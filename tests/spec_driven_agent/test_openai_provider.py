@@ -9,6 +9,7 @@ import pytest
 
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
 
+from besser.llm.pricing import get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
     LLMProvider,
     OpenAIProvider,
@@ -17,7 +18,6 @@ from besser.spec_driven_agent.providers.llm_client import (
     _TextBlock,
     _ToolUseBlock,
     _anthropic_tools_to_openai,
-    _get_pricing,
     _needs_reasoning_none_for_tools,
     _openai_messages_to_api,
     _openai_response_to_common,
@@ -331,7 +331,7 @@ class TestOpenAIUsageAdapter:
 class TestOpenAIPricing:
 
     def test_gpt4o_pricing(self):
-        p = _get_pricing("gpt-4o")
+        p = get_pricing("gpt-4o")
         assert p["input"] == 2.5
         assert p["output"] == 10.0
         assert p["cache_write"] == 0
@@ -339,17 +339,17 @@ class TestOpenAIPricing:
         assert p["cache_read"] == 1.25
 
     def test_gpt4o_mini_pricing(self):
-        p = _get_pricing("gpt-4o-mini")
+        p = get_pricing("gpt-4o-mini")
         assert p["input"] == 0.15
         assert p["output"] == 0.6
 
     def test_gpt5_pricing(self):
         # Early-2026 rates; gpt-5.5 (the pricier tier) is matched first
-        # by _get_pricing so plain gpt-5 gets its own cheaper rate.
-        p = _get_pricing("gpt-5")
+        # by get_pricing so plain gpt-5 gets its own cheaper rate.
+        p = get_pricing("gpt-5")
         assert p["input"] == 1.25
         assert p["output"] == 10.0
-        p55 = _get_pricing("gpt-5.5")
+        p55 = get_pricing("gpt-5.5")
         assert p55["input"] == 5.0
         assert p55["output"] == 30.0
 
@@ -367,7 +367,7 @@ class TestOpenAIPricing:
         ],
     )
     def test_gpt56_variant_pricing(self, model, input_rate, output_rate):
-        pricing = _get_pricing(model)
+        pricing = get_pricing(model)
         assert pricing["input"] == input_rate
         assert pricing["output"] == output_rate
 
@@ -379,19 +379,19 @@ class TestOpenAIPricing:
         number stayed stale, and would have kept ``max_cost_usd`` firing at a
         fifth of the intended spend.
         """
-        p = _get_pricing("o3")
+        p = get_pricing("o3")
         assert p["input"] == 2.0
         assert p["output"] == 8.0
 
     def test_o3_mini_pricing(self):
-        p = _get_pricing("o3-mini")
+        p = get_pricing("o3-mini")
         assert p["input"] == 1.1
         assert p["output"] == 4.4
 
     def test_gpt4o_mini_not_matched_as_gpt4o(self):
         """gpt-4o-mini should get its own pricing, not gpt-4o's."""
-        p_mini = _get_pricing("gpt-4o-mini")
-        p_4o = _get_pricing("gpt-4o")
+        p_mini = get_pricing("gpt-4o-mini")
+        p_4o = get_pricing("gpt-4o")
         assert p_mini["input"] != p_4o["input"]
 
     def test_cost_estimation(self):
@@ -403,15 +403,15 @@ class TestOpenAIPricing:
 
     def test_claude_pricing_still_works(self):
         """Anthropic pricing unaffected by OpenAI additions."""
-        p = _get_pricing("claude-sonnet-4-20250514")
+        p = get_pricing("claude-sonnet-4-20250514")
         assert p["input"] == 3.0
         assert p["output"] == 15.0
 
     def test_unknown_model_defaults_to_gpt4o(self):
-        # _get_pricing falls back to the gpt-4o middle tier for unknown
+        # get_pricing falls back to the gpt-4o middle tier for unknown
         # *paid* model ids (see the function's docstring). A tagless name
         # that matches no open family must still get the protective rate.
-        p = _get_pricing("some-unknown-model")
+        p = get_pricing("some-unknown-model")
         assert p["input"] == 2.5
 
     @pytest.mark.parametrize(
@@ -429,7 +429,7 @@ class TestOpenAIPricing:
     def test_local_open_models_are_free(self, model):
         # Self-hosted / open-weight models must price at $0 so they never
         # trip max_cost_usd and abort a free run mid-generation.
-        p = _get_pricing(model)
+        p = get_pricing(model)
         assert p == {
             "input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0,
         }
@@ -438,7 +438,7 @@ class TestOpenAIPricing:
         # A genuinely-unknown *paid* cloud id (no colon, no open family)
         # keeps the protective gpt-4o fallback — the $0 rule must not
         # over-broaden and remove the cost cap for real spend.
-        assert _get_pricing("gpt-6-preview")["input"] == 2.5
+        assert get_pricing("gpt-6-preview")["input"] == 2.5
 
 
 # ======================================================================

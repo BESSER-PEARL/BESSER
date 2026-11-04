@@ -11,10 +11,10 @@ from unittest.mock import MagicMock
 
 import anthropic.types as at
 
+from besser.llm.pricing import get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     ClaudeLLMClient,
-    _get_pricing,
 )
 
 TOOL = {
@@ -35,7 +35,7 @@ def test_the_anthropic_default_is_sonnet_5():
 
 
 def test_the_default_bills_at_sonnet_5_rates():
-    pricing = _get_pricing(ClaudeLLMClient.DEFAULT_MODEL)
+    pricing = get_pricing(ClaudeLLMClient.DEFAULT_MODEL)
     assert (pricing["input"], pricing["output"]) == (2.0, 10.0)
 
 

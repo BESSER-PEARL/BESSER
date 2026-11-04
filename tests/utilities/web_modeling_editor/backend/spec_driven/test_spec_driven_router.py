@@ -13,9 +13,6 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
-)
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )

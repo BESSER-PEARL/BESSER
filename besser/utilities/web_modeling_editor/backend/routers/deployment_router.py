@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
+    FeedbackResponse,
     FeedbackSubmission,
 )
 
@@ -126,7 +127,7 @@ async def deploy_app(input_data: DiagramInput):
             raise ValueError("Deployment only possible for Django projects")
 
 
-@router.post("/feedback")
+@router.post("/feedback", response_model=FeedbackResponse)
 @handle_endpoint_errors("feedback_endpoint")
 async def feedback_endpoint(feedback: FeedbackSubmission):
     """

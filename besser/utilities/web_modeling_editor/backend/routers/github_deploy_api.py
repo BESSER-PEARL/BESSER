@@ -11,18 +11,19 @@ import os
 import re
 import tempfile
 import uuid
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field, field_validator
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
+from besser.utilities.path_utils import is_repo_json_path
+from besser.utilities.secret_redaction import redact_credentials, sanitize_config
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
 )
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import (
@@ -31,8 +32,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
-from besser.utilities.web_modeling_editor.backend.constants.constants import BUML_EMIT_IDS
-from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
+from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep, SettingsDep
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
 from besser.utilities.buml_code_builder import (
     domain_model_to_code,
     gui_model_to_code,
@@ -41,9 +42,7 @@ from besser.utilities.buml_code_builder import (
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.provenance import write_generation_provenance
-from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
-    sanitize_config,
-)
+from besser.utilities.web_modeling_editor.backend.services.generation.agents import has_agent_components
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     collect_agents_from_diagrams,
     extract_openai_api_key,
@@ -55,6 +54,11 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     GenerationError,
     ValidationError,
+)
+from besser.utilities.web_modeling_editor.backend.models.responses import (
+    CommitStatus,
+    DeployToGitHubResponse,
+    ResponseModel,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,26 +100,11 @@ class DeployToGitHubRequest(BaseModel):
     )
 
 
-class DeployToGitHubResponse(BaseModel):
-    """Response model for GitHub deployment."""
-    success: bool
-    repo_url: str
-    repo_name: str
-    owner: str
-    deployment_urls: dict
-    files_uploaded: int
-    message: str
-    # True on the very first deploy to a repo (no previous ``render.yaml`` found),
-    # False on every subsequent deploy. The frontend uses this to pick the right
-    # "next action" button — create-blueprint vs. open-live-site.
-    is_first_deploy: bool = True
-    # Deployment flavor: ``webapp`` (Class+GUI) or ``chatbot`` (Agent-only).
-    deployment_type: str = "webapp"
-
-
 @router.post("/deploy-webapp", response_model=DeployToGitHubResponse)
 async def deploy_webapp_to_github(
+    github_sessions: GitHubSessionsDep,
     request: Request,
+    backend_settings: SettingsDep,
     body: dict = Body(...),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -139,7 +128,7 @@ async def deploy_webapp_to_github(
                 detail="GitHub authentication required. Please sign in with GitHub first."
             )
 
-        access_token = get_user_token(github_session)
+        access_token = get_user_token(github_sessions, github_session)
         if not access_token:
             raise HTTPException(
                 status_code=401,
@@ -387,8 +376,7 @@ async def deploy_webapp_to_github(
         agent_models: list = []
         agent_configs: dict = {}
         agent_config_yamls: dict = {}
-        has_agent_components = _has_agent_components(gui_model)
-        if has_agent_components:
+        if has_agent_components(gui_model):
             settings = body.get("settings", {}) or {}
             settings_config = settings.get("config") or {}
             agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
@@ -480,7 +468,7 @@ async def deploy_webapp_to_github(
             os.makedirs(buml_dir, exist_ok=True)
             try:
                 domain_model_to_code(
-                    model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"), emit_ids=BUML_EMIT_IDS,
+                    model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"), emit_ids=backend_settings.buml_emit_ids,
                 )
                 gui_model_to_code(model=gui_model, file_path=os.path.join(buml_dir, "gui_model.py"), domain_model=buml_model)
                 for ag in agent_models:
@@ -575,24 +563,8 @@ async def deploy_webapp_to_github(
         raise HTTPException(status_code=500, detail=str(e)) from e
     except httpx.HTTPStatusError as e:
         # GitHub API rejected the request (e.g. 422 "name already exists on
-        # this account", 403 rate limit, 401 expired token). Forward a useful
-        # message to the frontend instead of swallowing it as a generic 500.
-        logger.warning("GitHub API error in deploy_webapp_to_github", exc_info=True)
-        upstream_status = e.response.status_code if e.response is not None else 502
-        detail = _extract_github_error_message(e)
-        if upstream_status == 401:
-            raise HTTPException(status_code=401, detail=detail) from e
-        if upstream_status == 403:
-            raise HTTPException(status_code=403, detail=detail) from e
-        if upstream_status == 422:
-            # 409 Conflict is the most accurate mapping for "repository name
-            # already exists on this account" — the frontend can show a
-            # rename / overwrite popup instead of a generic error.
-            raise HTTPException(status_code=409, detail=detail) from e
-        if 400 <= upstream_status < 500:
-            raise HTTPException(status_code=upstream_status, detail=detail) from e
-        # 5xx from GitHub becomes 502 Bad Gateway.
-        raise HTTPException(status_code=502, detail=f"GitHub upstream error: {detail}") from e
+        # this account", 403 rate limit, 401 expired token).
+        raise _github_status_error(e, "deploy_webapp_to_github") from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
@@ -653,6 +625,28 @@ def _extract_github_error_message(error: httpx.HTTPStatusError) -> str:
             return top_level
 
     return f"GitHub returned HTTP {response.status_code}"
+
+
+def _github_status_error(
+    exc: httpx.HTTPStatusError, endpoint: str, repo_missing_on_404: bool = False,
+) -> HTTPException:
+    """The HTTP error for a failed GitHub API call: 401/403 kept, 422 as 409, other 4xx kept, 5xx as 502."""
+    logger.warning("GitHub API error in %s", endpoint, exc_info=True)
+    upstream_status = exc.response.status_code if exc.response is not None else 502
+    detail = _extract_github_error_message(exc)
+    if upstream_status in (401, 403):
+        return HTTPException(status_code=upstream_status, detail=detail)
+    if repo_missing_on_404 and upstream_status == 404:
+        # Repo missing / no access — machine-usable code.
+        return HTTPException(status_code=404, detail="repo_missing")
+    if upstream_status == 422:
+        # 422 covers both "repository name already exists on this
+        # account" AND a non-fast-forward ref update (a concurrent
+        # change to the branch). Both map cleanly to 409 Conflict.
+        return HTTPException(status_code=409, detail=detail)
+    if 400 <= upstream_status < 500:
+        return HTTPException(status_code=upstream_status, detail=detail)
+    return HTTPException(status_code=502, detail=f"GitHub upstream error: {detail}")
 
 
 def _sanitize_repo_name(name: str) -> str:
@@ -985,29 +979,6 @@ async def _read_existing_chatbot_service_suffix(github, owner: str, repo_name: s
     return None
 
 
-def _has_agent_components(gui_model) -> bool:
-    """Check if the GUI model contains any agent components."""
-    from besser.BUML.metamodel.gui.dashboard import AgentComponent
-    from besser.BUML.metamodel.gui import ViewContainer
-
-    if not gui_model or not gui_model.modules:
-        return False
-
-    def _check_container(container) -> bool:
-        for element in (container.view_elements or []):
-            if isinstance(element, AgentComponent):
-                return True
-            if isinstance(element, ViewContainer) and _check_container(element):
-                return True
-        return False
-
-    for module in gui_model.modules:
-        for screen in (module.screens or []):
-            if _check_container(screen):
-                return True
-    return False
-
-
 def _add_deployment_configs(
     directory: str,
     app_name: str,
@@ -1189,7 +1160,7 @@ VITE_AGENT_URLS='{json.dumps(local_agent_urls)}'
 # GitHub Project Storage API
 # ============================================================================
 
-class GitHubRepoResponse(BaseModel):
+class GitHubRepoResponse(ResponseModel):
     """Repository information response."""
     id: int
     name: str
@@ -1204,14 +1175,14 @@ class GitHubRepoResponse(BaseModel):
     can_push: bool = True
 
 
-class GitHubReposListResponse(BaseModel):
+class GitHubReposListResponse(ResponseModel):
     """Response for list of repositories."""
     repositories: List[GitHubRepoResponse]
     # True when the account has more repositories than the listing covers.
     truncated: bool = False
 
 
-class GitHubCommitResponse(BaseModel):
+class GitHubCommitResponse(ResponseModel):
     """Commit information response."""
     sha: str
     message: str
@@ -1222,7 +1193,7 @@ class GitHubCommitResponse(BaseModel):
     origin: Optional[str] = None
 
 
-class GitHubCommitsListResponse(BaseModel):
+class GitHubCommitsListResponse(ResponseModel):
     """Response for list of commits."""
     commits: List[GitHubCommitResponse]
 
@@ -1247,31 +1218,30 @@ class SaveProjectRequest(BaseModel):
     @field_validator("legacy_file_path")
     @classmethod
     def _legacy_file_path_in_repo(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and not repo_model.is_repo_json_path(value):
+        if value is not None and not is_repo_json_path(value):
             raise ValueError("legacy_file_path must be a relative repo path to a .json file, without '..'")
         return value
 
 
-class SaveProjectResponse(BaseModel):
+class SaveProjectResponse(ResponseModel):
     """Response for project save."""
     success: bool
     commit_sha: str
     message: str
-    # "pushed", "merged" or "conflict" (see GitHubService.commit_tree).
-    status: str = "pushed"
+    status: CommitStatus = "pushed"
     conflict_branch: Optional[str] = None
     # What the user should know about a merged save (see GitHubService.commit_tree).
     warnings: List[str] = []
 
 
-class LoadProjectResponse(BaseModel):
+class LoadProjectResponse(ResponseModel):
     """Response for project load."""
     success: bool
     project: dict
     sha: str
 
 
-class LoadProjectFromCommitResponse(BaseModel):
+class LoadProjectFromCommitResponse(ResponseModel):
     """Response for loading project from specific commit."""
     success: bool
     project: dict
@@ -1289,7 +1259,7 @@ class CreateRepoForProjectRequest(BaseModel):
     project_export: Optional[dict] = None
 
 
-class CreateRepoForProjectResponse(BaseModel):
+class CreateRepoForProjectResponse(ResponseModel):
     """Response for creating repo with project."""
     success: bool
     repo_url: str
@@ -1301,13 +1271,14 @@ class CreateRepoForProjectResponse(BaseModel):
 
 @router.get("/repos", response_model=GitHubReposListResponse)
 async def get_user_repositories(
+    github_sessions: GitHubSessionsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """
     The repositories the signed-in user can open: their own, those they
     collaborate on and their organizations', most recently updated first.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         listing = await github.get_user_repositories()
         return GitHubReposListResponse(
@@ -1315,19 +1286,20 @@ async def get_user_repositories(
             truncated=listing["truncated"],
         )
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_user_repositories") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub repositories")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repositories.")
 
 
-class GitHubBranchesListResponse(BaseModel):
+class GitHubBranchesListResponse(ResponseModel):
     """Response for list of branches."""
     branches: List[str]
 
 
 @router.get("/branches", response_model=GitHubBranchesListResponse)
 async def get_repository_branches(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
@@ -1335,18 +1307,18 @@ async def get_repository_branches(
     """
     Get list of branches for a repository.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         branches = await github.get_branches(owner, repo)
         return GitHubBranchesListResponse(branches=branches)
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_repository_branches") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub branches")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching branches.")
 
 
-class FileExistsResponse(BaseModel):
+class FileExistsResponse(ResponseModel):
     """Response for file existence check."""
     exists: bool
     path: str
@@ -1354,6 +1326,7 @@ class FileExistsResponse(BaseModel):
 
 @router.get("/file/exists", response_model=FileExistsResponse)
 async def check_file_exists(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     branch: str = Query("main", description="Branch name"),
@@ -1366,7 +1339,7 @@ async def check_file_exists(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 
@@ -1375,13 +1348,15 @@ async def check_file_exists(
         exists = await github.file_exists(owner, repo, file_path, branch)
 
         return FileExistsResponse(exists=exists, path=file_path)
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "check_file_exists") from exc
     except Exception:
         logger.exception("Unexpected error checking file existence on GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while checking file existence.")
 
 
 
-class GitHubContentItem(BaseModel):
+class GitHubContentItem(ResponseModel):
     """Item in a repository directory."""
     name: str
     path: str
@@ -1390,13 +1365,14 @@ class GitHubContentItem(BaseModel):
     sha: str
 
 
-class GitHubContentsResponse(BaseModel):
+class GitHubContentsResponse(ResponseModel):
     """Response for repository contents."""
     contents: List[GitHubContentItem]
 
 
 @router.get("/contents", response_model=GitHubContentsResponse)
 async def get_repository_contents(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     path: str = Query("", description="Path to directory"),
@@ -1409,7 +1385,7 @@ async def get_repository_contents(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 
@@ -1429,6 +1405,8 @@ async def get_repository_contents(
                 for item in contents
             ]
         )
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "get_repository_contents") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub repository contents")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repository contents.")
@@ -1436,6 +1414,7 @@ async def get_repository_contents(
 
 @router.get("/commits", response_model=GitHubCommitsListResponse)
 async def get_repository_commits(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     path: Optional[str] = Query(None, description="File path to filter commits"),
@@ -1447,7 +1426,7 @@ async def get_repository_commits(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 
@@ -1458,16 +1437,18 @@ async def get_repository_commits(
         return GitHubCommitsListResponse(
             commits=[_commit_response(c) for c in commits]
         )
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "get_repository_commits") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub commits")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching commits.")
 
 
-def _github_for(github_session: Optional[str]):
+def _github_for(github_sessions: GitHubSessions, github_session: Optional[str]):
     """The GitHubService for a request's session header; 401 when there is none."""
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
     return create_github_service(access_token)
@@ -1485,7 +1466,7 @@ def _commit_response(commit: dict) -> "GitHubCommitResponse":
 
 
 def _checked_model_path(model_path: Optional[str]) -> Optional[str]:
-    if model_path is not None and not repo_model.is_repo_json_path(model_path):
+    if model_path is not None and not is_repo_json_path(model_path):
         raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
     return model_path
 
@@ -1565,13 +1546,9 @@ async def _model_tree_entries(github, owner: str, repo: str, files: dict[str, by
     return entries
 
 
-def _github_http_error(exc: httpx.HTTPStatusError) -> HTTPException:
-    status = exc.response.status_code if exc.response is not None else 502
-    return HTTPException(status_code=status if 400 <= status < 500 else 502, detail=_extract_github_error_message(exc))
-
-
 @router.post("/project/save", response_model=SaveProjectResponse)
 async def save_project_to_github(
+    github_sessions: GitHubSessionsDep,
     request: SaveProjectRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -1585,7 +1562,7 @@ async def save_project_to_github(
     merged with the newer commits. An empty repository gets its first commit
     through the contents API first.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         files = repo_model.model_files(request.project_export or request.project_data)
         message = repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR)
@@ -1621,8 +1598,7 @@ async def save_project_to_github(
             warnings=outcome.get("warnings", []),
         )
     except httpx.HTTPStatusError as exc:
-        logger.warning("GitHub API error saving project", exc_info=True)
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "save_project_to_github") from exc
     except Exception:
         logger.exception("Unexpected error saving project to GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while saving the project.")
@@ -1630,6 +1606,7 @@ async def save_project_to_github(
 
 @router.get("/project/load", response_model=LoadProjectResponse)
 async def load_project_from_github(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     branch: str = Query("main", description="Branch name"),
@@ -1643,7 +1620,7 @@ async def load_project_from_github(
     (``buml/diagrams.json``) or, for an older repo, a bare project. ``sha`` is
     the branch head it was read at.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         head = await github.get_branch_head(owner, repo, branch)
         project = await _read_model(github, owner, repo, head, _checked_model_path(model_path)) if head else None
@@ -1654,6 +1631,8 @@ async def load_project_from_github(
         raise HTTPException(status_code=400, detail="Invalid project file format")
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "load_project_from_github") from exc
     except Exception:
         logger.exception("Unexpected error loading project from GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while loading the project.")
@@ -1661,6 +1640,7 @@ async def load_project_from_github(
 
 @router.get("/project/load-commit", response_model=LoadProjectFromCommitResponse)
 async def load_project_from_commit(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     commit_sha: str = Query(..., description="Commit SHA to load from"),
@@ -1672,7 +1652,7 @@ async def load_project_from_commit(
 
     This allows restoring previous versions of the project.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         project = await _read_model(github, owner, repo, commit_sha, _checked_model_path(model_path))
         if project is None:
@@ -1691,6 +1671,8 @@ async def load_project_from_commit(
         raise HTTPException(status_code=400, detail="Invalid project file format")
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "load_project_from_commit") from exc
     except Exception:
         logger.exception("Unexpected error loading project from GitHub commit")
         raise HTTPException(status_code=500, detail="An internal error occurred while loading the project from commit.")
@@ -1715,6 +1697,7 @@ A [BESSER](https://github.com/BESSER-PEARL/BESSER) project.
 
 @router.post("/project/create-repo", response_model=CreateRepoForProjectResponse)
 async def create_repository_for_project(
+    github_sessions: GitHubSessionsDep,
     request: CreateRepoForProjectRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -1723,7 +1706,7 @@ async def create_repository_for_project(
 
     The first commit holds the model files and a README.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         user_info = await github.get_authenticated_user()
         username = user_info.get("login")
@@ -1757,6 +1740,8 @@ async def create_repository_for_project(
             message=f"Repository '{repo_name}' created with project",
             branch=branch,
         )
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "create_repository_for_project") from exc
     except Exception:
         logger.exception("Unexpected error creating GitHub repository for project")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the repository.")
@@ -1766,7 +1751,7 @@ async def create_repository_for_project(
 # Linked repository: summary, sync status, model history, pull requests
 # ============================================================================
 
-class RepoSummaryResponse(BaseModel):
+class RepoSummaryResponse(ResponseModel):
     """What the repo browser shows on a repo card."""
     has_model: bool
     branch: str
@@ -1787,6 +1772,7 @@ class RepoSummaryResponse(BaseModel):
 
 @router.get("/repo-summary", response_model=RepoSummaryResponse)
 async def get_repo_summary(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(...),
     repo: str = Query(...),
     branch: Optional[str] = Query(None, description="Branch; the repo default when omitted"),
@@ -1794,7 +1780,7 @@ async def get_repo_summary(
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """The model a repo holds (name, diagrams, classes), every model file in it, and its last commit."""
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     model_path = _checked_model_path(model_path)
     try:
         if not branch:
@@ -1818,24 +1804,24 @@ async def get_repo_summary(
             **repo_model.summarize(found[1]),
         )
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_repo_summary") from exc
     except Exception:
         logger.exception("Unexpected error summarizing a GitHub repository")
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the repository.")
 
 
-class PendingChangeStatus(BaseModel):
+class PendingChangeStatus(ResponseModel):
     """Where a save or push that did not land on the branch stands."""
     branch: str
     # False once the branch was deleted (e.g. after its pull request was merged).
     branch_exists: bool
     pull_request_number: Optional[int] = None
     pull_request_url: Optional[str] = None
-    # "open", "closed" or "merged"; None while no pull request was opened.
-    pull_request_state: Optional[str] = None
+    # None while no pull request was opened.
+    pull_request_state: Optional[Literal["open", "closed", "merged"]] = None
 
 
-class SyncStatusResponse(BaseModel):
+class SyncStatusResponse(ResponseModel):
     """How a linked repo's branch relates to the commit the editor last synced."""
     head_sha: str
     # Commits on the branch since ``base_sha``, newest first.
@@ -1854,7 +1840,7 @@ async def _pending_status(github, owner: str, repo: str, branch: str) -> Pending
     pull = await github.get_pull_request_for_branch(owner, repo, branch)
     state = None
     if pull:
-        state = "merged" if pull["merged"] else pull["state"]
+        state = "merged" if pull["merged"] else pull["state"] or None
     return PendingChangeStatus(
         branch=branch, branch_exists=exists,
         pull_request_number=pull and pull["number"], pull_request_url=pull and pull["html_url"],
@@ -1864,6 +1850,7 @@ async def _pending_status(github, owner: str, repo: str, branch: str) -> Pending
 
 @router.get("/sync-status", response_model=SyncStatusResponse)
 async def get_sync_status(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(...),
     repo: str = Query(...),
     branch: str = Query("main"),
@@ -1877,7 +1864,7 @@ async def get_sync_status(
     (a conflict, or a pull request): the answer says whether its pull
     request was opened, merged or closed.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         head = await github.get_branch_head(owner, repo, branch)
         if not head:
@@ -1891,7 +1878,7 @@ async def get_sync_status(
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_sync_status") from exc
     except Exception:
         logger.exception("Unexpected error reading GitHub sync status")
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the sync status.")
@@ -1902,7 +1889,7 @@ class ModelHistoryEntry(GitHubCommitResponse):
     changes: List[str]
 
 
-class ModelHistoryResponse(BaseModel):
+class ModelHistoryResponse(ResponseModel):
     commits: List[ModelHistoryEntry]
 
 
@@ -1912,6 +1899,7 @@ _MODEL_HISTORY_LIMIT = 15
 
 @router.get("/model-history", response_model=ModelHistoryResponse)
 async def get_model_history(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(...),
     repo: str = Query(...),
     branch: str = Query("main"),
@@ -1921,11 +1909,12 @@ async def get_model_history(
     """Recent commits that changed the model file, each with its class-diagram changes.
 
     The model file is ``buml/diagrams.json``, or the file an older editor saved
-    while the repo has no ``buml/diagrams.json`` yet. Each commit is compared
-    with its first parent, not with the commit listed after it: after a merge,
-    the next commit by date is on the other branch.
+    while the repo has no ``buml/diagrams.json`` yet. When a save moved the
+    model into ``buml/diagrams.json``, the history goes on with the older file.
+    Each commit is compared with its first parent, not with the commit listed
+    after it: after a merge, the next commit by date is on the other branch.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     model_path = _checked_model_path(model_path)
     try:
         head = await github.get_branch_head(owner, repo, branch)
@@ -1937,11 +1926,26 @@ async def get_model_history(
         commits = await github.get_commits(
             owner, repo, model_path, per_page=_MODEL_HISTORY_LIMIT, ref=branch
         )
+        # The file the model was read from at each commit listed (and at the move's parent).
+        paths = {commit["sha"]: model_path for commit in commits}
+        moved_from = (commits[-1].get("parents") or [None])[0] if commits else None
+        if moved_from and len(commits) < _MODEL_HISTORY_LIMIT:
+            try:
+                before = await _find_model(github, owner, repo, moved_from)
+            except json.JSONDecodeError:
+                before = None
+            if before is not None and before[0] != model_path:
+                paths[moved_from] = before[0]
+                older = await github.get_commits(
+                    owner, repo, before[0], per_page=_MODEL_HISTORY_LIMIT - len(commits), ref=moved_from
+                )
+                paths.update({commit["sha"]: before[0] for commit in older})
+                commits += older
         models: dict[str, Optional[dict]] = {}
 
         async def model_at(sha: str) -> Optional[dict]:
             if sha not in models:
-                file_data = await github.get_file_content(owner, repo, model_path, ref=sha)
+                file_data = await github.get_file_content(owner, repo, paths.get(sha, model_path), ref=sha)
                 try:
                     content = file_data.get("content") if file_data else None
                     models[sha] = json.loads(content) if content else None
@@ -1958,7 +1962,7 @@ async def get_model_history(
             entries.append(ModelHistoryEntry(**_commit_response(commit).model_dump(), changes=changes))
         return ModelHistoryResponse(commits=entries)
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_model_history") from exc
     except Exception:
         logger.exception("Unexpected error reading the model history")
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the model history.")
@@ -1974,13 +1978,14 @@ class CreatePullRequestRequest(BaseModel):
     body: str = ""
 
 
-class CreatePullRequestResponse(BaseModel):
+class CreatePullRequestResponse(ResponseModel):
     number: int
     html_url: str
 
 
 @router.post("/pull-request", response_model=CreatePullRequestResponse)
 async def create_pull_request(
+    github_sessions: GitHubSessionsDep,
     request: CreatePullRequestRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -1988,7 +1993,7 @@ async def create_pull_request(
 
     Asking again for a branch that already has an open pull request returns it.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         body = request.body or await _pull_request_body(
             github, request.owner, request.repo, request.base, request.head
@@ -1998,7 +2003,7 @@ async def create_pull_request(
         )
         return CreatePullRequestResponse(**result)
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "create_pull_request") from exc
 
 
 async def _pull_request_body(github, owner: str, repo: str, base: str, head: str) -> str:
@@ -2016,14 +2021,14 @@ async def _pull_request_body(github, owner: str, repo: str, base: str, head: str
 # Go live: deploy the project's own repository
 # ============================================================================
 
-class AppCapabilitiesResponse(BaseModel):
+class AppCapabilitiesResponse(ResponseModel):
     """Server features the editor switches on; read once per page load."""
     go_live: bool
 
 
 @router.get("/app/capabilities", response_model=AppCapabilitiesResponse)
-async def get_app_capabilities():
-    return AppCapabilitiesResponse(go_live=backend_constants.DEPLOY_FROM_REPO)
+async def get_app_capabilities(settings: SettingsDep):
+    return AppCapabilitiesResponse(go_live=settings.deploy_from_repo)
 
 
 class GoLiveRequest(BaseModel):
@@ -2032,7 +2037,7 @@ class GoLiveRequest(BaseModel):
     branch: str = "main"
 
 
-class GoLiveResponse(BaseModel):
+class GoLiveResponse(ResponseModel):
     """The repo is ready for Render: ``render_deploy_url`` connects it once."""
     commit_sha: str
     # False when the repo already held these exact deploy files.
@@ -2047,7 +2052,9 @@ class GoLiveResponse(BaseModel):
 
 @router.post("/app/go-live", response_model=GoLiveResponse)
 async def go_live(
+    github_sessions: GitHubSessionsDep,
     request: GoLiveRequest,
+    settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """Commit Render deploy files for the app in ``owner/repo`` into that repo.
@@ -2058,9 +2065,9 @@ async def go_live(
     redeploys; saves that only change the model do not. Answers 422 with the
     reason when the repo holds no app BESSER can deploy.
     """
-    if not backend_constants.DEPLOY_FROM_REPO:
+    if not settings.deploy_from_repo:
         raise HTTPException(status_code=404, detail="go_live_disabled")
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         head = await github.get_branch_head(request.owner, request.repo, request.branch)
         if not head:
@@ -2112,7 +2119,7 @@ async def go_live(
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "go_live") from exc
     except ValueError as exc:
         # download_repo_tarball's size / member-count refusals.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2140,7 +2147,7 @@ class CreateGistRequest(BaseModel):
     is_public: bool = False
 
 
-class CreateGistResponse(BaseModel):
+class CreateGistResponse(ResponseModel):
     """Response for Gist creation."""
     success: bool
     gist_url: str
@@ -2150,6 +2157,7 @@ class CreateGistResponse(BaseModel):
 
 @router.post("/gist/create", response_model=CreateGistResponse)
 async def create_gist_from_project(
+    github_sessions: GitHubSessionsDep,
     request: CreateGistRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -2162,7 +2170,7 @@ async def create_gist_from_project(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 
@@ -2196,13 +2204,13 @@ async def create_gist_from_project(
             message="Gist created successfully"
         )
     except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code if e.response is not None else 500
         # GitHub returns 404/403 when the token lacks the "gist" scope or gists are disabled
-        if status_code in (403, 404):
-            detail = "GitHub token is missing access to gists. Please reconnect GitHub and grant the 'gist' scope."
-        else:
-            detail = f"GitHub API error while creating Gist: {str(e)}"
-        raise HTTPException(status_code=status_code, detail=detail)
+        if e.response is not None and e.response.status_code in (403, 404):
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="GitHub token is missing access to gists. Please reconnect GitHub and grant the 'gist' scope.",
+            ) from e
+        raise _github_status_error(e, "create_gist_from_project") from e
     except Exception:
         logger.exception("Unexpected error creating GitHub Gist")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the Gist.")

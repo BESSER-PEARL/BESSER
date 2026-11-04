@@ -25,7 +25,7 @@ from besser.utilities.buml_code_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.provenance import PROVENANCE_FILENAME
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.routers.generation_router import _streaming_zip
+from besser.utilities.web_modeling_editor.backend.services.generation.downloads import agent_zip_output
 from besser.utilities.web_modeling_editor.backend.services.converters import process_class_diagram
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     parse_buml_content,
@@ -35,6 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import SmartGenerationRunner
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _build_request
+from tests.utilities.web_modeling_editor.backend._runtime import make_runtime
 
 _SETUP_CFG = configparser.ConfigParser()
 _SETUP_CFG.read(Path(__file__).resolve().parents[2] / "setup.cfg", encoding="utf-8")
@@ -169,7 +170,7 @@ class TestGeneratedZip:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("agent.py", "print('hi')\n")
-        _streaming_zip(buffer, "agent_output.zip")
+        agent_zip_output(buffer, "agent_output.zip")
         entries = _zip_entries(buffer.getvalue())
         assert set(entries) == {"agent.py", PROVENANCE_FILENAME}
         assert "Generator: `agent`" in entries[PROVENANCE_FILENAME].decode("utf-8")
@@ -225,7 +226,7 @@ class TestSpecDriven:
         (result_path / ".besser_recipe.json").write_text(
             json.dumps({"generator_used": "backend", "llm_model": "claude-sonnet-4-5"}), encoding="utf-8"
         )
-        runner = SmartGenerationRunner(_build_request())
+        runner = SmartGenerationRunner(_build_request(), runtime=make_runtime())
         runner.temp_dir = str(tmp_path)
         return result_path, runner._package_result(str(result_path))
 

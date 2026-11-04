@@ -10,8 +10,9 @@ best-practice rubric.
 
 - **Follow the existing convention.** When the codebase already has a way to do something, a new but equivalent
   way is a finding: `@handle_endpoint_errors` plus the exceptions in `services/exceptions.py`, the
-  `GeneratorInfo` registry, the `tests/conftest.py` fixtures, `_escape_python_string` / `safe_var_name` in
-  `buml_code_builder/common.py`, Jinja2 templates under `generators/<name>/templates/`, `constants/constants.py`.
+  generator registry (`besser/generators/registry.py`), the `tests/conftest.py` fixtures,
+  `_escape_python_string` / `safe_var_name` in `buml_code_builder/common.py`, Jinja2 templates under
+  `generators/<name>/templates/`, `constants/constants.py`.
 - **No papering over.** Flag a fix that hides a symptom instead of resolving the cause:
   - `except Exception: pass` or a bare `except:` that swallows an error
   - `isinstance(x, dict)` fallbacks next to a metamodel type, or `hasattr` / `getattr(..., default)` guards on
@@ -38,8 +39,7 @@ Important is for findings that break behavior or a contract:
 
 - incorrect logic, crashes, data loss, security issues
 - a converter feature added in only one direction (`json_to_buml` without `buml_to_json`, or the reverse)
-- a generator that does not implement `GeneratorInterface` or is missing from `SUPPORTED_GENERATORS` /
-  `get_filename_for_generator`
+- a generator that does not implement `GeneratorInterface` or is missing from `besser/generators/registry.py`
 - a removed or renamed public metamodel attribute without a documented migration
 - user-controlled strings emitted into generated Python without `_escape_python_string` / `safe_var_name`
 - `shell=True` with user input, path traversal on upload/import/export, secrets in the diff

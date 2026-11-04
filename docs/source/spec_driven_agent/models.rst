@@ -44,7 +44,7 @@ The model catalog
 Which providers and models the editor's key dialog offers, the endpoint of a
 gateway provider, and the rates a gateway bills are configuration, held in one
 JSON file. BESSER ships a public default,
-``besser/spec_driven_agent/providers/data/model_catalog.json``. A deployment
+``besser/llm/data/model_catalog.json``. A deployment
 points ``BESSER_MODEL_CATALOG`` at its own file, which is merged over the
 default (see :doc:`configuration`). Adding, removing or repricing a model is an
 edit to that file and a restart of the backend, the Spec-Driven worker and the

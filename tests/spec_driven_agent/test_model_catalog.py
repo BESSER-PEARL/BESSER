@@ -15,13 +15,12 @@ import httpx
 import pytest
 from httpx._transports.asgi import ASGITransport
 
-from besser.spec_driven_agent.providers import model_catalog
+from besser.llm.pricing import get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
     OpenAIProvider,
-    _get_pricing,
     create_llm_client,
 )
-from besser.spec_driven_agent.providers.model_catalog import (
+from besser.llm.catalog import (
     ModelCatalogError,
     load_model_catalog,
 )
@@ -71,7 +70,7 @@ def use_catalog(tmp_path, monkeypatch):
         path = tmp_path / "catalog.json"
         path.write_text(json.dumps(data) if not isinstance(data, str) else data,
                         encoding="utf-8")
-        monkeypatch.setenv(model_catalog.CATALOG_ENV_VAR, str(path))
+        monkeypatch.setenv("BESSER_MODEL_CATALOG", str(path))
         load_model_catalog.cache_clear()
     return _use
 
@@ -132,7 +131,7 @@ def test_a_malformed_override_fails_loudly(use_catalog, bad, message):
 
 
 def test_a_missing_override_file_fails_loudly(monkeypatch, tmp_path):
-    monkeypatch.setenv(model_catalog.CATALOG_ENV_VAR, str(tmp_path / "absent.json"))
+    monkeypatch.setenv("BESSER_MODEL_CATALOG", str(tmp_path / "absent.json"))
     with pytest.raises(ModelCatalogError, match="cannot be read"):
         load_model_catalog()
 
@@ -159,26 +158,26 @@ def test_gateway_runs_are_priced_at_the_catalog_rates(use_catalog, model, expect
 
 def test_a_missing_cache_rate_bills_at_the_input_rate(use_catalog):
     use_catalog(GATEWAY_CATALOG)
-    rate = _get_pricing("claude-sonnet-5-5", route=GATEWAY_URL)
+    rate = get_pricing("claude-sonnet-5-5", route=GATEWAY_URL)
     assert rate["cache_read"] == rate["cache_write"] == 2.5
-    assert _get_pricing("gpt-6-luna", route=GATEWAY_URL)["cache_read"] == 0.03
+    assert get_pricing("gpt-6-luna", route=GATEWAY_URL)["cache_read"] == 0.03
 
 
 def test_the_same_id_off_the_gateway_keeps_its_vendor_price(use_catalog):
     use_catalog(GATEWAY_CATALOG)
-    assert _get_pricing("gpt-6-luna", billed=True)["input"] == 0.1
+    assert get_pricing("gpt-6-luna", billed=True)["input"] == 0.1
 
 
 def test_a_catalog_price_on_a_vendor_model_beats_the_fallback(use_catalog):
-    assert _get_pricing("gpt-9-nova", billed=True)["input"] == 2.5  # gpt-4o fallback
+    assert get_pricing("gpt-9-nova", billed=True)["input"] == 2.5  # gpt-4o fallback
     use_catalog(GATEWAY_CATALOG)
-    assert _get_pricing("gpt-9-nova", billed=True) == {
+    assert get_pricing("gpt-9-nova", billed=True) == {
         "input": 7.0, "output": 21.0, "cache_read": 7.0, "cache_write": 7.0,
     }
 
 
 def test_route_prices_from_the_default_still_price_the_sponsored_gateway():
-    rate = _get_pricing("moonshotai/Kimi-K3", route="https://api.commandcode.ai/provider/v1")
+    rate = get_pricing("moonshotai/Kimi-K3", route="https://api.commandcode.ai/provider/v1")
     assert (rate["input"], rate["cache_read"]) == (3.0, 0.30)
 
 

@@ -11,7 +11,6 @@ number without its derivation is an invitation to "tune" it blindly.
 
 from __future__ import annotations
 
-import os
 
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.state.checkpoint import (
@@ -263,13 +262,6 @@ _RUNTIME_UNVERIFIED_PREFIXES = (
     "api scenario:",
 )
 
-# Checkpoint history eviction (see history_eviction.py). When enabled, stale
-# file bodies in older messages are stubbed at the compaction checkpoint to cut
-# the re-sent context. OFF by default: it rewrites history the provider
-# re-serializes and is not yet verified end to end. Enable with
-# BESSER_LLM_HISTORY_EVICTION=1.
-_HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") == "1"
-
 # Generators that produce a WHOLE application, and the workspace folder each
 # writes. Once one of them has built the scaffold, none of them may run again:
 # re-running the primary regenerates over every edit Phase 2 has made, and a
@@ -283,6 +275,10 @@ _APPLICATION_OUTPUT_DIRS = {
     "generate_rest_api": "rest_api",
 }
 _APPLICATION_PRIMARY_TOOLS = frozenset(_APPLICATION_OUTPUT_DIRS)
+# The generators a modify run regenerates and merges after a model change (#659):
+# on 44 FastAPI runs, regenerating kept every app working. The web app's React
+# output has no determinism test yet, so it is not regenerated.
+REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend"})
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
 # FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST

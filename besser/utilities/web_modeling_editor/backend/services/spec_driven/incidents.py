@@ -18,15 +18,19 @@ import re
 import shutil
 import threading
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
+from besser.utilities.secret_redaction import redact_text
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 
+_DEFAULT_INCIDENT_LOG_DIR = "/app/incidents"
+
 
 def _incident_path() -> str:
-    directory = os.environ.get("BESSER_INCIDENT_LOG_DIR", "/app/incidents")
+    configured = BackendSettings().incident_log_dir
+    directory = _DEFAULT_INCIDENT_LOG_DIR if configured is None else configured
     try:
         os.makedirs(directory, exist_ok=True)
     except Exception:
@@ -96,9 +100,10 @@ def persist_run_trace(
     try:
         if not run_id or not trace_path or not os.path.isfile(trace_path):
             return
-        base = os.environ.get("BESSER_INCIDENT_LOG_DIR")
+        settings = BackendSettings()
+        base = settings.incident_log_dir
         if not base and study_run:
-            base = os.environ.get("BESSER_TELEMETRY_DIR")
+            base = settings.telemetry_dir
         if not base:
             return
         dest_dir = os.path.join(base, "traces")

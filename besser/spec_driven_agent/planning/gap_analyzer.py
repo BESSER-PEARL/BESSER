@@ -48,7 +48,7 @@ from typing import Any, Callable
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
-from besser.utilities.llm_utils import extract_json
+from besser.llm import extract_json
 
 logger = logging.getLogger(__name__)
 

@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
+from besser.BUML.metamodel.structural import DomainModel
 from besser.spec_driven_agent.agent.compaction import (
     COMPACT_RESERVE_TOKENS,
     # Re-exported on purpose: callers and tests import the threshold from
@@ -87,10 +88,10 @@ from besser.spec_driven_agent.planning.gap_analyzer import analyze_gaps_via_llm
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
+from besser.llm.pricing import is_free_local_model
 from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
-    _is_free_local_model,
     _is_quota_exhausted,
 )
 from besser.spec_driven_agent.agent.prompt_builder import (
@@ -102,6 +103,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     _FRONTEND_ASK_RE,
 )
 from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
+from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
 from besser.spec_driven_agent.planning.generator_keywords import (
     default_generator,
     keyword_generator,
@@ -154,6 +156,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
+from besser.utilities.secret_redaction import redact_trace_text
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
@@ -205,7 +208,6 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _APPLICATION_PRIMARY_TOOLS,
     _EDIT_STREAK_TOOLS,
     _EDIT_TOOLS,
-    _HISTORY_EVICTION_ENABLED,
     _MAX_PARALLEL_WORKERS,
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_FIX_TURNS,
@@ -241,6 +243,15 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
 from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin
+from besser.spec_driven_agent.pipeline.regeneration import Regeneration
+from besser.spec_driven_agent.settings import AgentSettings
+
+# Checkpoint history eviction (see history_eviction.py). When enabled, stale
+# file bodies in older messages are stubbed at the compaction checkpoint to cut
+# the re-sent context. OFF by default: it rewrites history the provider
+# re-serializes and is not yet verified end to end. Enable with
+# BESSER_LLM_HISTORY_EVICTION=1.
+_HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 
 
 class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
@@ -300,6 +311,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
+        previous_domain_model: DomainModel | None = None,
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
@@ -366,7 +378,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             object_model=object_model,
             bpmn_model=bpmn_model,
             nn_model=nn_model,
-            protect_scaffold=_is_free_local_model(_model_name),
+            protect_scaffold=is_free_local_model(_model_name),
             per_write_diagnostics=per_write_diagnostics,
             # The executor enforces this too. Hiding the tools from the
             # advertised list is not a gate: the model can name a tool it was
@@ -635,6 +647,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._updated_project_export: dict | None = None
         # The classes model sync added (its LLM answer), so a resume replays them.
         self._model_sync_classes: list[dict] = []
+        # The modify run's regeneration of the generated files (#659).
+        self._regeneration: Regeneration | None = None
+        # The model the app's stored generator output came from (modify runs), to
+        # rebuild the merge base after a BESSER upgrade (#659).
+        self._previous_domain_model = previous_domain_model
+        # Every file the seed run delivered (its recipe); None without a recipe.
+        self._seed_output_files: set[str] | None = None
+        # Generator files earlier runs' LLM edited, from the seed recipe.
+        self._seed_llm_modified: set[str] = set()
         # Why the model-sync call failed, for the trace and the recipe.
         self._model_sync_error: str | None = None
 
@@ -3418,6 +3439,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
+        if not self._modify_mode and self._scaffold_family() == "fastapi":
+            # A path the user wrote must exist verbatim, whatever the planner judged.
+            tasks.extend(requested_route_tasks(
+                self.output_dir, _requirements_ledger.original_request(self._instructions)))
         tasks.extend(item["text"] for item in self._requirements_for_validation()
                      if item.get("conversion_issue_id"))
         return tasks
@@ -4079,8 +4104,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # reads batch four to a turn.
         scaffold_snapshot = ""
         if (
-            os.environ.get("BESSER_LLM_INLINE_SCAFFOLD", "0").lower()
-            in ("1", "true")
+            AgentSettings().llm_inline_scaffold
             and (self._generator_used or self._phase0_5_files)
         ):
             try:
@@ -4470,7 +4494,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "size": os.path.getsize(full),
                         "source": "generator" if rel in generator_files else "llm",
                     }
-                    if os.path.normcase(os.path.normpath(full)) in llm_edited:
+                    if os.path.normcase(os.path.normpath(full)) in llm_edited or rel in self._seed_llm_modified:
                         entry["llm_modified"] = True
                     output_files.append(entry)
         except Exception:
@@ -4635,42 +4659,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
 
 
-# Credentials a tool call can carry that the provider-token patterns miss: a
-# bearer token in a probe command or request log, a login response's token
-# field (also inside JSON-escaped output), a bare JWT.
-_TRACE_CREDENTIAL_PATTERNS = (
-    (_re.compile(r"(?i)(authorization\\?[\"']?\s*[:=]\s*\\?[\"']?\s*(?:(?:bearer|basic|token)\s+)?)[^\s\"'\\,}]+"),
-     r"\1[REDACTED]"),
-    (_re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1[REDACTED]"),
-    (_re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), "[REDACTED]"),
-)
-
-
-_secret_redactor: Any = None
-
-
-def _redact_text_for_trace(text: str) -> str:
-    global _secret_redactor
-    if _secret_redactor is None:
-        # The artifact/SSE redaction. Loaded lazily: it lives in the web backend
-        # package, which the engine must not require.
-        try:
-            from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
-            _secret_redactor = redact_text
-        except Exception:
-            logger.debug("secret redaction unavailable for the trace", exc_info=True)
-            _secret_redactor = False
-    if _secret_redactor:
-        text = _secret_redactor(text, env_style=False)[0]
-    for pattern, replacement in _TRACE_CREDENTIAL_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
-
-
 def _redact_for_trace(value: Any) -> Any:
     """``value`` with credential-shaped strings replaced, recursively."""
     if isinstance(value, str):
-        return _redact_text_for_trace(value)
+        return redact_trace_text(value)
     if isinstance(value, list):
         return [_redact_for_trace(item) for item in value]
     if isinstance(value, dict):
@@ -4690,7 +4682,7 @@ def _trace_safe_input(tool_name: str, data: Any) -> Any:
 def _trace_result_excerpt(result: Any) -> dict:
     """The start of a tool result for the trace, redacted before it is cut."""
     text = result if isinstance(result, str) else json.dumps(result, default=str)
-    return {"chars": len(text), **_sanitize_for_log({"excerpt": _redact_text_for_trace(text)})}
+    return {"chars": len(text), **_sanitize_for_log({"excerpt": redact_trace_text(text)})}
 
 
 def _sanitize_for_log(data: Any) -> Any:

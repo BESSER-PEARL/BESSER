@@ -21,6 +21,7 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
+from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate
 from besser.spec_driven_agent.planning.model_change import (
     FULL_MODEL,
     compare_with_base,
@@ -43,6 +44,7 @@ from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
+    EVENT_REGENERATION,
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
@@ -138,6 +140,8 @@ class ModifyRunMixin:
         # never invoke it, so from-scratch output is byte-identical.
         self._derive_and_apply_model_deltas(instructions)
         self._mark_rules_broken_by_model_change()
+        # Before the inventory, so Phase 2 sees the regenerated files.
+        self._regenerate_generated_files()
 
         self._inventory = build_inventory(
             self.output_dir,
@@ -151,9 +155,12 @@ class ModifyRunMixin:
         if session_recap:
             self._inventory = f"{self._inventory}\n{session_recap}"
         model_note = self._render_model_change()
+        regeneration_note = self._regeneration.note() if self._regeneration else ""
         if model_note:
             self._inventory = (
                 f"{self._inventory}\n\n## Model change since the last run\n{model_note}")
+        if regeneration_note:
+            self._inventory = f"{self._inventory}\n\n## Regenerated files\n{regeneration_note}"
 
         # -- Fix/modify success gate: parse the user-reported failure ------
         # A modify run seeded by a reported error (traceback / broken
@@ -213,7 +220,7 @@ class ModifyRunMixin:
                 )
         # The model change leads the issues, after the reported failure's
         # headline in a fix run.
-        leading = [model_note] if model_note else []
+        leading = [note for note in (model_note, regeneration_note) if note]
         if leading and fix_seed_issues:
             leading = fix_seed_issues[:1] + leading
             fix_seed_issues = fix_seed_issues[1:]
@@ -312,6 +319,50 @@ class ModifyRunMixin:
                 "the app has no FastAPI backend (sql_alchemy.py / pydantic_classes.py)")]
         return issues
 
+    def _regenerate_generated_files(self) -> None:
+        """Bring the generated files up to the new model, merging into edited ones (#659).
+
+        Only when the model changed: with the same model it would at most bring in a
+        newer generator's output, which the modify request did not ask for.
+        """
+        change = getattr(self, "_model_change", None)
+        if not ((change is not None and change.changes) or self._model_sync_classes):
+            return
+        generator = self._seed_generator_used
+        if not generator:
+            # Nothing to regenerate: the app was written without a BESSER generator.
+            logger.info("Model changed; the app has no generator output to regenerate")
+            self._trace.write(EVENT_REGENERATION, generator=None, skipped="the app has no generator output")
+            return
+        try:
+            regeneration, reason = regenerate(
+                self.output_dir, generator, self.domain_model, self._seed_output_files,
+                change.class_renames if change else (), self._previous_domain_model)
+        except Exception as exc:
+            # The run goes on as before: the agent applies the whole model change.
+            logger.warning("Regenerating generated files failed", exc_info=True)
+            regeneration, reason = None, f"it failed: {type(exc).__name__}: {exc}"[:MAX_REASON_CHARS]
+        if regeneration is None:
+            logger.warning("Generated files not regenerated for the model change: %s", reason)
+            self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
+            return
+        self._regeneration = regeneration
+        moved_from = [old for old, _ in regeneration.moved]
+        self.executor.update_generator_files(
+            regeneration.written + [new for _, new in regeneration.moved], regeneration.removed + moved_from)
+        # Regenerated files hold the generator's text again; a moved file keeps its edits.
+        self._seed_llm_modified.difference_update(regeneration.written)
+        self._seed_llm_modified.update(new for old, new in regeneration.moved if old in self._seed_llm_modified)
+        self._seed_llm_modified.difference_update(moved_from)
+        self._trace.write(
+            EVENT_REGENERATION, generator=generator, method=regeneration.method,
+            replaced=regeneration.replaced, added=regeneration.added, merged=regeneration.merged,
+            moved=[list(pair) for pair in regeneration.moved], removed=regeneration.removed,
+            kept_in_use=regeneration.kept_in_use, to_update=[u.path for u in regeneration.to_update],
+            not_restored=regeneration.not_restored, not_checked=regeneration.not_checked,
+            upgraded_from=regeneration.upgraded_from, base_rebuilt=regeneration.base_rebuilt,
+            merge_warning=regeneration.merge_warning or None)
+
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
@@ -386,6 +437,9 @@ class ModifyRunMixin:
         except Exception:
             logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:
+            self._seed_output_files = {
+                entry["path"] for entry in recipe.get("output_files", [])
+                if isinstance(entry, dict) and isinstance(entry.get("path"), str)}
             for entry in recipe.get("output_files", []):
                 if (
                     isinstance(entry, dict)
@@ -393,6 +447,9 @@ class ModifyRunMixin:
                     and isinstance(entry.get("path"), str)
                 ):
                     self.executor._generator_files.add(entry["path"])
+                    # Edited by an earlier run: this run's tool calls alone would forget it.
+                    if entry.get("llm_modified"):
+                        self._seed_llm_modified.add(entry["path"])
         except Exception:
             logger.debug("Seed recipe output_files malformed", exc_info=True)
 
@@ -486,6 +543,7 @@ class ModifyRunMixin:
         return {
             "seed_generator_used": self._seed_generator_used,
             "generator_files": sorted(self.executor._generator_files),
+            "seed_llm_modified": sorted(self._seed_llm_modified),
             "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
             "previous_target": self._previous_target.to_dict() if self._previous_target else None,
             "model_change": (
@@ -504,6 +562,8 @@ class ModifyRunMixin:
         self._seed_generator_used = state.get("seed_generator_used")
         self.executor._generator_files.update(
             p for p in state.get("generator_files") or [] if isinstance(p, str))
+        self._seed_llm_modified.update(
+            p for p in state.get("seed_llm_modified") or [] if isinstance(p, str))
         fix_target = state.get("fix_target")
         self._fix_target = (
             ReportedTarget(**{**fix_target, "entities": tuple(fix_target.get("entities") or ())})

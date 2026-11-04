@@ -149,11 +149,9 @@ def test_fix_loop_runs_when_under_all_budgets(tmp_path) -> None:
 def test_auto_fix_flag_defaults_on() -> None:
     # CI/dev environments don't set BESSER_LLM_ENABLE_AUTO_FIX, so the
     # deploy-wide default must be ON — that's the whole enablement.
-    from besser.utilities.web_modeling_editor.backend.constants.constants import (
-        LLM_ENABLE_AUTO_FIX,
-    )
+    from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
-    assert LLM_ENABLE_AUTO_FIX is True
+    assert get_settings().llm_enable_auto_fix is True
 
 
 def test_runner_passes_auto_fix_flag_to_orchestrator() -> None:
@@ -168,4 +166,4 @@ def test_runner_passes_auto_fix_flag_to_orchestrator() -> None:
     )
 
     source = inspect.getsource(runner)
-    assert "auto_fix_issues=LLM_ENABLE_AUTO_FIX" in source
+    assert "auto_fix_issues=settings.llm_enable_auto_fix" in source

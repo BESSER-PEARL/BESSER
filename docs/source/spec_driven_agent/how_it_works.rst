@@ -92,7 +92,15 @@ The three phases
    as a change, or as removing the scaffold or switching its framework; the
    latter two are dropped, since the scaffold's stack is fixed. Only the
    planner's own empty list skips Phase 2: a list emptied by dropped tasks
-   runs Phase 2 from the request.
+   runs Phase 2 from the request. An HTTP path the request names (``GET
+   /stats``, "a /health/live endpoint") that the FastAPI scaffold does not
+   serve becomes a checklist item. Routes are read from the source: method
+   decorators and ``add_api_route``, under their router prefixes, the
+   ``include_router`` chain and a mounted sub-application, plus FastAPI's own
+   ``/docs``, ``/redoc`` and ``/openapi.json`` unless the app turns them off.
+   A scaffold serving
+   ``/statistics`` never counts as covering ``/stats``; the item closes only
+   once the route exists.
 
    A ``web_app`` target (an app, web app, UI, website, dashboard or portal
    with no other platform named) gets a frontend even without a GUI model:
@@ -257,7 +265,7 @@ reading a trace and wondering why a run did what it did.
        Toggle with ``BESSER_LLM_ENABLE_CHECKPOINTING`` (default on).
    * - Tracing
      - Every phase transition, turn, tool call, cost update, compaction,
-       snapshot, rollback and validation finding is appended to
+       snapshot, rollback, regeneration and validation finding is appended to
        ``.besser_trace.jsonl`` in the workspace. A ``tool_call`` record holds
        the input and a ``result`` excerpt (its length and the first 500
        characters), with credential-shaped values redacted before the cut. It
@@ -276,7 +284,7 @@ reading a trace and wondering why a run did what it did.
        In source files only the secret itself is replaced, inside its quotes,
        so the file still parses. Provider tokens are recognised by the
        prefix-anchored rules of `gitleaks <https://github.com/gitleaks/gitleaks>`_
-       (MIT), vendored as ``services/spec_driven/data/gitleaks_rules.toml``
+       (MIT), vendored as ``besser/utilities/data/gitleaks_rules.toml``
        (``ghp_``/``github_pat_``, ``AKIA``/``ASIA``, ``sk_live_``, ``AIza``,
        Slack webhooks, ``glpat-``, ``hf_``, ``npm_``, ``SG.``, PEM private
        keys, JWTs and more). Rules that match on a variable name or on
@@ -290,6 +298,11 @@ reading a trace and wondering why a run did what it did.
        (``{settings.db_password}``, ``%s``, ``$DB_PASSWORD``) is left alone.
        Symbolic links, FIFOs and other special files in the workspace are
        skipped, never opened.
+
+       The rules live in one module, ``besser.utilities.secret_redaction``,
+       which the trace (above), the LLM clients' error logs and the editor
+       backend's generator-config logs use as well. A log line masks a local
+       host's database password too: only the generated app needs it.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
        GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,

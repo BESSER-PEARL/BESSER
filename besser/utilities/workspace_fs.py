@@ -118,16 +118,17 @@ def open_plain_write(path, mode: str = "w", *, root: "str | None" = None, **kwar
 
 
 def write_atomic_plain(path, text: str, *, root: "str | None" = None,
-                       encoding: str = "utf-8") -> None:
+                       encoding: str = "utf-8", newline: "str | None" = None) -> None:
     """Replace ``path`` with ``text`` via a fresh temp file and a rename.
 
     ``mkstemp`` creates the temp file with ``O_EXCL``, and the rename
-    replaces a link at ``path`` rather than writing through it.
+    replaces a link at ``path`` rather than writing through it. ``newline``
+    is ``open``'s: ``""`` writes the line endings of ``text`` unchanged.
     """
     path = _refuse_link_parents(os.fspath(path), None if root is None else os.fspath(root))
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".besser_tmp_")
     try:
-        with os.fdopen(fd, "w", encoding=encoding) as handle:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as handle:
             handle.write(text)
         os.replace(tmp, path)
     except BaseException:

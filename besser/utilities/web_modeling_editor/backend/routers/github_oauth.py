@@ -2,12 +2,12 @@
 GitHub OAuth Integration for BESSER Web Editor.
 
 Handles OAuth flow to authenticate users with their GitHub accounts.
-Sessions are stored in an encrypted file-based store (with automatic
-fallback to in-memory storage when the cryptography package is absent).
+Sessions are stored in the app's encrypted file-based stores
+(``GitHubSessions``, built in the backend's lifespan), with an automatic
+fallback to in-memory storage when the cryptography package is absent.
 """
 
 import logging
-import os
 import secrets
 from typing import Optional
 import httpx
@@ -18,31 +18,14 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
-    SessionStore,
+    GitHubSessions,
 )
+from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep, SettingsDep
+from besser.utilities.web_modeling_editor.backend.models.responses import ResponseModel
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 
-# GitHub OAuth configuration
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
-GITHUB_REDIRECT_URI = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:9000/besser_api/github/auth/callback")
-DEPLOYMENT_URL = os.getenv("DEPLOYMENT_URL", "http://localhost:8080")
-
-
-# Encrypted session stores
-# - _oauth_sessions: short-lived CSRF state tokens (10 min TTL)
-# - _user_tokens: authenticated user sessions (24 hour TTL)
-_oauth_sessions = SessionStore(
-    store_path=os.environ.get("OAUTH_SESSIONS_PATH"),
-    ttl=600,
-)
-_user_tokens = SessionStore(
-    store_path=os.environ.get("USER_TOKENS_PATH"),
-    ttl=86400,
-)
-
-
-class GitHubOAuthResponse(BaseModel):
+class GitHubOAuthResponse(ResponseModel):
     """Response model for OAuth flow."""
     success: bool
     authenticated: Optional[bool] = None
@@ -75,13 +58,13 @@ def github_session_id(
 
 
 @router.get("/auth/login")
-async def github_login(request: Request):
+async def github_login(request: Request, settings: SettingsDep, github_sessions: GitHubSessionsDep):
     """
     Initiate GitHub OAuth flow.
 
     Returns redirect URL to GitHub authorization page.
     """
-    if not GITHUB_CLIENT_ID:
+    if not settings.github_client_id:
         raise HTTPException(
             status_code=500,
             detail="GitHub OAuth not configured. Set GITHUB_CLIENT_ID environment variable."
@@ -91,7 +74,7 @@ async def github_login(request: Request):
     state = secrets.token_urlsafe(32)
 
     # Store state in session store
-    _oauth_sessions.set(state, {
+    github_sessions.oauth_states.set(state, {
         "client_ip": request.client.host if request.client else "unknown"
     })
 
@@ -100,8 +83,8 @@ async def github_login(request: Request):
     scopes = "repo,gist,user"
     auth_url = (
         f"https://github.com/login/oauth/authorize"
-        f"?client_id={GITHUB_CLIENT_ID}"
-        f"&redirect_uri={GITHUB_REDIRECT_URI}"
+        f"?client_id={settings.github_client_id}"
+        f"&redirect_uri={settings.github_redirect_uri}"
         f"&scope={scopes}"
         f"&state={state}"
     )
@@ -110,21 +93,21 @@ async def github_login(request: Request):
 
 
 @router.get("/auth/callback")
-async def github_callback(code: str, state: str):
+async def github_callback(code: str, state: str, settings: SettingsDep, github_sessions: GitHubSessionsDep):
     """
     Handle GitHub OAuth callback.
 
     Exchange authorization code for access token.
     """
     # Verify state parameter
-    if _oauth_sessions.get(state) is None:
+    if github_sessions.oauth_states.get(state) is None:
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}?error=invalid_state",
+            url=f"{settings.deployment_url}?error=invalid_state",
             status_code=302
         )
 
     # Remove used state
-    _oauth_sessions.delete(state)
+    github_sessions.oauth_states.delete(state)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -133,10 +116,10 @@ async def github_callback(code: str, state: str):
                 "https://github.com/login/oauth/access_token",
                 headers={"Accept": "application/json"},
                 data={
-                    "client_id": GITHUB_CLIENT_ID,
-                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "client_id": settings.github_client_id,
+                    "client_secret": settings.github_client_secret.get_secret_value(),
                     "code": code,
-                    "redirect_uri": GITHUB_REDIRECT_URI
+                    "redirect_uri": settings.github_redirect_uri
                 },
                 timeout=10
             )
@@ -145,14 +128,14 @@ async def github_callback(code: str, state: str):
 
             if "error" in token_data:
                 return RedirectResponse(
-                    url=f"{DEPLOYMENT_URL}?error={token_data['error']}",
+                    url=f"{settings.deployment_url}?error={token_data['error']}",
                     status_code=302
                 )
 
             access_token = token_data.get("access_token")
             if not access_token:
                 return RedirectResponse(
-                    url=f"{DEPLOYMENT_URL}?error=no_access_token",
+                    url=f"{settings.deployment_url}?error=no_access_token",
                     status_code=302
                 )
 
@@ -172,7 +155,7 @@ async def github_callback(code: str, state: str):
 
         # Store token in encrypted session store
         session_id = secrets.token_urlsafe(32)
-        _user_tokens.set(session_id, {
+        github_sessions.user_tokens.set(session_id, {
             "access_token": access_token,
             "username": username,
             "avatar_url": user_data.get("avatar_url"),
@@ -180,19 +163,22 @@ async def github_callback(code: str, state: str):
 
         # The session id rides in the fragment, which browsers never send to a server or proxy log.
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}#github_session={session_id}&username={username}",
+            url=f"{settings.deployment_url}#github_session={session_id}&username={username}",
             status_code=302
         )
 
     except httpx.HTTPError:
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}?error=github_api_error",
+            url=f"{settings.deployment_url}?error=github_api_error",
             status_code=302
         )
 
 
 @router.get("/auth/status")
-async def get_auth_status(session_id: Optional[str] = Depends(github_session_id)) -> GitHubOAuthResponse:
+async def get_auth_status(
+    github_sessions: GitHubSessionsDep,
+    session_id: Optional[str] = Depends(github_session_id),
+) -> GitHubOAuthResponse:
     """
     Check GitHub authentication status.
 
@@ -202,7 +188,7 @@ async def get_auth_status(session_id: Optional[str] = Depends(github_session_id)
     Returns:
         Authentication status
     """
-    session_data = _user_tokens.get(session_id) if session_id else None
+    session_data = github_sessions.user_tokens.get(session_id) if session_id else None
 
     if not session_data:
         return GitHubOAuthResponse(
@@ -227,6 +213,8 @@ class LogoutRequest(BaseModel):
 
 @router.post("/auth/logout")
 async def github_logout(
+    settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
     body: Optional[LogoutRequest] = None,
     session_id: Optional[str] = Query(None, deprecated=True),
 ):
@@ -240,22 +228,22 @@ async def github_logout(
             raise HTTPException(status_code=422, detail="session_id is required")
         logger.warning("GitHub logout sent the deprecated session_id query parameter; send it in the body")
     session_id = body.session_id if body is not None else session_id
-    session_data = _user_tokens.get(session_id)
-    _user_tokens.delete(session_id)
+    session_data = github_sessions.user_tokens.get(session_id)
+    github_sessions.user_tokens.delete(session_id)
     if session_data:
-        await _revoke_github_token(session_data["access_token"])
+        await _revoke_github_token(settings, session_data["access_token"])
 
     return {"success": True, "message": "Logged out successfully"}
 
 
-async def _revoke_github_token(access_token: str) -> None:
+async def _revoke_github_token(settings: BackendSettings, access_token: str) -> None:
     """Revoke the OAuth token at GitHub, so a copy of it stops working too."""
     try:
         async with httpx.AsyncClient() as client:
             response = await client.request(
                 "DELETE",
-                f"https://api.github.com/applications/{GITHUB_CLIENT_ID}/token",
-                auth=(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET),
+                f"https://api.github.com/applications/{settings.github_client_id}/token",
+                auth=(settings.github_client_id, settings.github_client_secret.get_secret_value()),
                 headers={"Accept": "application/vnd.github+json"},
                 json={"access_token": access_token},
                 timeout=10,
@@ -266,17 +254,18 @@ async def _revoke_github_token(access_token: str) -> None:
         logger.warning("Could not revoke the GitHub token at logout", exc_info=True)
 
 
-def get_user_token(session_id: str) -> Optional[str]:
+def get_user_token(github_sessions: GitHubSessions, session_id: str) -> Optional[str]:
     """
     Get user's GitHub access token from session.
 
     Args:
+        github_sessions: The app's sign-in stores (``GitHubSessionsDep``)
         session_id: Session ID
 
     Returns:
         Access token or None if not found/expired
     """
-    session_data = _user_tokens.get(session_id)
+    session_data = github_sessions.user_tokens.get(session_id)
 
     if not session_data:
         return None
@@ -289,9 +278,12 @@ BESSER_REPO_NAME = "BESSER"
 
 
 @router.get("/star/status")
-async def get_star_status(session_id: Optional[str] = Depends(github_session_id)):
+async def get_star_status(
+    github_sessions: GitHubSessionsDep,
+    session_id: Optional[str] = Depends(github_session_id),
+):
     """Check if the authenticated user has starred the BESSER repository."""
-    token = get_user_token(session_id)
+    token = get_user_token(github_sessions, session_id)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -311,9 +303,12 @@ async def get_star_status(session_id: Optional[str] = Depends(github_session_id)
 
 
 @router.put("/star")
-async def star_besser_repo(session_id: Optional[str] = Depends(github_session_id)):
+async def star_besser_repo(
+    github_sessions: GitHubSessionsDep,
+    session_id: Optional[str] = Depends(github_session_id),
+):
     """Star the BESSER repository on behalf of the authenticated user."""
-    token = get_user_token(session_id)
+    token = get_user_token(github_sessions, session_id)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -335,9 +330,12 @@ async def star_besser_repo(session_id: Optional[str] = Depends(github_session_id
 
 
 @router.delete("/star")
-async def unstar_besser_repo(session_id: Optional[str] = Depends(github_session_id)):
+async def unstar_besser_repo(
+    github_sessions: GitHubSessionsDep,
+    session_id: Optional[str] = Depends(github_session_id),
+):
     """Unstar the BESSER repository on behalf of the authenticated user."""
-    token = get_user_token(session_id)
+    token = get_user_token(github_sessions, session_id)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 

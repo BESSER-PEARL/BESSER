@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+from besser.utilities.secret_redaction import (
     REDACTED_SECRET,
     looks_like_secret_env,
     redact_text,

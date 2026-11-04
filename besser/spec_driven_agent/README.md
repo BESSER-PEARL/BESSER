@@ -44,10 +44,10 @@ paths so a test's descriptive name is not mistaken for exercising those paths.
 
 `run_command` / `install_dependencies` are off by default on every path
 (`LLMOrchestrator`, `LLMGenerator`, the web runner). The web runner takes its
-value from `BESSER_LLM_ENABLE_SHELL_TOOLS`, read once at import into
-`backend/constants/constants.py`; no request field, header or query parameter
-reaches `allow_shell_tools`, and the Pydantic request model drops an unknown
-key in the body. That is the property that makes the hosted default a gate rather
+value from `BESSER_LLM_ENABLE_SHELL_TOOLS`, read once per process as
+`get_settings().llm_enable_shell_tools` (`backend/settings.py`); no request
+field, header or query parameter reaches `allow_shell_tools`, and the Pydantic
+request model drops an unknown key in the body. That is the property that makes the hosted default a gate rather
 than a suggestion, so keep the decision at process scope. The gate is enforced
 in `ToolExecutor.execute_typed`, not only by filtering the advertised tool list.
 
@@ -76,7 +76,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | --- | --- |
 | Public entry | `__init__.py`, `generator.py` (`LLMGenerator`), `errors.py` |
 | Run coordination | `pipeline/orchestrator.py`, `pipeline/modify_run.py`, `pipeline/phase3_repair.py`, `pipeline/edit_loop_guards.py`, `pipeline/constants.py` |
-| Planning, prompts, discovery | `planning/gap_analyzer.py`, `planning/action_inventory.py`, `planning/mutation_inventory.py`, `planning/stack_metadata.py`, `agent/prompt_builder.py`, `agent/runbook.py`, `model_serializer.py` |
+| Planning, prompts, discovery | `planning/gap_analyzer.py`, `planning/action_inventory.py`, `planning/requested_routes.py`, `planning/mutation_inventory.py`, `planning/stack_metadata.py`, `agent/prompt_builder.py`, `agent/runbook.py`, `model_serializer.py` |
 | Authoritative request | `planning/specification.py`, `planning/user_request.py` |
 | Tool contracts and execution | `agent/tools.py`, `agent/tool_executor.py`, `agent/edit_apply.py` |
 | Subprocess environment, sandbox and the per-run shell session | `execution/process.py`, `execution/sandbox.py`, `execution/shell_session.py` |
@@ -86,7 +86,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | Runtime probes | `validation/constructibility.py`, `validation/api_probe.py` |
 | Requirements and scoped acceptance | `planning/requirements_ledger.py`, `planning/fix_target.py`, `validation/acceptance.py` |
 | Persistence, tracing, context | `state/checkpoint.py`, `state/tracing.py`, `agent/compaction.py`, `agent/history_eviction.py`, `run_report.py` |
-| Providers, routing, usage | `providers/llm_client.py`, `providers/model_settings.py`, `providers/tool_input.py`, `providers/data/model_prices.json` |
+| Providers, routing, usage | `providers/llm_client.py`, `providers/model_settings.py`, `providers/tool_input.py`; prices and model catalog in `besser/llm/` (`pricing.py`, `catalog.py`, `data/`) |
 
 The shared `validation/` and `execution/` modules do not import the orchestrator
 or executor. Existing imports from `pipeline/orchestrator.py` and `agent/tool_executor.py` remain

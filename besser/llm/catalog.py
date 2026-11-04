@@ -24,19 +24,20 @@ A provider entry::
 over the OpenAI-compatible protocol, so the browser never holds the host.
 Prices are USD per 1M tokens; a missing cache rate bills at the input rate.
 Public vendor list prices stay in ``data/model_prices.json``; a model's
-``price`` here overrides them on that provider's route. A model marked
+``price`` here overrides them on that provider's route (see
+:mod:`besser.llm.pricing`). A model marked
 ``"default": true`` is the provider's default when a request names none. An
 optional ``"request"`` object sets the model's request quirks
 (``forced_tool_choice``, ``thinking_can_be_disabled``,
-``reasoning_effort_for_tools``) over model_settings' built-in row, so a new
-model with a known quirk needs no release.
+``reasoning_effort_for_tools``) over the Spec-Driven Agent's built-in row
+(``spec_driven_agent/providers/model_settings.py``), so a new model with a
+known quirk needs no release.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -52,9 +53,10 @@ from pydantic import (
     field_validator,
 )
 
+from besser.llm.settings import LLMSettings
+
 logger = logging.getLogger(__name__)
 
-CATALOG_ENV_VAR = "BESSER_MODEL_CATALOG"
 DEFAULT_CATALOG_PATH = Path(__file__).with_name("data") / "model_catalog.json"
 
 
@@ -297,7 +299,7 @@ def load_model_catalog() -> ModelCatalog:
     provider.
     """
     data = _read(DEFAULT_CATALOG_PATH)
-    override_path = os.environ.get(CATALOG_ENV_VAR, "").strip()
+    override_path = LLMSettings().model_catalog.strip()
     if override_path:
         data = _merge(data, _read(Path(override_path)))
         logger.info("Model catalog: %s merged over the default", override_path)

@@ -23,11 +23,11 @@ all fall out of ``subprocess``, and nothing a command prints can be mistaken
 for a protocol message.
 
 The session ends when the run ends (:meth:`ShellSession.close`), after
-:data:`IDLE_ENV` seconds without a command, when its run folder is removed,
+``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` seconds without a command, when its run folder is removed,
 or when the worker exits: the supervisor exits on EOF on its channel, which
 the kernel delivers when this process dies however it dies, and bubblewrap's
 init takes every remaining process in the PID namespace with it. At most
-:data:`MAX_ENV` sessions live per worker; past that a command runs in a
+``BESSER_LLM_SHELL_SESSION_MAX`` sessions live per worker; past that a command runs in a
 one-off sandbox with the same confinement, as before this module.
 
 With a private network (``BESSER_LLM_SHELL_NETWORK``, see :mod:`.sandbox`)
@@ -71,15 +71,9 @@ from besser.spec_driven_agent.execution.sandbox import (
     start_pasta,
     stop_process,
 )
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
-
-# Seconds without a command after which a run's session is torn down; 0: never.
-IDLE_ENV = "BESSER_LLM_SHELL_SESSION_IDLE_SECONDS"
-_IDLE_DEFAULT = 900
-# Live sessions per worker process; 0 gives every command its own sandbox.
-MAX_ENV = "BESSER_LLM_SHELL_SESSION_MAX"
-_MAX_DEFAULT = 10
 
 _START_TIMEOUT = 30
 # Past the command's own timeout, which the supervisor enforces.
@@ -328,14 +322,6 @@ def _real(path: str) -> str:
     return real[4:] if real.startswith("\\\\?\\") and not real.startswith("\\\\?\\UNC\\") else real
 
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return max(0, int(os.environ.get(name, default)))
-    except ValueError:
-        logger.warning("%s=%r is not an integer; using %d", name, os.environ.get(name), default)
-        return default
-
-
 # --------------------------------------------------------------------------- #
 # Spawning: bwrap's --die-with-parent is a PR_SET_PDEATHSIG, which fires when
 # the THREAD that forked it exits. Tools run on a per-turn ThreadPoolExecutor,
@@ -528,7 +514,7 @@ _reaper: threading.Thread | None = None
 def _acquire_slot(session: "ShellSession") -> bool:
     global _reaper
     with _registry_lock:
-        if len(_live) >= _env_int(MAX_ENV, _MAX_DEFAULT):
+        if len(_live) >= AgentSettings().llm_shell_session_max:
             return False
         _live.add(session)
         if _reaper is None or not _reaper.is_alive():
@@ -545,7 +531,7 @@ def _release_slot(session: "ShellSession") -> None:
 def _reap_loop() -> None:
     while True:
         time.sleep(1.0)
-        idle = _env_int(IDLE_ENV, _IDLE_DEFAULT)
+        idle = AgentSettings().llm_shell_session_idle_seconds
         with _registry_lock:
             sessions = list(_live)
         for session in sessions:

@@ -261,7 +261,8 @@ rather than ``.``: CI does not lint the tests.
 ``besser.spec_driven_agent``, ``besser.generators``, ``besser.BUML.notations``
 and ``besser.BUML.metamodel``. A module imports only from the layers below it,
 and ``besser.utilities`` outside the backend never imports the generators, the
-agent or the backend. The few known exceptions are listed in
+agent or the backend. Inside the backend, ``services/`` never imports
+``routers/``. The few known exceptions are listed in
 ``ignore_imports``, each with the change that removes it.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
@@ -272,9 +273,9 @@ Working in core packages
 * **Generators** (``besser/generators/``) — inherit from
   :class:`~besser.generators.generator_interface.GeneratorInterface`; place
   Jinja2 templates in ``generators/<name>/templates/``; register the
-  generator in
-  ``besser/utilities/web_modeling_editor/backend/config/generators.py`` if it
-  should be exposed via the web editor.
+  generator with one entry in ``besser/generators/registry.py``, which the
+  web editor and the Spec-Driven Agent both read (see
+  :doc:`generators/build_generator`).
 * **Metamodel** (``besser/BUML/metamodel/``) — keep changes
   backward-compatible where possible; mirror existing patterns (private
   fields with validating setters, ``Element → NamedElement → …`` hierarchy).
@@ -296,7 +297,9 @@ Working in core packages
   durable ownership and event replay. A new tool needs its declaration in
   ``agent/tools.py``, an entry in ``_TOOL_MODEL_REQUIREMENTS`` in the same file
   (so it is only offered when the models it needs are present), and a handler
-  in ``ToolExecutor._handlers``. See
+  in ``ToolExecutor._handlers``. A generator tool is declared instead by the
+  ``agent_tool`` of its entry in ``besser/generators/registry.py`` (which
+  carries its requirements), its id in ``AGENT_TOOL_ORDER`` and the handler. See
   :doc:`spec_driven_agent/index`.
 * **Bidirectional converters** — if you support a feature in
   ``json_to_buml/``, add the symmetric path in ``buml_to_json/``. Round-trips

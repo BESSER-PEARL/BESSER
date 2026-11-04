@@ -6,6 +6,9 @@ jinja2>=3.1.2
 antlr4-python3-runtime>=4.13.1
 requests>=2.31.0
 pydantic>=2.6.3
+# Typed environment settings of the editor backend and the Spec-Driven Agent,
+# which imports from a base install (its LLM SDKs load lazily).
+pydantic-settings>=2.4,<3
 SQLAlchemy>=2.0.29
 # The Docker Compose generator writes YAML; the BAF generator reads it.
 PyYAML>=6.0

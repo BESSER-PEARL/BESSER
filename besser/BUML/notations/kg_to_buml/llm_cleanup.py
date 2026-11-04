@@ -38,7 +38,7 @@ from besser.BUML.notations.kg_to_buml.preflight import (
     KGPreflightReport,
     kg_signature,
 )
-from besser.utilities.llm_utils import (
+from besser.llm import (
     DEFAULT_OPENAI_MODEL,
     OPENAI_CHAT_ENDPOINT,
     LLMUpstreamError,
@@ -668,7 +668,7 @@ def analyze_kg_with_description(
     The ``_http_post`` keyword is for tests — production callers should leave
     it ``None`` so the transport looks up :func:`requests.post` at call time
     (this lets monkeypatches on ``requests.post`` take effect). Network or
-    parse failures raise :class:`~besser.utilities.llm_utils.LLMUpstreamError`
+    parse failures raise :class:`~besser.llm.errors.LLMUpstreamError`
     (a ``RuntimeError``) whose message never contains the provider's response
     body; the caller is expected to translate it into a user-facing 5xx
     response.
@@ -861,7 +861,7 @@ def classify_orphan_nodes_with_llm(
     ``diagram_type = "OrphanClassification"``.
 
     Network or parse failures raise
-    :class:`~besser.utilities.llm_utils.LLMUpstreamError` (a ``RuntimeError``)
+    :class:`~besser.llm.errors.LLMUpstreamError` (a ``RuntimeError``)
     whose message never carries the provider's response body; the caller is
     expected to translate that into a 5xx.
     """

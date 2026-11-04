@@ -8,6 +8,19 @@ and by ``besser/spec_driven_agent/``; the live values of the caps and feature
 flags are reported by ``GET /besser_api/spec-driven/config``, which is what a
 client should read rather than hardcoding the figures below.
 
+Each variable is declared once, with its type, default and description: the
+agent's own (models, keyless tiers, provider calls, context budgets, shell
+sessions) on ``AgentSettings`` in ``besser/spec_driven_agent/settings.py``,
+and the backend's (the caps, run lifecycle and feature flags, the demo token,
+telemetry and incidents) on ``BackendSettings`` in
+``besser/utilities/web_modeling_editor/backend/settings.py`` (see
+:ref:`the backend's environment variables <web-editor-backend-env>`). Values
+the agent keeps in module constants (the context budgets, history eviction, the output-token
+ceilings, the SDK timeout, the rolling cache) are read when the module is
+imported; a malformed number there fails the import with an error naming the
+variable. The others are read at each use; a shell-session number that is not
+an integer logs a warning and uses its default.
+
 Models
 ------
 

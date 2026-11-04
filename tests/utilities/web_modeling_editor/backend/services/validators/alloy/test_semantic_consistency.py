@@ -15,6 +15,7 @@ from besser.utilities.web_modeling_editor.backend.services.validators.alloy impo
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
     check_semantic_consistency,
     generate_object_diagram,
+    semantic_check_slots,
 )
 from tests.utilities.web_modeling_editor.backend.services.validators.alloy.utils_alloy_solver import needs_alloy
 
@@ -72,6 +73,12 @@ def state_machine_diagram() -> DiagramInput:
     return DiagramInput(title="Machine", model={"type": "StateMachineDiagram", "elements": {}, "relationships": {}})
 
 
+@pytest.fixture
+def slots() -> threading.BoundedSemaphore:
+    """One app's check slots, as the backend's lifespan builds them."""
+    return semantic_check_slots()
+
+
 def _events(stream) -> list[dict]:
     """The events of the SSE *stream*, an async generator of ``data:`` lines and heartbeat comments."""
     return [json.loads(line.removeprefix("data: ")) for line in _lines(stream) if not line.startswith(":")]
@@ -88,25 +95,25 @@ def _lines(stream) -> list[str]:
 # Diagrams that cannot be checked (no Alloy needed)
 # ---------------------------------------------------------------------------
 
-def test_only_class_diagrams_are_checked(state_machine_diagram):
-    events = _events(check_semantic_consistency(state_machine_diagram))
+def test_only_class_diagrams_are_checked(state_machine_diagram, slots):
+    events = _events(check_semantic_consistency(state_machine_diagram, slots=slots))
     assert len(events) == 1
     assert events[0]["done"] is True
     assert events[0]["isValid"] is False
     assert events[0]["message"] == "Semantic consistency is only checked for class diagrams."
 
 
-def test_invalid_ocl_is_not_checked(invalid_ocl_diagram):
-    events = _events(check_semantic_consistency(invalid_ocl_diagram))
+def test_invalid_ocl_is_not_checked(invalid_ocl_diagram, slots):
+    events = _events(check_semantic_consistency(invalid_ocl_diagram, slots=slots))
     assert len(events) == 1
     assert events[0]["isValid"] is False
     assert events[0]["message"] == "The OCL constraints are invalid: the semantic check was skipped."
     assert len(events[0]["errors"]) >= 1
 
 
-def test_analyzer_not_available(monkeypatch, consistent_diagram):
+def test_analyzer_not_available(monkeypatch, consistent_diagram, slots):
     monkeypatch.delenv("JAVA_HOME", raising=False)
-    events = _events(check_semantic_consistency(consistent_diagram))
+    events = _events(check_semantic_consistency(consistent_diagram, slots=slots))
     assert events[-1]["isValid"] is False
     assert events[-1]["message"] == "The Alloy Analyzer is not available on this server."
 
@@ -116,29 +123,29 @@ def test_analyzer_not_available(monkeypatch, consistent_diagram):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("path", ["/besser_api/semantic-consistency-check", "/besser_api/generate-object-diagram"])
-def test_endpoint_is_busy_while_a_check_runs(monkeypatch, path, state_machine_diagram):
+def test_endpoint_is_busy_while_a_check_runs(app_state, path, state_machine_diagram):
     slots = threading.BoundedSemaphore(1)
     slots.acquire()  # the check running
-    monkeypatch.setattr(semantic_consistency, "_check_slots", slots)
+    app_state.semantic_check_slots = slots
     client = TestClient(app)
     response = client.post(path, json=state_machine_diagram.model_dump(mode="json"))
     assert response.status_code == 503
 
 
-def test_slot_is_released_after_a_check(monkeypatch, state_machine_diagram):
-    monkeypatch.setattr(semantic_consistency, "_check_slots", threading.BoundedSemaphore(1))
-    first = _events(check_semantic_consistency(state_machine_diagram))
-    second = _events(check_semantic_consistency(state_machine_diagram))
+def test_slot_is_released_after_a_check(state_machine_diagram):
+    slots = threading.BoundedSemaphore(1)
+    first = _events(check_semantic_consistency(state_machine_diagram, slots=slots))
+    second = _events(check_semantic_consistency(state_machine_diagram, slots=slots))
     assert first[-1]["done"] is True
     assert second[-1]["done"] is True
 
 
-def test_slot_is_released_when_the_stream_never_starts(monkeypatch, state_machine_diagram):
-    monkeypatch.setattr(semantic_consistency, "_check_slots", threading.BoundedSemaphore(1))
-    stream = check_semantic_consistency(state_machine_diagram)
+def test_slot_is_released_when_the_stream_never_starts(state_machine_diagram):
+    slots = threading.BoundedSemaphore(1)
+    stream = check_semantic_consistency(state_machine_diagram, slots=slots)
     del stream  # the client went away before the stream was read
     gc.collect()
-    events = _events(check_semantic_consistency(state_machine_diagram))
+    events = _events(check_semantic_consistency(state_machine_diagram, slots=slots))
     assert events[-1]["done"] is True
 
 
@@ -147,23 +154,23 @@ def test_slot_is_released_when_the_stream_never_starts(monkeypatch, state_machin
 # ---------------------------------------------------------------------------
 
 @needs_alloy
-def test_consistent_diagram(consistent_diagram):
-    events = _events(check_semantic_consistency(consistent_diagram))
+def test_consistent_diagram(consistent_diagram, slots):
+    events = _events(check_semantic_consistency(consistent_diagram, slots=slots))
     assert events[-1]["isValid"] is True
     assert events[-1]["done"] is True
     assert events[-1]["message"].startswith("Instance found within 5 objects per class")
 
 
 @needs_alloy
-def test_heartbeats_while_the_analyzer_runs(monkeypatch, contradictory_diagram):
+def test_heartbeats_while_the_analyzer_runs(monkeypatch, contradictory_diagram, slots):
     monkeypatch.setattr(semantic_consistency, "HEARTBEAT_SECONDS", 0.01)
-    lines = _lines(check_semantic_consistency(contradictory_diagram, scopes=(5,)))
+    lines = _lines(check_semantic_consistency(contradictory_diagram, scopes=(5,), slots=slots))
     assert ": semantic-check-heartbeat\n\n" in lines  # the JVM alone takes longer to start
 
 
 @needs_alloy
-def test_object_diagram_of_a_consistent_diagram(consistent_diagram):
-    events = _events(generate_object_diagram(consistent_diagram))
+def test_object_diagram_of_a_consistent_diagram(consistent_diagram, slots):
+    events = _events(generate_object_diagram(consistent_diagram, slots=slots))
     object_diagram = events[-1]["object_model"]
     names = [element["name"] for element in object_diagram["elements"].values() if element["type"] == "ObjectName"]
     assert events[-1]["isValid"] is True
@@ -171,8 +178,8 @@ def test_object_diagram_of_a_consistent_diagram(consistent_diagram):
 
 
 @needs_alloy
-def test_contradictory_diagram(contradictory_diagram):
-    events = _events(check_semantic_consistency(contradictory_diagram))
+def test_contradictory_diagram(contradictory_diagram, slots):
+    events = _events(check_semantic_consistency(contradictory_diagram, slots=slots))
     not_found = [event for event in events if event["message"].startswith("No instance within")]
     assert len(not_found) == 3  # one per scope, the last one final
     assert events[-1]["isValid"] is False
@@ -181,8 +188,8 @@ def test_contradictory_diagram(contradictory_diagram):
 
 
 @needs_alloy
-def test_timeout_ends_the_search(consistent_diagram):
-    events = _events(check_semantic_consistency(consistent_diagram, timeout=0))
+def test_timeout_ends_the_search(consistent_diagram, slots):
+    events = _events(check_semantic_consistency(consistent_diagram, timeout=0, slots=slots))
     searches = [event for event in events if event["message"].startswith("Searching within")]
     assert len(searches) == 1  # a timeout ends the search
     assert events[-1]["isValid"] is False
@@ -190,8 +197,8 @@ def test_timeout_ends_the_search(consistent_diagram):
 
 
 @needs_alloy
-def test_bounds_too_large(too_large_diagram):
-    events = _events(check_semantic_consistency(too_large_diagram))
+def test_bounds_too_large(too_large_diagram, slots):
+    events = _events(check_semantic_consistency(too_large_diagram, slots=slots))
     searches = [event for event in events if event["message"].startswith("Searching within")]
     assert len(searches) == 1  # bounds too large end the search
     assert events[-1]["isValid"] is False
@@ -199,40 +206,40 @@ def test_bounds_too_large(too_large_diagram):
 
 
 @needs_alloy
-def test_analyzer_error(monkeypatch, consistent_diagram):
+def test_analyzer_error(monkeypatch, consistent_diagram, slots):
     monkeypatch.setattr(semantic_consistency, "_analyze", lambda *args: (AlloyResult.ERROR, None))
-    events = _events(check_semantic_consistency(consistent_diagram))
+    events = _events(check_semantic_consistency(consistent_diagram, slots=slots))
     assert events[-1]["isValid"] is False
     assert events[-1]["message"] == "The semantic check failed unexpectedly at scope 5."
 
 
 @needs_alloy
-def test_object_diagram_conversion_error(monkeypatch, consistent_diagram):
+def test_object_diagram_conversion_error(monkeypatch, consistent_diagram, slots):
     def failing_conversion(*args):
         raise ValueError("cannot convert")
     monkeypatch.setattr(semantic_consistency, "_object_model_to_json", failing_conversion)
-    events = _events(generate_object_diagram(consistent_diagram))
+    events = _events(generate_object_diagram(consistent_diagram, slots=slots))
     assert events[-1]["done"] is True
     assert events[-1]["isValid"] is False
     assert events[-1]["message"] == "The semantic check failed unexpectedly at scope 5."
 
 
 @needs_alloy
-def test_scopes_and_timeout_are_parameters(contradictory_diagram):
-    events = _events(check_semantic_consistency(contradictory_diagram, scopes=(1, 2), timeout=10))
+def test_scopes_and_timeout_are_parameters(contradictory_diagram, slots):
+    events = _events(check_semantic_consistency(contradictory_diagram, scopes=(1, 2), timeout=10, slots=slots))
     assert events[-1]["message"].startswith("No instance within 2 objects per class")
 
 
 @needs_alloy
-def test_untranslatable_diagram(untranslatable_diagram):
-    events = _events(check_semantic_consistency(untranslatable_diagram))
+def test_untranslatable_diagram(untranslatable_diagram, slots):
+    events = _events(check_semantic_consistency(untranslatable_diagram, slots=slots))
     assert events[-1]["isValid"] is False
     assert events[-1]["message"] == "The model cannot be translated to Alloy."
     assert "Reals" in events[-1]["errors"][0]
 
 
 @needs_alloy
-def test_cancelling_the_stream_stops_the_analyzer(monkeypatch, consistent_diagram):
+def test_cancelling_the_stream_stops_the_analyzer(monkeypatch, consistent_diagram, slots):
     # The Alloy Analyzer is replaced by a process that sleeps longer than the analysis timeout
     started = []
     popen = subprocess.Popen
@@ -246,7 +253,7 @@ def test_cancelling_the_stream_stops_the_analyzer(monkeypatch, consistent_diagra
     monkeypatch.setattr(semantic_consistency, "HEARTBEAT_SECONDS", 0.01)
 
     async def cancel_at_first_heartbeat():
-        stream = check_semantic_consistency(consistent_diagram, scopes=(5,))
+        stream = check_semantic_consistency(consistent_diagram, scopes=(5,), slots=slots)
         async for line in stream:
             if line.startswith(":"):
                 break

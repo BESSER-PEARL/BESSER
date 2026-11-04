@@ -85,7 +85,9 @@ by a dependency in ``dependencies.py``:
 - ``app.state.kg_consistency_slots`` (``KgConsistencySlotsDep``) -- the
   ``KG_CONSISTENCY_MAX_CONCURRENT`` cap on knowledge graph consistency checks;
 - ``app.state.sdmx_import_slots`` (``SdmxImportSlotsDep``) -- the
-  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports.
+  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports;
+- ``app.state.semantic_check_slots`` (``SemanticCheckSlotsDep``) -- the
+  ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` cap on semantic checks.
 
 Two applications in one process share none of this state. The sign-in stores
 are encrypted files, so two applications configured with the same paths still

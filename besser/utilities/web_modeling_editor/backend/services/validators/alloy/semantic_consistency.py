@@ -50,51 +50,51 @@ DEFAULT_TIMEOUT_SECONDS = 30
 # proxies see the stream is alive.
 HEARTBEAT_SECONDS = 15
 
-# Slots of the checks running at once (BESSER_ALLOY_MAX_CONCURRENT_CHECKS), each with its own JVM
-_check_slots: threading.BoundedSemaphore | None = None
-_slots_lock = threading.Lock()
+def semantic_check_slots() -> threading.BoundedSemaphore:
+    """A fresh set of ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` check slots, for one app (built in the lifespan).
+    Each check runs its own JVM."""
+    return threading.BoundedSemaphore(get_settings().alloy_max_concurrent_checks)
 
 
 def check_semantic_consistency(
     input_data: DiagramInput,
     scopes: Sequence[int] = DEFAULT_SCOPES,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    *,
+    slots: threading.BoundedSemaphore,
 ) -> AsyncGenerator[str, None]:
     """Searches for an instance of the class diagram *input_data* within each of the *scopes*, in turn,
     each analysis timing out after *timeout* seconds; the stream returned yields the progress as SSE lines.
+    *slots* are the app's check slots (``SemanticCheckSlotsDep``).
 
     Raises:
         UpstreamError: (503) when ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks are already running.
     """
-    return _start_search(input_data, scopes, timeout, with_object_diagram=False)
+    return _start_search(input_data, scopes, timeout, with_object_diagram=False, slots=slots)
 
 
 def generate_object_diagram(
     input_data: DiagramInput,
     scopes: Sequence[int] = DEFAULT_SCOPES,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    *,
+    slots: threading.BoundedSemaphore,
 ) -> AsyncGenerator[str, None]:
     """Searches for an instance of the class diagram *input_data* as :func:`check_semantic_consistency`
     does; the event of the instance found carries it as an object diagram (``object_model``)."""
-    return _start_search(input_data, scopes, timeout, with_object_diagram=True)
-
-
-def _slots() -> threading.BoundedSemaphore:
-    """The check slots, built on first use so tests can change the cap before."""
-    global _check_slots
-    with _slots_lock:
-        if _check_slots is None:
-            _check_slots = threading.BoundedSemaphore(get_settings().alloy_max_concurrent_checks)
-        return _check_slots
+    return _start_search(input_data, scopes, timeout, with_object_diagram=True, slots=slots)
 
 
 def _start_search(
-    input_data: DiagramInput, scopes: Sequence[int], timeout: int, with_object_diagram: bool
+    input_data: DiagramInput,
+    scopes: Sequence[int],
+    timeout: int,
+    with_object_diagram: bool,
+    slots: threading.BoundedSemaphore,
 ) -> AsyncGenerator[str, None]:
-    """Takes a check slot and returns the search, which releases it when it ends."""
+    """Takes one of *slots* and returns the search, which releases it when it ends."""
     if not scopes:
         raise ValueError("The semantic check needs at least one scope")
-    slots = _slots()
     if not slots.acquire(blocking=False):
         logger.warning(
             "Semantic check refused: %d checks already running", get_settings().alloy_max_concurrent_checks

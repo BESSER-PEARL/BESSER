@@ -68,10 +68,10 @@ class SmartGenerateRequest(BaseModel):
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.
     api_key: Optional[SecretStr] = None
-    # "pia" is a gateway whose endpoint comes from the server's model catalog
-    # (BESSER_MODEL_CATALOG); a server without it rejects the run.
+    # "pia" and "gateway" are gateways whose endpoints come from the server's
+    # model catalog (BESSER_MODEL_CATALOG); a server without them rejects the run.
     provider: Literal[
-        "anthropic", "openai", "mistral", "nebius", "free", "sponsored", "pia"
+        "anthropic", "openai", "mistral", "nebius", "free", "sponsored", "pia", "gateway"
     ] = "anthropic"
     llm_model: Optional[str] = Field(default=None, max_length=120)
     # OpenAI-compatible base URL for the frontend's 'Local (self-hosted)'
@@ -213,7 +213,7 @@ class SmartGenerateRequest(BaseModel):
             raise ValueError(
                 f"api_key is required for provider '{self.provider}'"
             )
-        if self.provider == "pia":
+        if self.provider in ("pia", "gateway"):
             # The gateway's endpoint is the server's model catalog, never the
             # request's, so a stray base_url must not trip the SSRF gate.
             self.base_url = None

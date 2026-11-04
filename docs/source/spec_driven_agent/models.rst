@@ -89,9 +89,10 @@ A deployment's file names only what differs from the default:
 - ``base_url`` makes the provider a **gateway**: its runs go to that
   OpenAI-compatible endpoint, which the server resolves, so the browser never
   holds the host. A request for a gateway carries no ``base_url`` and is not
-  subject to the custom-endpoint gate below. The editor knows one gateway
-  provider, ``pia``; the public default has none, so the editor offers it only
-  where a deployment's catalog defines it.
+  subject to the custom-endpoint gate below. The editor knows two gateway
+  providers, ``pia`` and ``gateway``; the public default has neither, so the
+  editor offers each only where a deployment's catalog defines it, under the
+  catalog's label.
 - A model's optional ``request`` object sets how BESSER shapes requests to
   it, over the built-in rules in the table under `Model-specific request
   handling`_: ``forced_tool_choice`` (``false`` when ``tool_choice`` of type

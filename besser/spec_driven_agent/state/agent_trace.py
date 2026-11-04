@@ -140,7 +140,7 @@ def normalize_model_id(provider: Optional[str], model: Optional[str]) -> Optiona
     if "/" in model:
         return model
     provider = (provider or "").strip().lower()
-    if provider in ("", "free", "sponsored", "pia", "local"):
+    if provider in ("", "free", "sponsored", "pia", "gateway", "local"):
         return model
     return f"{provider}/{model}"
 

@@ -213,6 +213,15 @@ def _published_pricing(model_id: str) -> dict[str, float] | None:
     return None
 
 
+@lru_cache(maxsize=256)
+def _warn_unpriced(model_id: str) -> None:
+    """Say once per model that nobody priced it: the fallback rate can stop a run at its cost cap."""
+    logger.warning(
+        "No price for model %s: using the gpt-4o fallback rate against the cost cap. "
+        "Add its rate to the model catalog.", model_id,
+    )
+
+
 def get_pricing(model_id: str, billed: bool = False, route: "str | None" = None) -> dict[str, float]:
     """Get the per-1M-token rates for a model ID.
 
@@ -281,4 +290,5 @@ def get_pricing(model_id: str, billed: bool = False, route: "str | None" = None)
     ):
         if key in model_lower:
             return MODEL_PRICING[key]
+    _warn_unpriced(model_id)
     return MODEL_PRICING["gpt-4o"]  # default

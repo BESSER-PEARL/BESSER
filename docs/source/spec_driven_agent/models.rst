@@ -112,6 +112,10 @@ A deployment's file names only what differs from the default:
   rate). A price on a gateway model applies on that gateway; ``route_prices``
   prices a gateway that is not a picker provider, such as the keyless tiers'
   endpoint. A price on a vendor model overrides the published list price.
+- A model with no rate anywhere counts against the cost cap at the ``gpt-4o``
+  fallback rate, and a warning names it in the log. Add a row whenever a paid
+  model joins ``BESSER_FREE_LLM_MODEL`` or ``BESSER_FREE_LLM_ALT_MODELS``: the
+  fallback can be many times the real rate and stop a run early.
 
 ``GET /besser_api/spec-driven/config`` returns the catalog's providers and
 models as ``providers`` (``id``, ``label``, ``hint``, ``key_prefix``,

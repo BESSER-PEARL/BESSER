@@ -11,7 +11,7 @@ import os
 import re
 import tempfile
 import uuid
-from typing import Literal, Optional, List
+from typing import Dict, Literal, Optional, List
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.secret_redaction import redact_credentials, sanitize_config
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
+from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import attribution_records
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
 )
@@ -1235,6 +1236,9 @@ class SaveProjectResponse(ResponseModel):
     conflict_branch: Optional[str] = None
     # What the user should know about a merged save (see GitHubService.commit_tree).
     warnings: List[str] = []
+    # Who added each class and attribute of the saved model, by element id:
+    # ``{"addedBy": <login>, "addedAt": <UTC time>}``. Not what a merge brought in.
+    attribution: Dict[str, Dict[str, str]] = {}
 
 
 class LoadProjectResponse(ResponseModel):
@@ -1474,16 +1478,6 @@ def _checked_model_path(model_path: Optional[str]) -> Optional[str]:
     return model_path
 
 
-async def _read_project_file(github, owner: str, repo: str, path: str, ref: str) -> Optional[dict]:
-    """``path`` at ``ref`` when it holds a BESSER project, else None."""
-    try:
-        file_data = await github.get_file_content(owner, repo, path, ref=ref)
-        document = json.loads(file_data["content"]) if file_data and file_data.get("content") else None
-    except ValueError:
-        return None
-    return document if repo_model.is_besser_project(document) else None
-
-
 async def _find_models(github, owner: str, repo: str, ref: str, *, first_only: bool) -> list[tuple[str, dict]]:
     """The models in the repo at commit ``ref`` with their paths, the one to use first.
 
@@ -1503,7 +1497,7 @@ async def _find_models(github, owner: str, repo: str, ref: str, *, first_only: b
         logger.warning("Could not list %s/%s@%s to look for a saved project", owner, repo, ref[:7], exc_info=True)
         return found
     for path in repo_model.saved_project_candidates(paths):
-        document = await _read_project_file(github, owner, repo, path, ref)
+        document = await repo_model.read_project_file(github, owner, repo, path, ref)
         if document is not None:
             found.append((path, document))
             if first_only:
@@ -1516,7 +1510,7 @@ async def _find_model(
 ) -> Optional[tuple[str, dict]]:
     """The repo's model at commit ``ref`` and its path: ``model_path`` when it holds one, else the first found."""
     if model_path:
-        document = await _read_project_file(github, owner, repo, model_path, ref)
+        document = await repo_model.read_project_file(github, owner, repo, model_path, ref)
         if document is not None:
             return model_path, document
     found = await _find_models(github, owner, repo, ref, first_only=True)
@@ -1603,6 +1597,7 @@ async def save_project_to_github(
             status=outcome["status"],
             conflict_branch=outcome["conflict_branch"],
             warnings=outcome.get("warnings", []),
+            attribution=attribution_records(repo_model.project_of(export)),
         )
     except httpx.HTTPStatusError as exc:
         raise _github_status_error(exc, "save_project_to_github") from exc

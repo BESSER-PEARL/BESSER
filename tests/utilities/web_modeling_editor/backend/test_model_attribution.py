@@ -272,6 +272,98 @@ def test_a_record_stays_with_its_first_author():
     assert attribute_project(project, base, "ben", NOW)["attribution"] == {"id-Book": ANA}
 
 
+def test_a_sender_cannot_claim_an_element_the_base_lacks():
+    forged = {"id-Loan": {"addedBy": "torvalds", "addedAt": "2020-01-01T00:00:00Z"}}
+    base = _envelope(_model("Book"))["project"]
+    project = _envelope(_model("Book", "Loan"), forged)["project"]
+
+    assert attribute_project(project, base, "ben", NOW)["attribution"] == {
+        "id-Loan": {"addedBy": "ben", "addedAt": ANA["addedAt"]},
+    }
+
+
+def test_a_sender_cannot_rewrite_a_record_the_base_holds():
+    base = _envelope(_model("Book"), {"id-Book": ANA})["project"]
+    project = _envelope(_model("Book"), {"id-Book": {"addedBy": "mallory", "addedAt": ANA["addedAt"]}})["project"]
+
+    assert attribute_project(project, base, "ben", NOW)["attribution"] == {"id-Book": ANA}
+
+
+@pytest.mark.parametrize("record", [
+    {"addedBy": 5, "addedAt": ANA["addedAt"]},
+    {"addedBy": "ana"},
+    {"addedBy": "<!-- besser:end -->", "addedAt": ANA["addedAt"]},
+    {"addedBy": "ana", "addedAt": "yesterday"},
+    "ana",
+])
+def test_a_malformed_record_in_the_repo_is_not_kept(record):
+    base = _envelope(_model("Book"), {"id-Book": record})["project"]
+
+    assert attribute_project(base, base, "ben", NOW)["attribution"] == {}
+
+
+def test_only_the_two_fields_of_a_record_are_kept():
+    base = _envelope(_model("Book"), {"id-Book": {**ANA, "email": "ana@example.com"}})["project"]
+
+    assert attribute_project(base, base, "ben", NOW)["attribution"] == {"id-Book": ANA}
+
+
+def test_removing_the_last_credited_element_is_no_conflict_with_a_new_record():
+    base = _envelope(_model("Book"), {"id-Book": ANA})
+    theirs = _envelope(_model("Book", "Loan"), {"id-Book": ANA, "id-Loan": ANA})
+    ours = copy.deepcopy(base)
+    ours["project"]["diagrams"]["ClassDiagram"][0]["model"] = _model()
+    del ours["project"]["attribution"]
+    ours["project"] = attribute_project(ours["project"], base["project"], "ben", NOW)
+
+    merged = merge_documents(base, ours, theirs)
+
+    assert "id-Loan" in merged["project"]["attribution"]
+
+
+def test_a_save_without_records_is_no_conflict_with_a_new_record():
+    # What a failed lookup sends: the merge keeps the records rather than treating them as deleted.
+    base = _envelope(_model("Book"), {"id-Book": ANA})
+    theirs = _envelope(_model("Book", "Loan"), {"id-Book": ANA, "id-Loan": ANA})
+    ours = _envelope(_model("Book", "Member"))
+
+    files = repo_model.ModelMerge(ours).merge(json.dumps(base), json.dumps(theirs))
+
+    assert files is not None
+    assert set(json.loads(files.files[repo_model.MODEL_FILE])["project"]["attribution"]) == {"id-Book", "id-Loan"}
+
+
+def test_a_deeply_nested_repo_model_does_not_fail_the_save(github):
+    repo = github.create_repo("library", files={repo_model.MODEL_FILE: "[" * 100_000 + "]" * 100_000})
+
+    saved = _save(github, "ben", _envelope(_model("Book")), github.ref(repo, "main"))
+
+    assert saved["commit_sha"]
+
+
+def test_a_model_in_an_older_editors_folder_is_the_base_when_no_path_is_given(github):
+    # Everything used to be credited to whoever pushed first after the older editor.
+    repo = github.create_repo("library", files={"models/shop.json": json.dumps(_envelope(_model("Book")))})
+
+    _save(github, "ben", _envelope(_model("Book", "Loan")), github.ref(repo, "main"))
+
+    assert set(_in_repo(github, repo)["attribution"]) == {"id-Loan"}
+
+
+def test_a_save_returns_the_records_it_wrote(github):
+    github.create_repo("library")
+
+    saved = _save(github, "ana", _envelope(_model("Book")), None)
+
+    assert saved["attribution"]["id-Book"]["addedBy"] == "ana"
+
+
+def test_a_save_of_a_model_without_classes_returns_no_records(github):
+    github.create_repo("library")
+
+    assert _save(github, "ana", _envelope({"elements": {}}), None)["attribution"] == {}
+
+
 def test_react_flow_classes_and_rows_are_attributed():
     """The same record works after the React Flow migration: members are rows of their class node."""
     model = {"nodes": [

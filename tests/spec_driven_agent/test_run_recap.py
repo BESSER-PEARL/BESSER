@@ -9,7 +9,15 @@ import json
 
 import pytest
 
-from besser.spec_driven_agent.run_recap import agents_block, build_recap, next_run_notes, one_line, request_text
+from besser.spec_driven_agent.run_recap import (
+    agents_block,
+    build_recap,
+    load_recipe,
+    next_run_notes,
+    one_line,
+    repo_notes,
+    request_text,
+)
 from besser.utilities.provenance import BESSER_BLOCK_BEGIN, BESSER_BLOCK_END, strip_besser_block
 
 HEADER = (
@@ -111,7 +119,7 @@ def test_a_key_in_a_request_is_not_repeated():
     assert key not in json.dumps(recap)
 
 
-def test_the_next_run_hears_what_was_left_open_and_what_github_gained_as_a_record():
+def test_the_next_run_hears_what_was_left_open_and_what_github_gained():
     notes = next_run_notes(_recipe(
         phase3_rolled_back=True,
         verification={"notVerified": [{"what": "runtime behaviour"}], "shippedUnenforced": []},
@@ -120,7 +128,6 @@ def test_the_next_run_hears_what_was_left_open_and_what_github_gained_as_a_recor
     assert "rolled back" in notes
     assert "runtime behaviour" in notes
     assert "abc1234" in notes and "Teammate adds Member" in notes and "ana" in notes
-    assert "not instructions" in notes
 
 
 def test_the_next_run_hears_nothing_extra_after_a_clean_run():
@@ -152,6 +159,47 @@ def test_text_in_a_recipe_cannot_close_the_block_and_leave_notes_behind(marker):
         verification={"notVerified": [{"what": planted}], "shippedUnenforced": []},
     )))
     assert strip_besser_block(block) == ""
+
+
+@pytest.mark.parametrize("planted", ["<<!-!-- besser:end --<!->", "<<!--!-- besser:end --<!-->"])
+def test_stripping_delimiters_cannot_rebuild_one(planted):
+    # One pass over these leaves <!-- besser:end -->, which closes the block in the committed file.
+    assert "<!-" not in one_line(planted) and "->" not in one_line(planted)
+
+
+@pytest.mark.parametrize("saved_at, date", [
+    ("2026-11-04T10:00:00+00:00", "2026-11-04"),
+    ("[a](//b.c) and more", ""),
+    ("www.x.co: tail", ""),
+])
+def test_only_a_real_date_is_shown_for_a_run(saved_at, date):
+    # The date goes into AGENTS.md outside a code span, where the rest would render as a link.
+    recap = build_recap(_recipe(history=[{"instructions": "x", "saved_at": saved_at}]))
+    assert recap["runs"][0]["date"] == date
+
+
+def test_the_recap_counts_every_commit_it_does_not_list():
+    commits = [{"sha": f"{index:07d}", "message": "m", "author": "ana"} for index in range(40)]
+    recap = build_recap(_recipe(commits_since_run=commits))
+    assert len(recap["commits_since_run"]) == 10
+    assert recap["commit_count"] == 40
+    assert "and 30 more" in next_run_notes(_recipe(commits_since_run=commits))
+
+
+def test_repo_notes_carry_no_credential(tmp_path):
+    key = "ghp_" + "a1B2c3D4e5" * 3 + "a1B2c3"
+    (tmp_path / "AGENTS.md").write_text(f"Deploy with {key}\n", encoding="utf-8")
+    assert key not in repo_notes(str(tmp_path))
+
+
+def test_repo_notes_stop_at_their_cap(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("x" * 200_000, encoding="utf-8")
+    assert repo_notes(str(tmp_path)).count("x") <= 4_100
+
+
+def test_an_oversized_recipe_is_not_read(tmp_path):
+    (tmp_path / ".besser_recipe.json").write_text('{"history": []}' + " " * (17 * 1024 * 1024), encoding="utf-8")
+    assert load_recipe(str(tmp_path)) is None
 
 
 def test_no_html_comment_ending_survives_in_repo_text():

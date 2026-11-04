@@ -364,6 +364,8 @@ class RepoRecap(ResponseModel):
     # The true total; ``open_items`` is capped.
     open_item_count: int
     commits_since_run: list[RecapCommit]
+    # The true total; ``commits_since_run`` is capped.
+    commit_count: int
 
 
 class PushSmartToGitHubResponse(ResponseModel):
@@ -399,7 +401,8 @@ class PushSmartToGitHubResponse(ResponseModel):
     # that added classes); None when it is the request's own export. The
     # editor loads it, so its model matches the repo.
     project_export: Optional[dict] = None
-    # What this push wrote to ``AGENTS.md``; None for a run that left no recipe.
+    # What the pushed recipe records, and ``AGENTS.md`` too unless a warning says
+    # otherwise; None for a run that left no recipe.
     recap: Optional[RepoRecap] = None
 
 

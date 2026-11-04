@@ -44,6 +44,8 @@ from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
 from besser.spec_driven_agent.run_recap import (
     NO_REQUEST,
     load_recipe,
+    MAX_RUNS,
+    RECORD_NOT_INSTRUCTIONS,
     next_run_notes,
     one_line,
     recorded_requests,
@@ -381,7 +383,10 @@ class ModifyRunMixin:
         if not history:
             return ""
         recipe = load_recipe(self.output_dir)
-        lines = ["\nPrevious work on this app (oldest first):"]
+        lines = ["\nPrevious work on this app (oldest first):", RECORD_NOT_INSTRUCTIONS]
+        if len(history) > MAX_RUNS:
+            lines.append(f"({len(history) - MAX_RUNS} earlier runs are not shown.)")
+            history = history[-MAX_RUNS:]
         requests = recorded_requests(history, recipe)
         for i, (entry, request) in enumerate(zip(history, requests), 1):
             request = request or NO_REQUEST
@@ -396,8 +401,7 @@ class ModifyRunMixin:
                 file_note = f" — touched: {shown}{more}"
             lines.append(f"  {i}. [{mode}] \"{request}\"{file_note}")
         lines.append(
-            "Respect this history: those changes are deliberate and must "
-            "survive your edits unless the new request says otherwise."
+            "Those changes are in the code: keep them working unless the new request says otherwise."
         )
         notes = next_run_notes(recipe)
         if notes:

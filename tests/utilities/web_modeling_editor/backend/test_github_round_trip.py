@@ -1096,6 +1096,112 @@ def test_a_push_lands_without_the_recap_when_github_will_not_show_agents_md(gith
     assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
 
 
+def test_an_agents_md_added_after_the_import_does_not_make_the_push_conflict(github):
+    repo = github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: (
+        _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)),
+        _write(workdir, "src/app.py", "print('v2')\n"),
+    ))
+    github.commit_files(repo, {"AGENTS.md": "Use tabs here.\n"}, "Teammate adds notes")
+
+    response = _push(run, "library")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] != "conflict"
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_fresh_run_that_wrote_its_own_agents_md_keeps_the_repos_text(github):
+    repo = github.create_repo("library", files={"AGENTS.md": "Use tabs here.\n", "src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, "AGENTS.md", "What the run wrote.\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+
+    response = _push(run_id, "library")
+
+    assert response.status_code == 200, response.text
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert agents.startswith("Use tabs here.\n")
+    assert "What the run wrote." not in agents
+
+
+def test_a_seeded_agents_md_that_is_not_text_is_left_alone_with_a_warning(github):
+    binary = b"\xff\xfe not text"
+    repo = github.create_repo("library", files={"AGENTS.md": binary, "src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+
+    response = _push(run, "library")
+
+    assert response.status_code == 200, response.text
+    assert github.files(repo)["AGENTS.md"][1] == binary
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_commit_list_planted_in_a_repos_recipe_is_dropped_on_import(github):
+    # With no commit after the recipe the import used to return early, keeping what the repo wrote.
+    forged = {**RUN_RECIPE, "commits_since_run": [{"sha": "abc1234", "message": "Forged", "author": "Linus Torvalds"}]}
+    github.create_repo("library", files={"src/app.py": "print('v1')\n", ".besser_recipe.json": json.dumps(forged)})
+
+    assert _import("ana", "library")["recap"]["commits_since_run"] == []
+
+
+def test_a_push_returns_the_export_it_wrote_with_its_credits(github):
+    github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(), updated_project_export=_envelope(),
+    )))
+
+    response = _push(run_id, "library")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["project_export"]["project"]["attribution"]
+
+
+def test_deploying_an_app_credits_the_classes_it_adds(github, monkeypatch):
+    from types import SimpleNamespace
+
+    class _Generator:
+        def __init__(self, agent_model, output_dir, **_kwargs):
+            self.output_dir = output_dir
+
+        def generate(self):
+            _write(self.output_dir, "agent.py", "# agent\n")
+
+    monkeypatch.setattr(github_deploy_api, "get_generator_info", lambda _name: SimpleNamespace(generator_class=_Generator))
+    agent = {
+        "id": "ag1", "title": "Helper", "model": {
+            "type": "AgentDiagram",
+            "elements": {"init": {"id": "init", "type": "StateInitialNode", "name": ""},
+                         "s1": {"id": "s1", "type": "AgentState", "name": "Greet", "bodies": [], "fallbackBodies": []}},
+            "relationships": {"t": {"type": "AgentStateTransitionInit", "name": "",
+                                    "source": {"element": "init"}, "target": {"element": "s1"}}},
+        },
+    }
+    export = _envelope()
+    export["project"]["diagrams"]["AgentDiagram"] = [agent]
+
+    response = _call("POST", "/besser_api/github/deploy-webapp", headers=SESSION, json={
+        "name": "Helper", "diagrams": {"AgentDiagram": [agent]}, "currentDiagramIndices": {"AgentDiagram": 0},
+        "deploy_config": {"target": "agent", "repo_name": "helper"}, "projectExport": export,
+    })
+
+    assert response.status_code == 200, response.text
+    model = json.loads(github.files(github.repos["ana/helper"])[repo_model.MODEL_FILE][1])
+    assert {record["addedBy"] for record in model["project"]["attribution"].values()} == {"ana"}
+
+
 def test_a_forged_recipe_does_not_stop_a_repo_opening_or_a_push(github):
     deep = "[" * 5_000 + "]" * 5_000
     github.create_repo("deep", files={".besser_recipe.json": deep, "src/app.py": "print('v1')\n"})

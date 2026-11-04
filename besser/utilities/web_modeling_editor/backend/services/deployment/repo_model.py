@@ -32,7 +32,11 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
 )
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
-from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import attribute_project
+from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import (
+    ATTRIBUTION_KEY,
+    attribute_project,
+    with_well_formed_records,
+)
 from besser.utilities.web_modeling_editor.backend.services.deployment.model_merge import (
     MergeConflict,
     merge_documents,
@@ -101,6 +105,21 @@ def project_of(export: dict) -> dict:
     return inner if isinstance(inner, dict) else export
 
 
+def _with_project(export: dict, project: dict) -> dict:
+    """``export`` holding ``project`` in place of its own (see ``project_of``)."""
+    return {**export, "project": project} if isinstance(export.get("project"), dict) else project
+
+
+async def read_project_file(github, owner: str, repo: str, path: str, ref: str) -> Optional[dict]:
+    """``path`` at ``ref`` when it holds a BESSER project, else None."""
+    try:
+        file_data = await github.get_file_content(owner, repo, path, ref=ref)
+        document = json.loads(file_data["content"]) if file_data and file_data.get("content") else None
+    except (ValueError, RecursionError):
+        return None
+    return document if is_besser_project(document) else None
+
+
 async def attribute_new_elements(
     github, owner: str, repo: str, export: Optional[dict],
     *, login: Optional[str] = None, ref: Optional[str] = None, branch: str = "main", model_path: Optional[str] = None,
@@ -108,7 +127,8 @@ async def attribute_new_elements(
     """``export`` with the classes and members it adds over the repo's model credited to the signed-in user.
 
     ``ref`` is the commit ``export`` was derived from, else the head of ``branch``.
-    The credit is not worth a failed save: when GitHub does not answer, ``export`` goes as it is.
+    The credit is not worth a failed save: when GitHub does not answer, or the repo's
+    model cannot be read, ``export`` goes with its own records, only the well-formed ones.
     """
     if not is_besser_project(export):
         return export
@@ -120,15 +140,21 @@ async def attribute_new_elements(
             if file_data and file_data.get("content"):
                 base = json.loads(file_data["content"])
                 break
-    except (httpx.HTTPError, ValueError):
+        if base is None:  # An older editor may have saved it elsewhere: all of it is not new.
+            commit = ref or await github.get_branch_head(owner, repo, branch)
+            for path in saved_project_candidates(await github.get_tree_entries(owner, repo, commit) if commit else ()):
+                base = await read_project_file(github, owner, repo, path, commit)
+                if base is not None:
+                    break
+    # RuntimeError: a model nested too deep to parse (RecursionError), or a tree too large to list.
+    except (httpx.HTTPError, ValueError, RuntimeError):
         logger.warning("Could not read the model of %s/%s to credit new elements", owner, repo, exc_info=True)
-        return export
+        return _with_project(export, with_well_formed_records(project_of(export)))
     if not login:
         logger.warning("GitHub named no user for %s/%s; new elements are not credited", owner, repo)
-        return export
+        return _with_project(export, with_well_formed_records(project_of(export)))
     project = project_of(export)
-    attributed = attribute_project(project, project_of(base) if is_besser_project(base) else None, login)
-    return {**export, "project": attributed} if isinstance(export.get("project"), dict) else attributed
+    return _with_project(export, attribute_project(project, project_of(base) if is_besser_project(base) else None, login))
 
 
 def link_record(export: dict) -> dict:
@@ -395,12 +421,19 @@ class ModelMerge:
         # Compared as stored: the repo copy has its credentials redacted.
         self.ours, _ = redact_credentials(ours_export, yaml_fields=AGENT_CONFIG_YAML_FIELDS)
 
+    def _keeping_records(self, base: Optional[dict]) -> dict:
+        """Our export, where having no records means nothing was said about them, not that they were deleted."""
+        ours = project_of(self.ours)
+        if ATTRIBUTION_KEY in ours or not is_besser_project(base) or ATTRIBUTION_KEY not in project_of(base):
+            return self.ours
+        return _with_project(self.ours, {**ours, ATTRIBUTION_KEY: project_of(base)[ATTRIBUTION_KEY]})
+
     def merge(self, base_text: Optional[str], theirs_text: Optional[str]) -> Optional[ModelFiles]:
         """The model files of the merged model, or None when the two versions conflict."""
         try:
             base = json.loads(base_text) if base_text else None
             theirs = json.loads(theirs_text) if theirs_text else None
-            merged = merge_documents(base, self.ours, theirs)
+            merged = merge_documents(base, self._keeping_records(base), theirs)
         except ValueError:
             logger.warning("The repo's %s is not valid JSON; the model is not merged", MODEL_FILE)
             return None

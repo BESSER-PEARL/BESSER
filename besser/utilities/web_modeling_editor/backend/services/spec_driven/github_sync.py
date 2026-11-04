@@ -236,14 +236,18 @@ async def push_run_to_github(
         ), title=repo_name if is_first_push else None)
 
         # Whoever comes back to this repo, here or in another coding tool, reads what the run left.
+        seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)
         recap = build_recap(read_run_json(os.path.join(workdir, RECIPE_FILENAME)))
         if recap:
-            if is_first_push or await _hold_repo_agents_md(github, owner, repo_name, target_branch, workdir):
-                add_agents_block(workdir, agents_block(recap))
-            else:
+            holds_file = is_first_push or await _hold_repo_agents_md(
+                github, owner, repo_name, target_branch, workdir,
+                seeded=seed_sha is not None, base_sha=seed_sha or deploy_config.base_commit_sha,
+            )
+            if not (holds_file and add_agents_block(workdir, agents_block(recap))):
                 logger.warning("%s/%s: could not add to AGENTS.md; the push leaves it alone", owner, repo_name)
-                deploy_warnings.append(f"BESSER did not add its recap to {AGENTS_FILENAME}: in this repository "
-                                       "it is a link or not text, or GitHub did not return it.")
+                deploy_warnings.append(f"BESSER did not add its recap to {AGENTS_FILENAME}: in this repository it is "
+                                       "a link or not text, it was added after this run started, or GitHub did not "
+                                       "return it.")
 
         # ---- 5d. Fold BESSER's run records in GitHub diffs ----
         # A run that did not start from this repo lacks the repo's own file, which the push would replace.
@@ -261,7 +265,6 @@ async def push_run_to_github(
         # The run records that commit itself: the editor's link may have
         # moved on (a pull after the run started), and pushing over the
         # link's newer base would revert what was pulled.
-        seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)
         commit_message = repo_model.with_origin(
             deploy_config.commit_message or "Spec-driven app + model — BESSER",
             repo_model.ORIGIN_AGENT,
@@ -351,20 +354,24 @@ async def push_run_to_github(
             pull_request_branch=push_branch if pull_request_url else None,
             base_run_id=base_run_id,
             warnings=deploy_warnings,
-            project_export=run_export,
+            project_export=effective_export if run_export else None,
             recap=recap,
         )
 
 
-async def _hold_repo_agents_md(github, owner: str, repo: str, branch: str, workdir: str) -> bool:
+async def _hold_repo_agents_md(
+    github, owner: str, repo: str, branch: str, workdir: str, *, seeded: bool, base_sha: Optional[str],
+) -> bool:
     """Make sure a push adds to the repo's ``AGENTS.md`` rather than replacing it; False when it cannot.
 
-    A run that did not start from this repo lacks the file, and so does one whose
-    archive left it out. A link, a file that is not text, or a file GitHub did
-    not return stays as it is: the recap is not worth a failed push or a lost file.
+    A run that did not start from this repo holds no copy of the file, or its own;
+    the repo's text wins. So does a run whose archive left the file out. A link, a
+    file that is not text, a file GitHub did not return or one added after the push's
+    base (the merge would see two new files) stays as it is: the recap is not worth
+    a failed push or a lost file.
     """
     path = os.path.join(workdir, AGENTS_FILENAME)
-    if os.path.lexists(path):
+    if seeded and os.path.lexists(path):
         return True
     try:
         head = await github.get_branch_head(owner, repo, branch)
@@ -372,6 +379,8 @@ async def _hold_repo_agents_md(github, owner: str, repo: str, branch: str, workd
         if entry is None:
             return True
         if entry["mode"] not in repo_model.REGULAR_FILE_MODES:
+            return False
+        if base_sha and base_sha != head and AGENTS_FILENAME not in await github.get_tree_entries(owner, repo, base_sha):
             return False
         current = await github.get_file_content(owner, repo, AGENTS_FILENAME, ref=head)
     except (httpx.HTTPError, UnicodeDecodeError):
@@ -477,6 +486,8 @@ async def _note_commits_since_run(github, owner: str, repo: str, commit_sha: str
     recipe = read_run_json(path)
     if not isinstance(recipe, dict):
         return
+    if recipe.pop(COMMITS_SINCE_RUN, None) is not None:  # A repo's own list is not GitHub's answer.
+        write_run_json(path, recipe)
     try:
         last_run = await github.get_commits(owner, repo, path=RECIPE_FILENAME, per_page=1, ref=commit_sha)
         if not last_run or last_run[0]["sha"] == commit_sha:

@@ -228,15 +228,17 @@ def remove_readme_block(directory: str) -> None:
         _write_text(path, directory, strip_besser_block(text))
 
 
-def add_agents_block(directory: str, block: str) -> None:
+def add_agents_block(directory: str, block: str) -> bool:
     """Put ``block`` into the root ``AGENTS.md`` of ``directory``, creating the file when it is missing.
 
-    A file that is not UTF-8 text is left as it is.
+    A file that is not UTF-8 text is left as it is; returns False then.
     """
     path = os.path.join(directory, AGENTS_FILENAME)
     text = _read_text(path, directory) if os.path.lexists(path) else ""
-    if text is not None:
-        _write_text(path, directory, with_besser_block(text, block))
+    if text is None:
+        return False
+    _write_text(path, directory, with_besser_block(text, block))
+    return True
 
 
 def remove_agents_block(directory: str) -> None:

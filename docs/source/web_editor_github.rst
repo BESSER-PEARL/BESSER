@@ -215,7 +215,12 @@ Who added what
   GitHub user, the same identity as the commit's author. A save needs a session,
   so nothing is credited without one, and a model that nobody saves through
   BESSER (a hand edit of the file) simply has no record. When GitHub does not
-  answer, the save goes on without new records and logs a warning.
+  answer, the save goes on without new records and logs a warning. The save
+  returns the records it wrote as ``attribution``.
+- **What it proves**: the records of the base commit stand and a client cannot
+  rewrite them or claim an element it adds for someone else; a malformed record is
+  dropped. Anyone with push access can still edit the file, so a record says who
+  BESSER recorded, not who is proven to have added the element.
 - **Why it cannot affect generation**: the block sits beside the diagrams.
   ``ProjectInput`` does not read it, so no converter or generator sees it, and
   the B-UML sources are the same with or without it.
@@ -313,11 +318,12 @@ last run has expired, the editor imports the branch head before the run
 - the next run's inventory gets the earlier requests, where the last run ended
   (repairs rolled back, requirements missing from the code or not checked, tasks
   left out), the commits made since, and the repository's ``AGENTS.md``;
-- every push keeps a section in ``AGENTS.md``, for people and for other coding
-  tools. It sits between ``<!-- besser:begin -->`` and ``<!-- besser:end -->``,
+- every push of a run with a recipe keeps a section in ``AGENTS.md``, for people
+  and for other coding tools. It sits between ``<!-- besser:begin -->`` and ``<!-- besser:end -->``,
   and anything outside those markers stays as it is, also when the run never held
   the file. A seeded run works without the section, and the push renders it again.
-  An ``AGENTS.md`` that is a link or not text is left alone, with a warning;
+  An ``AGENTS.md`` that is a link or not text, or that was added on GitHub after
+  the run started, is left alone, with a warning;
 - the import and the push return it as ``recap``. The chat shows it when a
   repository opens or a run continues from one, and the editor sends it to the
   modeling agent with each message (``context.githubRepo``).

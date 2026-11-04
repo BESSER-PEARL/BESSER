@@ -1184,3 +1184,30 @@ def test_recording_the_commits_does_not_read_as_a_change_of_the_run(github):
     # Pushing the imported run as it is: nothing changed, so the note stays out of the repo.
     assert _push(_import("ana", "library")["run_id"], "library").status_code == 200
     assert github.files(repo)[".besser_recipe.json"][1] == before
+
+
+# ---------------------------------------------------------------------
+# A Spec-Driven push credits the classes it adds
+# ---------------------------------------------------------------------
+
+
+def test_a_spec_driven_push_credits_what_it_adds_to_whoever_pushes(github):
+    repo = github.create_repo("shop", files={
+        **IMPORTED_REPO, repo_model.MODEL_FILE: json.dumps(_envelope()),
+    })
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda workdir: _write(workdir, "src/new.py", "NEW = 2\n"))
+    github.login = "ben"
+
+    r = _call("POST", "/besser_api/spec-driven/push-to-github", headers=SESSION, json={
+        "run_id": run_id, "projectExport": _envelope(_with_class(CLASS_DIAGRAM_MODEL, "Loan")),
+        "deploy_config": {"owner": "ana", "repo_name": "shop", "use_existing": True,
+                          "base_commit_sha": imported["commit_sha"]},
+    })
+
+    assert r.status_code == 200, r.text
+    project = json.loads(github.files(repo)[repo_model.MODEL_FILE][1])["project"]
+    records = project["attribution"]
+    elements = project["diagrams"]["ClassDiagram"][0]["model"]["elements"]
+    assert [elements[element]["name"] for element in records] == ["Loan"]
+    assert [record["addedBy"] for record in records.values()] == ["ben"]

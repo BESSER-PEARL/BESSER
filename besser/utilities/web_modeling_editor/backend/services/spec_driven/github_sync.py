@@ -277,6 +277,12 @@ async def push_run_to_github(
         else:
             push_branch = target_branch
             base_sha = seed_sha or deploy_config.base_commit_sha
+        # What the push adds over the commit it starts from is credited to whoever pushes.
+        effective_export = await repo_model.attribute_new_elements(
+            github, owner, repo_name, effective_export, login=login, ref=base_sha, branch=target_branch,
+        )
+        if effective_export:
+            repo_model.write_model_files(workdir, effective_export)
         push_results = await github.push_directory_to_repo(
             owner=owner,
             repo_name=repo_name,

@@ -202,6 +202,40 @@ who each add a class collide on the same lines. When a write holds the model,
 
 The scratch and code branches are deleted in every case.
 
+Who added what
+--------------
+
+``project.attribution`` in ``diagrams.json`` maps the id of a class or member
+(attribute, method) to who added it::
+
+    "attribution": {"<element id>": {"addedBy": "<GitHub login>", "addedAt": "2026-11-04T12:00:00Z"}}
+
+- **Where the author comes from**: ``repo_model.attribute_new_elements`` credits
+  each element the write adds over the model at its base commit to the signed-in
+  GitHub user, the same identity as the commit's author. A save needs a session,
+  so nothing is credited without one, and a model that nobody saves through
+  BESSER (a hand edit of the file) simply has no record. When GitHub does not
+  answer, the save goes on without new records and logs a warning.
+- **Why it cannot affect generation**: the block sits beside the diagrams.
+  ``ProjectInput`` does not read it, so no converter or generator sees it, and
+  the B-UML sources are the same with or without it.
+- **Merging**: an element's record merges like any other key, so two people's
+  additions both keep their credit. ``addedBy`` and ``addedAt`` keep this side's
+  value rather than conflict. A sender that dropped the block (an older editor)
+  does not erase it: the records of the base commit are kept. Records of removed
+  elements are dropped.
+- **Older repositories**: elements already in the base commit get no record, so
+  a repository saved before this block existed gets records only for what is
+  added from then on.
+
+After a pull, the editor marks what the pull brought in
+(``pullRepoIntoProject.ts``): elements the local project lacks and that have a
+record. Only a project already in sync with the repository compares, so opening
+a repository marks nothing. The mark is a list of ids in the project's link in
+the browser (``newFromRepo``), never in the model, and
+``ModelAttributionLayer.tsx`` draws it over the canvas from the position of each
+``[data-id]`` element, so a colour someone chose for an element is not touched.
+
 Conflicts and pull requests
 ---------------------------
 

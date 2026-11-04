@@ -22,6 +22,8 @@ import logging
 import os
 from typing import Iterable, NamedTuple, Optional
 
+import httpx
+
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.spec_driven_agent.planning.model_change import describe_model_change, model_summary
 from besser.utilities.buml_code_builder import (
@@ -30,6 +32,7 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
 )
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import attribute_project
 from besser.utilities.web_modeling_editor.backend.services.deployment.model_merge import (
     MergeConflict,
     merge_documents,
@@ -96,6 +99,36 @@ def project_of(export: dict) -> dict:
     """The project inside a V2 export envelope, or ``export`` itself when it is a bare project."""
     inner = export.get("project")
     return inner if isinstance(inner, dict) else export
+
+
+async def attribute_new_elements(
+    github, owner: str, repo: str, export: Optional[dict],
+    *, login: Optional[str] = None, ref: Optional[str] = None, branch: str = "main", model_path: Optional[str] = None,
+) -> Optional[dict]:
+    """``export`` with the classes and members it adds over the repo's model credited to the signed-in user.
+
+    ``ref`` is the commit ``export`` was derived from, else the head of ``branch``.
+    The credit is not worth a failed save: when GitHub does not answer, ``export`` goes as it is.
+    """
+    if not is_besser_project(export):
+        return export
+    try:
+        login = login or (await github.get_authenticated_user()).get("login")
+        base = None
+        for path in (MODEL_FILE, model_path or LEGACY_PROJECT_FILE):
+            file_data = await github.get_file_content(owner, repo, path, branch=branch, ref=ref)
+            if file_data and file_data.get("content"):
+                base = json.loads(file_data["content"])
+                break
+    except (httpx.HTTPError, ValueError):
+        logger.warning("Could not read the model of %s/%s to credit new elements", owner, repo, exc_info=True)
+        return export
+    if not login:
+        logger.warning("GitHub named no user for %s/%s; new elements are not credited", owner, repo)
+        return export
+    project = project_of(export)
+    attributed = attribute_project(project, project_of(base) if is_besser_project(base) else None, login)
+    return {**export, "project": attributed} if isinstance(export.get("project"), dict) else attributed
 
 
 def link_record(export: dict) -> dict:

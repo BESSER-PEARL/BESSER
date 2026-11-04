@@ -297,7 +297,7 @@ async def deploy_webapp_to_github(
                 except Exception:
                     logger.warning("Failed to export agent B-UML model — continuing without it", exc_info=True)
 
-                _write_deploy_model(temp_dir, body, diagrams)
+                await _write_deploy_model(temp_dir, body, diagrams, github, username, repo_name, default_branch)
 
                 write_generation_provenance(temp_dir, "agent")
                 readme_path = os.path.join(temp_dir, "README.md")
@@ -477,7 +477,7 @@ async def deploy_webapp_to_github(
             except Exception:
                 logger.warning("Failed to export B-UML models — continuing without them", exc_info=True)
 
-            _write_deploy_model(temp_dir, body, diagrams)
+            await _write_deploy_model(temp_dir, body, diagrams, github, username, repo_name, default_branch)
 
             # Add README before push so everything lands in one commit
             write_generation_provenance(temp_dir, "web_app")
@@ -575,7 +575,9 @@ async def deploy_webapp_to_github(
         )
 
 
-def _write_deploy_model(temp_dir: str, body: dict, diagrams: dict) -> None:
+async def _write_deploy_model(
+    temp_dir: str, body: dict, diagrams: dict, github, owner: str, repo: str, branch: str,
+) -> None:
     """Write the deployed project's model files, credentials redacted, as every repo write does.
 
     The frontend sends the V2 ``projectExport`` envelope, which the editor can
@@ -588,6 +590,7 @@ def _write_deploy_model(temp_dir: str, body: dict, diagrams: dict) -> None:
             "which the editor cannot import again."
         )
         project_export = diagrams
+    project_export = await repo_model.attribute_new_elements(github, owner, repo, project_export, login=owner, branch=branch)
     repo_model.write_model_files(temp_dir, project_export)
 
 
@@ -1564,7 +1567,11 @@ async def save_project_to_github(
     """
     github = _github_for(github_sessions, github_session)
     try:
-        files = repo_model.model_files(request.project_export or request.project_data)
+        export = await repo_model.attribute_new_elements(
+            github, request.owner, request.repo, request.project_export or request.project_data,
+            ref=request.base_commit_sha, branch=request.branch, model_path=request.legacy_file_path,
+        )
+        files = repo_model.model_files(export)
         message = repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR)
         if files:
             await github.ensure_first_commit(
@@ -1582,7 +1589,7 @@ async def save_project_to_github(
             request.owner, request.repo, request.branch, entries, message,
             layer_on_parent=True,
             base_commit_sha=request.base_commit_sha,
-            model_merge=repo_model.ModelMerge(request.project_export or request.project_data),
+            model_merge=repo_model.ModelMerge(export),
         )
         await github.add_topic(request.owner, request.repo, repo_model.BESSER_TOPIC)
         conflict = outcome["status"] == "conflict"
@@ -1720,7 +1727,10 @@ async def create_repository_for_project(
         )
         branch = repo_info.get("default_branch", "main")
         project_name = request.project_data.get("name", "BESSER Project")
-        files = repo_model.model_files(request.project_export or request.project_data)
+        export = await repo_model.attribute_new_elements(
+            github, username, repo_name, request.project_export or request.project_data, login=username, branch=branch,
+        )
+        files = repo_model.model_files(export)
         files["README.md"] = _README_TEMPLATE.format(
             project_name=project_name, model_file=repo_model.MODEL_FILE, model_dir=repo_model.MODEL_DIR,
         ).encode("utf-8")

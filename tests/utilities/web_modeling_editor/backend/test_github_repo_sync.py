@@ -376,6 +376,9 @@ class _SidebarGitHub:
         self.legacy_exists = legacy_exists
         self.commit = None
 
+    async def get_authenticated_user(self):
+        return {"login": "ana"}
+
     async def create_blob(self, owner, repo, content):
         return f"blob-{len(content)}"
 

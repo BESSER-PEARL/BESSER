@@ -117,6 +117,36 @@ def open_plain_write(path, mode: str = "w", *, root: "str | None" = None, **kwar
         raise
 
 
+def write_atomic_plain_bytes(path, content: bytes, *, root: "str | None" = None,
+                             mode: "int | None" = None) -> None:
+    """``write_atomic_plain`` for bytes; ``mode`` sets the new file's permissions (the temp file's are 0600)."""
+    path = _refuse_link_parents(os.fspath(path), None if root is None else os.fspath(root))
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".besser_tmp_")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def is_text(content: bytes) -> bool:
+    """UTF-8 without NUL bytes."""
+    if b"\x00" in content:
+        return False
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def write_atomic_plain(path, text: str, *, root: "str | None" = None,
                        encoding: str = "utf-8", newline: "str | None" = None) -> None:
     """Replace ``path`` with ``text`` via a fresh temp file and a rename.

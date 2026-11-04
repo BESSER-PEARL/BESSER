@@ -24,7 +24,7 @@ class GeneratorInterface(ABC):
         ``generate()`` overwrites; this runs it in a scratch folder and merges the result
         against what was generated last time, recorded in the folder. An edit is kept or
         flagged, never overwritten, and files the generator does not produce are left alone.
-        Needs ``pip install "besser[regen]"``.
+        Needs ``pip install "besser[regen]"`` and an explicit ``output_dir``.
 
         Args:
             adopt: Record a folder generated before this existed as this model's output,
@@ -34,11 +34,15 @@ class GeneratorInterface(ABC):
             RegenerationReport: What changed, and what needs attention.
 
         Raises:
-            RegenerationError: The folder cannot be regenerated safely; nothing was changed.
+            RegenerationError: The folder cannot be regenerated safely; no generated file was changed.
         """
         from besser.generators.regeneration import regenerate_output
 
         return regenerate_output(self, adopt)
+
+    def _regeneration_refusal(self) -> "str | None":
+        """Why this instance cannot regenerate, as its options stand; ``None`` when it can."""
+        return None
 
     def _keep_generated_values(self, previous: dict[str, bytes], generated: dict[str, bytes]) -> dict[str, bytes]:
         """``generated`` with any value that must stay the same across regenerations taken from ``previous``."""

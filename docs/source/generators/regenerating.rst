@@ -16,7 +16,7 @@ up to your changed model and keeps those edits:
     report = JavaGenerator(new_library_model, output_dir="app").regenerate()
     print(report.merged, report.conflicted)
 
-It needs the optional merge library:
+It needs an explicit ``output_dir``, which also holds the record, and the optional merge library:
 
 .. code-block:: console
 
@@ -53,10 +53,11 @@ Every edit is kept or flagged, never overwritten:
      - It is removed (``deleted``).
    * - You deleted it, and the model changed it
      - It stays deleted (``not_restored``).
-   * - You edited it into text that is not UTF-8, and it clashes with the model
+   * - It holds text that is not UTF-8, or binary data, and clashes with the model
      - It stays as you left it (``not_merged``).
 
-Files that are not text, such as images, are written once and never merged.
+Files that are not text, such as images, are written once and never merged. Each file is replaced
+in one step, so a full disk cannot leave half of it behind; run ``regenerate()`` again afterwards.
 
 .. warning::
 
@@ -67,14 +68,17 @@ Files that are not text, such as images, are written once and never merged.
 Resolving conflicts
 -------------------
 
-A conflict looks like one from ``git merge``. Edit the file so the markers are gone. Until
-then the next ``regenerate()`` raises ``RegenerationError`` and changes nothing.
+A conflict looks like one from ``git merge``, with ``<<<<<<< your edit`` and ``>>>>>>> generated
+from your model`` around the lines. Edit the file so the markers are gone. Until then the next
+``regenerate()`` raises ``RegenerationError`` and changes nothing.
 
 Folders generated earlier
 -------------------------
 
-A folder that holds files but no record is refused, because edits cannot be told from
-generated code. Adopt it once, using the model those files came from. This changes no file:
+A folder holding generated files but no record is refused, because edits cannot be told from
+generated code. Adopt it once, using the model those files came from. This changes no file, and
+``report.differs_from_model`` lists what differs from that model: those differences count as
+your edits from then on, so a long list usually means it was the wrong model.
 
 .. code-block:: python
 
@@ -87,13 +91,19 @@ Limits
 
 - **Renamed classes are not followed.** The old file stays, with your edits, and the new
   one appears beside it. The report lists both, as ``kept_removed_from_model`` and
-  ``written``. Move your edits across by hand.
+  ``written``. Move your edits across by hand. A rename that changes only the case of a
+  file name is followed.
+- **One folder per generator.** A folder recorded by another generator is refused, because
+  merging into it would delete that generator's files.
 - **Spec-Driven Agent apps are refused.** They keep their own record of who wrote each
   line, so change their model through a :doc:`modify run <../spec_driven_agent/regeneration>`.
 - **Some generators do not take part**, because their output is not the same on every
-  run for one model: Supabase (a timestamp in the file name), Flutter, the BESSER
-  Agentic Framework generator and Docker Compose. Calling ``regenerate()`` on one raises
-  ``RegenerationError``.
+  run for one model: Supabase (a timestamp in the file name), Flutter, Terraform, the BESSER
+  Agentic Framework generator and Docker Compose. So does a ``BackendGenerator`` set to build
+  a Docker image, which would push one without your edits. Calling ``regenerate()`` on these
+  raises ``RegenerationError``.
+- **Line endings.** A rewritten file keeps CRLF only if every line used it; a file with mixed
+  line endings comes back with LF.
 - **Editor downloads have no record.** The web editor's ZIP does not include one. To keep
   edits across downloads, commit each generated version to its own git branch, merge that
   branch into your working branch, and let git find the conflicts.

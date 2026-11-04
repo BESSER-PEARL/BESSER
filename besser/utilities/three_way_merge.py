@@ -62,7 +62,7 @@ def merge_trees(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str
 def _with_markers(repo, ancestor, ours, theirs) -> bytes | None:
     try:
         return repo.merge_file_from_index(ancestor, ours, theirs).contents.encode("utf-8")
-    except UnicodeDecodeError:
+    except (UnicodeDecodeError, RuntimeError, pygit2.GitError):  # not text: NUL bytes, or another encoding
         return None
 
 

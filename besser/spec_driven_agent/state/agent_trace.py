@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from besser.utilities.workspace_fs import (
+    is_text,
     is_plain_entry,
     open_plain,
     walk_plain,
@@ -147,17 +148,6 @@ def normalize_model_id(provider: Optional[str], model: Optional[str]) -> Optiona
 
 def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()[:_HASH_LEN]
-
-
-def is_text(content: bytes) -> bool:
-    """What attribution reads as text: UTF-8 without NUL bytes."""
-    if b"\x00" in content:
-        return False
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
 
 
 def is_plain_relpath(rel: str) -> bool:

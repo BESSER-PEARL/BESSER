@@ -111,37 +111,6 @@ def _bpmn(out):
     return BPMNGenerator(_gateway_model(), output_dir=out)
 
 
-def _terraform(out):
-    from besser.BUML.metamodel.deployment import (
-        Application,
-        Container,
-        Deployment,
-        DeploymentModel,
-        Protocol,
-        Provider,
-        PublicCluster,
-        Region,
-        Resources,
-        Service,
-        ServiceType,
-        Zone,
-    )
-    from besser.generators.terraform import TerraformGenerator
-
-    config = os.path.join(os.path.dirname(os.path.abspath(out)), "cluster.conf")
-    with open(config, "w", encoding="utf-8") as handle:
-        handle.write("project_id = p\ncluster_name = c\n")
-    app = Application(name="app", image_repo="gcr.io/t/a", port=8080, required_resources=Resources(cpu=1, memory=512),
-                      domain_model=library())
-    cluster = PublicCluster(
-        name="c", services={Service(name="s", port=80, target_port=8080, type=ServiceType.lb, protocol=Protocol.http,
-                                    application=app)},
-        deployments={Deployment(name="d", replicas=2, containers={Container(name="k", application=app)})},
-        regions={Region(name="us_central1", zones={Zone(name="us_central1_a")})}, num_nodes=3,
-        provider=Provider.google, config_file=config)
-    return TerraformGenerator(DeploymentModel(name="T", clusters={cluster}), output_dir=out)
-
-
 def _network():
     from besser.BUML.metamodel.nn import NN, LinearLayer
 
@@ -195,7 +164,6 @@ BUILDERS = {
     "jsonobject": _jsonobject,
     "qiskit": _qiskit,
     "bpmn": _bpmn,
-    "terraform": _terraform,
     "pytorch": _pytorch,
     "tensorflow": _tensorflow,
     "forecaster": _forecaster,

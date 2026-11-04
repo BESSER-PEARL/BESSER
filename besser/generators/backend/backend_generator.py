@@ -82,6 +82,11 @@ class BackendGenerator(GeneratorInterface):
                 logger.warning("Docker configuration file not found at path: %s", self.docker_config_path)
             return None
 
+    def _regeneration_refusal(self) -> "str | None":
+        if self.docker_image or self.docker_config_path:
+            return "with docker_image or docker_config_path it builds and pushes an image without your edits."
+        return None
+
     def generate(self):
         """
         Generates Backend model code based on the provided B-UML model and saves it to the specified output directory.

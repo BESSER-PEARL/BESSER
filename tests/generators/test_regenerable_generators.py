@@ -21,6 +21,7 @@ SCRIPT = Path(__file__).with_name("regenerable_builders.py")
 SEEDS = ("0", "1")
 # Excluded on purpose: output that differs per run, or an LLM step.
 NOT_REGENERABLE = {
+    "terraform": "its templates loop over sets of regions, services and deployments",
     "supabase": "a timestamp in the migration's file name",
     "flutter": "sql_helper.dart's order follows the hash seed",
     "agent": "personalization calls an LLM and draws random ids",

@@ -245,6 +245,61 @@ writes its own records there (``.besser_github_source.json``,
 link is never followed, a read is size-capped, and a write replaces the file
 atomically.
 
+.. _web-editor-github-coming-back:
+
+Coming back to a repository
+---------------------------
+
+A finished run lives on the server only for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``
+(30 minutes by default). The repository is what lasts, so that is what a later
+request continues from.
+
+**The base of the next run.** When the project is linked to a repository and its
+last run has expired, the editor imports the branch head before the run
+(``features/spec-driven/linkedRepoBase.ts``) and edits that code:
+
+- the head is the commit the project last synced with: the run starts from it,
+  and the project's model stays, with any changes made to it since;
+- the head moved and the model has no unsaved changes: the project takes the
+  repository's model first, as **Get latest** does;
+- the head moved and the model has unsaved changes: no run starts, and the chat
+  asks the user to save first, which merges both models. Running anyway would
+  push the older model over the newer one;
+- the repository holds only a saved model (``has_code: false`` on the import):
+  there is no app yet, so the run builds one from the model;
+- the code cannot be read (this tab is not connected to GitHub, the repository
+  is gone, GitHub cannot be reached): the user chooses between rebuilding from
+  the model and stopping. A repository known to hold only a saved model just
+  builds, without asking. When the server has no free run slot, nothing runs and
+  the chat asks to try again.
+
+**What the run knows.** ``besser/spec_driven_agent/run_recap.py`` reads
+``.besser_recipe.json`` once for everyone who continues the app:
+
+- the next run's inventory gets the earlier requests, where the last run ended
+  (repairs rolled back, requirements missing from the code or not checked, tasks
+  left out), the commits made since, and the repository's ``AGENTS.md``;
+- every push keeps a section in ``AGENTS.md``, for people and for other coding
+  tools. It sits between ``<!-- besser:begin -->`` and ``<!-- besser:end -->``,
+  and anything outside those markers stays as it is, also when the run never held
+  the file. A seeded run works without the section, and the push renders it again.
+  An ``AGENTS.md`` that is a link or not text is left alone, with a warning;
+- the import and the push return it as ``recap``. The chat shows it when a
+  repository opens or a run continues from one, and the editor sends it to the
+  modeling agent with each message (``context.githubRepo``).
+
+A recipe and an ``AGENTS.md`` can be written by anyone with push access, and a
+public repository's by a stranger. So a recap value is one line, capped, free of
+credentials and unable to close the ``AGENTS.md`` section; the agent receives
+all of it labelled as a record and not as instructions, and ``AGENTS.md``
+quoted line by line and capped at 4,000 characters; the chat escapes it.
+
+The commits since the last run are the ones after the last commit that changed
+the recipe. The import notes them on the imported recipe
+(``commits_since_run``), so the next run reads them and its own recipe drops
+them. Without an answer from GitHub the repository still opens, with no commits
+listed.
+
 The Spec-Driven Agent's model fallback
 --------------------------------------
 

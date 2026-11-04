@@ -102,6 +102,9 @@ class _FakeGitHubService:
     async def get_branch_head(self, owner, repo_name, branch):
         return "a" * 40
 
+    async def get_tree_entries(self, owner, repo_name, commit_sha):
+        return {}
+
     async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
         content = self._repo_files.get(file_path)
         return None if content is None else {"content": content}

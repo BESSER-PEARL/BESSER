@@ -328,6 +328,44 @@ class PushSmartToGitHubRequest(BaseModel):
     deploy_config: SmartPushDeployConfig
 
 
+class RecapRun(ResponseModel):
+    """One earlier run on the app, as ``run_recap.build_recap`` reads it."""
+
+    # The user's own words; empty when the recipe no longer holds them.
+    request: str
+    date: str
+    mode: Literal["create", "modify"]
+    file_count: int
+
+
+class RecapOpenItem(ResponseModel):
+    """Something the last run left open."""
+
+    kind: Literal["rolled_back", "missing", "not_checked", "left_out"]
+    text: str
+
+
+class RecapCommit(ResponseModel):
+    """A commit the repo gained after the last run."""
+
+    sha: str
+    message: str
+    author: str
+
+
+class RepoRecap(ResponseModel):
+    """What was done on a repo's app and where it stands (``run_recap.build_recap``).
+
+    The editor's chat shows it; every value is text from the repository.
+    """
+
+    runs: list[RecapRun]
+    open_items: list[RecapOpenItem]
+    # The true total; ``open_items`` is capped.
+    open_item_count: int
+    commits_since_run: list[RecapCommit]
+
+
 class PushSmartToGitHubResponse(ResponseModel):
     """Response of ``POST /besser_api/spec-driven/push-to-github``."""
 
@@ -361,6 +399,8 @@ class PushSmartToGitHubResponse(ResponseModel):
     # that added classes); None when it is the request's own export. The
     # editor loads it, so its model matches the repo.
     project_export: Optional[dict] = None
+    # What this push wrote to ``AGENTS.md``; None for a run that left no recipe.
+    recap: Optional[RepoRecap] = None
 
 
 class ImportGitHubRunRequest(BaseModel):
@@ -475,6 +515,10 @@ class ImportGitHubRunResponse(ResponseModel):
     # True when an AI model could read the code for a better diagram and the
     # request did not allow it: import again with ``allow_ai_reading`` to read it.
     ai_reading_offered: bool = False
+    # False for a repo holding only a saved model: a run has no app to continue from.
+    has_code: bool = False
+    # Where the repo's app stands; None when no Spec-Driven run was pushed to it.
+    recap: Optional[RepoRecap] = None
 
 
 class SmartPreviewRequest(BaseModel):

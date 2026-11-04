@@ -21,6 +21,7 @@ from besser.utilities.web_modeling_editor.backend.routers import spec_driven_rou
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api
 from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import GitHubService
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartRunEntry,
@@ -971,3 +972,215 @@ def test_a_teammates_gitattributes_line_survives_the_next_push(github):
     assert r.status_code == 200, r.text
     assert r.json()["status"] in ("pushed", "merged")
     assert github.files(repo)[".gitattributes"][1].decode() == teammate
+
+
+# ---------------------------------------------------------------------
+# Coming back to a repo days later
+# ---------------------------------------------------------------------
+
+
+RUN_RECIPE = {
+    "instructions": "build a library app",
+    "history": [{"instructions": "build a library app", "saved_at": "2026-11-01T10:00:00+00:00",
+                 "mode": "create", "files_touched": ["src/app.py"]}],
+    "verification": {"notVerified": [{"what": "runtime behaviour"}], "shippedUnenforced": []},
+}
+
+
+def _repo_with_a_pushed_run(github, name: str = "library"):
+    """A repo a finished Spec-Driven run was pushed to."""
+    repo = github.create_repo(name, files={"README.md": "# Library\n", "src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", name)["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+    response = _push(run, name)
+    assert response.status_code == 200, response.text
+    return repo, response.json()
+
+
+def test_a_repo_with_code_is_one_a_run_can_continue_from(github):
+    github.create_repo("shop", files={"README.md": "# shop\n", "src/app.py": "print('v1')\n"})
+    assert _import("ana", "shop")["has_code"] is True
+
+
+def test_a_repo_holding_only_the_saved_model_has_no_code_to_continue_from(github):
+    # "Save it on GitHub" links a project to a repo before any app exists.
+    github.create_repo("model-only", files={
+        "README.md": "# model-only\n", ".gitignore": "*.pyc\n", "LICENSE": "MIT\n",
+        "buml/diagrams.json": json.dumps(_envelope()), "buml/domain_model.py": "x = 1\n",
+        ".besser/project.json": "{}\n",
+    })
+    assert _import("ana", "model-only")["has_code"] is False
+
+
+def test_an_older_editors_saved_model_is_not_code_either(github):
+    github.create_repo("old-save", files={"README.md": "# old\n", "models/library.json": json.dumps(_envelope())})
+    imported = _import("ana", "old-save")
+    assert imported["has_model"] is True
+    assert imported["has_code"] is False
+
+
+def test_a_push_writes_a_recap_into_agents_md_and_returns_it(github):
+    repo, pushed = _repo_with_a_pushed_run(github)
+    assert pushed["recap"]["runs"][-1]["request"] == "build a library app"
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert "<!-- besser:begin -->" in agents
+    assert "build a library app" in agents
+    assert "runtime behaviour" in agents
+
+
+def test_a_push_keeps_what_a_person_wrote_in_agents_md(github):
+    repo = github.create_repo("library", files={
+        "AGENTS.md": "Use tabs here.\n", "README.md": "# Library\n", "src/app.py": "print('v1')\n",
+    })
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+    assert _push(run, "library").status_code == 200
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert agents.startswith("Use tabs here.\n")
+    assert "build a library app" in agents
+
+
+def test_a_fresh_run_adds_to_the_repos_agents_md_rather_than_replacing_it(github, tmp_path):
+    # A run built from the model has no copy of the file; the push used to upload a block-only one over it.
+    repo = github.create_repo("library", files={"AGENTS.md": "Use tabs here.\n", "src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+    response = _push(run_id, "library")
+    assert response.status_code == 200, response.text
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert agents.startswith("Use tabs here.\n")
+    assert "build a library app" in agents
+
+
+def test_an_agents_md_that_is_a_link_stays_a_link(github):
+    repo = github.create_repo("library", files={
+        "CLAUDE.md": "Use tabs here.\n", "AGENTS.md": ("CLAUDE.md", "120000"), "src/app.py": "print('v1')\n",
+    })
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+    response = _push(run, "library")
+    assert response.status_code == 200, response.text
+    assert github.files(repo)["AGENTS.md"][0] == "120000"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_push_lands_without_the_recap_when_github_will_not_show_agents_md(github, monkeypatch, tmp_path):
+    # Replacing a file it could not read would lose it, and the recap is not worth failing the push.
+    repo = github.create_repo("library", files={"AGENTS.md": "Use tabs here.\n", "src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+
+    real_get_file_content = GitHubService.get_file_content
+
+    async def down_for_agents_md(self, owner, repo_name, file_path, *args, **kwargs):
+        if file_path == "AGENTS.md":
+            raise httpx.ConnectError("GitHub is down for this one call")
+        return await real_get_file_content(self, owner, repo_name, file_path, *args, **kwargs)
+
+    monkeypatch.setattr(GitHubService, "get_file_content", down_for_agents_md)
+    response = _push(run_id, "library")
+    assert response.status_code == 200, response.text
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+
+
+def test_a_forged_recipe_does_not_stop_a_repo_opening_or_a_push(github):
+    deep = "[" * 5_000 + "]" * 5_000
+    github.create_repo("deep", files={".besser_recipe.json": deep, "src/app.py": "print('v1')\n"})
+    assert _import("ana", "deep")["recap"] is None
+    surrogate = '{"history": [{"instructions": "add \\ud800 search", "saved_at": "\\ud800"}]}'
+    github.create_repo("surrogate", files={".besser_recipe.json": surrogate, "src/app.py": "print('v1')\n"})
+    assert _import("ana", "surrogate")["recap"]["runs"]
+    run = _modify_run(_import("ana", "surrogate")["run_id"],
+                      lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+    assert _push(run, "surrogate").status_code == 200
+
+
+def test_a_run_without_a_recipe_writes_no_recap(github):
+    repo = github.create_repo("library", files={"README.md": "# Library\n", "src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"],
+                      lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+    response = _push(run, "library")
+    assert response.status_code == 200
+    assert response.json()["recap"] is None
+    assert "AGENTS.md" not in github.files(repo)
+
+
+def test_the_next_run_sees_agents_md_without_besser_s_block(github, tmp_path):
+    github.create_repo("library", files={
+        "AGENTS.md": "Use tabs here.\n\n<!-- besser:begin -->\nold\n<!-- besser:end -->\n",
+        "src/app.py": "print('v1')\n",
+    })
+    base = asyncio.run(current_runtime().registry.get(_import("ana", "library")["run_id"]))
+    seeded = tmp_path / "seeded"
+    seeded.mkdir()
+    _seed_workspace_from_base(base.temp_dir, str(seeded))
+    assert (seeded / "AGENTS.md").read_text(encoding="utf-8") == "Use tabs here.\n"
+
+
+def test_an_agents_md_holding_only_the_block_comes_back_on_the_next_push(github):
+    repo, _ = _repo_with_a_pushed_run(github)
+    # The seed drops the file and the agent works without it: the push renders it again, not deletes it.
+    next_run = _modify_run(_import("ana", "library")["run_id"],
+                           lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+    assert _push(next_run, "library").status_code == 200
+    assert "build a library app" in github.files(repo)["AGENTS.md"][1].decode()
+
+
+def test_opening_a_repo_returns_the_recap(github):
+    _repo_with_a_pushed_run(github)
+    recap = _import("ana", "library")["recap"]
+    assert recap["runs"][-1] == {"request": "build a library app", "date": "2026-11-01", "mode": "create",
+                                 "file_count": 1}
+    assert recap["open_items"] == [{"kind": "not_checked", "text": "runtime behaviour"}]
+    assert recap["commits_since_run"] == []
+
+
+def test_a_repo_no_run_was_pushed_to_has_no_recap(github):
+    github.create_repo("shop", files={"src/app.py": "print('v1')\n"})
+    assert _import("ana", "shop")["recap"] is None
+
+
+def test_opening_a_repo_reports_the_commits_made_since_the_last_run(github):
+    repo, _ = _repo_with_a_pushed_run(github)
+    github.commit_files(repo, {"src/extra.py": "EXTRA = 1\n"}, "Teammate adds a helper")
+    imported = _import("ana", "library")
+    commits = imported["recap"]["commits_since_run"]
+    assert [c["message"] for c in commits] == ["Teammate adds a helper"]
+    assert len(commits[0]["sha"]) == 7
+    # The seed the worker reads carries them, for the next run's notes.
+    base = asyncio.run(current_runtime().registry.get(imported["run_id"]))
+    with open(os.path.join(base.temp_dir, ".besser_recipe.json"), encoding="utf-8") as fh:
+        assert json.load(fh)["commits_since_run"][0]["message"] == "Teammate adds a helper"
+
+
+def test_a_repo_read_without_the_commit_history_still_opens(github, monkeypatch):
+    repo, _ = _repo_with_a_pushed_run(github)
+    github.commit_files(repo, {"src/extra.py": "EXTRA = 1\n"}, "Teammate adds a helper")
+
+    async def down(*_args, **_kwargs):
+        raise httpx.ConnectError("GitHub is down for this one call")
+
+    monkeypatch.setattr(GitHubService, "compare_commits", down)
+    assert _import("ana", "library")["recap"]["commits_since_run"] == []
+
+
+def test_recording_the_commits_does_not_read_as_a_change_of_the_run(github):
+    repo, _ = _repo_with_a_pushed_run(github)
+    github.commit_files(repo, {"src/extra.py": "EXTRA = 1\n"}, "Teammate adds a helper")
+    before = github.files(repo)[".besser_recipe.json"][1]
+    # Pushing the imported run as it is: nothing changed, so the note stays out of the repo.
+    assert _push(_import("ana", "library")["run_id"], "library").status_code == 200
+    assert github.files(repo)[".besser_recipe.json"][1] == before

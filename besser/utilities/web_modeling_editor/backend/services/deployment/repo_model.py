@@ -39,7 +39,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 )
 from besser.utilities.secret_redaction import redact_credentials
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
-from besser.utilities.workspace_fs import is_plain_file, read_plain_text, write_atomic_plain
+from besser.utilities.workspace_fs import is_plain_file, read_plain_text, walk_plain, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,14 @@ GITATTRIBUTES_FILE = ".gitattributes"
 _MAX_SAVED_PROJECT_CANDIDATES = 10
 _NOT_SAVED_PROJECT_NAMES = frozenset({"package.json", "package-lock.json", "tsconfig.json"})
 _NOT_SAVED_PROJECT_DIRS = frozenset({MODEL_DIR, ".besser", ".git", "node_modules"})
+# Git's modes for a file: plain and executable (not a link or a submodule).
+REGULAR_FILE_MODES = frozenset({"100644", "100755"})
+# What a repo holds besides an app: BESSER's own files and the usual project files.
+_NOT_APP_CODE_DIRS = frozenset({MODEL_DIR, ".besser", ".agent-trace", ".git", ".github"})
+_NOT_APP_CODE_FILES = (
+    "readme*", "license*", "changelog*", "agents.md", "claude.md", ".gitignore", ".gitattributes",
+    ".besser_*", "besser_generation.md", "render.yaml", LEGACY_PROJECT_FILE,
+)
 # The B-UML sources BESSER generates under ``MODEL_DIR``.
 DOMAIN_SOURCE = "domain_model.py"
 GUI_SOURCE = "gui_model.py"
@@ -272,6 +280,20 @@ def is_model_path(path: str) -> bool:
     )
 
 
+def has_app_code(directory: str, model_path: Optional[str] = None) -> bool:
+    """True when the repo in ``directory`` holds more than a saved model and the usual project files."""
+    for root, dirs, files in walk_plain(directory):
+        at_top = os.path.samefile(root, directory)
+        if at_top:
+            dirs[:] = [name for name in dirs if name not in _NOT_APP_CODE_DIRS]
+        for name in files:
+            if os.path.relpath(os.path.join(root, name), directory).replace(os.sep, "/") == model_path:
+                continue
+            if not (at_top and any(fnmatch.fnmatch(name.lower(), pattern) for pattern in _NOT_APP_CODE_FILES)):
+                return True
+    return False
+
+
 def is_besser_project(document: object) -> bool:
     """True for a parsed model file: a V2 export envelope or a bare project, both holding ``diagrams``."""
     return isinstance(document, dict) and isinstance(project_of(document).get("diagrams"), dict)
@@ -310,7 +332,7 @@ def find_saved_project(root: str, model_path: Optional[str] = None) -> Optional[
         try:
             with open(os.path.join(root, *path.split("/")), encoding="utf-8") as fh:
                 document = json.load(fh)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             continue
         if is_besser_project(document):
             return path, document

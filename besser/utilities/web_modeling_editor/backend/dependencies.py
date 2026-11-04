@@ -45,11 +45,17 @@ def get_sdmx_import_slots(connection: HTTPConnection) -> threading.BoundedSemaph
     return connection.app.state.sdmx_import_slots
 
 
+def get_semantic_check_slots(connection: HTTPConnection) -> threading.BoundedSemaphore:
+    """The cap on concurrent semantic checks, on ``app.state.semantic_check_slots``."""
+    return connection.app.state.semantic_check_slots
+
+
 SpecDrivenRuntimeDep = Annotated[SpecDrivenRuntime, Depends(get_spec_driven_runtime)]
 GitHubSessionsDep = Annotated[GitHubSessions, Depends(get_github_sessions)]
 AgentSimulatorDep = Annotated[AgentSimulatorState, Depends(get_agent_simulator)]
 KgConsistencySlotsDep = Annotated[threading.BoundedSemaphore, Depends(get_kg_consistency_slots)]
 SdmxImportSlotsDep = Annotated[threading.BoundedSemaphore, Depends(get_sdmx_import_slots)]
+SemanticCheckSlotsDep = Annotated[threading.BoundedSemaphore, Depends(get_semantic_check_slots)]
 
 # The process settings read once (``get_settings``); tests swap them through
 # ``app.dependency_overrides[get_settings]``. Fields read per call stay

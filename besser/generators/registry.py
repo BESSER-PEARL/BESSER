@@ -489,6 +489,16 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         required_diagram_type="DeploymentDiagram",
         download_filename="docker_compose.zip",
     ),
+    # Formal methods (class diagram based). A ZIP holding the Alloy
+    # specification model.als plus the library modules it opens.
+    GeneratorSpec(
+        id="alloy",
+        class_path="besser.generators.alloy:AlloyGenerator",
+        category="formal_methods",
+        output_type="zip",
+        file_extension=".zip",
+        download_filename="alloy_specification.zip",
+    ),
     # Neural network generators
     GeneratorSpec(
         id="pytorch",

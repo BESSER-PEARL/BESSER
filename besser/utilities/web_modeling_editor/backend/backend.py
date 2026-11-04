@@ -76,6 +76,9 @@ from besser.utilities.web_modeling_editor.backend.services.agent_simulation impo
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
 from besser.utilities.web_modeling_editor.backend.services.kg.validation import consistency_check_slots
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import sdmx_import_slots
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
+    semantic_check_slots,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     SpecDrivenRuntime,
 )
@@ -222,6 +225,7 @@ async def lifespan(app: FastAPI):
     app.state.agent_simulator = AgentSimulatorState.create(get_settings())
     app.state.kg_consistency_slots = consistency_check_slots()
     app.state.sdmx_import_slots = sdmx_import_slots()
+    app.state.semantic_check_slots = semantic_check_slots()
     runtime = SpecDrivenRuntime.create(get_settings())
     app.state.spec_driven = runtime
     logger.info("Spec-driven runtime started (%d run slots)", get_settings().llm_max_concurrent_runs)

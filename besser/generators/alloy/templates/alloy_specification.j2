@@ -1,0 +1,36 @@
+module {{ name }}
+{% for module in opens %}
+open {{ module }}
+{% endfor %}
+{% for sig in signatures %}
+
+{{ sig.header }} {
+{% for field in sig.fields %}
+  {{ field }}{{ "," if not loop.last }}
+{% endfor %}
+}
+{% endfor %}
+{% for fun in functions %}
+
+fun {{ fun.header }} {
+{% for expression in fun.body %}
+  {{ expression }}
+{% endfor %}
+}
+{% endfor %}
+{% for fact in facts %}
+
+fact { {{ fact }} }
+{% endfor %}
+{% for pred in predicates %}
+
+pred {{ pred.header }} {
+{% for formula in pred.body %}
+  {{ formula }}
+{% endfor %}
+}
+{% endfor %}
+{% if run %}
+
+run {{ run.predicate }} for {{ run.scopes | join(', ') }}
+{% endif %}

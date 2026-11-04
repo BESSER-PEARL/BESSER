@@ -85,7 +85,9 @@ by a dependency in ``dependencies.py``:
 - ``app.state.kg_consistency_slots`` (``KgConsistencySlotsDep``) -- the
   ``KG_CONSISTENCY_MAX_CONCURRENT`` cap on knowledge graph consistency checks;
 - ``app.state.sdmx_import_slots`` (``SdmxImportSlotsDep``) -- the
-  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports.
+  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports;
+- ``app.state.semantic_check_slots`` (``SemanticCheckSlotsDep``) -- the
+  ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` cap on semantic checks.
 
 Two applications in one process share none of this state. The sign-in stores
 are encrypted files, so two applications configured with the same paths still
@@ -637,6 +639,9 @@ Validation
   For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
   consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
+- ``POST /semantic-consistency-check`` -- Checks the satisfiability of a class diagram and its OCL constraints with
+  the Alloy Analyzer (see :doc:`utilities/object_diagram_generator`)
+- ``POST /generate-object-diagram`` -- Same search, but returns the instance found as an object diagram
 
 Deployment
 ^^^^^^^^^^
@@ -931,6 +936,10 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
   ``llm_model`` and ``api_key`` in the request body, so they also accept
   Anthropic, Mistral and Nebius keys.
 
+- ``JAVA_HOME`` and ``BESSER_ALLOY_JAR`` -- The Java installation and the Alloy Analyzer jar that
+  ``/semantic-consistency-check`` and ``/generate-object-diagram`` run (see
+  :doc:`utilities/object_diagram_generator`). The backend Docker image sets both.
+
 **Spec-Driven Agent (all optional):**
 
 The agent's ``BESSER_LLM_*``, ``BESSER_FREE_LLM_*``,
@@ -1016,6 +1025,15 @@ gateway.
 - ``AGENT_SIMULATOR_MEMORY_MB``, ``AGENT_SIMULATOR_CPU_CORES``,
   ``AGENT_SIMULATOR_DISK_MB``, ``AGENT_SIMULATOR_QUOTA_ENABLED`` -- Values
   reported by ``/limits``.
+
+**Semantic check** (``POST /semantic-consistency-check`` and ``/generate-object-diagram``,
+read once at startup):
+
+- ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` (``1``) -- Checks running at once, each in
+  its own Alloy Analyzer JVM; more are answered with 503. A client that disconnects
+  stops its JVM and frees its slot.
+- ``BESSER_ALLOY_MAX_HEAP_MB`` (``1024``) -- Maximum heap of each JVM (``-Xmx``), so
+  that a large search cannot exhaust the host's memory.
 
 
 Generator Configuration

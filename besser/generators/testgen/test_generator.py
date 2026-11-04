@@ -46,6 +46,8 @@ class TestCaseGenerator(GeneratorInterface):
     # starts with "Test"); it is a generator, not a test case.
     __test__ = False
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None, module_name: str = "classes"):
         super().__init__(model, output_dir)
         self.module_name = module_name

@@ -5,6 +5,10 @@ from besser.BUML.metamodel.structural import Model
 # Interface for code generators
 class GeneratorInterface(ABC):
 
+    # Opt-in for regenerate(): the output must be byte-identical for one model, or a merge
+    # could not tell a model change from noise (tests/generators/test_regenerable_generators.py).
+    regenerable = False
+
     @abstractmethod
     def __init__(self, model: Model, output_dir: str = None):
         self.model = model
@@ -13,6 +17,32 @@ class GeneratorInterface(ABC):
     @abstractmethod
     def generate(self):
         pass
+
+    def regenerate(self, adopt: bool = False):
+        """Bring the output folder up to this generator's model, keeping edits made in it.
+
+        ``generate()`` overwrites; this runs it in a scratch folder and merges the result
+        against what was generated last time, recorded in the folder. An edit is kept or
+        flagged, never overwritten, and files the generator does not produce are left alone.
+        Needs ``pip install "besser[regen]"``.
+
+        Args:
+            adopt: Record a folder generated before this existed as this model's output,
+                changing no file. Run it once, with the model those files came from.
+
+        Returns:
+            RegenerationReport: What changed, and what needs attention.
+
+        Raises:
+            RegenerationError: The folder cannot be regenerated safely; nothing was changed.
+        """
+        from besser.generators.regeneration import regenerate_output
+
+        return regenerate_output(self, adopt)
+
+    def _keep_generated_values(self, previous: dict[str, bytes], generated: dict[str, bytes]) -> dict[str, bytes]:
+        """``generated`` with any value that must stay the same across regenerations taken from ``previous``."""
+        return generated
 
     @property
     def model(self) -> Model:

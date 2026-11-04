@@ -197,6 +197,16 @@ Generate database schemas, APIs, and data formats:
    generators/rdf
    generators/terraform
 
+Regenerating After a Model Change
+---------------------------------
+
+Change your model without losing the edits you made in the generated code:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/regenerating
+
 Machine Learning
 ----------------
 

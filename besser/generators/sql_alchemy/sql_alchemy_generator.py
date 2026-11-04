@@ -73,6 +73,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "Optional_",        # typing.Optional
     }
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
         # Work on an instance-level copy so per-model enum entries never leak

@@ -91,6 +91,8 @@ class WebAppGenerator(GeneratorInterface):
             hosting services); the agent config then keeps its placeholders.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,

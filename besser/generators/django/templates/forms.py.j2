@@ -33,7 +33,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                  {%- set _ = generals.names.append(parent.name) %}
                 {%- endfor %}
              {%- set inheritance = generals.names | join(', ') %}
-                {%- for association in class_obj.associations %}
+                {%- for association in sort_by_timestamp(class_obj.associations) %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                        {%- set ns = namespace(end1=None, end2=None) %}
                             {%- set ends_list = association.ends | sort(attribute='name') | list %}
@@ -168,7 +168,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                            {%- endif %}
                        {%- endfor%}
                    {%- endif %}
-                {%- for association in class_obj.associations %}
+                {%- for association in sort_by_timestamp(class_obj.associations) %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                       {%- set ns = namespace(end1=None, end2=None) %}
                         {%- set ends_list = association.ends | sort(attribute='name') | list %}

@@ -65,16 +65,8 @@ from besser.spec_driven_agent.state.generator_output import (
     store_generator_output,
 )
 from besser.utilities.provenance import get_besser_version
+from besser.utilities.three_way_merge import lf, merge_available, merge_trees, same_text, with_endings_of
 from besser.utilities.workspace_fs import open_plain_write, walk_plain
-
-try:
-    import pygit2
-    from pygit2.enums import FileMode, MergeFlag
-
-    # Renames are paired from the model change, never guessed (see _merge_trees).
-    _NO_RENAME_DETECTION = MergeFlag(0)
-except ImportError:  # the ``agents`` extra; without it edited files are left to the agent
-    pygit2 = None
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +205,7 @@ def regenerate(
         stored = load_generator_output(workspace, out_dir)
     except GeneratorOutputError as exc:
         warnings.append(f"edited files are not merged: the stored generator output cannot be used ({exc})")
-    if stored is not None and pygit2 is None:
+    if stored is not None and not merge_available():
         stored = None
         warnings.append("edited files are not merged: pygit2 is not installed (pip install besser[agents])")
     if stored is not None and previous_domain_model is not None and stored.besser_version == get_besser_version():
@@ -389,18 +381,18 @@ class _Merger(_Apply):
                 unreadable.add(new)
                 self.result.not_checked.append(new)
         # An untouched file keeps the stored base, so it becomes the new output as is.
-        self.merge_base = {p: d if self.rebuilt is None or _same(ours.get(p), d) else self.rebuilt.get(p, d)
+        self.merge_base = {p: d if self.rebuilt is None or same_text(ours.get(p), d) else self.rebuilt.get(p, d)
                            for p, d in self.base.items() if p not in unreadable}
         # Merged with LF endings: on Windows the generator writes CRLF, and an editor may convert.
-        base = {moves.get(p, p): _lf(d) for p, d in self.merge_base.items()}
-        mine = {moves.get(p, p): _lf(d) for p, d in ours.items()}
-        theirs = {p: _lf(d) for p, d in new_files.items() if p not in unreadable}
-        merged, conflicted = _merge_trees(base, mine, theirs)
+        base = {moves.get(p, p): lf(d) for p, d in self.merge_base.items()}
+        mine = {moves.get(p, p): lf(d) for p, d in ours.items()}
+        theirs = {p: lf(d) for p, d in new_files.items() if p not in unreadable}
+        merged, conflicted = merge_trees(base, mine, theirs)
         source = {new: old for old, new in moves.items()}
         for path in sorted(set(base) | set(mine) | set(theirs)):
             self._file(source.get(path, path), path, ours.get(source.get(path, path)), merged, conflicted, new_files)
 
-    def _file(self, old: str, path: str, current: bytes | None, merged: dict[str, bytes], conflicted: set[str],
+    def _file(self, old: str, path: str, current: bytes | None, merged: dict[str, bytes], conflicted: dict[str, bytes | None],
               new_files: dict[str, bytes]) -> None:
         """``old`` is the file's path in the app, ``path`` its path in the new output."""
         base, new = self.base.get(old), new_files.get(path)
@@ -424,18 +416,18 @@ class _Merger(_Apply):
         if current is None or current == base:
             content = new if new is not None else merged[path]
         else:
-            content = _with_endings_of(current, merged[path])
+            content = with_endings_of(current, merged[path])
         if path != old:
             # Moved even when the old file cannot be deleted (it is then not checked): the edits came along.
             if self._write(path, content, None):
                 self._remove(old)
                 self.result.moved.append((old, path))
             return
-        if current is not None and _lf(current) == merged[path]:
+        if current is not None and lf(current) == merged[path]:
             return
         if current is None:
             self._write(path, content, self.result.added)
-        elif _same(current, base):
+        elif same_text(current, base):
             self._write(path, content, self.result.replaced)
         else:
             self._write(path, content, self.result.merged)
@@ -491,31 +483,6 @@ class _Regenerator(_Apply):
                 self._write(rel, new_bytes, self.result.added)
 
 
-def _merge_trees(base: dict[str, bytes], ours: dict[str, bytes],
-                 theirs: dict[str, bytes]) -> tuple[dict[str, bytes], set[str]]:
-    """Merge three ``{path: content}`` trees: the clean result by path, and the paths in conflict.
-
-    Renames are not guessed: libgit2 misses a class rename once the file was
-    edited, and a guess could pair a removed class's file with an added one.
-    The caller moves renamed files first (:func:`_moves`).
-    """
-    work = tempfile.mkdtemp(prefix="besser_llm_merge_")
-    try:
-        repo = pygit2.init_repository(work, bare=True)
-
-        def tree(files: dict[str, bytes]):
-            index = pygit2.Index()
-            for path, content in files.items():
-                index.add(pygit2.IndexEntry(path, repo.create_blob(content), FileMode.BLOB))
-            return index.write_tree(repo)
-
-        index = repo.merge_trees(tree(base), tree(ours), tree(theirs), flags=_NO_RENAME_DETECTION)
-        conflicted = {entry.path for entries in (index.conflicts or ()) for entry in entries if entry is not None}
-        return {e.path: repo[e.id].data for e in index if e.path not in conflicted}, conflicted
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
 def _moves(base: dict[str, bytes], new_files: dict[str, bytes], present: set[str],
            renamed_classes: tuple[tuple[str, str], ...]) -> dict[str, str]:
     """Old path -> new path of the files named after a renamed class.
@@ -549,21 +516,6 @@ def _after_class(stem: str, class_name: str) -> str | None:
     if stem == name or stem.startswith(name + "_"):
         return stem[len(name):]
     return None
-
-
-def _lf(content: bytes) -> bytes:
-    return content.replace(b"\r\n", b"\n")
-
-
-def _same(a: bytes | None, b: bytes | None) -> bool:
-    """The same text, line endings aside."""
-    return a is not None and b is not None and _lf(a) == _lf(b)
-
-
-def _with_endings_of(current: bytes, merged: bytes) -> bytes:
-    """``merged`` (LF) with CRLF endings when every line of ``current`` ends with CRLF."""
-    lines = current.count(b"\n")
-    return merged.replace(b"\n", b"\r\n") if lines and current.count(b"\r\n") == lines else merged
 
 
 def _lines(content: bytes | None) -> list[str]:

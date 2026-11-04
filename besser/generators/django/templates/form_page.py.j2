@@ -55,7 +55,7 @@
         {%- endif %}
     {%- endfor %}
     {#- End for fields #}
-                {%- for association in class_obj.associations %}
+                {%- for association in sort_by_timestamp(class_obj.associations) %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                       {%- set ns = namespace(end1=None, end2=None) %}
                         {%- set ends_list = association.ends | sort(attribute='name') | list %}

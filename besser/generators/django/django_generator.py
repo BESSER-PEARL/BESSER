@@ -3,6 +3,7 @@ This module generates Django code using Jinja2 templates based on BUML models.
 """
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,9 @@ logger = logging.getLogger(__name__)
 ##############################
 #    Django Generator
 ##############################
+_SECRET_KEY_LINE = re.compile(rb"^SECRET_KEY = [^\r\n]*", re.MULTILINE)
+
+
 class DjangoGenerator(GeneratorInterface):
     """
     DjangoGenerator is responsible for generating Django executable code based on
@@ -38,6 +42,8 @@ class DjangoGenerator(GeneratorInterface):
           typically grouping related screens and functionalities.
         output_dir (str, optional): Directory where generated code will be saved. Defaults to None.
     """
+
+    regenerable = True
 
     def __init__(self, model: DomainModel, project_name: str, app_name: str,
                  gui_model: GUIModel = None, containerization: bool = False,
@@ -142,6 +148,14 @@ class DjangoGenerator(GeneratorInterface):
         return isinstance(value, Enumeration)
 
     ## DjangoGeneratorModelsFile:
+    def _keep_generated_values(self, previous: dict[str, bytes], generated: dict[str, bytes]) -> dict[str, bytes]:
+        """``startproject`` draws a new ``SECRET_KEY`` each run; rotating it would log every user out."""
+        settings = f"{self.project_name}/{self.project_name}/settings.py"
+        key = _SECRET_KEY_LINE.search(previous[settings]) if settings in previous else None
+        if not key or settings not in generated:
+            return generated
+        return {**generated, settings: _SECRET_KEY_LINE.sub(lambda _: key.group(0), generated[settings], count=1)}
+
     def generate_models(self):
 
         """

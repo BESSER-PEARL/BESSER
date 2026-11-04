@@ -194,6 +194,8 @@ def test_a_free_tier_minimax_flash_run_is_not_capped_at_the_gpt4o_rate(lineup, m
 @pytest.mark.parametrize("model, rate", [
     (MINIMAX_FLASH, (0.15, 0.60, 0.015)),
     ("z-ai/glm-5.3-flash", (0.15, 0.50, 0.03)),
+    # Free on Command Code, but its id has no free marker to go by.
+    ("stealth/crouton-alpha", (0.0, 0.0, 0.0)),
 ])
 def test_the_paid_free_tier_models_carry_the_gateways_published_rate(model, rate):
     pricing = get_pricing(model, route=FREE_URL)

@@ -116,6 +116,9 @@ A deployment's file names only what differs from the default:
   fallback rate, and a warning names it in the log. Add a row whenever a paid
   model joins ``BESSER_FREE_LLM_MODEL`` or ``BESSER_FREE_LLM_ALT_MODELS``: the
   fallback can be many times the real rate and stop a run early.
+- An endpoint that reports no token usage on a stream is estimated from the
+  size of the request and reply, with a warning in the log, so the cost cap
+  still counts the call. The estimate has no cache information and errs high.
 
 ``GET /besser_api/spec-driven/config`` returns the catalog's providers and
 models as ``providers`` (``id``, ``label``, ``hint``, ``key_prefix``,

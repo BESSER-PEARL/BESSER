@@ -764,6 +764,65 @@ class TestOpenAIProviderStream:
         assert provider.usage.output_tokens == 500
         assert provider.usage.estimated_cost > 0
 
+    # Live evidence, production v8.8.0: free run 85843c37 on MiniMax stayed at 4,178
+    # tokens from turn 1 to turn 86, so the cost cap could not see its spend.
+    @staticmethod
+    def _text_chunk(text, finish_reason=None, usage=None):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content=text, tool_calls=None),
+                finish_reason=finish_reason,
+            )],
+            usage=usage,
+        )
+
+    @staticmethod
+    def _usage(prompt, completion):
+        return SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion, prompt_tokens_details=None)
+
+    def _stream(self, provider, chunks):
+        provider._client.chat.completions.create.return_value = iter(chunks)
+        return list(provider.chat_stream(
+            system="sys", messages=[{"role": "user", "content": "x" * 4000}], tools=[],
+        ))
+
+    def test_stream_records_usage_sent_on_a_chunk_with_choices(self):
+        """Some gateways put usage on the last content chunk, with no usage-only chunk."""
+        provider = _make_openai_provider()
+        self._stream(provider, [
+            self._text_chunk("hel"),
+            self._text_chunk("lo", finish_reason="stop", usage=self._usage(1000, 500)),
+        ])
+        assert provider.usage.api_calls == 1
+        assert provider.usage.input_tokens == 1000
+        assert provider.usage.output_tokens == 500
+
+    def test_stream_counts_running_usage_on_every_chunk_once(self):
+        """Usage repeated on every chunk is a running total, not one call per chunk."""
+        provider = _make_openai_provider()
+        self._stream(provider, [
+            self._text_chunk("a", usage=self._usage(1000, 1)),
+            self._text_chunk("b", usage=self._usage(1000, 2)),
+            self._text_chunk("c", finish_reason="stop", usage=self._usage(1000, 3)),
+        ])
+        assert provider.usage.api_calls == 1
+        assert provider.usage.input_tokens == 1000
+        assert provider.usage.output_tokens == 3
+
+    def test_a_stream_with_no_usage_is_estimated_so_the_cost_cap_still_sees_it(self, caplog):
+        provider = _make_openai_provider()
+        with caplog.at_level("WARNING"):
+            self._stream(provider, [self._text_chunk("y" * 400, finish_reason="stop")])
+            cost_after_one = provider.usage.estimated_cost
+            self._stream(provider, [self._text_chunk("y" * 400, finish_reason="stop")])
+
+        assert provider.usage.input_tokens >= 1000  # 4,000 chars of history
+        assert provider.usage.output_tokens == 200
+        assert 0 < cost_after_one < provider.usage.estimated_cost
+        warnings = [r.getMessage() for r in caplog.records if "reported no usage" in r.getMessage()]
+        assert len(warnings) == 1
+
+
     def test_streaming_cost_grows_across_turns(self):
         """End-to-end regression for the frozen-cost bug: simulate a
         multi-turn customise loop where each turn streams a response

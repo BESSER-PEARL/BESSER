@@ -309,6 +309,51 @@ def test_two_people_who_each_opened_the_repo_can_both_save(github):
     assert _saved_classes(github, repo) == {"Author", "Book", "Member", "Loan"}
 
 
+def _class_diagrams(*ids: str, index: int = 0) -> dict:
+    project = {
+        "id": "proj-1", "type": "BesserProject", "name": "Library", "createdAt": "2026-04-15T00:00:00Z",
+        "diagrams": {"ClassDiagram": [{"id": d, "title": d, "model": CLASS_DIAGRAM_MODEL} for d in ids]},
+        "currentDiagramIndices": {"ClassDiagram": index},
+    }
+    return {"project": project, "exportedAt": "2026-10-26T00:00:00Z", "version": "2.0.0"}
+
+
+def _merged_indices(base: dict, ours: dict, theirs: dict) -> tuple[list[str], int]:
+    files = repo_model.ModelMerge(ours).merge(json.dumps(base), json.dumps(theirs))
+    project = json.loads(files.files[repo_model.MODEL_FILE])["project"]
+    return [d["id"] for d in project["diagrams"]["ClassDiagram"]], project["currentDiagramIndices"]["ClassDiagram"]
+
+
+def test_the_open_diagram_survives_a_merge_that_removes_one_before_it():
+    # Found in review: index 2 of three diagrams stayed 2 after the other side deleted the first.
+    ids, index = _merged_indices(_class_diagrams("a", "b", "c"), _class_diagrams("a", "b", "c", index=2),
+                                 _class_diagrams("b", "c"))
+
+    assert ids == ["b", "c"]
+    assert ids[index] == "c"
+
+
+def test_the_open_diagram_falls_back_when_the_other_side_deleted_it():
+    ids, index = _merged_indices(_class_diagrams("a", "b", "c"), _class_diagrams("a", "b", "c", index=2),
+                                 _class_diagrams("a", "b"))
+
+    assert ids == ["a", "b"]
+    assert index == 1
+
+
+def test_the_sync_status_says_whose_account_a_commit_is_and_whether_it_is_a_merge(github):
+    repo, base = _model_repo(github)
+    _teammate_saves(github, repo, _with_class(CLASS_DIAGRAM_MODEL, "Member"))
+    assert _save(_with_class(CLASS_DIAGRAM_MODEL, "Loan"), base).json()["status"] == "merged"
+
+    commits = _call("GET", f"/besser_api/github/sync-status?owner=ana&repo=library&branch=main&base_sha={base}",
+                    headers=SESSION).json()["commits_since"]
+
+    assert commits[0]["is_merge"] is True
+    assert [c["author_login"] for c in commits if c["message"].startswith("Add a class")] == ["ben"]
+    assert not next(c for c in commits if c["message"].startswith("Add a class"))["is_merge"]
+
+
 def _renamed(model: dict, element_id: str, name: str) -> dict:
     model = json.loads(json.dumps(model))
     model["elements"][element_id]["name"] = name

@@ -191,10 +191,12 @@ who each add a class collide on the same lines. When a write holds the model,
 2. ``diagrams.json`` is merged three ways as data by ``model_merge.py``: objects
    key by key, lists of objects with an ``id`` item by item (diagram elements in
    either editor engine), lists of unique values as sets. Layout, timestamps
-   and the diagram each person had open keep this side's value; the project's
-   id and creation date keep the repository's, because opening a repository
-   gives the local project new ones. A value both sides changed differently, or
-   a merged model that no longer builds, is a conflict.
+   and the diagram each person had open keep this side's value, found again by
+   diagram id. When both sides changed the project's id or creation date, the
+   repository's value stays: opening a repository gives the local project new
+   ones, and a save with no newer commits writes its own. Nothing reads them. A
+   value both sides changed differently, or a merged model that no longer builds,
+   is a conflict.
 3. The B-UML sources are written again from the merged model. If that export
    fails, the previous sources are kept, not deleted, and the answer's
    ``warnings`` says they may be out of date.
@@ -242,7 +244,8 @@ While a linked project is open, the editor checks the branch every minute and
 when the window regains focus. When someone else's commits arrive, a card says
 who pushed and the latest commit's subject, with **Get latest**, or **Save and
 merge** when there are unsaved edits (``useTeammateChangeNotice.tsx``). It shows
-once per new commit, and not for commits by the signed-in user.
+once per new commit, and not for commits GitHub matched to the signed-in user. A
+commit GitHub matched to no account is compared by its git name.
 
 **Preview**, on that card and in the GitHub menu, shows what is new on the canvas
 before it is taken in (``RepoChangePreview.tsx``). It compares the class diagrams

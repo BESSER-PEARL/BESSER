@@ -422,6 +422,30 @@ def _keeping_records(document: Optional[dict], base: Optional[dict]) -> Optional
     return _with_project(document, {**project, ATTRIBUTION_KEY: project_of(base)[ATTRIBUTION_KEY]})
 
 
+def _keeping_active_diagrams(merged: dict, ours: dict) -> dict:
+    """``merged`` with each open diagram index pointing where ``ours`` was: the merge can add or remove diagrams.
+
+    An index is a position, so it is found again through the diagram's id; a diagram the
+    other side deleted falls back to the last one left.
+    """
+    if not is_besser_project(merged) or not is_besser_project(ours):
+        return merged
+    project, our_project = project_of(merged), project_of(ours)
+    indices = project.get("currentDiagramIndices")
+    diagrams, our_diagrams = project.get("diagrams"), our_project.get("diagrams")
+    if not all(isinstance(value, dict) for value in (indices, diagrams, our_diagrams)):
+        return merged
+    resolved = dict(indices)
+    for diagram_type, index in indices.items():
+        here, there = diagrams.get(diagram_type), our_diagrams.get(diagram_type)
+        if not isinstance(here, list) or not here or not isinstance(index, int) or not isinstance(there, list):
+            continue
+        active = there[index].get("id") if 0 <= index < len(there) and isinstance(there[index], dict) else None
+        ids = [diagram.get("id") if isinstance(diagram, dict) else None for diagram in here]
+        resolved[diagram_type] = ids.index(active) if active in ids else min(max(index, 0), len(here) - 1)
+    return _with_project(merged, {**project, "currentDiagramIndices": resolved})
+
+
 class ModelMerge:
     """How a commit that changed the model is merged with newer commits (``GitHubService.commit_tree``).
 
@@ -443,6 +467,7 @@ class ModelMerge:
             base = json.loads(base_text) if base_text else None
             theirs = json.loads(theirs_text) if theirs_text else None
             merged = merge_documents(base, _keeping_records(self.ours, base), _keeping_records(theirs, base))
+            merged = _keeping_active_diagrams(merged, self.ours)
         except ValueError:
             logger.warning("The repo's %s is not valid JSON; the model is not merged", MODEL_FILE)
             return None

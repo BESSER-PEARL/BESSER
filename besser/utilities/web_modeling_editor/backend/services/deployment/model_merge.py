@@ -27,10 +27,11 @@ OURS_WINS_KEYS = frozenset({
     "exportedAt", "lastUpdate", "updatedAt", "lastModified",
     "editorVersion", "currentDiagramType", "currentDiagramIndices",
 })
-# Who added an element and when the project began; the commit already in the repository was first.
-THEIRS_WINS_KEYS = frozenset({"addedBy", "addedAt", "createdAt"})
-# Only the project's id: a diagram's or an element's id identifies it, so those stay strict.
-PROJECT_ID_PATH = "project.id"
+# Who added an element; the commit already in the repository was first.
+THEIRS_WINS_KEYS = frozenset({"addedBy", "addedAt"})
+# The project's own id and date, in an export envelope or a bare project: opening a repo mints new ones.
+# Exact paths: a diagram's or an element's id identifies it, so those stay strict.
+PROJECT_IDENTITY_PATHS = frozenset({"project.id", "project.createdAt", "id", "createdAt"})
 
 
 class MergeConflict(Exception):
@@ -58,7 +59,7 @@ def merge_values(base: Any, ours: Any, theirs: Any, path: str = "") -> Any:
     key = path.rsplit(".", 1)[-1]
     if key in OURS_WINS_KEYS and ours is not _MISSING:
         return ours
-    if (key in THEIRS_WINS_KEYS or path == PROJECT_ID_PATH) and theirs is not _MISSING:
+    if (key in THEIRS_WINS_KEYS or path in PROJECT_IDENTITY_PATHS) and theirs is not _MISSING:
         return theirs
     if isinstance(ours, dict) and isinstance(theirs, dict):
         return _merge_dicts(base if isinstance(base, dict) else {}, ours, theirs, path)

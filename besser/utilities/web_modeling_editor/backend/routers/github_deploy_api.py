@@ -1191,6 +1191,8 @@ class GitHubCommitResponse(ResponseModel):
     sha: str
     message: str
     author: str
+    author_login: Optional[str] = None
+    is_merge: bool = False
     date: str
     html_url: str
     # The BESSER-Origin trailer ("spec-driven-agent", "editor"); None for a person's commit.
@@ -1466,6 +1468,8 @@ def _commit_response(commit: dict) -> "GitHubCommitResponse":
         sha=commit.get("sha", ""),
         message=commit.get("message", ""),
         author=commit.get("author", ""),
+        author_login=commit.get("author_login"),
+        is_merge=len(commit.get("parents") or []) > 1,
         date=commit.get("date", ""),
         html_url=commit.get("html_url", ""),
         origin=repo_model.commit_origin(commit.get("message", "")),

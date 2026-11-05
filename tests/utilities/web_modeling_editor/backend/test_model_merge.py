@@ -100,13 +100,34 @@ def test_two_people_who_each_opened_the_repo_can_merge():
 
 def test_what_each_person_was_looking_at_is_no_conflict():
     repo = _opened_by("repo", {})
-    ana = _opened_by("ana", {}, tab="GUINoCodeDiagram", index=1, editor="1.0.1")
-    ben = _opened_by("ben", {}, tab="AgentDiagram", index=2, editor="1.0.2")
+    ana = _opened_by("ana", {}, tab="GUINoCodeDiagram", editor="1.0.1")
+    ben = _opened_by("ben", {}, tab="AgentDiagram", editor="1.0.2")
 
-    project = merge_documents(repo, ben, ana)["project"]
+    merged = merge_documents(repo, ben, ana)
 
-    assert project["currentDiagramType"] == "AgentDiagram"
-    assert project["currentDiagramIndices"] == {"ClassDiagram": 2}
+    assert merged["project"]["currentDiagramType"] == "AgentDiagram"
+    assert merged["editorVersion"] == "1.0.2"
+
+
+def test_a_bare_project_keeps_the_repos_identity_too():
+    repo = {"id": "r", "createdAt": "0", "name": "A"}
+    ours = {"id": "o", "createdAt": "1", "name": "A"}
+    theirs = {"id": "t", "createdAt": "2", "name": "A"}
+
+    assert merge_documents(repo, ours, theirs) == {"id": "t", "createdAt": "2", "name": "A"}
+
+
+def test_a_save_over_an_unchanged_repo_id_writes_its_own():
+    # Only both sides changing it needs a rule; the web_editor_github docs say so.
+    assert merge_documents({"project": {"id": "r"}}, {"project": {"id": "o"}}, {"project": {"id": "r"}}) == {
+        "project": {"id": "o"},
+    }
+
+
+def test_a_created_at_elsewhere_in_the_model_still_conflicts():
+    with pytest.raises(MergeConflict) as conflict:
+        merge_documents({"a": {"createdAt": "0"}}, {"a": {"createdAt": "1"}}, {"a": {"createdAt": "2"}})
+    assert conflict.value.path == "a.createdAt"
 
 
 def test_only_the_project_id_is_exempt_not_a_diagrams_or_an_elements():

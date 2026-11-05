@@ -1396,6 +1396,8 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
             "sha": c.get("sha"),
             "message": c.get("commit", {}).get("message", ""),
             "author": c.get("commit", {}).get("author", {}).get("name", "Unknown"),
+            # The account GitHub matched the commit to; a git name can be anything. None when it matched none.
+            "author_login": (c.get("author") or {}).get("login"),
             "date": c.get("commit", {}).get("author", {}).get("date", ""),
             "html_url": c.get("html_url", ""),
             "parents": [p.get("sha") for p in c.get("parents", [])],

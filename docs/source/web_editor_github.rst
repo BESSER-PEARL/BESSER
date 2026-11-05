@@ -252,6 +252,8 @@ before it is taken in (``RepoChangePreview.tsx``). It compares the class diagram
 of the last synced commit and the branch head, draws new and changed classes and
 new relationships over the canvas, and marks removed classes. The model does not
 change. Other diagram types are not drawn; taking the change in brings them too.
+A model is a file anyone with write access can edit, so the engine sanitises its
+icons and colours where it draws them (``sanitize-svg.ts``, ``safe-color.ts``).
 
 After a pull, the editor marks what the pull brought in
 (``pullRepoIntoProject.ts``): elements the local project lacks and that have a

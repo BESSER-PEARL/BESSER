@@ -10,10 +10,23 @@ replaces a link rather than following it.
 """
 
 import os
+import posixpath
 import shutil
 import stat
 import tempfile
 from typing import Iterable, Iterator
+
+# An NTFS junction: a directory to os.lstat and os.path.islink, though it leads elsewhere like a link.
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+
+
+def is_link(path: str) -> bool:
+    """True for a symlink or an NTFS junction, without following it."""
+    try:
+        info = os.lstat(path)
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == _IO_REPARSE_TAG_MOUNT_POINT
 
 
 def is_plain_entry(path: str) -> bool:
@@ -22,7 +35,7 @@ def is_plain_entry(path: str) -> bool:
         mode = os.lstat(path).st_mode
     except OSError:
         return False
-    return stat.S_ISREG(mode) or stat.S_ISDIR(mode)
+    return (stat.S_ISREG(mode) or stat.S_ISDIR(mode)) and not is_link(path)
 
 
 def _refuse_link_parents(path: str, root: "str | None") -> str:
@@ -40,7 +53,7 @@ def _refuse_link_parents(path: str, root: "str | None") -> str:
         current = root
         for part in rel.split(os.sep)[:-1]:
             current = os.path.join(current, part)
-            if os.path.islink(current):
+            if is_link(current):
                 raise PermissionError(f"reached through a link: {path}")
     return path
 
@@ -58,7 +71,7 @@ def is_plain_file(path, root: "str | None" = None) -> bool:
     try:
         _refuse_unless_plain_file(os.fspath(path), None if root is None else os.fspath(root))
         return True
-    except OSError:
+    except (OSError, ValueError):  # ValueError: a NUL byte in the path
         return False
 
 
@@ -117,19 +130,21 @@ def open_plain_write(path, mode: str = "w", *, root: "str | None" = None, **kwar
         raise
 
 
-def write_atomic_plain(path, text: str, *, root: "str | None" = None,
-                       encoding: str = "utf-8", newline: "str | None" = None) -> None:
-    """Replace ``path`` with ``text`` via a fresh temp file and a rename.
+def write_atomic_plain_bytes(path, content: bytes, *, root: "str | None" = None,
+                             mode: "int | None" = None) -> None:
+    """Replace ``path`` with ``content`` via a fresh temp file and a rename.
 
-    ``mkstemp`` creates the temp file with ``O_EXCL``, and the rename
-    replaces a link at ``path`` rather than writing through it. ``newline``
-    is ``open``'s: ``""`` writes the line endings of ``text`` unchanged.
+    ``mkstemp`` creates the temp file with ``O_EXCL``, and the rename replaces a
+    link at ``path`` rather than writing through it. ``mode`` sets the new file's
+    permissions (the temp file's are 0600).
     """
     path = _refuse_link_parents(os.fspath(path), None if root is None else os.fspath(root))
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".besser_tmp_")
     try:
-        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+        if mode is not None:
+            os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -137,6 +152,32 @@ def write_atomic_plain(path, text: str, *, root: "str | None" = None,
         except OSError:
             pass
         raise
+
+
+def is_plain_relpath(rel: str) -> bool:
+    """A plain workspace-relative path (no ``..``, ``\\``, drive, root or NUL)."""
+    return (isinstance(rel, str) and rel == posixpath.normpath(rel) and not rel.startswith(("/", "../"))
+            and not any(c in rel for c in ("\\", ":", "\x00")))
+
+
+def is_text(content: bytes) -> bool:
+    """UTF-8 without NUL bytes."""
+    if b"\x00" in content:
+        return False
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def write_atomic_plain(path, text: str, *, root: "str | None" = None,
+                       encoding: str = "utf-8", newline: "str | None" = None) -> None:
+    """:func:`write_atomic_plain_bytes` for text. ``newline`` is ``open``'s:
+    ``""`` writes the line endings of ``text`` unchanged."""
+    if newline != "":
+        text = text.replace("\n", newline or os.linesep)
+    write_atomic_plain_bytes(path, text.encode(encoding), root=root)
 
 
 def walk_plain(top: str) -> Iterator[tuple[str, list[str], list[str]]]:

@@ -40,6 +40,8 @@ class SQLGenerator(GeneratorInterface):
             joined by ``and``). Other constraints are skipped. Defaults to ``True``.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = "sqlite",
                  ocl_check_constraints: bool = True):
         super().__init__(model, output_dir)

@@ -3,6 +3,7 @@ This module generates Django code using Jinja2 templates based on BUML models.
 """
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 ##############################
 #    Django Generator
 ##############################
+# One plain literal, as startproject writes it: the record is a file, so it must not supply code.
+_SECRET_KEY_LINE = re.compile(rb"^SECRET_KEY = '[^'\\\r\n]*'(?=\r?$)", re.MULTILINE)
+_RECORDED_SECRET_KEY = b"SECRET_KEY = 'not-in-the-record'"
+
+
 class DjangoGenerator(GeneratorInterface):
     """
     DjangoGenerator is responsible for generating Django executable code based on
@@ -39,6 +45,8 @@ class DjangoGenerator(GeneratorInterface):
         output_dir (str, optional): Directory where generated code will be saved. Defaults to None.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, project_name: str, app_name: str,
                  gui_model: GUIModel = None, containerization: bool = False,
                  module: Module = None, output_dir: str = None):
@@ -55,7 +63,7 @@ class DjangoGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
-        self.env.globals.update(normalize_code=normalize_method_code)
+        self.env.globals.update(normalize_code=normalize_method_code, sort_by_timestamp=sort_by_timestamp)
         register_default_literals(self.env)
         # Register custom Jinja2 tests once for all methods
         self.env.tests['is_Button'] = self.is_button
@@ -141,6 +149,26 @@ class DjangoGenerator(GeneratorInterface):
         """Check if the given value is an instance of Enumeration class."""
         return isinstance(value, Enumeration)
 
+    def _settings_path(self) -> str:
+        return f"{self.project_name}/{self.project_name}/settings.py"
+
+    def _keep_generated_values(self, previous: dict[str, bytes], generated: dict[str, bytes]) -> dict[str, bytes]:
+        """``startproject`` draws a new ``SECRET_KEY`` each run; rotating it would log every user out.
+
+        Once a record exists this carries over its placeholder, so the merge leaves the file's own line alone.
+        """
+        settings = self._settings_path()
+        key = _SECRET_KEY_LINE.search(previous[settings]) if settings in previous else None
+        if not key or settings not in generated:
+            return generated
+        return {**generated, settings: _SECRET_KEY_LINE.sub(lambda _: key.group(0), generated[settings], count=1)}
+
+    def _without_secrets(self, files: dict[str, bytes]) -> dict[str, bytes]:
+        settings = self._settings_path()
+        if settings not in files:
+            return files
+        return {**files, settings: _SECRET_KEY_LINE.sub(lambda _: _RECORDED_SECRET_KEY, files[settings], count=1)}
+
     ## DjangoGeneratorModelsFile:
     def generate_models(self):
 
@@ -221,7 +249,7 @@ class DjangoGenerator(GeneratorInterface):
 
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -265,7 +293,7 @@ class DjangoGenerator(GeneratorInterface):
         template = self.env.get_template('forms.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -315,7 +343,7 @@ class DjangoGenerator(GeneratorInterface):
         template = self.env.get_template('views.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -361,7 +389,7 @@ class DjangoGenerator(GeneratorInterface):
         template = self.env.get_template('home_page.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -400,17 +428,17 @@ class DjangoGenerator(GeneratorInterface):
 
         # Select the first module if none was specified
         if self.module is None:
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = self.module.screens
 
         # Generate HTML files for each screen in screens
-        for module in self.gui_model.modules:
-            for screen in module.screens:
+        for module in sort_by_timestamp(self.gui_model.modules):
+            for screen in sort_by_timestamp(module.screens):
             # Loop through view elements to find `source_name`
-                for component in screen.view_elements:
+                for component in sort_by_timestamp(screen.view_elements):
                     if self.is_list(component):  # Ensure it's a List component
-                        for source in component.list_sources:
+                        for source in sort_by_timestamp(component.list_sources):
                             if self.is_model_element(source):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
@@ -443,17 +471,17 @@ class DjangoGenerator(GeneratorInterface):
 
         # Select the first module if none was specified
         if self.module is None:
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = self.module.screens
 
         # Generate HTML files for each screen in screens
-        for module in self.gui_model.modules:
-            for screen in module.screens:
+        for module in sort_by_timestamp(self.gui_model.modules):
+            for screen in sort_by_timestamp(module.screens):
                 # Loop through view elements to find `source_name`
-                for component in screen.view_elements:
+                for component in sort_by_timestamp(screen.view_elements):
                     if self.is_list(component):  # Ensure it's a List component
-                        for source in component.list_sources:
+                        for source in sort_by_timestamp(component.list_sources):
                             if self.is_model_element(source):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
@@ -493,17 +521,17 @@ class DjangoGenerator(GeneratorInterface):
 
         # Select the first module if none was specified
         if self.module is None:
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = self.module.screens
 
         # Generate HTML files for each screen in screens
-        for module in self.gui_model.modules:
-            for screen in module.screens:
+        for module in sort_by_timestamp(self.gui_model.modules):
+            for screen in sort_by_timestamp(module.screens):
                 # Loop through view elements to find `source_name`
-                for component in screen.view_elements:
+                for component in sort_by_timestamp(screen.view_elements):
                     if self.is_list(component):  # Ensure it's a List component
-                        for source in component.list_sources:
+                        for source in sort_by_timestamp(component.list_sources):
                             if self.is_model_element(source):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name

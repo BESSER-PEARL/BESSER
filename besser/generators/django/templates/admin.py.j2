@@ -1,6 +1,6 @@
 from django.contrib import admin
 from {{app_name}}.models import *
-{% for class in model.get_classes() %}
+{% for class in sort(model.get_classes()) %}
 
 {%- if class.methods %}
 {%- set method_list = sort(class.methods) %}

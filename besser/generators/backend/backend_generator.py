@@ -36,6 +36,8 @@ class BackendGenerator(GeneratorInterface):
         api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
                  api_title: str = None, api_description: str = None, api_version: str = None):
         super().__init__(model, output_dir)
@@ -79,6 +81,11 @@ class BackendGenerator(GeneratorInterface):
             else:
                 logger.warning("Docker configuration file not found at path: %s", self.docker_config_path)
             return None
+
+    def _regeneration_refusal(self) -> "str | None":
+        if self.docker_image and self.config:
+            return "with docker_image and a Docker configuration it builds and pushes an image without your edits."
+        return None
 
     def generate(self):
         """

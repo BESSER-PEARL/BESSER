@@ -24,6 +24,9 @@ Pass ``ocl_check_constraints=True`` to ``generate`` to turn the simple OCL invar
 into ``CheckConstraint`` entries in each table's ``__table_args__`` (off by default). Which invariants
 are translated is described in :ref:`sql-ocl-check-constraints`.
 
+Both can also be given to the generator when you create it, which is how
+:doc:`regenerating` gets them, as it calls ``generate`` with no arguments.
+
 Generated Output
 ----------------
 

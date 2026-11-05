@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 class JavaGenerator(GeneratorInterface):
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None, package_name: str = None):
         super().__init__(model, output_dir)
         self.package_name = package_name

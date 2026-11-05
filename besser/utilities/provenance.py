@@ -19,6 +19,8 @@ from urllib.parse import quote
 from besser.utilities.workspace_fs import open_plain, open_plain_write
 
 PROVENANCE_FILENAME = "BESSER_GENERATION.md"
+ATTRIBUTION_FILENAME = ".besser_attribution.json"
+GENERATOR_OUTPUT_FILENAME = ".besser_generator_output.json"
 BESSER_URL = "https://github.com/BESSER-PEARL/BESSER"
 EDITOR_URL = "https://editor.besser-pearl.org"
 CATALOG_URL = "https://github.com/BESSER-PEARL/Built-with-BESSER"

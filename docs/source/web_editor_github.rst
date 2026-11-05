@@ -190,9 +190,11 @@ who each add a class collide on the same lines. When a write holds the model,
    scratch branch (``besser/sync-merge-…``).
 2. ``diagrams.json`` is merged three ways as data by ``model_merge.py``: objects
    key by key, lists of objects with an ``id`` item by item (diagram elements in
-   either editor engine), lists of unique values as sets. Layout and timestamps
-   keep this side's value. A value both sides changed differently, or a merged
-   model that no longer builds, is a conflict.
+   either editor engine), lists of unique values as sets. Layout, timestamps
+   and the diagram each person had open keep this side's value; the project's
+   id and creation date keep the repository's, because opening a repository
+   gives the local project new ones. A value both sides changed differently, or
+   a merged model that no longer builds, is a conflict.
 3. The B-UML sources are written again from the merged model. If that export
    fails, the previous sources are kept, not deleted, and the answer's
    ``warnings`` says they may be out of date.

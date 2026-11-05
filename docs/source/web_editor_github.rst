@@ -241,9 +241,14 @@ Who added what
 While a linked project is open, the editor checks the branch every minute and
 when the window regains focus. When someone else's commits arrive, a card says
 who pushed and the latest commit's subject, with **Get latest**, or **Save and
-merge** when there are unsaved edits, and **What changed**, which opens the
-model history (``useTeammateChangeNotice.tsx``). It shows once per new commit,
-and not for commits by the signed-in user.
+merge** when there are unsaved edits (``useTeammateChangeNotice.tsx``). It shows
+once per new commit, and not for commits by the signed-in user.
+
+**Preview**, on that card and in the GitHub menu, shows what is new on the canvas
+before it is taken in (``RepoChangePreview.tsx``). It compares the class diagrams
+of the last synced commit and the branch head, draws new and changed classes and
+new relationships over the canvas, and marks removed classes. The model does not
+change. Other diagram types are not drawn; taking the change in brings them too.
 
 After a pull, the editor marks what the pull brought in
 (``pullRepoIntoProject.ts``): elements the local project lacks and that have a

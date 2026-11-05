@@ -289,6 +289,26 @@ def test_two_people_adding_different_classes_both_keep_theirs(github):
     assert "Member" in domain and "Loan" in domain
 
 
+def test_two_people_who_each_opened_the_repo_can_both_save(github):
+    """Live 2026-11-05: opening mints a project id and createdAt, so the second save reported a conflict."""
+    repo, base = _model_repo(github)
+    ben = _envelope(_with_class(CLASS_DIAGRAM_MODEL, "Member"))
+    ben["project"].update(id="project-of-ben", createdAt="2026-11-05T09:00:00Z")
+    github.commit_files(repo, repo_model.model_files(ben),
+                        repo_model.with_origin("Add a class", repo_model.ORIGIN_EDITOR), author="ben")
+    ana = _envelope(_with_class(CLASS_DIAGRAM_MODEL, "Loan"))
+    ana["project"].update(id="project-of-ana", createdAt="2026-11-05T09:30:00Z")
+
+    r = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "ana", "repo": "library", "commit_message": "Add Loan",
+        "project_data": ana["project"], "project_export": ana, "base_commit_sha": base,
+    })
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "merged", r.json()
+    assert _saved_classes(github, repo) == {"Author", "Book", "Member", "Loan"}
+
+
 def _renamed(model: dict, element_id: str, name: str) -> dict:
     model = json.loads(json.dumps(model))
     model["elements"][element_id]["name"] = name

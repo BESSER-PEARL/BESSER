@@ -44,7 +44,8 @@ Where the LLM sits
 ------------------
 
 Agentic development tools differ first in where they place the LLM. This is
-the choice that decides what can be regenerated later and who keeps the code.
+the choice that decides what can be regenerated later and where the application
+lives.
 
 .. container:: besser-diagram
 
@@ -53,13 +54,14 @@ the choice that decides what can be regenerated later and who keeps the code.
 
    BESSER follows C: the model drives deterministic generators, and the LLM
    handles what they could not. C has to solve the merge when the model changes
-   (see :doc:`regeneration`), because the generated code has been edited.
+   (see :doc:`regeneration`), because the generated code has been edited. Today that
+   merge covers the FastAPI backend.
 
 The whole system
 ----------------
 
-Three repositories run as separate services. The modeling agent and the
-Spec-Driven worker never talk to each other: the agent asks the browser to
+The editor, the modeling agent, the backend and the Spec-Driven worker run as
+separate services. The modeling agent and the worker never talk to each other: the agent asks the browser to
 start a run, and the browser sends the model it holds at that moment.
 
 .. container:: besser-diagram
@@ -68,7 +70,7 @@ start a run, and the browser sends the model it holds at that moment.
       :file: ../_static/diagrams/system.svg
 
    The assistant's output is editor JSON. B-UML objects exist only once the
-   backend converts a project.
+   backend or the worker converts a project.
 
 When to use it
 --------------

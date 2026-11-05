@@ -1,16 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 344" role="img" aria-label="Generator output stored from the previous model is the merge base, the generator run on the edited model is theirs, and the current app is ours. Clean merges need no LLM; the agent only receives files that would conflict.">
-<defs><marker id="regeneration-a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker><marker id="regeneration-ar" viewBox="0 0 8 8" refX="0.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M8,0 L0,4 L8,8 z"/></marker></defs>
-<g class="n k-d"><rect x="10" y="34" width="165" height="54" rx="6"/><text class="t" x="22" y="58">Model, previous</text><text class="s" x="22" y="73">as stored with the run</text></g>
-<g class="n k-d"><rect x="10" y="112" width="165" height="54" rx="6"/><text class="t" x="22" y="136">compare_with_base</text><text class="s" x="22" y="151">no LLM; finds renames</text></g>
-<g class="n k-h"><rect x="10" y="190" width="165" height="54" rx="6"/><text class="t" x="22" y="214">Model, edited</text><text class="s" x="22" y="229">by you, on the canvas</text></g>
-<g class="n k-d"><rect x="10" y="282" width="165" height="54" rx="6"/><text class="t" x="22" y="306">App today</text><text class="s" x="22" y="321">generator + agent + you</text></g>
+<defs><marker id="regeneration-a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+<g class="n k-d"><rect x="10" y="34" width="165" height="54" rx="6"/><text class="t" x="22" y="58">Model, previous</text>
+<text class="s" x="22" y="73">as stored with the run</text>
+</g>
+<g class="n k-d"><rect x="10" y="112" width="165" height="54" rx="6"/><text class="t" x="22" y="136">compare_with_base</text>
+<text class="s" x="22" y="151">no LLM; finds renames</text>
+</g>
+<g class="n k-h"><rect x="10" y="190" width="165" height="54" rx="6"/><text class="t" x="22" y="214">Model, edited</text>
+<text class="s" x="22" y="229">by you, on the canvas</text>
+</g>
+<g class="n k-d"><rect x="10" y="282" width="165" height="54" rx="6"/><text class="t" x="22" y="306">App today</text>
+<text class="s" x="22" y="321">generator + agent + you</text>
+</g>
 <path class="e" d="M92,88 L92,112" marker-end="url(#regeneration-a)"/>
 <path class="e" d="M92,190 L92,166" marker-end="url(#regeneration-a)"/>
-<g class="n k-d"><rect x="222" y="34" width="185" height="54" rx="6"/><text class="t" x="234" y="58">Stored generator output</text><text class="s" x="234" y="73">checked by regenerating it</text></g>
-<g class="n k-d"><rect x="222" y="190" width="185" height="54" rx="6"/><text class="t" x="234" y="214">Generator on edited model</text><text class="s" x="234" y="229">writes to a scratch folder</text></g>
+<g class="n k-d"><rect x="222" y="34" width="185" height="54" rx="6"/><text class="t" x="234" y="58">Stored generator output</text>
+<text class="s" x="234" y="73">checked by regenerating it</text>
+</g>
+<g class="n k-d"><rect x="222" y="190" width="185" height="54" rx="6"/><text class="t" x="234" y="214">Generator, edited model</text>
+<text class="s" x="234" y="229">writes to a scratch folder</text>
+</g>
 <path class="e" d="M175,61 L222,61" marker-end="url(#regeneration-a)"/>
 <path class="e" d="M175,217 L222,217" marker-end="url(#regeneration-a)"/>
-<g class="n k-d"><rect x="462" y="122" width="148" height="92" rx="6"/><text class="t" x="474" y="158">Three-way merge</text><text class="s" x="474" y="173">file by file;</text><text class="s" x="474" y="187">no LLM call</text></g>
+<g class="n k-d"><rect x="462" y="122" width="148" height="92" rx="6"/><text class="t" x="474" y="158">Three-way merge</text>
+<text class="s" x="474" y="173">file by file;</text>
+<text class="s" x="474" y="187">no LLM call</text>
+</g>
 <path class="e" d="M407,61 L435,61 L462,132" marker-end="url(#regeneration-a)"/>
 <text class="lab" x="412" y="52" text-anchor="start">base</text>
 <path class="e" d="M407,217 L435,217 L462,186" marker-end="url(#regeneration-a)"/>
@@ -18,13 +33,20 @@
 <path class="e" d="M175,309 L435,309 L462,204" marker-end="url(#regeneration-a)"/>
 <text class="lab" x="395" y="303" text-anchor="start">ours</text>
 <path class="e d" d="M175,139 L462,158" marker-end="url(#regeneration-a)"/>
-<text class="lab" x="190" y="134" text-anchor="start">class renames, from the model</text>
-<g class="n k-d"><rect x="650" y="60" width="200" height="54" rx="6"/><text class="t" x="662" y="84">Clean merge</text><text class="s" x="662" y="99">file updated with no LLM call</text></g>
-<g class="n k-d"><rect x="650" y="142" width="200" height="54" rx="6"/><text class="t" x="662" y="166">Would conflict</text><text class="s" x="662" y="181">file kept whole, note to agent</text></g>
-<g class="n k-l"><rect x="650" y="224" width="200" height="54" rx="6"/><text class="t" x="662" y="248">Agent</text><text class="s" x="662" y="263">only what did not merge</text></g>
+<text class="lab" x="322" y="142" text-anchor="start">class renames</text>
+<g class="n k-d"><rect x="650" y="60" width="200" height="54" rx="6"/><text class="t" x="662" y="84">Clean merge</text>
+<text class="s" x="662" y="99">file updated with no LLM call</text>
+</g>
+<g class="n k-d"><rect x="650" y="142" width="200" height="54" rx="6"/><text class="t" x="662" y="166">Would conflict</text>
+<text class="s" x="662" y="181">file kept whole, note to agent</text>
+</g>
+<g class="n k-l"><rect x="650" y="224" width="200" height="54" rx="6"/><text class="t" x="662" y="248">Agent</text>
+<text class="s" x="662" y="263">only what did not merge</text>
+</g>
 <path class="e" d="M610,150 L650,87" marker-end="url(#regeneration-a)"/>
 <path class="e" d="M610,168 L650,169" marker-end="url(#regeneration-a)"/>
 <path class="e" d="M750,196 L750,224" marker-end="url(#regeneration-a)"/>
-<path class="e" d="M750,60 L750,16 L314,16 L314,34" marker-end="url(#regeneration-a)"/>
-<text class="lab" x="322" y="11" text-anchor="start">output becomes the next base; a file that did not merge keeps its old base</text>
+<path class="e" d="M314,190 L314,88" marker-end="url(#regeneration-a)"/>
+<text class="lab" x="306" y="106" text-anchor="end">next base, except</text>
+<text class="lab" x="306" y="120" text-anchor="end">files not merged</text>
 </svg>

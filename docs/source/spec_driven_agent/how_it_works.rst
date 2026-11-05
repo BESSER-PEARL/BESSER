@@ -10,7 +10,9 @@ A run is a three-phase pipeline (``LLMOrchestrator.run`` in
       :file: ../_static/diagrams/create-run.svg
 
    A new run. Teal boxes are LLM calls, and everything else is deterministic
-   code. The agent is one conversation with a tool list.
+   code. The agent is one conversation with a tool list. Around Phase 1, two
+   deterministic checks run: Phase 0 turns mandatory creation cycles in the model
+   into blockers before anything is generated, and Phase 1.5 validates the scaffold.
 
 The three phases
 ----------------

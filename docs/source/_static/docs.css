@@ -109,7 +109,7 @@ a:focus-visible, button:focus-visible, input:focus-visible {
 }
 
 @media print {
-  .doc-path, .doc-lead { break-inside: avoid; }
+  .doc-path, .doc-lead, .besser-diagram { break-inside: avoid; }
 }
 
 /* Architecture diagrams: inline SVG, so they follow the theme. */
@@ -120,16 +120,16 @@ a:focus-visible, button:focus-visible, input:focus-visible {
 .besser-diagram .k-d rect { fill: var(--md-default-bg-color); stroke: var(--md-default-fg-color--lighter); }
 .besser-diagram .k-l rect { fill: var(--besser-surface); stroke: var(--md-primary-fg-color); stroke-width: 1.8; }
 .besser-diagram .k-h rect { fill: transparent; stroke: var(--md-default-fg-color); stroke-dasharray: 4 3; }
-.besser-diagram .t { font: 600 14px var(--md-text-font), sans-serif; fill: var(--md-default-fg-color); }
+.besser-diagram .t { font: 600 14px var(--md-text-font), "Helvetica Neue", Arial, sans-serif; fill: var(--md-default-fg-color); }
 .besser-diagram .k-l .t { fill: var(--md-accent-fg-color); }
-.besser-diagram .s { font: 400 12px var(--md-text-font), sans-serif; fill: var(--md-default-fg-color--light); }
+.besser-diagram .s { font: 400 12px var(--md-text-font), "Helvetica Neue", Arial, sans-serif; fill: var(--md-default-fg-color--light); }
 .besser-diagram .lab { font: 400 11px var(--md-code-font), monospace; fill: var(--md-default-fg-color--light); }
 .besser-diagram .bt { font: 600 11.5px var(--md-code-font), monospace; fill: var(--md-default-fg-color); }
 .besser-diagram .box { fill: none; stroke: var(--besser-border); stroke-width: 1.4; }
 .besser-diagram .e { fill: none; stroke: var(--md-default-fg-color--lighter); stroke-width: 1.3; }
 .besser-diagram .e.d { stroke-dasharray: 5 4; }
 .besser-diagram .ah { fill: var(--md-default-fg-color--light); }
-@media (max-width: 44em) {
+@media (max-width: 700px) {
   .besser-diagram { overflow-x: auto; }
   .besser-diagram > svg { min-width: 40rem; }
 }

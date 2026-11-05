@@ -25,8 +25,9 @@ be combined safely.
    .. raw:: html
       :file: ../_static/diagrams/regeneration.svg
 
-   A later modify run with a changed model. The base is real stored output, so
-   a change in the generator itself is not read as an edit.
+   A later modify run with a changed model. The base is the generator's stored
+   output, rebuilt after a BESSER upgrade so that a change in the generator itself
+   is not read as an edit.
 
 When it runs
 ------------

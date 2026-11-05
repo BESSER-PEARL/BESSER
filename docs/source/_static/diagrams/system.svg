@@ -1,12 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 616" role="img" aria-label="The browser connects three services. The modeling agent never calls the Spec-Driven worker: it sends the browser an action, and the browser opens the run with the model it holds.">
 <defs><marker id="system-a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker><marker id="system-ar" viewBox="0 0 8 8" refX="0.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M8,0 L0,4 L8,8 z"/></marker></defs>
-<g class="n k-h"><rect x="330" y="6" width="160" height="38" rx="6"/><text class="t" x="410.0" y="29" text-anchor="middle">You</text></g>
+<g class="n k-h"><rect x="330" y="6" width="160" height="38" rx="6"/><text class="t" x="410.0" y="29" text-anchor="middle">You</text>
+</g>
 <path class="e" d="M410,44 L410,70" marker-end="url(#system-a)"/>
 <text class="lab" x="420" y="62" text-anchor="start">sentence, model edits, go-ahead</text>
 <rect class="box" x="10" y="70" width="800" height="100" rx="9"/><text class="bt" x="26" y="90">Web Modeling Editor, in the browser</text>
-<g class="n k-d"><rect x="26" y="100" width="222" height="56" rx="6"/><text class="t" x="38" y="125">Chat client</text><text class="s" x="38" y="140">applies whole-reply actions</text></g>
-<g class="n k-d"><rect x="299" y="100" width="222" height="56" rx="6"/><text class="t" x="311" y="125">Canvas + model store</text><text class="s" x="311" y="140">project JSON, all diagrams</text></g>
-<g class="n k-d"><rect x="572" y="100" width="222" height="56" rx="6"/><text class="t" x="584" y="125">Run card</text><text class="s" x="584" y="140">phases, checks, file split</text></g>
+<g class="n k-d"><rect x="26" y="100" width="222" height="56" rx="6"/><text class="t" x="38" y="125">Chat client</text>
+<text class="s" x="38" y="140">applies whole-reply actions</text>
+</g>
+<g class="n k-d"><rect x="299" y="100" width="222" height="56" rx="6"/><text class="t" x="311" y="125">Canvas + model store</text>
+<text class="s" x="311" y="140">project JSON, all diagrams</text>
+</g>
+<g class="n k-d"><rect x="572" y="100" width="222" height="56" rx="6"/><text class="t" x="584" y="125">Run card</text>
+<text class="s" x="584" y="140">phases, checks, file split</text>
+</g>
 <path class="e" d="M100,170 L100,250" marker-end="url(#system-a)"/>
 <path class="e" d="M180,250 L180,170" marker-end="url(#system-a)"/>
 <text class="lab" x="94" y="205" text-anchor="end">message +</text>
@@ -23,30 +30,62 @@
 <text class="lab" x="736" y="205" text-anchor="start">SSE, replay</text>
 <text class="lab" x="736" y="219" text-anchor="start">from a log</text>
 <rect class="box" x="10" y="250" width="255" height="272" rx="9"/><text class="bt" x="26" y="270">Modeling agent</text>
-<g class="n k-l"><rect x="26" y="280" width="223" height="42" rx="6"/><text class="t" x="38" y="298">Classifier</text><text class="s" x="38" y="313">one forced call per message</text></g>
-<g class="n k-d"><rect x="26" y="328" width="223" height="42" rx="6"/><text class="t" x="38" y="346">Guards + open questions</text><text class="s" x="38" y="361">before and after the classifier</text></g>
-<g class="n k-l"><rect x="26" y="376" width="223" height="42" rx="6"/><text class="t" x="38" y="394">Diagram handlers</text><text class="s" x="38" y="409">semantic spec only</text></g>
-<g class="n k-d"><rect x="26" y="424" width="223" height="42" rx="6"/><text class="t" x="38" y="442">Layout engine</text><text class="s" x="38" y="457">adds every position</text></g>
-<g class="n k-d"><rect x="26" y="472" width="223" height="42" rx="6"/><text class="t" x="38" y="490">Generation handler</text><text class="s" x="38" y="505">stash, confirm, trigger</text></g>
+<g class="n k-l"><rect x="26" y="280" width="223" height="42" rx="6"/><text class="t" x="38" y="298">Classifier</text>
+<text class="s" x="38" y="313">one forced call per message</text>
+</g>
+<g class="n k-d"><rect x="26" y="328" width="223" height="42" rx="6"/><text class="t" x="38" y="346">Guards + open questions</text>
+<text class="s" x="38" y="361">before and after the classifier</text>
+</g>
+<g class="n k-l"><rect x="26" y="376" width="223" height="42" rx="6"/><text class="t" x="38" y="394">Diagram handlers</text>
+<text class="s" x="38" y="409">semantic spec only</text>
+</g>
+<g class="n k-d"><rect x="26" y="424" width="223" height="42" rx="6"/><text class="t" x="38" y="442">Layout engine</text>
+<text class="s" x="38" y="457">adds every position</text>
+</g>
+<g class="n k-d"><rect x="26" y="472" width="223" height="42" rx="6"/><text class="t" x="38" y="490">Generation handler</text>
+<text class="s" x="38" y="505">stash, confirm, trigger</text>
+</g>
 <rect class="box" x="283" y="250" width="255" height="272" rx="9"/><text class="bt" x="299" y="270">Backend</text>
-<g class="n k-d"><rect x="299" y="280" width="223" height="42" rx="6"/><text class="t" x="311" y="298">Validator</text><text class="s" x="311" y="313">JSON to B-UML, metamodel checks</text></g>
-<g class="n k-d"><rect x="299" y="328" width="223" height="42" rx="6"/><text class="t" x="311" y="346">Generators</text><text class="s" x="311" y="361">one registry, no LLM</text></g>
-<g class="n k-d"><rect x="299" y="376" width="223" height="42" rx="6"/><text class="t" x="311" y="394">GitHub push + import</text><text class="s" x="311" y="409">merges, never reverts</text></g>
-<g class="n k-d"><rect x="299" y="424" width="223" height="42" rx="6"/><text class="t" x="311" y="442">Reverse engineering</text><text class="s" x="311" y="457">AST; LLM reading needs consent</text></g>
+<g class="n k-d"><rect x="299" y="280" width="223" height="42" rx="6"/><text class="t" x="311" y="298">Validator</text>
+<text class="s" x="311" y="313">JSON to B-UML, metamodel checks</text>
+</g>
+<g class="n k-d"><rect x="299" y="328" width="223" height="42" rx="6"/><text class="t" x="311" y="346">Generators</text>
+<text class="s" x="311" y="361">one registry, no LLM</text>
+</g>
+<g class="n k-d"><rect x="299" y="376" width="223" height="42" rx="6"/><text class="t" x="311" y="394">GitHub push + import</text>
+<text class="s" x="311" y="409">merges, never reverts</text>
+</g>
+<g class="n k-d"><rect x="299" y="424" width="223" height="42" rx="6"/><text class="t" x="311" y="442">Reverse engineering</text>
+<text class="s" x="311" y="457">AST; LLM reading needs consent</text>
+</g>
 <text class="lab" x="299" y="502" text-anchor="start">shared run workspace</text>
 <path class="e" d="M538,498 L556,498" marker-end="url(#system-a)" marker-start="url(#system-ar)"/>
 <rect class="box" x="556" y="250" width="254" height="272" rx="9"/><text class="bt" x="572" y="270">Spec-Driven worker</text>
-<g class="n k-l"><rect x="572" y="280" width="222" height="42" rx="6"/><text class="t" x="584" y="298">Select generator + target</text><text class="s" x="584" y="313">one forced call</text></g>
-<g class="n k-d"><rect x="572" y="328" width="222" height="42" rx="6"/><text class="t" x="584" y="346">Generate, or merge on change</text><text class="s" x="584" y="361">scaffold; three-way merge</text></g>
-<g class="n k-l"><rect x="572" y="376" width="222" height="42" rx="6"/><text class="t" x="584" y="394">Plan the gap</text><text class="s" x="584" y="409">tasks + requirements</text></g>
-<g class="n k-l"><rect x="572" y="424" width="222" height="42" rx="6"/><text class="t" x="584" y="442">Agent loop + tools</text><text class="s" x="584" y="457">sandboxed shell, budget caps</text></g>
-<g class="n k-d"><rect x="572" y="472" width="222" height="42" rx="6"/><text class="t" x="584" y="490">Checks + runtime gate</text><text class="s" x="584" y="505">LLM repair runs inside this step</text></g>
+<g class="n k-l"><rect x="572" y="280" width="222" height="42" rx="6"/><text class="t" x="584" y="298">Select generator + target</text>
+<text class="s" x="584" y="313">one forced call</text>
+</g>
+<g class="n k-d"><rect x="572" y="328" width="222" height="42" rx="6"/><text class="t" x="584" y="346">Generate, or merge on change</text>
+<text class="s" x="584" y="361">scaffold; three-way merge</text>
+</g>
+<g class="n k-l"><rect x="572" y="376" width="222" height="42" rx="6"/><text class="t" x="584" y="394">Plan the gap</text>
+<text class="s" x="584" y="409">tasks + requirements</text>
+</g>
+<g class="n k-l"><rect x="572" y="424" width="222" height="42" rx="6"/><text class="t" x="584" y="442">Agent loop + tools</text>
+<text class="s" x="584" y="457">sandboxed shell, budget caps</text>
+</g>
+<g class="n k-d"><rect x="572" y="472" width="222" height="42" rx="6"/><text class="t" x="584" y="490">Checks + runtime gate</text>
+<text class="s" x="584" y="505">LLM repair runs inside this step</text>
+</g>
 <path class="e" d="M410,522 L410,560" marker-end="url(#system-a)" marker-start="url(#system-ar)"/>
 <text class="lab" x="418" y="546" text-anchor="start">code + model + records</text>
 <path class="e" d="M683,522 L683,560" marker-end="url(#system-a)"/>
 <text class="lab" x="691" y="546" text-anchor="start">ZIP download</text>
-<g class="n k-d"><rect x="283" y="560" width="255" height="46" rx="6"/><text class="t" x="295" y="580">GitHub repository</text><text class="s" x="295" y="595">app, buml/ model, run records</text></g>
-<g class="n k-d"><rect x="556" y="560" width="254" height="46" rx="6"/><text class="t" x="568" y="580">Your application</text><text class="s" x="568" y="595">ZIP, Docker, Render</text></g>
+<g class="n k-d"><rect x="283" y="560" width="255" height="46" rx="6"/><text class="t" x="295" y="580">GitHub repository</text>
+<text class="s" x="295" y="595">app, buml/ model, run records</text>
+</g>
+<g class="n k-d"><rect x="556" y="560" width="254" height="46" rx="6"/><text class="t" x="568" y="580">Your application</text>
+<text class="s" x="568" y="595">ZIP, Docker, Render</text>
+</g>
 <g class="n k-d"><rect x="26" y="542" width="22" height="14" rx="3"/></g><text class="s" x="56" y="553">Deterministic code</text>
 <g class="n k-l"><rect x="26" y="566" width="22" height="14" rx="3"/></g><text class="s" x="56" y="577">LLM call</text>
 <g class="n k-h"><rect x="26" y="590" width="22" height="14" rx="3"/></g><text class="s" x="56" y="601">You decide</text>

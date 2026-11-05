@@ -1,9 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 590" role="img" aria-label="A new run assembles the model, checks it, runs a generator, lets one LLM conversation fill the gap with tool feedback, then repairs against runtime checks and passes a gate on every exit.">
-<defs><marker id="create-run-a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker><marker id="create-run-ar" viewBox="0 0 8 8" refX="0.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M8,0 L0,4 L8,8 z"/></marker></defs>
-<g class="n k-d"><rect x="10" y="10" width="185" height="72" rx="6"/><text class="t" x="22" y="36">Model assembly</text><text class="s" x="22" y="51">editor JSON to B-UML;</text><text class="s" x="22" y="65">a loss becomes a finding</text></g>
-<g class="n k-d"><rect x="228" y="10" width="185" height="72" rx="6"/><text class="t" x="240" y="36">Phase 0: contract</text><text class="s" x="240" y="51">unsatisfiable creation</text><text class="s" x="240" y="65">cycles become blockers</text></g>
-<g class="n k-l"><rect x="446" y="10" width="185" height="72" rx="6"/><text class="t" x="458" y="36">Phase 1: select</text><text class="s" x="458" y="51">generator + target kind:</text><text class="s" x="458" y="65">web_app, backend, other</text></g>
-<g class="n k-d"><rect x="665" y="10" width="185" height="72" rx="6"/><text class="t" x="677" y="36">Phase 1: generate</text><text class="s" x="677" y="51">GUI model: React + API;</text><text class="s" x="677" y="65">class only: FastAPI</text></g>
+<defs><marker id="create-run-a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+<g class="n k-d"><rect x="10" y="10" width="185" height="72" rx="6"/><text class="t" x="22" y="36">Model assembly</text>
+<text class="s" x="22" y="51">editor JSON to B-UML;</text>
+<text class="s" x="22" y="65">a loss becomes a finding</text>
+</g>
+<g class="n k-d"><rect x="228" y="10" width="185" height="72" rx="6"/><text class="t" x="240" y="36">Phase 0: contract</text>
+<text class="s" x="240" y="51">unsatisfiable creation</text>
+<text class="s" x="240" y="65">cycles become blockers</text>
+</g>
+<g class="n k-l"><rect x="446" y="10" width="185" height="72" rx="6"/><text class="t" x="458" y="36">Phase 1: select</text>
+<text class="s" x="458" y="51">generator + target kind:</text>
+<text class="s" x="458" y="65">web_app, backend, other</text>
+</g>
+<g class="n k-d"><rect x="665" y="10" width="185" height="72" rx="6"/><text class="t" x="677" y="36">Phase 1: generate</text>
+<text class="s" x="677" y="51">GUI model: React + API;</text>
+<text class="s" x="677" y="65">otherwise FastAPI by default</text>
+</g>
 <path class="e" d="M195,46.0 L228,46.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M413,46.0 L446,46.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M631,46.0 L665,46.0" marker-end="url(#create-run-a)"/>
@@ -11,24 +23,53 @@
 <path class="e d" d="M538.5,82 L538.5,107"/>
 <text class="lab" x="112.5" y="102" text-anchor="start">no generator fits: stack manifest, agent writes all</text>
 <text class="lab" x="548.5" y="102" text-anchor="start">scaffold + inventory</text>
-<g class="n k-d"><rect x="10" y="132" width="185" height="72" rx="6"/><text class="t" x="22" y="158">Phase 1.5: validate</text><text class="s" x="22" y="173">findings become scoped</text><text class="s" x="22" y="187">issues for the agent</text></g>
-<g class="n k-l"><rect x="228" y="132" width="185" height="72" rx="6"/><text class="t" x="240" y="158">Phase 2: plan the gap</text><text class="s" x="240" y="173">forced task list, then</text><text class="s" x="240" y="187">deterministic filters</text></g>
-<g class="n k-d"><rect x="446" y="132" width="185" height="72" rx="6"/><text class="t" x="458" y="158">Harness tasks</text><text class="s" x="458" y="173">frontend, actions, OCL,</text><text class="s" x="458" y="187">routes; with verifiers</text></g>
-<g class="n k-d"><rect x="665" y="132" width="185" height="72" rx="6"/><text class="t" x="677" y="158">System prompt</text><text class="s" x="677" y="173">model JSON, endpoints;</text><text class="s" x="677" y="187">request outranks model</text></g>
+<g class="n k-d"><rect x="10" y="132" width="185" height="72" rx="6"/><text class="t" x="22" y="158">Phase 1.5: validate</text>
+<text class="s" x="22" y="173">findings become scoped</text>
+<text class="s" x="22" y="187">issues for the agent</text>
+</g>
+<g class="n k-l"><rect x="228" y="132" width="185" height="72" rx="6"/><text class="t" x="240" y="158">Phase 2: plan the gap</text>
+<text class="s" x="240" y="173">forced task list, then</text>
+<text class="s" x="240" y="187">deterministic filters</text>
+</g>
+<g class="n k-d"><rect x="446" y="132" width="185" height="72" rx="6"/><text class="t" x="458" y="158">Harness tasks</text>
+<text class="s" x="458" y="173">frontend, actions, OCL,</text>
+<text class="s" x="458" y="187">routes; with verifiers</text>
+</g>
+<g class="n k-d"><rect x="665" y="132" width="185" height="72" rx="6"/><text class="t" x="677" y="158">System prompt</text>
+<text class="s" x="677" y="173">model JSON, endpoints;</text>
+<text class="s" x="677" y="187">request outranks model</text>
+</g>
 <path class="e" d="M195,168.0 L228,168.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M413,168.0 L446,168.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M631,168.0 L665,168.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M757.5,204 L757.5,229 L102.5,229 L102.5,254" marker-end="url(#create-run-a)"/>
-<g class="n k-l"><rect x="10" y="254" width="185" height="72" rx="6"/><text class="t" x="22" y="280">Agent loop</text><text class="s" x="22" y="295">one conversation; end_turn</text><text class="s" x="22" y="309">refused while tasks open</text></g>
-<g class="n k-d"><rect x="228" y="254" width="185" height="72" rx="6"/><text class="t" x="240" y="280">Tool executor + sandbox</text><text class="s" x="240" y="295">file, shell, model tools; every</text><text class="s" x="240" y="309">write returns diagnostics</text></g>
+<g class="n k-l"><rect x="10" y="254" width="185" height="72" rx="6"/><text class="t" x="22" y="280">Agent loop</text>
+<text class="s" x="22" y="295">one conversation; nudged</text>
+<text class="s" x="22" y="309">while tasks stay open</text>
+</g>
+<g class="n k-d"><rect x="228" y="254" width="185" height="72" rx="6"/><text class="t" x="240" y="280">Tool executor + sandbox</text>
+<text class="s" x="240" y="295">file, shell, model tools; every</text>
+<text class="s" x="240" y="309">write returns diagnostics</text>
+</g>
 <path class="e" d="M195,278 L228,278" marker-end="url(#create-run-a)"/>
 <path class="e" d="M228,304 L195,304" marker-end="url(#create-run-a)"/>
 <path class="e" d="M102.5,326 L102.5,376" marker-end="url(#create-run-a)"/>
 <text class="lab" x="112.5" y="346" text-anchor="start">hand-off: done, blockers at end_turn, or no progress</text>
-<g class="n k-d"><rect x="10" y="376" width="185" height="72" rx="6"/><text class="t" x="22" y="402">Phase 3: checks</text><text class="s" x="22" y="417">boot, create each entity,</text><text class="s" x="22" y="431">call actions, compare state</text></g>
-<g class="n k-l"><rect x="228" y="376" width="185" height="72" rx="6"/><text class="t" x="240" y="402">Requirements judge</text><text class="s" x="240" y="417">coverage verdict; harness</text><text class="s" x="240" y="431">re-checks each citation</text></g>
-<g class="n k-l"><rect x="446" y="376" width="185" height="72" rx="6"/><text class="t" x="458" y="409">Repair attempt</text><text class="s" x="458" y="424">acts on blockers only</text></g>
-<g class="n k-d"><rect x="665" y="376" width="185" height="72" rx="6"/><text class="t" x="677" y="402">Runtime gate</text><text class="s" x="677" y="417">runs on every exit;</text><text class="s" x="677" y="431">unknown counts as failure</text></g>
+<g class="n k-d"><rect x="10" y="376" width="185" height="72" rx="6"/><text class="t" x="22" y="402">Phase 3: checks</text>
+<text class="s" x="22" y="417">boot, create each entity,</text>
+<text class="s" x="22" y="431">call actions, compare state</text>
+</g>
+<g class="n k-l"><rect x="228" y="376" width="185" height="72" rx="6"/><text class="t" x="240" y="402">Requirements judge</text>
+<text class="s" x="240" y="417">coverage verdict; harness</text>
+<text class="s" x="240" y="431">re-checks each citation</text>
+</g>
+<g class="n k-l"><rect x="446" y="376" width="185" height="72" rx="6"/><text class="t" x="458" y="409">Repair attempt</text>
+<text class="s" x="458" y="424">acts on blockers only</text>
+</g>
+<g class="n k-d"><rect x="665" y="376" width="185" height="72" rx="6"/><text class="t" x="677" y="402">Runtime gate</text>
+<text class="s" x="677" y="417">runs on every exit; a dead</text>
+<text class="s" x="677" y="431">app is never called complete</text>
+</g>
 <path class="e" d="M195,412.0 L228,412.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M413,412.0 L446,412.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M631,412.0 L665,412.0" marker-end="url(#create-run-a)"/>
@@ -36,5 +77,8 @@
 <text class="lab" x="10" y="496" text-anchor="start">re-validate after each attempt;</text>
 <text class="lab" x="10" y="511" text-anchor="start">keep the best tree, ranked by boot, entities, actions, then blockers</text>
 <path class="e" d="M757.5,448 L757.5,508" marker-end="url(#create-run-a)"/>
-<g class="n k-d"><rect x="665" y="508" width="185" height="72" rx="6"/><text class="t" x="677" y="534">Records + packaging</text><text class="s" x="677" y="549">recipe, Agent Trace, secret</text><text class="s" x="677" y="563">scrub, generator output, ZIP</text></g>
+<g class="n k-d"><rect x="665" y="508" width="185" height="72" rx="6"/><text class="t" x="677" y="534">Records + packaging</text>
+<text class="s" x="677" y="549">recipe, Agent Trace, secret</text>
+<text class="s" x="677" y="563">scrub, generator output, ZIP</text>
+</g>
 </svg>

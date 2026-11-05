@@ -390,8 +390,8 @@ class _Merger(_Apply):
         for path in sorted(set(base) | set(mine) | set(theirs)):
             self._file(source.get(path, path), path, ours.get(source.get(path, path)), merged, conflicted, new_files)
 
-    def _file(self, old: str, path: str, current: bytes | None, merged: dict[str, bytes], conflicted: dict[str, bytes | None],
-              new_files: dict[str, bytes]) -> None:
+    def _file(self, old: str, path: str, current: bytes | None, merged: dict[str, bytes],
+              conflicted: dict[str, bytes | None], new_files: dict[str, bytes]) -> None:
         """``old`` is the file's path in the app, ``path`` its path in the new output."""
         base, new = self.base.get(old), new_files.get(path)
         if path in conflicted:

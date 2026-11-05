@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 ##############################
 # One plain literal, as startproject writes it: the record is a file, so it must not supply code.
 _SECRET_KEY_LINE = re.compile(rb"^SECRET_KEY = '[^'\\\r\n]*'(?=\r?$)", re.MULTILINE)
+_RECORDED_SECRET_KEY = b"SECRET_KEY = 'not-in-the-record'"
 
 
 class DjangoGenerator(GeneratorInterface):
@@ -148,15 +149,27 @@ class DjangoGenerator(GeneratorInterface):
         """Check if the given value is an instance of Enumeration class."""
         return isinstance(value, Enumeration)
 
-    ## DjangoGeneratorModelsFile:
+    def _settings_path(self) -> str:
+        return f"{self.project_name}/{self.project_name}/settings.py"
+
     def _keep_generated_values(self, previous: dict[str, bytes], generated: dict[str, bytes]) -> dict[str, bytes]:
-        """``startproject`` draws a new ``SECRET_KEY`` each run; rotating it would log every user out."""
-        settings = f"{self.project_name}/{self.project_name}/settings.py"
+        """``startproject`` draws a new ``SECRET_KEY`` each run; rotating it would log every user out.
+
+        Once a record exists this carries over its placeholder, so the merge leaves the file's own line alone.
+        """
+        settings = self._settings_path()
         key = _SECRET_KEY_LINE.search(previous[settings]) if settings in previous else None
         if not key or settings not in generated:
             return generated
         return {**generated, settings: _SECRET_KEY_LINE.sub(lambda _: key.group(0), generated[settings], count=1)}
 
+    def _without_secrets(self, files: dict[str, bytes]) -> dict[str, bytes]:
+        settings = self._settings_path()
+        if settings not in files:
+            return files
+        return {**files, settings: _SECRET_KEY_LINE.sub(lambda _: _RECORDED_SECRET_KEY, files[settings], count=1)}
+
+    ## DjangoGeneratorModelsFile:
     def generate_models(self):
 
         """

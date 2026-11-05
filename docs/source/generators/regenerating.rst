@@ -56,8 +56,9 @@ Every edit is kept or flagged, never overwritten:
    * - It holds text that is not UTF-8, or binary data, and clashes with the model
      - It stays as you left it (``not_merged``).
 
-Files that are not text, such as images, are written once and never merged. Each file is replaced
-in one step, so a full disk cannot leave half of it behind; run ``regenerate()`` again afterwards.
+Files that are not text, such as images, are written once, and never merged or removed: one the
+model drops stays, and is listed in ``kept_removed_from_model``. Each file is replaced in one step,
+so a full disk cannot leave half of it behind; run ``regenerate()`` again afterwards.
 
 .. warning::
 
@@ -70,7 +71,8 @@ Resolving conflicts
 
 A conflict looks like one from ``git merge``, with ``<<<<<<< your edit`` and ``>>>>>>> generated
 from your model`` around the lines. Edit the file so the markers are gone. Until then the next
-``regenerate()`` raises ``RegenerationError`` and changes nothing.
+``regenerate()`` raises ``RegenerationError`` and changes nothing. It and the report are in
+``besser.generators.regeneration`` (:doc:`API <../api/generators/api_regeneration>`).
 
 Folders generated earlier
 -------------------------
@@ -99,8 +101,8 @@ Limits
   line, so change their model through a :doc:`modify run <../spec_driven_agent/regeneration>`.
 - **Some generators do not take part**, because their output is not the same on every
   run for one model: Supabase (a timestamp in the file name), Flutter, Terraform, the BESSER
-  Agentic Framework generator and Docker Compose. Neither does a ``BackendGenerator`` set to build
-  a Docker image, which would push one without your edits, or a ``WebAppGenerator`` with a
+  Agentic Framework generator and Docker Compose. Neither does a ``BackendGenerator`` set to push
+  a Docker image, which would not hold your edits, or a ``WebAppGenerator`` with a
   personalized agent, which calls an LLM. Calling ``regenerate()`` on these raises
   ``RegenerationError``.
 - **Options go on the generator.** ``regenerate()`` runs ``generate()`` with no arguments, so
@@ -143,6 +145,7 @@ Your own generator
 
 A generator takes part by setting ``regenerable = True``, once its output is
 byte-identical on every run for one model. Add it to
-``tests/generators/regenerable_builders.py``, which checks this across hash seeds. If one
-value has to differ per run, override ``_keep_generated_values`` to carry it over, as
-``DjangoGenerator`` does for ``SECRET_KEY``.
+``tests/generators/regenerable_builders.py``; ``tests/generators/test_regenerable_generators.py``
+then checks this across hash seeds. If one value has to differ per run, override
+``_keep_generated_values`` to carry it over, as ``DjangoGenerator`` does for ``SECRET_KEY``. If that
+value is a secret, also override ``_without_secrets`` to keep it out of the record.

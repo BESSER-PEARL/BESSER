@@ -89,6 +89,7 @@ source_modules = [
     "besser.utilities.sdmx_to_buml",
     "besser.utilities.secret_redaction",
     "besser.utilities.subprocess_env",
+    "besser.utilities.three_way_merge",
     "besser.utilities.utils",
     "besser.utilities.workspace_fs",
 ]

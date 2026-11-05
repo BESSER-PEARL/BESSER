@@ -83,8 +83,8 @@ class BackendGenerator(GeneratorInterface):
             return None
 
     def _regeneration_refusal(self) -> "str | None":
-        if self.docker_image or self.docker_config_path:
-            return "with docker_image or docker_config_path it builds and pushes an image without your edits."
+        if self.docker_image and self.config:
+            return "with docker_image and a Docker configuration it builds and pushes an image without your edits."
         return None
 
     def generate(self):

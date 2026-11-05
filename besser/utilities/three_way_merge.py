@@ -6,7 +6,6 @@ also in ``besser[agents]``). Check :func:`merge_available` before merging.
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from typing import NamedTuple
 
@@ -41,8 +40,8 @@ def merge_trees(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str
     A caller that knows a file moved passes it under its new path in ``base``
     and ``ours``.
     """
-    work = tempfile.mkdtemp(prefix="besser_merge_")
-    try:
+    # TemporaryDirectory, as libgit2's objects are read-only: on Windows rmtree cannot remove them.
+    with tempfile.TemporaryDirectory(prefix="besser_merge_", ignore_cleanup_errors=True) as work:
         repo = pygit2.init_repository(work, bare=True)
 
         def tree(files: dict[str, bytes]):
@@ -56,9 +55,9 @@ def merge_trees(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str
         for ancestor, mine, their in index.conflicts or ():
             path = (mine or their or ancestor).path
             conflicts[path] = _with_markers(repo, ancestor, mine, their) if mine and their else None
-        return TreeMerge({e.path: repo[e.id].data for e in index if e.path not in conflicts}, conflicts)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+        merged = TreeMerge({e.path: repo[e.id].data for e in index if e.path not in conflicts}, conflicts)
+        repo.free()
+        return merged
 
 
 def _with_markers(repo, ancestor, ours, theirs) -> bytes | None:

@@ -5,6 +5,8 @@ Every edit is either kept or flagged; ``generate()`` itself is unchanged.
 import json
 import os
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -176,7 +178,7 @@ def test_a_folder_generated_before_is_refused_then_adopted(tmp_path):
 
     before = read(out)
     report = regen(out, {"app.py": APP}, adopt=True)  # the model those files came from
-    assert read(out) == before and report.adopted and not report.written
+    assert read(out) == before and not report.written
 
     regen(out, {"app.py": APP.replace(b"return 3", b"return 33")})
     assert b"# mine" in read(out) and b"return 33" in read(out)
@@ -216,7 +218,7 @@ BAD_PATHS = ["../evil.py", "/etc/evil.py", "a/../../evil.py", "C:/evil.py", "a\\
 
 
 def _record(**changes):
-    return json.dumps({"format": 1, "generator": "FilesGenerator", "conflicted": [],
+    return json.dumps({"format": 1, "generator": "FilesGenerator", "binaries": [], "conflicted": [],
                        "files": {"app.py": APP.decode("utf-8")}, **changes})
 
 
@@ -244,9 +246,9 @@ def test_a_record_listing_such_a_path_as_conflicted_is_refused(folder, rel):
 @pytest.mark.parametrize("content", [
     "{not json", "[]", '{"format": 1, "files": {}}',
     _record(format=99), _record(files=3), _record(files=["app.py"]), _record(files={"app.py": 1}),
-    _record(conflicted="app.py"), _record(conflicted=[1]),
+    _record(conflicted="app.py"), _record(conflicted=[1]), _record(binaries="logo.png"), _record(binaries=[".git/x"]),
 ], ids=["not_json", "not_an_object", "missing_keys", "format", "files_number", "files_list", "file_not_text",
-        "conflicted_string", "conflicted_not_paths"])
+        "conflicted_string", "conflicted_not_paths", "binaries_string", "binaries_bad_path"])
 def test_an_unusable_record_is_refused_not_overwritten(folder, content):
     (folder / RECORD_FILENAME).write_text(content, encoding="utf-8")
     edit(folder, b"return 1\n", b"return 1  # mine\n")
@@ -487,9 +489,25 @@ def test_conflict_markers_say_which_side_is_which(folder):
 def test_a_backend_that_pushes_an_image_is_refused(tmp_path):
     from besser.generators.backend import BackendGenerator
 
-    generator = BackendGenerator(_shelf(), output_dir=str(tmp_path / "out"), docker_image=True)
+    config = tmp_path / "docker.ini"
+    config.write_text("[DEFAULT]\n" + "".join(f"docker_{key} = x\n" for key in (
+        "username", "password", "image_name", "repository", "tag", "port")), encoding="utf-8")
+    generator = BackendGenerator(_shelf(), output_dir=str(tmp_path / "out"), docker_image=True,
+                                 docker_config_path=str(config))
     with pytest.raises(RegenerationError, match="image"):
         generator.regenerate()
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("options", [{"docker_image": True}, {"docker_config_path": "docker.ini"}])
+def test_a_backend_that_pushes_nothing_regenerates(tmp_path, monkeypatch, options):
+    from besser.generators.backend import BackendGenerator
+
+    monkeypatch.chdir(tmp_path)
+    out = str(tmp_path / "out")
+    BackendGenerator(_shelf(), output_dir=out, **options).regenerate()
+    report = BackendGenerator(_shelf(), output_dir=out, **options).regenerate()
+    assert not (report.written or report.merged or report.conflicted)
 
 
 # -- a merge must not cut a file short, and a record must not reach outside its folder ------
@@ -647,6 +665,199 @@ def test_sqlalchemy_options_reach_a_regeneration(tmp_path, dbms, url):
     assert f'"{url}' in read(out, "sql_alchemy.py").decode("utf-8")
 
 
+def test_a_users_own_marker_lines_are_neither_relabelled_nor_blocking(folder):
+    own = b"<<<<<<< HEAD\n>>>>>>> theirs\n"
+    edit(folder, b"return 1\n", b"return 100\n")
+    edit(folder, b"return 3\n", b"return 3\n" + own)
+    regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    assert own in read(folder) and read(folder).count(b"<<<<<<< your edit\n") == 1
+
+    (folder / "app.py").write_bytes(APP + own)
+    report = regen(folder, {"app.py": APP.replace(b"return 2", b"return 22")})
+    assert own in read(folder) and b"return 22" in read(folder) and not report.conflicted
+
+
+def test_a_binary_file_the_model_dropped_is_kept_and_reported(tmp_path, caplog):
+    out = tmp_path / "out"
+    regen(out, {"app.py": APP, "logo.png": b"\x89PNG\x00one"})
+    with caplog.at_level("WARNING", logger=regeneration_module.__name__):
+        report = regen(out, {"app.py": APP})
+    assert read(out, "logo.png") == b"\x89PNG\x00one"
+    assert report.kept_removed_from_model == ["logo.png"] and "logo.png" in caplog.text
+    assert not regen(out, {"app.py": APP}).kept_removed_from_model  # no longer recorded
+
+
+def test_the_old_name_of_a_case_rename_on_a_case_sensitive_disk_is_reported(tmp_path, case_sensitive):
+    out = tmp_path / "out"
+    regen(out, {"book.java": APP})
+    (out / "Book.java").write_bytes(APP)
+    report = regen(out, {"Book.java": APP})
+    assert report.kept_removed_from_model == ["book.java"] and (out / "book.java").is_file()
+
+
+def test_a_full_disk_while_saving_the_record_keeps_the_old_one(folder, monkeypatch):
+    before = (folder / RECORD_FILENAME).read_bytes()
+    with monkeypatch.context() as patch:
+        _fail_replacing(patch, RECORD_FILENAME)
+        with pytest.raises(OSError):
+            regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+    assert (folder / RECORD_FILENAME).read_bytes() == before
+
+
+def test_a_failed_merge_is_reported_and_changes_no_file(folder, monkeypatch):
+    def broken(*args):
+        raise ValueError("boom")
+
+    edit(folder, b"return 1\n", b"return 1  # mine\n")
+    edited = read(folder)
+    monkeypatch.setattr(regeneration_module, "merge_trees", broken)
+    with pytest.raises(RegenerationError, match="merge failed.*boom"):
+        regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+    assert read(folder) == edited
+
+
+def test_a_conflict_in_a_crlf_file_keeps_crlf(folder):
+    (folder / "app.py").write_bytes(APP.replace(b"return 1\n", b"return 100\n").replace(b"\n", b"\r\n"))
+    regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    content = read(folder)
+    assert b"<<<<<<< your edit\r\n" in content and content.count(b"\n") == content.count(b"\r\n")
+
+
+def test_adopting_keeps_generated_values_from_the_folder(tmp_path):
+    class KeyGenerator(FilesGenerator):
+        def _keep_generated_values(self, previous, generated):
+            return {**generated, "key": previous.get("key", generated["key"])}
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "key").write_bytes(b"from the folder\n")
+    report = KeyGenerator({"key": b"drawn this run\n"}, output_dir=str(out)).regenerate(adopt=True)
+    assert not report.differs_from_model
+
+
+def test_build_leftovers_are_not_output(tmp_path):
+    out = tmp_path / "out"
+    report = regen(out, {"app.py": APP, ".git/config": b"x\n", "pkg/__pycache__/m.pyc": b"x\n",
+                         "web/node_modules/a.js": b"x\n"})
+    assert report.written == ["app.py"]
+    assert sorted(p.name for p in out.rglob("*") if p.is_file()) == [RECORD_FILENAME, "app.py"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs symlinks")
+def test_a_record_that_is_a_link_is_refused(folder, tmp_path):
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_bytes((folder / RECORD_FILENAME).read_bytes())
+    (folder / RECORD_FILENAME).unlink()
+    (folder / RECORD_FILENAME).symlink_to(elsewhere)
+    with pytest.raises(RegenerationError, match="not a regular file"):
+        regen(folder, {"app.py": APP})
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs symlinks")
+def test_a_link_in_the_scratch_output_is_not_read(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"secret\n")
+
+    class LinkGenerator(FilesGenerator):
+        def generate(self):
+            super().generate()
+            os.symlink(secret, self.build_generation_path("leak.txt"))
+
+    out = tmp_path / "out"
+    report = LinkGenerator({"app.py": APP}, output_dir=str(out)).regenerate()
+    assert report.written == ["app.py"] and not (out / "leak.txt").exists()
+
+
+@pytest.fixture
+def junction(tmp_path):
+    """``make(link, target)``, an NTFS junction."""
+    if os.name != "nt":
+        pytest.skip("needs NTFS")
+
+    def make(link, target):
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+
+    return make
+
+
+def test_a_junction_at_a_generated_folder_is_refused(tmp_path, junction):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "mod.py").write_bytes(b"mine\n")
+    out = tmp_path / "out"
+    regen(out, {"app.py": APP})
+    junction(out / "pkg", outside)
+    with pytest.raises(RegenerationError, match="pkg"):
+        regen(out, {"app.py": APP, "pkg/mod.py": b"m = 1\n"})
+    assert (outside / "mod.py").read_bytes() == b"mine\n"
+
+
+def test_a_file_reached_through_a_junction_is_not_read_as_an_edit(tmp_path, junction):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "mod.py").write_bytes(b"m = 1\n")
+    out = tmp_path / "out"
+    regen(out, {"pkg/mod.py": b"m = 1\n"})
+    shutil.rmtree(out / "pkg")
+    junction(out / "pkg", outside)
+    report = regen(out, {"app.py": APP})
+    assert (outside / "mod.py").read_bytes() == b"m = 1\n" and "pkg/mod.py" not in report.deleted
+
+
+def test_merges_and_scratch_runs_leave_nothing_in_the_temp_folder(tmp_path, monkeypatch):
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    out = tmp_path / "out"
+    regen(out, {"app.py": APP})
+    edit(out, b"return 1\n", b"return 100\n")
+    regen(out, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    assert not list(temp.iterdir())
+
+
+@pytest.mark.parametrize("arrange, change, expected", [
+    ("edit", {"app.py": APP.replace(b"return 1\n", b"return 11\n")}, "Conflicts to resolve"),
+    ("delete", {"app.py": APP.replace(b"return 1\n", b"return 11\n")}, "left deleted"),
+    ("edit", {"other.py": b"o = 1\n"}, "may hold your work"),
+    ("binary", {"app.py": APP.replace(b"return 1\n", b"return 11\n")}, "cannot be merged"),
+], ids=["conflict", "not_restored", "kept", "not_merged"])
+def test_what_needs_attention_is_logged(folder, caplog, arrange, change, expected):
+    if arrange == "edit":
+        edit(folder, b"return 1\n", b"return 100\n")
+    elif arrange == "delete":
+        (folder / "app.py").unlink()
+    else:
+        (folder / "app.py").write_bytes(APP.replace(b"return 1\n", b"return '\xe9'\n"))
+    with caplog.at_level("WARNING", logger=regeneration_module.__name__):
+        regen(folder, change)
+    assert expected in caplog.text and "app.py" in caplog.text
+
+
+def test_adopting_a_different_model_is_logged(tmp_path, caplog):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "app.py").write_bytes(b"something else\n")
+    with caplog.at_level("WARNING", logger=regeneration_module.__name__):
+        regen(out, {"app.py": APP}, adopt=True)
+    assert "read as edits from now on" in caplog.text
+
+
+def test_a_nul_byte_in_a_path_is_simply_not_a_plain_file():
+    assert not workspace_fs.is_plain_file("a\x00b")
+    assert not workspace_fs.is_link("a\x00b")
+
+
+@pytest.mark.parametrize("newline, expected", [("", b"a\nb\r\nc"), ("\n", b"a\nb\r\nc"), ("\r\n", b"a\r\nb\r\r\nc"),
+                                               (None, f"a{os.linesep}b\r{os.linesep}c".encode())])
+def test_atomic_text_writes_translate_line_endings_like_open(tmp_path, newline, expected):
+    path = tmp_path / "f.txt"
+    workspace_fs.write_atomic_plain(str(path), "a\nb\r\nc", newline=newline)
+    assert path.read_bytes() == expected
+    with open(tmp_path / "g.txt", "w", encoding="utf-8", newline=newline) as handle:
+        handle.write("a\nb\r\nc")
+    assert (tmp_path / "g.txt").read_bytes() == expected
+
+
 # -- real generators ---------------------------------------------------------------------
 
 
@@ -681,8 +892,8 @@ def test_python_keeps_a_helper_through_a_model_change(tmp_path):
     out = tmp_path / "python"
     PythonGenerator(_shelf(), output_dir=str(out)).regenerate()
     classes = out / "classes.py"
-    classes.write_text(classes.read_text(encoding="utf-8") + "\n\ndef shelf_size(books):  # mine\n    return len(books)\n",
-                       encoding="utf-8")
+    helper = "\n\ndef shelf_size(books):  # mine\n    return len(books)\n"
+    classes.write_text(classes.read_text(encoding="utf-8") + helper, encoding="utf-8")
 
     report = PythonGenerator(_shelf(isbn=True), output_dir=str(out)).regenerate()
 
@@ -714,6 +925,12 @@ def test_django_keeps_edits_own_files_and_its_secret_key(tmp_path):
     assert (out / "shelfsite" / "shelfapp" / "services.py").is_file()
     assert key in settings.read_text(encoding="utf-8")
     assert "shelfsite/shelfsite/settings.py" not in report.written
+    assert key not in (out / RECORD_FILENAME).read_text(encoding="utf-8")
+
+    moved = "SECRET_KEY = os.environ['DJANGO_KEY']"
+    settings.write_text(settings.read_text(encoding="utf-8").replace(key, moved), encoding="utf-8")
+    make(_shelf(isbn=True)).regenerate()
+    assert moved in settings.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("django-admin") is None, reason="needs django-admin")

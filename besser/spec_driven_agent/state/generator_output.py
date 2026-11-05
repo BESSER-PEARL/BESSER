@@ -29,11 +29,11 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
+from besser.utilities.provenance import GENERATOR_OUTPUT_FILENAME
 from besser.utilities.workspace_fs import is_plain_relpath, is_text, open_plain, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 
-GENERATOR_OUTPUT_FILENAME = ".besser_generator_output.json"
 _FORMAT = 1
 # The packaging scrub skips files over 2 MiB; a bigger store would ship unscrubbed.
 MAX_STORED_BYTES = 1_500_000

@@ -5,7 +5,7 @@ import pytest
 
 from besser.generators.django import DjangoGenerator
 from besser.BUML.metamodel.structural import DomainModel, Property, Class, \
-    BinaryAssociation, Enumeration, EnumerationLiteral, Multiplicity
+    BinaryAssociation, Multiplicity
 from besser.BUML.metamodel.gui import GUIModel, Module, DataList, \
     DataSourceElement, Screen
 from tests.generators.regenerable_builders import library, library_gui
@@ -470,11 +470,6 @@ def test_Operations_many_to_many():
 
 def test_gui_output_is_valid_python(tmp_path):
     model = library()
-    for name, literals in (("Genre", ("novel", "essay")), ("Format", ("paper", "ebook"))):
-        enumeration = Enumeration(name=name, literals={EnumerationLiteral(name=literal) for literal in literals})
-        model.types = model.types | {enumeration}
-        book = next(cls for cls in model.get_classes() if cls.name == "Book")
-        book.attributes = book.attributes | {Property(name=name.lower(), type=enumeration)}
 
     DjangoGenerator(model, project_name="shelfsite", app_name="shelfapp", gui_model=library_gui(model),
                     output_dir=str(tmp_path), containerization=False).generate()

@@ -5,6 +5,8 @@ interpreter with a different ``PYTHONHASHSEED``; ``set`` order is what usually d
 """
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,16 +33,18 @@ NOT_REGENERABLE = {
 
 def _regenerate_all(top: Path, seed: str) -> tuple[dict, dict[str, bytes]]:
     env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(REPO)}
-    result = subprocess.run([sys.executable, str(SCRIPT), str(top)], env=env, check=True, cwd=REPO,
+    result = subprocess.run([sys.executable, str(SCRIPT), str(top)], env=env, cwd=REPO,
                             capture_output=True, text=True, encoding="utf-8")
+    if result.returncode:
+        pytest.fail(f"A generator failed to build or regenerate:\n{result.stderr[-3000:]}")
     files = {str(p.relative_to(top)): p.read_bytes() for p in sorted(top.rglob("*")) if p.is_file()}
     return json.loads(result.stdout.splitlines()[-1]), files
 
 
 def _without_secret(files: dict[str, bytes]) -> dict[str, bytes]:
     """Django's ``SECRET_KEY`` is stable in one folder, and random between two new ones."""
-    return {name: content for name, content in files.items()
-            if not name.endswith(("settings.py", ".besser_generated.json")) or "django" not in name}
+    return {name: re.sub(rb"(?m)^SECRET_KEY = .*$", b"SECRET_KEY = ...", content)
+            if name.endswith("settings.py") else content for name, content in files.items()}
 
 
 @pytest.fixture(scope="module")
@@ -60,6 +64,11 @@ def test_regenerable_matches_the_list_above(spec):
     except ImportError as exc:
         pytest.skip(f"{spec.id} is not installed: {exc}")
     assert generator_class.regenerable is (spec.id not in NOT_REGENERABLE)
+
+
+@pytest.mark.skipif(shutil.which("django-admin") is None, reason="Django is not covered: needs django-admin")
+def test_django_is_among_the_generators_checked(runs):
+    assert "django" in runs[SEEDS[0]][0]
 
 
 def test_a_second_run_with_the_same_model_changes_nothing(runs):

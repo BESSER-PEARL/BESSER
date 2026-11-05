@@ -52,11 +52,10 @@ from besser.utilities.workspace_fs import (
     walk_plain,
     write_atomic_plain,
 )
-from besser.utilities.provenance import PROVENANCE_FILENAME
+from besser.utilities.provenance import ATTRIBUTION_FILENAME, PROVENANCE_FILENAME
 
 logger = logging.getLogger(__name__)
 
-ATTRIBUTION_FILENAME = ".besser_attribution.json"
 TRACE_DIRNAME = ".agent-trace"
 AGENT_TRACE_VERSION = "0.1"
 AGENT_TRACE_MIME_TYPE = "application/vnd.agent-trace.record+json"

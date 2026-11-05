@@ -1,6 +1,11 @@
 import os
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
 from besser.BUML.metamodel.structural import Model
+
+if TYPE_CHECKING:
+    from besser.generators.regeneration import RegenerationReport
 
 # Interface for code generators
 class GeneratorInterface(ABC):
@@ -18,7 +23,7 @@ class GeneratorInterface(ABC):
     def generate(self):
         pass
 
-    def regenerate(self, adopt: bool = False):
+    def regenerate(self, adopt: bool = False) -> "RegenerationReport":
         """Bring the output folder up to this generator's model, keeping edits made in it.
 
         ``generate()`` overwrites; this runs it in a scratch folder and merges the result
@@ -47,6 +52,10 @@ class GeneratorInterface(ABC):
     def _keep_generated_values(self, previous: dict[str, bytes], generated: dict[str, bytes]) -> dict[str, bytes]:
         """``generated`` with any value that must stay the same across regenerations taken from ``previous``."""
         return generated
+
+    def _without_secrets(self, files: dict[str, bytes]) -> dict[str, bytes]:
+        """``files`` as the record holds them: it stays with the code, even once a secret has moved out of it."""
+        return files
 
     @property
     def model(self) -> Model:

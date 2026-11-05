@@ -12,34 +12,30 @@ import shutil
 import sys
 
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation,
     Class,
-    DateType,
     DomainModel,
-    IntegerType,
-    Multiplicity,
+    Enumeration,
+    EnumerationLiteral,
+    Generalization,
+    Method,
     Property,
     StringType,
 )
+from tests.conftest import library_book_author
 
 
 def library() -> DomainModel:
-    library_class = Class(name="Library", attributes={Property(name="name", type=StringType),
-                                                      Property(name="address", type=StringType)})
-    book = Class(name="Book", attributes={Property(name="title", type=StringType),
-                                          Property(name="pages", type=IntegerType),
-                                          Property(name="release", type=DateType)})
-    author = Class(name="Author", attributes={Property(name="name", type=StringType),
-                                              Property(name="email", type=StringType)})
-    associations = {
-        BinaryAssociation(name="lib_book", ends={
-            Property(name="locatedIn", type=library_class, multiplicity=Multiplicity(1, 1)),
-            Property(name="has", type=book, multiplicity=Multiplicity(0, "*"))}),
-        BinaryAssociation(name="book_author", ends={
-            Property(name="writtenBy", type=author, multiplicity=Multiplicity(1, "*")),
-            Property(name="publishes", type=book, multiplicity=Multiplicity(0, "*"))}),
-    }
-    return DomainModel(name="Library_Model", types={library_class, book, author}, associations=associations)
+    """The shared library model, plus more for the templates to loop over: enumerations, a subclass and methods."""
+    model = library_book_author()
+    book = next(cls for cls in model.get_classes() if cls.name == "Book")
+    genre = Enumeration(name="Genre", literals={EnumerationLiteral(name="novel"), EnumerationLiteral(name="essay")})
+    size = Enumeration(name="Size", literals={EnumerationLiteral(name="small"), EnumerationLiteral(name="large")})
+    book.attributes = book.attributes | {Property(name="genre", type=genre), Property(name="size", type=size)}
+    book.methods = {Method(name="summary", type=StringType), Method(name="blurb", type=StringType)}
+    prize_book = Class(name="PrizeBook", attributes={Property(name="prize", type=StringType)})
+    model.types = model.types | {genre, size, prize_book}
+    model.generalizations = {Generalization(general=book, specific=prize_book)}
+    return model
 
 
 def _editor_models():
@@ -52,7 +48,8 @@ def _editor_models():
     classes = {"Guest": [("full_name", "str"), ("age", "int")], "Room": [("number", "int")]}
 
     def form(name, attributes):
-        inputs = [{"tagName": "input", "type": "input", "attributes": {"type": "text", "name": a}} for a, _ in attributes]
+        inputs = [{"tagName": "input", "type": "input", "attributes": {"type": "text", "name": a}}
+                  for a, _ in attributes]
         return {"type": "gui-form", "tagName": "form", "components": inputs,
                 "attributes": {"id": f"{name}-form", "data-gui-type": "Form", "data-source": f"cls-{name}",
                                "method": "POST"}}
@@ -169,7 +166,8 @@ def _forecaster(out):
     from besser.generators.nn.forecaster import ForecastConfig, TimeSeriesForecasterGenerator
     from tests.forecaster_networks import HORIZON, WINDOW, mlp
 
-    return TimeSeriesForecasterGenerator(mlp(), ForecastConfig(window=WINDOW, horizon=HORIZON, seeds=(0,)), output_dir=out)
+    return TimeSeriesForecasterGenerator(mlp(), ForecastConfig(window=WINDOW, horizon=HORIZON, seeds=(0,)),
+                                         output_dir=out)
 
 
 def _on_library(path, name):

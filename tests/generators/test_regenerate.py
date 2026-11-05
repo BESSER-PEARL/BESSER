@@ -105,10 +105,11 @@ def test_the_users_own_files_are_never_touched(folder):
 def test_a_clashing_edit_gets_markers_and_is_reported(folder):
     edit(folder, b"return 1\n", b"return 100\n")
     report = regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
-    content = read(folder)
     assert report.conflicted == ["app.py"]
-    assert b"<<<<<<< " in content and b"return 100" in content and b"return 11" in content
-    assert b"return 2" in content  # only the clash is marked, not the whole file
+    assert read(folder) == (b"def a():\n"
+                            b"<<<<<<< your edit\n    return 100\n=======\n    return 11\n"
+                            b">>>>>>> generated from your model\n"
+                            b"\n\ndef b():\n    return 2\n\n\ndef c():\n    return 3\n")
 
 
 def test_the_next_run_refuses_until_the_conflict_is_resolved(folder):
@@ -210,17 +211,42 @@ def test_an_edit_in_another_encoding_that_clashes_is_kept_and_reported(folder):
     assert report.not_merged == ["app.py"] and not report.conflicted
 
 
-@pytest.mark.parametrize("rel", ["../evil.py", "/etc/evil.py", "a/../../evil.py", "C:/evil.py", "a\\..\\..\\evil.py"])
-def test_a_record_naming_a_path_outside_the_folder_is_refused(folder, rel):
-    record = folder / RECORD_FILENAME
-    data = json.loads(record.read_text(encoding="utf-8"))
-    data["files"][rel] = "x\n"
-    record.write_text(json.dumps(data), encoding="utf-8")
+BAD_PATHS = ["../evil.py", "/etc/evil.py", "a/../../evil.py", "C:/evil.py", "a\\..\\..\\evil.py", "link/../evil.py",
+             "nul\x00.py", ".git/hooks/pre-commit", ".GIT/config", "pkg/.git/config"]
+
+
+def _record(**changes):
+    return json.dumps({"format": 1, "generator": "FilesGenerator", "conflicted": [],
+                       "files": {"app.py": APP.decode("utf-8")}, **changes})
+
+
+def test_a_complete_record_is_used(folder):
+    (folder / RECORD_FILENAME).write_text(_record(), encoding="utf-8")
+    edit(folder, b"return 1\n", b"return 1  # mine\n")
+    report = regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+    assert report.merged == ["app.py"]
+
+
+@pytest.mark.parametrize("rel", BAD_PATHS)
+def test_a_record_naming_a_path_it_must_not_touch_is_refused(folder, rel):
+    (folder / RECORD_FILENAME).write_text(_record(files={"app.py": APP.decode("utf-8"), rel: "x\n"}), encoding="utf-8")
     with pytest.raises(RegenerationError, match="record"):
         regen(folder, {"app.py": APP})
 
 
-@pytest.mark.parametrize("content", ["{not json", "[]", '{"format": 99, "files": {}}', '{"format": 1, "files": 3}'])
+@pytest.mark.parametrize("rel", BAD_PATHS)
+def test_a_record_listing_such_a_path_as_conflicted_is_refused(folder, rel):
+    (folder / RECORD_FILENAME).write_text(_record(conflicted=[rel]), encoding="utf-8")
+    with pytest.raises(RegenerationError, match="record"):
+        regen(folder, {"app.py": APP})
+
+
+@pytest.mark.parametrize("content", [
+    "{not json", "[]", '{"format": 1, "files": {}}',
+    _record(format=99), _record(files=3), _record(files=["app.py"]), _record(files={"app.py": 1}),
+    _record(conflicted="app.py"), _record(conflicted=[1]),
+], ids=["not_json", "not_an_object", "missing_keys", "format", "files_number", "files_list", "file_not_text",
+        "conflicted_string", "conflicted_not_paths"])
 def test_an_unusable_record_is_refused_not_overwritten(folder, content):
     (folder / RECORD_FILENAME).write_text(content, encoding="utf-8")
     edit(folder, b"return 1\n", b"return 1  # mine\n")
@@ -466,6 +492,161 @@ def test_a_backend_that_pushes_an_image_is_refused(tmp_path):
         generator.regenerate()
 
 
+# -- a merge must not cut a file short, and a record must not reach outside its folder ------
+
+
+# libgit2's binary check stops at 8000 bytes, and pygit2 reads the merge result as a C string.
+LONG = b"".join(b"line %d\n" % i for i in range(2000))
+
+
+def test_a_clash_in_a_file_with_a_late_nul_byte_keeps_every_byte(tmp_path):
+    out = tmp_path / "out"
+    regen(out, {"app.py": LONG + b"shared\nend\n"})
+    edited = LONG + b"mine\nend\nbin\x00ary\nmy later edit\n"
+    (out / "app.py").write_bytes(edited)
+    report = regen(out, {"app.py": LONG + b"model\nend\n"})
+    assert read(out) == edited
+    assert report.not_merged == ["app.py"] and not report.conflicted
+
+
+def test_a_late_nul_byte_survives_a_clean_merge(tmp_path):
+    out = tmp_path / "out"
+    regen(out, {"app.py": b"first\n" + LONG + b"end\n"})
+    (out / "app.py").write_bytes(b"first\n" + LONG + b"end\nbin\x00ary\nmine\n")
+    report = regen(out, {"app.py": b"model\n" + LONG + b"end\n"})
+    assert read(out) == b"model\n" + LONG + b"end\nbin\x00ary\nmine\n"
+    assert report.merged == ["app.py"]
+
+
+def test_control_characters_merge_like_any_other_text(tmp_path):
+    out = tmp_path / "out"
+    control = b"\x01" * 400 + b"\n"
+    regen(out, {"app.py": control + b"shared\n"})
+    (out / "app.py").write_bytes(control + b"mine\n")
+    report = regen(out, {"app.py": control + b"model\n"})
+    assert report.conflicted == ["app.py"]
+    assert read(out) == control + b"<<<<<<< your edit\nmine\n=======\nmodel\n>>>>>>> generated from your model\n"
+
+
+def test_emptying_a_file_that_clashes_still_blocks_the_next_run(folder):
+    (folder / "app.py").write_bytes(b"")
+    changed = {"app.py": APP.replace(b"return 1\n", b"return 11\n")}
+    report = regen(folder, changed)
+    assert report.conflicted == ["app.py"] and read(folder).startswith(b"<<<<<<< your edit\n")
+    with pytest.raises(RegenerationError, match="app.py"):
+        regen(folder, changed)
+
+
+@pytest.fixture
+def case_sensitive(tmp_path):
+    probe = tmp_path / "CaseProbe"
+    probe.touch()
+    if (tmp_path / "caseprobe").exists():
+        pytest.skip("needs a case-sensitive disk")
+    probe.unlink()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs symlinks")
+def test_a_case_rename_cannot_move_a_file_through_a_link(tmp_path, case_sensitive):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    out = tmp_path / "out"
+    regen(out, {"PKG/mod.py": b"m = 1\n"})
+    (out / "pkg").symlink_to(outside)
+    with pytest.raises(RegenerationError, match="pkg"):
+        regen(out, {"pkg/mod.py": b"m = 1\n"})
+    assert not list(outside.iterdir()) and read(out, "PKG/mod.py") == b"m = 1\n"
+
+
+def test_a_case_rename_never_overwrites_a_file_with_the_new_name(tmp_path, case_sensitive):
+    out = tmp_path / "out"
+    regen(out, {"book.java": APP})
+    edit(out, b"return 1\n", b"return 1  // mine\n", rel="book.java")
+    (out / "Book.java").write_bytes(b"my own class\n")
+    regen(out, {"Book.java": APP})
+    assert b"// mine" in read(out, "book.java") and read(out, "Book.java") == b"my own class\n"
+
+
+def test_output_paths_differing_only_in_case_are_refused(tmp_path, case_sensitive):
+    out = tmp_path / "out"
+    with pytest.raises(RegenerationError, match="only in case"):
+        regen(out, {"Book.java": APP, "book.java": APP})
+    assert not (out / "Book.java").exists()
+
+
+@pytest.mark.parametrize("line", [
+    b"'x'; __import__('os').system('echo PWNED')",
+    b"get_key()",
+    b"'a' + get_key()",
+    b"'x'  # note",
+    b"'x\\'",
+    b'"x"',
+])
+def test_django_does_not_carry_over_anything_but_a_plain_key(line):
+    from besser.generators.django import DjangoGenerator
+
+    settings = "s/s/settings.py"
+    generated = {settings: b"A = 1\nSECRET_KEY = 'fresh'\nB = 2\n"}
+    previous = {settings: b"SECRET_KEY = " + line + b"\n"}
+    assert DjangoGenerator(_shelf(), "s", "a")._keep_generated_values(previous, generated) == generated
+
+
+@pytest.mark.parametrize("ending", [b"\n", b"\r\n"])
+def test_django_carries_a_plain_key_over(ending):
+    from besser.generators.django import DjangoGenerator
+
+    settings = "s/s/settings.py"
+    previous = {settings: b"SECRET_KEY = 'django-insecure-!@#$%^&*(-_=+)'" + ending}
+    generated = {settings: b"SECRET_KEY = 'fresh'\nB = 2\n"}
+    kept = DjangoGenerator(_shelf(), "s", "a")._keep_generated_values(previous, generated)
+    assert kept[settings] == b"SECRET_KEY = 'django-insecure-!@#$%^&*(-_=+)'\nB = 2\n"
+
+
+def _web_app(tmp_path, agent_config):
+    from besser.BUML.metamodel.state_machine.agent import Agent
+    from besser.generators.web_app import WebAppGenerator
+    from tests.generators.regenerable_builders import _editor_models
+
+    agent = Agent("helper")
+    agent.new_state("init", initial=True)
+    return WebAppGenerator(*_editor_models(), output_dir=str(tmp_path / "out"), agent_model=agent,
+                           agent_config=agent_config)
+
+
+@pytest.mark.parametrize("config", [
+    {"agentLanguage": "french"},
+    {"presentation": {"agentLanguage": "french"}},
+    {"personalizationMapping": [{"name": "default"}]},
+])
+def test_a_web_app_with_a_personalized_agent_is_refused(tmp_path, config, monkeypatch):
+    from besser.generators.agents import agent_personalization
+
+    def no_llm(*args, **kwargs):
+        raise AssertionError("regenerate() reached the LLM")
+
+    monkeypatch.setattr(agent_personalization, "call_openai_chat", no_llm)
+    with pytest.raises(RegenerationError, match="personalized agent"):
+        _web_app(tmp_path, config).regenerate()
+    assert not (tmp_path / "out" / "agents").exists()
+
+
+def test_a_web_app_with_a_plain_agent_regenerates(tmp_path):
+    _web_app(tmp_path, {"platform": "websocket"}).regenerate()
+    report = _web_app(tmp_path, {"platform": "websocket"}).regenerate()
+    assert not (report.written or report.merged or report.conflicted)
+    assert (tmp_path / "out" / "agents" / "helper" / "helper.py").is_file()
+
+
+@pytest.mark.parametrize("dbms, url", [(None, "sqlite:///"), ("postgresql", "postgresql"), ("mysql", "mysql")])
+def test_sqlalchemy_options_reach_a_regeneration(tmp_path, dbms, url):
+    from besser.generators.sql_alchemy import SQLAlchemyGenerator
+
+    out = tmp_path / "out"
+    options = {"dbms": dbms} if dbms else {}
+    SQLAlchemyGenerator(_shelf(), output_dir=str(out), **options).regenerate()
+    assert f'"{url}' in read(out, "sql_alchemy.py").decode("utf-8")
+
+
 # -- real generators ---------------------------------------------------------------------
 
 
@@ -535,6 +716,29 @@ def test_django_keeps_edits_own_files_and_its_secret_key(tmp_path):
     assert "shelfsite/shelfsite/settings.py" not in report.written
 
 
+@pytest.mark.skipif(shutil.which("django-admin") is None, reason="needs django-admin")
+def test_django_runs_no_code_planted_in_the_recorded_key(tmp_path):
+    from besser.generators.django import DjangoGenerator
+
+    out = tmp_path / "django"
+
+    def make():
+        return DjangoGenerator(_shelf(), project_name="shelfsite", app_name="shelfapp", output_dir=str(out),
+                               containerization=False)
+
+    make().regenerate()
+    name = "shelfsite/shelfsite/settings.py"
+    record_path = out / RECORD_FILENAME
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    # An extra first line of the record: the file itself stays clean, so nothing looks edited.
+    record["files"][name] = "SECRET_KEY = 'x'; __import__('os').system('echo PWNED')\n" + record["files"][name]
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    make().regenerate()
+
+    assert "PWNED" not in (out / name).read_text(encoding="utf-8")
+
+
 def test_the_merge_helper_marks_only_the_clash():
     merge = three_way_merge.merge_trees(
         {"a": b"1\n2\n3\n4\n5\n6\n7\n", "gone": b"x\n"},
@@ -543,4 +747,6 @@ def test_the_merge_helper_marks_only_the_clash():
     )
     assert merge.clean == {"added": b"y\n"}
     assert merge.conflicts["gone"] is None
-    assert b"<<<<<<< " in merge.conflicts["a"] and b"7\n" in merge.conflicts["a"]
+    conflict = merge.conflicts["a"]
+    assert conflict.startswith(b"<<<<<<< ") and conflict.endswith(b"\n2\n3\n4\n5\n6\n7\n")
+    assert b"mine\n=======\nnew\n>>>>>>> " in conflict

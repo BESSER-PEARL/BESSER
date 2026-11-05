@@ -99,14 +99,44 @@ Limits
   line, so change their model through a :doc:`modify run <../spec_driven_agent/regeneration>`.
 - **Some generators do not take part**, because their output is not the same on every
   run for one model: Supabase (a timestamp in the file name), Flutter, Terraform, the BESSER
-  Agentic Framework generator and Docker Compose. So does a ``BackendGenerator`` set to build
-  a Docker image, which would push one without your edits. Calling ``regenerate()`` on these
-  raises ``RegenerationError``.
+  Agentic Framework generator and Docker Compose. Neither does a ``BackendGenerator`` set to build
+  a Docker image, which would push one without your edits, or a ``WebAppGenerator`` with a
+  personalized agent, which calls an LLM. Calling ``regenerate()`` on these raises
+  ``RegenerationError``.
+- **Options go on the generator.** ``regenerate()`` runs ``generate()`` with no arguments, so
+  give ``SQLAlchemyGenerator`` its ``dbms`` and ``ocl_check_constraints`` when you create it.
 - **Line endings.** A rewritten file keeps CRLF only if every line used it; a file with mixed
   line endings comes back with LF.
-- **Editor downloads have no record.** The web editor's ZIP does not include one. To keep
-  edits across downloads, commit each generated version to its own git branch, merge that
-  branch into your working branch, and let git find the conflicts.
+- **Editor downloads have no record.** The web editor's ZIP does not include one. See below
+  for keeping edits across downloads with git.
+
+Keeping edits across editor downloads
+-------------------------------------
+
+Commit each download to its own branch, and work on another. Unpack the first download into an
+empty folder, then:
+
+.. code-block:: console
+
+    git init -b generated
+    git add -A
+    git commit -m "Generated code"
+    git switch -c main
+
+Work on ``main`` as usual. When you download a new version, replace the contents of the
+``generated`` branch with it, so that files of removed classes go away, and merge it:
+
+.. code-block:: console
+
+    git switch generated
+    git rm -rqf .
+    # unpack the new download here
+    git add -A
+    git commit -m "Generated code after the model change"
+    git switch main
+    git merge generated
+
+git keeps your edits and marks the conflicts.
 
 Your own generator
 ------------------

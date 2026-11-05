@@ -49,8 +49,6 @@ from besser.spec_driven_agent.state.agent_trace import (
     KIND_GENERATOR,
     AttributionState,
     AttributionStateError,
-    is_plain_relpath,
-    is_text,
     iter_attributable_files,
     line_hashes,
     matching_lines,
@@ -66,7 +64,7 @@ from besser.spec_driven_agent.state.generator_output import (
 )
 from besser.utilities.provenance import get_besser_version
 from besser.utilities.three_way_merge import lf, merge_available, merge_trees, same_text, with_endings_of
-from besser.utilities.workspace_fs import open_plain_write, walk_plain
+from besser.utilities.workspace_fs import is_plain_relpath, is_text, open_plain_write, walk_plain
 
 logger = logging.getLogger(__name__)
 

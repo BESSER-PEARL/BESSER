@@ -29,8 +29,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from besser.spec_driven_agent.state.agent_trace import is_plain_relpath, is_text
-from besser.utilities.workspace_fs import open_plain, write_atomic_plain
+from besser.utilities.workspace_fs import is_plain_relpath, is_text, open_plain, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 

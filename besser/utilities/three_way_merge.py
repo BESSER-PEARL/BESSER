@@ -10,6 +10,8 @@ import shutil
 import tempfile
 from typing import NamedTuple
 
+from besser.utilities.workspace_fs import is_text
+
 try:
     import pygit2
     from pygit2.enums import FileMode, MergeFlag
@@ -60,10 +62,11 @@ def merge_trees(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str
 
 
 def _with_markers(repo, ancestor, ours, theirs) -> bytes | None:
-    try:
-        return repo.merge_file_from_index(ancestor, ours, theirs).contents.encode("utf-8")
-    except (UnicodeDecodeError, RuntimeError, pygit2.GitError):  # not text: NUL bytes, or another encoding
+    # Checked here because libgit2 looks for NUL in the first 8000 bytes only, and pygit2 reads
+    # the result as a C string: a later NUL would silently cut the file short.
+    if not all(is_text(repo[side.id].data) for side in (ancestor, ours, theirs) if side):
         return None
+    return repo.merge_file_from_index(ancestor, ours, theirs).contents.encode("utf-8")
 
 
 def lf(content: bytes) -> bytes:

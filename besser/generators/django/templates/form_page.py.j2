@@ -1,6 +1,6 @@
-{%- for component in screen.view_elements %}
+{%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                     {%- set source_name= source.dataSourceClass%}
                     {% set data_source_name_lower = source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]%}
@@ -37,12 +37,12 @@
                     {%- endif %}
                 {#- End for inheritance #}
         {#- for fields #}
-        {%- for component in screen.view_elements %}
+        {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                    {%- set source_name= source.dataSourceClass%}
-                   {%- set fieldsList = source.fields|list %}
+                   {%- set fieldsList = sort_by_timestamp(source.fields) %}
                        {%- for field in fieldsList%}
 
                 <div class="form-group">

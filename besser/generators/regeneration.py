@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import posixpath
 import re
 import shutil
 import stat
@@ -23,6 +22,7 @@ from besser.utilities.three_way_merge import lf, merge_available, merge_trees, s
 from besser.utilities.workspace_fs import (
     is_plain_entry,
     is_plain_file,
+    is_plain_relpath,
     is_text,
     open_plain,
     read_plain_text,
@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = ".besser_generated.json"
 _RECORD_FORMAT = 1
-_CONFLICT_START = re.compile(rb"^<<<<<<< .*$", re.MULTILINE)
-_CONFLICT_END = re.compile(rb"^>>>>>>> .*$", re.MULTILINE)
-_DRIVE = re.compile(r"^[A-Za-z]:")
+# libgit2 writes a bare marker when that side is empty.
+_CONFLICT_START = re.compile(rb"^<<<<<<<( .*)?$", re.MULTILINE)
+_CONFLICT_END = re.compile(rb"^>>>>>>>( .*)?$", re.MULTILINE)
 _NOT_OUTPUT = frozenset({".git", "__pycache__", "node_modules"})
 _DEFAULT_MODE = 0o644
 # A Spec-Driven app keeps its own base and line authorship. A merge here would update neither: the
@@ -96,12 +96,13 @@ def regenerate_output(generator: GeneratorInterface, adopt: bool = False) -> Reg
     if adopt:
         report.differs_from_model = sorted(rel for rel in new if not same_text(current.get(rel), new[rel]))
     else:
+        # First, as a case rename already moves a file: through a planted link it would leave the folder.
+        _require_writable_paths(folder, output)
         if record is None:
             _require_no_generated_files(folder, output)
             # A crash from here on resumes with the next run, rather than needing an adoption.
             _save_record(folder, {}, [], name)
         _follow_case_renames(folder, base, current, new)
-        _require_writable_paths(folder, output)
         _apply(folder, base, current, new, modes, report, name)
         _write_binaries(folder, output, new, modes, report)
     _save_record(folder, new, report.conflicted, name)
@@ -300,8 +301,8 @@ def _load_record(folder: str, generator_name: str) -> dict | None:
         files, conflicted = data["files"], data["conflicted"]
         if data["format"] != _RECORD_FORMAT or not isinstance(files, dict) or not isinstance(conflicted, list):
             raise ValueError("unexpected content")
-        if not all(isinstance(rel, str) and _inside(rel) for rel in [*files, *conflicted]):
-            raise ValueError("a path outside the folder")
+        if not all(_inside(rel) for rel in [*files, *conflicted]):
+            raise ValueError("a path outside the folder, or in .git")
         record = {"files": {rel: text.encode("utf-8") for rel, text in files.items()}, "conflicted": conflicted}
         recorded_by = data["generator"]
     except (ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
@@ -314,10 +315,8 @@ def _load_record(folder: str, generator_name: str) -> dict | None:
 
 
 def _inside(rel: str) -> bool:
-    """A path that stays inside the folder, whichever platform reads it."""
-    normal = posixpath.normpath(rel)
-    return not (normal.startswith(("/", "../")) or normal == ".." or "\\" in rel or _DRIVE.match(rel)
-                or ".git" in (part.casefold() for part in normal.split("/")))
+    """A plain path inside the folder, whichever platform reads it, and not git's own."""
+    return is_plain_relpath(rel) and ".git" not in (part.casefold() for part in rel.split("/"))
 
 
 def _save_record(folder: str, files: dict[str, bytes], conflicted: list[str], generator_name: str) -> None:

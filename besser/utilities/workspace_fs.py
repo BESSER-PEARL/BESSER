@@ -10,6 +10,7 @@ replaces a link rather than following it.
 """
 
 import os
+import posixpath
 import shutil
 import stat
 import tempfile
@@ -134,6 +135,12 @@ def write_atomic_plain_bytes(path, content: bytes, *, root: "str | None" = None,
         except OSError:
             pass
         raise
+
+
+def is_plain_relpath(rel: str) -> bool:
+    """A plain workspace-relative path (no ``..``, ``\\``, drive, root or NUL)."""
+    return (isinstance(rel, str) and rel == posixpath.normpath(rel) and not rel.startswith(("/", "../"))
+            and not any(c in rel for c in ("\\", ":", "\x00")))
 
 
 def is_text(content: bytes) -> bool:

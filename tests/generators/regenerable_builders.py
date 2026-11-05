@@ -62,17 +62,50 @@ def _editor_models():
     return domain, process_gui_diagram(gui, class_json, domain)
 
 
+def library_gui(model: DomainModel):
+    """A GUI with several modules, screens and fields: Django loops over each of these sets."""
+    from besser.BUML.metamodel.gui import DataList, DataSourceElement, GUIModel, Module, Screen
+    from besser.utilities import sort_by_timestamp
+
+    def screen(cls):
+        source = DataSourceElement(name=f"{cls.name}Source", dataSourceClass=cls, fields=set(cls.attributes))
+        return Screen(name=f"{cls.name}Screen", description="", x_dpi="", y_dpi="", screen_size="Small",
+                      view_elements={DataList(name=f"{cls.name}List", description="", list_sources={source})})
+
+    home = Screen(name="Home", description="", x_dpi="", y_dpi="", screen_size="Small", view_elements=set(),
+                  is_main_page=True)
+    classes = sort_by_timestamp(model.get_classes())
+    modules = {Module(name="Main", screens={home, *(screen(cls) for cls in classes[1:])}),
+               Module(name="Other", screens={screen(classes[0])})}
+    return GUIModel(name="Shelf", package="p", versionCode="1", versionName="1", description="",
+                    screenCompatibility=True, modules=modules)
+
+
 def _django(out):
     from besser.generators.django import DjangoGenerator
 
-    return DjangoGenerator(library(), project_name="shelfsite", app_name="shelfapp", output_dir=out,
-                           containerization=False)
+    model = library()
+    return DjangoGenerator(model, project_name="shelfsite", app_name="shelfapp", gui_model=library_gui(model),
+                           output_dir=out, containerization=False)
+
+
+def _agent():
+    from besser.BUML.metamodel.state_machine.agent import Agent
+
+    agent = Agent("helper")
+    greeting = agent.new_intent("greeting", ["hello", "good morning"])
+    goodbye = agent.new_intent("goodbye", ["bye", "see you"])
+    start = agent.new_state("start", initial=True)
+    greeted = agent.new_state("greeted")
+    start.when_intent_matched(greeting).go_to(greeted)
+    greeted.when_intent_matched(goodbye).go_to(start)
+    return agent
 
 
 def _web_app(out):
     from besser.generators.web_app import WebAppGenerator
 
-    return WebAppGenerator(*_editor_models(), output_dir=out)
+    return WebAppGenerator(*_editor_models(), output_dir=out, agent_model=_agent())
 
 
 def _react(out):

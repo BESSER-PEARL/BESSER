@@ -39,7 +39,6 @@ import hashlib
 import json
 import logging
 import os
-import posixpath
 import stat
 import threading
 import uuid
@@ -148,12 +147,6 @@ def normalize_model_id(provider: Optional[str], model: Optional[str]) -> Optiona
 
 def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()[:_HASH_LEN]
-
-
-def is_plain_relpath(rel: str) -> bool:
-    """A plain workspace-relative path, as attribution records them (no ``..``, ``\\``, drive, root or NUL)."""
-    return (isinstance(rel, str) and rel == posixpath.normpath(rel) and not rel.startswith(("/", "../"))
-            and not any(c in rel for c in ("\\", ":", "\x00")))
 
 
 def read_text_bytes(workspace: str, rel: str) -> Optional[bytes]:

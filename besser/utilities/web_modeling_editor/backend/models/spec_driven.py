@@ -68,10 +68,10 @@ class SmartGenerateRequest(BaseModel):
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.
     api_key: Optional[SecretStr] = None
-    # "pia" is a gateway whose endpoint comes from the server's model catalog
-    # (BESSER_MODEL_CATALOG); a server without it rejects the run.
+    # "pia" and "gateway" are gateways whose endpoints come from the server's
+    # model catalog (BESSER_MODEL_CATALOG); a server without them rejects the run.
     provider: Literal[
-        "anthropic", "openai", "mistral", "nebius", "free", "sponsored", "pia"
+        "anthropic", "openai", "mistral", "nebius", "free", "sponsored", "pia", "gateway"
     ] = "anthropic"
     llm_model: Optional[str] = Field(default=None, max_length=120)
     # OpenAI-compatible base URL for the frontend's 'Local (self-hosted)'
@@ -213,7 +213,7 @@ class SmartGenerateRequest(BaseModel):
             raise ValueError(
                 f"api_key is required for provider '{self.provider}'"
             )
-        if self.provider == "pia":
+        if self.provider in ("pia", "gateway"):
             # The gateway's endpoint is the server's model catalog, never the
             # request's, so a stray base_url must not trip the SSRF gate.
             self.base_url = None
@@ -328,6 +328,46 @@ class PushSmartToGitHubRequest(BaseModel):
     deploy_config: SmartPushDeployConfig
 
 
+class RecapRun(ResponseModel):
+    """One earlier run on the app, as ``run_recap.build_recap`` reads it."""
+
+    # The user's own words; empty when the recipe no longer holds them.
+    request: str
+    date: str
+    mode: Literal["create", "modify"]
+    file_count: int
+
+
+class RecapOpenItem(ResponseModel):
+    """Something the last run left open."""
+
+    kind: Literal["rolled_back", "missing", "not_checked", "left_out"]
+    text: str
+
+
+class RecapCommit(ResponseModel):
+    """A commit the repo gained after the last run."""
+
+    sha: str
+    message: str
+    author: str
+
+
+class RepoRecap(ResponseModel):
+    """What was done on a repo's app and where it stands (``run_recap.build_recap``).
+
+    The editor's chat shows it; every value is text from the repository.
+    """
+
+    runs: list[RecapRun]
+    open_items: list[RecapOpenItem]
+    # The true total; ``open_items`` is capped.
+    open_item_count: int
+    commits_since_run: list[RecapCommit]
+    # The true total; ``commits_since_run`` is capped.
+    commit_count: int
+
+
 class PushSmartToGitHubResponse(ResponseModel):
     """Response of ``POST /besser_api/spec-driven/push-to-github``."""
 
@@ -361,6 +401,9 @@ class PushSmartToGitHubResponse(ResponseModel):
     # that added classes); None when it is the request's own export. The
     # editor loads it, so its model matches the repo.
     project_export: Optional[dict] = None
+    # What the pushed recipe records, and ``AGENTS.md`` too unless a warning says
+    # otherwise; None for a run that left no recipe.
+    recap: Optional[RepoRecap] = None
 
 
 class ImportGitHubRunRequest(BaseModel):
@@ -475,6 +518,10 @@ class ImportGitHubRunResponse(ResponseModel):
     # True when an AI model could read the code for a better diagram and the
     # request did not allow it: import again with ``allow_ai_reading`` to read it.
     ai_reading_offered: bool = False
+    # False for a repo holding only a saved model: a run has no app to continue from.
+    has_code: bool = False
+    # Where the repo's app stands; None when no Spec-Driven run was pushed to it.
+    recap: Optional[RepoRecap] = None
 
 
 class SmartPreviewRequest(BaseModel):

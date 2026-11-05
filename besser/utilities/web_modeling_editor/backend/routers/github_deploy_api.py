@@ -11,7 +11,7 @@ import os
 import re
 import tempfile
 import uuid
-from typing import Literal, Optional, List
+from typing import Dict, Literal, Optional, List
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.secret_redaction import redact_credentials, sanitize_config
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
+from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import attribution_records
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
 )
@@ -297,7 +298,7 @@ async def deploy_webapp_to_github(
                 except Exception:
                     logger.warning("Failed to export agent B-UML model — continuing without it", exc_info=True)
 
-                _write_deploy_model(temp_dir, body, diagrams)
+                await _write_deploy_model(temp_dir, body, diagrams, github, username, repo_name, default_branch)
 
                 write_generation_provenance(temp_dir, "agent")
                 readme_path = os.path.join(temp_dir, "README.md")
@@ -477,7 +478,7 @@ async def deploy_webapp_to_github(
             except Exception:
                 logger.warning("Failed to export B-UML models — continuing without them", exc_info=True)
 
-            _write_deploy_model(temp_dir, body, diagrams)
+            await _write_deploy_model(temp_dir, body, diagrams, github, username, repo_name, default_branch)
 
             # Add README before push so everything lands in one commit
             write_generation_provenance(temp_dir, "web_app")
@@ -575,7 +576,9 @@ async def deploy_webapp_to_github(
         )
 
 
-def _write_deploy_model(temp_dir: str, body: dict, diagrams: dict) -> None:
+async def _write_deploy_model(
+    temp_dir: str, body: dict, diagrams: dict, github, owner: str, repo: str, branch: str,
+) -> None:
     """Write the deployed project's model files, credentials redacted, as every repo write does.
 
     The frontend sends the V2 ``projectExport`` envelope, which the editor can
@@ -588,6 +591,7 @@ def _write_deploy_model(temp_dir: str, body: dict, diagrams: dict) -> None:
             "which the editor cannot import again."
         )
         project_export = diagrams
+    project_export = await repo_model.attribute_new_elements(github, owner, repo, project_export, login=owner, branch=branch)
     repo_model.write_model_files(temp_dir, project_export)
 
 
@@ -1187,6 +1191,8 @@ class GitHubCommitResponse(ResponseModel):
     sha: str
     message: str
     author: str
+    author_login: Optional[str] = None
+    is_merge: bool = False
     date: str
     html_url: str
     # The BESSER-Origin trailer ("spec-driven-agent", "editor"); None for a person's commit.
@@ -1232,6 +1238,9 @@ class SaveProjectResponse(ResponseModel):
     conflict_branch: Optional[str] = None
     # What the user should know about a merged save (see GitHubService.commit_tree).
     warnings: List[str] = []
+    # Who added each class and attribute of the saved model, by element id:
+    # ``{"addedBy": <login>, "addedAt": <UTC time>}``. Not what a merge brought in.
+    attribution: Dict[str, Dict[str, str]] = {}
 
 
 class LoadProjectResponse(ResponseModel):
@@ -1459,6 +1468,8 @@ def _commit_response(commit: dict) -> "GitHubCommitResponse":
         sha=commit.get("sha", ""),
         message=commit.get("message", ""),
         author=commit.get("author", ""),
+        author_login=commit.get("author_login"),
+        is_merge=len(commit.get("parents") or []) > 1,
         date=commit.get("date", ""),
         html_url=commit.get("html_url", ""),
         origin=repo_model.commit_origin(commit.get("message", "")),
@@ -1469,16 +1480,6 @@ def _checked_model_path(model_path: Optional[str]) -> Optional[str]:
     if model_path is not None and not is_repo_json_path(model_path):
         raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
     return model_path
-
-
-async def _read_project_file(github, owner: str, repo: str, path: str, ref: str) -> Optional[dict]:
-    """``path`` at ``ref`` when it holds a BESSER project, else None."""
-    try:
-        file_data = await github.get_file_content(owner, repo, path, ref=ref)
-        document = json.loads(file_data["content"]) if file_data and file_data.get("content") else None
-    except ValueError:
-        return None
-    return document if repo_model.is_besser_project(document) else None
 
 
 async def _find_models(github, owner: str, repo: str, ref: str, *, first_only: bool) -> list[tuple[str, dict]]:
@@ -1500,7 +1501,7 @@ async def _find_models(github, owner: str, repo: str, ref: str, *, first_only: b
         logger.warning("Could not list %s/%s@%s to look for a saved project", owner, repo, ref[:7], exc_info=True)
         return found
     for path in repo_model.saved_project_candidates(paths):
-        document = await _read_project_file(github, owner, repo, path, ref)
+        document = await repo_model.read_project_file(github, owner, repo, path, ref)
         if document is not None:
             found.append((path, document))
             if first_only:
@@ -1513,7 +1514,7 @@ async def _find_model(
 ) -> Optional[tuple[str, dict]]:
     """The repo's model at commit ``ref`` and its path: ``model_path`` when it holds one, else the first found."""
     if model_path:
-        document = await _read_project_file(github, owner, repo, model_path, ref)
+        document = await repo_model.read_project_file(github, owner, repo, model_path, ref)
         if document is not None:
             return model_path, document
     found = await _find_models(github, owner, repo, ref, first_only=True)
@@ -1564,7 +1565,11 @@ async def save_project_to_github(
     """
     github = _github_for(github_sessions, github_session)
     try:
-        files = repo_model.model_files(request.project_export or request.project_data)
+        export = await repo_model.attribute_new_elements(
+            github, request.owner, request.repo, request.project_export or request.project_data,
+            ref=request.base_commit_sha, branch=request.branch, model_path=request.legacy_file_path,
+        )
+        files = repo_model.model_files(export)
         message = repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR)
         if files:
             await github.ensure_first_commit(
@@ -1582,7 +1587,7 @@ async def save_project_to_github(
             request.owner, request.repo, request.branch, entries, message,
             layer_on_parent=True,
             base_commit_sha=request.base_commit_sha,
-            model_merge=repo_model.ModelMerge(request.project_export or request.project_data),
+            model_merge=repo_model.ModelMerge(export),
         )
         await github.add_topic(request.owner, request.repo, repo_model.BESSER_TOPIC)
         conflict = outcome["status"] == "conflict"
@@ -1596,6 +1601,7 @@ async def save_project_to_github(
             status=outcome["status"],
             conflict_branch=outcome["conflict_branch"],
             warnings=outcome.get("warnings", []),
+            attribution=attribution_records(repo_model.project_of(export)),
         )
     except httpx.HTTPStatusError as exc:
         raise _github_status_error(exc, "save_project_to_github") from exc
@@ -1720,7 +1726,10 @@ async def create_repository_for_project(
         )
         branch = repo_info.get("default_branch", "main")
         project_name = request.project_data.get("name", "BESSER Project")
-        files = repo_model.model_files(request.project_export or request.project_data)
+        export = await repo_model.attribute_new_elements(
+            github, username, repo_name, request.project_export or request.project_data, login=username, branch=branch,
+        )
+        files = repo_model.model_files(export)
         files["README.md"] = _README_TEMPLATE.format(
             project_name=project_name, model_file=repo_model.MODEL_FILE, model_dir=repo_model.MODEL_DIR,
         ).encode("utf-8")

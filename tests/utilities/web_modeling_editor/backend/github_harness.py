@@ -23,7 +23,8 @@ skips GitHub's consent page and lands on the real callback as user ``ana``.
 ``POST /mock/teammate-class?repo=library&name=Member``,
 ``POST /mock/teammate-rename?repo=library&element=<id>&name=Writer``,
 ``POST /mock/teammate-code?repo=…&path=…&content=…``,
-``POST /mock/merge-pull?repo=…&number=1``, and to inspect:
+``POST /mock/merge-pull?repo=…&number=1``, ``POST /mock/sign-in-as?login=ben`` (who
+GitHub says is signed in, for a second person in a second origin), and to inspect:
 ``GET /mock/files?repo=…[&ref=…]``, ``GET /mock/state?repo=…``.
 """
 
@@ -192,6 +193,12 @@ def teammate_code(repo: str, path: str, content: str, owner: str = "ana"):
 @mock.post("/merge-pull")
 def merge_pull(repo: str, number: int, owner: str = "ana"):
     return {"sha": fake.merge_pull(_repo(owner, repo), number)}
+
+
+@mock.post("/sign-in-as")
+def sign_in_as(login: str):
+    fake.login = login
+    return {"login": login}
 
 
 @mock.get("/files")

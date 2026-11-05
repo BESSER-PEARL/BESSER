@@ -52,6 +52,7 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
 )
 from besser.spec_driven_agent.planning.user_request import user_request
+from besser.spec_driven_agent.run_recap import request_text
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import evict_stale_file_bodies
 from besser.spec_driven_agent.validation.frontend_contract import (
@@ -4556,7 +4557,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             and isinstance((tc.get("input") or {}).get("path"), str)
         })
         history.append({
-            "instructions": (instructions or "")[:300],
+            "instructions": request_text(instructions)[:300],  # bounded: one history line
             "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "mode": "modify" if self._modify_mode else "create",
             "files_touched": touched[:20],

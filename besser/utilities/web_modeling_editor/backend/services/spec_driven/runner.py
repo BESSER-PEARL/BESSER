@@ -65,6 +65,7 @@ from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
     inline_code,
+    remove_agents_block,
     remove_readme_block,
     write_generation_provenance,
 )
@@ -910,11 +911,12 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     # The old provenance file is not user code; packaging writes a fresh one.
     with contextlib.suppress(OSError):
         os.remove(os.path.join(dest_dir, PROVENANCE_FILENAME))
-    # Nor is the README's BESSER block: the push renders it again.
+    # Nor are the BESSER blocks of the README and AGENTS.md: the push renders them again.
     try:
         remove_readme_block(dest_dir)
+        remove_agents_block(dest_dir)
     except OSError:
-        logger.warning("Could not strip the BESSER block from the seed README in %s", dest_dir, exc_info=True)
+        logger.warning("Could not strip the BESSER blocks from the seed in %s", dest_dir, exc_info=True)
 
 
 # ---------------------------------------------------------------------

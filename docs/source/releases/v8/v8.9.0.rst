@@ -110,3 +110,10 @@ Deploy the modeling agent ``v8.1.0`` alongside (its own release, from ``develop`
   on every path, instead of "the AI service is unavailable".
 * **A request on a linked repository is a change to its app** (agent #56), and only an
   explicit discard rebuilds it. Questions about what was built get the recap.
+* **PyMuPDF is replaced by pypdfium2** (agent #63), as PyMuPDF is AGPL-3.0 or commercial
+  and this repository is MIT. PDF uploads and the UML specification index use it. A
+  password-protected file now gets the intended error reply, and a file with no pages
+  gets "could not open". Conversions queue, because PDFium is not thread-safe. On some
+  slide decks word spaces are lost in the extracted text ("massiveamounts ofsoftware"),
+  though every character is correct and in order. Existing RAG stores keep their text
+  until rebuilt.

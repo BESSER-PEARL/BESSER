@@ -5,9 +5,10 @@ import pytest
 
 from besser.generators.django import DjangoGenerator
 from besser.BUML.metamodel.structural import DomainModel, Property, Class, \
-    BinaryAssociation, Multiplicity
+    BinaryAssociation, Enumeration, EnumerationLiteral, Multiplicity
 from besser.BUML.metamodel.gui import GUIModel, Module, DataList, \
     DataSourceElement, Screen
+from tests.generators.regenerable_builders import library, library_gui
 
 # DjangoGenerator shells out to ``django-admin startproject``.
 pytestmark = pytest.mark.skipif(
@@ -465,3 +466,20 @@ def test_Operations_many_to_many():
     assert "models.ForeignKey" in content, "Missing ManyToManyField in the generated file."
 
     shutil.rmtree(project_folder)
+
+
+def test_gui_output_is_valid_python(tmp_path):
+    model = library()
+    for name, literals in (("Genre", ("novel", "essay")), ("Format", ("paper", "ebook"))):
+        enumeration = Enumeration(name=name, literals={EnumerationLiteral(name=literal) for literal in literals})
+        model.types = model.types | {enumeration}
+        book = next(cls for cls in model.get_classes() if cls.name == "Book")
+        book.attributes = book.attributes | {Property(name=name.lower(), type=enumeration)}
+
+    DjangoGenerator(model, project_name="shelfsite", app_name="shelfapp", gui_model=library_gui(model),
+                    output_dir=str(tmp_path), containerization=False).generate()
+
+    sources = sorted(tmp_path.rglob("*.py"))
+    assert {"views.py", "urls.py", "forms.py", "models.py"} <= {path.name for path in sources}
+    for path in sources:
+        compile(path.read_text(encoding="utf-8"), str(path), "exec")

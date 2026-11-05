@@ -16,6 +16,8 @@ class QiskitGenerator(GeneratorInterface):
     """
     Generates Qiskit code from a BESSER QuantumCircuit model.
     """
+    regenerable = True
+
     def __init__(self, model: QuantumCircuit, output_dir: str = None,
                  backend_type: str = "aer_simulator", shots: int = 1024):
         super().__init__(model, output_dir)

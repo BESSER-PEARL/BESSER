@@ -29,6 +29,8 @@ class RDFGenerator(GeneratorInterface):
         "timedelta": "duration",
     }
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
 

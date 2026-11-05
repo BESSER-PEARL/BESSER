@@ -219,7 +219,7 @@ class TimeSeriesForecasterGenerator(PytorchGenerator):
         config = ForecastConfig() if config is None else config
         config.validate()
         self.config = config.resolved()
-        self.regenerate = regenerate
+        self.regenerate_command = regenerate
         self.layout = self._check_shapes(model, self.config, channel_last)
         super().__init__(model, output_dir=output_dir, generation_type="subclassing",
                          channel_last=channel_last)
@@ -340,7 +340,7 @@ class TimeSeriesForecasterGenerator(PytorchGenerator):
             layout=self.layout,
             conf=self.model.configuration,
             network=self._describe_network(),
-            regenerate=self.regenerate,
+            regenerate=self.regenerate_command,
         )
         code = self._tidy(code)
         path = self.build_generation_path(file_name=self.file_name_for())

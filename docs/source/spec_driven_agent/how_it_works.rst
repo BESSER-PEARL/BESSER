@@ -4,6 +4,14 @@ How it works
 A run is a three-phase pipeline (``LLMOrchestrator.run`` in
 ``besser/spec_driven_agent/orchestrator.py``).
 
+.. container:: besser-diagram
+
+   .. raw:: html
+      :file: ../_static/diagrams/create-run.svg
+
+   A new run. Teal boxes are LLM calls, and everything else is deterministic
+   code. The agent is one conversation with a tool list.
+
 The three phases
 ----------------
 

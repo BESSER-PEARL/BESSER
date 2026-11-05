@@ -5,9 +5,9 @@ generated code) and the links derived between them. It follows W3C PROV:
 an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
 :class:`Actor` is an agent.
 
-* An :class:`Operation` is performed by Actors and consumes and produces Artifacts.
-  Its kind is its class: :class:`Modeling` edits models and holds the granular
-  :class:`Change` records of what it did, :class:`CodeGeneration` (a
+* An :class:`Operation` is performed by Actors and reads and writes Artifacts.
+  Its kind is its class: :class:`ModelingSession` edits models and holds the granular
+  :class:`ChangeEvent` records of what it did, :class:`CodeGeneration` (a
   :class:`Transformation`) derives code from models, :class:`Conversation` is a
   dialogue between a user and an agent. Whether a person or an agent did the
   work is told by its actors, not by its kind.
@@ -16,7 +16,7 @@ an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
   (a prompt and its answer). The tools an operation used are derived from its calls.
 * A :class:`TraceLink` connects a source and a target Artifact (a class and the
   code generated from it). :class:`Evidence` says why the link holds and
-  :class:`Confidence` how sure it is.
+  :class:`Confidence` how sure it is; an operation may have a Confidence too.
 
 A trace is stored apart from the model it describes. It points at model
 elements by their persistent ``Element.id`` (the editor element id), never by
@@ -52,9 +52,9 @@ __all__ = [
     "LLM",
     "LogRecord",
     "ToolCall",
-    "Change",
+    "ChangeEvent",
     "Operation",
-    "Modeling",
+    "ModelingSession",
     "Transformation",
     "CodeGeneration",
     "Conversation",
@@ -79,7 +79,7 @@ class ExecutionStatus(Enum):
 
 
 class ChangeKind(Enum):
-    """What a :class:`Change` did to its artifact."""
+    """What a :class:`ChangeEvent` did to its artifact."""
     CREATED = "CREATED"
     UPDATED = "UPDATED"
     DELETED = "DELETED"
@@ -184,7 +184,7 @@ class TraceElement(Element, ABC):
 
 
 class Artifact(TraceElement, ABC):
-    """Something an operation consumes, produces or changes.
+    """Something an operation reads, writes or changes.
 
     Args:
         name (str): Display name, free text (an element name, a file path).
@@ -816,7 +816,7 @@ class ToolCall(TraceElement):
         self.__logs = _instances(logs, LogRecord, "ToolCall", "logs")
 
 
-class Change(TraceElement):
+class ChangeEvent(TraceElement):
     """One granular effect of an operation on one artifact.
 
     ``feature`` names the changed feature (``name``, ``type``, ``multiplicity``, ...)
@@ -858,9 +858,9 @@ class Change(TraceElement):
             TypeError: If kind is not a ChangeKind.
             ValueError: If an UPDATED change has no feature, or another kind has one.
         """
-        _instance(kind, ChangeKind, "Change", "kind")
+        _instance(kind, ChangeKind, "ChangeEvent", "kind")
         if kind is ChangeKind.UPDATED:
-            _text(feature, "Change", "feature")
+            _text(feature, "ChangeEvent", "feature")
         elif feature is not None:
             raise ValueError(f"A {kind.value} change has no feature; got {feature!r}.")
         self.__kind = kind
@@ -874,7 +874,7 @@ class Change(TraceElement):
     @artifact.setter
     def artifact(self, artifact: Artifact):
         """Artifact: Set the artifact that changed."""
-        self.__artifact = _instance(artifact, Artifact, "Change", "artifact")
+        self.__artifact = _instance(artifact, Artifact, "ChangeEvent", "artifact")
 
     @property
     def old_value(self) -> Optional[str]:
@@ -884,7 +884,7 @@ class Change(TraceElement):
     @old_value.setter
     def old_value(self, old_value: Optional[str]):
         """str: Set the value before the change."""
-        self.__old_value = _optional_text(old_value, "Change", "old_value")
+        self.__old_value = _optional_text(old_value, "ChangeEvent", "old_value")
 
     @property
     def new_value(self) -> Optional[str]:
@@ -894,11 +894,11 @@ class Change(TraceElement):
     @new_value.setter
     def new_value(self, new_value: Optional[str]):
         """str: Set the value after the change."""
-        self.__new_value = _optional_text(new_value, "Change", "new_value")
+        self.__new_value = _optional_text(new_value, "ChangeEvent", "new_value")
 
 
 class Operation(TraceElement, ABC):
-    """An activity on the project. Abstract: an operation is a :class:`Modeling`, a
+    """An activity on the project. Abstract: an operation is a :class:`ModelingSession`, a
     :class:`CodeGeneration` or a :class:`Conversation`.
 
     ``started_at`` is the element's timestamp.
@@ -909,8 +909,9 @@ class Operation(TraceElement, ABC):
         started_at (datetime): When it started (current time when None).
         ended_at (datetime): When it ended (None while it runs).
         tool_calls (list[ToolCall]): The tools it called, in order, with their messages.
-        consumes (list[Artifact]): Artifacts it read.
-        produces (list[Artifact]): Artifacts it created.
+        reads (list[Artifact]): Artifacts it read.
+        writes (list[Artifact]): Artifacts it wrote.
+        confidence (Confidence): How sure its result is (None when not assessed).
         id (str): Persistent identifier.
 
     Raises:
@@ -919,16 +920,18 @@ class Operation(TraceElement, ABC):
 
     def __init__(self, performed_by: List[Actor], status: ExecutionStatus = ExecutionStatus.SUCCEEDED,
                  started_at: datetime = None, ended_at: datetime = None, tool_calls: List[ToolCall] = None,
-                 consumes: List[Artifact] = None, produces: List[Artifact] = None, id: str = None):
+                 reads: List[Artifact] = None, writes: List[Artifact] = None, confidence: "Confidence" = None,
+                 id: str = None):
         if type(self) in (Operation, Transformation):
-            raise TypeError(f"{type(self).__name__} is abstract: use Modeling, CodeGeneration or Conversation.")
+            raise TypeError(f"{type(self).__name__} is abstract: use ModelingSession, CodeGeneration or Conversation.")
         super().__init__(id, started_at)
         self.performed_by: List[Actor] = performed_by
         self.status: ExecutionStatus = status
         self.ended_at: Optional[datetime] = ended_at
         self.tool_calls: List[ToolCall] = tool_calls
-        self.consumes: List[Artifact] = consumes
-        self.produces: List[Artifact] = produces
+        self.reads: List[Artifact] = reads
+        self.writes: List[Artifact] = writes
+        self.confidence: Optional[Confidence] = confidence
 
     @property
     def performed_by(self) -> List[Actor]:
@@ -992,51 +995,61 @@ class Operation(TraceElement, ABC):
         return _instances([call.tool for call in self.__tool_calls], Tool, "Operation", "tools")
 
     @property
-    def consumes(self) -> List[Artifact]:
+    def reads(self) -> List[Artifact]:
         """list[Artifact]: Get the artifacts the operation read."""
-        return list(self.__consumes)
+        return list(self.__reads)
 
-    @consumes.setter
-    def consumes(self, consumes: List[Artifact]):
+    @reads.setter
+    def reads(self, reads: List[Artifact]):
         """list[Artifact]: Set the artifacts the operation read."""
-        self.__consumes = _instances(consumes, Artifact, "Operation", "consumes")
+        self.__reads = _instances(reads, Artifact, "Operation", "reads")
 
     @property
-    def produces(self) -> List[Artifact]:
-        """list[Artifact]: Get the artifacts the operation created."""
-        return list(self.__produces)
+    def writes(self) -> List[Artifact]:
+        """list[Artifact]: Get the artifacts the operation wrote."""
+        return list(self.__writes)
 
-    @produces.setter
-    def produces(self, produces: List[Artifact]):
-        """list[Artifact]: Set the artifacts the operation created."""
-        self.__produces = _instances(produces, Artifact, "Operation", "produces")
+    @writes.setter
+    def writes(self, writes: List[Artifact]):
+        """list[Artifact]: Set the artifacts the operation wrote."""
+        self.__writes = _instances(writes, Artifact, "Operation", "writes")
+
+    @property
+    def confidence(self) -> Optional["Confidence"]:
+        """Confidence: Get how sure the operation's result is."""
+        return self.__confidence
+
+    @confidence.setter
+    def confidence(self, confidence: Optional["Confidence"]):
+        """Confidence: Set how sure the operation's result is."""
+        self.__confidence = _instance(confidence, Confidence, "Operation", "confidence", optional=True)
 
 
-class Modeling(Operation):
+class ModelingSession(Operation):
     """A modeling session: edits made to models, by a person, an agent (an
     assistant), or both, recorded change by change.
 
     Args:
         performed_by (list[Actor]): Who made the edits (at least one).
-        changes (list[Change]): The edits, in order (at least one in a valid trace).
+        changes (list[ChangeEvent]): The edits, in order (at least one in a valid trace).
         **kwargs: The other :class:`Operation` arguments.
     """
 
-    def __init__(self, performed_by: List[Actor], changes: List[Change] = None, **kwargs):
+    def __init__(self, performed_by: List[Actor], changes: List[ChangeEvent] = None, **kwargs):
         super().__init__(performed_by, **kwargs)
-        self.changes: List[Change] = changes
+        self.changes: List[ChangeEvent] = changes
 
     @property
-    def changes(self) -> List[Change]:
-        """list[Change]: Get the session's edits, in order."""
+    def changes(self) -> List[ChangeEvent]:
+        """list[ChangeEvent]: Get the session's edits, in order."""
         return list(self.__changes)
 
     @changes.setter
-    def changes(self, changes: List[Change]):
-        """list[Change]: Set the session's edits."""
-        self.__changes = _instances(changes, Change, "Modeling", "changes")
+    def changes(self, changes: List[ChangeEvent]):
+        """list[ChangeEvent]: Set the session's edits."""
+        self.__changes = _instances(changes, ChangeEvent, "ModelingSession", "changes")
 
-    def add_change(self, change: Change):
+    def add_change(self, change: ChangeEvent):
         """Append an edit to the session."""
         self.changes = self.__changes + [change]
 
@@ -1050,7 +1063,7 @@ class CodeGeneration(Transformation):
     """A generation run: code derived from models, by a generator or by an LLM.
 
     It calls at least one :class:`CodeGenerator` or :class:`LLM` (checked by
-    ``TraceModel.validate``), consumes the model artifacts and produces the code artifacts
+    ``TraceModel.validate``), reads the model artifacts and writes the code artifacts
     it links them to. Which of the two made a link is told by its evidence: a
     :class:`RuleEvidence` for a generator's template, an :class:`AIEvidence` for an LLM.
     """
@@ -1061,9 +1074,9 @@ class Conversation(Operation):
     :class:`ToolCall` to the LLM the agent answers with, holding the turn's messages.
 
     What it leads to varies, so it is not a :class:`Transformation`: a clarification question
-    produces nothing; stated requirements are artifacts it produces, linked from the
+    writes nothing; stated requirements are artifacts it writes, linked from the
     :class:`PromptArtifact` they came from; an edit or a generation it asks for is a separate
-    :class:`Modeling` or :class:`CodeGeneration`. At least one of its actors is an :class:`Agent`
+    :class:`ModelingSession` or :class:`CodeGeneration`. At least one of its actors is an :class:`Agent`
     (checked by ``TraceModel.validate``).
     """
 
@@ -1147,7 +1160,8 @@ class AIEvidence(Evidence):
 
 
 class Confidence(TraceElement):
-    """How sure a trace link is, as a probability. Its timestamp is when it was calculated.
+    """How sure a trace link or an operation is, as a probability. Its timestamp is when it was
+    calculated.
 
     Args:
         value (float): Probability between 0 and 1.
@@ -1386,9 +1400,9 @@ class TraceModel(Model):
         return next((a for a in self.__artifacts
                      if isinstance(a, ModelArtifact) and a.element_id == element_id), None)
 
-    def changes_of(self, artifact: Artifact) -> List[Change]:
+    def changes_of(self, artifact: Artifact) -> List[ChangeEvent]:
         """Every change recorded on ``artifact``, in time order."""
-        changes = [c for op in self.__operations if isinstance(op, Modeling) for c in op.changes
+        changes = [c for op in self.__operations if isinstance(op, ModelingSession) for c in op.changes
                    if c.artifact is artifact]
         return sorted(changes, key=lambda c: c.timestamp)
 
@@ -1401,12 +1415,12 @@ class TraceModel(Model):
             pending.extend(self.fragments_of(current))
         return result
 
-    def changed_since(self, artifact: Artifact, trace_link: TraceLink) -> List[Change]:
+    def changed_since(self, artifact: Artifact, trace_link: TraceLink) -> List[ChangeEvent]:
         """The changes to ``artifact``, or a fragment of it, made after ``trace_link`` by another
         operation than the link's (that operation's own changes are part of making the link), in
         time order."""
         parts = set(map(id, self.with_fragments(artifact)))
-        changes = [c for op in self.__operations if isinstance(op, Modeling) and op is not trace_link.operation
+        changes = [c for op in self.__operations if isinstance(op, ModelingSession) and op is not trace_link.operation
                    for c in op.changes if id(c.artifact) in parts and c.timestamp > trace_link.timestamp]
         return sorted(changes, key=lambda c: c.timestamp)
 
@@ -1458,7 +1472,7 @@ class TraceModel(Model):
 
         for artifact in self.__artifacts:
             check(artifact.parent, artifacts, "artifact", f"Artifact {artifact.id!r} (parent)")
-        producer: dict[int, str] = {}
+        writer: dict[int, str] = {}
         for operation in self.__operations:
             where = f"Operation {operation.id!r}"
             for actor in operation.performed_by:
@@ -1468,18 +1482,18 @@ class TraceModel(Model):
                 errors.append(f"{where} has tool calls sharing a sequence number.")
             for call in operation.tool_calls:
                 check(call.tool, tools, "tool", f"ToolCall {call.id!r}")
-            for artifact in operation.consumes + operation.produces:
+            for artifact in operation.reads + operation.writes:
                 check(artifact, artifacts, "artifact", where)
-            for artifact in operation.produces:
-                if id(artifact) in producer:
-                    errors.append(f"Artifact {artifact.id!r} is produced by both operation "
-                                  f"{producer[id(artifact)]!r} and {operation.id!r}.")
-                producer[id(artifact)] = operation.id
-            if isinstance(operation, Modeling):
+            for artifact in operation.writes:
+                if id(artifact) in writer:
+                    errors.append(f"Artifact {artifact.id!r} is written by both operation "
+                                  f"{writer[id(artifact)]!r} and {operation.id!r}.")
+                writer[id(artifact)] = operation.id
+            if isinstance(operation, ModelingSession):
                 if not operation.changes:
-                    errors.append(f"{where} is a Modeling with no changes.")
+                    errors.append(f"{where} is a ModelingSession with no changes.")
                 for change in operation.changes:
-                    check(change.artifact, artifacts, "artifact", f"Change {change.id!r}")
+                    check(change.artifact, artifacts, "artifact", f"ChangeEvent {change.id!r}")
             elif isinstance(operation, CodeGeneration):
                 if not any(isinstance(tool, (CodeGenerator, LLM)) for tool in operation.tools):
                     errors.append(f"{where} is a CodeGeneration that calls no CodeGenerator or LLM.")
@@ -1515,8 +1529,10 @@ class TraceModel(Model):
             for call in operation.tool_calls:
                 elements.append(call)
                 elements += call.logs
-            if isinstance(operation, Modeling):
+            if isinstance(operation, ModelingSession):
                 elements += operation.changes
+            if operation.confidence is not None:
+                elements.append(operation.confidence)
         for link in self.__trace_links:
             elements.append(link)
             elements += link.evidence

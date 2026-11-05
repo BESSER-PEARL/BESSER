@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from besser.BUML.metamodel.traceability import (
-    LLM, AIEvidence, Agent, Change, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
-    Conversation, Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Modeling, Person, PromptArtifact,
+    LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
+    Conversation, Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, ModelingSession, Person, PromptArtifact,
     RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.utilities.utils import parse_iso_timestamp
@@ -19,7 +19,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import TRA
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 _ACTOR_TYPES = {"Person": Person, "Agent": Agent}
-_OPERATION_TYPES = {"Modeling": Modeling, "CodeGeneration": CodeGeneration, "Conversation": Conversation}
+_OPERATION_TYPES = {"ModelingSession": ModelingSession, "CodeGeneration": CodeGeneration, "Conversation": Conversation}
 _TOOL_TYPES = {"Editor": Editor, "CodeGenerator": CodeGenerator, "LLM": LLM}
 
 
@@ -63,6 +63,18 @@ def _resolve(index: Dict[str, Any], ref_id: Any, what: str, where: str):
     if not isinstance(ref_id, str) or ref_id not in index:
         raise ConversionError(f"{where} references unknown {what} {ref_id!r}.")
     return index[ref_id]
+
+
+def _confidence(raw: dict, where: str) -> Optional[Confidence]:
+    """The optional ``confidence`` of a trace link or an operation."""
+    raw_conf = raw.get("confidence")
+    if raw_conf is None:
+        return None
+    cwhere = f"Confidence of {where}"
+    return _build(
+        Confidence, cwhere, value=_field(raw_conf, "value", cwhere),
+        explanation=_field(raw_conf, "explanation", cwhere, optional=True),
+        id=_field(raw_conf, "id", cwhere), timestamp=_timestamp(raw_conf, "timestamp", cwhere))
 
 
 def _build(factory: Callable, where: str, **kwargs):
@@ -145,13 +157,13 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
         kind = _field(raw, "type", where)
         if kind not in _OPERATION_TYPES:
             raise ConversionError(f"{where} has unknown type {kind!r}; expected one of {sorted(_OPERATION_TYPES)}.")
-        if kind != "Modeling" and _list(raw, "changes", where):
-            raise ConversionError(f"{where} is a {kind}: only a Modeling has changes.")
+        if kind != "ModelingSession" and _list(raw, "changes", where):
+            raise ConversionError(f"{where} is a {kind}: only a ModelingSession has changes.")
         op_changes = []
         for raw_change in _list(raw, "changes", where):
-            cwhere = f"Change {raw_change.get('id') if isinstance(raw_change, dict) else raw_change!r}"
+            cwhere = f"ChangeEvent {raw_change.get('id') if isinstance(raw_change, dict) else raw_change!r}"
             change = _build(
-                Change, cwhere, kind=_enum(ChangeKind, raw_change, "kind", cwhere),
+                ChangeEvent, cwhere, kind=_enum(ChangeKind, raw_change, "kind", cwhere),
                 artifact=_resolve(artifacts, _field(raw_change, "artifactId", cwhere), "artifact", cwhere),
                 feature=_field(raw_change, "feature", cwhere, optional=True),
                 old_value=_field(raw_change, "oldValue", cwhere, optional=True),
@@ -186,12 +198,13 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
             "started_at": _timestamp(raw, "startedAt", where),
             "ended_at": _timestamp(raw, "endedAt", where, optional=True),
             "tool_calls": op_calls,
-            "consumes": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "consumes", where)],
-            "produces": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "produces", where)],
+            "reads": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "reads", where)],
+            "writes": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "writes", where)],
+            "confidence": _confidence(raw, where),
             "id": _field(raw, "id", where),
         }
-        if kind == "Modeling":
-            operation = _build(Modeling, where, changes=op_changes, **common)
+        if kind == "ModelingSession":
+            operation = _build(ModelingSession, where, changes=op_changes, **common)
         else:
             operation = _build(_OPERATION_TYPES[kind], where, **common)
         operations[operation.id] = operation
@@ -212,14 +225,7 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
             else:
                 raise ConversionError(f"{ewhere} has unknown type {kind!r}.")
             evidence[ev.id] = ev
-        confidence = None
-        raw_conf = raw.get("confidence")
-        if raw_conf is not None:
-            cwhere = f"Confidence of {where}"
-            confidence = _build(
-                Confidence, cwhere, value=_field(raw_conf, "value", cwhere),
-                explanation=_field(raw_conf, "explanation", cwhere, optional=True),
-                id=_field(raw_conf, "id", cwhere), timestamp=_timestamp(raw_conf, "timestamp", cwhere))
+        confidence = _confidence(raw, where)
         trace.add_trace_link(_build(
             TraceLink, where,
             source=_resolve(artifacts, _field(raw, "sourceId", where), "artifact", where),

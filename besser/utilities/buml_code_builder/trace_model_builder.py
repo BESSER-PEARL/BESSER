@@ -24,8 +24,8 @@ from collections import Counter
 from typing import Dict, Iterable, List, Optional, Sequence, TextIO, Tuple
 
 from besser.BUML.metamodel.traceability import (
-    AIEvidence, Agent, Artifact, Change, CodeArtifact, CodeGeneration, Confidence, Evidence, LLM,
-    Conversation, LogRecord, ModelArtifact, Modeling, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceElement,
+    AIEvidence, Agent, Artifact, ChangeEvent, CodeArtifact, CodeGeneration, Confidence, Evidence, LLM,
+    Conversation, LogRecord, ModelArtifact, ModelingSession, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceElement,
     TraceLink, TraceModel,
 )
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
@@ -45,7 +45,7 @@ TRACE_SECTION_KEYWORD = "TRACEABILITY"
 
 _IMPORTED_NAMES = (
     "TraceModel, Person, Agent, Editor, CodeGenerator, LLM, ModelArtifact, CodeArtifact, PromptArtifact,\n"
-    "    Modeling, CodeGeneration, Conversation, ExecutionStatus, Change, ChangeKind, ToolCall, LogRecord, LogType,\n"
+    "    ModelingSession, CodeGeneration, Conversation, ExecutionStatus, ChangeEvent, ChangeKind, ToolCall, LogRecord, LogType,\n"
     "    RuleEvidence, AIEvidence, Confidence, TraceLink,"
 )
 
@@ -217,10 +217,10 @@ class _TraceWriter:
         kind = type(operation).__name__
         actors = ", ".join(_comment_safe(a.name) for a in operation.performed_by)
         self.out.write(f"\n# Operation {index}: {kind} by {actors}\n")
-        if not isinstance(operation, (Modeling, CodeGeneration, Conversation)):
+        if not isinstance(operation, (ModelingSession, CodeGeneration, Conversation)):
             raise TypeError(f"Unsupported operation type {kind}.")
         specific = ""
-        if isinstance(operation, Modeling):
+        if isinstance(operation, ModelingSession):
             for change in operation.changes:
                 self._bind(change, "change", self._change(change))
             specific = f"changes={self._refs(operation.changes)}, "
@@ -228,21 +228,25 @@ class _TraceWriter:
             for log in call.logs:
                 self._bind(log, "log", self._log(log))
             self._bind(call, "call", self._tool_call(call))
+        confidence = "None"
+        if operation.confidence is not None:
+            self._bind(operation.confidence, "confidence", self._confidence(operation.confidence))
+            confidence = self.vars[operation.confidence.id]
         self._bind(operation, "operation", (
             f"{kind}({self._refs(operation.performed_by)}, {specific}"
             f"status=ExecutionStatus.{operation.status.name}, "
             f"started_at={self._datetime(operation.started_at)}, ended_at={self._datetime(operation.ended_at)}, "
             f"tool_calls={self._refs(operation.tool_calls)}, "
-            f"consumes={self._refs(operation.consumes)}, produces={self._refs(operation.produces)}, "
-            f"id={_string(operation.id)})"
+            f"reads={self._refs(operation.reads)}, writes={self._refs(operation.writes)}, "
+            f"confidence={confidence}, id={_string(operation.id)})"
         ))
 
     @staticmethod
     def _datetime(value) -> str:
         return "None" if value is None else f"datetime.datetime.fromisoformat({_string(value.isoformat())})"
 
-    def _change(self, change: Change) -> str:
-        return (f"Change(ChangeKind.{change.kind.name}, {self.vars[change.artifact.id]}, "
+    def _change(self, change: ChangeEvent) -> str:
+        return (f"ChangeEvent(ChangeKind.{change.kind.name}, {self.vars[change.artifact.id]}, "
                 f"feature={_optional(change.feature)}, old_value={_optional(change.old_value)}, "
                 f"new_value={_optional(change.new_value)}, {_common(change)})")
 

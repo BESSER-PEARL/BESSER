@@ -15,8 +15,8 @@ from typing import Any, Dict, Optional
 
 import besser.BUML.metamodel.traceability.traceability as traceability_module
 from besser.BUML.metamodel.traceability import (
-    AIEvidence, Artifact, Change, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
-    Modeling, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel,
+    AIEvidence, Artifact, ChangeEvent, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
+    ModelingSession, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
@@ -63,7 +63,7 @@ def _artifact(artifact: Artifact) -> Dict[str, Any]:
     return data
 
 
-def _change(change: Change) -> Dict[str, Any]:
+def _change(change: ChangeEvent) -> Dict[str, Any]:
     return _with_optional(
         {"id": change.id, "kind": change.kind.value, "artifactId": change.artifact.id,
          "timestamp": utc_iso(change.timestamp)},
@@ -95,12 +95,13 @@ def _operation(operation: Operation) -> Dict[str, Any]:
             "startedAt": utc_iso(operation.started_at),
             "performedBy": [a.id for a in operation.performed_by],
             "toolCalls": [_tool_call(call) for call in operation.tool_calls],
-            "consumes": [a.id for a in operation.consumes],
-            "produces": [a.id for a in operation.produces],
+            "reads": [a.id for a in operation.reads],
+            "writes": [a.id for a in operation.writes],
         },
         endedAt=utc_iso(operation.ended_at) if operation.ended_at else None,
+        confidence=_confidence(operation.confidence) if operation.confidence else None,
     )
-    if isinstance(operation, Modeling):
+    if isinstance(operation, ModelingSession):
         data["changes"] = [_change(c) for c in operation.changes]
     return data
 

@@ -16,7 +16,7 @@ Concepts
 
 - **TraceModel** -- the root: every artifact, operation, actor, tool and trace link
   recorded for one project. It is a ``Model``.
-- **Artifact** -- something an operation consumes, produces or changes. An artifact
+- **Artifact** -- something an operation reads, writes or changes. An artifact
   can be a fragment of another one (``parent``).
 
   - **ModelArtifact** -- a model or a model element. When the element is at hand (a
@@ -38,12 +38,13 @@ Concepts
     trace link); the other messages of a conversation stay in the logs of its tool calls.
 
 - **Operation** -- an activity, performed by one or more **Actors** (``Person``,
-  ``Agent``). It has a status (``ExecutionStatus``) and start/end times, consumes and
-  produces artifacts, and reaches its **Tools** (``Editor``, ``CodeGenerator``, ``LLM``)
+  ``Agent``). It has a status (``ExecutionStatus``) and start/end times, reads and
+  writes artifacts, and reaches its **Tools** (``Editor``, ``CodeGenerator``, ``LLM``)
   only through its **ToolCalls**; the tools it used (``Operation.tools``) are derived
-  from them. ``Operation`` is abstract; its kind is its class:
+  from them. It may have a **Confidence** in its result, as a trace link may (none is
+  computed yet). ``Operation`` is abstract; its kind is its class:
 
-  - **Modeling** -- edits made to models, recorded as its **Changes** (at least one).
+  - **ModelingSession** -- edits made to models, recorded as its **ChangeEvents** (at least one).
     Whether a person or the assistant made them is told by the actors (a ``Person``,
     an ``Agent``, or both), not by the kind of operation.
   - **CodeGeneration** -- a generation run, deriving code from models; it calls at least
@@ -53,10 +54,10 @@ Concepts
   - **Conversation** -- a dialogue between a user and an agent (the BESSER assistant);
     each turn is a tool call to the agent's ``LLM``, holding the turn's messages. At
     least one actor is an ``Agent``. What it leads
-    to varies, so it is not a ``Transformation``: a clarification question produces
-    nothing; stated requirements are artifacts it produces, linked from the
+    to varies, so it is not a ``Transformation``: a clarification question writes
+    nothing; stated requirements are artifacts it writes, linked from the
     ``PromptArtifact`` they came from; an edit or a generation it asks for is a separate
-    ``Modeling`` or ``CodeGeneration``. A chain such as prompt -> requirement -> class ->
+    ``ModelingSession`` or ``CodeGeneration``. A chain such as prompt -> requirement -> class ->
     code is made of trace links, each made by the operation that took that step.
 
 - **ToolCall** -- one use of a tool within an operation: an LLM prompted, a generator
@@ -66,7 +67,7 @@ Concepts
   an answer, an error, ... by ``LogType``; none for an editor session). A call to an
   ``LLM`` can record the tokens it read and wrote (``input_tokens``,
   ``output_tokens``), what the call cost; only a call to an LLM records them.
-- **Change** -- one granular effect of a ``Modeling`` on one artifact: ``CREATED``,
+- **ChangeEvent** -- one granular effect of a ``ModelingSession`` on one artifact: ``CREATED``,
   ``UPDATED`` or ``DELETED`` (``ChangeKind``). An update names the changed ``feature``
   (``name``, ``type``, ``multiplicity``, ...) with its old and new values.
 - **TraceLink** -- a directed link from a source artifact to a target artifact (a
@@ -118,7 +119,7 @@ Example
                          start_line=108, end_line=140, parent=file)
 
     generation = CodeGeneration([owner], tool_calls=[ToolCall(generator, 0)],
-                                consumes=[book], produces=[file, lines])
+                                reads=[book], writes=[file, lines])
     evidence = RuleEvidence("sql_alchemy_template.py.j2#class")
     link = TraceLink(book, lines, generation, [evidence], Confidence(1.0))
 

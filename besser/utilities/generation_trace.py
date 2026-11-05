@@ -226,7 +226,7 @@ def build_generation_trace(
     """The trace fragment of one generation run.
 
     It holds a CodeGeneration operation performed by ``actor_name`` with the
-    generator, consuming the model and producing every file and one fragment per
+    generator, reading the model and writing every file and one fragment per
     region. Trace links go from the model to every file, from each element to the
     fragments rendered from it, and from each whole-file source to its file, with
     the template rule as evidence and confidence 1 (they are made by construction).
@@ -239,8 +239,8 @@ def build_generation_trace(
     tool = CodeGenerator(generator, generator_version)
     model_artifact = ModelArtifact(model_name, model_id, "DomainModel")
     artifacts = [model_artifact]
-    consumes = [model_artifact]
-    produces: list = []
+    reads = [model_artifact]
+    writes: list = []
     links: list = []
     elements: Dict[str, ModelArtifact] = {}
 
@@ -251,7 +251,7 @@ def build_generation_trace(
             artifact = ModelArtifact(ref.element_name, ref.element_id, ref.element_type, parent=parent)
             elements[ref.element_id] = artifact
             artifacts.append(artifact)
-            consumes.append(artifact)
+            reads.append(artifact)
         return artifact
 
     def link(source, target, rule: str):
@@ -268,7 +268,7 @@ def build_generation_trace(
                            generated.path, max_stored_content_bytes)
         file_artifact = CodeArtifact(generated.path, generated.path, _sha256(generated.content), content=stored)
         artifacts.append(file_artifact)
-        produces.append(file_artifact)
+        writes.append(file_artifact)
         link(model_artifact, file_artifact, f"generator:{generator}")
         for source in generated.trace.sources:
             link(element(source.element), file_artifact, source.rule)
@@ -279,14 +279,14 @@ def build_generation_trace(
                                     _sha256(snippet), start_line=region.start_line, end_line=region.end_line,
                                     parent=file_artifact)
             artifacts.append(fragment)
-            produces.append(fragment)
+            writes.append(fragment)
             owner = region.owner
             link(element(ElementRef(region.element_id, region.element_type, region.element_name), owner),
                  fragment, region.rule)
 
     run = ToolCall(tool, 0, status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at)
     operation = CodeGeneration([actor], status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at,
-                               tool_calls=[run], consumes=consumes, produces=produces)
+                               tool_calls=[run], reads=reads, writes=writes)
     trace_links = [TraceLink(source, target, operation, [evidence], Confidence(1.0, timestamp=ended_at),
                              timestamp=ended_at) for source, target, evidence in links]
     return TraceModel(actors=[actor], tools=[tool], artifacts=artifacts, operations=[operation],

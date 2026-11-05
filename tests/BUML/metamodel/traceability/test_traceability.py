@@ -6,8 +6,8 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
 from besser.BUML.metamodel.traceability import (
-    LLM, AIEvidence, Agent, Change, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
-    Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Conversation, Modeling, Operation, OutOfDateReason,
+    LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
+    Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Conversation, ModelingSession, Operation, OutOfDateReason,
     Person, PromptArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel, Transformation,
 )
 
@@ -24,7 +24,7 @@ def generation_trace():
     file = CodeArtifact("sql_alchemy.py", "sql_alchemy.py", "h0")
     fragment = CodeArtifact("Book (10-20)", "sql_alchemy.py", "h1", start_line=10, end_line=20, parent=file)
     generation = CodeGeneration([owner], started_at=T0, tool_calls=[ToolCall(generator, 0, started_at=T0)],
-                                consumes=[book], produces=[file, fragment])
+                                reads=[book], writes=[file, fragment])
     evidence = RuleEvidence("sql_alchemy_template.py.j2#class", timestamp=T0)
     link = TraceLink(book, fragment, generation, [evidence], Confidence(1.0, timestamp=T0), timestamp=T0)
     trace = TraceModel(project_id="p1", artifacts=[book, title, file, fragment], operations=[generation],
@@ -33,8 +33,8 @@ def generation_trace():
 
 
 def _edit(trace, owner, artifact, when):
-    session = Modeling([owner], started_at=when)
-    session.add_change(Change(ChangeKind.UPDATED, artifact, "name", "old", "new", timestamp=when))
+    session = ModelingSession([owner], started_at=when)
+    session.add_change(ChangeEvent(ChangeKind.UPDATED, artifact, "name", "old", "new", timestamp=when))
     trace.add_operation(session)
 
 
@@ -72,10 +72,10 @@ def test_an_edited_target_makes_the_link_out_of_date_but_not_what_follows(genera
     assistant = trace.add_actor(Agent("BESSER modeling assistant"))
     earlier = T0 - timedelta(minutes=10)
     prompt = trace.add_artifact(PromptArtifact("Add Book", "Add a Book class.", "h", timestamp=earlier))
-    edits = trace.add_operation(Modeling([owner, assistant], started_at=earlier))
+    edits = trace.add_operation(ModelingSession([owner, assistant], started_at=earlier))
     derived = trace.add_trace_link(TraceLink(prompt, book, edits, timestamp=earlier))
     # The same edits go on after the link (a later reply of the turn): part of making it.
-    edits.add_change(Change(ChangeKind.CREATED, title, timestamp=earlier + timedelta(seconds=5)))
+    edits.add_change(ChangeEvent(ChangeKind.CREATED, title, timestamp=earlier + timedelta(seconds=5)))
     assert trace.out_of_date(derived) == set()
     _edit(trace, owner, book, T0 + timedelta(minutes=1))
     assert trace.out_of_date(derived) == {TARGET}
@@ -85,22 +85,22 @@ def test_an_edited_target_makes_the_link_out_of_date_but_not_what_follows(genera
 def test_updated_change_needs_a_feature_and_others_have_none():
     book = ModelArtifact("Book", "c1", "Class")
     with pytest.raises(ValueError):
-        Change(ChangeKind.UPDATED, book)
+        ChangeEvent(ChangeKind.UPDATED, book)
     with pytest.raises(ValueError):
-        Change(ChangeKind.CREATED, book, feature="name")
-    assert Change(ChangeKind.CREATED, book, new_value="Book").feature is None
+        ChangeEvent(ChangeKind.CREATED, book, feature="name")
+    assert ChangeEvent(ChangeKind.CREATED, book, new_value="Book").feature is None
 
 
 def test_operation_needs_an_actor_and_ends_after_it_starts():
     with pytest.raises(ValueError):
-        Modeling([])
+        ModelingSession([])
     with pytest.raises(ValueError):
-        Modeling([Person("a")], started_at=T0, ended_at=T0 - timedelta(1))
+        ModelingSession([Person("a")], started_at=T0, ended_at=T0 - timedelta(1))
 
 
 def test_aware_timestamps_are_stored_as_naive_utc():
     when = datetime(2026, 10, 1, 14, 0, tzinfo=timezone(timedelta(hours=2)))
-    operation = Modeling([Person("a")], started_at=when, ended_at=when)
+    operation = ModelingSession([Person("a")], started_at=when, ended_at=when)
     assert operation.started_at == operation.ended_at == T0
 
 
@@ -152,7 +152,7 @@ def test_any_evidence_can_rest_on_log_records(generation_trace):
 def test_validate_reports_references_outside_the_trace(generation_trace):
     trace, link, owner, book, _ = generation_trace
     stray = ModelArtifact("Stray", "s", "Class")
-    trace.add_operation(Modeling([Person("ghost")], consumes=[stray]))
+    trace.add_operation(ModelingSession([Person("ghost")], reads=[stray]))
     result = trace.validate(raise_exception=False)
     assert not result["success"]
     assert any("actor" in e for e in result["errors"])
@@ -161,12 +161,12 @@ def test_validate_reports_references_outside_the_trace(generation_trace):
         trace.validate()
 
 
-def test_validate_reports_an_artifact_produced_twice(generation_trace):
+def test_validate_reports_an_artifact_written_twice(generation_trace):
     trace, _, owner, book, _ = generation_trace
-    trace.add_operation(CodeGeneration([owner], produces=[book]))
-    trace.operations[0].produces = trace.operations[0].produces + [book]
+    trace.add_operation(CodeGeneration([owner], writes=[book]))
+    trace.operations[0].writes = trace.operations[0].writes + [book]
     errors = trace.validate(raise_exception=False)["errors"]
-    assert any("produced by both" in e for e in errors)
+    assert any("written by both" in e for e in errors)
 
 
 def test_validate_reports_duplicate_ids(generation_trace):
@@ -197,22 +197,22 @@ def test_operation_and_transformation_are_abstract():
 
 
 def test_who_did_the_modeling_is_told_by_its_actors():
-    session = Modeling([Person("Ada"), Agent("BESSER modeling assistant")])
+    session = ModelingSession([Person("Ada"), Agent("BESSER modeling assistant")])
     assert {type(actor).__name__ for actor in session.performed_by} == {"Person", "Agent"}
 
 
 def test_validate_checks_each_operation_kind(generation_trace):
     trace, link, owner, book, _ = generation_trace
-    trace.add_operation(Modeling([owner], started_at=T0))
+    trace.add_operation(ModelingSession([owner], started_at=T0))
     trace.add_operation(CodeGeneration([owner], started_at=T0))
     trace.add_operation(Conversation([owner], started_at=T0))
     errors = trace.validate(raise_exception=False)["errors"]
-    assert any("Modeling with no changes" in e for e in errors)
+    assert any("ModelingSession with no changes" in e for e in errors)
     assert any("calls no CodeGenerator or LLM" in e for e in errors)
     assert any("Conversation with no Agent" in e for e in errors)
 
 
-def test_a_conversation_may_produce_nothing(generation_trace):
+def test_a_conversation_may_write_nothing(generation_trace):
     trace, _, owner, _, _ = generation_trace
     assistant = trace.add_actor(Agent("BESSER modeling assistant"))
     trace.add_operation(Conversation([owner, assistant], started_at=T0))  # a clarification question
@@ -226,10 +226,10 @@ def test_a_prompt_is_the_source_of_what_was_derived_from_it(generation_trace):
     earlier = T0 - timedelta(minutes=10)
     prompt = trace.add_artifact(PromptArtifact("Library prompt", "Books have a title.", "h", timestamp=earlier))
     requirement = trace.add_artifact(ModelArtifact("R1", "req-1", "Requirement", timestamp=earlier))
-    chat = trace.add_operation(Conversation([owner, assistant], started_at=earlier, consumes=[prompt],
-                                            produces=[requirement]))
+    chat = trace.add_operation(Conversation([owner, assistant], started_at=earlier, reads=[prompt],
+                                            writes=[requirement]))
     trace.add_trace_link(TraceLink(prompt, requirement, chat, timestamp=earlier))
-    edit = trace.add_operation(Modeling([assistant], [Change(ChangeKind.CREATED, book, timestamp=earlier)],
+    edit = trace.add_operation(ModelingSession([assistant], [ChangeEvent(ChangeKind.CREATED, book, timestamp=earlier)],
                                         started_at=earlier))
     derived = trace.add_trace_link(TraceLink(requirement, book, edit, timestamp=earlier))
     assert trace.validate(raise_exception=False)["success"]
@@ -246,7 +246,7 @@ def test_a_prompt_has_content():
 def test_a_changed_source_spreads_downstream_as_upstream_changed(generation_trace):
     trace, link, owner, book, _ = generation_trace
     requirement = trace.add_artifact(ModelArtifact("R1", "req-1", "Requirement"))
-    derivation = Modeling([Agent("assistant")], started_at=T0 - timedelta(minutes=5))
+    derivation = ModelingSession([Agent("assistant")], started_at=T0 - timedelta(minutes=5))
     trace.add_operation(derivation)
     upstream = trace.add_trace_link(TraceLink(requirement, book, derivation, timestamp=T0 - timedelta(minutes=5)))
     assert trace.out_of_date(link) == set()
@@ -259,6 +259,17 @@ def test_out_of_date_terminates_on_a_cycle(generation_trace):
     trace, link, owner, book, _ = generation_trace
     trace.add_trace_link(TraceLink(link.target, book, trace.operations[0], timestamp=T0))
     assert trace.out_of_date(link) == set()
+
+
+def test_an_operation_may_have_a_confidence(generation_trace):
+    trace, link, *_ = generation_trace
+    generation = link.operation
+    assert generation.confidence is None  # not assessed
+    generation.confidence = Confidence(0.9, explanation="every element traced", timestamp=T0)
+    assert generation.confidence.value == 0.9
+    assert trace.validate(raise_exception=False)["success"]
+    with pytest.raises(TypeError):
+        generation.confidence = 0.9  # a Confidence, not a bare number
 
 
 def test_a_model_artifact_references_its_element_or_records_it():
@@ -283,7 +294,7 @@ def test_code_can_be_generated_by_an_llm(generation_trace):
     code = trace.add_artifact(CodeArtifact("app.py", "app.py", "h2"))
     trace.add_operation(CodeGeneration([owner, trace.add_actor(Agent("assistant"))], started_at=T0,
                                        tool_calls=[ToolCall(llm, 0, started_at=T0)],
-                                       consumes=[book], produces=[code]))
+                                       reads=[book], writes=[code]))
     assert trace.validate(raise_exception=False)["success"]
 
 

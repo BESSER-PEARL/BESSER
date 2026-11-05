@@ -64,7 +64,7 @@ def test_trace_records_actor_tool_and_model(traced):
     assert operation["type"] == "CodeGeneration" and operation["status"] == "SUCCEEDED"
     assert "changes" not in operation
     model = next(a for a in trace["artifacts"] if a.get("elementType") == "DomainModel")
-    assert model["elementId"] == "diagram-1" and model["id"] in operation["consumes"]
+    assert model["elementId"] == "diagram-1" and model["id"] in operation["reads"]
     file = next(a for a in trace["artifacts"] if a["type"] == "CodeArtifact" and "startLine" not in a)
     assert file["content"] == base64.b64decode(traced["contentBase64"]).decode("utf-8")
 
@@ -95,9 +95,9 @@ def test_trace_with_edits_round_trips(traced):
     class_artifact = next(a for a in trace["artifacts"] if a.get("elementType") == "Class")
     trace["projectId"] = "project-1"
     trace["operations"].append({
-        "id": "op-edit", "type": "Modeling", "status": "SUCCEEDED",
+        "id": "op-edit", "type": "ModelingSession", "status": "SUCCEEDED",
         "startedAt": "2026-10-29T10:00:00.000Z", "endedAt": "2026-10-29T10:05:00.000Z",
-        "performedBy": [trace["actors"][0]["id"]], "toolCalls": [], "consumes": [], "produces": [],
+        "performedBy": [trace["actors"][0]["id"]], "toolCalls": [], "reads": [], "writes": [],
         "changes": [{"id": "ch-1", "kind": "UPDATED", "artifactId": class_artifact["id"], "feature": "name",
                      "oldValue": "Libro", "newValue": "Book", "timestamp": "2026-10-29T10:01:00.000Z"}],
     })
@@ -108,15 +108,15 @@ def test_trace_with_edits_round_trips(traced):
                                "contentHash": "h"})
     trace["operations"].append({
         "id": "op-chat", "type": "Conversation", "status": "SUCCEEDED", "startedAt": "2026-10-29T09:58:00.000Z",
-        "performedBy": [trace["actors"][0]["id"], "assistant"], "toolCalls": [], "consumes": ["prompt-1"],
-        "produces": [],
+        "performedBy": [trace["actors"][0]["id"], "assistant"], "toolCalls": [], "reads": ["prompt-1"],
+        "writes": [],
     })
     assert trace_buml_to_json(process_trace(trace)) == trace
 
 
 @pytest.mark.parametrize("corrupt, message", [
     (lambda t: t["operations"][0].update(type="CODE_GENERATION"), "unknown type"),
-    (lambda t: t["operations"][0].update(changes=[{"id": "c"}]), "only a Modeling has changes"),
+    (lambda t: t["operations"][0].update(changes=[{"id": "c"}]), "only a ModelingSession has changes"),
     (lambda t: t.update(schemaVersion=99), "schemaVersion"),
     (lambda t: t["traceLinks"][0].update(sourceId="missing"), "unknown artifact"),
     (lambda t: t["operations"][0].update(startedAt="yesterday"), "ISO 8601"),

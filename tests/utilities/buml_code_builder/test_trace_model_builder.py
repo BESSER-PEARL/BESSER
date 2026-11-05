@@ -5,8 +5,8 @@ from datetime import datetime
 import pytest
 
 from besser.BUML.metamodel.traceability import (
-    LLM, AIEvidence, Agent, Change, ChangeKind, CodeArtifact, CodeGenerator, Confidence, Editor,
-    LogRecord, LogType, ModelArtifact, Modeling, CodeGeneration, Conversation, ExecutionStatus, Person, PromptArtifact,
+    LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGenerator, Confidence, Editor,
+    LogRecord, LogType, ModelArtifact, ModelingSession, CodeGeneration, Conversation, ExecutionStatus, Person, PromptArtifact,
     RuleEvidence, ToolCall, TraceLink,
     TraceModel,
 )
@@ -35,17 +35,18 @@ def trace():
     lines = CodeArtifact("Book (1-2)", "sql_alchemy.py", "b" * 64, start_line=1, end_line=2, parent=file,
                          timestamp=_at(5))
 
-    rename = Change(ChangeKind.UPDATED, book, "name", "Libro", "Book", timestamp=_at(2))
-    created = Change(ChangeKind.CREATED, book, timestamp=_at(1))
+    rename = ChangeEvent(ChangeKind.UPDATED, book, "name", "Libro", "Book", timestamp=_at(2))
+    created = ChangeEvent(ChangeKind.CREATED, book, timestamp=_at(1))
     log = LogRecord("rename Libro to Book", 0, LogType.INPUT_REQUEST, timestamp=_at(2))
-    modeling = Modeling([owner, assistant], changes=[created, rename], started_at=_at(1), ended_at=_at(3),
+    modeling = ModelingSession([owner, assistant], changes=[created, rename], started_at=_at(1), ended_at=_at(3),
                          tool_calls=[ToolCall(editor, 0, started_at=_at(1), ended_at=_at(3)),
                                      ToolCall(llm, 1, status=ExecutionStatus.FAILED, started_at=_at(2), logs=[log],
                                               input_tokens=1200, output_tokens=340)],
-                         consumes=[model])
+                         reads=[model])
     generation = CodeGeneration([owner], status=ExecutionStatus.SUCCEEDED, started_at=_at(4),
                                 tool_calls=[ToolCall(generator, 0, started_at=_at(4), ended_at=_at(5))],
-                                consumes=[model, book], produces=[file, lines])
+                                reads=[model, book], writes=[file, lines],
+                                confidence=Confidence(0.9, explanation="every element traced", timestamp=_at(5)))
 
     rule = RuleEvidence("sql_alchemy_template.py.j2#class", timestamp=_at(5))
     file_rule = RuleEvidence("generator:sqlalchemy", logs=[log], timestamp=_at(5))  # rule evidence with a log
@@ -57,7 +58,7 @@ def trace():
     ]
     prompt = PromptArtifact("Library", 'Books have a "title".\nAnd pages.', "c" * 64, timestamp=_at(0))
     answer = LogRecord("Noted: Book(title, pages).", 0, LogType.OUTPUT_RESPONSE, timestamp=_at(0))
-    chat = Conversation([owner, assistant], started_at=_at(0), consumes=[prompt],
+    chat = Conversation([owner, assistant], started_at=_at(0), reads=[prompt],
                         tool_calls=[ToolCall(llm, 0, started_at=_at(0), logs=[answer])])
     links.append(TraceLink(prompt, book, modeling, [AIEvidence("llm", logs=[answer], timestamp=_at(1))],
                            timestamp=_at(1)))
@@ -99,5 +100,8 @@ def test_json_form_round_trips_every_element_kind(trace):
     """Tool calls with their logs, and evidence of each kind resting on log records, survive the JSON form."""
     data = trace_buml_to_json(trace)
     assert trace_buml_to_json(process_trace(data)) == data
+    generation = next(op for op in data["operations"] if op["type"] == "CodeGeneration")
+    assert generation["confidence"]["value"] == 0.9  # an operation's confidence
+    assert "confidence" not in next(op for op in data["operations"] if op["type"] == "Conversation")  # not assessed
     rule_with_log = next(e for link in data["traceLinks"] for e in link["evidence"] if e["type"] == "RuleEvidence" and "logIds" in e)
     assert rule_with_log["logIds"] and "logIds" not in data["traceLinks"][0]["evidence"][0]  # left out when empty

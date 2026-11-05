@@ -71,8 +71,8 @@ def _record_editing(trace, diagram):
     changes.append({"id": "c-gone-deleted", "kind": "DELETED", "artifactId": "a-gone", "oldValue": "Ghost",
                     "timestamp": "2026-10-29T09:31:00.000Z"})
     trace["operations"].insert(0, {
-        "id": "session", "type": "Modeling", "status": "SUCCEEDED", "startedAt": T, "performedBy": [actor],
-        "toolCalls": [], "consumes": [], "produces": [], "changes": changes,
+        "id": "session", "type": "ModelingSession", "status": "SUCCEEDED", "startedAt": T, "performedBy": [actor],
+        "toolCalls": [], "reads": [], "writes": [], "changes": changes,
     })
     return trace
 

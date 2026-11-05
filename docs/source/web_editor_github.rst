@@ -238,6 +238,13 @@ Who added what
   a repository saved before this block existed gets records only for what is
   added from then on.
 
+While a linked project is open, the editor checks the branch every minute and
+when the window regains focus. When someone else's commits arrive, a card says
+who pushed and the latest commit's subject, with **Get latest**, or **Save and
+merge** when there are unsaved edits, and **What changed**, which opens the
+model history (``useTeammateChangeNotice.tsx``). It shows once per new commit,
+and not for commits by the signed-in user.
+
 After a pull, the editor marks what the pull brought in
 (``pullRepoIntoProject.ts``): elements the local project lacks and that have a
 record. Only a project already in sync with the repository compares, so opening

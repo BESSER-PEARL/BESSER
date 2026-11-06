@@ -209,8 +209,8 @@ The scratch and code branches are deleted in every case.
 Who added what
 --------------
 
-``project.attribution`` in ``diagrams.json`` maps the id of a class or member
-(attribute, method) to who added it::
+``project.attribution`` in ``diagrams.json`` maps the id of a class, member
+(attribute, method) or relationship to who added it::
 
     "attribution": {"<element id>": {"addedBy": "<GitHub login>", "addedAt": "2026-11-04T12:00:00Z"}}
 

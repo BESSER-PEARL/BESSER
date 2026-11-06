@@ -461,6 +461,44 @@ def test_the_model_history_says_what_each_commit_changed_and_who_made_it(monkeyp
     assert first["origin"] == repo_model.ORIGIN_EDITOR
 
 
+def _model_that_cannot_be_built() -> dict:
+    """An attribute typed by an enumeration the model does not have, as a filmed history hit."""
+    model = json.loads(json.dumps(CLASS_DIAGRAM_MODEL))
+    model["elements"]["attr-1"]["name"] = "+ kind: RoomType"
+    return model
+
+
+@pytest.mark.parametrize(("newer", "older"), [
+    (_model_that_cannot_be_built(), CLASS_DIAGRAM_MODEL),
+    (CLASS_DIAGRAM_MODEL, _model_that_cannot_be_built()),
+], ids=["newer_unreadable", "older_unreadable"])
+def test_the_history_does_not_call_an_unreadable_version_a_change(monkeypatch, newer, older):
+    """Such a version's row said every class was removed, and the next row that they were all added."""
+    fake = _SidebarGitHub(files_at={
+        (repo_model.MODEL_FILE, "2" * 40): json.dumps(_envelope(newer)),
+        (repo_model.MODEL_FILE, "1" * 40): json.dumps(_envelope(older)),
+    })
+    _sidebar(monkeypatch, fake)
+
+    r = _call("GET", "/besser_api/github/model-history", headers=SESSION,
+              params={"owner": "me", "repo": "app"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["commits"][0]["changes"] == [repo_model.VERSION_NOT_COMPARED]
+
+
+def test_a_pull_request_does_not_list_an_unreadable_head_as_removals():
+    changes = repo_model.describe_change(_envelope(), _envelope(_model_that_cannot_be_built()))
+    body = repo_model.pull_request_body(changes)
+    assert repo_model.VERSION_NOT_COMPARED in body
+    assert "removed" not in body
+
+
+def test_deleting_every_class_is_still_listed_as_removals():
+    empty = {"type": "ClassDiagram", "elements": {}, "relationships": {}}
+    assert "class Author removed" in repo_model.describe_change(_envelope(), _envelope(empty))
+
+
 def test_the_origin_trailer_round_trips():
     message = repo_model.with_origin("Add the model", repo_model.ORIGIN_AGENT)
     assert repo_model.commit_origin(message) == repo_model.ORIGIN_AGENT

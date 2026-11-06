@@ -302,7 +302,7 @@ def summarize(project_export: dict) -> dict:
         for kind, value in diagrams.items()
         if value
     }
-    classes = _domain_summary(project_export).get("classes", {})
+    classes = (_domain_summary(project_export) or {}).get("classes", {})
     return {
         "project_name": project.get("name") or "",
         "project_id": project.get("id"),
@@ -312,13 +312,17 @@ def summarize(project_export: dict) -> dict:
     }
 
 
-def _domain_summary(project_export: dict) -> dict:
-    """``model_summary`` of the export's class diagram, or ``{}`` when it has none."""
+# In place of a diff: a version that cannot be built is not a version with no classes.
+VERSION_NOT_COMPARED = "class diagram not compared: one version could not be read"
+
+
+def _domain_summary(project_export: dict) -> Optional[dict]:
+    """``model_summary`` of the export's class diagram: ``{}`` when it has none, ``None`` when it cannot be built."""
     try:
         assembled = assemble_models_from_project(ProjectInput.model_validate(project_of(project_export)))
     except Exception:
         logger.warning("Could not build the domain model of a repo's diagrams.json", exc_info=True)
-        return {}
+        return None
     if assembled.domain_model is None:
         return {}
     return model_summary(assembled.domain_model)
@@ -327,9 +331,12 @@ def _domain_summary(project_export: dict) -> dict:
 def describe_change(old_export: Optional[dict], new_export: dict) -> list[str]:
     """One line per class-diagram change between two versions of ``diagrams.json``."""
     new = _domain_summary(new_export)
+    old = {} if old_export is None else _domain_summary(old_export)
+    if new is None or old is None:
+        return [VERSION_NOT_COMPARED]
     if old_export is None:
         return [f"class {name} added" for name in sorted(new.get("classes", {}))]
-    return describe_model_change(_domain_summary(old_export), new)
+    return describe_model_change(old, new)
 
 
 def is_model_path(path: str) -> bool:

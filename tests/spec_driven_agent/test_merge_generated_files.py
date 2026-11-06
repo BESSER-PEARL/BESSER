@@ -19,6 +19,7 @@ import pytest
 
 pygit2 = pytest.importorskip("pygit2")
 
+from besser.utilities import three_way_merge
 import besser.spec_driven_agent.pipeline.regeneration as regeneration_module  # noqa: E402
 import besser.spec_driven_agent.state.generator_output as generator_output_module  # noqa: E402
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator  # noqa: E402
@@ -530,7 +531,7 @@ def test_a_store_over_the_size_cap_is_not_read(app, monkeypatch):
 
 
 def test_without_pygit2_edited_files_are_left_to_the_agent(app, monkeypatch):
-    monkeypatch.setattr(regeneration_module, "pygit2", None)
+    monkeypatch.setattr(three_way_merge, "pygit2", None)
     _append(app / SCHEMAS, "# validated by hand")
 
     regeneration = _regenerate(app, shelf_model(isbn=True))

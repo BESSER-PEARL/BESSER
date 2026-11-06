@@ -104,6 +104,10 @@ Endpoints
        wrong secret falls back to the keyless one. An import takes a
        ``BESSER_LLM_MAX_CONCURRENT_RUNS`` slot while it runs and answers
        ``429`` when none is free. Requires an ``X-GitHub-Session`` header.
+       ``has_code`` is ``false`` for a repo holding only a saved model, and
+       ``recap`` says what was done on its app and where it stands (``null``
+       when no run was pushed to it); ``push-to-github`` returns ``recap`` too.
+       See :ref:`web-editor-github-coming-back`.
 
 Request body
 ------------

@@ -19,13 +19,20 @@ from urllib.parse import quote
 from besser.utilities.workspace_fs import open_plain, open_plain_write
 
 PROVENANCE_FILENAME = "BESSER_GENERATION.md"
+ATTRIBUTION_FILENAME = ".besser_attribution.json"
+GENERATOR_OUTPUT_FILENAME = ".besser_generator_output.json"
 BESSER_URL = "https://github.com/BESSER-PEARL/BESSER"
 EDITOR_URL = "https://editor.besser-pearl.org"
 CATALOG_URL = "https://github.com/BESSER-PEARL/Built-with-BESSER"
 README_FILENAME = "README.md"
-README_BLOCK_BEGIN = "<!-- besser:begin -->"
-README_BLOCK_END = "<!-- besser:end -->"
-_README_BLOCK = re.compile(re.escape(README_BLOCK_BEGIN) + r".*?" + re.escape(README_BLOCK_END), re.DOTALL)
+AGENTS_FILENAME = "AGENTS.md"
+BESSER_BLOCK_BEGIN = "<!-- besser:begin -->"
+BESSER_BLOCK_END = "<!-- besser:end -->"
+# From the last begin marker before an end marker: text after a stray begin marker is someone's, not the block.
+_BESSER_BLOCK = re.compile(
+    re.escape(BESSER_BLOCK_BEGIN) + rf"(?:(?!{re.escape(BESSER_BLOCK_BEGIN)}).)*?" + re.escape(BESSER_BLOCK_END),
+    re.DOTALL,
+)
 
 
 @lru_cache(maxsize=1)
@@ -130,7 +137,7 @@ def readme_besser_block(
     link can open; without one the block links no model.
     """
     lines = [
-        README_BLOCK_BEGIN,
+        BESSER_BLOCK_BEGIN,
         "---",
         "",
         f"[![Built with BESSER](https://img.shields.io/badge/Built_with-BESSER-2563eb)]({BESSER_URL})",
@@ -149,13 +156,13 @@ def readme_besser_block(
     links.append(f"[More apps built with BESSER]({CATALOG_URL})")
     if has_provenance:
         links.append(f"[Generation details]({PROVENANCE_FILENAME})")
-    lines += ["", " · ".join(links), README_BLOCK_END]
+    lines += ["", " · ".join(links), BESSER_BLOCK_END]
     return "\n".join(lines)
 
 
-def strip_readme_block(text: str) -> str:
+def strip_besser_block(text: str) -> str:
     """``text`` without the BESSER block and the blank lines around it."""
-    match = _README_BLOCK.search(text)
+    match = _BESSER_BLOCK.search(text)
     if not match:
         return text
     before, after = text[:match.start()].rstrip(), text[match.end():].lstrip("\r\n")
@@ -165,12 +172,12 @@ def strip_readme_block(text: str) -> str:
     return f"{before}{newline}" if before else ""
 
 
-def with_readme_block(text: str, block: str) -> str:
+def with_besser_block(text: str, block: str) -> str:
     """``text`` with ``block`` in place of its BESSER block, or appended when it has none."""
     newline = "\r\n" if "\r\n" in text else "\n"
     block = block.replace("\n", newline)
-    if _README_BLOCK.search(text):
-        return _README_BLOCK.sub(lambda _: block, text, count=1)
+    if _BESSER_BLOCK.search(text):
+        return _BESSER_BLOCK.sub(lambda _: block, text, count=1)
     body = text.rstrip()
     return f"{body}{newline}{newline}{block}{newline}" if body else f"{block}{newline}"
 
@@ -212,7 +219,7 @@ def add_readme_block(directory: str, block: str, title: Optional[str] = None) ->
         text = _read_text(path, directory)
         if text is None:
             return
-    _write_text(path, directory, with_readme_block(text, block))
+    _write_text(path, directory, with_besser_block(text, block))
 
 
 def remove_readme_block(directory: str) -> None:
@@ -223,8 +230,38 @@ def remove_readme_block(directory: str) -> None:
     """
     path = _root_readme(directory)
     text = _read_text(path, directory) if path else None
-    if text is not None and _README_BLOCK.search(text):
-        _write_text(path, directory, strip_readme_block(text))
+    if text is not None and _BESSER_BLOCK.search(text):
+        _write_text(path, directory, strip_besser_block(text))
+
+
+def add_agents_block(directory: str, block: str) -> bool:
+    """Put ``block`` into the root ``AGENTS.md`` of ``directory``, creating the file when it is missing.
+
+    A file that is not UTF-8 text is left as it is; returns False then.
+    """
+    path = os.path.join(directory, AGENTS_FILENAME)
+    text = _read_text(path, directory) if os.path.lexists(path) else ""
+    if text is None:
+        return False
+    _write_text(path, directory, with_besser_block(text, block))
+    return True
+
+
+def remove_agents_block(directory: str) -> None:
+    """Drop the BESSER block from ``AGENTS.md``, and the file when nothing else is in it.
+
+    The push renders the block again; removing it first leaves the next run only
+    what people wrote there.
+    """
+    path = os.path.join(directory, AGENTS_FILENAME)
+    text = _read_text(path, directory) if os.path.lexists(path) else None
+    if text is None or not _BESSER_BLOCK.search(text):
+        return
+    remaining = strip_besser_block(text)
+    if remaining.strip():
+        _write_text(path, directory, remaining)
+    else:
+        os.remove(path)
 
 
 def add_generation_provenance_to_zip(

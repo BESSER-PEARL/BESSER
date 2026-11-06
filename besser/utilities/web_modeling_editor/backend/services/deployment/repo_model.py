@@ -22,6 +22,8 @@ import logging
 import os
 from typing import Iterable, NamedTuple, Optional
 
+import httpx
+
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.spec_driven_agent.planning.model_change import describe_model_change, model_summary
 from besser.utilities.buml_code_builder import (
@@ -30,6 +32,12 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
 )
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import (
+    ATTRIBUTION_KEY,
+    attribute_project,
+    with_well_formed_records,
+    without_records,
+)
 from besser.utilities.web_modeling_editor.backend.services.deployment.model_merge import (
     MergeConflict,
     merge_documents,
@@ -39,7 +47,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 )
 from besser.utilities.secret_redaction import redact_credentials
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
-from besser.utilities.workspace_fs import is_plain_file, read_plain_text, write_atomic_plain
+from besser.utilities.workspace_fs import is_plain_file, read_plain_text, walk_plain, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +61,14 @@ GITATTRIBUTES_FILE = ".gitattributes"
 _MAX_SAVED_PROJECT_CANDIDATES = 10
 _NOT_SAVED_PROJECT_NAMES = frozenset({"package.json", "package-lock.json", "tsconfig.json"})
 _NOT_SAVED_PROJECT_DIRS = frozenset({MODEL_DIR, ".besser", ".git", "node_modules"})
+# Git's modes for a file: plain and executable (not a link or a submodule).
+REGULAR_FILE_MODES = frozenset({"100644", "100755"})
+# What a repo holds besides an app: BESSER's own files and the usual project files.
+_NOT_APP_CODE_DIRS = frozenset({MODEL_DIR, ".besser", ".agent-trace", ".git", ".github"})
+_NOT_APP_CODE_FILES = (
+    "readme*", "license*", "changelog*", "agents.md", "claude.md", ".gitignore", ".gitattributes",
+    ".besser_*", "besser_generation.md", "render.yaml", LEGACY_PROJECT_FILE,
+)
 # The B-UML sources BESSER generates under ``MODEL_DIR``.
 DOMAIN_SOURCE = "domain_model.py"
 GUI_SOURCE = "gui_model.py"
@@ -88,6 +104,63 @@ def project_of(export: dict) -> dict:
     """The project inside a V2 export envelope, or ``export`` itself when it is a bare project."""
     inner = export.get("project")
     return inner if isinstance(inner, dict) else export
+
+
+def _with_project(export: dict, project: dict) -> dict:
+    """``export`` holding ``project`` in place of its own (see ``project_of``)."""
+    return {**export, "project": project} if isinstance(export.get("project"), dict) else project
+
+
+async def read_project_file(github, owner: str, repo: str, path: str, ref: str) -> Optional[dict]:
+    """``path`` at ``ref`` when it holds a BESSER project, else None."""
+    try:
+        file_data = await github.get_file_content(owner, repo, path, ref=ref)
+        document = json.loads(file_data["content"]) if file_data and file_data.get("content") else None
+    except (ValueError, RecursionError):
+        return None
+    return document if is_besser_project(document) else None
+
+
+async def attribute_new_elements(
+    github, owner: str, repo: str, export: Optional[dict],
+    *, login: Optional[str] = None, ref: Optional[str] = None, branch: str = "main", model_path: Optional[str] = None,
+) -> Optional[dict]:
+    """``export`` with the classes and members it adds over the repo's model credited to the signed-in user.
+
+    ``ref`` is the commit ``export`` was derived from, else the head of ``branch``.
+    The credit is not worth a failed save. When GitHub does not answer, ``export`` goes
+    with its well-formed records. When the repo's model cannot be read, it goes with none:
+    nothing backs them, and a model file anyone can break must not unlock a forged credit.
+    """
+    if not is_besser_project(export):
+        return export
+    try:
+        login = login or (await github.get_authenticated_user()).get("login")
+        base = None
+        for path in (MODEL_FILE, model_path or LEGACY_PROJECT_FILE):
+            file_data = await github.get_file_content(owner, repo, path, branch=branch, ref=ref)
+            if file_data and file_data.get("content"):
+                base = json.loads(file_data["content"])
+                break
+        if base is None:  # An older editor may have saved it elsewhere: all of it is not new.
+            commit = ref or await github.get_branch_head(owner, repo, branch)
+            for path in saved_project_candidates(await github.get_tree_entries(owner, repo, commit) if commit else ()):
+                base = await read_project_file(github, owner, repo, path, commit)
+                if base is not None:
+                    break
+    except httpx.HTTPError:
+        logger.warning("GitHub did not answer for the model of %s/%s; new elements are not credited",
+                       owner, repo, exc_info=True)
+        return _with_project(export, with_well_formed_records(project_of(export)))
+    # RuntimeError: a model nested too deep to parse (RecursionError), or a tree too large to list.
+    except (ValueError, RuntimeError):
+        logger.warning("Could not read the model of %s/%s; this save credits nobody", owner, repo, exc_info=True)
+        return _with_project(export, without_records(project_of(export)))
+    if not login:
+        logger.warning("GitHub named no user for %s/%s; new elements are not credited", owner, repo)
+        return _with_project(export, with_well_formed_records(project_of(export)))
+    project = project_of(export)
+    return _with_project(export, attribute_project(project, project_of(base) if is_besser_project(base) else None, login))
 
 
 def link_record(export: dict) -> dict:
@@ -272,6 +345,20 @@ def is_model_path(path: str) -> bool:
     )
 
 
+def has_app_code(directory: str, model_path: Optional[str] = None) -> bool:
+    """True when the repo in ``directory`` holds more than a saved model and the usual project files."""
+    for root, dirs, files in walk_plain(directory):
+        at_top = os.path.samefile(root, directory)
+        if at_top:
+            dirs[:] = [name for name in dirs if name not in _NOT_APP_CODE_DIRS]
+        for name in files:
+            if os.path.relpath(os.path.join(root, name), directory).replace(os.sep, "/") == model_path:
+                continue
+            if not (at_top and any(fnmatch.fnmatch(name.lower(), pattern) for pattern in _NOT_APP_CODE_FILES)):
+                return True
+    return False
+
+
 def is_besser_project(document: object) -> bool:
     """True for a parsed model file: a V2 export envelope or a bare project, both holding ``diagrams``."""
     return isinstance(document, dict) and isinstance(project_of(document).get("diagrams"), dict)
@@ -310,7 +397,7 @@ def find_saved_project(root: str, model_path: Optional[str] = None) -> Optional[
         try:
             with open(os.path.join(root, *path.split("/")), encoding="utf-8") as fh:
                 document = json.load(fh)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             continue
         if is_besser_project(document):
             return path, document
@@ -323,6 +410,40 @@ def _builds(project_export: dict) -> bool:
     except Exception:
         return False
     return True
+
+
+def _keeping_records(document: Optional[dict], base: Optional[dict]) -> Optional[dict]:
+    """``document``, where having no records means nothing was said about them, not that they were deleted."""
+    if not is_besser_project(document) or not is_besser_project(base):
+        return document
+    project = project_of(document)
+    if ATTRIBUTION_KEY in project or ATTRIBUTION_KEY not in project_of(base):
+        return document
+    return _with_project(document, {**project, ATTRIBUTION_KEY: project_of(base)[ATTRIBUTION_KEY]})
+
+
+def _keeping_active_diagrams(merged: dict, ours: dict) -> dict:
+    """``merged`` with each open diagram index pointing where ``ours`` was: the merge can add or remove diagrams.
+
+    An index is a position, so it is found again through the diagram's id; a diagram the
+    other side deleted falls back to the last one left.
+    """
+    if not is_besser_project(merged) or not is_besser_project(ours):
+        return merged
+    project, our_project = project_of(merged), project_of(ours)
+    indices = project.get("currentDiagramIndices")
+    diagrams, our_diagrams = project.get("diagrams"), our_project.get("diagrams")
+    if not all(isinstance(value, dict) for value in (indices, diagrams, our_diagrams)):
+        return merged
+    resolved = dict(indices)
+    for diagram_type, index in indices.items():
+        here, there = diagrams.get(diagram_type), our_diagrams.get(diagram_type)
+        if not isinstance(here, list) or not here or not isinstance(index, int) or not isinstance(there, list):
+            continue
+        active = there[index].get("id") if 0 <= index < len(there) and isinstance(there[index], dict) else None
+        ids = [diagram.get("id") if isinstance(diagram, dict) else None for diagram in here]
+        resolved[diagram_type] = ids.index(active) if active in ids else min(max(index, 0), len(here) - 1)
+    return _with_project(merged, {**project, "currentDiagramIndices": resolved})
 
 
 class ModelMerge:
@@ -345,7 +466,8 @@ class ModelMerge:
         try:
             base = json.loads(base_text) if base_text else None
             theirs = json.loads(theirs_text) if theirs_text else None
-            merged = merge_documents(base, self.ours, theirs)
+            merged = merge_documents(base, _keeping_records(self.ours, base), _keeping_records(theirs, base))
+            merged = _keeping_active_diagrams(merged, self.ours)
         except ValueError:
             logger.warning("The repo's %s is not valid JSON; the model is not merged", MODEL_FILE)
             return None

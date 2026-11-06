@@ -251,6 +251,9 @@ class _PushGitHub(_ImportGitHub):
     async def add_topic(self, owner, repo_name, topic):
         self.topics.append(topic)
 
+    async def get_tree_entries(self, owner, repo_name, commit_sha):
+        return {}
+
     async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
         return {"content": self.render_yaml} if file_path == "render.yaml" and self.render_yaml else None
 
@@ -376,6 +379,9 @@ class _SidebarGitHub:
         self.legacy_exists = legacy_exists
         self.commit = None
 
+    async def get_authenticated_user(self):
+        return {"login": "ana"}
+
     async def create_blob(self, owner, repo, content):
         return f"blob-{len(content)}"
 
@@ -398,6 +404,9 @@ class _SidebarGitHub:
 
     async def get_branch_head(self, owner, repo, branch):
         return "2" * 40
+
+    async def get_tree_entries(self, owner, repo_name, commit_sha):
+        return {}
 
     async def get_file_content(self, owner, repo, path, branch="main", ref=None):
         if ref is None and self.legacy_exists and path == repo_model.LEGACY_PROJECT_FILE:

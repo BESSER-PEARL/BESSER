@@ -20,6 +20,7 @@ import os
 import re
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -1210,6 +1211,18 @@ def _openai_response_to_common(response, tools: list[dict] | None = None) -> dic
 # OpenAI provider
 # ======================================================================
 
+# Rough token size of English text and code, for an endpoint that reports no usage.
+_CHARS_PER_TOKEN = 4
+
+
+@dataclass
+class _EstimatedUsage:
+    """Token counts worked out locally, in the shape ``UsageTracker.record`` reads."""
+
+    input_tokens: int
+    output_tokens: int
+
+
 class _OpenAIUsageAdapter:
     """Adapter so ``UsageTracker.record()`` works with OpenAI usage objects.
 
@@ -1319,9 +1332,32 @@ class OpenAIProvider(LLMProvider):
         self._fallback_step = 0
         self._on_fallback = False
         self.fallback_reason: str | None = None
+        self._warned_no_stream_usage = False
 
     # True on a vendor that only serves paid API models (Mistral, Nebius).
     _PAID_VENDOR = False
+
+    def _record_stream_usage(self, usage: Any, api_messages: list, text: str, tool_calls: dict) -> None:
+        """Record a finished stream's usage, or estimate it when the endpoint sent none.
+
+        Unrecorded calls would leave the run's cost cap blind. The estimate has
+        no cache information, so it bills the whole history as fresh input and
+        errs high.
+        """
+        if usage:
+            self._usage.record(_OpenAIUsageAdapter(usage))
+            return
+        if not self._warned_no_stream_usage:
+            self._warned_no_stream_usage = True
+            logger.warning(
+                "Model %s reported no usage on a stream: estimating its tokens against the cost cap.",
+                self._model,
+            )
+        arguments = "".join(call["arguments"] for call in tool_calls.values())
+        self._usage.record(_EstimatedUsage(
+            input_tokens=len(str(api_messages)) // _CHARS_PER_TOKEN,
+            output_tokens=(len(text) + len(arguments)) // _CHARS_PER_TOKEN,
+        ))
 
     def _is_billed_route(self, base_url: str | None) -> bool:
         """Paid vendor API rather than a gateway / self-hosted endpoint."""
@@ -1555,6 +1591,7 @@ class OpenAIProvider(LLMProvider):
                 collected_text = ""
                 tool_calls_accum: dict[int, dict] = {}
                 finish_reason = None
+                stream_usage = None
 
                 stream = self._client.chat.completions.create(**kwargs)
                 try:
@@ -1562,10 +1599,12 @@ class OpenAIProvider(LLMProvider):
                         # The served model name appears on every chunk
                         # in a stream; capture once.
                         self._usage.set_served_model(getattr(chunk, "model", None))
+                        # Gateways differ: a final usage-only chunk, usage on the
+                        # last content chunk, or a running total on every chunk.
+                        # The last one seen is the call's total in all three.
+                        if getattr(chunk, "usage", None):
+                            stream_usage = chunk.usage
                         if not chunk.choices:
-                            # Usage-only chunk at end of stream
-                            if chunk.usage:
-                                self._usage.record(_OpenAIUsageAdapter(chunk.usage))
                             continue
 
                         delta = chunk.choices[0].delta
@@ -1606,6 +1645,8 @@ class OpenAIProvider(LLMProvider):
                             close_fn()
                         except Exception:
                             pass
+
+                self._record_stream_usage(stream_usage, api_messages, collected_text, tool_calls_accum)
 
                 # Build final content blocks
                 content: list[Any] = []

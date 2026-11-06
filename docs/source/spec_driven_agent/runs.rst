@@ -89,7 +89,8 @@ workspace is seeded from that run's generated files and edited in place instead
 of being rebuilt from scratch. Phase 2 is never skipped for a modify run — you
 asked for a change, so a change is made. When the base has expired the runner
 warns and falls back to normal from-scratch generation rather than failing the
-request.
+request. The editor avoids that for a project linked to GitHub: it starts the run
+from the repository instead (see :ref:`web-editor-github-coming-back`).
 
 Every run records the class diagram it was given in the run's
 ``.besser_recipe.json`` as ``model.user_model``: classes (abstract, parents,

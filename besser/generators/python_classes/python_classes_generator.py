@@ -20,6 +20,8 @@ class PythonGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be
             saved. Defaults to None.
     """
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
 

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 372" role="img" aria-label="Three places for the LLM. A writes all the code. B writes a vendor model that the platform runs. C writes an open model, runs generators, fills the gap with an LLM, keeps the code, and merges on a model edit.">
+<defs><marker id="llm-placement-a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L8,4 L0,8 z"/></marker></defs>
+<text class="lab" x="10" y="18" text-anchor="start">A. LLM WRITES THE CODE</text>
+<text class="s" x="10" y="33">No model to edit: every later change is another LLM edit.</text>
+<text class="lab" x="10" y="130" text-anchor="start">B. LLM WRITES A MODEL THE PLATFORM RUNS</text>
+<text class="s" x="10" y="145">The model is the application, and it usually stays on the platform.</text>
+<text class="lab" x="10" y="242" text-anchor="start">C. LLM WRITES A MODEL, GENERATORS WRITE CODE, LLM FILLS THE GAP</text>
+<text class="s" x="10" y="257">BESSER: an open model, and code that leaves the platform, so a model change has to be merged.</text>
+<g class="n k-h"><rect x="10" y="40" width="100" height="54" rx="6"/><text class="t" x="60.0" y="71" text-anchor="middle">Request</text>
+</g>
+<g class="n k-l"><rect x="150" y="40" width="90" height="54" rx="6"/><text class="t" x="195.0" y="71" text-anchor="middle">LLM</text>
+</g>
+<g class="n k-d"><rect x="280" y="40" width="190" height="54" rx="6"/><text class="t" x="375.0" y="71" text-anchor="middle">All application code</text>
+</g>
+<path class="e" d="M110,67 L150,67" marker-end="url(#llm-placement-a)"/>
+<path class="e" d="M240,67 L280,67" marker-end="url(#llm-placement-a)"/>
+<g class="n k-h"><rect x="10" y="152" width="100" height="54" rx="6"/><text class="t" x="60.0" y="183" text-anchor="middle">Request</text>
+</g>
+<g class="n k-l"><rect x="150" y="152" width="90" height="54" rx="6"/><text class="t" x="195.0" y="183" text-anchor="middle">LLM</text>
+</g>
+<g class="n k-d"><rect x="280" y="152" width="150" height="54" rx="6"/><text class="t" x="355.0" y="183" text-anchor="middle">Vendor model</text>
+</g>
+<g class="n k-d"><rect x="470" y="152" width="200" height="54" rx="6"/><text class="t" x="570.0" y="183" text-anchor="middle">Platform build or runtime</text>
+</g>
+<path class="e" d="M110,179 L150,179" marker-end="url(#llm-placement-a)"/>
+<path class="e" d="M240,179 L280,179" marker-end="url(#llm-placement-a)"/>
+<path class="e" d="M430,179 L470,179" marker-end="url(#llm-placement-a)"/>
+<g class="n k-h"><rect x="10" y="264" width="100" height="54" rx="6"/><text class="t" x="60.0" y="295" text-anchor="middle">Request</text>
+</g>
+<g class="n k-l"><rect x="135" y="264" width="76" height="54" rx="6"/><text class="t" x="173.0" y="295" text-anchor="middle">LLM</text>
+</g>
+<g class="n k-d"><rect x="236" y="264" width="112" height="54" rx="6"/><text class="t" x="292.0" y="295" text-anchor="middle">B-UML model</text>
+</g>
+<g class="n k-d"><rect x="373" y="264" width="112" height="54" rx="6"/><text class="t" x="429.0" y="295" text-anchor="middle">Generators</text>
+</g>
+<g class="n k-l"><rect x="510" y="264" width="76" height="54" rx="6"/><text class="t" x="548.0" y="288" text-anchor="middle">LLM</text>
+<text class="s" x="548.0" y="303" text-anchor="middle">the gap</text>
+</g>
+<g class="n k-d"><rect x="611" y="264" width="180" height="54" rx="6"/><text class="t" x="701.0" y="288" text-anchor="middle">Application code</text>
+<text class="s" x="701.0" y="303" text-anchor="middle">with model + records</text>
+</g>
+<path class="e" d="M110,291 L135,291" marker-end="url(#llm-placement-a)"/>
+<path class="e" d="M211,291 L236,291" marker-end="url(#llm-placement-a)"/>
+<path class="e" d="M348,291 L373,291" marker-end="url(#llm-placement-a)"/>
+<path class="e" d="M485,291 L510,291" marker-end="url(#llm-placement-a)"/>
+<path class="e" d="M586,291 L611,291" marker-end="url(#llm-placement-a)"/>
+<path class="e d" d="M292,318 L292,348 L701,348 L701,318" marker-end="url(#llm-placement-a)"/>
+<text class="lab" x="306" y="343" text-anchor="start">model edit: regenerate and merge, keep the edits</text>
+</svg>

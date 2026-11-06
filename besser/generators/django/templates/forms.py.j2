@@ -1,19 +1,19 @@
 {%- import "django_fields.py.j2" as django_fields %}
 from django import forms
-{%- for class_obj in model.classes_sorted_by_inheritance() %}
+{% for class_obj in model.classes_sorted_by_inheritance() %}
 from .models import {{ class_obj.name[0].upper() + class_obj.name[1:] }}
-{%- endfor%}
-{# Enumeration definition -#}
-{%- for enum in model.get_enumerations() %}
+{% endfor %}
+{# Enumeration definition #}
+{% for enum in sort_by_timestamp(model.get_enumerations()) %}
 from .models import {{ enum.name }}
-{%- endfor -%}
+{% endfor %}
 
 
-{%- for module in app.modules%}
-    {%- for screen in module.screens %}
-    {%- for component in screen.view_elements %}
+{%- for module in sort_by_timestamp(app.modules)%}
+    {%- for screen in sort_by_timestamp(module.screens) %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                     {%- set source_name= source.dataSourceClass%}
 
@@ -33,7 +33,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                  {%- set _ = generals.names.append(parent.name) %}
                 {%- endfor %}
              {%- set inheritance = generals.names | join(', ') %}
-                {%- for association in class_obj.associations %}
+                {%- for association in sort_by_timestamp(class_obj.associations) %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                        {%- set ns = namespace(end1=None, end2=None) %}
                             {%- set ends_list = association.ends | sort(attribute='name') | list %}
@@ -51,6 +51,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
 
                                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
                                    {%- if class_obj.name == fkeys.get(ns.end1.owner.name) %}
+
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -94,6 +95,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
 
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
                                 {%- if class_obj.name == fkeys.get(ns.end2.owner.name) %}
+
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelMultipleChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -117,6 +119,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
 
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
                                     {%- if class_obj.name == one_to_one.get(ns.end1.owner.name) %}
+
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField (
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -168,7 +171,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                            {%- endif %}
                        {%- endfor%}
                    {%- endif %}
-                {%- for association in class_obj.associations %}
+                {%- for association in sort_by_timestamp(class_obj.associations) %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                       {%- set ns = namespace(end1=None, end2=None) %}
                         {%- set ends_list = association.ends | sort(attribute='name') | list %}
@@ -194,12 +197,12 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                 {%- endfor %}
     {%- endif %}
 {%- endfor %}
-    {%- for component in screen.view_elements %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
     {%- if component is is_List %}
-        {%- for source in component.list_sources %}
+        {%- for source in sort_by_timestamp(component.list_sources) %}
             {%- if source is is_ModelElement %}
                 {%- set source_name = source.dataSourceClass %}
-                {%- set fieldsList = source.fields|list %}
+                {%- set fieldsList = sort_by_timestamp(source.fields) %}
                 {%- for field in fieldsList %}'{{ field.name }}'
                     {%- if not loop.last %}, {%- endif %}
                 {%- endfor %}
@@ -244,11 +247,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                 'type': 'date'
             }),
                                 {%- elif attr.type is is_enumeration %}Select(
-                {%- for enum in model.get_enumerations() %}
-                    {%- if attr.type == enum.name %}
-                    {%- set enum = enum %}
-                    {%- endif %}
-                choices={{enum.name}}.choices,
+                choices={{ attr.type.name }}.choices,
                 attrs={
                     'class': (
                         'form-select mt-1 block w-full rounded-md '
@@ -256,7 +255,6 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                     )
                 }
             ),
-                {%- endfor -%}
                                 {%- endif %}
                               {%- endfor %}
                            {%- endif %}
@@ -265,12 +263,12 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
     {%- endif %}
     {%- endfor %}
     {#- End for inheritance #}
-    {%- for component in screen.view_elements %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                    {%- set source_name= source.dataSourceClass%}
-                   {%- set fieldsList = source.fields|list %}
+                   {%- set fieldsList = sort_by_timestamp(source.fields) %}
                       {%- for field in fieldsList%}
             '{{ field.name }}': forms.
                 {%- for class_obj in model.classes_sorted_by_inheritance() %}
@@ -300,11 +298,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                 'type': 'date'
             }),
                                 {%- elif attr.type is is_enumeration %}Select(
-                {%- for enum in model.get_enumerations() %}
-                    {%- if attr.type == enum.name %}
-                    {%- set enum = enum %}
-                    {%- endif %}
-                choices={{enum.name}}.choices,
+                choices={{ attr.type.name }}.choices,
                 attrs={
                     'class': (
                         'form-select mt-1 block w-full rounded-md '
@@ -312,7 +306,6 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                     )
                 }
             ),
-                {%- endfor -%}
 
                                 {%- endif %}
                             {%- endif%}

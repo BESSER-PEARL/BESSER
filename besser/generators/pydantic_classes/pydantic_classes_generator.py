@@ -32,6 +32,8 @@ class PydanticGenerator(GeneratorInterface):
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
+    regenerable = True
+
     def __init__(self, model: DomainModel, backend: bool = False, nested_creations: bool = False, output_dir: str = None):
         super().__init__(model, output_dir)
         self.domain_model = model

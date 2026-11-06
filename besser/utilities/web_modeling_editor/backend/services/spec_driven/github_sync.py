@@ -23,9 +23,17 @@ from typing import Optional
 import httpx
 
 from besser.spec_driven_agent.providers.llm_client import FREE_TIER_PROVIDER, SPONSORED_PROVIDER
-from besser.utilities.provenance import PROVENANCE_FILENAME, add_readme_block, readme_besser_block
+from besser.spec_driven_agent.run_recap import COMMITS_SINCE_RUN, agents_block, build_recap
+from besser.spec_driven_agent.run_report import RECIPE_FILENAME
+from besser.utilities.provenance import (
+    AGENTS_FILENAME,
+    PROVENANCE_FILENAME,
+    add_agents_block,
+    add_readme_block,
+    readme_besser_block,
+)
 from besser.utilities.secret_redaction import scrub_secret_files
-from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, open_plain_write
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGitHubRunRequest,
     ImportGitHubRunResponse,
@@ -227,6 +235,20 @@ async def push_run_to_github(
             has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
         ), title=repo_name if is_first_push else None)
 
+        # Whoever comes back to this repo, here or in another coding tool, reads what the run left.
+        seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)
+        recap = build_recap(read_run_json(os.path.join(workdir, RECIPE_FILENAME)))
+        if recap:
+            holds_file = is_first_push or await _hold_repo_agents_md(
+                github, owner, repo_name, target_branch, workdir,
+                seeded=seed_sha is not None, base_sha=seed_sha or deploy_config.base_commit_sha,
+            )
+            if not (holds_file and add_agents_block(workdir, agents_block(recap))):
+                logger.warning("%s/%s: could not add to AGENTS.md; the push leaves it alone", owner, repo_name)
+                deploy_warnings.append(f"BESSER did not add its recap to {AGENTS_FILENAME}: in this repository it is "
+                                       "a link or not text, it was added after this run started, or GitHub did not "
+                                       "return it.")
+
         # ---- 5d. Fold BESSER's run records in GitHub diffs ----
         # A run that did not start from this repo lacks the repo's own file, which the push would replace.
         repo_gitattributes = None
@@ -243,7 +265,6 @@ async def push_run_to_github(
         # The run records that commit itself: the editor's link may have
         # moved on (a pull after the run started), and pushing over the
         # link's newer base would revert what was pulled.
-        seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)
         commit_message = repo_model.with_origin(
             deploy_config.commit_message or "Spec-driven app + model — BESSER",
             repo_model.ORIGIN_AGENT,
@@ -259,6 +280,12 @@ async def push_run_to_github(
         else:
             push_branch = target_branch
             base_sha = seed_sha or deploy_config.base_commit_sha
+        # What the push adds over the commit it starts from is credited to whoever pushes.
+        effective_export = await repo_model.attribute_new_elements(
+            github, owner, repo_name, effective_export, login=login, ref=base_sha, branch=target_branch,
+        )
+        if effective_export:
+            repo_model.write_model_files(workdir, effective_export)
         push_results = await github.push_directory_to_repo(
             owner=owner,
             repo_name=repo_name,
@@ -327,8 +354,44 @@ async def push_run_to_github(
             pull_request_branch=push_branch if pull_request_url else None,
             base_run_id=base_run_id,
             warnings=deploy_warnings,
-            project_export=run_export,
+            project_export=effective_export if run_export else None,
+            recap=recap,
         )
+
+
+async def _hold_repo_agents_md(
+    github, owner: str, repo: str, branch: str, workdir: str, *, seeded: bool, base_sha: Optional[str],
+) -> bool:
+    """Make sure a push adds to the repo's ``AGENTS.md`` rather than replacing it; False when it cannot.
+
+    A run that did not start from this repo holds no copy of the file, or its own;
+    the repo's text wins. So does a run whose archive left the file out. A link, a
+    file that is not text, a file GitHub did not return or one added after the push's
+    base stays as it is: the recap is not worth a failed push or a lost file. In that
+    last case the run's own copy goes too, or the merge would see two new files.
+    """
+    path = os.path.join(workdir, AGENTS_FILENAME)
+    run_holds_file = os.path.lexists(path)
+    try:
+        head = await github.get_branch_head(owner, repo, branch)
+        entry = (await github.get_tree_entries(owner, repo, head)).get(AGENTS_FILENAME) if head else None
+        if entry is None:
+            return True
+        if entry["mode"] not in repo_model.REGULAR_FILE_MODES:
+            return False
+        if base_sha and base_sha != head and AGENTS_FILENAME not in await github.get_tree_entries(owner, repo, base_sha):
+            if run_holds_file:
+                os.remove(path)
+            return False
+        if seeded and run_holds_file:
+            return True
+        current = await github.get_file_content(owner, repo, AGENTS_FILENAME, ref=head)
+    except (httpx.HTTPError, UnicodeDecodeError):
+        return seeded and run_holds_file  # Its own copy of the repo's file merges without GitHub's answer here.
+    if current and current.get("content"):
+        with open_plain_write(path, "wb", root=workdir) as handle:
+            handle.write(current["content"].encode("utf-8"))
+    return True
 
 
 def _model_changes(entry) -> list[str]:
@@ -416,6 +479,33 @@ def _plain_file_hashes(root: str) -> dict[str, str]:
     return dict(sorted(found.items()))
 
 
+async def _note_commits_since_run(github, owner: str, repo: str, commit_sha: str, run_dir: str) -> None:
+    """Add to the imported recipe what the repo gained after the run that wrote it.
+
+    The next run and the recap read it, and the next run's own recipe drops it.
+    Without GitHub's answer the repo still opens: the recap just lists no commits.
+    """
+    path = os.path.join(run_dir, RECIPE_FILENAME)
+    recipe = read_run_json(path)
+    if not isinstance(recipe, dict):
+        return
+    if recipe.pop(COMMITS_SINCE_RUN, None) is not None:  # A repo's own list is not GitHub's answer.
+        write_run_json(path, recipe)
+    try:
+        last_run = await github.get_commits(owner, repo, path=RECIPE_FILENAME, per_page=1, ref=commit_sha)
+        if not last_run or last_run[0]["sha"] == commit_sha:
+            return
+        compared = await github.compare_commits(owner, repo, last_run[0]["sha"], commit_sha)
+    except httpx.HTTPError:
+        logger.warning("Could not read the commits of %s/%s since its last run", owner, repo, exc_info=True)
+        return
+    recipe[COMMITS_SINCE_RUN] = [
+        {"sha": commit["sha"], "message": commit["message"].partition("\n")[0], "author": commit["author"]}
+        for commit in compared["commits"] if len(commit["parents"]) < 2  # a merge adds nothing to read
+    ]
+    write_run_json(path, recipe)
+
+
 async def _import_repo_as_run(
     github, owner: str, repo: str, commit_sha: str, registry: SmartRunRegistry,
 ) -> tuple[str, str]:
@@ -429,6 +519,8 @@ async def _import_repo_as_run(
     extract_dir = create_run_workspace(run_id)
     try:
         await github.download_repo_tarball(owner, repo, commit_sha, dest_dir=extract_dir)
+        # Before the hashes below: this note is not a change the run made.
+        await _note_commits_since_run(github, owner, repo, commit_sha, extract_dir)
         # The registry persists a manifest pointing at one file of the run;
         # this one also records where the run came from and which files it
         # holds: an archive leaves out export-ignore paths, links and
@@ -553,7 +645,7 @@ async def import_run_from_github(
                 project = json.load(fh)
             has_model = True
             model_path = repo_model.MODEL_FILE
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             logger.warning(
                 "import-github-run: buml/diagrams.json present but "
                 "unreadable for %s/%s@%s",
@@ -630,4 +722,6 @@ async def import_run_from_github(
         proposed_diagram=proposed_diagram,
         ai_reading_offered=ai_reading_offered,
         model_path=model_path,
+        has_code=await asyncio.to_thread(repo_model.has_app_code, extract_dir, model_path),
+        recap=build_recap(read_run_json(os.path.join(extract_dir, RECIPE_FILENAME))),
     )

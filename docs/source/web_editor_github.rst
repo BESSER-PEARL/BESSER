@@ -190,9 +190,13 @@ who each add a class collide on the same lines. When a write holds the model,
    scratch branch (``besser/sync-merge-…``).
 2. ``diagrams.json`` is merged three ways as data by ``model_merge.py``: objects
    key by key, lists of objects with an ``id`` item by item (diagram elements in
-   either editor engine), lists of unique values as sets. Layout and timestamps
-   keep this side's value. A value both sides changed differently, or a merged
-   model that no longer builds, is a conflict.
+   either editor engine), lists of unique values as sets. Layout, timestamps
+   and the diagram each person had open keep this side's value, found again by
+   diagram id. When both sides changed the project's id or creation date, the
+   repository's value stays: opening a repository gives the local project new
+   ones, and a save with no newer commits writes its own. Nothing reads them. A
+   value both sides changed differently, or a merged model that no longer builds,
+   is a conflict.
 3. The B-UML sources are written again from the merged model. If that export
    fails, the previous sources are kept, not deleted, and the answer's
    ``warnings`` says they may be out of date.
@@ -201,6 +205,63 @@ who each add a class collide on the same lines. When a write holds the model,
    meanwhile, the fast-forward fails rather than reverting anything.
 
 The scratch and code branches are deleted in every case.
+
+Who added what
+--------------
+
+``project.attribution`` in ``diagrams.json`` maps the id of a class or member
+(attribute, method) to who added it::
+
+    "attribution": {"<element id>": {"addedBy": "<GitHub login>", "addedAt": "2026-11-04T12:00:00Z"}}
+
+- **Where the author comes from**: ``repo_model.attribute_new_elements`` credits
+  each element the write adds over the model at its base commit to the signed-in
+  GitHub user, the same identity as the commit's author. A save needs a session,
+  so nothing is credited without one, and a model that nobody saves through
+  BESSER (a hand edit of the file) simply has no record. When GitHub does not
+  answer, the save goes on without new records and logs a warning; when the
+  repository's model cannot be read, it also carries no records from the client.
+  The save
+  returns the records it wrote as ``attribution``.
+- **What it proves**: the records of the base commit stand and a client cannot
+  rewrite them or claim an element it adds for someone else; a malformed record is
+  dropped. Anyone with push access can still edit the file, so a record says who
+  BESSER recorded, not who is proven to have added the element.
+- **Why it cannot affect generation**: the block sits beside the diagrams.
+  ``ProjectInput`` does not read it, so no converter or generator sees it, and
+  the B-UML sources are the same with or without it.
+- **Merging**: an element's record merges like any other key, so two people's
+  additions both keep their credit. ``addedBy`` and ``addedAt`` keep the
+  repository's value rather than conflict, since it was there first. A side that
+  dropped the block (an older editor) does not erase it: the records of the base
+  commit are kept. Records of removed
+  elements are dropped.
+- **Older repositories**: elements already in the base commit get no record, so
+  a repository saved before this block existed gets records only for what is
+  added from then on.
+
+While a linked project is open, the editor checks the branch every minute and
+when the window regains focus. When someone else's commits arrive, a card says
+who pushed and the latest commit's subject, with **Get latest**, or **Save and
+merge** when there are unsaved edits (``useTeammateChangeNotice.tsx``). It shows
+once per new commit, and not for commits GitHub matched to the signed-in user. A
+commit GitHub matched to no account is compared by its git name.
+
+**Preview**, on that card and in the GitHub menu, shows what is new on the canvas
+before it is taken in (``RepoChangePreview.tsx``). It compares the class diagrams
+of the last synced commit and the branch head, draws new and changed classes and
+new relationships over the canvas, and marks removed classes. The model does not
+change. Other diagram types are not drawn; taking the change in brings them too.
+A model is a file anyone with write access can edit, so the engine sanitises its
+icons and colours where it draws them (``sanitize-svg.ts``, ``safe-color.ts``).
+
+After a pull, the editor marks what the pull brought in
+(``pullRepoIntoProject.ts``): elements the local project lacks and that have a
+record. Only a project already in sync with the repository compares, so opening
+a repository marks nothing. The mark is a list of ids in the project's link in
+the browser (``newFromRepo``), never in the model, and
+``ModelAttributionLayer.tsx`` draws it over the canvas from the position of each
+``[data-id]`` element, so a colour someone chose for an element is not touched.
 
 Conflicts and pull requests
 ---------------------------
@@ -244,6 +305,62 @@ writes its own records there (``.besser_github_source.json``,
 ``.besser_recipe.json``) through ``read_run_json`` / ``write_run_json``: a
 link is never followed, a read is size-capped, and a write replaces the file
 atomically.
+
+.. _web-editor-github-coming-back:
+
+Coming back to a repository
+---------------------------
+
+A finished run lives on the server only for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``
+(30 minutes by default). The repository is what lasts, so that is what a later
+request continues from.
+
+**The base of the next run.** When the project is linked to a repository and its
+last run has expired, the editor imports the branch head before the run
+(``features/spec-driven/linkedRepoBase.ts``) and edits that code:
+
+- the head is the commit the project last synced with: the run starts from it,
+  and the project's model stays, with any changes made to it since;
+- the head moved and the model has no unsaved changes: the project takes the
+  repository's model first, as **Get latest** does;
+- the head moved and the model has unsaved changes: no run starts, and the chat
+  asks the user to save first, which merges both models. Running anyway would
+  push the older model over the newer one;
+- the repository holds only a saved model (``has_code: false`` on the import):
+  there is no app yet, so the run builds one from the model;
+- the code cannot be read (this tab is not connected to GitHub, the repository
+  is gone, GitHub cannot be reached): the user chooses between rebuilding from
+  the model and stopping. A repository known to hold only a saved model just
+  builds, without asking. When the server has no free run slot, nothing runs and
+  the chat asks to try again.
+
+**What the run knows.** ``besser/spec_driven_agent/run_recap.py`` reads
+``.besser_recipe.json`` once for everyone who continues the app:
+
+- the next run's inventory gets the earlier requests, where the last run ended
+  (repairs rolled back, requirements missing from the code or not checked, tasks
+  left out), the commits made since, and the repository's ``AGENTS.md``;
+- every push of a run with a recipe keeps a section in ``AGENTS.md``, for people
+  and for other coding tools. It sits between ``<!-- besser:begin -->`` and ``<!-- besser:end -->``,
+  and anything outside those markers stays as it is, also when the run never held
+  the file. A seeded run works without the section, and the push renders it again.
+  An ``AGENTS.md`` that is a link or not text, or that was added on GitHub after
+  the run started, is left alone, with a warning;
+- the import and the push return it as ``recap``. The chat shows it when a
+  repository opens or a run continues from one, and the editor sends it to the
+  modeling agent with each message (``context.githubRepo``).
+
+A recipe and an ``AGENTS.md`` can be written by anyone with push access, and a
+public repository's by a stranger. So a recap value is one line, capped, free of
+credentials and unable to close the ``AGENTS.md`` section; the agent receives
+all of it labelled as a record and not as instructions, and ``AGENTS.md``
+quoted line by line and capped at 4,000 characters; the chat escapes it.
+
+The commits since the last run are the ones after the last commit that changed
+the recipe. The import notes them on the imported recipe
+(``commits_since_run``), so the next run reads them and its own recipe drops
+them. Without an answer from GitHub the repository still opens, with no commits
+listed.
 
 The Spec-Driven Agent's model fallback
 --------------------------------------

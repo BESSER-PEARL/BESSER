@@ -1,4 +1,4 @@
-"""Who added each class and attribute of a project's model.
+"""Who added each class, attribute and relationship of a project's model.
 
 ``project.attribution`` in ``diagrams.json`` maps an element id to
 ``{"addedBy": <GitHub login>, "addedAt": <UTC time>}``. It sits beside the
@@ -33,13 +33,16 @@ def _as_list(items: object) -> list:
 
 
 def attributed_ids(project: dict) -> set[str]:
-    """The ids of the classes and members in ``project``'s class diagrams, in either editor format."""
+    """The ids of the classes, members and relationships in ``project``'s class diagrams, in either editor format."""
     found: list = []
     for model in _class_models(project):
         elements = model.get("elements")
         for element_id, element in elements.items() if isinstance(elements, dict) else ():
             if isinstance(element, dict) and element.get("type") in _ATTRIBUTED_APOLLON_TYPES:
                 found.append(element_id)
+        relationships = model.get("relationships")
+        found += list(relationships) if isinstance(relationships, dict) else []
+        found += [edge.get("id") for edge in _as_list(model.get("edges")) if isinstance(edge, dict)]
         for node in _as_list(model.get("nodes")):  # React Flow: the members are rows of their class.
             if isinstance(node, dict) and node.get("type") == "class":
                 data = node.get("data") if isinstance(node.get("data"), dict) else {}

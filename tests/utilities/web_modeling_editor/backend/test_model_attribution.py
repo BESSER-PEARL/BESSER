@@ -296,6 +296,36 @@ def test_stamping_touches_no_diagram():
     assert "attribution" not in project
 
 
+def _with_relationship(model: dict, relationship_id: str = "rel-1") -> dict:
+    return {**model, "relationships": {relationship_id: {"id": relationship_id, "type": "ClassBidirectional"}}}
+
+
+def test_a_new_relationship_is_credited_to_who_added_it():
+    # Preview named it, then Get latest left it unmarked: no record existed for a relationship.
+    base = _envelope(_model("Book"), {"id-Book": ANA})["project"]
+    project = _envelope(_with_relationship(_model("Book")), {"id-Book": ANA})["project"]
+
+    stamped = attribute_project(project, base, "ben", NOW)["attribution"]
+
+    assert stamped["rel-1"]["addedBy"] == "ben"
+    assert stamped["id-Book"] == ANA
+
+
+def test_a_relationship_the_repo_already_had_is_not_credited_to_the_next_saver():
+    project = _envelope(_with_relationship(_model("Book")), {"id-Book": ANA})["project"]
+    assert "rel-1" not in attribute_project(project, copy.deepcopy(project), "ben", NOW)["attribution"]
+
+
+def test_the_record_of_a_removed_relationship_goes():
+    base = _envelope(_with_relationship(_model("Book")), {"id-Book": ANA, "rel-1": ANA})["project"]
+    project = _envelope(_model("Book"), {"id-Book": ANA, "rel-1": ANA})["project"]
+    assert "rel-1" not in attribute_project(project, base, "ben", NOW)["attribution"]
+
+
+def test_a_react_flow_edge_is_credited_too():
+    assert attributed_ids({"diagrams": {"ClassDiagram": [{"model": {"nodes": [], "edges": [{"id": "edge-1"}, "bad"]}}]}}) == {"edge-1"}
+
+
 def test_records_of_removed_elements_go():
     project = _envelope(_model("Book"), {"id-Book": ANA, "id-Gone": ANA})["project"]
 
@@ -414,9 +444,8 @@ def test_react_flow_classes_and_rows_are_attributed():
     assert attributed_ids(project) == {"c1", "a1", "m1"}
 
 
-def test_relationships_and_other_diagrams_are_not_attributed():
+def test_other_diagrams_are_not_attributed():
     model = _model("Book")
-    model["relationships"]["r1"] = {"id": "r1", "type": "ClassBidirectional"}
     project = {"diagrams": {"ClassDiagram": [{"model": model}], "StateMachineDiagram": [{"model": {
         "elements": {"s1": {"id": "s1", "type": "State"}},
     }}]}}

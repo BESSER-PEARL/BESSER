@@ -21,7 +21,9 @@ Highlights
   beside it, as after **Get latest**. New classes are still marked whole.
 * **The preview marks new relationships.** A new relationship is drawn in the
   author's colour with their name on the line, and the bar names it by its
-  classes (``Guest – Review``) instead of counting it. After **Get latest**,
-  relationships are not marked yet.
+  classes (``Guest – Review``) instead of counting it. Each save now records who
+  added a relationship, so after **Get latest** it stays marked and hovering it
+  says who added it and when, as for a class. A relationship saved before this
+  has no author and is not marked.
 * **Dialogs keep wide content inside the window.** This was already live on
   ``editor.besser-pearl.org`` and is now part of a release.

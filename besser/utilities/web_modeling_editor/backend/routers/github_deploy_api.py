@@ -1904,6 +1904,8 @@ class ModelHistoryResponse(ResponseModel):
 
 # Each entry costs one file read; the history panel shows recent changes only.
 _MODEL_HISTORY_LIMIT = 15
+# A file that is not JSON, unlike ``None`` (no file): describe_change reports it as not compared.
+_UNPARSEABLE_MODEL: dict = {}
 
 
 @router.get("/model-history", response_model=ModelHistoryResponse)
@@ -1959,7 +1961,7 @@ async def get_model_history(
                     content = file_data.get("content") if file_data else None
                     models[sha] = json.loads(content) if content else None
                 except json.JSONDecodeError:
-                    models[sha] = None
+                    models[sha] = _UNPARSEABLE_MODEL
             return models[sha]
 
         entries = []

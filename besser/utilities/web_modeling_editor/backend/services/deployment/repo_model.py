@@ -44,6 +44,8 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.model_merg
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
+    class_diagram_model,
+    generation_class_diagram,
 )
 from besser.utilities.secret_redaction import redact_credentials
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
@@ -84,6 +86,8 @@ ORIGIN_EDITOR = "editor"
 AGENT_CONFIG_YAML_FIELDS = ("configYaml", "agentConfigCustomYaml")
 # Files a pull request description lists before "and N more".
 PULL_REQUEST_FILE_LIMIT = 30
+# In place of a diff: a version that cannot be built is not a version with no classes.
+VERSION_NOT_COMPARED = "class diagram not compared: one version could not be read"
 
 
 def with_origin(message: str, origin: str) -> str:
@@ -302,7 +306,7 @@ def summarize(project_export: dict) -> dict:
         for kind, value in diagrams.items()
         if value
     }
-    classes = _domain_summary(project_export).get("classes", {})
+    classes = (_domain_summary(project_export) or {}).get("classes", {})
     return {
         "project_name": project.get("name") or "",
         "project_id": project.get("id"),
@@ -312,24 +316,25 @@ def summarize(project_export: dict) -> dict:
     }
 
 
-def _domain_summary(project_export: dict) -> dict:
-    """``model_summary`` of the export's class diagram, or ``{}`` when it has none."""
+def _domain_summary(project_export: dict) -> Optional[dict]:
+    """``model_summary`` of the export's class diagram: ``{}`` when it has none, ``None`` when it cannot be built."""
+    # Only the class diagram: assembling the whole project keeps going when it fails and another diagram survives.
+    # The old sidebar's files have no ``createdAt``, and nothing here reads it.
     try:
-        assembled = assemble_models_from_project(ProjectInput.model_validate(project_of(project_export)))
+        diagram = generation_class_diagram(ProjectInput.model_validate({"createdAt": "", **project_of(project_export)}))
+        return model_summary(class_diagram_model(diagram)) if diagram is not None else {}
     except Exception:
         logger.warning("Could not build the domain model of a repo's diagrams.json", exc_info=True)
-        return {}
-    if assembled.domain_model is None:
-        return {}
-    return model_summary(assembled.domain_model)
+        return None
 
 
 def describe_change(old_export: Optional[dict], new_export: dict) -> list[str]:
-    """One line per class-diagram change between two versions of ``diagrams.json``."""
+    """One line per class-diagram change between two versions of ``diagrams.json``, or ``VERSION_NOT_COMPARED``."""
     new = _domain_summary(new_export)
-    if old_export is None:
-        return [f"class {name} added" for name in sorted(new.get("classes", {}))]
-    return describe_model_change(_domain_summary(old_export), new)
+    old = {} if old_export is None else _domain_summary(old_export)
+    if new is None or old is None:
+        return [VERSION_NOT_COMPARED]
+    return describe_model_change(old, new)
 
 
 def is_model_path(path: str) -> bool:

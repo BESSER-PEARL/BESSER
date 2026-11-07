@@ -2021,9 +2021,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         len(open_items), self._end_turn_task_nudges,
                         self._MAX_TASK_NUDGES,
                     )
-                    messages.append(
-                        {"role": "assistant", "content": response["content"]}
-                    )
+                    # An empty end_turn reply (no text, no tool calls) is not
+                    # replayed: OpenAI-compatible APIs reject an assistant
+                    # message with null content and no tool calls (400), and
+                    # Anthropic gets an empty turn mid-history.
+                    if response["content"]:
+                        messages.append(
+                            {"role": "assistant", "content": response["content"]}
+                        )
                     listing = "\n".join(
                         f"  {t['id']}. {t['text']}" for t in open_items
                     )

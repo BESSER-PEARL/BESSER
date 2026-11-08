@@ -1,0 +1,50 @@
+Version 8.9.3
+=============
+
+Patch release: **the modeling assistant keeps your conversation, and the
+editor's welcome dialog speaks your language**. Fixes for issues
+`#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_ to
+`#745 <https://github.com/BESSER-PEARL/BESSER/issues/745>`_. No metamodel,
+generator or API contract changes.
+
+Highlights
+----------
+
+* **The assistant no longer forgets a specification while you wait.** The
+  modeling agent dropped a conversation's memory an hour after its last
+  message, even while the tab was still open, and a restart lost it too. The
+  agent now keeps the memory while the tab is connected, and the editor sends
+  the latest turns with the first message after each reconnect, so an agent
+  that lost the memory rebuilds it. Reported in
+  `#745 <https://github.com/BESSER-PEARL/BESSER/issues/745>`_.
+* **The conversation is kept with the project.** The editor stores the latest
+  50 turns on the project: they are saved in the browser, written to
+  ``buml/diagrams.json`` on a GitHub save, and restored when the project opens
+  with an empty chat. Provider tokens are redacted there like the rest of the
+  model, and the key stored in the tab is removed before the conversation is
+  kept. Generation requests and gists leave it out. When two people each
+  chatted since the last commit, the save keeps the saver's conversation
+  instead of reporting a conflict.
+* **Clearer messages during a long generation.** After four minutes without a
+  reply the assistant used to say the request failed and to try again, though
+  the request kept running and its result still arrived. It now says the
+  request is still running. The auto-fix outcome lists the issues it fixed, a
+  partial class diagram says why it is partial, and modification replies name
+  the member and its owner (``Updated attribute aliases in Brand.``). Reported
+  in `#744 <https://github.com/BESSER-PEARL/BESSER/issues/744>`_.
+* **A model change in the API key dialog can be saved.** Save stayed disabled
+  until the key was typed again, because the stored key is never shown in the
+  field. Leaving the field empty now keeps the stored key for its provider.
+  Reported in `#743 <https://github.com/BESSER-PEARL/BESSER/issues/743>`_; the
+  short Command Code model list is a server configuration change, not part of
+  this release.
+* **The welcome dialog is translated.** Its text was written in English; it is
+  now available in all six editor languages. Reported in
+  `#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_.
+
+Modeling agent
+--------------
+
+Deploy the modeling agent ``v8.1.1`` alongside (its own release, from
+``develop``). The editor works with an older agent, which ignores the new
+``recentHistory`` field, but the memory fix needs both.

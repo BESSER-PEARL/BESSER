@@ -32,11 +32,12 @@ import uuid
 from typing import AsyncIterator, Optional
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Path, Query
+from fastapi import APIRouter, File, Header, HTTPException, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from besser.spec_driven_agent.planning.model_change import compare_with_base
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
+    ImportGeneratedCodeResponse,
     ImportGitHubRunRequest,
     ImportGitHubRunResponse,
     PushSmartToGitHubRequest,
@@ -71,6 +72,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     _locate_run_temp_dir,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
+    MAX_GENERATED_CODE_BYTES,
+    import_generated_code,
     import_run_from_github,
     push_run_to_github,
 )
@@ -919,6 +922,49 @@ async def push_spec_driven_to_github(
             status_code=500,
             detail="An internal error occurred during GitHub push.",
         )
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/spec-driven/import-generated-code
+# ---------------------------------------------------------------------
+
+
+@router.post("/spec-driven/import-generated-code", response_model=ImportGeneratedCodeResponse)
+async def import_generated_code_run(
+    github_sessions: GitHubSessionsDep,
+    runtime: SpecDrivenRuntimeDep,
+    file: UploadFile = File(...),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+) -> ImportGeneratedCodeResponse:
+    """Store the output of a deterministic generator as a run, to push it to GitHub.
+
+    ``/generate-output`` keeps nothing on the server, so its output (a ZIP or
+    a single file, such as the SQL generator's ``.sql``) has no run for
+    ``/spec-driven/push-to-github`` to push. The editor uploads the file it
+    received; the returned ``run_id`` is then pushed like any other run.
+    Only a session signed in to GitHub, the one thing the run is for, may
+    store one.
+    """
+    if not github_session:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub authentication required. Please sign in with GitHub first.",
+        )
+    if not get_user_token(github_sessions, github_session):
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub session expired. Please sign in again.",
+        )
+    content = await file.read(MAX_GENERATED_CODE_BYTES + 1)
+    if len(content) > MAX_GENERATED_CODE_BYTES:
+        raise HTTPException(status_code=413, detail="The generated code is too large to save to GitHub.")
+    if not content:
+        raise HTTPException(status_code=400, detail="The generated file is empty.")
+    try:
+        run_id = await import_generated_code(content, file.filename or "", runtime.registry)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ImportGeneratedCodeResponse(run_id=run_id)
 
 
 # ---------------------------------------------------------------------

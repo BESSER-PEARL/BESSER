@@ -12,9 +12,11 @@ Covers the failures behind "BESSER can't keep working on an existing repo":
 """
 
 import asyncio
+import base64
 import copy
 import json
 import os
+import re
 import tempfile
 import time
 
@@ -639,6 +641,60 @@ def test_a_new_project_repo_is_private_unless_the_user_asks_for_public(monkeypat
         r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION, json={**body, **extra})
         assert r.status_code == 200, r.text
     assert fake.created == [True, False]
+
+
+def test_a_new_project_repo_readme_holds_the_project_description_and_date(monkeypatch):
+    """#750: the README said only "A BESSER project"; it now says what the project is and when it was made."""
+    class _ReadmeGitHub(_SidebarGitHub):
+        blobs = {}
+
+        async def get_authenticated_user(self):
+            return {"login": "me"}
+
+        async def create_repository(self, repo_name, description, is_private, auto_init):
+            return {"default_branch": "main", "html_url": f"https://github.com/me/{repo_name}"}
+
+        async def create_blob(self, owner, repo, content):
+            sha = f"blob-{len(self.blobs)}"
+            self.blobs[sha] = content
+            return sha
+
+    def readme_for(project):
+        fake = _ReadmeGitHub(legacy_exists=False)
+        _sidebar(monkeypatch, fake)
+        r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION, json={
+            "repo_name": "library", "project_data": project, "project_export": _envelope(),
+        })
+        assert r.status_code == 200, r.text
+        blob = fake.blobs[fake.commit["paths"]["README.md"]]
+        return (blob if isinstance(blob, bytes) else base64.b64decode(blob)).decode("utf-8")
+
+    described = readme_for({**_project(), "description": "  Loans and members of a city library.\n"})
+    assert "\nLoans and members of a city library.\n\nCreated with [BESSER]" in described
+    assert re.search(r"Created with \[BESSER\]\([^)]+\) on \d{4}-\d{2}-\d{2}\.", described)
+    assert described.index("Loans and members") < described.index("## Files")
+
+    for project in (_project(), {**_project(), "description": "   "}, {**_project(), "description": None}):
+        readme = readme_for(project)
+        assert "Created with [BESSER]" in readme
+        assert "\n\n\n" not in readme
+
+
+def test_the_deploy_readme_holds_the_description_and_the_generation_date():
+    """#750: a generated app's README says what the project is and when BESSER generated it."""
+    github = GitHubService("token")
+    generated = re.compile(r"Generated with \[BESSER\]\(https://github.com/BESSER-PEARL/BESSER\) "
+                           r"on \d{4}-\d{2}-\d{2}\.")
+
+    for kind in ("webapp", "chatbot"):
+        readme = github.generate_readme_content(
+            "Library", owner="me", repo_name="library", deployment_type=kind, description="Loans and members.",
+        )
+        assert "</div>\n\nLoans and members.\n\nGenerated with [BESSER]" in readme
+        assert generated.search(readme)
+        bare = github.generate_readme_content("Library", deployment_type=kind)
+        assert generated.search(bare)
+        assert "\n\n\n" not in bare
 
 
 class _FailingGitHub:

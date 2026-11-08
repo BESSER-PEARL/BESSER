@@ -2062,8 +2062,9 @@ class TestStandaloneChatbotDeploy:
                 }
 
             def generate_readme_content(self, name, deploy_instructions=False,
-                                        owner="", repo_name="", deployment_type="webapp"):
+                                        owner="", repo_name="", deployment_type="webapp", description=""):
                 captured["deployment_type_in_readme"] = deployment_type
+                captured["description_in_readme"] = description
                 return f"# {name}\n"
 
         fake_service = _FakeGithubService()
@@ -2101,6 +2102,7 @@ class TestStandaloneChatbotDeploy:
         body = {
             "id": "proj-1",
             "name": "ChatProj",
+            "description": "Answers library questions.",
             "type": "Project",
             "diagrams": {
                 "AgentDiagram": [
@@ -2132,6 +2134,8 @@ class TestStandaloneChatbotDeploy:
         assert data["success"] is True
         # The README was rendered with deployment_type='chatbot'.
         assert captured["deployment_type_in_readme"] == "chatbot"
+        # ...and with the project's description (#750).
+        assert captured["description_in_readme"] == "Answers library questions."
 
         # PyGithub helper saw exactly one create + one push call.
         assert captured["create_calls"] == 1

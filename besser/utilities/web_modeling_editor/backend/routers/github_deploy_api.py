@@ -22,7 +22,7 @@ from besser.utilities.secret_redaction import redact_credentials, sanitize_confi
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import attribution_records
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
-    create_github_service
+    create_github_service, readme_about,
 )
 from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token
@@ -309,6 +309,7 @@ async def deploy_webapp_to_github(
                         owner=username,
                         repo_name=repo_name,
                         deployment_type="chatbot",
+                        description=body.get("description", ""),
                     ))
 
                 if custom_commit_message:
@@ -490,6 +491,7 @@ async def deploy_webapp_to_github(
                     owner=username,
                     repo_name=repo_name,
                     deployment_type="webapp",
+                    description=body.get("description", ""),
                 ))
 
             # Push code to repository
@@ -1688,6 +1690,7 @@ _README_TEMPLATE = """# {project_name}
 
 A [BESSER](https://github.com/BESSER-PEARL/BESSER) project.
 
+{about}
 ## Files
 
 - `{model_file}`: the model. Open the repository from the GitHub panel of the
@@ -1732,6 +1735,7 @@ async def create_repository_for_project(
         files = repo_model.model_files(export)
         files["README.md"] = _README_TEMPLATE.format(
             project_name=project_name, model_file=repo_model.MODEL_FILE, model_dir=repo_model.MODEL_DIR,
+            about=readme_about(request.project_data.get("description"), "Created"),
         ).encode("utf-8")
         entries = await _model_tree_entries(github, username, repo_name, files)
         outcome = await github.commit_tree(

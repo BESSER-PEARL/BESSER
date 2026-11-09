@@ -23,7 +23,7 @@ from besser.utilities.web_modeling_editor.backend.config import SUPPORTED_GENERA
 from besser.utilities.web_modeling_editor.backend.config import generators as backend_config
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_OUTPUT_FILENAME,
-    BPMN_DIAGRAM_TYPE,
+    BPMN_PROJECT_DIAGRAM_KEY,
     DEPLOYMENT_DIAGRAM_TYPE,
 )
 
@@ -104,7 +104,7 @@ def test_importing_the_registry_imports_no_generator():
 def test_values_shared_with_the_backend_constants():
     by_id = {spec.id: spec for spec in GENERATORS}
     assert by_id["agent"].download_filename == AGENT_OUTPUT_FILENAME
-    assert by_id["bpmn"].required_diagram_type == BPMN_DIAGRAM_TYPE
+    assert by_id["bpmn"].required_diagram_type == BPMN_PROJECT_DIAGRAM_KEY
     assert by_id["docker_compose"].required_diagram_type == DEPLOYMENT_DIAGRAM_TYPE
 
 

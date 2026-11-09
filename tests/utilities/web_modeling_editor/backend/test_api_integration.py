@@ -720,9 +720,14 @@ class TestValidateDiagram:
     def test_design_check_warnings_leave_an_older_model_valid_and_generating(self, client, single_class_model):
         """A model saved before the #756 design checks, which trips only their warnings, still generates."""
         model = copy.deepcopy(single_class_model)
-        model["elements"]["class-1"]["attributes"].append("attr-2")
-        model["elements"]["attr-2"] = {"type": "Attribute", "name": "+ id: int"}  # 'id' not the identifier
-        model["elements"]["class-2"] = {"type": "Class", "name": "Note", "attributes": [], "methods": []}  # isolated
+        # 'id' not the identifier
+        model["nodes"][0]["data"]["attributes"].append(
+            {"id": "attr-2", "name": "id", "attributeType": "int", "visibility": "public"}
+        )
+        model["nodes"].append({  # isolated
+            "id": "class-2", "type": "class", "position": {"x": 300, "y": 0}, "width": 160, "height": 100,
+            "data": {"name": "Note", "attributes": [], "methods": []},
+        })
         payload = {"title": "SavedBefore756", "model": model, "generator": "python"}
 
         validation = client.post("/besser_api/validate-diagram", json=payload).json()
@@ -771,7 +776,7 @@ class TestValidateDiagram:
         from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
 
         assert vr.user_reference_domain_model.validate(raise_exception=False)["warnings"]
-        payload = {"title": "UserProfile", "model": {"type": "UserDiagram", "elements": {}, "relationships": {}}}
+        payload = {"title": "UserProfile", "model": {"version": "4.0.0", "type": "UserDiagram", "nodes": [], "edges": []}}
 
         data = client.post("/besser_api/validate-diagram", json=payload).json()
 

@@ -199,8 +199,11 @@ NO_NAVIGABLE_END = _edit(
 
 def _class_diagram(project):
     model = project["diagrams"]["ClassDiagram"][0]["model"]
-    names = {el["name"] for el in model["elements"].values() if el.get("type") in ("Class", "AbstractClass")}
-    return names, model["relationships"]
+    names = {
+        node["data"]["name"] for node in model["nodes"]
+        if node.get("type") == "class" and (node["data"].get("stereotype") or "").lower() != "enumeration"
+    }
+    return names, model["edges"]
 
 
 def test_an_ecore_converter_project_imports_with_its_compositions_repaired():
@@ -213,7 +216,7 @@ def test_an_ecore_converter_project_imports_with_its_compositions_repaired():
     names, relationships = _class_diagram(project)
     assert names == {"PortSortie", "Port", "Documentation", "AlgorithmeElement", "Algorithme",
                      "PortEntree", "Ressource"}
-    assert sorted(r["type"] for r in relationships.values()) == [
+    assert sorted(r["type"] for r in relationships) == [
         "ClassBidirectional", "ClassComposition", "ClassComposition",
         "ClassInheritance", "ClassInheritance", "ClassInheritance", "ClassInheritance",
     ]
@@ -246,7 +249,7 @@ def test_a_composition_with_a_non_navigable_owner_end_is_repaired_and_reported()
     names, relationships = _class_diagram(project_to_json(NON_NAVIGABLE_OWNER, warnings))
 
     assert names == {"Book", "Author"}
-    [relationship] = relationships.values()
+    [relationship] = relationships
     assert relationship["type"] == "ClassComposition"
     assert warnings == [
         "Association 'book_author': the non-composite end 'book' (Book) of a composition must be "

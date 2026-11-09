@@ -660,7 +660,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
    ``session.get('key')`` (``{user_message}`` resolves to the last user message).
    Lines are emitted unindented; call sites apply ``| trim | indent(4)``. #}
 {% macro assign_text(var, text, use_session_vars) %}
-{{ var }} = '{{ text | replace('\\', '\\\\') | replace("'", "\\'") }}'
+{{ var }} = '{{ text | py_str }}'
 {% if use_session_vars %}
 {% for key in extract_braced_vars(text) %}
 {% if key == 'user_message' %}

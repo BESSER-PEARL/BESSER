@@ -151,6 +151,9 @@ Other changes
   Django code failed ``manage.py check`` (``models.E004``), and the new
   ``Attribute 'id' is not the identifier:`` warning made every generation from
   the untouched template ask first.
+* **Projects saved by an older editor open again.** A v1 project in the
+  browser, saved without ``currentDiagramIndices``, failed to load and did not
+  open.
 
 Web Modeling Editor
 -------------------
@@ -159,9 +162,11 @@ The editor half of these fixes is editor version ``8.9.3``: its release PR
 `BESSER-Web-Modeling-Editor#268 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/268>`_
 folds in #262 to #267, and
 `#269 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/269>`_
-releases ``develop`` to ``main``. The ``frontend`` submodule points at it. The
-editor's version, shown in its About dialog and stamped into JSON exports, is
-now ``8.9.3``. Its own notes are ``docs/source/releases/v8.9.3.rst`` in the
+releases ``develop`` to ``main``;
+`#270 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/270>`_
+adds the v1 project and NexaCRM template fixes. The ``frontend`` submodule
+points at #270's merge. The editor's version, shown in its About dialog and
+stamped into JSON exports, is now ``8.9.3``. Its own notes are ``docs/source/releases/v8.9.3.rst`` in the
 editor repository.
 
 Modeling agent

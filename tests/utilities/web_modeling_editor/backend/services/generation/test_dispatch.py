@@ -27,12 +27,17 @@ from besser.utilities.web_modeling_editor.backend.services.generation import (
 )
 
 CLASS_MODEL = {
+    "version": "4.0.0",
     "type": "ClassDiagram",
-    "elements": {
-        "class-1": {"type": "Class", "name": "Book", "attributes": ["attr-1"], "methods": []},
-        "attr-1": {"type": "Attribute", "name": "+ title: str"},
-    },
-    "relationships": {},
+    "nodes": [{
+        "id": "class-1", "type": "class", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+        "data": {
+            "name": "Book",
+            "attributes": [{"id": "attr-1", "name": "title", "attributeType": "str", "visibility": "public"}],
+            "methods": [],
+        },
+    }],
+    "edges": [],
 }
 
 

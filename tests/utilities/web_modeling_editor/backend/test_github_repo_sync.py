@@ -695,6 +695,8 @@ def test_the_deploy_readme_holds_the_description_and_the_generation_date():
         bare = github.generate_readme_content("Library", deployment_type=kind)
         assert generated.search(bare)
         assert "\n\n\n" not in bare
+        blank = github.generate_readme_content("Library", deployment_type=kind, description="  \n ")
+        assert blank == bare
 
 
 class _FailingGitHub:

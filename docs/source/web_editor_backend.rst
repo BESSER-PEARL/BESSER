@@ -643,7 +643,9 @@ Validation
 Deployment
 ^^^^^^^^^^
 
-- ``POST /deploy-app`` -- Docker Compose deployment for Django projects
+- ``POST /deploy-app`` -- Docker Compose deployment for Django projects, on the backend's own host.
+  Off unless ``BESSER_ENABLE_DOCKER_DEPLOY`` is on (403 otherwise); a failed or timed-out
+  ``docker-compose`` answers 502 or 504 with the details in the server log.
 - ``POST /feedback`` -- User feedback submission
 
 Standalone Chatbot Deployment
@@ -908,6 +910,12 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
 - ``GITHUB_CLIENT_SECRET`` -- GitHub OAuth app secret
 - ``BESSER_DEPLOY_FROM_REPO`` (optional, default ``false``) -- offers "Go live"
   (``/github/app/go-live``), which deploys the project's own repository
+
+**Docker deployment:**
+
+- ``BESSER_ENABLE_DOCKER_DEPLOY`` (off) -- enables ``POST /deploy-app``, which runs
+  ``docker-compose`` on the backend's own host. The endpoint has no authentication,
+  so turn it on only for a single-user local install, never on a shared server.
 
 **Optional:**
 

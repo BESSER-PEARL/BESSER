@@ -50,6 +50,8 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_DJANGO_APP_NAME,
 )
 
+from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
+
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
@@ -62,7 +64,7 @@ router = APIRouter(prefix="/besser_api", tags=["deployment"])
 
 @router.post("/deploy-app")
 @handle_endpoint_errors("deploy_app")
-async def deploy_app(input_data: DiagramInput):
+async def deploy_app(input_data: DiagramInput, settings: SettingsDep):
     """
     Deploy application using Docker Compose.
 
@@ -75,6 +77,14 @@ async def deploy_app(input_data: DiagramInput):
     Raises:
         HTTPException: If deployment fails
     """
+    # Off unless BESSER_ENABLE_DOCKER_DEPLOY: this builds and starts containers on
+    # the backend's own Docker daemon, unauthenticated, so only a single-user local
+    # install should enable it. (The docstring is in the editor's OpenAPI schema.)
+    if not settings.docker_deploy_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Docker deployment is disabled on this server (set BESSER_ENABLE_DOCKER_DEPLOY to enable it).",
+        )
     with tempfile.TemporaryDirectory(prefix=f'{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_') as temp_dir:
         json_data = input_data.model_dump()
         generator = input_data.generator
@@ -97,6 +107,8 @@ async def deploy_app(input_data: DiagramInput):
             # Validate project_name to prevent path traversal
             if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_-]*$', project_name):
                 raise HTTPException(status_code=400, detail="Invalid project name")
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', app_name):
+                raise HTTPException(status_code=400, detail="Invalid app name")
 
             # Sanitize and resolve project directory safely within temp_dir
             project_dir = _safe_path(temp_dir, project_name)
@@ -122,6 +134,7 @@ async def deploy_app(input_data: DiagramInput):
                 raise ValueError("Django project generation failed: Output directory is empty")
 
             await asyncio.to_thread(run_docker_compose, directory=project_dir, project_name=project_name)
+            return {"status": "deployed", "project_name": project_name}
 
         else:
             raise ValueError("Deployment only possible for Django projects")

@@ -110,6 +110,11 @@ class BackendSettings(BaseSettings):
     deploy_from_repo: _Flag = Field(
         False, validation_alias="BESSER_DEPLOY_FROM_REPO",
         description="'Go live' deploys the project's own repository instead of a regenerated copy.")
+    # Off: /deploy-app runs docker-compose on the backend's own host, which
+    # only a single-user local install should allow.
+    docker_deploy_enabled: _Flag = Field(
+        False, validation_alias="BESSER_ENABLE_DOCKER_DEPLOY",
+        description="Enable POST /deploy-app (docker-compose on this host); off answers 403.")
 
     # -- Spec-Driven Agent: per-run caps -----------------------------------
     # The UI reads the hard caps from /spec-driven/config, so they are what a

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import httpx
 
+from besser.utilities.provenance import readme_about
 from besser.utilities.web_modeling_editor.backend.services.deployment.render_blueprint import RENDER_DEPLOY_URL
 from besser.utilities.web_modeling_editor.backend.services.deployment.repo_model import commit_origin, with_origin
 
@@ -912,8 +913,10 @@ class GitHubService:
         owner: str = "",
         repo_name: str = "",
         deployment_type: str = "webapp",
+        description: Optional[str] = "",
     ) -> str:
-        """Generate README.md content."""
+        """Generate README.md content; ``description`` is the project's."""
+        about = readme_about(description, "Generated")
         if deployment_type == "chatbot":
             readme = f"""<div align=\"center\">
 
@@ -927,11 +930,12 @@ class GitHubService:
                 readme += f"""[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/{owner}/{repo_name})
 """
 
-            readme += """
+            readme += f"""
 A standalone chatbot generated from an Agent Diagram using the [BESSER Web Modeling Editor](https://editor.besser-pearl.org).
 
 </div>
 
+{about}
 ## Project Structure
 
 ```
@@ -976,11 +980,12 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
             readme += f"""[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/{owner}/{repo_name})
 """
 
-        readme += """
+        readme += f"""
 A full-stack web application generated from visual models using the [BESSER Web Modeling Editor](https://editor.besser-pearl.org), a low-code open-source platform.
 
 </div>
 
+{about}
 """
 
         if deploy_instructions:

@@ -149,7 +149,8 @@ Other changes
 * **Fewer false "no frontend create path" warnings.** The Spec-Driven Agent's
   acceptance matrix now sees a create made through a shared list component
   even when a comment in it names an entity, and no longer credits an entity
-  with a POST that goes to another class's resource.
+  with a POST that goes to another class's resource
+  (`#763 <https://github.com/BESSER-PEARL/BESSER/pull/763>`_).
 * **A project's README says what it is.** A repository created from the
   GitHub panel, a deployed web app or chatbot, and a new repository that a
   Spec-Driven or generator result is pushed to (when the run has no README of

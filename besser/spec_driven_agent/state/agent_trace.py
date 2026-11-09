@@ -25,7 +25,7 @@ never file content, so it can ride along with the GitHub push (a later
 continue-from-GitHub run reads it back to detect human edits).
 
 The workspace is written by model-authored commands, so every read and write
-here goes through :mod:`~besser.spec_driven_agent.execution.workspace_fs`:
+here goes through :mod:`~besser.utilities.workspace_fs`:
 a link planted at the state file, a source file or ``.agent-trace/`` is never
 followed. Parallel generator calls update the state concurrently; a module lock
 serializes each load-update-save cycle.
@@ -45,17 +45,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-from besser.spec_driven_agent.execution.workspace_fs import (
+from besser.utilities.workspace_fs import (
+    is_text,
     is_plain_entry,
     open_plain,
     walk_plain,
     write_atomic_plain,
 )
-from besser.utilities.provenance import PROVENANCE_FILENAME
+from besser.utilities.provenance import ATTRIBUTION_FILENAME, PROVENANCE_FILENAME
 
 logger = logging.getLogger(__name__)
 
-ATTRIBUTION_FILENAME = ".besser_attribution.json"
 TRACE_DIRNAME = ".agent-trace"
 AGENT_TRACE_VERSION = "0.1"
 AGENT_TRACE_MIME_TYPE = "application/vnd.agent-trace.record+json"
@@ -139,7 +139,7 @@ def normalize_model_id(provider: Optional[str], model: Optional[str]) -> Optiona
     if "/" in model:
         return model
     provider = (provider or "").strip().lower()
-    if provider in ("", "free", "sponsored", "pia", "local"):
+    if provider in ("", "free", "sponsored", "pia", "gateway", "local"):
         return model
     return f"{provider}/{model}"
 
@@ -148,8 +148,8 @@ def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()[:_HASH_LEN]
 
 
-def _read_lines(workspace: str, rel: str) -> Optional[list[str]]:
-    """The file's lines without line endings, or None when it is not attributable
+def read_text_bytes(workspace: str, rel: str) -> Optional[bytes]:
+    """The file's content, or None when it is not attributable
     (absent, a link or reached through one, special, too large, or not text)."""
     try:
         with open_plain(os.path.join(workspace, rel), "rb", root=workspace) as handle:
@@ -158,13 +158,18 @@ def _read_lines(workspace: str, rel: str) -> Optional[list[str]]:
             data = handle.read()
     except OSError:
         return None
-    if b"\x00" in data:
-        return None
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
-    return text.splitlines()
+    return data if is_text(data) else None
+
+
+def read_text_lines(workspace: str, rel: str) -> Optional[list[str]]:
+    """The file's lines without line endings, or None when it is not attributable (see :func:`read_text_bytes`)."""
+    data = read_text_bytes(workspace, rel)
+    return None if data is None else data.decode("utf-8").splitlines()
+
+
+def line_hashes(lines: list[str]) -> list[str]:
+    """The hash attribution stores for each line."""
+    return [_line_hash(line) for line in lines]
 
 
 def _content_hash(lines: list[str]) -> str:
@@ -294,20 +299,42 @@ class AttributionState:
         old_hashes, old_owners = old
         if old_hashes == new_hashes:
             return 0
-        owners = [index] * len(new_hashes)
-        kept = 0
-        if max(len(old_hashes), len(new_hashes)) > _MAX_DIFF_LINES:
-            blocks = _head_and_tail(old_hashes, new_hashes)
-        else:
-            blocks = difflib.SequenceMatcher(
-                None, old_hashes, new_hashes, autojunk=False
-            ).get_matching_blocks()
-        for a, b, size in blocks:
-            for offset in range(size):
-                owners[b + offset] = old_owners[a + offset]
-            kept += size
+        owners, kept = _carry_owners(old_hashes, old_owners, new_hashes, index)
         self.files[rel] = (new_hashes, owners)
         return len(new_hashes) - kept
+
+    def owners_of(self, rel: str, lines: list[str]) -> list[int]:
+        """The contributor index of each of ``lines``, ``rel`` as it is now; ``-1`` for a
+        line changed since the state was recorded. The state itself is not updated."""
+        new_hashes = line_hashes(lines)
+        if rel not in self.files:
+            return [-1] * len(new_hashes)
+        old_hashes, old_owners = self.files[rel]
+        return _carry_owners(old_hashes, old_owners, new_hashes, -1)[0]
+
+
+def _carry_owners(
+    old_hashes: list[str], old_owners: list[int], new_hashes: list[str], fill: int
+) -> tuple[list[int], int]:
+    """New lines' owners: unchanged lines keep theirs, the rest get ``fill``; also the count kept."""
+    owners = [fill] * len(new_hashes)
+    kept = 0
+    for a, b, size in matching_lines(old_hashes, new_hashes):
+        for offset in range(size):
+            owners[b + offset] = old_owners[a + offset]
+        kept += size
+    return owners, kept
+
+
+def matching_lines(old: list[str], new: list[str]) -> list[tuple[int, int, int]]:
+    """The unchanged lines of ``old`` in ``new`` as ``(a, b, size)`` blocks, in order.
+
+    A line diff of files over ``_MAX_DIFF_LINES`` is too slow, so for those only
+    the unchanged first and last lines match.
+    """
+    if max(len(old), len(new)) > _MAX_DIFF_LINES:
+        return _head_and_tail(old, new)
+    return difflib.SequenceMatcher(None, old, new, autojunk=False).get_matching_blocks()
 
 
 def _head_and_tail(old: list[str], new: list[str]) -> list[tuple[int, int, int]]:
@@ -414,7 +441,7 @@ def record_generated_files(
                 rel = str(rel).replace("\\", "/")
                 if rel.split("/", 1)[0] in _ALWAYS_SKIPPED_DIRS:
                     continue
-                lines = _read_lines(workspace, rel)
+                lines = read_text_lines(workspace, rel)
                 if lines is None:
                     state.files.pop(rel, None)
                 else:
@@ -424,6 +451,35 @@ def record_generated_files(
             logger.warning("Generator attribution skipped: %s", exc)
         except Exception:
             logger.warning("Recording generator attribution failed", exc_info=True)
+            _mark_broken(workspace)
+
+
+def record_merged_files(
+    workspace: str,
+    rel_paths: Iterable[str],
+    moves: dict[str, str],
+    generator: str,
+    besser_version: Optional[str] = None,
+) -> None:
+    """Attribute the lines a merge brought into edited generated files to the generator.
+
+    The other lines keep their contributor; a file moved by a class rename
+    (``moves``: old path -> new path) keeps its old path's record. Without a
+    state there is nothing to keep, so nothing is recorded.
+    """
+    with _STATE_LOCK:
+        try:
+            state = AttributionState.load(workspace)
+            if state is None:
+                return
+            for old, new in moves.items():
+                if old in state.files:
+                    state.files[new] = state.files.pop(old)
+            _reconcile(state, workspace, generator_contributor(generator, besser_version), None, rel_paths)
+        except AttributionStateError as exc:
+            logger.warning("Merge attribution skipped: %s", exc)
+        except Exception:
+            logger.warning("Recording merge attribution failed", exc_info=True)
             _mark_broken(workspace)
 
 
@@ -460,7 +516,7 @@ def _reconcile(
     else:
         targets = sorted({str(p).replace("\\", "/") for p in paths})
     for rel in targets:
-        lines = _read_lines(workspace, rel)
+        lines = read_text_lines(workspace, rel)
         if lines is None:
             state.files.pop(rel, None)
             continue
@@ -547,7 +603,7 @@ def build_trace_record(
     files: list[dict] = []
     totals = {KIND_GENERATOR: 0, KIND_AI: 0, KIND_HUMAN: 0, KIND_UNKNOWN: 0}
     for rel in sorted(state.files):
-        lines = _read_lines(workspace, rel)
+        lines = read_text_lines(workspace, rel)
         hashes, owners = state.files[rel]
         if lines is None or len(lines) != len(owners) or not owners:
             continue

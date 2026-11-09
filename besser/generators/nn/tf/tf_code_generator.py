@@ -30,6 +30,8 @@ class TFGenerator(NNCodeGenerator):
         template_dir (str): The name of the jinja template directory.
         generation_type (str): 'subclassing' or 'sequential'.
     """
+    regenerable = True
+
     def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing",
                  strip_layer_counter_suffix: bool = False,

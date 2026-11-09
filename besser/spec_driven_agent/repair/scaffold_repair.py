@@ -19,7 +19,7 @@ import os
 import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
+from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 from besser.spec_driven_agent.repair.dependency_pins import pin_known_incompatible
 
 

@@ -213,6 +213,20 @@ would deploy is not defined there or when ``besser-wme-smartgen`` is not on the
 in both containers with the commit it built, then checks that the API answers
 ``200``.
 
+The model catalog (``BESSER_MODEL_CATALOG``) is validated strictly at startup:
+an unknown key, a value of the wrong type or a ``base_url`` without a host
+stops the backend and the worker (see :doc:`models`). A catalog edited by hand
+on the host is not checked by the workflow, so check it against the image you
+are about to deploy before you deploy:
+
+.. code-block:: bash
+
+   docker run --rm -e BESSER_MODEL_CATALOG=/catalog.json \
+     -v /home/ec2-user/model_catalog.json:/catalog.json:ro <backend image> \
+     python -c "from besser.llm.catalog import load_model_catalog as l; print(sorted(l().providers))"
+
+It prints the provider ids, or a ``ModelCatalogError`` naming the field.
+
 Verification
 ------------
 
@@ -236,7 +250,7 @@ Run these on the host, in the directory of its compose file:
    curl -s http://127.0.0.1:9001/besser_api/spec-driven/config | python3 -m json.tool | grep -E 'shell_tools_enabled|toolchain_validation_enabled'
    # ... and off in the backend
    docker compose exec -T besser-wme-backend python -c \
-     "import besser.utilities.web_modeling_editor.backend.constants.constants as c; print(c.LLM_ENABLE_SHELL_TOOLS, c.LLM_ENABLE_TOOLCHAIN_VALIDATION)"
+     "from besser.utilities.web_modeling_editor.backend.settings import get_settings as g; print(g().llm_enable_shell_tools, g().llm_enable_toolchain_validation)"
 
    # The API answers through the public URL
    curl -s -o /dev/null -w '%{http_code}\n' https://<editor-host>/besser_api/

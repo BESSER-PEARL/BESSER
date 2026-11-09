@@ -44,7 +44,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
-    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.multiplicity_format import (
     format_to_name,
@@ -273,7 +272,7 @@ def deployment_buml_to_json(content: str) -> dict:
     }
     try:
         namespace = safe_load_buml(
-            strip_buml_imports(content),
+            content,
             allowed_names,
         )
     except (SyntaxError, NameError, TypeError, ValueError) as exc:

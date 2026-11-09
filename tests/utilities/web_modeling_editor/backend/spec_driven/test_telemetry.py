@@ -34,6 +34,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import 
     _collect_frames,
     _parse_frame,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -442,7 +443,7 @@ class TestRunSummaryEmission:
     def test_successful_run_records_summary_with_split(
         self, split_orchestrator, telemetry_env
     ):
-        runner = SmartGenerationRunner(_telemetry_request())
+        runner = SmartGenerationRunner(_telemetry_request(), runtime=current_runtime())
         frames = asyncio.run(_collect_frames(runner))
 
         events = _read_events(telemetry_env, "study-sess-1")
@@ -480,7 +481,7 @@ class TestRunSummaryEmission:
     def test_failed_run_records_failure_summary(
         self, failing_orchestrator, telemetry_env
     ):
-        runner = SmartGenerationRunner(_telemetry_request())
+        runner = SmartGenerationRunner(_telemetry_request(), runtime=current_runtime())
         asyncio.run(_collect_frames(runner))
 
         events = _read_events(telemetry_env, "study-sess-1")
@@ -494,7 +495,7 @@ class TestRunSummaryEmission:
     def test_no_summary_without_telemetry_fields(
         self, split_orchestrator, telemetry_env
     ):
-        runner = SmartGenerationRunner(_build_request())
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
         frames = asyncio.run(_collect_frames(runner))
         assert os.listdir(str(telemetry_env)) == []
         # The run itself still succeeds.
@@ -503,7 +504,7 @@ class TestRunSummaryEmission:
     def test_no_summary_when_disabled(
         self, split_orchestrator, telemetry_disabled
     ):
-        runner = SmartGenerationRunner(_telemetry_request())
+        runner = SmartGenerationRunner(_telemetry_request(), runtime=current_runtime())
         frames = asyncio.run(_collect_frames(runner))
         assert os.listdir(str(telemetry_disabled)) == []
         assert _parse_frame(frames[-1])["event"] == "done"
@@ -515,7 +516,7 @@ class TestRunSummaryEmission:
             raise RuntimeError("telemetry store exploded")
 
         monkeypatch.setattr(runner_module.telemetry, "record_event", _boom)
-        runner = SmartGenerationRunner(_telemetry_request())
+        runner = SmartGenerationRunner(_telemetry_request(), runtime=current_runtime())
         frames = asyncio.run(_collect_frames(runner))
         assert _parse_frame(frames[-1])["event"] == "done"
 

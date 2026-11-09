@@ -17,10 +17,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     SmartGenerationRunner,
     _seed_workspace_from_base,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
-    copytree_no_links,
-    is_plain_entry,
-)
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
 from tests.utilities.web_modeling_editor.backend.spec_driven import (
     test_push_smart_to_github as push_tests,
 )
@@ -28,6 +25,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import 
     _build_request,
     _clear_registry,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 SECRET = "TOP-SECRET-OUTSIDE-THE-TREE"
 
@@ -87,7 +85,7 @@ def test_copytree_no_links_drops_links_and_applies_patterns(tmp_path):
     dst = tmp_path / "dst"
     dst.mkdir()
 
-    copytree_no_links(str(src), str(dst), ["*.db"])
+    copytree_plain(str(src), str(dst), ["*.db"], dirs_exist_ok=True)
 
     assert _all_files(dst) == ["pkg/mod.py"]
 
@@ -100,7 +98,7 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
     (result_path / "app.py").write_text("app = 1\n", encoding="utf-8")
     _add_links(result_path, outside)
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     done, entry = runner._package_result(str(result_path))
 
@@ -108,7 +106,7 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
     with zipfile.ZipFile(entry.file_path) as archive:
         names = archive.namelist()
         trace = f".agent-trace/{done.runId}.json"
-        assert sorted(names) == [trace, "BESSER_GENERATION.md", "app.py", "main.py"]
+        assert sorted(names) == [trace, ".besser_attribution.json", "BESSER_GENERATION.md", "app.py", "main.py"]
         # Linked files are not attributed either.
         assert {f["path"] for f in json.loads(archive.read(trace))["files"]} == {"app.py", "main.py"}
         assert all(SECRET not in archive.read(n).decode("utf-8") for n in names)
@@ -125,7 +123,7 @@ def test_attribution_writes_never_follow_a_planted_link(tmp_path):
     _symlink(outside / "secret.txt", result_path / ".besser_attribution.json.tmp")
     _symlink(outside, result_path / ".agent-trace", is_dir=True)
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     done, entry = runner._package_result(str(result_path))
 
@@ -162,7 +160,7 @@ def test_single_file_download_is_never_a_symlink(tmp_path):
     (result_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
     _symlink(outside / "secret.txt", result_path / "leak.txt")
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     _done, entry = runner._package_result(str(result_path))
 
@@ -211,3 +209,21 @@ def test_push_to_github_skips_symlinks(tmp_path, monkeypatch):
     assert "leak.txt" not in pushed
     assert ".besser_recipe.json" not in pushed
     assert not any(p.startswith("linked_dir/") for p in pushed)
+
+
+def test_a_linked_carried_file_never_reaches_the_zip(tmp_path):
+    """BESSER's own records ride in the ZIP (#659); one planted as a link must not leak its target."""
+    outside = _outside(tmp_path)
+    result_path = tmp_path / "result"
+    result_path.mkdir()
+    (result_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (result_path / "app.py").write_text("app = 1\n", encoding="utf-8")
+    _symlink(outside / "secret.txt", result_path / ".besser_generator_output.json")
+
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+    runner.temp_dir = str(tmp_path)
+    _, entry = runner._package_result(str(result_path))
+
+    with zipfile.ZipFile(entry.file_path) as archive:
+        assert ".besser_generator_output.json" not in archive.namelist()
+        assert all(SECRET not in archive.read(n).decode("utf-8") for n in archive.namelist())

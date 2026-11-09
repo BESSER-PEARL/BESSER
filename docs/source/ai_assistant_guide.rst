@@ -64,7 +64,7 @@ Quality Assurance
 
      python -m pytest tests/
 
-  This is what CI runs (with ``--ignore=tests/generators/nn -x``).
+  This is what CI runs (with ``-q --tb=short``).
   See :doc:`contributor_guide` for the full testing guidance.
 * Build the documentation (``cd docs && make html``) when altering files under
   ``docs/`` or when the change impacts user-facing guidance.

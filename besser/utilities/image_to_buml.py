@@ -2,7 +2,7 @@ import base64
 import os
 
 from besser.BUML.metamodel.structural import DomainModel
-from besser.utilities.llm_utils import DEFAULT_OPENAI_MODEL, LLMUpstreamError, post_openai_chat
+from besser.llm import DEFAULT_OPENAI_MODEL, LLMUpstreamError, post_openai_chat
 from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 
 UNLIMITED_MULTIPLICITY = 9999

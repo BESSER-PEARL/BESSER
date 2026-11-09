@@ -235,6 +235,26 @@ def test_mutation_inventory_marks_unknowns_and_budget_omissions_without_executin
     assert len(clipped) <= 700 and "TRUNCATED" in clipped and "UNVERIFIED" in clipped
 
 
+def test_mutation_inventory_resolves_nested_routers(tmp_path):
+    # The include_router chain is resolved through routers, not only from the app.
+    d = _mk(tmp_path, {
+        "backend/main.py": (
+            "app = FastAPI()\n"
+            "class Item(Base):\n    __tablename__ = 'item'\n"
+            "class Owner(Base):\n    __tablename__ = 'owner'\n"
+            "Item.owners = relationship('Owner')\n"
+            "api = APIRouter(prefix='/api')\n"
+            "items = APIRouter(prefix='/item')\n"
+            "@items.delete('/{id}/')\ndef delete_item(id: int):\n    return Item()\n"
+            "api.include_router(items, prefix='/v1')\n"
+            "app.include_router(api)\n"
+        ),
+    })
+    manifest = build_mutation_manifest(d)
+    assert "DELETE /api/v1/item/{id}/" in manifest
+    assert "UNKNOWN mount" not in manifest and "unresolved router mount" not in manifest
+
+
 def test_mutation_observations_use_executed_paths_body_shapes_and_freshness_not_scenario_names(tmp_path):
     d = _mk(tmp_path, {
         "backend/main.py": (

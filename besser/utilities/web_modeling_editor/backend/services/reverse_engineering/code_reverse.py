@@ -187,8 +187,9 @@ def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
 def _python_files(root: str):
     count = 0
     for current, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith(".")]
-        for name in files:
+        # Sorted: os.walk follows the filesystem's order, and the cap must keep the same files everywhere.
+        dirs[:] = sorted(d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith("."))
+        for name in sorted(files):
             path = os.path.join(current, name)
             if name.endswith(".py") and os.path.getsize(path) <= _MAX_FILE_BYTES:
                 count += 1
@@ -206,8 +207,10 @@ def _detect_stack(root: str) -> list[str]:
             found.append(name)
 
     for current, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith(".")]
-        depth = os.path.relpath(current, root).count(os.sep)
+        # Sorted: os.walk follows the filesystem's order, which only Windows sorts.
+        dirs[:] = sorted(d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith("."))
+        files.sort()
+        depth =os.path.relpath(current, root).count(os.sep)
         if depth > 3:
             dirs[:] = []
         if "manage.py" in files:
@@ -452,6 +455,9 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
                 relation = _relation(node.name, name, statement.value)
                 if relation is not None:
                     module.relations.append(relation)
+            elif _is_mapped(statement.annotation):
+                # SQLAlchemy 2.0: a bare ``year: Mapped[int]`` is a column too.
+                orm_fields.append(_annotated_field(name, statement.annotation))
             else:
                 annotated.append(_annotated_field(name, statement.annotation))
 
@@ -469,6 +475,14 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
     if annotated and (_derives_from(bases, _SCHEMA_BASES, module) or "dataclass" in decorators):
         return "schema", _Entity(node.name, None, annotated, source, own_bases)
     return "schema", None
+
+
+def _is_mapped(annotation) -> bool:
+    """``Mapped[...]`` or ``orm.Mapped[...]``."""
+    if not isinstance(annotation, ast.Subscript):
+        return False
+    outer = annotation.value
+    return (outer.id if isinstance(outer, ast.Name) else getattr(outer, "attr", "")) == "Mapped"
 
 
 def _is_relationship(value) -> bool:

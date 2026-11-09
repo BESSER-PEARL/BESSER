@@ -7,7 +7,8 @@ so ``max_cost_usd`` fired at a fraction of the real budget.
 
 import pytest
 
-from besser.spec_driven_agent.providers.llm_client import UsageTracker, _get_pricing
+from besser.llm.pricing import get_pricing
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
 # (model id, input $/1M, output $/1M) from the vendors' pricing pages.
 SELECTABLE_MODEL_PRICES = [
@@ -37,7 +38,7 @@ SELECTABLE_MODEL_PRICES = [
 
 @pytest.mark.parametrize(("model", "input_rate", "output_rate"), SELECTABLE_MODEL_PRICES)
 def test_every_selectable_model_is_billed_at_its_published_rate(model, input_rate, output_rate):
-    pricing = _get_pricing(model)
+    pricing = get_pricing(model)
     assert (pricing["input"], pricing["output"]) == (input_rate, output_rate)
 
 
@@ -46,11 +47,11 @@ def test_every_selectable_model_is_billed_at_its_published_rate(model, input_rat
     ("claude-fable-5-1", 0.25),
 ])
 def test_cache_reads_are_billed_at_the_discounted_rate(model, cache_read):
-    assert _get_pricing(model)["cache_read"] == cache_read
+    assert get_pricing(model)["cache_read"] == cache_read
 
 
 def test_a_bedrock_style_opus_5_5_id_gets_the_same_rate():
-    assert _get_pricing("us.anthropic.claude-opus-5-5")["input"] == 4.0
+    assert get_pricing("us.anthropic.claude-opus-5-5")["input"] == 4.0
 
 
 def test_the_cost_cap_sees_the_real_spend_on_gpt_6_luna():

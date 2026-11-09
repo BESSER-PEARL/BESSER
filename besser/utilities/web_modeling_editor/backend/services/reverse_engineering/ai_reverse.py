@@ -24,7 +24,8 @@ from besser.spec_driven_agent.providers.llm_client import (
     free_tier_available,
     sponsored_tier_available,
 )
-from besser.utilities.kg_llm_to_buml import clean_json_response, convert_spec_json_to_buml, parse_json_safely
+from besser.utilities.kg_llm_to_buml import convert_spec_json_to_buml
+from besser.llm import extract_json
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
 )
@@ -36,7 +37,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.c
     SCHEMA_MODEL_SOURCE,
     CodeAnalysis,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
+from besser.utilities.secret_redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -384,11 +385,7 @@ def _ask_model(prompt: str, provider: str = FREE_TIER_PROVIDER) -> str:
 
 
 def _parse_reply(reply: str) -> Optional[dict]:
-    spec = parse_json_safely(clean_json_response(reply or ""))
-    if not isinstance(spec, dict):
-        # Small models wrap the JSON in prose; take the outermost object.
-        start, end = (reply or "").find("{"), (reply or "").rfind("}")
-        spec = parse_json_safely(reply[start:end + 1]) if 0 <= start < end else None
+    spec = extract_json(reply, dict)
     return spec if isinstance(spec, dict) and isinstance(spec.get("classes"), list) else None
 
 

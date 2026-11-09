@@ -141,13 +141,11 @@ def test_hosted_validation_never_invokes_pip(tmp_path, monkeypatch):
 # The hosted backend defaults the flag OFF
 # --------------------------------------------------------------------------- #
 def test_hosted_constant_defaults_off(monkeypatch):
-    # With the env var unset, the backend constant must resolve to False so a
+    # With the env var unset, the backend setting must resolve to False so a
     # fresh hosted deploy is secure without any extra configuration.
     monkeypatch.delenv("BESSER_LLM_ENABLE_SHELL_TOOLS", raising=False)
-    import importlib
-    from besser.utilities.web_modeling_editor.backend.constants import constants
-    importlib.reload(constants)
-    assert constants.LLM_ENABLE_SHELL_TOOLS is False
+    from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
+    assert BackendSettings().llm_enable_shell_tools is False
 
 
 # ---------------------------------------------------------------------------

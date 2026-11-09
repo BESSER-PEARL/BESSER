@@ -110,8 +110,38 @@ def fresh_primitive_types() -> dict:
     }
 
 
-def parse_buml_content(content: str) -> DomainModel:
-    """Parse B-UML content from a Python file and return a DomainModel."""
+def _repairing_binary_association(warnings: list[str]):
+    """``BinaryAssociation`` that makes a composition's non-composite end navigable instead of failing.
+
+    Ecore containment usually has no opposite, so files converted from Ecore
+    write that end non-navigable. The JSON import repairs the same case.
+    """
+    def binary_association(name, ends, *args, **kwargs):
+        properties = [end for end in ends if isinstance(end, Property)]
+        if len(properties) == 2:
+            for whole, part in (properties, properties[::-1]):
+                if whole.is_composite is True and part.is_navigable is False:
+                    part.is_navigable = True
+                    message = (
+                        f"Association '{name}': the non-composite end '{part.name}' ({part.type.name}) "
+                        f"of a composition must be navigable; made it navigable."
+                    )
+                    logger.warning(message)
+                    warnings.append(message)
+        return BinaryAssociation(name, ends, *args, **kwargs)
+
+    return binary_association
+
+
+def parse_buml_content(content: str, warnings: list[str] | None = None) -> DomainModel:
+    """Parse B-UML content from a Python file and return a DomainModel and OCL constraints.
+
+    Args:
+        content: The BUML source.
+        warnings: Receives a message for every repair made to load the model.
+    """
+    if warnings is None:
+        warnings = []
     try:
         if isinstance(content, DomainModel):
             return content
@@ -125,7 +155,7 @@ def parse_buml_content(content: str) -> DomainModel:
             "Method": Method,
             "Parameter": StructuralParameter,
             "PrimitiveDataType": PrimitiveDataType,
-            "BinaryAssociation": BinaryAssociation,
+            "BinaryAssociation": _repairing_binary_association(warnings),
             "Constraint": Constraint,
             "Multiplicity": Multiplicity,
             "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
@@ -153,28 +183,11 @@ def parse_buml_content(content: str) -> DomainModel:
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
-        # Strip a leading UTF-8 BOM so the sandboxed exec does not fail with
-        # "invalid non-printable character U+FEFF" for files saved with a BOM
-        # (common from Windows editors).
-        if content.startswith("﻿"):
-            content = content[1:]
-
-        cleaned_lines = []
-        in_import_block = False
-        for line in content.splitlines():
-            stripped = line.lstrip()
-            if in_import_block:
-                if ")" in line:
-                    in_import_block = False
-                continue
-            if stripped.startswith(("import ", "from ")):
-                if "(" in line and ")" not in line:
-                    in_import_block = True
-                continue
-            if any(gen in line for gen in ["Generator(", ".generate("]):
-                continue
-            cleaned_lines.append(line)
-        cleaned_content = "\n".join(cleaned_lines)
+        # Only the model is loaded, not a generator run at the end of the file.
+        cleaned_content = "\n".join(
+            line for line in content.splitlines()
+            if not any(gen in line for gen in ["Generator(", ".generate("])
+        )
 
         # A class named ``Project`` is bound by the script itself; the stub
         # would make the loader treat it as a shared object it may not modify.

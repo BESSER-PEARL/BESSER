@@ -10,6 +10,8 @@ from besser.generators import GeneratorInterface
 class JSONObjectGenerator(GeneratorInterface):
     """Generate JSON documents from BESSER ObjectModel instances."""
 
+    regenerable = True
+
     def __init__(self, model: ObjectModel, output_dir: str = None):
         if not isinstance(model, ObjectModel):
             raise TypeError("JSONObjectGenerator expects an ObjectModel instance")

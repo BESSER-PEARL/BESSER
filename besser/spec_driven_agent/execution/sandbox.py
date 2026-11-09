@@ -47,6 +47,7 @@ import time
 from dataclasses import dataclass
 
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ logger = logging.getLogger(__name__)
 # auto (default): sandbox mandatory wherever the platform can provide one.
 # off: explicit operator opt-out, for a Linux host whose kernel forbids
 # unprivileged user namespaces. Never set this on a multi-tenant host.
-SANDBOX_POLICY_ENV = "BESSER_LLM_SHELL_SANDBOX"
+SANDBOX_POLICY_ENV = AgentSettings.model_fields["llm_shell_sandbox"].validation_alias
 
 # Mounted fresh rather than bound: a private /proc (so --unshare-pid actually
 # hides the host PID 1) and a private /dev, plus scratch space nothing outside
@@ -80,7 +81,7 @@ _SANDBOX_TIMEOUT = 30
 # auto (default): private when the network selftest passes, else shared with
 # one warning. private: unavailable -> commands refused. shared: the worker's
 # own namespace.
-SHELL_NETWORK_ENV = "BESSER_LLM_SHELL_NETWORK"
+SHELL_NETWORK_ENV = AgentSettings.model_fields["llm_shell_network"].validation_alias
 # pasta answers DNS sent here and forwards it to the container's nameserver,
 # which the sandbox cannot reach when it is a loopback address (Docker's
 # embedded 127.0.0.11).
@@ -161,7 +162,7 @@ class SandboxedCommand:
 
 
 def _policy() -> str:
-    raw = (os.environ.get(SANDBOX_POLICY_ENV) or "auto").strip().lower()
+    raw = (AgentSettings().llm_shell_sandbox or "auto").strip().lower()
     if raw not in {"auto", "off"}:
         logger.warning(
             "%s=%r is not a known policy; using 'auto'", SANDBOX_POLICY_ENV, raw,
@@ -318,7 +319,7 @@ def sandbox_selftest_error() -> str | None:
 
 
 def _network_mode() -> str:
-    raw = (os.environ.get(SHELL_NETWORK_ENV) or "auto").strip().lower()
+    raw = (AgentSettings().llm_shell_network or "auto").strip().lower()
     if raw not in {"auto", "private", "shared"}:
         logger.warning("%s=%r is not a known mode; using 'auto'", SHELL_NETWORK_ENV, raw)
         return "auto"

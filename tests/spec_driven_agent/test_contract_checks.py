@@ -388,9 +388,9 @@ def test_write_time_framework_switch_warning(tmp_path):
 class TestAFrameworkTheUserAskedForIsNotASwitch:
     """"Build a Flask REST API" must not be a hard-constraint violation.
 
-    The generator selector maps "backend" / "API" / "REST" to FastAPI, and
-    _names_unsupported_stack does not recognise Flask, so a Flask request got a
-    FastAPI scaffold. Both enforcement sites then compared generated imports
+    The generator selector's keyword fallback maps "backend" / "API" / "REST"
+    to FastAPI and has no Flask generator, so a Flask request got a FastAPI
+    scaffold. Both enforcement sites then compared generated imports
     against the scaffold ALONE: the write-time lint warned the model it was
     violating a hard constraint, and Phase 3 raised a blocker telling it to
     "Remove the rewrite and extend the existing fastapi app" -- for doing

@@ -1,0 +1,19 @@
+Version 8.7.2
+=============
+
+Patch release: **SHACL shapes on an imported class become OCL again**. Backend
+only; no editor, metamodel API or generator changes.
+
+Highlights
+----------
+
+* **Imported SHACL constraints are no longer dropped when converting to OCL.**
+  When a class is itself the SHACL node shape (``:Person a sh:NodeShape ;
+  sh:targetClass :Person ; sh:property ...``), its ``sh:property`` edges start
+  at the class rather than at a ``KGNodeConstraint`` wrapper. The RDF
+  projection treated every ``sh:property`` edge whose source lacked a
+  ``"shacl"`` tag as the importer's OWL-restriction bookkeeping and skipped
+  it, so an imported Knowledge Graph converted to a class diagram without its
+  invariants. Only a ``KGNodeConstraint`` can be that bookkeeping, so the
+  projection now skips the edge only for one, the same test the RDF exporter
+  already applies.

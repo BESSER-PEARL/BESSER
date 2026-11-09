@@ -60,7 +60,8 @@ Optional dependencies
 
 .. code-block:: console
 
-   # OpenAI and Anthropic clients for the Spec-Driven Agent
+   # OpenAI and Anthropic clients, tiktoken, Pygments and pygit2 (the merge of a
+   # model change into edited generated files), for the Spec-Driven Agent
    python -m pip install "besser[agents]"
 
    # Neural-network dependencies
@@ -68,6 +69,34 @@ Optional dependencies
 
    # pyshacl, for the Knowledge Graph OWL/SHACL consistency check
    python -m pip install "besser[kg]"
+
+   # The B-OCL interpreter, to evaluate OCL constraints on object models
+   python -m pip install "besser[ocl]"
+
+   # pygit2, for generator.regenerate() (a model change that keeps your edits)
+   python -m pip install "besser[regen]"
+
+   # Django, for the Django generator
+   python -m pip install "besser[django]"
+
+   # The Docker SDK, for the DockerHub build and push of BackendGenerator
+   python -m pip install "besser[docker]"
+
+   # PostgreSQL, MySQL, Oracle and SQL Server drivers, to run generated apps
+   # against those databases from the same environment
+   python -m pip install "besser[db]"
+
+   # pytest, to run the test suite of a source checkout
+   python -m pip install -e ".[dev]"
+
+Extras combine: ``pip install "besser[agents,django]"``.
+
+.. versionchanged:: 8.7.0
+   pytest, Django, docker, bocl, tiktoken, uvicorn, python-multipart and the
+   database drivers are no longer part of the base install; install the
+   matching extra above. The editor backend's requirements file still
+   includes all of them. PyYAML joined the base install: the Docker Compose
+   generator needs it.
 
 The hosted editor backend has its own requirements. Its runtime setup is
 covered by :doc:`contributor_guide` and the

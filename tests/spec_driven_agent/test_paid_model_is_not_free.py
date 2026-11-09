@@ -1,6 +1,6 @@
 """A paid model priced at $0 silently disables the cost cap.
 
-``_is_free_local_model`` decides both the pricing tier and, at
+``is_free_local_model`` decides both the pricing tier and, at
 ``orchestrator.py:587``, whether ``protect_scaffold`` is on. Its own
 docstring warns that "a false positive prices a paid model at $0 and
 SILENTLY DISABLES the cost cap" - and it was doing exactly that for four
@@ -18,7 +18,7 @@ The discriminator is the separator, not the family: Ollama writes
 
 import pytest
 
-from besser.spec_driven_agent.providers.llm_client import _get_pricing, _is_free_local_model
+from besser.llm.pricing import get_pricing, is_free_local_model
 
 
 PAID_MISTRAL_IDS = [
@@ -31,13 +31,13 @@ PAID_MISTRAL_IDS = [
 
 @pytest.mark.parametrize("model_id", PAID_MISTRAL_IDS)
 def test_a_paid_mistral_api_id_is_not_free(model_id):
-    assert _is_free_local_model(model_id) is False
+    assert is_free_local_model(model_id) is False
 
 
 @pytest.mark.parametrize("model_id", PAID_MISTRAL_IDS)
 def test_a_paid_mistral_api_id_is_not_priced_at_zero(model_id):
     """$0 is what disables the cap, so assert the price, not just the flag."""
-    pricing = _get_pricing(model_id)
+    pricing = get_pricing(model_id)
 
     assert pricing["input"] > 0, f"{model_id} priced at $0 - the cost cap is off"
     assert pricing["output"] > 0
@@ -50,18 +50,18 @@ def test_a_paid_mistral_api_id_is_not_priced_at_zero(model_id):
 ])
 def test_a_self_hosted_tag_is_still_free(model_id):
     """Rule 2 catches these before the new rule can see them."""
-    assert _is_free_local_model(model_id) is True
+    assert is_free_local_model(model_id) is True
 
 
 @pytest.mark.parametrize("model_id", ["mistral-small", "codestral", "devstral"])
 def test_a_tagless_family_name_is_still_free(model_id):
     """The family list exists for tagless self-hosted ids; keep it working."""
-    assert _is_free_local_model(model_id) is True
+    assert is_free_local_model(model_id) is True
 
 
 def test_a_free_tier_alias_ending_in_latest_is_still_free():
     """``-free`` is checked first, so the new rule cannot override it."""
-    assert _is_free_local_model("something-latest-free") is True
+    assert is_free_local_model("something-latest-free") is True
 
 
 @pytest.mark.parametrize("model_id", [
@@ -70,4 +70,4 @@ def test_a_free_tier_alias_ending_in_latest_is_still_free():
     "meituan/longcat-2.0:free",
 ])
 def test_the_other_free_paths_are_untouched(model_id):
-    assert _is_free_local_model(model_id) is True
+    assert is_free_local_model(model_id) is True

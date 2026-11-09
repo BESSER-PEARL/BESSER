@@ -47,7 +47,7 @@ import logging
 import os
 import re
 from typing import Iterable
-from besser.spec_driven_agent.execution.workspace_fs import open_plain_write
+from besser.utilities.workspace_fs import open_plain_write
 
 logger = logging.getLogger(__name__)
 

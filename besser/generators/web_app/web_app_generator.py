@@ -91,6 +91,8 @@ class WebAppGenerator(GeneratorInterface):
             hosting services); the agent config then keeps its placeholders.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,
@@ -111,6 +113,14 @@ class WebAppGenerator(GeneratorInterface):
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
         self.env.filters['agent_slug'] = agent_slug
+
+    def _regeneration_refusal(self) -> "str | None":
+        from besser.generators.agents.baf_generator import _config_has_personalization_content
+
+        for agent in self.agent_models:
+            if _config_has_personalization_content(self.agent_configs.get(getattr(agent, "name", None))):
+                return "a personalized agent calls an LLM, so its output differs from run to run."
+        return None
 
     @property
     def agent_model(self):

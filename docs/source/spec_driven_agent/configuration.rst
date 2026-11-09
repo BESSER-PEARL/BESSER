@@ -8,6 +8,19 @@ and by ``besser/spec_driven_agent/``; the live values of the caps and feature
 flags are reported by ``GET /besser_api/spec-driven/config``, which is what a
 client should read rather than hardcoding the figures below.
 
+Each variable is declared once, with its type, default and description: the
+agent's own (models, keyless tiers, provider calls, context budgets, shell
+sessions) on ``AgentSettings`` in ``besser/spec_driven_agent/settings.py``,
+and the backend's (the caps, run lifecycle and feature flags, the demo token,
+telemetry and incidents) on ``BackendSettings`` in
+``besser/utilities/web_modeling_editor/backend/settings.py`` (see
+:ref:`the backend's environment variables <web-editor-backend-env>`). Values
+the agent keeps in module constants (the context budgets, history eviction, the output-token
+ceilings, the SDK timeout, the rolling cache) are read when the module is
+imported; a malformed number there fails the import with an error naming the
+variable. The others are read at each use; a shell-session number that is not
+an integer logs a warning and uses its default.
+
 Models
 ------
 
@@ -202,6 +215,13 @@ Context and token budgets
   not send prompts of that size every turn. Models measured to serve a
   smaller window than they advertise are clamped below both values
   regardless.
+- ``TIKTOKEN_CACHE_DIR`` -- Where ``tiktoken`` keeps the ``cl100k_base`` file
+  the compaction threshold counts tokens with. The Docker images fetch it at
+  build time into ``/opt/tiktoken-cache``. Elsewhere it is downloaded on first
+  use with no timeout, so on a host without internet access pre-fetch it
+  (``python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"`` with
+  the variable set); without it tokens are estimated as characters/4, which
+  compacts earlier than needed, and a warning is logged.
 - ``BESSER_LLM_HISTORY_EVICTION`` (**off**) -- Opt into the lossless
   alternative to compaction: large file bodies in older messages are replaced
   by stubs pointing back to disk, instead of whole messages being summarised.
@@ -238,7 +258,8 @@ Storage and lifecycle
 - ``BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS`` (``2.0``) -- Cadence of the
   ``cost`` SSE tick.
 - ``BESSER_INCIDENT_LOG_DIR`` (``/app/incidents``) -- Where provider-incident
-  records (a failed endpoint, a fallback-chain switch) are written. When it is
+  records (a failed endpoint, a fallback-chain switch) are written, with
+  credentials redacted from their message, traceback and instructions. When it is
   set explicitly, every run's trace is also copied to its ``traces/``
   folder; when it is unset, only the traces of research-study runs are kept,
   in ``BESSER_TELEMETRY_DIR``. Study mode is described alongside the

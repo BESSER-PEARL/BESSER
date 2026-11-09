@@ -11,8 +11,6 @@ number without its derivation is an invitation to "tune" it blindly.
 
 from __future__ import annotations
 
-import os
-import re as _re
 
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.state.checkpoint import (
@@ -69,45 +67,25 @@ _RECIPE_EXCLUDED_DIRS = {
 # boot probe both compare the revision across their own run, and their own
 # leftovers must not read back as a source edit.
 _REVISION_IGNORED_SUFFIXES = (
-    ".tsbuildinfo", ".log", ".db", ".sqlite", ".sqlite3",
+    ".tsbuildinfo", ".log", ".db", ".sqlite", ".sqlite3", ".pyc", ".coverage",
+    # SQLite's sidecar files next to a database (app.db-journal, -wal, -shm).
+    "-journal", "-wal", "-shm",
 )
-
-
-# Languages / frameworks BESSER has NO code generator for. An explicitly-named
-# one must be built from scratch by the LLM (Phase 2) rather than scaffolded by
-# the nearest built-in generator — otherwise a "C++ classes" request scaffolds
-# Python and the customise loop yields a Python/C++ mishmash. Kept in sync with
-# the modeling-agent classifier guard (unified_classifier._names_unsupported_stack).
-_UNSUPPORTED_STACK_RE = _re.compile(
-    r"\b(rust|kotlin|swift|scala|elixir|golang|ruby|php|dart|perl|haskell|zig|"
-    r"nim|crystal|cpp|csharp|dotnet|fsharp|rails|nestjs|nextjs|express|"
-    r"springboot|spring|laravel|symfony|angular|vue|svelte|nuxt|flutter|"
-    r"objective-?c)\b",
-    _re.I,
+# Caches and build or coverage output a test, lint or build run writes inside
+# the workspace (``obj`` is .NET's, ``.dart_tool`` Flutter's).
+_REVISION_IGNORED_DIRS = frozenset({
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
+    "htmlcov", "coverage", "obj", ".dart_tool",
+})
+# Data and media a running app writes (a CSV store, an uploaded photo): their
+# path counts, their content does not, so the app's own writes are no edit.
+_REVISION_PATH_ONLY_SUFFIXES = (
+    ".csv", ".tsv", ".jsonl", ".parquet", ".pkl", ".npy",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+    ".pdf", ".zip", ".gz", ".tar", ".mp3", ".mp4", ".wav",
 )
-_UNSUPPORTED_STACK_LITERALS = ("c++", "c#", ".net", "f#")
-_BARE_LANG_RE = _re.compile(
-    r"\b(?:c|go)\b[\s\-]{0,3}(?:classes|class|code|program|programs|language|"
-    r"structs?|headers?|files?|app|application)\b",
-    _re.I,
-)
-
-
-def _names_unsupported_stack(instructions: str) -> bool:
-    """True when the request explicitly names a language/stack BESSER has no
-    generator for, so Phase 1 must be skipped and the LLM builds from scratch."""
-    low = (instructions or "").lower()
-    if any(tok in low for tok in _UNSUPPORTED_STACK_LITERALS):
-        return True
-    if _UNSUPPORTED_STACK_RE.search(low):
-        return True
-    if _BARE_LANG_RE.search(low):
-        return True
-    return False
-
-
-
-
+# Bytes of each file the revision reads; the size covers the rest.
+_REVISION_HASH_CAP = 1024 * 1024
 
 
 # Tool-call detail shown in progress events.
@@ -284,13 +262,6 @@ _RUNTIME_UNVERIFIED_PREFIXES = (
     "api scenario:",
 )
 
-# Checkpoint history eviction (see history_eviction.py). When enabled, stale
-# file bodies in older messages are stubbed at the compaction checkpoint to cut
-# the re-sent context. OFF by default: it rewrites history the provider
-# re-serializes and is not yet verified end to end. Enable with
-# BESSER_LLM_HISTORY_EVICTION=1.
-_HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") == "1"
-
 # Generators that produce a WHOLE application, and the workspace folder each
 # writes. Once one of them has built the scaffold, none of them may run again:
 # re-running the primary regenerates over every edit Phase 2 has made, and a
@@ -304,6 +275,10 @@ _APPLICATION_OUTPUT_DIRS = {
     "generate_rest_api": "rest_api",
 }
 _APPLICATION_PRIMARY_TOOLS = frozenset(_APPLICATION_OUTPUT_DIRS)
+# The generators a modify run regenerates and merges after a model change (#659):
+# on 44 FastAPI runs, regenerating kept every app working. The web app's React
+# output has no determinism test yet, so it is not regenerated.
+REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend"})
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
 # FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST

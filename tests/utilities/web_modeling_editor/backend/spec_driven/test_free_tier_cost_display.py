@@ -27,6 +27,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed im
     _collect_frames,
     _parse,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 # Tokens of free run d3a33f95; ~$4.30 at the Kimi-K3 list rate, over a $1 cap.
 _REVIEWED_RUN = SimpleNamespace(
@@ -57,7 +58,7 @@ def _events(monkeypatch, billed_to_user: bool) -> list[dict]:
         runner_module, "create_llm_client", lambda **_: _Client(billed_to_user),
     )
     try:
-        frames = asyncio.run(_collect_frames(SmartGenerationRunner(_build_request())))
+        frames = asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
         return [_parse(f) for f in frames]
     finally:
         _cleanup()

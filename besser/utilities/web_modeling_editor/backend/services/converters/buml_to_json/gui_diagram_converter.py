@@ -167,29 +167,6 @@ def _namespace_of(*modules) -> Dict[str, Any]:
     return namespace
 
 
-def _strip_imports(code: str) -> str:
-    """Remove import statements from generated BUML code.
-
-    The sandbox provides the metamodel names directly and withholds
-    ``__import__``, so an import line would fail rather than resolve.
-    Multi-line parenthesised imports are handled as a block.
-    """
-    cleaned_lines = []
-    in_import_block = False
-    for line in code.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        cleaned_lines.append(line)
-    return "\n".join(cleaned_lines)
-
-
 def _bind_domain_aliases(namespace: Dict[str, Any]) -> None:
     """Bind ``ClassName_attributeName`` for every attribute a class exposes.
 
@@ -235,8 +212,6 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
         "bind_data_source": bind_data_source,
         "bind_association_end": bind_association_end,
     }
-    cleaned_content = _strip_imports(content)
-
     # Execute the domain context first so the GUI code can name the domain
     # elements it binds to, then bind the ClassName_attributeName aliases
     # the GUI section uses before running it.
@@ -258,7 +233,7 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
             "tuple": tuple,
         }
         try:
-            context_vars = safe_load_buml(_strip_imports(context_code), context_names)
+            context_vars = safe_load_buml(context_code, context_names)
         except Exception as exc:
             raise ValueError(f"Failed to execute domain context: {exc}") from exc
         # Carry over what the domain code *built* -- the DomainModel and the
@@ -271,7 +246,7 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
             allowed_names[context_name] = context_value
         _bind_domain_aliases(allowed_names)
     try:
-        local_vars = safe_load_buml(cleaned_content, allowed_names)
+        local_vars = safe_load_buml(content, allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute GUI BUML content: {exc}") from exc
     gui_candidates = [

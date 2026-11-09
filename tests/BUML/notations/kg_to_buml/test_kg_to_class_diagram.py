@@ -230,6 +230,42 @@ def test_constraint_targeting_undeclared_class_still_resolves():
     assert any(c.context is person_cls and "email" in c.expression for c in cr.domain_model.constraints)
 
 
+def test_class_acting_as_node_shape_yields_ocl():
+    """A class that is itself the SHACL node shape (``:Person a sh:NodeShape ;
+    sh:targetClass :Person ; sh:property ...``), with no ``KGNodeConstraint``
+    wrapper, must still get its property shapes translated to OCL. The
+    ``sh:property`` edge starts at a plain class with no ``source`` tag and was
+    once dropped as OWL-restriction bookkeeping, silently yielding no invariants."""
+    from besser.BUML.metamodel.kg import KGPropertyConstraint
+    from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_PROPERTY, SH, SH_PROPERTY
+
+    kg = KnowledgeGraph(name="class_shape")
+    person = KGClass(id="Person", label="Person", iri=EX + "Person")
+    node_shape = KGClass(id="NodeShape", label="NodeShape", iri=SH + "NodeShape")
+    xsd_str = KGClass(id="xsd_str", label="string", iri=XSD + "string")
+    code = KGProperty(id="code", label="code", iri=EX + "code")
+    pc = KGPropertyConstraint(
+        id="pc",
+        metadata={
+            "constraintSpecs": [{"kind": "maxCardinality", "value": 1}, {"kind": "pattern", "value": "^[A-Z]{3}$"}],
+            "source": "shacl",
+        },
+    )
+    for n in (person, node_shape, xsd_str, code, pc):
+        kg.add_node(n)
+    kg.add_edge(KGEdge(id="dom", source=code, target=person, iri=RDFS + "domain"))
+    kg.add_edge(KGEdge(id="rng", source=code, target=xsd_str, iri=RDFS + "range"))
+    kg.add_edge(KGEdge(id="ty", source=person, target=node_shape, iri=RDF + "type"))
+    kg.add_edge(KGEdge(id="tc", source=person, target=person, iri=SH + "targetClass"))
+    kg.add_edge(KGEdge(id="sp", source=person, target=pc, iri=SH_PROPERTY))
+    kg.add_edge(KGEdge(id="path", source=pc, target=code, iri=CONSTRAINT_TARGET_PROPERTY))
+
+    cr = kg_to_class_diagram(kg)
+    bodies = [c.expression for c in cr.domain_model.constraints if c.context.name == "Person"]
+    assert any("self.code->size() <= 1" in b for b in bodies), bodies
+    assert any("matches('^[A-Z]{3}$')" in b for b in bodies), bodies
+
+
 def test_constraint_targeting_unresolvable_node_emits_orphaned_warning():
     """A constraintTargetClass edge whose target can never become a class
     (e.g. a KGLiteral) must produce a visible ORPHANED_CONSTRAINT warning

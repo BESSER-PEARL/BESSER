@@ -7,7 +7,7 @@ from besser.BUML.metamodel.action_language.action_language import Condition, Blo
     Assignment, BoolType, EnumType, IntType, StringType, RealType, Type, FunctionType, SequenceType, ObjectType, \
     Multiplicity, AnyType, OptionalType, FunctionDefinition, Parameter, AssignTarget, Nothing
 from besser.BUML.metamodel.action_language.visitors import BALVisitor
-from besser.BUML.metamodel.action_language.ActionLanguageTypeChecker import BALTypeChecker, TypeCheckingContext, \
+from besser.generators.action_language.ActionLanguageTypeChecker import BALTypeChecker, TypeCheckingContext, \
     check_bal
 
 

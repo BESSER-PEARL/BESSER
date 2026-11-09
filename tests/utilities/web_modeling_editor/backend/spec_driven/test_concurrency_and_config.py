@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import httpx
+import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
@@ -17,11 +19,18 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
-    runner as runner_module,
+    ActiveRuns,
+    RunSlots,
+    SpecDrivenRuntime,
+    SqliteRunEventStore,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _FakeClient, _FakeOrchestrator
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
     _build_project_body,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -143,17 +152,13 @@ def test_config_endpoint_free_models_empty_when_unconfigured(monkeypatch):
     assert free_tier["models"] == []
 
 
-def test_config_endpoint_reflects_monkeypatched_caps(monkeypatch):
-    """Patching the module-level constants must be visible to the
-    config endpoint. This matters because env-var overrides are applied
-    at import time — ops changing the env and restarting the process
-    expects the config endpoint to reflect the new values.
+def test_config_endpoint_reports_the_settings_it_is_given(route_settings):
+    """The config endpoint reports the settings the app hands it
+    (``SettingsDep``), read once per process from the environment.
     """
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
-    monkeypatch.setattr(C, "LLM_MAX_COST_USD_HARD_CAP", 7.5, raising=True)
-    monkeypatch.setattr(C, "LLM_MAX_CONCURRENT_RUNS", 42, raising=True)
-    monkeypatch.setattr(C, "LLM_ENABLE_TRACING", False, raising=True)
+    route_settings.llm_max_cost_usd_hard_cap = 7.5
+    route_settings.llm_max_concurrent_runs = 42
+    route_settings.llm_enable_tracing = False
 
     resp = _get_config()
     payload = resp.json()
@@ -171,41 +176,95 @@ def test_try_acquire_and_release_round_trips():
     """Two acquires with a cap of 2 both succeed; third fails; after
     releasing one, another acquire succeeds again.
     """
-    runner_module._reset_concurrency_semaphore_for_tests()
+    slots = RunSlots(2)
 
     async def _exercise() -> None:
-        from besser.utilities.web_modeling_editor.backend.constants import constants as C
+        assert slots.try_acquire() is True
+        assert slots.try_acquire() is True
+        # Cap reached — third attempt must fail.
+        assert slots.try_acquire() is False
 
-        original = C.LLM_MAX_CONCURRENT_RUNS
-        try:
-            C.LLM_MAX_CONCURRENT_RUNS = 2
-            runner_module._reset_concurrency_semaphore_for_tests()
-
-            assert runner_module.try_acquire_run_slot() is True
-            assert runner_module.try_acquire_run_slot() is True
-            # Cap reached — third attempt must fail.
-            assert runner_module.try_acquire_run_slot() is False
-
-            runner_module.release_run_slot()
-            # A slot came back — next acquire succeeds.
-            assert runner_module.try_acquire_run_slot() is True
-        finally:
-            C.LLM_MAX_CONCURRENT_RUNS = original
-            runner_module._reset_concurrency_semaphore_for_tests()
+        slots.release()
+        # A slot came back — next acquire succeeds.
+        assert slots.try_acquire() is True
 
     asyncio.run(_exercise())
 
 
+def test_runtime_slots_are_sized_from_the_settings(monkeypatch):
+    monkeypatch.setattr(get_settings(), "llm_max_concurrent_runs", 2, raising=True)
+    runtime = SpecDrivenRuntime.create(store=SqliteRunEventStore(":memory:"))
+    try:
+        assert [runtime.slots.try_acquire() for _ in range(3)] == [True, True, False]
+    finally:
+        runtime.close()
+        runtime.durable_runs.store.close()
+
+
+def test_runtime_opens_the_run_store_its_settings_name(tmp_path, monkeypatch):
+    monkeypatch.delenv("BESSER_LLM_RUN_STORE_PATH", raising=False)
+    path = str(tmp_path / "runs.sqlite3")
+    runtime = SpecDrivenRuntime.create(get_settings().model_copy(update={"llm_run_store_path": path}))
+    try:
+        assert runtime.durable_runs.store.path == path
+    finally:
+        runtime.close()
+        runtime.durable_runs.store.close()
+
+
+def _free_slots(runtime: SpecDrivenRuntime) -> int:
+    taken = 0
+    while runtime.slots.try_acquire():
+        taken += 1
+    for _ in range(taken):
+        runtime.slots.release()
+    return taken
+
+
+@pytest.mark.parametrize("disconnect_early", [False, True], ids=["read to the end", "client disconnects"])
+def test_a_finished_run_returns_its_slot_and_cancel_event(monkeypatch, spec_driven_runtime, disconnect_early):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _FakeOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **kw: _FakeClient())
+    runtime = spec_driven_runtime
+    free_before = _free_slots(runtime)
+
+    async def scenario() -> None:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+            async with ac.stream("POST", "/besser_api/spec-driven/generate", json=_build_project_body()) as r:
+                assert r.status_code == 200
+                async for _ in r.aiter_bytes():
+                    if disconnect_early:
+                        break
+        # The run goes on detached from the client; wait for it to finish.
+        for _ in range(200):
+            if all(task.done() for task in runtime.durable_runs._tasks.values()):
+                return
+            await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    assert _free_slots(runtime) == free_before
+    assert runtime.active_runs._events == {}
+
+
+def test_an_over_release_is_logged(caplog):
+    with caplog.at_level(logging.WARNING):
+        RunSlots(1).release()
+    assert "RunSlots.release called with no slot held; ignored" in caplog.text
+
+
 def test_run_id_reservation_is_single_flight():
+    active_runs = ActiveRuns()
+
     async def _exercise() -> None:
         run_id = "a" * 32
         first, second = await asyncio.gather(
-            runner_module.reserve_active_run(run_id),
-            runner_module.reserve_active_run(run_id),
+            active_runs.reserve(run_id),
+            active_runs.reserve(run_id),
         )
         owned = [event for event in (first, second) if event is not None]
         assert len(owned) == 1
-        assert await runner_module.release_active_run(run_id, owned[0]) is True
+        assert await active_runs.release(run_id, owned[0]) is True
 
     asyncio.run(_exercise())
 
@@ -215,9 +274,10 @@ def test_resume_returns_409_when_run_id_is_already_active(monkeypatch):
     monkeypatch.setattr(
         router_module, "_locate_run_temp_dir", lambda candidate: "recoverable"
     )
+    active_runs = current_runtime().active_runs
 
     async def _exercise() -> httpx.Response:
-        event = await runner_module.reserve_active_run(run_id)
+        event = await active_runs.reserve(run_id)
         assert event is not None
         try:
             transport = ASGITransport(app=app)
@@ -229,7 +289,7 @@ def test_resume_returns_409_when_run_id_is_already_active(monkeypatch):
                     json=_build_project_body(),
                 )
         finally:
-            await runner_module.release_active_run(run_id, event)
+            await active_runs.release(run_id, event)
 
     response = asyncio.run(_exercise())
     assert response.status_code == 409
@@ -240,74 +300,59 @@ def test_release_when_at_max_does_not_crash():
     """Calling release without a prior acquire is a no-op semantically
     — we don't want a double-release bug to take down the server.
     """
-    runner_module._reset_concurrency_semaphore_for_tests()
+    slots = RunSlots(1)
 
     async def _exercise() -> None:
-        # The asyncio.Semaphore release() raises ValueError only when
-        # there are no waiters AND the counter is at its bound.
-        # Verify our release path tolerates that or caps sensibly.
-        try:
-            runner_module.release_run_slot()
-            runner_module.release_run_slot()
-        except ValueError:
-            # Some Python versions raise; that's OK — the operational
-            # invariant is that we never call release without a prior
-            # acquire from within the router itself.
-            pass
+        slots.release()
+        slots.release()
+        assert slots.try_acquire() is True
+        assert slots.try_acquire() is False
 
     asyncio.run(_exercise())
-    runner_module._reset_concurrency_semaphore_for_tests()
 
 
 def test_smart_generate_returns_429_when_saturated(monkeypatch):
     """When the semaphore is exhausted, POST /spec-driven/generate must
     return 429 immediately — not open an SSE stream that hangs.
     """
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
-    monkeypatch.setattr(C, "LLM_MAX_CONCURRENT_RUNS", 1, raising=True)
-    runner_module._reset_concurrency_semaphore_for_tests()
+    monkeypatch.setattr(current_runtime(), "slots", RunSlots(1))
 
     # Pre-acquire the one available slot so the endpoint sees a full cap.
-    assert runner_module.try_acquire_run_slot() is True
+    assert current_runtime().slots.try_acquire() is True
 
-    try:
-        async def _post() -> httpx.Response:
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
-                return await ac.post(
-                    "/besser_api/spec-driven/generate",
-                    json={
-                        # Minimal body — real validation runs first but
-                        # the cap check precedes any heavy work so a
-                        # semantically-incomplete project still 429s.
-                        "project": {
-                            "id": "x",
-                            "type": "BesserProject",
-                            "name": "x",
-                            "createdAt": "2026-04-21T00:00:00Z",
-                            "diagrams": {},
-                            "currentDiagramIndices": {},
-                        },
-                        "instructions": "Build something",
-                        "api_key": "sk-ant-test",
-                        "provider": "anthropic",
+    async def _post() -> httpx.Response:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+            return await ac.post(
+                "/besser_api/spec-driven/generate",
+                json={
+                    # Minimal body — real validation runs first but
+                    # the cap check precedes any heavy work so a
+                    # semantically-incomplete project still 429s.
+                    "project": {
+                        "id": "x",
+                        "type": "BesserProject",
+                        "name": "x",
+                        "createdAt": "2026-04-21T00:00:00Z",
+                        "diagrams": {},
+                        "currentDiagramIndices": {},
                     },
-                )
+                    "instructions": "Build something",
+                    "api_key": "sk-ant-test",
+                    "provider": "anthropic",
+                },
+            )
 
-        resp = asyncio.run(_post())
-        # Pydantic validation runs BEFORE our cap check (FastAPI orders
-        # request-body validation first), so a project with no diagrams
-        # would return 422 instead. A correctly-shaped request hits the
-        # cap check — either outcome is acceptable here, what we're
-        # guarding against is a 500 or a hang. Lock down the acceptable
-        # shapes:
-        assert resp.status_code in (422, 429)
-        if resp.status_code == 429:
-            assert "in flight" in resp.json()["detail"].lower()
-    finally:
-        runner_module.release_run_slot()
-        runner_module._reset_concurrency_semaphore_for_tests()
+    resp = asyncio.run(_post())
+    # Pydantic validation runs BEFORE our cap check (FastAPI orders
+    # request-body validation first), so a project with no diagrams
+    # would return 422 instead. A correctly-shaped request hits the
+    # cap check — either outcome is acceptable here, what we're
+    # guarding against is a 500 or a hang. Lock down the acceptable
+    # shapes:
+    assert resp.status_code in (422, 429)
+    if resp.status_code == 429:
+        assert "in flight" in resp.json()["detail"].lower()
 
 
 # ======================================================================
@@ -322,19 +367,16 @@ def test_smart_generate_returns_429_when_saturated(monkeypatch):
 def test_smart_gen_executor_is_dedicated_and_sized_to_cap():
     from concurrent.futures import ThreadPoolExecutor
 
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
-    runner_module._SMART_GEN_EXECUTOR = None  # rebuild at the current cap
-    ex = runner_module._get_smart_gen_executor()
+    ex = current_runtime().executor
     assert isinstance(ex, ThreadPoolExecutor)
-    assert ex._max_workers == C.LLM_MAX_CONCURRENT_RUNS + 4
+    assert ex._max_workers == get_settings().llm_max_concurrent_runs + 4
 
 
 def test_run_blocking_runs_on_the_dedicated_pool_not_the_default():
     import threading
 
     async def _go() -> str:
-        return await runner_module._run_blocking(
+        return await current_runtime().run_blocking(
             lambda: threading.current_thread().name
         )
 

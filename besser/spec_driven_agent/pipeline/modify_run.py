@@ -12,32 +12,49 @@ Mixed into ``LLMOrchestrator``; all run state is reached through ``self``.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
 import time
 
-from besser.spec_driven_agent.agent.prompt_builder import build_inventory, requests_frontend
+from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
-from besser.spec_driven_agent.planning.model_change import FULL_MODEL, compare_with_base
+from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate
+from besser.spec_driven_agent.planning.model_change import (
+    FULL_MODEL,
+    compare_with_base,
+    model_change_from_dict,
+)
 from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
+from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
-    BACKEND,
-    WEB_APP,
+    MODIFY_RULES,
+    STACK_RULES,
+    TARGET_RULES,
     Target,
-    may_name_other_target,
-    named_target,
 )
 from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
+from besser.spec_driven_agent.run_recap import (
+    NO_REQUEST,
+    load_recipe,
+    MAX_RUNS,
+    RECORD_NOT_INSTRUCTIONS,
+    next_run_notes,
+    one_line,
+    recorded_requests,
+    repo_notes,
+)
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
+    EVENT_REGENERATION,
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
@@ -45,7 +62,7 @@ from besser.spec_driven_agent.state.tracing import (
 )
 from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
-from besser.spec_driven_agent.execution.workspace_fs import open_plain
+from besser.utilities.workspace_fs import open_plain
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +102,9 @@ class ModifyRunMixin:
         self._instructions = instructions
 
         self._start_time = time.monotonic()
+        # Before the model-sync below adds classes: a resume re-checks it
+        # against the model in the request.
+        self._project_fingerprint = self._compute_project_fingerprint(instructions)
         self._modify_mode = True
         # Edit-first guardrail: in a modify run, whole-file rewrites of
         # existing files are rejected until targeted edits were tried —
@@ -101,6 +121,8 @@ class ModifyRunMixin:
         # the copied recipe BEFORE building the inventory (which needs a
         # generator name for its framing line).
         self._seed_generator_files_from_recipe()
+        # One routing call: does the request change the target, does it report a failure.
+        self._route_modify_request()
         # Frame the run as editing an existing project. When the seed came
         # from a deterministic generator we adopt that name (accurate — the
         # base + prior LLM edits descend from it) so gap analysis, the
@@ -128,6 +150,8 @@ class ModifyRunMixin:
         # never invoke it, so from-scratch output is byte-identical.
         self._derive_and_apply_model_deltas(instructions)
         self._mark_rules_broken_by_model_change()
+        # Before the inventory, so Phase 2 sees the regenerated files.
+        self._regenerate_generated_files()
 
         self._inventory = build_inventory(
             self.output_dir,
@@ -140,10 +164,16 @@ class ModifyRunMixin:
         session_recap = self._render_seed_history()
         if session_recap:
             self._inventory = f"{self._inventory}\n{session_recap}"
+        notes = repo_notes(self.output_dir)
+        if notes:
+            self._inventory = f"{self._inventory}\n\n{notes}"
         model_note = self._render_model_change()
+        regeneration_note = self._regeneration.note() if self._regeneration else ""
         if model_note:
             self._inventory = (
                 f"{self._inventory}\n\n## Model change since the last run\n{model_note}")
+        if regeneration_note:
+            self._inventory = f"{self._inventory}\n\n## Regenerated files\n{regeneration_note}"
 
         # -- Fix/modify success gate: parse the user-reported failure ------
         # A modify run seeded by a reported error (traceback / broken
@@ -203,7 +233,7 @@ class ModifyRunMixin:
                 )
         # The model change leads the issues, after the reported failure's
         # headline in a fix run.
-        leading = [model_note] if model_note else []
+        leading = [note for note in (model_note, regeneration_note) if note]
         if leading and fix_seed_issues:
             leading = fix_seed_issues[:1] + leading
             fix_seed_issues = fix_seed_issues[1:]
@@ -302,17 +332,68 @@ class ModifyRunMixin:
                 "the app has no FastAPI backend (sql_alchemy.py / pydantic_classes.py)")]
         return issues
 
+    def _regenerate_generated_files(self) -> None:
+        """Bring the generated files up to the new model, merging into edited ones (#659).
+
+        Only when the model changed: with the same model it would at most bring in a
+        newer generator's output, which the modify request did not ask for.
+        """
+        change = getattr(self, "_model_change", None)
+        if not ((change is not None and change.changes) or self._model_sync_classes):
+            return
+        generator = self._seed_generator_used
+        if not generator:
+            # Nothing to regenerate: the app was written without a BESSER generator.
+            logger.info("Model changed; the app has no generator output to regenerate")
+            self._trace.write(EVENT_REGENERATION, generator=None, skipped="the app has no generator output")
+            return
+        try:
+            regeneration, reason = regenerate(
+                self.output_dir, generator, self.domain_model, self._seed_output_files,
+                change.class_renames if change else (), self._previous_domain_model)
+        except Exception as exc:
+            # The run goes on as before: the agent applies the whole model change.
+            logger.warning("Regenerating generated files failed", exc_info=True)
+            regeneration, reason = None, f"it failed: {type(exc).__name__}: {exc}"[:MAX_REASON_CHARS]
+        if regeneration is None:
+            logger.warning("Generated files not regenerated for the model change: %s", reason)
+            self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
+            return
+        self._regeneration = regeneration
+        moved_from = [old for old, _ in regeneration.moved]
+        self.executor.update_generator_files(
+            regeneration.written + [new for _, new in regeneration.moved], regeneration.removed + moved_from)
+        # Regenerated files hold the generator's text again; a moved file keeps its edits.
+        self._seed_llm_modified.difference_update(regeneration.written)
+        self._seed_llm_modified.update(new for old, new in regeneration.moved if old in self._seed_llm_modified)
+        self._seed_llm_modified.difference_update(moved_from)
+        self._trace.write(
+            EVENT_REGENERATION, generator=generator, method=regeneration.method,
+            replaced=regeneration.replaced, added=regeneration.added, merged=regeneration.merged,
+            moved=[list(pair) for pair in regeneration.moved], removed=regeneration.removed,
+            kept_in_use=regeneration.kept_in_use, to_update=[u.path for u in regeneration.to_update],
+            not_restored=regeneration.not_restored, not_checked=regeneration.not_checked,
+            upgraded_from=regeneration.upgraded_from, base_rebuilt=regeneration.base_rebuilt,
+            merge_warning=regeneration.merge_warning or None)
+
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         history = self._load_recipe_history(recipe_path)
         if not history:
             return ""
-        lines = ["\nPrevious work on this app (oldest first):"]
-        for i, entry in enumerate(history, 1):
-            request = (entry.get("instructions") or "").strip().replace("\n", " ")
-            mode = entry.get("mode") or "run"
-            files = entry.get("files_touched") or []
+        recipe = load_recipe(self.output_dir)
+        lines = ["\nPrevious work on this app (oldest first):", RECORD_NOT_INSTRUCTIONS]
+        if len(history) > MAX_RUNS:
+            lines.append(f"({len(history) - MAX_RUNS} earlier runs are not shown.)")
+            history = history[-MAX_RUNS:]
+        requests = recorded_requests(history, recipe)
+        for i, (entry, request) in enumerate(zip(history, requests), 1):
+            request = request or NO_REQUEST
+            # The recipe can come from any repository: nothing of it reaches the prompt as it is.
+            mode = entry.get("mode") if entry.get("mode") in ("create", "modify") else "run"
+            files = entry.get("files_touched")
+            files = [one_line(f) for f in files if isinstance(f, str)] if isinstance(files, list) else []
             file_note = ""
             if files:
                 shown = ", ".join(files[:8])
@@ -320,9 +401,11 @@ class ModifyRunMixin:
                 file_note = f" — touched: {shown}{more}"
             lines.append(f"  {i}. [{mode}] \"{request}\"{file_note}")
         lines.append(
-            "Respect this history: those changes are deliberate and must "
-            "survive your edits unless the new request says otherwise."
+            "Those changes are in the code: keep them working unless the new request says otherwise."
         )
+        notes = next_run_notes(recipe)
+        if notes:
+            lines.append(notes)
         return "\n".join(lines)
 
     def _seed_generator_files_from_recipe(self) -> None:
@@ -356,14 +439,7 @@ class ModifyRunMixin:
         if not isinstance(recipe, dict):
             return
         self._seed_generator_used = recipe.get("generator_used")
-        seed_target = Target.from_payload(recipe.get("target"))
-        self.target = self._modify_target(seed_target)
-        # A switch: another kind, or the Target line naming another product.
-        # A reworded description of the same kind is not one.
-        if self.target is not seed_target and (
-                self.target.kind != seed_target.kind
-                or named_target(self._instructions) is not None):
-            self._previous_target = seed_target
+        self._seed_target = self.target = Target.from_payload(recipe.get("target"))
         converted = (recipe.get("model") or {}).get("converted_rules")
         if isinstance(converted, list):
             self._seed_converted_rules = set(converted)
@@ -383,6 +459,9 @@ class ModifyRunMixin:
         except Exception:
             logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:
+            self._seed_output_files = {
+                entry["path"] for entry in recipe.get("output_files", [])
+                if isinstance(entry, dict) and isinstance(entry.get("path"), str)}
             for entry in recipe.get("output_files", []):
                 if (
                     isinstance(entry, dict)
@@ -390,32 +469,54 @@ class ModifyRunMixin:
                     and isinstance(entry.get("path"), str)
                 ):
                     self.executor._generator_files.add(entry["path"])
+                    # Edited by an earlier run: this run's tool calls alone would forget it.
+                    if entry.get("llm_modified"):
+                        self._seed_llm_modified.add(entry["path"])
         except Exception:
             logger.debug("Seed recipe output_files malformed", exc_info=True)
 
-    def _modify_target(self, seed: Target | None) -> Target | None:
-        """The seed's target, unless this request names another kind of target.
+    def _route_modify_request(self) -> None:
+        """Decide what this modify run changes with one forced ``choose_generator`` call.
 
-        "Add a settings screen" keeps it with no LLM call. "Add a React
-        frontend" on a backend, or "make it a desktop app" on a web app, asks
-        the selector again; a failed decision keeps the seed's target.
+        The answer says whether the request turns the app into another kind of
+        software (a new target, built next to the existing project) and whether
+        the newest message reports a failure (``_detect_fix_target``). A failed
+        call keeps the seed's target and leaves the run ungated, with a warning.
         """
-        if seed is None or not self._may_change_target(seed):
-            return seed
-        self._decide_target(self._instructions, current=seed)
-        return self.target or seed
+        seed = self._seed_target
+        routing = None
+        if self._can_route():
+            routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+        if routing is None or routing.target is None:
+            logger.warning(
+                "Modify run: the routing call failed; keeping the existing target (%s) "
+                "and treating the request as a change, not a failure report",
+                seed.description if seed else "none recorded")
+            return
+        self._modify_routing = routing
+        if seed is None:
+            self._record_target(routing.target)
+        elif routing.changes_target:
+            self._previous_target = seed
+            self._record_target(routing.target)
 
-    def _may_change_target(self, seed: Target) -> bool:
+    def _modify_routing_prompt(self, seed: Target | None) -> str:
         instructions = self._instructions
-        named = named_target(instructions)
-        if named is not None:
-            return named.lower() != seed.description.lower()
-        asks_web = requests_frontend(instructions, bare_app=False)
-        if seed.kind == WEB_APP:
-            return may_name_other_target(instructions)
-        if seed.kind == BACKEND:
-            return asks_web or may_name_other_target(instructions)
-        return asks_web
+        existing = (
+            f"The existing app was built as: {seed.description or seed.kind} ({seed.kind}).\n"
+            if seed is not None else "The existing app's target was not recorded.\n"
+        )
+        try:
+            classes = sorted(c.name for c in self.domain_model.get_classes()) if self.domain_model else []
+        except Exception:
+            classes = []
+        return (
+            f"User request: {user_request(instructions)}\n\n"
+            f"Newest user message: {latest_user_message(instructions)}\n\n"
+            f"{TARGET_RULES}\n{STACK_RULES}\n{MODIFY_RULES}\n\n"
+            f"{existing}Model classes: {', '.join(classes) or 'none'}\n"
+            "The generator is already settled: answer generator=NONE."
+        )
 
     def _mark_rules_broken_by_model_change(self) -> None:
         """Mark rejected model rules whose element this model change removed or renamed.
@@ -434,22 +535,19 @@ class ModifyRunMixin:
         )
 
     def _detect_fix_target(self, instructions: str) -> None:
-        """MODIFY-only: parse the user-reported failure into a target.
+        """MODIFY-only: turn a reported failure into the run's success target.
 
-        Sets ``self._fix_target`` and ``self._is_fix_run``. Best-effort — a
-        parse failure, or a newest user message with no evidence of a failure
-        (``fix_target._EVIDENCE_RULES``), leaves the run ungated, so a plain
-        feature-add modify is not gated on a target. NEVER invoked from run()/resume(); from-scratch generation
-        is untouched.
+        Sets ``self._fix_target`` and ``self._is_fix_run`` from the routing
+        call's ``is_failure_report`` / ``reported_entity``. A feature request,
+        or a failed routing call, leaves the run ungated. NEVER invoked from
+        run()/resume(); from-scratch generation is untouched.
         """
-        try:
-            from besser.spec_driven_agent.planning.fix_target import parse_reported_target
-            self._fix_target = parse_reported_target(
-                instructions, self.domain_model,
-            )
-        except Exception:
-            logger.debug("Fix-target parse failed", exc_info=True)
-            self._fix_target = None
+        from besser.spec_driven_agent.planning.fix_target import parse_reported_target
+        routing = self._modify_routing
+        self._fix_target = (
+            parse_reported_target(instructions, self.domain_model, routing.reported_entity)
+            if routing is not None and routing.is_failure_report else None
+        )
         self._is_fix_run = self._fix_target is not None
         if self._is_fix_run:
             logger.info(
@@ -458,6 +556,50 @@ class ModifyRunMixin:
                 self._fix_target.kind,
                 ", ".join(self._fix_target.entities) or "none",
             )
+
+    def _modify_checkpoint_state(self) -> dict | None:
+        """What a resume needs to continue this run as a modify run; ``None`` for a create run."""
+        if not self._modify_mode:
+            return None
+        change = getattr(self, "_model_change", None)
+        return {
+            "seed_generator_used": self._seed_generator_used,
+            "generator_files": sorted(self.executor._generator_files),
+            "seed_llm_modified": sorted(self._seed_llm_modified),
+            "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
+            "previous_target": self._previous_target.to_dict() if self._previous_target else None,
+            "model_change": (
+                {**change.to_dict(), "base": change.base, "new": change.new} if change else None),
+            # Model sync is an LLM call: its result is replayed, not asked again.
+            "model_sync_classes": self._model_sync_classes,
+            "updated_project_export": self._updated_project_export,
+            "model_sync_error": self._model_sync_error,
+        }
+
+    def _restore_modify_state(self, state: dict) -> None:
+        """Continue a checkpointed modify run as one (the inverse of ``_modify_checkpoint_state``)."""
+        from besser.spec_driven_agent.planning.fix_target import ReportedTarget
+        self._modify_mode = True
+        self.executor.enable_modify_guard()
+        self._seed_generator_used = state.get("seed_generator_used")
+        self.executor._generator_files.update(
+            p for p in state.get("generator_files") or [] if isinstance(p, str))
+        self._seed_llm_modified.update(
+            p for p in state.get("seed_llm_modified") or [] if isinstance(p, str))
+        fix_target = state.get("fix_target")
+        self._fix_target = (
+            ReportedTarget(**{**fix_target, "entities": tuple(fix_target.get("entities") or ())})
+            if isinstance(fix_target, dict) else None)
+        self._is_fix_run = self._fix_target is not None
+        self._previous_target = Target.from_payload(state.get("previous_target"))
+        self._model_change = model_change_from_dict(state.get("model_change"))
+        classes = state.get("model_sync_classes")
+        if isinstance(classes, list) and classes and self.domain_model is not None:
+            self._model_sync_classes = classes
+            self._apply_new_classes(classes)
+        export = state.get("updated_project_export")
+        self._updated_project_export = export if isinstance(export, dict) else None
+        self._model_sync_error = state.get("model_sync_error")
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""
@@ -665,6 +807,7 @@ class ModifyRunMixin:
         added = self._apply_new_classes(new_classes)
         if added == 0:
             return
+        self._model_sync_classes = new_classes
 
         logger.info("modify: model-sync added %d new class(es)", added)
 

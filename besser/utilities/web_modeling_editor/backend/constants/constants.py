@@ -226,6 +226,10 @@ AGENT_SIMULATOR_WS_OPEN_TIMEOUT_SECONDS = 15
 # {"type": "auth", "githubSession": "..."} within this many seconds.
 AGENT_SIMULATOR_WS_AUTH_TIMEOUT_SECONDS = 10
 
+# Largest request body the backend accepts (RequestSizeLimitMiddleware); an endpoint's own
+# upload cap cannot be above it.
+MAX_REQUEST_SIZE = 50 * 1024 * 1024  # 50MB
+
 # WebSocket close codes sent to the frontend.
 WS_CLOSE_BAD_REQUEST = 4400
 WS_CLOSE_UNAUTHORIZED = 4401

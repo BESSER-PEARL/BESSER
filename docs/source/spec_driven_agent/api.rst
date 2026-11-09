@@ -108,6 +108,14 @@ Endpoints
        ``recap`` says what was done on its app and where it stands (``null``
        when no run was pushed to it); ``push-to-github`` returns ``recap`` too.
        See :ref:`web-editor-github-coming-back`.
+   * - ``/spec-driven/import-generated-code``
+     - POST
+     - Store the output of a deterministic generator (multipart field
+       ``file``: the ZIP or single file ``/generate-output`` returned) as a
+       run, so ``push-to-github`` can push it; returns its ``run_id``. A ZIP
+       is unpacked (no links, no ``.besser_*`` files, 50,000 files and 500 MB
+       at most), any other file is the run's only file. Upload limit 50 MB,
+       the backend's request size limit (``413`` above it). Requires an ``X-GitHub-Session`` header.
 
 Request body
 ------------

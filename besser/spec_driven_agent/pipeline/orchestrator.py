@@ -758,6 +758,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             phase="phase1",
             generator_used=self._generator_used,
         )
+        # The scaffold's generator is known now: add the model findings that
+        # only break what that generator emits.
+        self._collect_model_contract_issues()
 
         # -- Phase 0.5: Stack-metadata floor (only when no Phase 1 ran) ---
         # When Phase 1 picked a Python generator (Django / FastAPI /
@@ -4330,21 +4333,47 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Loop detection
     # ==================================================================
 
+    # ``DomainModel.validate`` warnings that make any generated CRUD app
+    # unusable, whichever stack builds it. Matched case-insensitively on the
+    # message start, like ``_classify_issue``.
+    _MODEL_CONTRACT_WARNING_PREFIXES = (
+        "mandatory creation cycle",
+        "class names differ only in case",
+        "attribute names differ only in case",
+    )
+    # Warnings about what one family of BESSER generators emits: each was
+    # observed to stop that scaffold from loading (SyntaxError, a table
+    # defined twice, a Django system-check error), and is harmless to others,
+    # so it is promoted only once the generator that built the scaffold is known.
+    _SCAFFOLD_CONTRACT_WARNING_PREFIXES = {
+        "fastapi": (
+            "python keyword name", "empty enumeration", "join table name clash",
+            "foreign key column clash", "subclass declares 'id'", "class-typed attribute",
+        ),
+        "django": (
+            "python keyword name", "empty enumeration", "foreign key column clash",
+            "subclass declares 'id'", "attribute 'id' is not the identifier",
+        ),
+    }
+
     def _collect_model_contract_issues(self) -> None:
-        """Promote the domain model's constructibility warnings to blockers.
+        """Promote the domain model's errors and its fatal warnings to blockers.
 
-        ``DomainModel.validate`` only warns about a mandatory creation cycle:
-        an association with 1..1 on both ends is legal UML, and BESSER's own
-        ``user_reference_domain_model`` ships three of them. Here the intent
-        IS to generate a CRUD API, and a cycle makes that API unusable — if
-        ``BookingCreate`` requires a ReservedRoom id while
+        ``DomainModel.validate`` only warns about, e.g., a mandatory creation
+        cycle: an association with 1..1 on both ends is legal UML, and
+        BESSER's own ``user_reference_domain_model`` ships three of them. Here
+        the intent IS to generate a CRUD API, and a cycle makes that API
+        unusable — if ``BookingCreate`` requires a ReservedRoom id while
         ``ReservedRoomCreate`` requires a Booking id, neither class can ever
-        be created.
+        be created. Every validation error is promoted too: an invalid
+        identifier or a dangling type is broken code whatever is generated.
 
-        Recorded once, before Phase 1, and deliberately NOT part of
-        ``_collect_validation_issues``: the Phase 3 fix loop edits code, and
-        no edit to the generated code can repair the specification it was
-        generated from. Surfacing it early is the whole value.
+        Deliberately NOT part of ``_collect_validation_issues``: the Phase 3
+        fix loop edits code, and no edit to the generated code can repair the
+        specification it was generated from. Surfacing it early is the whole
+        value. Run before Phase 1 and again once the scaffold's generator is
+        known (``_SCAFFOLD_CONTRACT_WARNING_PREFIXES``); a finding already
+        recorded is not recorded twice.
 
         Kept in ``_model_contract_issues`` as well, because Phase 3 REPLACES
         ``_validation_issues`` with what ``_collect_validation_issues``
@@ -4355,12 +4384,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         try:
             result = self.domain_model.validate(raise_exception=False)
         except Exception:
-            logger.debug("Domain-model validation raised; skipping", exc_info=True)
+            logger.warning("Phase 0: domain-model validation raised; model contract not checked",
+                           exc_info=True)
             return
-        for warning in result.get("warnings", []):
-            if not warning.lower().startswith("mandatory creation cycle"):
+        prefixes = self._MODEL_CONTRACT_WARNING_PREFIXES + self._SCAFFOLD_CONTRACT_WARNING_PREFIXES.get(
+            self._scaffold_family() or "", ())
+        findings = list(result.get("errors", [])) + [
+            warning for warning in result.get("warnings", [])
+            if warning.lower().startswith(prefixes)
+        ]
+        recorded = {issue.message for issue in self._model_contract_issues}
+        for finding in findings:
+            issue = _classify_issue(f"model contract: {finding}")
+            if issue.message in recorded:
                 continue
-            issue = _classify_issue(f"model contract: {warning}")
             self._model_contract_issues.append(issue)
             self._validation_issues.append(issue)
             logger.warning("Phase 0: %s", issue.message)

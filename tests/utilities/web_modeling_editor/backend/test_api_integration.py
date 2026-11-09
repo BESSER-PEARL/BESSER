@@ -660,6 +660,24 @@ class TestValidateDiagram:
         assert "warnings" in data
         assert isinstance(data["warnings"], list)
 
+    def test_design_check_warnings_leave_an_older_model_valid_and_generating(self, client, single_class_model):
+        """A model saved before the #756 design checks, which trips only their warnings, still generates."""
+        model = copy.deepcopy(single_class_model)
+        model["elements"]["class-1"]["attributes"].append("attr-2")
+        model["elements"]["attr-2"] = {"type": "Attribute", "name": "+ id: int"}  # 'id' not the identifier
+        model["elements"]["class-2"] = {"type": "Class", "name": "Note", "attributes": [], "methods": []}  # isolated
+        payload = {"title": "SavedBefore756", "model": model, "generator": "python"}
+
+        validation = client.post("/besser_api/validate-diagram", json=payload).json()
+        assert validation["isValid"] is True
+        assert validation["errors"] == []
+        assert any("is not the identifier" in w for w in validation["warnings"])
+        assert any("Isolated class" in w for w in validation["warnings"])
+
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        assert "class Person" in response.text
+
     def test_validate_missing_model_field(self, client):
         """Request with empty model dict should handle gracefully."""
         payload = {"title": "NoModel", "model": {}}
@@ -684,6 +702,23 @@ class TestValidateDiagram:
         data = response.json()
         assert data["isValid"] is False
         assert any("reference" in err.lower() for err in data["errors"])
+
+    def test_validate_user_diagram_has_no_reference_model_warnings(self, client):
+        """A user diagram is not warned about BESSER's own user reference model.
+
+        The editor asks before generating a model with warnings (WME #752); the
+        user cannot edit the reference model, so its warnings were a question
+        on every JSON Object generation from a user diagram.
+        """
+        from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
+
+        assert vr.user_reference_domain_model.validate(raise_exception=False)["warnings"]
+        payload = {"title": "UserProfile", "model": {"type": "UserDiagram", "elements": {}, "relationships": {}}}
+
+        data = client.post("/besser_api/validate-diagram", json=payload).json()
+
+        assert data["isValid"] is True
+        assert data["warnings"] == []
 
     def test_validate_user_diagram_runs_ocl_check(self, client, monkeypatch):
         """UserDiagram validation should execute OCL checking with object model context."""
@@ -2062,8 +2097,9 @@ class TestStandaloneChatbotDeploy:
                 }
 
             def generate_readme_content(self, name, deploy_instructions=False,
-                                        owner="", repo_name="", deployment_type="webapp"):
+                                        owner="", repo_name="", deployment_type="webapp", description=""):
                 captured["deployment_type_in_readme"] = deployment_type
+                captured["description_in_readme"] = description
                 return f"# {name}\n"
 
         fake_service = _FakeGithubService()
@@ -2101,6 +2137,7 @@ class TestStandaloneChatbotDeploy:
         body = {
             "id": "proj-1",
             "name": "ChatProj",
+            "description": "Answers library questions.",
             "type": "Project",
             "diagrams": {
                 "AgentDiagram": [
@@ -2132,6 +2169,8 @@ class TestStandaloneChatbotDeploy:
         assert data["success"] is True
         # The README was rendered with deployment_type='chatbot'.
         assert captured["deployment_type_in_readme"] == "chatbot"
+        # ...and with the project's description (#750).
+        assert captured["description_in_readme"] == "Answers library questions."
 
         # PyGithub helper saw exactly one create + one push call.
         assert captured["create_calls"] == 1

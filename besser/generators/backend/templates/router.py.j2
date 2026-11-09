@@ -54,8 +54,10 @@ router = APIRouter()
         {% set name_end2 = lns.end2.name %}
         {% if lns.end2.is_navigable %}
         {# Lower-bound guard: the other class requires at least end1.min instances of this class
-           (self-associations are left alone: their ends are not distinguishable by type) #}
-        {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+           (self-associations are left alone: their ends are not distinguishable by type).
+           A composite whole has none: the ORM deletes its parts with it. #}
+        {% set is_whole = lns.end1.is_composite and lns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min, lns.end1.multiplicity.max, lns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
         {% if association.name in assoc_by_association %}
@@ -95,8 +97,10 @@ router = APIRouter()
         {% set name_end2 = plns.end2.name %}
         {% if plns.end2.is_navigable %}
         {# Lower-bound guard: the other class requires at least end1.min instances of this class
-           (self-associations are left alone: their ends are not distinguishable by type) #}
-        {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+           (self-associations are left alone: their ends are not distinguishable by type).
+           A composite whole has none: the ORM deletes its parts with it. #}
+        {% set is_whole = plns.end1.is_composite and plns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min, plns.end1.multiplicity.max, plns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
         {% if association.name in assoc_by_association %}

@@ -127,7 +127,8 @@ async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlot
             buml_model = user_reference_domain_model
             domain_validation = buml_model.validate(raise_exception=False)
             validation_errors.extend(domain_validation.get("errors", []))
-            validation_warnings.extend(domain_validation.get("warnings", []))
+            # The reference model is BESSER's, not the user's: its warnings are not theirs to fix,
+            # and the editor asks before generating from a model with warnings.
 
             if domain_validation.get("success", False):
                 object_model = process_object_diagram(input_data.model_dump(), buml_model)

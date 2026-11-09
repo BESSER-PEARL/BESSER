@@ -524,6 +524,14 @@ class ImportGitHubRunResponse(ResponseModel):
     recap: Optional[RepoRecap] = None
 
 
+class ImportGeneratedCodeResponse(ResponseModel):
+    """Response of ``POST /besser_api/spec-driven/import-generated-code``."""
+
+    # A fresh run id whose stored files are the uploaded generator output;
+    # ``POST /spec-driven/push-to-github`` pushes it like any other run.
+    run_id: str
+
+
 class SmartPreviewRequest(BaseModel):
     """Body of ``POST /besser_api/spec-driven/preview``.
 

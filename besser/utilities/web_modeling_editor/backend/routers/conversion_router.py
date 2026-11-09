@@ -139,9 +139,6 @@ from besser.utilities.web_modeling_editor.backend.services.utils.upload_validati
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    ConversionError,
-)
 from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
     ensure_not_legacy_model,
 )

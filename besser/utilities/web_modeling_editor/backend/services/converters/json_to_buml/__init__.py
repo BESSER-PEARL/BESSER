@@ -33,6 +33,7 @@ __all__ = [
     'process_gui_diagram',
     'process_quantum_diagram',
     'process_nn_diagram',
+    'process_kg_diagram',
     'link_method_neural_networks',
     'process_component_diagram',
     'process_deployment_diagram',

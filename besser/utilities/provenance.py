@@ -218,18 +218,22 @@ def _write_text(path: str, root: str, text: str) -> None:
         handle.write(text.encode("utf-8"))
 
 
-def add_readme_block(directory: str, block: str, title: Optional[str] = None) -> None:
+def add_readme_block(
+    directory: str, block: str, title: Optional[str] = None, about: Optional[str] = None,
+) -> None:
     """Put ``block`` into the root README of ``directory``.
 
     A missing README is created as ``# title`` only when ``title`` is given: in an
-    existing repo it would replace the README the repo already has. A README
-    that is not UTF-8 text is left as it is.
+    existing repo it would replace the README the repo already has. ``about``
+    (see :func:`readme_about`) follows the title of a README created here. A
+    README that is not UTF-8 text is left as it is.
     """
     path = _root_readme(directory)
     if path is None:
         if title is None:
             return
-        path, text = os.path.join(directory, README_FILENAME), f"# {title}\n"
+        text = f"# {title}\n\n{about}" if about else f"# {title}\n"
+        path = os.path.join(directory, README_FILENAME)
     else:
         text = _read_text(path, directory)
         if text is None:

@@ -1,11 +1,14 @@
 Version 8.9.3
 =============
 
-Patch release: **the modeling assistant keeps your conversation, and the
-editor's welcome dialog speaks your language**. Fixes for issues
+Patch release: **the modeling assistant keeps your conversation, sticks to
+modeling and draws compositions the right way round; the editor asks before
+generating a model with warnings; a generated SQL file can be saved to
+GitHub**. Fixes for issues
 `#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_ to
-`#745 <https://github.com/BESSER-PEARL/BESSER/issues/745>`_. No metamodel,
-generator or API contract changes.
+`#752 <https://github.com/BESSER-PEARL/BESSER/issues/752>`_. No metamodel
+changes. One new endpoint (``POST /besser_api/spec-driven/import-generated-code``)
+and a tidier SQL generator output; no existing request or response changes.
 
 Highlights
 ----------
@@ -22,9 +25,35 @@ Highlights
   ``buml/diagrams.json`` on a GitHub save, and restored when the project opens
   with an empty chat. Provider tokens are redacted there like the rest of the
   model, and the key stored in the tab is removed before the conversation is
-  kept. Generation requests and gists leave it out. When two people each
-  chatted since the last commit, the save keeps the saver's conversation
-  instead of reporting a conflict.
+  kept. Generation requests leave it out. When two people each chatted since
+  the last commit, the save keeps the saver's conversation instead of
+  reporting a conflict.
+* **Compositions point the right way.** The editor draws a composition's
+  diamond at the target end, the whole. The modeling agent stated and read
+  compositions the other way round, and the assistant's *extract class* and
+  *promote attribute* linked the original class as the source, which put the
+  diamond on the new part. Both now make the whole the target, so "a Brand has
+  many BrandURLs" puts the diamond on Brand. Reported in
+  `#746 <https://github.com/BESSER-PEARL/BESSER/issues/746>`_.
+* **The modeling assistant sticks to modeling.** It no longer ends a model or
+  an edit with an offer to generate the application, and its welcome text and
+  suggestions are about creating and changing models (the *Generate Django
+  code* chip is now *Create a state machine for an order*). Asking it for
+  generation still works. Reported in
+  `#747 <https://github.com/BESSER-PEARL/BESSER/issues/747>`_.
+* **Save to GitHub for a deterministic generator's result.** When the
+  assistant hands a request to a deterministic generator (for example the SQL
+  generator after you answer "sqlite"), the result card now offers **Save to
+  GitHub**, like a Spec-Driven run. The editor uploads the file it received to
+  the new ``POST /besser_api/spec-driven/import-generated-code``, which stores
+  it as a run (a ZIP is unpacked, refusing members outside the run; the upload
+  is capped at 100 MB and needs a GitHub session), and pushes it with the
+  existing ``/spec-driven/push-to-github``. Reported in
+  `#748 <https://github.com/BESSER-PEARL/BESSER/issues/748>`_.
+* **The editor asks before generating a model with warnings.** When
+  validation passes with warnings, generating code or deploying locally now
+  asks *Generate anyway* or *Fix the model first*, and lists the warnings.
+  Reported in `#752 <https://github.com/BESSER-PEARL/BESSER/issues/752>`_.
 * **Clearer messages during a long generation.** After four minutes without a
   reply the assistant used to say the request failed and to try again, though
   the request kept running and its result still arrived. It now says the
@@ -42,9 +71,40 @@ Highlights
   now available in all six editor languages. Reported in
   `#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_.
 
+Other changes
+-------------
+
+* **A project's README says what it is.** A repository created from the
+  GitHub panel, and a deployed web app or chatbot, now get a README with the
+  project's description (left out when blank) and the date BESSER created or
+  generated it. Reported in
+  `#750 <https://github.com/BESSER-PEARL/BESSER/issues/750>`_.
+* **Tidier SQL.** Each ``CREATE TABLE`` statement now ends with ``);`` instead
+  of a blank line before the ``;``, statements are separated by one blank
+  line, and no line ends with a space (all dialects). The SQLite DDL quotes
+  only reserved words (``"order"``) and names with special characters, not
+  every mixed-case name (``createdAt``); PostgreSQL and Oracle still quote
+  mixed-case names, which they need. Reported in
+  `#751 <https://github.com/BESSER-PEARL/BESSER/issues/751>`_.
+* **Preview Project and Share as Gist are removed** from the editor's File
+  menu: the preview showed the same content as Export, and the GitHub
+  integration supersedes gists. Reported in
+  `#749 <https://github.com/BESSER-PEARL/BESSER/issues/749>`_.
+
+Web Modeling Editor
+-------------------
+
+The editor half of these fixes is
+`BESSER-Web-Modeling-Editor#268 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/268>`_
+(release ``v8.9.3``, which folds in #262 to #267). The ``frontend`` submodule
+points at it. The editor's **Save to GitHub** on a generator's result needs
+this backend's new endpoint, so deploy the two together.
+
 Modeling agent
 --------------
 
 Deploy the modeling agent ``v8.1.1`` alongside (its own release, from
-``develop``). The editor works with an older agent, which ignores the new
-``recentHistory`` field, but the memory fix needs both.
+``develop``): the conversation memory fix, the composition direction and the
+modeling-only replies (modeling-agent #64, #67 and #68). The editor works with
+an older agent, which ignores the new ``recentHistory`` field, but the memory,
+composition and modeling-scope fixes need both.

@@ -394,6 +394,29 @@ def test_part_with_one_mandatory_and_one_optional_owner_is_fine():
     assert _with("Part with several mandatory owners:", _warnings(model)) == []
 
 
+# ------------------------------------------------------------ whole end that allows many (warning)
+
+
+def test_composition_whose_whole_end_allows_many_is_warned():
+    # The diamond drawn at the part: each Order "belongs to" many OrderLines.
+    order = Class(name="Order", attributes={_attr("ref")})
+    line = Class(name="OrderLine", attributes={_attr("qty", IntegerType)})
+    lines = _assoc("order_lines", line, "lines", (0, "*"), order, "order", (1, 1), composite_a=True)
+    found = _with("Part with several wholes:",
+                  _warnings(DomainModel(name="S", types={order, line}, associations={lines})))
+    assert len(found) == 1
+    assert "composition 'order_lines'" in found[0]
+    assert "each 'Order' is a part of many 'OrderLine'" in found[0]
+
+
+def test_composition_whose_whole_end_is_one_is_fine():
+    order = Class(name="Order", attributes={_attr("ref")})
+    line = Class(name="OrderLine", attributes={_attr("qty", IntegerType)})
+    lines = _assoc("order_lines", order, "order", (1, 1), line, "lines", (0, "*"), composite_a=True)
+    model = DomainModel(name="S", types={order, line}, associations={lines})
+    assert _with("Part with several wholes:", _warnings(model)) == []
+
+
 # ------------------------------------------------------------ the canonical fixture stays clean
 
 

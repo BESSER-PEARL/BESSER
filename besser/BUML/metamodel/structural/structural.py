@@ -2596,6 +2596,7 @@ class DomainModel(Model):
         self._validate_isolated_classes(warnings)
         self._validate_abstract_classes_without_concrete_subclass(warnings)
         self._validate_shared_composite_parts(warnings)
+        self._validate_composite_whole_multiplicity(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -3080,6 +3081,27 @@ class DomainModel(Model):
                 f"either whole deletes it. Make all but one of these compositions plain associations, or "
                 f"their owner ends optional (0..1)."
             )
+
+    def _validate_composite_whole_multiplicity(self, warnings: list[str]):
+        """Warn about a composition whose whole end allows more than one whole.
+
+        A part belongs to one whole, so the whole's end is 1 or 0..1. With a
+        larger upper bound the generated backends cannot delete the parts with
+        their whole. Most often the diamond was drawn at the part's end.
+        """
+        for association in sorted(self.__associations, key=lambda a: a.name):
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            for whole, part in ((ends[0], ends[1]), (ends[1], ends[0])):
+                if whole.is_composite and whole.multiplicity.max > 1:
+                    warnings.append(
+                        f"Part with several wholes: in composition '{association.name}', each "
+                        f"'{part.type.name}' is a part of many '{whole.type.name}', but a part belongs to one "
+                        f"whole, so generated backends do not delete the parts with their whole. If the "
+                        f"diamond is at the wrong end, move it to '{part.type.name}'; otherwise set the "
+                        f"multiplicity at '{whole.type.name}' to 1 or 0..1."
+                    )
 
     def _validate_constraints(self, errors: list[str]):
         """Validate that constraint contexts reference classes in the model.

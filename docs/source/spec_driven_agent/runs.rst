@@ -56,7 +56,9 @@ runs survive a dropped connection:
   frame after sequence ``N`` and then follows the live producer. Native
   ``EventSource`` clients can use the ``Last-Event-ID`` header instead; the
   larger of the two cursors wins, so a stale query value can't replay
-  duplicates.
+  duplicates. A resumed run drops the previous attempt's frames but keeps
+  numbering from where it stopped, so a cursor from that attempt replays the
+  whole new attempt.
 
 .. code-block:: bash
 
@@ -87,7 +89,8 @@ workspace is seeded from that run's generated files and edited in place instead
 of being rebuilt from scratch. Phase 2 is never skipped for a modify run — you
 asked for a change, so a change is made. When the base has expired the runner
 warns and falls back to normal from-scratch generation rather than failing the
-request.
+request. The editor avoids that for a project linked to GitHub: it starts the run
+from the repository instead (see :ref:`web-editor-github-coming-back`).
 
 Every run records the class diagram it was given in the run's
 ``.besser_recipe.json`` as ``model.user_model``: classes (abstract, parents,
@@ -107,6 +110,19 @@ OCL constraints are not compared. Elements are matched as described in
 ``class Book renamed to Publication``. A base run recorded before this existed
 only names its classes, and those include classes the agent added itself, so
 it gets no change list (logged as a warning).
+
+Bringing generated files up to a changed model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When the model changed and the app's backend came from ``generate_fastapi_backend``,
+the generator runs again on the new model before Phase 2, and its output is
+merged into the app file by file, like ``git merge``: untouched files become the
+new output, edited files keep their edits and get the model change, and only
+what cannot be merged is left to the agent, with a precise note. The base of
+the merge is the generator's output as it was written, stored in
+``.besser_generator_output.json``, which travels with the app in the seed, the
+ZIP and the GitHub push. See :doc:`regeneration` for how it works, the records
+involved, worked examples and the measured results.
 
 After Phase 2 a deterministic check compares the FastAPI backend
 (``sql_alchemy.py`` and the ``<Class>Create`` schemas in
@@ -170,8 +186,9 @@ writes a file, its lines are recorded (as short hashes) in
 ``.besser_attribution.json``; at packaging time every line that differs from
 that record goes to the LLM. A line keeps its contributor however often the
 file was edited, as long as the line itself is unchanged. The record holds
-hashes only, never content, and is pushed to GitHub beside the recipe, so a
-continue-from-GitHub run can tell a person's edits from the AI's. Binary files
+hashes only, never content, and goes into the GitHub push and the download ZIP
+beside the recipe, so a continue-from-GitHub run can tell a person's edits from
+the AI's. Binary files
 and files over 2 MB are not attributed. In files longer than 5,000 lines only
 the unchanged lines at the start and the end keep their contributor: a change
 in the middle gives every line from the first change to the last one to the

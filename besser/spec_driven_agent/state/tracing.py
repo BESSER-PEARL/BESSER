@@ -33,7 +33,7 @@ import os
 import threading
 import time
 from typing import Any
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write
+from besser.utilities.workspace_fs import open_plain, open_plain_write
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ EVENT_COST_UPDATE = "cost_update"
 EVENT_COMPACTION = "compaction"
 EVENT_SNAPSHOT = "snapshot"
 EVENT_ROLLBACK = "rollback"
+EVENT_REGENERATION = "regeneration"
 EVENT_TARGET = "target"
 EVENT_VALIDATION_ISSUE = "validation_issue"
 EVENT_CHECKPOINT = "checkpoint"

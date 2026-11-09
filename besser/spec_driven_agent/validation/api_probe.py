@@ -7,7 +7,9 @@ coverage.
 No commands, external URLs or Python expressions are accepted. Request headers
 are limited to an allow-list, and the values of sensitive ones never appear in
 the report.
-The child imports no BESSER package and runs this same file as a script.
+The child imports no BESSER package and runs this same file as a script, so it
+masks the scenario's own secrets with ``_scrub`` rather than
+``besser.utilities.secret_redaction``.
 """
 from __future__ import annotations
 

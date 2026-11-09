@@ -20,6 +20,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
     process_class_diagram,
 )
 from tests.utilities.web_modeling_editor.backend.services.converters.test_timestamp_roundtrip import _diagram
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 # Every class-diagram element of ``_diagram()`` that maps to a B-UML element.
 MODEL_IDS = {
@@ -193,11 +194,9 @@ def _export_buml(diagram):
     return response.text
 
 
-def test_the_editor_export_writes_ids_only_when_the_deployment_turns_it_on(monkeypatch):
-    from besser.utilities.web_modeling_editor.backend.routers import conversion_router
-
+def test_the_editor_export_writes_ids_only_when_the_deployment_turns_it_on(route_settings):
     assert 'id="' not in _export_buml(_diagram())
-    monkeypatch.setattr(conversion_router, "BUML_EMIT_IDS", True)
+    route_settings.buml_emit_ids = True
     assert 'id="library"' in _export_buml(_diagram())
 
 
@@ -212,5 +211,5 @@ def test_the_spec_driven_push_writes_ids_only_when_the_deployment_turns_it_on(tm
         return open(os.path.join(workdir, "buml", "domain_model.py"), encoding="utf-8").read()
 
     assert 'id="' not in pushed(tmp_path / "off")
-    monkeypatch.setattr(repo_model, "BUML_EMIT_IDS", True)
+    monkeypatch.setattr(get_settings(), "buml_emit_ids", True)
     assert 'id="library"' in pushed(tmp_path / "on")

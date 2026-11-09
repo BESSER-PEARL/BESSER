@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import os
 import re
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 _FRONTEND_EXTS = (".js", ".jsx", ".ts", ".tsx")
 _SKIP_DIRS = ("node_modules", "dist", "build", "__pycache__")
@@ -93,6 +93,25 @@ def _blank_literals(text: str) -> str:
     memory proportional to the literals, not to the file.
     """
     return _BLANKABLE_RE.sub(lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()), text)
+
+
+def _blank_comments(text: str) -> str:
+    """Blank comments only: a doc comment's example path names no resource."""
+    return _BLANKABLE_RE.sub(
+        lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()) if m.group().startswith("/") else m.group(), text)
+
+
+# A POST the file issues itself: `.post(` with its arguments, or a fetch with
+# method POST, whose target is not attributable and so counts as unnamed.
+_DIRECT_POST_RE = re.compile(r"\.post\s*\((?P<args>[^()]{0,200})", re.IGNORECASE)
+_FETCH_POST_RE = re.compile(r"method\s*:\s*['\"]POST['\"]", re.IGNORECASE)
+
+
+def _direct_create_calls(source: str) -> list:
+    """Creates ``source`` issues itself, shaped like ``_client_create_calls``."""
+    code = _blank_comments(source)
+    calls: list = [_STRING_ARG_RE.findall(m.group("args")) or None for m in _DIRECT_POST_RE.finditer(code)]
+    return calls + [None] * len(_FETCH_POST_RE.findall(code))
 
 
 def _bracket_depth(blanked: str, start: int, end: int) -> int:
@@ -236,6 +255,17 @@ def _mentions(text: str, forms: list[str]) -> bool:
     return any(f in low for f in forms)
 
 
+def _creates(args: list[str] | None, forms: list[str]) -> bool:
+    """Whether a create call can be this entity's.
+
+    An unnamed target (a variable) can be; a literal one must name the entity:
+    `api.post('/stockcheck/', ...)` on a page that lists products in a dropdown
+    is not Product's create. Separators are ignored, so `/order-lines/` names
+    OrderLine.
+    """
+    return args is None or _mentions(re.sub(r"[-_\s]", "", " ".join(args)), forms)
+
+
 def build_acceptance_matrix(
     output_dir: str,
     domain_model,
@@ -288,24 +318,26 @@ def build_acceptance_matrix(
 
     by_path = dict(frontend_files)
     helper_cache: dict[str, set[str]] = {}
-    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache)
+    create_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache) + _direct_create_calls(content)
                     for rel, content in frontend_files}
     # Generic pages (``EntityList entity={key}``): the create names its resource
-    # through a variable and the component names no class of the model. A file
-    # that mentions an entity and imports one creates that entity through it.
-    # ``LoanList`` with a variable-argument create is not generic: crediting it
-    # to every entity App.jsx lists would hide their missing creates.
+    # through a variable and the component's code names no class of the model
+    # (its comments may: ``e.g. "/brand/"``). A file that mentions an entity and
+    # renders one as JSX creates that entity through it; importing the api
+    # client is not rendering a page. ``LoanList`` with a variable-argument
+    # create is not generic: crediting it to every entity App.jsx lists would
+    # hide their missing creates.
     all_forms = [f for name in classes for f in _entity_forms(name)]
     generic_creators = {
-        rel for rel, calls in client_calls.items()
+        rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(by_path[rel], all_forms)
+        and not _mentions(_blank_comments(by_path[rel]), all_forms)
     }
     renders_generic_creator = {
-        rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None)
-                 in generic_creators
-                 for _binding, spec in _import_bindings(content))
+        rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None) in generic_creators
+                 and re.search(r"<\s*" + re.escape(binding) + r"\b", content)
+                 for binding, spec in _import_bindings(content))
         for rel, content in frontend_files
     }
 
@@ -325,13 +357,10 @@ def build_acceptance_matrix(
             if not about:
                 continue
             page = True
-            # A resolved create that names another resource literally is that
-            # resource's create, not this entity's: `api.create('order', ...)`
-            # on a page that merely lists clerks in a dropdown proves nothing
-            # about Clerk.
-            resolved = any(args is None or _mentions(" ".join(args), forms)
-                           for args in client_calls.get(rel, ()))
-            if (_POST_RE.search(content) or resolved
+            # A create that names another resource literally is that resource's
+            # create, not this entity's: `api.create('order', ...)` on a page
+            # that merely lists clerks in a dropdown proves nothing about Clerk.
+            if (any(_creates(args, forms) for args in create_calls[rel])
                     or renders_generic_creator[rel]
                     or _table_block_create_wired(content, cls)):
                 create = True

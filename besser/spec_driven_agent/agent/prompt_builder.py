@@ -27,7 +27,7 @@ from besser.spec_driven_agent.model_serializer import (
 from besser.spec_driven_agent.agent.runbook import runbook_section
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
 from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 from besser.spec_driven_agent.planning.target import OTHER, Target
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,8 @@ def _other_target_rule(target: Target) -> str:
     ui = (
         "    It is used through screens: build a complete, navigable UI for that\n"
         "    platform - every entity reachable, working create / edit / delete -\n"
-        "    and keep the data locally unless the user asked for a server.\n"
+        "    and keep the data locally unless the user asked for a server. Every\n"
+        "    control is visible at the default window size.\n"
         if target.has_user_interface else ""
     )
     return f"""\

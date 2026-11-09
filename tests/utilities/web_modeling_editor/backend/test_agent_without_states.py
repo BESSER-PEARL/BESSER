@@ -84,13 +84,13 @@ def test_saving_to_github_keeps_the_model_files_of_an_agent_without_states():
 
 
 def test_standalone_agent_deploy_reports_an_agent_without_states(monkeypatch):
-    from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api as gda
+    from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api as gda
 
     class _FakeGitHub:
         async def get_authenticated_user(self):
             return {"login": "someone"}
 
-    monkeypatch.setattr(gda, "get_user_token", lambda _session: "fake-token")
+    monkeypatch.setattr(gda, "get_user_token", lambda _sessions, _session: "fake-token")
     monkeypatch.setattr(gda, "create_github_service", lambda _token: _FakeGitHub())
     body = {"id": "p", "type": "Project", "name": "P", "createdAt": "2026-01-01T00:00:00Z",
             "diagrams": {"AgentDiagram": [_entry(_COMPONENTS_ONLY)]},

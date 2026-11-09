@@ -17,16 +17,17 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.constants import constants
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
-from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api, render_blueprint
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_deploy_api import _add_deployment_configs
-from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
+from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api
+from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import _add_deployment_configs
+from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 HEAD = "b" * 40
@@ -53,9 +54,9 @@ def _web_app(root, prefix="web_app/", out_dir='outDir: "build",', app_var="app",
 
 
 @pytest.fixture(autouse=True)
-def clean(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setattr(constants, "DEPLOY_FROM_REPO", True)
+def clean(tmp_path, monkeypatch, route_settings):
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path / "workspace"))
+    route_settings.deploy_from_repo = True
     asyncio.run(_clear_registry())
     yield
     asyncio.run(_clear_registry())
@@ -170,7 +171,7 @@ def _call(method, url, **kwargs):
 
 def _go_live(monkeypatch, fake, repo="room-booking"):
     monkeypatch.setattr(github_deploy_api, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda _sessions, sid: "token")
     return _call("POST", "/besser_api/github/app/go-live", headers=SESSION,
                  json={"owner": "me", "repo": repo, "branch": "main"})
 
@@ -220,8 +221,8 @@ def test_a_repo_without_a_deployable_app_says_why(monkeypatch, tmp_path):
     assert r.status_code == 422 and "Django" in r.json()["detail"]
 
 
-def test_go_live_stays_off_until_the_server_turns_it_on(monkeypatch, tmp_path):
-    monkeypatch.setattr(constants, "DEPLOY_FROM_REPO", False)
+def test_go_live_stays_off_until_the_server_turns_it_on(monkeypatch, tmp_path, route_settings):
+    route_settings.deploy_from_repo = False
 
     r = _go_live(monkeypatch, _RepoGitHub(str(tmp_path)))
 
@@ -270,12 +271,12 @@ class _PushGitHub:
 def _push_run(monkeypatch, tmp_path, fake):
     run_dir = tmp_path / "run"
     _web_app(str(run_dir))
-    asyncio.run(SMART_RUN_REGISTRY.put("f" * 32, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put("f" * 32, SmartRunEntry(
         file_path=str(run_dir / "buml" / "diagrams.json"), file_name="diagrams.json", is_zip=False,
         temp_dir=str(run_dir), created_at=time.time(),
     )))
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
     return _call("POST", "/besser_api/spec-driven/push-to-github", headers=SESSION, json={
         "run_id": "f" * 32, "deploy_config": {"repo_name": "room-booking", "use_existing": True}})
 

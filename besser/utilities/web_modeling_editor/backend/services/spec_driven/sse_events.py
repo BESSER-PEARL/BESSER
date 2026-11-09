@@ -23,7 +23,7 @@ from typing import Any, Iterable, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+from besser.utilities.secret_redaction import (
     redact_data,
 )
 
@@ -40,7 +40,7 @@ class StartEvent(BaseSseEvent):
     event: Literal["start"] = "start"
     runId: str
     provider: Literal[
-        "anthropic", "openai", "mistral", "nebius", "free", "sponsored", "pia"
+        "anthropic", "openai", "mistral", "nebius", "free", "sponsored", "pia", "gateway"
     ]
     llmModel: str
     maxCost: float

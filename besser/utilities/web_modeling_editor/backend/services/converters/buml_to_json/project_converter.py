@@ -296,6 +296,7 @@ def _convert_section(
     diagram_id: Optional[str] = None,
     class_ids: Optional[Dict[str, str]] = None,
     references: Optional[Dict[str, str]] = None,
+    warnings: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Convert a single section's code into a diagram JSON entry.
@@ -311,6 +312,7 @@ def _convert_section(
         diagram_id: The diagram's editor id, kept when the export recorded it
         class_ids: ``{class name: class node id}`` recorded for a class diagram
         references: the editor ``references`` recorded for an object diagram
+        warnings: Receives a message for every repair made to load the section
 
     Returns:
         Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
@@ -320,7 +322,7 @@ def _convert_section(
 
     try:
         if model_name == "domain_model":
-            parsed = parse_buml_content(section_code)
+            parsed = parse_buml_content(section_code, warnings)
             if class_ids:
                 parsed._wme_class_index = {
                     wid: parsed.get_class_by_name(name)
@@ -518,7 +520,9 @@ def _detect_single_diagram_type(content: str) -> str:
     return ''
 
 
-def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
+def _build_project_from_single_diagram(
+    content: str, warnings: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Wrap a single-diagram BUML file (no Project(...)) into a project structure."""
     diagram_type = _detect_single_diagram_type(content)
     if not diagram_type:
@@ -532,7 +536,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
     title = DIAGRAM_DEFAULT_TITLES[diagram_type]
     try:
         if diagram_type == 'ClassDiagram':
-            parsed = parse_buml_content(content)
+            parsed = parse_buml_content(content, warnings)
             model = class_buml_to_json(parsed)
         elif diagram_type == 'AgentDiagram':
             model = agent_buml_to_json(content)
@@ -586,7 +590,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
     }
 
 
-def project_to_json(content: str) -> Dict[str, Any]:
+def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Convert a BUML project content to JSON format matching the frontend structure.
 
@@ -598,6 +602,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
 
     Args:
         content: Project Python code as string
+        warnings: Receives a message for every repair made to load a model
 
     Returns:
         Dictionary representing the complete project with all diagrams.
@@ -611,7 +616,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         logger.info(
             "No 'models=[...]' declaration found; using single-diagram fallback."
         )
-        return _build_project_from_single_diagram(content)
+        return _build_project_from_single_diagram(content, warnings)
 
     model_names = re.findall(r'\b(\w+)\b', model_match.group(1))
     logger.debug("Detected model names in project: %s", model_names)
@@ -740,6 +745,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
                 diagram_id=section_ids[idx],
                 class_ids=recorded_class_ids.get(section_ids[idx]) if section_ids[idx] else None,
                 references=section_references[idx],
+                warnings=warnings,
             )
             if entry is not None:
                 diagram_list.append(entry)
@@ -754,22 +760,18 @@ def project_to_json(content: str) -> Dict[str, Any]:
     # gets an empty placeholder, which the frontend renders as a blank canvas.
     # Reuse the single-diagram detector to recover the actual model, then
     # restore the project name/description/owner from the Project(...) wrapper.
-    if not diagram_jsons:
+    # A detected model that fails to parse raises: swallowing it here imported
+    # the file as a blank canvas with no error.
+    if not diagram_jsons and _detect_single_diagram_type(content):
         logger.info(
             "Project declares models=%s but no section headers were found; "
             "falling back to single-diagram detection.", model_names,
         )
-        try:
-            result = _build_project_from_single_diagram(content)
-        except ValueError:
-            # No detectable single-diagram type either — fall through to the
-            # all-empty default below so the caller sees a structured project.
-            result = None
-        if result is not None:
-            result["name"] = project_name
-            result["description"] = project_description
-            result["owner"] = project_owner
-            return result
+        result = _build_project_from_single_diagram(content, warnings)
+        result["name"] = project_name
+        result["description"] = project_description
+        result["owner"] = project_owner
+        return result
 
     project_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()

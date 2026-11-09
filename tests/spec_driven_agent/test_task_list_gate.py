@@ -150,6 +150,35 @@ def test_end_turn_with_open_tasks_is_nudged_then_released(tmp_path, monkeypatch)
     assert orch._phase2_exited_cleanly is True
 
 
+class _RecordingClient(_ScriptedClient):
+    def __init__(self, responses):
+        super().__init__(responses)
+        self.sent = []
+
+    def chat(self, system=None, messages=None, tools=None, **kwargs):
+        self.sent.append(list(messages or []))
+        return super().chat(system=system, messages=messages, tools=tools, **kwargs)
+
+
+def test_empty_end_turn_reply_is_not_replayed_in_the_nudge(tmp_path, monkeypatch):
+    """An empty end_turn reply must not go back as an assistant turn: OpenAI
+    rejects null content without tool calls (400), ending Phase 2 with
+    api_error instead of nudging (issue #739)."""
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_gaps_via_llm",
+        lambda **kwargs: ["Add auth", "Style the pages"],
+    )
+    client = _RecordingClient([{"stop_reason": "end_turn", "content": []}])
+    orch = _make_orch(tmp_path, client)
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    assert orch._end_turn_task_nudges >= 1
+    nudge_request = client.sent[1]
+    assert not [m for m in nudge_request if m["role"] == "assistant" and not m["content"]]
+    assert "still OPEN" in nudge_request[-1]["content"][0]["text"]
+
+
 def test_end_turn_with_closed_checklist_finishes_immediately(tmp_path, monkeypatch):
     """Marking every item done releases the gate with zero nudges."""
     monkeypatch.setattr(

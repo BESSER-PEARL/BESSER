@@ -44,7 +44,7 @@ The model catalog
 Which providers and models the editor's key dialog offers, the endpoint of a
 gateway provider, and the rates a gateway bills are configuration, held in one
 JSON file. BESSER ships a public default,
-``besser/spec_driven_agent/providers/data/model_catalog.json``. A deployment
+``besser/llm/data/model_catalog.json``. A deployment
 points ``BESSER_MODEL_CATALOG`` at its own file, which is merged over the
 default (see :doc:`configuration`). Adding, removing or repricing a model is an
 edit to that file and a restart of the backend, the Spec-Driven worker and the
@@ -89,9 +89,8 @@ A deployment's file names only what differs from the default:
 - ``base_url`` makes the provider a **gateway**: its runs go to that
   OpenAI-compatible endpoint, which the server resolves, so the browser never
   holds the host. A request for a gateway carries no ``base_url`` and is not
-  subject to the custom-endpoint gate below. The editor knows one gateway
-  provider, ``pia``; the public default has none, so the editor offers it only
-  where a deployment's catalog defines it.
+  subject to the custom-endpoint gate below. The public default has none, so
+  the editor offers a gateway only where a deployment's catalog defines it.
 - A model's optional ``request`` object sets how BESSER shapes requests to
   it, over the built-in rules in the table under `Model-specific request
   handling`_: ``forced_tool_choice`` (``false`` when ``tool_choice`` of type
@@ -112,11 +111,21 @@ A deployment's file names only what differs from the default:
   rate). A price on a gateway model applies on that gateway; ``route_prices``
   prices a gateway that is not a picker provider, such as the keyless tiers'
   endpoint. A price on a vendor model overrides the published list price.
+- A model with no rate anywhere counts against the cost cap at the ``gpt-4o``
+  fallback rate, and a warning names it in the log. Add a row whenever a paid
+  model joins ``BESSER_FREE_LLM_MODEL`` or ``BESSER_FREE_LLM_ALT_MODELS``: the
+  fallback can be many times the real rate and stop a run early.
+- An endpoint that reports no token usage on a stream is estimated from the
+  size of the request and reply, with a warning in the log, so the cost cap
+  still counts the call. The estimate has no cache information and errs high.
 
 ``GET /besser_api/spec-driven/config`` returns the catalog's providers and
 models as ``providers`` (``id``, ``label``, ``hint``, ``key_prefix``,
 ``models``), without endpoints or rates. A broken catalog file stops the
-backend at startup with a message naming the file and the field.
+backend at startup with a message naming the file and the field. Validation
+is strict: a key not listed above (a typo such as ``base_ur1``), a value of the
+wrong type (``"default": "true"``) or a ``base_url`` without a host is an
+error, not ignored.
 
 The fallback chain
 ------------------

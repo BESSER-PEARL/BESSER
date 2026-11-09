@@ -83,14 +83,12 @@ def test_an_explicit_opt_in_is_preserved(flag, tmp_path, monkeypatch):
 
 def test_the_hosted_runner_still_gates_shell_tools_off():
     """The deployment's own default must not have moved."""
-    from besser.utilities.web_modeling_editor.backend.constants.constants import (
-        LLM_ENABLE_SHELL_TOOLS,
-    )
-    assert LLM_ENABLE_SHELL_TOOLS is False
+    from besser.utilities.web_modeling_editor.backend.settings import get_settings
+    assert get_settings().llm_enable_shell_tools is False
 
 
 def test_the_hosted_runner_passes_its_own_value_explicitly():
     """It must not rely on the orchestrator default, in either direction."""
     import besser.utilities.web_modeling_editor.backend.services.spec_driven.runner as runner
     source = inspect.getsource(runner)
-    assert "allow_shell_tools=LLM_ENABLE_SHELL_TOOLS" in source
+    assert "allow_shell_tools=settings.llm_enable_shell_tools" in source

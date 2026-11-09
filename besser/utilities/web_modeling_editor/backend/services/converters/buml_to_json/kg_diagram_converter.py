@@ -32,7 +32,6 @@ from besser.BUML.metamodel.kg import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
-    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -114,7 +113,7 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
             allowed_names[name] = getattr(kg_module, name)
 
     try:
-        local_vars = safe_load_buml(strip_buml_imports(content), allowed_names)
+        local_vars = safe_load_buml(content, allowed_names)
     except Exception as exc:
         raise ConversionError(f"Failed to load Knowledge Graph BUML content: {exc}") from exc
 

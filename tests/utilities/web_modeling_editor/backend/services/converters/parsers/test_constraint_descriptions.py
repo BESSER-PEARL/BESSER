@@ -263,3 +263,49 @@ class TestBumlToJsonRoundTripDescription:
                 ocl_rows.append(data)
         assert ocl_rows, "expected at least one inlined OCL constraint row"
         assert ocl_rows[0].get("description") == "Realistic age"
+
+
+# The inline ``-- description`` split used a regex that CodeQL flagged as
+# polynomial (py/polynomial-redos). The str.find version must keep its output.
+_OLD_INLINE_RE = r'--\s*(.*?)\s*$'
+
+
+def _old_extract(block: str) -> tuple[str, str]:
+    import re
+    parts, lines = [], []
+    for raw_line in block.split('\n'):
+        match = re.search(_OLD_INLINE_RE, raw_line)
+        if match and match.group(1):
+            parts.append(match.group(1))
+            raw_line = raw_line[:match.start()].rstrip()
+        lines.append(raw_line)
+    return '\n'.join(lines), ' '.join(parts).strip()
+
+
+@pytest.mark.parametrize("block", [
+    "context X inv: self.x > 0 -- must be positive",
+    "context X inv: self.x > 0 --must be positive   ",
+    "context X inv: self.x > 0 --",
+    "context X inv: self.x > 0 --    ",
+    "context X inv:\n  self.x > 0 -- first\n  and self.y > 0 -- second -- part",
+    "no comment here",
+    "-- only a comment",
+    "a\t--\ttabbed\t\r",
+    "",
+])
+def test_inline_description_matches_the_former_regex(block):
+    from besser.utilities.web_modeling_editor.backend.services.converters.parsers.ocl_parser import (
+        _extract_inline_description,
+    )
+    assert _extract_inline_description(block) == _old_extract(block)
+
+
+def test_inline_description_is_linear_on_long_runs_of_spaces():
+    import time
+    from besser.utilities.web_modeling_editor.backend.services.converters.parsers.ocl_parser import (
+        _extract_inline_description,
+    )
+    block = "context X inv: self.x > 0 --" + " " * 200_000 + "x" + " " * 200_000 + "\x00"
+    started = time.monotonic()
+    _extract_inline_description(block)
+    assert time.monotonic() - started < 1.0

@@ -64,12 +64,13 @@ from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
+    required_check_unverified,
 )
 from besser.spec_driven_agent.validation.toolchain import (
     _build_toolchain_reminder,
     _toolchain_commands_for,
 )
-from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry, walk_plain
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -640,8 +641,17 @@ class Phase3RepairMixin:
         """
         try:
             finding = self._runtime_gate_finding()
-        except Exception:
-            logger.debug("Runtime gate evaluation failed", exc_info=True)
+        except Exception as exc:
+            # Fail closed: a gate that could not decide is not a pass.
+            logger.warning("Runtime gate evaluation failed; completion refused", exc_info=True)
+            unverified = _classify_issue(required_check_unverified(
+                "the runtime gate", f"it crashed: {type(exc).__name__}: {exc}"))
+            if all(i.message != unverified.message for i in self._validation_issues):
+                self._validation_issues.append(unverified)
+                self._trace.write(
+                    EVENT_VALIDATION_ISSUE, phase="phase3_runtime_gate",
+                    message=unverified.message[:1000],
+                )
             return
         if not finding:
             return

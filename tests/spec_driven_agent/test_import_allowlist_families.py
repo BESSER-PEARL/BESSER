@@ -171,3 +171,64 @@ def test_requirements_comments_and_flags_are_skipped(tmp_path):
     roots = _declared_dependency_roots(str(tmp_path))
     assert "fastapi" in roots
     assert not any(r.startswith("#") or r.startswith("-") for r in roots)
+
+
+# Review 2026-10-30 (R5, ``manifest_roots.py``): the manifest reader missed
+# Poetry tables, Pipfile and spellings such as ``psycopg2_binary``. The
+# spellings were masked by _EXTERNAL_IMPORT_ROOTS; a package outside that list
+# declared in Poetry or a Pipfile became a false "cannot start" blocker (below).
+@pytest.mark.parametrize("manifest,body", [
+    ("pyproject.toml", '[tool.poetry.dependencies]\npython="^3.11"\nbeautifulsoup4="^4.12"\n'),
+    ("Pipfile", '[packages]\nbeautifulsoup4 = "*"\n'),
+])
+def test_a_poetry_or_pipfile_dependency_is_not_a_missing_module(tmp_path, manifest, body):
+    _write(tmp_path, manifest, body)
+    _write(tmp_path, "app/main.py", "import bs4\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_an_undeclared_package_is_still_a_missing_module(tmp_path):
+    _write(tmp_path, "pyproject.toml", '[tool.poetry.dependencies]\npython="^3.11"\n')
+    _write(tmp_path, "app/main.py", "import bs4\n")
+    assert len(_unresolvable_local_imports(str(tmp_path))) == 1
+
+
+@pytest.mark.parametrize("manifest,body,expected", [
+    ("requirements.txt", "psycopg2_binary==2.9.9\n", "psycopg2"),
+    ("requirements.txt", "Python.Dotenv>=1\n", "dotenv"),
+    ("requirements.txt", "beautifulsoup4 ; python_version>'3.8'\n", "bs4"),
+    ("requirements.txt", "fastapi=0.1\n", "fastapi"),
+    ("pyproject.toml", '[project]\nname="app"\ndependencies=["beautifulsoup4>=4"]\n', "bs4"),
+    ("pyproject.toml", '[tool.poetry.dependencies]\npython="^3.11"\nbeautifulsoup4="^4.12"\n', "bs4"),
+    ("pyproject.toml", '[tool.poetry.dependencies]\nscikit-learn="^1.5"\n', "sklearn"),
+    ("pyproject.toml", '[tool.poetry.group.dev.dependencies]\npytest-asyncio="*"\n', "pytest_asyncio"),
+    ("pyproject.toml", '[dependency-groups]\ntest=["Faker>=30"]\n', "faker"),
+    ("Pipfile", '[packages]\nbeautifulsoup4 = "*"\n', "bs4"),
+    ("Pipfile", '[dev-packages]\npython-jose = "*"\n', "jose"),
+])
+def test_every_manifest_format_declares_its_packages(tmp_path, manifest, body, expected):
+    (tmp_path / manifest).write_text(body, encoding="utf-8")
+    roots = _declared_dependency_roots(str(tmp_path))
+    assert expected in roots
+    assert "python" not in roots
+
+
+def test_unparseable_pyproject_falls_back_to_a_loose_scan(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('dependencies = ["fastapi>=0.1"\n', encoding="utf-8")
+    assert "fastapi" in _declared_dependency_roots(str(tmp_path))
+
+
+# Review of #705: the TOML reader alone dropped what the loose scan read, and
+# crashed on a ``project`` that is not a table.
+@pytest.mark.parametrize("pyproject,rel,source", [
+    ('[project]\nname = "svc"\n[tool.uv]\ndev-dependencies = ["respx"]\n', "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "svc"\n[tool.pdm.dev-dependencies]\ntest = ["respx"]\n', "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "svc"\n[tool.hatch.envs.default]\ndependencies = ["respx"]\n',
+     "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "inventory-api"\ndependencies = []\n', "tests/test_main.py", "import inventory_api\n"),
+    ('project = "svc"\n', "app/main.py", "x = 1\n"),
+])
+def test_other_pyproject_layouts_stay_clean(tmp_path, pyproject, rel, source):
+    _write(tmp_path, "pyproject.toml", pyproject)
+    _write(tmp_path, rel, source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []

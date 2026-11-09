@@ -54,8 +54,10 @@ router = APIRouter()
         {% set name_end2 = lns.end2.name %}
         {% if lns.end2.is_navigable %}
         {# Lower-bound guard: the other class requires at least end1.min instances of this class
-           (self-associations are left alone: their ends are not distinguishable by type) #}
-        {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+           (self-associations are left alone: their ends are not distinguishable by type).
+           A composite whole has none: the ORM deletes its parts with it. #}
+        {% set is_whole = lns.end1.is_composite and lns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min, lns.end1.multiplicity.max, lns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
         {% if association.name in assoc_by_association %}
@@ -95,8 +97,10 @@ router = APIRouter()
         {% set name_end2 = plns.end2.name %}
         {% if plns.end2.is_navigable %}
         {# Lower-bound guard: the other class requires at least end1.min instances of this class
-           (self-associations are left alone: their ends are not distinguishable by type) #}
-        {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+           (self-associations are left alone: their ends are not distinguishable by type).
+           A composite whole has none: the ORM deletes its parts with it. #}
+        {% set is_whole = plns.end1.is_composite and plns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min, plns.end1.multiplicity.max, plns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
         {% if association.name in assoc_by_association %}
@@ -150,7 +154,7 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {% if ns.end_name_multiple or ns.one_to_many %}
             # Add many-to-many and one-to-many relationship objects (full details)
             {% for x in ns.end_name_multiple %}
-            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.{{ x[1] | pk }} == {{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
+            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.{{ x[1] | pk }} == {{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_item.{{ pk }}).all()
             item_dict['{{x[3]}}'] = []
             for {{x[1] | lower}}_obj in {{x[1] | lower}}_list:
                 {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
@@ -219,7 +223,7 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     result = []
     for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
         {% for x in ns.end_name_multiple %}
-        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
+        {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_item.{{ pk }}).all()
         {% endfor %}
         {% for x in ns.assoc_links %}
         {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
@@ -327,7 +331,7 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.ge
 
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% endif %}
     {% if ns.assoc_links %}
@@ -662,7 +666,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% for x in ns.assoc_links %}
     {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
@@ -1028,8 +1032,8 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
         if len({{ class.name | lower }}_data.{{x[3]}}) < {{x[5]}}:
             raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
         {% endif %}
-        existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
-            {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}))]
+        existing_{{x[1] | lower}}_ids = [assoc._mapping["{{x[3]}}"] for assoc in database.execute(
+            {{x[4]}}.select().where({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower }}.{{ pk }}))]
 
         {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}})
         for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
@@ -1039,7 +1043,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
                 raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{x[1]|lower}}_id) + " requires at least {{x[7]}} {{x[2]}}")
             {% endif %}
             association = {{x[4]}}.delete().where(
-                ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
+                ({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c["{{x[3]}}"] == {{x[1]|lower}}_id))
             database.execute(association)
 
         new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}) - set(existing_{{x[1]|lower}}_ids)
@@ -1057,7 +1061,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% for x in ns.assoc_links %}
     {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
@@ -1179,8 +1183,8 @@ async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 
     # Check if relationship already exists
     existing = database.query({{x[4]}}).filter(
-        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
-        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+        ({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c["{{x[3]}}"] == {{ related_param_name }})
     ).first()
 
     if existing:
@@ -1203,8 +1207,8 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
 
     # Check if relationship exists
     existing = database.query({{x[4]}}).filter(
-        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
-        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+        ({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c["{{x[3]}}"] == {{ related_param_name }})
     ).first()
 
     if not existing:
@@ -1223,8 +1227,8 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
 
     # Delete the association
     association = {{x[4]}}.delete().where(
-        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
-        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+        ({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c["{{x[3]}}"] == {{ related_param_name }})
     )
     database.execute(association)
     database.commit()
@@ -1239,7 +1243,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    {{x[1]|lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id).all()
+    {{x[1]|lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id).all()
     {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_([id[0] for id in {{x[1]|lower}}_ids])).all()
 
     return {

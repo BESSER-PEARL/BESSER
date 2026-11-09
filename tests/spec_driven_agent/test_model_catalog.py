@@ -15,13 +15,12 @@ import httpx
 import pytest
 from httpx._transports.asgi import ASGITransport
 
-from besser.spec_driven_agent.providers import model_catalog
+from besser.llm.pricing import get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
     OpenAIProvider,
-    _get_pricing,
     create_llm_client,
 )
-from besser.spec_driven_agent.providers.model_catalog import (
+from besser.llm.catalog import (
     ModelCatalogError,
     load_model_catalog,
 )
@@ -71,7 +70,7 @@ def use_catalog(tmp_path, monkeypatch):
         path = tmp_path / "catalog.json"
         path.write_text(json.dumps(data) if not isinstance(data, str) else data,
                         encoding="utf-8")
-        monkeypatch.setenv(model_catalog.CATALOG_ENV_VAR, str(path))
+        monkeypatch.setenv("BESSER_MODEL_CATALOG", str(path))
         load_model_catalog.cache_clear()
     return _use
 
@@ -103,13 +102,27 @@ def test_replace_drops_the_default_catalog(use_catalog):
 
 @pytest.mark.parametrize("bad, message", [
     ("{not json", "not valid JSON"),
-    ({"providers": {"pia": {"models": []}}}, "label is required"),
+    ({"providers": {"pia": {"models": []}}}, r"providers\.pia\.label: Field required"),
     ({"providers": {"pia": {"label": "P", "base_url": "gateway", "models": []}}},
      r"base_url must be an http\(s\) URL"),
     ({"providers": {"x": {"label": "X", "models": [{"id": "m", "price": {"input": 1}}]}}},
-     "price.output"),
+     r"models\[0\]\.price\.output"),
     ({"providers": {"x": {"label": "X", "models": [{"id": "m"}, {"id": "M"}]}}},
      "duplicate id"),
+    # Review 2026-10-30 (R8, model_catalog_validation.py): a typo key loaded
+    # silently as a provider with no gateway, a URL with no host crashed with
+    # AttributeError, and "true" (a string) loaded as not-the-default.
+    ({"providers": {"pia": {"label": "P", "base_ur1": "https://gw.example/v1", "models": []}}},
+     r"providers\.pia\.base_ur1: Extra inputs are not permitted"),
+    ({"providers": {"pia": {"label": "P", "base_url": "https:///v1",
+                            "models": [{"id": "m", "price": {"input": 1, "output": 2}}]}}},
+     "with a host"),
+    ({"providers": {"x": {"label": "X", "models": [{"id": "m", "default": "true"}]}}},
+     r"models\[0\]\.default: Input should be a valid boolean"),
+    ({"providers": {"x": {"label": "X", "models": [{"id": "m", "price": {"input": True, "output": 1}}]}}},
+     r"price\.input"),
+    ({"route_prices": {"gw.example": {"m": {"input": 1, "outptu": 2}}}},
+     r"route_prices\.gw\.example\.m\.output: Field required"),
 ])
 def test_a_malformed_override_fails_loudly(use_catalog, bad, message):
     use_catalog(bad)
@@ -118,7 +131,7 @@ def test_a_malformed_override_fails_loudly(use_catalog, bad, message):
 
 
 def test_a_missing_override_file_fails_loudly(monkeypatch, tmp_path):
-    monkeypatch.setenv(model_catalog.CATALOG_ENV_VAR, str(tmp_path / "absent.json"))
+    monkeypatch.setenv("BESSER_MODEL_CATALOG", str(tmp_path / "absent.json"))
     with pytest.raises(ModelCatalogError, match="cannot be read"):
         load_model_catalog()
 
@@ -145,26 +158,26 @@ def test_gateway_runs_are_priced_at_the_catalog_rates(use_catalog, model, expect
 
 def test_a_missing_cache_rate_bills_at_the_input_rate(use_catalog):
     use_catalog(GATEWAY_CATALOG)
-    rate = _get_pricing("claude-sonnet-5-5", route=GATEWAY_URL)
+    rate = get_pricing("claude-sonnet-5-5", route=GATEWAY_URL)
     assert rate["cache_read"] == rate["cache_write"] == 2.5
-    assert _get_pricing("gpt-6-luna", route=GATEWAY_URL)["cache_read"] == 0.03
+    assert get_pricing("gpt-6-luna", route=GATEWAY_URL)["cache_read"] == 0.03
 
 
 def test_the_same_id_off_the_gateway_keeps_its_vendor_price(use_catalog):
     use_catalog(GATEWAY_CATALOG)
-    assert _get_pricing("gpt-6-luna", billed=True)["input"] == 0.1
+    assert get_pricing("gpt-6-luna", billed=True)["input"] == 0.1
 
 
 def test_a_catalog_price_on_a_vendor_model_beats_the_fallback(use_catalog):
-    assert _get_pricing("gpt-9-nova", billed=True)["input"] == 2.5  # gpt-4o fallback
+    assert get_pricing("gpt-9-nova", billed=True)["input"] == 2.5  # gpt-4o fallback
     use_catalog(GATEWAY_CATALOG)
-    assert _get_pricing("gpt-9-nova", billed=True) == {
+    assert get_pricing("gpt-9-nova", billed=True) == {
         "input": 7.0, "output": 21.0, "cache_read": 7.0, "cache_write": 7.0,
     }
 
 
 def test_route_prices_from_the_default_still_price_the_sponsored_gateway():
-    rate = _get_pricing("moonshotai/Kimi-K3", route="https://api.commandcode.ai/provider/v1")
+    rate = get_pricing("moonshotai/Kimi-K3", route="https://api.commandcode.ai/provider/v1")
     assert (rate["input"], rate["cache_read"]) == (3.0, 0.30)
 
 
@@ -216,22 +229,40 @@ def test_a_model_added_only_in_the_override_reaches_the_picker(use_catalog):
     assert "base_url" not in providers["pia"]
 
 
-def test_a_gateway_run_announces_its_provider():
+@pytest.mark.parametrize("provider", ["pia", "gateway"])
+def test_a_gateway_run_announces_its_provider(provider):
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
         StartEvent,
     )
-    event = StartEvent(runId="r", provider="pia", llmModel="m", maxCost=1.0, maxRuntime=60)
-    assert event.provider == "pia"
+    event = StartEvent(runId="r", provider=provider, llmModel="m", maxCost=1.0, maxRuntime=60)
+    assert event.provider == provider
 
 
-def test_a_gateway_request_drops_a_stray_base_url():
+@pytest.mark.parametrize("provider", ["pia", "gateway"])
+def test_a_gateway_request_drops_a_stray_base_url(provider):
     """Its endpoint is the catalog's; a request URL must not trip the SSRF gate."""
     from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
         _build_request,
     )
-    request = _build_request(provider="pia", base_url="http://169.254.169.254/")
-    assert request.provider == "pia"
+    request = _build_request(provider=provider, base_url="http://169.254.169.254/")
+    assert request.provider == provider
     assert request.base_url is None
+
+
+def test_a_deployment_can_offer_a_second_gateway(use_catalog):
+    url = "https://second.example/v1"
+    use_catalog({"providers": {"gateway": {
+        "label": "Second gateway", "base_url": url, "models": [{"id": "vendor/m", "default": True}],
+    }}})
+    assert {p["id"]: p for p in _get_config()["providers"]}["gateway"]["label"] == "Second gateway"
+    client = create_llm_client(provider="gateway", api_key="sk-test", base_url="http://169.254.169.254/")
+    assert client._base_url == url
+    assert client._model == "vendor/m"
+
+
+def test_a_gateway_is_not_a_model_vendor():
+    from besser.spec_driven_agent.state.agent_trace import normalize_model_id
+    assert normalize_model_id("gateway", "m") == "m"
 
 
 # --- the provider's default model -------------------------------------------
@@ -298,10 +329,17 @@ def test_the_catalog_can_correct_a_built_in_row(use_catalog):
 
 
 @pytest.mark.parametrize("request_block, message", [
-    ({"forced_tools": False}, "unknown request field 'forced_tools'"),
-    ({"forced_tool_choice": "no"}, "request.forced_tool_choice has the wrong type"),
+    ({"forced_tools": False}, r"request\.forced_tools: Extra inputs are not permitted"),
+    ({"forced_tool_choice": "no"}, r"request\.forced_tool_choice: Input should be a valid boolean"),
+    ({"forced_tool_choice": None}, r"request\.forced_tool_choice: Input should be a valid boolean"),
 ])
 def test_a_malformed_request_block_fails_loudly(use_catalog, request_block, message):
     use_catalog({"providers": {"x": {"label": "X", "models": [{"id": "m", "request": request_block}]}}})
     with pytest.raises(ModelCatalogError, match=message):
         load_model_catalog()
+
+
+def test_notes_are_ignored_at_any_depth(use_catalog):
+    use_catalog({"providers": {"x": {"_note": "ops", "label": "X", "models": [
+        {"id": "m", "_why": "cheap", "price": {"input": 1, "output": 2, "_source": "vendor"}}]}}})
+    assert load_model_catalog().providers["x"]["models"][0]["price"]["cache_read"] == 1.0

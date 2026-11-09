@@ -317,7 +317,7 @@ def test_personalize_gui_page_rejects_v3_user_profile():
 ])
 def test_agent_config_recommendation_rejects_v3_user_profile(monkeypatch, endpoint):
     from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
-    monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+    monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
     _assert_legacy_rejected(_post(
         endpoint,
         json={"userProfileModel": _v3_model("UserDiagram")},
@@ -326,9 +326,9 @@ def test_agent_config_recommendation_rejects_v3_user_profile(monkeypatch, endpoi
 
 
 def test_github_deploy_webapp_rejects_v3_before_calling_github(monkeypatch):
-    from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api as gda
+    from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api as gda
 
-    monkeypatch.setattr(gda, "get_user_token", lambda _session: "fake-token")
+    monkeypatch.setattr(gda, "get_user_token", lambda _sessions, _session: "fake-token")
 
     def _no_github(_token):
         raise AssertionError("GitHub must not be contacted for a legacy payload")

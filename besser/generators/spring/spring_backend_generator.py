@@ -75,6 +75,8 @@ class SpringBackendGenerator(GeneratorInterface):
         description (str): The Maven ``description`` of the generated project.
     """
 
+    regenerable = True
+
     def __init__(self,
                  model: DomainModel,
                  output_dir: str = None,

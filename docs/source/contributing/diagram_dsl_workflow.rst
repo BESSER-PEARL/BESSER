@@ -106,7 +106,7 @@ The BESSER backend uses a **modular router architecture**. The application facto
 (``backend.py``) registers middleware and includes routers from ``backend/routers/``.
 Endpoints are organized by concern:
 
-- ``routers/generation_router.py`` — code generation
+- ``routers/generation_router.py`` — code generation (dispatch in ``services/generation/``)
 - ``routers/conversion_router.py`` — BUML import/export
 - ``routers/validation_router.py`` — diagram validation
 - ``routers/deployment_router.py`` — deployment integration
@@ -122,7 +122,8 @@ The BESSER backend must understand the JSON produced by the editor:
      and re-export it from
      ``besser/utilities/web_modeling_editor/backend/services/converters/__init__.py``.
    * Add or update endpoints in the appropriate router (e.g., ``routers/generation_router.py``
-     for generation, ``routers/conversion_router.py`` for export).
+     for generation, ``routers/conversion_router.py`` for export). A generator that reads the
+     new diagram gets its branch in ``services/generation/dispatch.py``.
    * If the diagram is part of a project payload, update
      ``besser/utilities/web_modeling_editor/backend/services/converters/json_to_buml/project_converter.py``
      to include the new diagram type.

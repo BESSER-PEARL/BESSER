@@ -13,8 +13,8 @@ production:
 
 import pytest
 
+from besser.llm.pricing import get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
-    _get_pricing,
     create_llm_client,
     free_alt_choice,
     free_alt_models,
@@ -58,14 +58,14 @@ def test_start_event_rejects_unknown_provider():
 
 @pytest.mark.parametrize("model", ["qwen3-coder:30b", "llama3.1:8b", "qwen2.5-coder:32b"])
 def test_local_models_price_zero(model):
-    p = _get_pricing(model)
+    p = get_pricing(model)
     assert p == {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0}
 
 
 def test_unknown_paid_model_keeps_protective_fallback():
     # A genuinely-unknown *paid* cloud id must NOT drop to $0 (keeps the cap
     # meaningful for BYOK runs on a new model we don't have a rate for yet).
-    assert _get_pricing("some-new-cloud-model")["input"] > 0
+    assert get_pricing("some-new-cloud-model")["input"] > 0
 
 
 # ---------------------------------------------------------------------

@@ -1,7 +1,7 @@
 name: BESSER CodeQL config
 
 # `py/clear-text-storage-sensitive-data` flags the two `f.write(render_config)`
-# calls in `besser/utilities/web_modeling_editor/backend/services/deployment/
+# calls in `besser/utilities/web_modeling_editor/backend/routers/
 # github_deploy_api.py` because the generated `render.yaml` references env-var
 # KEY names like `STREAMLIT_DB_PASSWORD` and `OPENAI_API_KEY` so the deployed
 # Render service can wire the actual secrets at runtime. No password VALUES are

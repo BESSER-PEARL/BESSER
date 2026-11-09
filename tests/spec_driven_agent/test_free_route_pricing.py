@@ -16,9 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from besser.llm.pricing import MODEL_PRICING, ZERO_PRICING, get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
-    _MODEL_PRICING,
-    _ZERO_PRICING,
     create_llm_client,
 )
 
@@ -80,19 +79,17 @@ def test_paid_alts_use_command_codes_published_rates(lineup, alt):
     # These have no row in the vendored table; Command Code publishes them.
     client = create_llm_client(provider="free", model=alt)
     assert client.model == alt
-    assert client.usage.pricing != _MODEL_PRICING["gpt-4o"]
+    assert client.usage.pricing != MODEL_PRICING["gpt-4o"]
     assert client.usage.pricing["cache_read"] < client.usage.pricing["input"]
 
 
 def test_an_unpriced_paid_id_on_an_unknown_gateway_gets_the_conservative_rate():
-    from besser.spec_driven_agent.providers.llm_client import _get_pricing
-
-    assert _get_pricing("meta/muse-spark-1.3", route="https://gateway.example/v1") == _MODEL_PRICING["gpt-4o"]
+    assert get_pricing("meta/muse-spark-1.3", route="https://gateway.example/v1") == MODEL_PRICING["gpt-4o"]
 
 
 def test_the_free_suffixed_alt_is_zero(lineup):
     client = create_llm_client(provider="free", model=LAGUNA)
-    assert client.usage.pricing == _ZERO_PRICING
+    assert client.usage.pricing == ZERO_PRICING
     assert _run_like_the_reviewed_one(client) == 0.0
 
 
@@ -169,7 +166,49 @@ def test_command_code_alternates_use_their_published_rates(model, rates):
 
 
 def test_the_same_id_on_another_route_keeps_that_routes_price():
-    from besser.spec_driven_agent.providers.llm_client import _get_pricing
-
-    nebius = _get_pricing("moonshotai/Kimi-K3", billed=True, route="https://api.studio.nebius.ai/v1/")
+    nebius = get_pricing("moonshotai/Kimi-K3", billed=True, route="https://api.studio.nebius.ai/v1/")
     assert nebius["input"] == 3.0 and nebius["cache_read"] != 0.30
+
+
+# Live evidence, production v8.8.0 (2026-11-04), free run 8ba774bb on a 6-class
+# library model. Unlisted, this model fell to the gpt-4o rate: the run was
+# recorded at $5.03, stopped at the $5 cap, and never reached Phase 3. At
+# Command Code's published rate the same tokens cost about $0.12.
+MINIMAX_FLASH = "minimax/minimax-m3.1-flash"
+CAPPED_RUN = SimpleNamespace(
+    input_tokens=152_667, output_tokens=87_373,
+    cache_creation_input_tokens=0, cache_read_input_tokens=3_020_534,
+)
+
+
+def test_a_free_tier_minimax_flash_run_is_not_capped_at_the_gpt4o_rate(lineup, monkeypatch):
+    monkeypatch.setenv("BESSER_FREE_LLM_MODEL", MINIMAX_FLASH)
+    client = create_llm_client(provider="free")
+    assert client.usage.pricing != MODEL_PRICING["gpt-4o"]
+
+    client.usage.record(CAPPED_RUN)
+
+    assert client.usage.estimated_cost == pytest.approx(0.12, abs=0.005)
+
+
+@pytest.mark.parametrize("model, rate", [
+    (MINIMAX_FLASH, (0.15, 0.60, 0.015)),
+    ("z-ai/glm-5.3-flash", (0.15, 0.50, 0.03)),
+    # Free on Command Code, but its id has no free marker to go by.
+    ("stealth/crouton-alpha", (0.0, 0.0, 0.0)),
+])
+def test_the_paid_free_tier_models_carry_the_gateways_published_rate(model, rate):
+    pricing = get_pricing(model, route=FREE_URL)
+    assert (pricing["input"], pricing["output"], pricing["cache_read"]) == rate
+
+
+def test_a_model_nobody_priced_warns_once_that_it_got_the_fallback_rate(caplog):
+    with caplog.at_level("WARNING", logger="besser.llm.pricing"):
+        first = get_pricing("vendor/nobody-priced-this", route=FREE_URL)
+        get_pricing("vendor/nobody-priced-this", route=FREE_URL)
+        get_pricing(MINIMAX_FLASH, route=FREE_URL)
+
+    assert first == MODEL_PRICING["gpt-4o"]
+    warnings = [r.getMessage() for r in caplog.records if "fallback" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "vendor/nobody-priced-this" in warnings[0]

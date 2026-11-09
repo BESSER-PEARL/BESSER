@@ -177,7 +177,7 @@ def test_the_digest_reads_schemas_then_routers_and_skips_the_stdlib(tmp_path, mo
     routers_at = digest.index("### web_app/backend/routers/booking.py")
     assert schemas_at < routers_at and orm_at < routers_at
     assert "### web_app/backend/routers/room.py" in digest
-    assert "bal_stdlib.py" not in digest
+    assert "### web_app/backend/bal_stdlib.py" not in digest
     assert "\n\n\n" not in digest, "blank lines are dropped"
     assert len(digest) <= ledger._DIGEST_MAX_TOTAL_CHARS
     _write(tmp_path, "backend/routers/booking.py", "x = 1\n" * 200 + "def tail_rule(): return True\n")
@@ -873,3 +873,28 @@ def test_verdicts_sent_as_a_json_string_are_still_judged():
     ]})
     verdicts = ledger.judge_coverage(reqs, "### x.py\nreturn a", _ToolClient([{"verdicts": answer}]))
     assert [v["status"] for v in verdicts] == ["implemented", "missing"]
+
+
+def test_judge_digest_lists_or_includes_init_py(tmp_path):
+    """The digest skipped every ``__init__.py`` and ``database.py`` without
+    saying so, so a Flask app factory in ``__init__.py`` was invisible to the
+    judge (review 2026-10-30, H7, ``probe_digest_skip.py``)."""
+    package = tmp_path / "inventory"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from flask import Flask\napp = Flask(__name__)\n@app.post('/items')\n"
+        "def create_item():\n    return LOW_STOCK_ALERT\n", encoding="utf-8")
+    (package / "database.py").write_text(
+        "ENGINE_URL = 'postgresql://inventory@db/inventory'\n", encoding="utf-8")
+    (package / "views.py").write_text("def list_items():\n    return []\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("# package marker\n", encoding="utf-8")
+    (tmp_path / "bal_stdlib.py").write_text("def bal_len(x):\n    return len(x)\n", encoding="utf-8")
+
+    digest = ledger.build_app_digest(str(tmp_path))
+    source, coverage = digest.split("## Digest coverage")
+
+    assert "### inventory/__init__.py" in source and "LOW_STOCK_ALERT" in source
+    assert "### inventory/database.py" in source
+    assert "pkg/__init__.py" not in digest  # empty after comments: nothing to judge
+    assert "bal_stdlib.py" not in source and "Omitted files: bal_stdlib.py" in coverage

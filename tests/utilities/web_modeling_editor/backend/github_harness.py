@@ -23,7 +23,8 @@ skips GitHub's consent page and lands on the real callback as user ``ana``.
 ``POST /mock/teammate-class?repo=library&name=Member``,
 ``POST /mock/teammate-rename?repo=library&element=<id>&name=Writer``,
 ``POST /mock/teammate-code?repo=…&path=…&content=…``,
-``POST /mock/merge-pull?repo=…&number=1``, and to inspect:
+``POST /mock/merge-pull?repo=…&number=1``, ``POST /mock/sign-in-as?login=ben`` (who
+GitHub says is signed in, for a second person in a second origin), and to inspect:
 ``GET /mock/files?repo=…[&ref=…]``, ``GET /mock/state?repo=…``.
 """
 
@@ -59,9 +60,9 @@ fake = FakeGitHub(login="ana", token="gho_fake_token", root=os.path.join(WORKDIR
 httpx.AsyncClient = github_client_class(fake)
 
 from besser.utilities.web_modeling_editor.backend.backend import app  # noqa: E402
-from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth, repo_model  # noqa: E402
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model  # noqa: E402
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (  # noqa: E402
-    SMART_RUN_REGISTRY, SmartRunEntry, _seed_workspace_from_base, create_run_workspace, run_changes,
+    SmartRunEntry, _seed_workspace_from_base, create_run_workspace, run_changes,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (  # noqa: E402
     DoneEvent, PhaseEvent, StartEvent, ToolCallEvent, format_sse,
@@ -194,6 +195,12 @@ def merge_pull(repo: str, number: int, owner: str = "ana"):
     return {"sha": fake.merge_pull(_repo(owner, repo), number)}
 
 
+@mock.post("/sign-in-as")
+def sign_in_as(login: str):
+    fake.login = login
+    return {"login": login}
+
+
 @mock.get("/files")
 def files(repo: str, owner: str = "ana", ref: str = ""):
     return {path: {"mode": mode, "size": len(data), "text": data.decode("utf-8", "replace")[:400]}
@@ -212,7 +219,7 @@ def state(repo: str, owner: str = "ana"):
 async def login(request: Request):
     """"Connect GitHub": skip github.com's consent page, keep the real callback."""
     state_token = uuid.uuid4().hex
-    github_oauth._oauth_sessions.set(state_token, {"client_ip": "harness"})
+    request.app.state.github_sessions.oauth_states.set(state_token, {"client_ip": "harness"})
     return RedirectResponse(f"/besser_api/github/auth/callback?code=fake&state={state_token}")
 
 
@@ -228,7 +235,8 @@ class Review(Base):
 async def generate(request: Request):
     """A real modify run without an LLM: seeded from its base, code edited, a class added."""
     body = await request.json()
-    base = await SMART_RUN_REGISTRY.get(body.get("base_run_id") or "")
+    registry = request.app.state.spec_driven.registry
+    base = await registry.get(body.get("base_run_id") or "")
     run_id = uuid.uuid4().hex
     workdir = create_run_workspace(run_id)
     if base is not None:
@@ -249,7 +257,7 @@ async def generate(request: Request):
         diagram["model"] = with_class(diagram["model"], "Review", dx=840)
         entry.updated_project_export = {"project": project, "exportedAt": "2026-10-29T12:00:00Z", "version": "2.0.0"}
         changes = ["class Review added"]
-    await SMART_RUN_REGISTRY.put(run_id, entry)
+    await registry.put(run_id, entry)
     recipe = {"history": [{"mode": "modify"}],
               "tool_calls": [{"tool": "modify_file", "input": {"path": "app/models.py"}},
                              {"tool": "write_file", "input": {"path": "app/reviews.py"}}],

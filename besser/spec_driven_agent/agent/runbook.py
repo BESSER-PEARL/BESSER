@@ -33,20 +33,18 @@ import logging
 import os
 
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
-from besser.spec_driven_agent.execution.workspace_fs import open_plain_write, walk_plain
+from besser.spec_driven_agent.settings import AgentSettings
+from besser.utilities.workspace_fs import open_plain_write, walk_plain
 
 logger = logging.getLogger(__name__)
 
 PROBE_FILENAME = ".besser_probe.py"
 
-# Environment kill switch. Default on whenever shell tools are enabled;
-# ``0`` gives the shell without the procedure (an escape hatch if the section
-# misfires on a stack the probe does not understand).
-_RUNBOOK_ENV = "BESSER_LLM_SHELL_RUNBOOK"
-
-
+# Environment kill switch (BESSER_LLM_SHELL_RUNBOOK). Default on whenever
+# shell tools are enabled; ``0`` gives the shell without the procedure (an
+# escape hatch if the section misfires on a stack the probe does not understand).
 def runbook_enabled() -> bool:
-    return os.environ.get(_RUNBOOK_ENV, "1").strip().lower() not in ("0", "false", "no")
+    return AgentSettings().llm_shell_runbook
 
 
 def _find_backend(output_dir: str) -> str | None:

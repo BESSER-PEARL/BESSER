@@ -9,23 +9,28 @@ from typing import Callable, Optional
 
 from fastapi import HTTPException
 
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token,
+)
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
+    GitHubSessions,
 )
 
 
 def require_github_session(
+    github_sessions: GitHubSessions,
     github_session: Optional[str],
-    token_lookup: Optional[Callable[[str], Optional[str]]] = None,
+    token_lookup: Optional[Callable[[GitHubSessions, str], Optional[str]]] = None,
 ) -> None:
     """Verify a GitHub OAuth session is present and active.
 
     Mirrors the auth gate used by the deploy endpoints in github_deploy_api.py.
 
     Args:
+        github_sessions: The app's sign-in stores (``GitHubSessionsDep``).
         github_session: The value of the ``X-GitHub-Session`` header (or the
             equivalent value sent by a WebSocket client).
-        token_lookup: Resolves a session id to its access token. Defaults to
+        token_lookup: Resolves ``(github_sessions, session id)`` to its access token. Defaults to
             :func:`github_oauth.get_user_token`; callers may pass their own
             module-level reference so it can be patched in tests.
 
@@ -38,7 +43,7 @@ def require_github_session(
             status_code=401,
             detail="GitHub authentication required. Please sign in with GitHub first.",
         )
-    if not lookup(github_session):
+    if not lookup(github_sessions, github_session):
         raise HTTPException(
             status_code=401,
             detail="GitHub session expired. Please sign in again.",

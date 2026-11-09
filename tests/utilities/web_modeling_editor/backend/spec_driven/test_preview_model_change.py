@@ -11,7 +11,6 @@ import time
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
@@ -21,6 +20,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_smart_preview 
     _preview,
     _project,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 BASE_ID = "b" * 32
 
@@ -37,12 +37,12 @@ def base_run(tmp_path):
     def _register(user_model: dict) -> None:
         (tmp_path / ".besser_recipe.json").write_text(
             json.dumps({"model": {"user_model": user_model}}), encoding="utf-8")
-        asyncio.run(SMART_RUN_REGISTRY.put(BASE_ID, SmartRunEntry(
+        asyncio.run(current_runtime().registry.put(BASE_ID, SmartRunEntry(
             file_path=str(tmp_path / "out.zip"), file_name="out.zip", is_zip=True,
             temp_dir=str(tmp_path), created_at=time.time(),
         )))
     yield _register
-    asyncio.run(SMART_RUN_REGISTRY.pop(BASE_ID))
+    asyncio.run(current_runtime().registry.pop(BASE_ID))
 
 
 def _body(mode="modify"):

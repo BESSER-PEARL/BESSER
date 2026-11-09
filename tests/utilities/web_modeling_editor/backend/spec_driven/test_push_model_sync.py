@@ -24,8 +24,8 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
@@ -34,6 +34,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -70,6 +71,9 @@ class _CapturingGitHubService:
     async def get_branch_head(self, owner, repo_name, branch):
         return "a" * 40
 
+    async def get_tree_entries(self, owner, repo_name, commit_sha):
+        return {}
+
     async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
         return None
 
@@ -102,8 +106,8 @@ class _CapturingGitHubService:
 
 
 def _install(monkeypatch, fake):
-    monkeypatch.setattr(router_module, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(router_module, "get_user_token", lambda sid: "fake-token")
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(router_module, "get_user_token", lambda _sessions, sid: "fake-token")
 
 
 def _export(name: str) -> dict:
@@ -134,7 +138,7 @@ def _seed_run(run_id: str, *, updated_export: dict | None) -> str:
         created_at=time.time(),
         updated_project_export=updated_export,
     )
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, entry))
+    asyncio.run(current_runtime().registry.put(run_id, entry))
     return tmp
 
 

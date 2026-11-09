@@ -17,7 +17,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from besser.spec_driven_agent.execution.workspace_fs import open_plain_write
+from besser.utilities.workspace_fs import open_plain_write
 
 
 @dataclass(frozen=True)

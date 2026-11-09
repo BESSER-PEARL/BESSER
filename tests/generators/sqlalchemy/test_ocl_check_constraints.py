@@ -131,6 +131,23 @@ def test_sqlalchemy_output_unchanged_by_default(tmpdir):
     assert "CheckConstraint" not in code
 
 
+def test_the_generators_options_are_the_defaults_of_generate(tmpdir):
+    model, _ = _book_model("self.pages > 0")
+    output_dir = str(tmpdir.mkdir("out"))
+    generator = SQLAlchemyGenerator(model=model, output_dir=output_dir, dbms="postgresql", ocl_check_constraints=True)
+    path = os.path.join(output_dir, "sql_alchemy.py")
+
+    generator.generate()
+    with open(path, encoding="utf-8") as f:
+        code = f.read()
+    assert "postgresql+psycopg2://" in code and "CheckConstraint" in code
+
+    generator.generate(dbms="mysql", ocl_check_constraints=False)
+    with open(path, encoding="utf-8") as f:
+        code = f.read()
+    assert "mysql+pymysql://" in code and "CheckConstraint" not in code
+
+
 def test_sqlalchemy_check_constraints_are_enforced(tmpdir):
     model, _ = _book_model("self.pages > 0", "self.title <> ''", "self.title.size() > 0")
     path, code = _generate(model, tmpdir, ocl_check_constraints=True)

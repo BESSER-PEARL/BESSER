@@ -30,7 +30,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from besser.spec_driven_agent.parsed_source import parse_source
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 # Model type names that serialize to a string on the wire.
 _STRING_TYPES = frozenset({"str", "string", "uuid"})

@@ -310,7 +310,7 @@ def test_v4_object_diagram_ingest():
 # ---------------------------------------------------------------------------
 
 def test_extract_reference_class_diagram_accepts_v4_shape():
-    from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
+    from besser.utilities.web_modeling_editor.backend.services.generation.dispatch import (
         _extract_reference_class_diagram,
     )
 
@@ -336,7 +336,7 @@ def test_extract_reference_class_diagram_accepts_v4_shape():
 
 
 def test_extract_reference_class_diagram_rejects_v3_shape():
-    from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
+    from besser.utilities.web_modeling_editor.backend.services.generation.dispatch import (
         _extract_reference_class_diagram,
     )
 

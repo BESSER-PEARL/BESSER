@@ -1,7 +1,6 @@
 import configparser
 import logging
 import os
-import docker
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.generators.rest_api import RESTAPIGenerator
@@ -36,6 +35,8 @@ class BackendGenerator(GeneratorInterface):
                                 description of the generated API.
         api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
     """
+
+    regenerable = True
 
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
                  api_title: str = None, api_description: str = None, api_version: str = None):
@@ -80,6 +81,11 @@ class BackendGenerator(GeneratorInterface):
             else:
                 logger.warning("Docker configuration file not found at path: %s", self.docker_config_path)
             return None
+
+    def _regeneration_refusal(self) -> "str | None":
+        if self.docker_image and self.config:
+            return "with docker_image and a Docker configuration it builds and pushes an image without your edits."
+        return None
 
     def generate(self):
         """
@@ -180,6 +186,13 @@ class BackendGenerator(GeneratorInterface):
         repository = self.config["docker_repository"]
         tag = self.config["docker_tag"]
         full_image_name = f"{repository}/{image_name}:{tag}"
+
+        try:
+            import docker
+        except ImportError as exc:
+            raise ImportError(
+                'Building the Docker image needs the docker package: pip install "besser[docker]"'
+            ) from exc
 
         # Create docker client
         client = docker.from_env()

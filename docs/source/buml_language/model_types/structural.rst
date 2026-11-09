@@ -118,6 +118,82 @@ The structural metamodel performs validation at multiple levels:
     result = domain_model.validate()
     # result contains errors and warnings about the model structure
 
+.. _structural-design-checks:
+
+Design checks
+~~~~~~~~~~~~~
+
+``DomainModel.validate()`` also reports design mistakes that pass construction but
+break, or degrade, the generated code. An **error** is a defect for every code
+generator; a **warning** is legal UML that breaks a specific family of generators,
+named in the message. The web editor's *Validate* shows both, and the Spec-Driven
+Agent turns the fatal ones into blockers (see :ref:`spec-driven-model-contract`).
+Each message says what is wrong, why it breaks generation, and how to fix it.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 10 60
+
+   * - Check
+     - Severity
+     - Example message (abridged)
+   * - Name that is not an identifier
+     - error
+     - Attribute '2nd_name' of class 'Item' is not a valid identifier: generated code uses the
+       name as written, so it will not parse.
+   * - Attribute typed by a type outside the model
+     - error
+     - Attribute 'color' of class 'Car' has type 'Color', which is not in the domain model.
+   * - Mandatory creation cycle
+     - warning
+     - Mandatory creation cycle: Brand -> BrandURL -> Brand. … Relax one of the association
+       ends in the cycle to an optional multiplicity (0..1 or 0..*).
+   * - Attribute and association end with one name
+     - warning
+     - Attribute and association end share a name: class 'Book' has an attribute and an
+       association end both named 'author'.
+   * - Python keyword name
+     - warning
+     - Python keyword name: Attribute 'from' of class 'Item' is the Python keyword 'from'.
+   * - Class names that differ only in case
+     - warning
+     - Class names differ only in case: 'Order', 'order'. … map to the same table 'order'.
+   * - Attribute names that differ only in case
+     - warning
+     - Attribute names differ only in case: 'Name', 'name' in class 'Person'.
+   * - Join table name clash
+     - warning
+     - Join table name clash: class 'Enrollment' and many-to-many association 'Enrollment'
+       map to the same table 'enrollment'.
+   * - Foreign key column clash
+     - warning
+     - Foreign key column clash: attribute 'author_id' of class 'Book' has the name of the
+       foreign key generated for association end 'author'.
+   * - ``id`` attributes
+     - warning
+     - Subclass declares 'id': … / Attribute 'id' is not the identifier: …
+   * - Empty enumeration
+     - warning
+     - Empty enumeration: 'Status' has no literals.
+   * - Class-typed attribute
+     - warning
+     - Class-typed attribute: attribute 'writer' of class 'Book' has the class 'Author' as its
+       type. … Replace the attribute with an association.
+   * - Isolated class
+     - warning
+     - Isolated class: 'Empty' has no attributes, methods, associations or generalizations.
+   * - Abstract class without concrete subclass
+     - warning
+     - Abstract class without concrete subclass: 'Shape' is abstract and no concrete class
+       specializes it.
+   * - Part with several mandatory owners
+     - warning
+     - Part with several mandatory owners: class 'Line' is a mandatory part of 'Invoice' and
+       'Order'.
+   * - Duplicate associations
+     - warning
+     - Classes 'Book' and 'Author' are connected by 2 associations.
+
 
 Supported notations
 -------------------

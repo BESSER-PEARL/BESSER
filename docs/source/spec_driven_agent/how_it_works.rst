@@ -11,8 +11,10 @@ A run is a three-phase pipeline (``LLMOrchestrator.run`` in
 
    A new run. Teal boxes are LLM calls, and everything else is deterministic
    code. The agent is one conversation with a tool list. Around Phase 1, two
-   deterministic checks run: Phase 0 turns mandatory creation cycles in the model
-   into blockers before anything is generated, and Phase 1.5 validates the scaffold.
+   deterministic checks run: Phase 0 turns the model's design defects (a
+   mandatory creation cycle, an invalid name, two tables with one name, …) into
+   blockers before anything is generated, and Phase 1.5 validates the scaffold.
+   See :ref:`spec-driven-model-contract`.
 
 The three phases
 ----------------

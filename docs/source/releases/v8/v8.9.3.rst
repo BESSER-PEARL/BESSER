@@ -126,6 +126,14 @@ asks *Generate anyway* on generation.
 Other changes
 -------------
 
+* **Deleting a whole deletes its parts.** The FastAPI backend and the
+  SQLAlchemy models ignored composition: deleting a whole answered ``409``
+  while it had parts ("OrderLine … requires at least 1 order"), so an Order
+  with lines could never be deleted. The whole's relationship now cascades
+  (``cascade="all, delete-orphan"``), nested parts included, and the delete
+  guard is kept only for plain mandatory associations. A new
+  ``Part with several wholes:`` warning flags a composition whose whole end
+  allows more than one whole, which usually means the diamond is at the part.
 * **A project's README says what it is.** A repository created from the
   GitHub panel, a deployed web app or chatbot, and a new repository that a
   Spec-Driven or generator result is pushed to (when the run has no README of

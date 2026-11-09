@@ -190,6 +190,10 @@ Each message says what is wrong, why it breaks generation, and how to fix it.
      - warning
      - Part with several mandatory owners: class 'Line' is a mandatory part of 'Invoice' and
        'Order'.
+   * - Part with several wholes
+     - warning
+     - Part with several wholes: in composition 'order_lines', each 'Order' is a part of many
+       'OrderLine'. … If the diamond is at the wrong end, move it to 'Order'.
    * - Duplicate associations
      - warning
      - Classes 'Book' and 'Author' are connected by 2 associations.

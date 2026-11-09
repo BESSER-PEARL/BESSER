@@ -13,13 +13,12 @@ import shutil
 import stat
 import tarfile
 import tempfile
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
 import httpx
 
-from besser.utilities.provenance import BESSER_URL
+from besser.utilities.provenance import readme_about
 from besser.utilities.web_modeling_editor.backend.services.deployment.render_blueprint import RENDER_DEPLOY_URL
 from besser.utilities.web_modeling_editor.backend.services.deployment.repo_model import commit_origin, with_origin
 
@@ -54,17 +53,6 @@ def git_blob_sha(content: bytes) -> str:
 def content_hash(content: bytes) -> str:
     """The hash a run records of each file it got from a repo (``push_directory_to_repo``'s ``base_hashes``)."""
     return hashlib.sha256(content).hexdigest()
-
-
-def readme_about(description: object, done: str) -> str:
-    """The project description and today's date (UTC), when ``done`` (e.g. "Generated") happened, as README paragraphs.
-
-    The description is the project's own text; a missing or blank one is left out.
-    """
-    text = description.strip() if isinstance(description, str) else ""
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    stamp = f"{done} with [BESSER]({BESSER_URL}) on {day}."
-    return f"{text}\n\n{stamp}\n" if text else f"{stamp}\n"
 
 
 def _merge_message(branch: str, commit_message: str) -> str:
@@ -925,7 +913,7 @@ class GitHubService:
         owner: str = "",
         repo_name: str = "",
         deployment_type: str = "webapp",
-        description: str = "",
+        description: Optional[str] = "",
     ) -> str:
         """Generate README.md content; ``description`` is the project's."""
         about = readme_about(description, "Generated")

@@ -699,6 +699,21 @@ def test_the_deploy_readme_holds_the_description_and_the_generation_date():
         assert blank == bare
 
 
+def test_a_description_holding_the_besser_block_markers_survives_a_push():
+    """The README block markers in a description would make a later push strip or replace the user's text."""
+    from besser.utilities.provenance import (
+        BESSER_BLOCK_BEGIN, BESSER_BLOCK_END, readme_about, strip_besser_block, with_besser_block,
+    )
+
+    description = f"Loans. {BESSER_BLOCK_BEGIN} keep me {BESSER_BLOCK_END} and members."
+    readme = "# Library\n\n" + readme_about(description, "Created")
+    assert BESSER_BLOCK_BEGIN not in readme and BESSER_BLOCK_END not in readme
+    assert strip_besser_block(readme) == readme
+    block = f"{BESSER_BLOCK_BEGIN}\nBuilt with BESSER\n{BESSER_BLOCK_END}"
+    pushed = with_besser_block(readme, block)
+    assert "keep me" in pushed and pushed.rstrip().endswith(BESSER_BLOCK_END)
+
+
 class _FailingGitHub:
     """Every GitHub call answers ``status``."""
 

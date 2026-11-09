@@ -19,10 +19,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.secret_redaction import redact_credentials, sanitize_config
+from besser.utilities.provenance import readme_about
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import attribution_records
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
-    create_github_service, readme_about,
+    create_github_service,
 )
 from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token
@@ -1687,8 +1688,6 @@ async def load_project_from_commit(
 
 
 _README_TEMPLATE = """# {project_name}
-
-A [BESSER](https://github.com/BESSER-PEARL/BESSER) project.
 
 {about}
 ## Files

@@ -10,6 +10,7 @@ import io
 import os
 import re
 import zipfile
+from datetime import datetime, timezone
 from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
@@ -70,6 +71,20 @@ def _inline(value) -> str:
 def inline_code(value) -> str:
     """A value as one markdown code span: never a link, heading or HTML."""
     return f"`{_inline(value)}`"
+
+
+def readme_about(description: Optional[str], done: str) -> str:
+    """The project description and today's date (UTC), when ``done`` (e.g. "Generated") happened, as README paragraphs.
+
+    The description is the project's own markdown; a missing or blank one is left out. The README
+    block markers in it are escaped, or a later push would take the user's text for BESSER's block.
+    """
+    text = description.strip() if isinstance(description, str) else ""
+    for marker in (BESSER_BLOCK_BEGIN, BESSER_BLOCK_END):
+        text = text.replace(marker, marker.replace("<", "&lt;"))
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamp = f"{done} with [BESSER]({BESSER_URL}) on {day}."
+    return f"{text}\n\n{stamp}\n" if text else f"{stamp}\n"
 
 
 def generation_provenance_markdown(

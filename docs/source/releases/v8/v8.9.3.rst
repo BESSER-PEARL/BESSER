@@ -24,14 +24,21 @@ Highlights
   that lost the memory rebuilds it. The editor also sends the stored API key
   again on each reconnect, so the chosen model is kept. Reported in
   `#745 <https://github.com/BESSER-PEARL/BESSER/issues/745>`_.
-* **The conversation is kept with the project.** The editor stores the latest
-  50 turns on the project: they are saved in the browser, written to
-  ``buml/diagrams.json`` on a GitHub save, and restored when the project opens
-  with an empty chat. Provider tokens are redacted there like the rest of the
-  model, and the key stored in the tab is removed before the conversation is
-  kept. Generation requests leave it out. When two people each chatted since
-  the last commit, the save keeps the saver's conversation instead of
-  reporting a conflict.
+* **The conversation is kept with the project.** Every tab or window that
+  opens a project shows its assistant conversation, run cards included, and
+  continues it after the tab is closed. Tabs open on the same project show
+  each other's turns as they happen, and a new chat in one clears the others.
+  The browser keeps the full conversations of the 20 most recently used
+  projects, within about 2 MB; when a project save finds the browser's storage
+  full, these are dropped first. The editor also stores the latest 50 turns
+  on the project: they are written to ``buml/diagrams.json`` on a GitHub save
+  and restored when this browser has no conversation for the project. The key
+  stored in the tab is removed from both copies, and provider tokens are
+  redacted in the project like the rest of the model. Generation requests
+  leave the conversation out. When two people each chatted since the last
+  commit, the save keeps the saver's conversation instead of reporting a
+  conflict
+  (`BESSER-Web-Modeling-Editor#272 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/272>`_).
 * **Compositions point the right way.** The editor draws a composition's
   diamond at the target end, the whole. The modeling agent stated and read
   compositions the other way round, and the assistant's *extract class* and
@@ -184,10 +191,12 @@ folds in #262 to #267, and
 `#269 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/269>`_
 releases ``develop`` to ``main``;
 `#270 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/270>`_
-adds the v1 project and NexaCRM template fixes, and
+adds the v1 project and NexaCRM template fixes,
 `#271 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/271>`_
-adds the GUI navigation map. The ``frontend`` submodule points at #271's
-merge. The editor's version, shown in its About dialog and
+adds the GUI navigation map, and
+`#272 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/272>`_
+keeps the assistant conversation with the project in every tab. The
+``frontend`` submodule points at #272's merge. The editor's version, shown in its About dialog and
 stamped into JSON exports, is now ``8.9.3``. Its own notes are ``docs/source/releases/v8.9.3.rst`` in the
 editor repository.
 
@@ -211,5 +220,9 @@ Upgrade notes
   endpoint, and the editor's OpenAPI types match this backend.
 * A GitHub save now commits the user's assistant conversation in
   ``buml/diagrams.json``.
+* The assistant conversation moves from per-tab to per-project storage in the
+  browser. The first project each open tab shows after the upgrade takes that
+  tab's conversation once, if it belongs to that project; a tab closed before
+  the upgrade has no conversation left to move.
 * To offer the full Command Code model list (#743), add the models to the
   deployment's model catalog (``BESSER_MODEL_CATALOG``).

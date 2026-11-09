@@ -9,7 +9,6 @@ import logging
 import os
 import tempfile
 import uuid
-import importlib.util
 import json
 
 import requests
@@ -110,7 +109,6 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_TEMP_DIR_PREFIX,
     CSV_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
-    AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
     KG_DIAGRAM_TYPE,
@@ -900,25 +898,15 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
         json_data["config"] = config
         # Convert to BUML model
+        # The generator takes the in-memory model. Serializing it to Python and
+        # importing that would run the user's code actions and tool code here.
         agent_model = process_agent_diagram(json_data)
-
-        # Persist BUML to file for generator import
-        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
-        agent_model_to_code(agent_model, agent_file)
-
-        # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
-        spec = importlib.util.spec_from_file_location("agent_model", agent_file)
-        agent_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent_module)
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
         generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
-        resolved_agent = getattr(agent_module, "agent", agent_model)
-        # gui_models is now serialized by agent_model_to_code, so the
-        # exec'd module's agent already carries it.
         generator_instance = generator_class(
-            resolved_agent,
+            agent_model,
             config=config,
             openai_api_key=extract_openai_api_key(config),
             output_dir=generation_output_dir,

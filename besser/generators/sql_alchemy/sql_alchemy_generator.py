@@ -5,6 +5,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
 from besser.utilities.utils import sort_by_timestamp
 from besser.generators.structural_utils import (
@@ -252,6 +253,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py
         """
+        require_valid_identifiers(self.model)
         dbms = self.dbms if dbms is None else dbms
         if ocl_check_constraints is None:
             ocl_check_constraints = self.ocl_check_constraints

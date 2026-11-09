@@ -2,7 +2,6 @@
 
 import ast
 import asyncio
-import importlib.util
 import io
 import json
 import logging
@@ -10,6 +9,7 @@ import os
 import tempfile
 import uuid
 import zipfile
+from copy import deepcopy
 from typing import Optional
 
 from besser.generators.agents.baf_generator import GenerationMode
@@ -70,7 +70,9 @@ def generate_agent_files(
             agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
             agent_model_to_code(agent_model, agent_file)
 
-            # Validate generated code with ast.parse() before executing
+            # The file is shipped in the ZIP, never imported: it carries the user's
+            # code actions and tool code verbatim, and importing it would run them
+            # in this process. A syntax error still means the shipped model is broken.
             with open(agent_file, "r", encoding="utf-8") as f:
                 agent_file_content = f.read()
             try:
@@ -78,11 +80,6 @@ def generate_agent_files(
             except SyntaxError as syntax_err:
                 logger.error("Generated agent code contains syntax errors: %s", syntax_err)
                 raise ValidationError("Generated code contains syntax errors") from syntax_err
-
-            # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
-            spec = importlib.util.spec_from_file_location("agent_model", agent_file)
-            agent_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(agent_module)
 
             # Get the BAFGenerator from the supported generators
             generator_info = get_generator_info("agent")
@@ -96,28 +93,16 @@ def generate_agent_files(
             # containing only the raw agent_model.py.
             generator_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
 
-            # Use the BAFGenerator with the agent model from the module.
-            # gui_models is now serialized by agent_model_to_code, so the
-            # exec'd module's agent already carries it.
-            if hasattr(agent_module, 'agent'):
-                generator = generator_class(
-                    agent_module.agent,
-                    output_dir=generator_output_dir,
-                    config=config,
-                    openai_api_key=openai_api_key,
-                    generation_mode=generation_mode,
-                    config_yaml=config_yaml,
-                )
-            else:
-                # Fall back to the original agent model
-                generator = generator_class(
-                    agent_model,
-                    output_dir=generator_output_dir,
-                    config=config,
-                    openai_api_key=openai_api_key,
-                    generation_mode=generation_mode,
-                    config_yaml=config_yaml,
-                )
+            # A copy, because personalization (configure_agent) mutates the model
+            # and callers reuse one model across configuration variants.
+            generator = generator_class(
+                deepcopy(agent_model),
+                output_dir=generator_output_dir,
+                config=config,
+                openai_api_key=openai_api_key,
+                generation_mode=generation_mode,
+                config_yaml=config_yaml,
+            )
 
             generator.generate()
 

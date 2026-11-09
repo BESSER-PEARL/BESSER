@@ -1288,11 +1288,9 @@ def test_deploying_an_app_credits_the_classes_it_adds(github, monkeypatch):
     monkeypatch.setattr(github_deploy_api, "get_generator_info", lambda _name: SimpleNamespace(generator_class=_Generator))
     agent = {
         "id": "ag1", "title": "Helper", "model": {
-            "type": "AgentDiagram",
-            "elements": {"init": {"id": "init", "type": "StateInitialNode", "name": ""},
-                         "s1": {"id": "s1", "type": "AgentState", "name": "Greet", "bodies": [], "fallbackBodies": []}},
-            "relationships": {"t": {"type": "AgentStateTransitionInit", "name": "",
-                                    "source": {"element": "init"}, "target": {"element": "s1"}}},
+            "version": "4.0.0", "type": "AgentDiagram", "edges": [], "components": {},
+            "nodes": [{"id": "s1", "type": "AgentState", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                       "data": {"name": "Greet", "initial": True, "bodies": [], "fallbackBodies": []}}],
         },
     }
     export = _envelope()
@@ -1445,6 +1443,6 @@ def test_a_spec_driven_push_credits_what_it_adds_to_whoever_pushes(github):
     assert r.status_code == 200, r.text
     project = json.loads(github.files(repo)[repo_model.MODEL_FILE][1])["project"]
     records = project["attribution"]
-    elements = project["diagrams"]["ClassDiagram"][0]["model"]["elements"]
-    assert [elements[element]["name"] for element in records] == ["Loan"]
-    assert [record["addedBy"] for record in records.values()] == ["ben"]
+    # React Flow keeps an attribute as a row of its class, and the row is credited with the class.
+    assert set(records) == {"class-loan", "attr-loan"}
+    assert {record["addedBy"] for record in records.values()} == {"ben"}

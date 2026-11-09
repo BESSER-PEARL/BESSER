@@ -34,6 +34,7 @@ from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     add_agents_block,
     add_readme_block,
+    readme_about,
     readme_besser_block,
 )
 from besser.utilities.secret_redaction import scrub_secret_files
@@ -237,12 +238,15 @@ async def push_run_to_github(
 
         # ---- 5c. Link the README back to BESSER and the model ----
         # Only a new repo gets a README the run lacks; an existing one keeps its own.
+        # That new README says what the project is and when it was generated (#750).
         model_source = f"{repo_model.MODEL_DIR}/{repo_model.DOMAIN_SOURCE}"
+        project = repo_model.project_of(effective_export) if isinstance(effective_export, dict) else {}
         add_readme_block(workdir, readme_besser_block(
             owner, repo_name, target_branch,
             model_source=model_source if os.path.isfile(os.path.join(workdir, *model_source.split("/"))) else None,
             has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
-        ), title=repo_name if is_first_push else None)
+        ), title=repo_name if is_first_push else None,
+            about=readme_about(project.get("description"), "Generated"))
 
         # Whoever comes back to this repo, here or in another coding tool, reads what the run left.
         seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)

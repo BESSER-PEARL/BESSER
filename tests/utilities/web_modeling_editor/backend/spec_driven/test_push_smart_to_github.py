@@ -9,6 +9,7 @@ real GitHub API.
 
 import asyncio
 import os
+import re
 import tempfile
 import time
 
@@ -426,8 +427,40 @@ class TestPushSmartToGitHub:
         }
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200, r.text
-        assert fake.push["readme"].startswith("# my-generated-app\n\n<!-- besser:begin -->")
+        assert re.match(
+            r"# my-generated-app\n\nGenerated with \[BESSER\]\(\S+\) on \d{4}-\d{2}-\d{2}\.\n\n<!-- besser:begin -->",
+            fake.push["readme"],
+        ), fake.push["readme"]
         assert "README.md" in fake.push["files"]
+
+    def test_a_new_readme_carries_the_project_description(self, monkeypatch):
+        # BESSER#750: the README of the repo a run creates says what the project is.
+        run_id = "3" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        export = {"project": {**_project_export(), "description": "  Tracks loans of a library.  "}}
+        body = {"run_id": run_id, "projectExport": export, "deploy_config": {"repo_name": "my-generated-app"}}
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        readme = fake.push["readme"]
+        assert readme.startswith("# my-generated-app\n\nTracks loans of a library.\n\nGenerated with [BESSER]")
+        assert readme.index("Generated with [BESSER]") < readme.index("<!-- besser:begin -->")
+
+    def test_an_existing_readme_is_not_given_the_description(self, monkeypatch):
+        run_id = "4" * 32
+        tmp = _seed_run(run_id)
+        with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# Library\n")
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        export = {**_project_export(), "description": "Tracks loans of a library."}
+        body = {"run_id": run_id, "projectExport": export, "deploy_config": {"repo_name": "my-generated-app"}}
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert fake.push["readme"].startswith("# Library\n\n<!-- besser:begin -->")
 
     def test_the_run_records_are_marked_generated_so_github_folds_their_diffs(self, monkeypatch):
         run_id = "f" * 32

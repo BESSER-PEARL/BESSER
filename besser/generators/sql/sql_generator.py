@@ -102,6 +102,12 @@ if 'DIALECT_PLACEHOLDER' == 'mssql':
     # predate 2008 (DATE/TIME rendered as DATETIME). Target a current SQL Server.
     _ddl_dialect.server_version_info = (16,)
     _ddl_dialect.deprecate_large_types = True
+if 'DIALECT_PLACEHOLDER' == 'sqlite':
+    # SQLite matches names case-insensitively and keeps them as written, so a mixed-case name
+    # ("createdAt") needs no quotes there; reserved words and illegal characters still get them.
+    _preparer = _ddl_dialect.identifier_preparer
+    _requires_quotes = _preparer._requires_quotes
+    _preparer._requires_quotes = lambda value: _requires_quotes(value.lower())
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 sql_file_path = os.path.join(current_directory, "tables_DIALECT_PLACEHOLDER.sql")
@@ -169,9 +175,10 @@ for table in Base.metadata.sorted_tables:
                     print(f"WARNING: Could not inject CHECK constraint for enum column '{col_name}' in table '{table.name}'", file=_sys.stderr)
     ddl_statements.append(ddl)
 
+# CreateTable pads a statement with blank lines and leaves a space after each comma.
+tidy_statements = ["\\n".join(line.rstrip() for line in stmt.strip().splitlines()) + ";" for stmt in ddl_statements]
 with open(sql_file_path, "w") as f:
-    for stmt in ddl_statements:
-        f.write(f"{stmt};\\n\\n")
+    f.write("\\n\\n".join(tidy_statements) + "\\n")
 '''
             content += ddl_dump_code.replace(
                 "DIALECT_URL_PLACEHOLDER", DDL_DIALECT_URLS[dialect]

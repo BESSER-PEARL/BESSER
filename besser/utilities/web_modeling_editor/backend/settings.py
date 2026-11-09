@@ -90,6 +90,7 @@ _PositiveInt = Annotated[int, BeforeValidator(_positive(int))]
 _PositiveFloat = Annotated[float, BeforeValidator(_positive(float))]
 _Flag = Annotated[bool, BeforeValidator(_flag)]
 _FlagOrDefault = Annotated[bool, BeforeValidator(_flag_or_default)]
+_FlagOrUnset = Annotated[Optional[bool], BeforeValidator(_flag_or_default)]
 _IntOrDefault = Annotated[Optional[int], BeforeValidator(_number_or_default(int))]
 _FloatOrDefault = Annotated[Optional[float], BeforeValidator(_number_or_default(float))]
 _AbsPath = Annotated[Optional[str], BeforeValidator(_abspath)]
@@ -110,11 +111,13 @@ class BackendSettings(BaseSettings):
     deploy_from_repo: _Flag = Field(
         False, validation_alias="BESSER_DEPLOY_FROM_REPO",
         description="'Go live' deploys the project's own repository instead of a regenerated copy.")
-    # Off: /deploy-app runs docker-compose on the backend's own host, which
-    # only a single-user local install should allow.
-    docker_deploy_enabled: _Flag = Field(
-        False, validation_alias="BESSER_ENABLE_DOCKER_DEPLOY",
-        description="Enable POST /deploy-app (docker-compose on this host); off answers 403.")
+    # /deploy-app runs docker-compose on the backend's own host, which only a
+    # single-user local install should allow. Unset (None): allowed only for a
+    # loopback request that no proxy forwarded (see deployment_router).
+    docker_deploy_enabled: _FlagOrUnset = Field(
+        None, validation_alias="BESSER_ENABLE_DOCKER_DEPLOY",
+        description="POST /deploy-app (docker-compose on this host): true allows, false answers 403, "
+                    "unset allows loopback requests only.")
 
     # -- Spec-Driven Agent: per-run caps -----------------------------------
     # The UI reads the hard caps from /spec-driven/config, so they are what a

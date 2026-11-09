@@ -1,12 +1,15 @@
-"""POST /besser_api/deploy-app: off by default, and a docker-compose failure is an error, not a 200."""
+"""POST /besser_api/deploy-app: local requests only by default, and a docker-compose failure is an error, not a 200."""
 
+import asyncio
 import os
 import subprocess
 import types
 
+import httpx
 import pytest
 
 from besser.generators.django.django_generator import DjangoGenerator
+from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.deployment import docker_deployment
 from besser.utilities.web_modeling_editor.backend.services.exceptions import UpstreamError
 
@@ -67,15 +70,66 @@ def stub_django(monkeypatch):
     monkeypatch.setattr(DjangoGenerator, "generate", generate)
 
 
-def test_disabled_by_default_answers_403_and_runs_nothing(client, route_settings, fake_docker):
-    docker = fake_docker()
-    assert route_settings.docker_deploy_enabled is False
+def post_from(client_host, server_url="http://127.0.0.1:9000", headers=None):
+    """POST the payload over a connection from ``client_host`` to ``server_url``."""
+    async def send():
+        transport = httpx.ASGITransport(app=app, client=(client_host, 50000))
+        async with httpx.AsyncClient(transport=transport, base_url=server_url) as ac:
+            return await ac.post(URL, json=PAYLOAD, headers=headers)
+    return asyncio.run(send())
 
-    response = client.post(URL, json=PAYLOAD)
+
+LOCAL = {"client_host": "127.0.0.1"}
+REMOTE = {"client_host": "203.0.113.7", "server_url": "http://10.0.0.5:9000"}
+PROXIED = {"client_host": "127.0.0.1", "headers": {"X-Forwarded-For": "203.0.113.7"}}
+
+
+@pytest.mark.parametrize("request_from", [
+    LOCAL,
+    {"client_host": "::1", "server_url": "http://[::1]:9000"},
+], ids=["ipv4 loopback", "ipv6 loopback"])
+def test_unset_serves_a_local_browser(route_settings, fake_docker, stub_django, request_from):
+    assert route_settings.docker_deploy_enabled is None
+    docker = fake_docker()
+
+    response = post_from(**request_from)
+
+    assert response.status_code == 200
+    assert docker.commands
+
+
+@pytest.mark.parametrize("request_from", [
+    REMOTE,
+    PROXIED,
+    {"client_host": "127.0.0.1", "headers": {"Forwarded": "for=203.0.113.7"}},
+    {"client_host": "127.0.0.1", "headers": {"X-Real-IP": "203.0.113.7"}},
+    {"client_host": "172.18.0.1", "server_url": "http://172.18.0.3:9000"},
+], ids=["remote client", "x-forwarded-for", "forwarded", "x-real-ip", "docker port mapping"])
+def test_unset_refuses_a_hosted_request_and_runs_nothing(route_settings, fake_docker, request_from):
+    docker = fake_docker()
+
+    response = post_from(**request_from)
 
     assert response.status_code == 403
     assert "BESSER_ENABLE_DOCKER_DEPLOY" in response.json()["detail"]
     assert docker.commands == []
+
+
+@pytest.mark.parametrize("request_from", [LOCAL, REMOTE, PROXIED], ids=["local", "remote", "proxied"])
+def test_explicit_false_refuses_everyone(route_settings, fake_docker, request_from):
+    route_settings.docker_deploy_enabled = False
+    docker = fake_docker()
+
+    assert post_from(**request_from).status_code == 403
+    assert docker.commands == []
+
+
+@pytest.mark.parametrize("request_from", [LOCAL, REMOTE, PROXIED], ids=["local", "remote", "proxied"])
+def test_explicit_true_serves_everyone(route_settings, fake_docker, stub_django, request_from):
+    route_settings.docker_deploy_enabled = True
+    fake_docker()
+
+    assert post_from(**request_from).status_code == 200
 
 
 def test_enabled_deploys_with_timeouts(client, route_settings, fake_docker, stub_django):

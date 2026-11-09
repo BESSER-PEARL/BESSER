@@ -10,6 +10,7 @@ import json
 import re
 
 from besser.BUML.metamodel.state_machine.agent import Agent, GUIReplyAction
+from besser.utilities.template_escaping import register_escaping_filters
 from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
@@ -517,6 +518,7 @@ class BAFGenerator(GeneratorInterface):
         env.filters['python_repr'] = repr
         env.filters['json_literal'] = json_literal
         env.filters['yaml_scalar'] = yaml_scalar
+        register_escaping_filters(env)
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")

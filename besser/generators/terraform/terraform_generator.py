@@ -3,6 +3,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.deployment import DeploymentModel, IPRangeType, ServiceType, Protocol
 from besser.generators import GeneratorInterface
+from besser.utilities.template_escaping import register_escaping_filters
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class TerraformGenerator(GeneratorInterface):
         env.filters['class_name'] = self.get_class_name
         env.filters['to_str'] = self.convert_type
         env.filters['set_dict_item'] = self.set_dict_item
+        register_escaping_filters(env)
         return env
 
     @staticmethod

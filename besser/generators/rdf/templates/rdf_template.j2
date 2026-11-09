@@ -15,12 +15,12 @@
         {% for parent in class_obj.parents()|sort(attribute='name') %}
 {{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class ;
           rdfs:subClassOf {{ vocab.uri_or_prefixed(parent) }}{% if class_obj.metadata and class_obj.metadata.description %} ;
-          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} ;
+          rdfs:comment "{{ class_obj.metadata.description | ttl_str }}"{% endif %} ;
           rdfs:label "{{ class_obj.name }}" .
         {% endfor %}
     {% else %}
 {{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class{% if class_obj.metadata and class_obj.metadata.description %} ;
-          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} ;
+          rdfs:comment "{{ class_obj.metadata.description | ttl_str }}"{% endif %} ;
           rdfs:label "{{ class_obj.name }}" .
     {% endif %}
 {% endfor %}
@@ -32,10 +32,10 @@
         rdfs:domain {{ vocab.uri_or_prefixed(class_obj) }} ;
         {% if types[property.type.name ] %}
         rdfs:range xsd:{{ types[property.type.name] }}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{ property.metadata.description }}"{% endif %} ;
+        rdfs:comment "{{ property.metadata.description | ttl_str }}"{% endif %} ;
         {% else %}
         rdfs:range xsd:{{ property.type.name }}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{ property.metadata.description }}"{% endif %} ;
+        rdfs:comment "{{ property.metadata.description | ttl_str }}"{% endif %} ;
         {% endif %}
         rdfs:label "{{ property.name }}" .
     {% endfor %}
@@ -56,28 +56,28 @@
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:comment "{{ association.metadata.description | ttl_str }}"{% endif %} ;
     rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
         {# N:1 #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:comment "{{ association.metadata.description | ttl_str }}"{% endif %} ;
     rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
         {# 1:N #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end2.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end1.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:comment "{{ association.metadata.description | ttl_str }}"{% endif %} ;
     rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
         {# 1:1 Relationship: Add unique reference to one of the ends #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:comment "{{ association.metadata.description | ttl_str }}"{% endif %} ;
     rdfs:label "{{ ns.end2.name }}" .
         {% endif %}
     {% endif %}
@@ -86,7 +86,7 @@
 # Enumeration definition
 {% for enum in model.get_enumerations()|sort(attribute='name') %}
 {{ vocab.uri_or_prefixed(enum) }} rdf:type rdfs:Class{% if enum.metadata and enum.metadata.description %} ;
-          rdfs:comment "{{ enum.metadata.description }}"{% endif %} ;
+          rdfs:comment "{{ enum.metadata.description | ttl_str }}"{% endif %} ;
           rdfs:label "{{ enum.name }}" .
     {% for literal in sort_by_timestamp(enum.literals) %}
 {{ vocab.uri_or_prefixed(literal) }} rdf:type {{ vocab.uri_or_prefixed(enum) }} ;

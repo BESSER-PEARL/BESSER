@@ -10,14 +10,18 @@ GitHub API propagates for the router to map.
 import asyncio
 import dataclasses
 import fnmatch
+import io
 import json
 import logging
 import os
 import re
 import shutil
 import tempfile
+import stat
 import time
 import uuid
+import zipfile
+import zlib
 from typing import Optional
 
 import httpx
@@ -40,12 +44,17 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     PushSmartToGitHubRequest,
     PushSmartToGitHubResponse,
 )
-from besser.utilities.web_modeling_editor.backend.constants.constants import SMART_PUSH_TEMP_DIR_PREFIX
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    MAX_REQUEST_SIZE,
+    SMART_PUSH_TEMP_DIR_PREFIX,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
+    MAX_ARCHIVE_MEMBERS,
+    MAX_EXTRACTED_ARCHIVE_BYTES,
     content_hash,
     create_github_service,
 )
@@ -540,6 +549,111 @@ async def _import_repo_as_run(
         created_at=time.time(),
     ))
     return run_id, extract_dir
+
+
+# Cap on generator output uploaded to be pushed: the request size limit, which
+# rejects a larger body before the router sees it. Its expansion is capped like
+# a repo imported from GitHub.
+MAX_GENERATED_CODE_BYTES = MAX_REQUEST_SIZE
+# Where the uploaded file itself is kept, for the run's download: a
+# ``.besser_*`` name, so a push of the run never commits it.
+GENERATED_CODE_FILENAME = ".besser_generated_code"
+
+
+def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str) -> None:
+    """Extract ``archive`` into ``dest_dir``; refuses unsafe paths and an archive past the caps.
+
+    Links and other non-regular members are skipped, and so are BESSER's own
+    run records (``.besser_*``): the run's are written by BESSER alone.
+    Everything is checked before anything is written, so a refused archive
+    writes nothing.
+    """
+    dest_abs = os.path.abspath(dest_dir)
+    members = []
+    total = 0
+    for info in archive.infolist():
+        if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG):
+            continue
+        if any(fnmatch.fnmatch(part, _RUN_INTERNAL_FILES) for part in info.filename.replace("\\", "/").split("/")):
+            continue
+        target = os.path.abspath(os.path.join(dest_abs, info.filename))
+        if not target.startswith(dest_abs + os.sep):
+            raise ValueError(f"Unsafe path in the generated code: {info.filename!r}")
+        total += info.file_size
+        members.append((info, target))
+        if len(members) > MAX_ARCHIVE_MEMBERS or total > MAX_EXTRACTED_ARCHIVE_BYTES:
+            raise ValueError("The generated code is too large to save to GitHub.")
+    try:
+        for info, target in members:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            # The reader stops at the declared size, which the caps above counted.
+            with archive.open(info) as source, open_plain_write(target, "wb", root=dest_abs) as handle:
+                shutil.copyfileobj(source, handle)
+    except OSError as exc:
+        # E.g. both ``a`` and ``a/b``: the archive has no tree a run can hold.
+        raise ValueError("The generated ZIP could not be unpacked.") from exc
+
+
+def _generated_file_name(file_name: str) -> str:
+    """The uploaded file's own name, without any directory; refuses one BESSER keeps for itself."""
+    name = os.path.basename((file_name or "").replace("\\", "/")).strip()
+    if not name or name in (".", "..") or fnmatch.fnmatch(name, _RUN_INTERNAL_FILES):
+        raise ValueError("The generated file has no usable name.")
+    return name
+
+
+def _store_generated_code(content: bytes, name: str, is_zip: bool, run_dir: str) -> str:
+    """Write the uploaded file into ``run_dir`` (a ZIP also unpacked there); returns the stored file's path."""
+    if is_zip:
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                _extract_generated_zip(archive, run_dir)
+        except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+            # Damaged, encrypted, or packed with a method Python cannot read.
+            raise ValueError("The generated ZIP could not be read.") from exc
+        stored = os.path.join(run_dir, GENERATED_CODE_FILENAME)
+    else:
+        stored = os.path.join(run_dir, name)
+    with open_plain_write(stored, "wb", root=run_dir) as handle:
+        handle.write(content)
+    return stored
+
+
+async def import_generated_code(content: bytes, file_name: str, registry: SmartRunRegistry) -> str:
+    """Register the output of a deterministic generator as a run, so it can be pushed to GitHub.
+
+    The editor's generators (``/generate-output``) hand their output to the
+    browser and keep nothing, while ``/spec-driven/push-to-github`` pushes a
+    stored run. A ZIP is unpacked as the run's file tree; any other file is the
+    tree's only file. Returns the run id.
+    """
+    name = _generated_file_name(file_name)
+    # A generator names its ZIP output ``*.zip``; any other file (a ``.jar`` or
+    # ``.xlsx`` is a ZIP too) is pushed as it is.
+    is_zip = name.lower().endswith(".zip")
+    run_id = uuid.uuid4().hex
+    run_dir = create_run_workspace(run_id)
+    writing = asyncio.ensure_future(asyncio.to_thread(_store_generated_code, content, name, is_zip, run_dir))
+    try:
+        stored = await asyncio.shield(writing)
+    except asyncio.CancelledError:
+        # A thread cannot be stopped: let it finish before removing what it
+        # wrote (or it recreates the run directory), and before the caller
+        # gives back the run slot.
+        await asyncio.wait([writing])
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
+    except BaseException:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
+    await registry.put(run_id, SmartRunEntry(
+        file_path=stored,
+        file_name=name,
+        is_zip=is_zip,
+        temp_dir=run_dir,
+        created_at=time.time(),
+    ))
+    return run_id
 
 
 _AI_READING_UNAVAILABLE = (

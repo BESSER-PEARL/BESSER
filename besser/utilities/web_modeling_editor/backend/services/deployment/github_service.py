@@ -40,6 +40,11 @@ _MAX_REPO_PAGES = 10
 _MAX_BRANCH_PAGES = 10
 
 
+# Caps on an unpacked archive, shared by a repo imported from GitHub and generated code
+# uploaded to be pushed (see GitHubService.download_repo_tarball for the reasoning).
+MAX_EXTRACTED_ARCHIVE_BYTES = 500 * 1024 * 1024  # 500 MB
+MAX_ARCHIVE_MEMBERS = 50_000
+
 # A commit retries once when the branch moved between reading its head and
 # updating it; moving again within that window is a real race, reported as one.
 _COMMIT_ATTEMPTS = 2
@@ -111,12 +116,12 @@ class GitHubService:
     # download, not the expansion: 100 MB of gzip holds ~100 GB. Source gzips
     # 3-5x, so 5x the compressed cap is the lowest ceiling that still admits
     # every archive the download already accepted.
-    _DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024  # 500 MB
+    _DEFAULT_MAX_EXTRACTED_BYTES = MAX_EXTRACTED_ARCHIVE_BYTES
 
     # Companion cap on member count. Empty files weigh nothing against the
     # byte cap but still cost an inode each, and the extracted tree is copied
     # again as a run seed and again into the packaging zip.
-    _DEFAULT_MAX_ARCHIVE_MEMBERS = 50_000
+    _DEFAULT_MAX_ARCHIVE_MEMBERS = MAX_ARCHIVE_MEMBERS
 
     async def download_repo_tarball(
         self,

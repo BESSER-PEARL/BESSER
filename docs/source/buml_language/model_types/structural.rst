@@ -144,13 +144,14 @@ Each message says what is wrong, why it breaks generation, and how to fix it.
    * - Attribute typed by a type outside the model
      - error
      - Attribute 'color' of class 'Car' has type 'Color', which is not in the domain model.
-   * - Attribute and association end with one name
-     - error
-     - Class 'Book' has an attribute and an association end both named 'author'.
    * - Mandatory creation cycle
      - warning
      - Mandatory creation cycle: Brand -> BrandURL -> Brand. … Relax one of the association
        ends in the cycle to an optional multiplicity (0..1 or 0..*).
+   * - Attribute and association end with one name
+     - warning
+     - Attribute and association end share a name: class 'Book' has an attribute and an
+       association end both named 'author'.
    * - Python keyword name
      - warning
      - Python keyword name: Attribute 'from' of class 'Item' is the Python keyword 'from'.

@@ -76,6 +76,12 @@ def _join_table_model() -> DomainModel:
     return _model(student, course, enrollment, associations=[link])
 
 
+def _class_typed_model() -> DomainModel:
+    author = Class(name="Author", attributes={Property(name="name", type=StringType)})
+    book = Class(name="Book", attributes={Property(name="writer", type=author)})
+    return _model(author, book)
+
+
 def _root_id_model() -> DomainModel:
     return _model(Class(name="Item", attributes={Property(name="id", type=StringType),
                                                  Property(name="name", type=StringType)}))
@@ -115,6 +121,7 @@ def test_a_scaffold_warning_is_not_promoted_for_a_generator_it_does_not_break(tm
 
 @pytest.mark.parametrize("model_factory, family_generator, other_generator", [
     (_join_table_model, "generate_fastapi_backend", "generate_django"),
+    (_class_typed_model, "generate_fastapi_backend", "generate_django"),
     (_root_id_model, "generate_django", "generate_fastapi_backend"),
 ])
 def test_scaffold_warnings_follow_the_family_they_break(tmp_path, model_factory, family_generator,

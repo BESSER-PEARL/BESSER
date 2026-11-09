@@ -3,7 +3,7 @@
 Each check has a model that trips it and the nearest correct model, which must
 not. The errors are defects for every code generator; the warnings break a
 specific family of generators (named in each message) and the Spec-Driven
-Agent promotes them to blockers when it builds that family.
+Agent promotes the fatal ones to blockers when it builds that family.
 """
 
 from besser.BUML.metamodel.structural import (
@@ -114,16 +114,18 @@ def test_attribute_typed_by_an_enumeration_of_the_model_is_fine():
     assert _errors(DomainModel(name="Garage", types={car, color})) == []
 
 
-# ------------------------------------------------------------ attribute vs association end (error)
+# ------------------------------------------------------------ attribute vs association end (warning)
 
 
-def test_attribute_and_end_with_one_name_is_an_error():
+def test_attribute_and_end_with_one_name_is_warned():
     author = Class(name="Author", attributes={_attr("name")})
     book = Class(name="Book", attributes={_attr("title"), _attr("author")})
     link = _assoc("writes", author, "author", (1, 1), book, "books", (0, "*"))
-    errors = _errors(DomainModel(name="Lib", types={author, book}, associations={link}))
-    assert len(errors) == 1
-    assert errors[0].startswith("Class 'Book' has an attribute and an association end both named 'author'.")
+    model = DomainModel(name="Lib", types={author, book}, associations={link})
+    found = _with("Attribute and association end share a name:", _warnings(model))
+    assert len(found) == 1
+    assert "class 'Book' has an attribute and an association end both named 'author'" in found[0]
+    assert _errors(model) == []
 
 
 def test_inherited_collision_is_reported_once_on_the_declaring_class():
@@ -133,15 +135,16 @@ def test_inherited_collision_is_reported_once_on_the_declaring_class():
     link = _assoc("writes", author, "author", (0, 1), work, "works", (0, "*"))
     model = DomainModel(name="Lib", types={author, work, book}, associations={link},
                         generalizations={Generalization(general=work, specific=book)})
-    collisions = [e for e in _errors(model) if "both named 'author'" in e]
-    assert len(collisions) == 1 and collisions[0].startswith("Class 'Work'")
+    collisions = _with("Attribute and association end share a name:", _warnings(model))
+    assert len(collisions) == 1 and "class 'Work'" in collisions[0]
 
 
 def test_attribute_and_end_with_distinct_names_are_fine():
     author = Class(name="Author", attributes={_attr("name")})
     book = Class(name="Book", attributes={_attr("title"), _attr("authorName")})
     link = _assoc("writes", author, "author", (1, 1), book, "books", (0, "*"))
-    assert _errors(DomainModel(name="Lib", types={author, book}, associations={link})) == []
+    model = DomainModel(name="Lib", types={author, book}, associations={link})
+    assert _with("Attribute and association end share a name:", _warnings(model)) == []
 
 
 # ------------------------------------------------------------ Python keyword names (warning)

@@ -2582,9 +2582,9 @@ class DomainModel(Model):
         self._validate_unique_end_names(errors)
         self._validate_identifier_names(errors)
         self._validate_attribute_types(errors)
-        self._validate_attribute_end_collisions(errors)
         self._validate_mandatory_cycles(warnings)
         self._validate_duplicate_associations(warnings)
+        self._validate_attribute_end_collisions(warnings)
         self._validate_python_keyword_names(warnings)
         self._validate_case_only_class_names(warnings)
         self._validate_case_only_attribute_names(warnings)
@@ -2820,23 +2820,27 @@ class DomainModel(Model):
                     f"it never defines. Add '{type_name}' to the model or use a primitive type."
                 )
 
-    def _validate_attribute_end_collisions(self, errors: list[str]):
-        """Report a class reaching an attribute and an association end of the same name.
+    def _validate_attribute_end_collisions(self, warnings: list[str]):
+        """Warn about a class reaching an attribute and an association end of the same name.
 
-        Generated code gives both the same member name, so one silently replaces
-        the other (Python, SQLAlchemy) or the class does not compile (Java). A
-        name inherited on both sides is reported once, on the class that
-        declares one of them.
+        Generated code gives both the same member name. The Java generator's
+        class does not compile; the SQLAlchemy generator still emits a module
+        that loads, but the relationship replaces the attribute's mapping, so
+        the column is no longer read or written. A warning, since generation
+        itself succeeds. A name inherited on both sides is reported once, on
+        the class that declares one of them.
         """
         for cls in sorted(self.get_classes(), key=lambda c: c.name):
             own_names = {attr.name for attr in cls.attributes} | {end.name for end in cls.association_ends()}
             attr_names = {attr.name for attr in cls.all_attributes()}
             end_names = {end.name for end in cls.all_association_ends()}
             for name in sorted((attr_names & end_names) & own_names):
-                errors.append(
-                    f"Class '{cls.name}' has an attribute and an association end both named '{name}'. "
-                    f"Generated code gives a class one member per name, so one of them is lost. "
-                    f"Rename one; if the attribute stores the related object, delete it and keep the association."
+                warnings.append(
+                    f"Attribute and association end share a name: class '{cls.name}' has an attribute and an "
+                    f"association end both named '{name}'. Generated code gives a class one member per name: "
+                    f"the Java class does not compile, and in the SQLAlchemy model the relationship hides the "
+                    f"attribute's column. Rename one; if the attribute stores the related object, delete it and "
+                    f"keep the association."
                 )
 
     def _validate_python_keyword_names(self, warnings: list[str]):
@@ -2975,16 +2979,17 @@ class DomainModel(Model):
     def _validate_empty_enumerations(self, warnings: list[str]):
         """Warn about an enumeration without literals.
 
-        No attribute of that type can hold a value, and the Python generators
-        emit an empty ``class Status(Enum):`` body, which does not parse, even
-        when no attribute uses the enumeration.
+        No attribute of that type can hold a value, and the SQLAlchemy,
+        Pydantic (with them the FastAPI backend) and Django generators emit an
+        empty ``class Status(Enum):`` body, which does not parse, even when no
+        attribute uses the enumeration.
         """
         for enum in sorted(self.get_enumerations(), key=lambda e: e.name):
             if not enum.literals:
                 warnings.append(
                     f"Empty enumeration: '{enum.name}' has no literals, so no attribute of that type can hold "
-                    f"a value, and the Python generators emit an empty class body that does not parse. Add "
-                    f"its literals, or delete it."
+                    f"a value, and the SQLAlchemy, Pydantic and Django generators emit an empty class body that does "
+                    f"not parse. Add its literals, or delete it."
                 )
 
     def _validate_class_typed_attributes(self, warnings: list[str]):

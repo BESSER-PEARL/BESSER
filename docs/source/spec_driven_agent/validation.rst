@@ -156,17 +156,19 @@ they survive every Phase 3 pass.
 
 - Every validation **error** is promoted.
 - **Warnings** that make any generated CRUD app unusable are promoted at once:
-  mandatory creation cycles, class names or attribute names that differ only in
-  case, and class-typed attributes.
+  mandatory creation cycles, and class names or attribute names that differ only
+  in case.
 - **Warnings** about what one family of BESSER generators emits are promoted once
   Phase 1 has run and only when the scaffold came from that family: Python keyword
   names, empty enumerations, foreign key column clashes and subclasses declaring
-  ``id`` (FastAPI and Django scaffolds), join table name clashes (FastAPI), and a
-  root ``id`` attribute that is not the identifier (Django). A modify run knows its
-  scaffold from the seed run and checks everything at Phase 0.
-- Other warnings (isolated classes, abstract classes without a concrete subclass,
-  parts with several mandatory owners, duplicate associations) describe a working
-  but degraded app and stay warnings.
+  ``id`` (FastAPI and Django scaffolds), join table name clashes and class-typed
+  attributes (FastAPI), and a root ``id`` attribute that is not the identifier
+  (Django). A modify run knows its scaffold from the seed run and checks
+  everything at Phase 0.
+- Other warnings (an attribute and an association end sharing a name, isolated
+  classes, abstract classes without a concrete subclass, parts with several
+  mandatory owners, duplicate associations) describe an app that is generated but
+  degraded, and stay warnings.
 
 Severities
 ----------

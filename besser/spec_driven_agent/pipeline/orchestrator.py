@@ -4340,7 +4340,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         "mandatory creation cycle",
         "class names differ only in case",
         "attribute names differ only in case",
-        "class-typed attribute",
     )
     # Warnings about what one family of BESSER generators emits: each was
     # observed to stop that scaffold from loading (SyntaxError, a table
@@ -4349,7 +4348,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     _SCAFFOLD_CONTRACT_WARNING_PREFIXES = {
         "fastapi": (
             "python keyword name", "empty enumeration", "join table name clash",
-            "foreign key column clash", "subclass declares 'id'",
+            "foreign key column clash", "subclass declares 'id'", "class-typed attribute",
         ),
         "django": (
             "python keyword name", "empty enumeration", "foreign key column clash",

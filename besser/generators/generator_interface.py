@@ -2,10 +2,29 @@ import os
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from besser.BUML.metamodel.structural import Model
+from besser.BUML.metamodel.structural import DomainModel, Model
 
 if TYPE_CHECKING:
     from besser.generators.regeneration import RegenerationReport
+
+class InvalidIdentifierError(ValueError):
+    """A model name that a generator would write into code is not a valid identifier."""
+
+
+def require_valid_identifiers(model: DomainModel) -> None:
+    """Refuse to render ``model`` while any name it emits as code is not an identifier.
+
+    The ``NamedElement.name`` setter stays lenient so saved models keep loading;
+    generators that write names verbatim into Python call this before rendering,
+    so a name such as ``A=1;...`` can never become a statement in generated code.
+
+    Raises:
+        InvalidIdentifierError: With every offending name, one per line.
+    """
+    errors = model.invalid_identifier_names()
+    if errors:
+        raise InvalidIdentifierError("Cannot generate code from this model:\n" + "\n".join(errors))
+
 
 # Interface for code generators
 class GeneratorInterface(ABC):

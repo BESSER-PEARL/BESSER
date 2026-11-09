@@ -12,6 +12,7 @@ from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSo
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
@@ -697,6 +698,7 @@ JAZZMIN_SETTINGS = {{
 
     def generate(self, *args):
         """Generates the Django project, app, and necessary configurations."""
+        require_valid_identifiers(self.model)
 
         try:
             # Step 1: Initialize Django project and app. Everything is anchored

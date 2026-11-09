@@ -5,6 +5,7 @@ import tempfile
 import shutil
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
 # Marker of the trailing "database connection" section of the SQLAlchemy module.
@@ -57,6 +58,7 @@ class SQLGenerator(GeneratorInterface):
             ValueError: If the dialect is not supported.
             RuntimeError: If the DDL could not be produced.
         """
+        require_valid_identifiers(self.model)
         if self.sql_dialect not in DDL_DIALECT_URLS:
             raise ValueError(
                 f"Invalid DBMS (SQL dialect '{self.sql_dialect}'). "

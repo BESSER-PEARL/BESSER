@@ -4,6 +4,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
 
@@ -35,6 +36,7 @@ class PythonGenerator(GeneratorInterface):
         Returns:
             None, but store the generated code as a file named classes.py
         """
+        require_valid_identifiers(self.model)
         file_path = self.build_generation_path(file_name="classes.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")

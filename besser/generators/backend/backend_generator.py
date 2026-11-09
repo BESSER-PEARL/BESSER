@@ -3,6 +3,7 @@ import logging
 import os
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
@@ -95,6 +96,7 @@ class BackendGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
         """
+        require_valid_identifiers(self.model)
         if self.output_dir is not None:
             backend_folder_path = self.output_dir
             os.makedirs(backend_folder_path, exist_ok=True)

@@ -466,15 +466,18 @@ def test_the_model_history_says_what_each_commit_changed_and_who_made_it(monkeyp
 def _model_with_an_unknown_type() -> dict:
     """An attribute typed by an enumeration the model does not have."""
     model = copy.deepcopy(CLASS_DIAGRAM_MODEL)
-    model["elements"]["attr-1"]["name"] = "+ kind: RoomType"
+    model["nodes"][0]["data"]["attributes"][0].update(name="kind", attributeType="RoomType")
     return model
 
 
 def _model_with_two_enumerations_of_one_name() -> dict:
     """Two enumerations left at the palette's default name, as in a repository of a live two-person test."""
     model = copy.deepcopy(CLASS_DIAGRAM_MODEL)
-    for element_id in ("enum-1", "enum-2"):
-        model["elements"][element_id] = {"type": "Enumeration", "name": "Enumeration", "attributes": []}
+    for node_id in ("enum-1", "enum-2"):
+        model["nodes"].append({
+            "id": node_id, "type": "class", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+            "data": {"name": "Enumeration", "stereotype": "Enumeration", "attributes": [], "methods": []},
+        })
     return model
 
 
@@ -483,7 +486,7 @@ def _as_the_editor_saves_it(class_model) -> dict:
     envelope = _envelope(class_model)
     envelope["project"]["diagrams"]["StateMachineDiagram"] = [{
         "id": "sm1", "title": "Empty",
-        "model": {"type": "StateMachineDiagram", "elements": {}, "relationships": {}},
+        "model": {"version": "4.0.0", "type": "StateMachineDiagram", "nodes": [], "edges": []},
     }]
     envelope["project"]["currentDiagramIndices"]["StateMachineDiagram"] = 0
     return envelope
@@ -527,7 +530,10 @@ def test_the_history_does_not_call_a_version_after_an_unreadable_one_a_change(mo
 
 def test_the_history_still_lists_changes_beside_other_diagrams(monkeypatch):
     with_loan = copy.deepcopy(CLASS_DIAGRAM_MODEL)
-    with_loan["elements"]["loan-class"] = {"type": "Class", "name": "Loan", "attributes": [], "methods": []}
+    with_loan["nodes"].append({
+        "id": "loan-class", "type": "class", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+        "data": {"name": "Loan", "attributes": [], "methods": []},
+    })
     newest, first = _history_changes(
         monkeypatch,
         json.dumps(_as_the_editor_saves_it(with_loan)),
@@ -547,7 +553,7 @@ def test_a_pull_request_does_not_list_an_unreadable_head_as_removals():
 
 
 def test_deleting_every_class_is_still_listed_as_removals():
-    empty = {"type": "ClassDiagram", "elements": {}, "relationships": {}}
+    empty = {"version": "4.0.0", "type": "ClassDiagram", "nodes": [], "edges": []}
     assert "class Author removed" in repo_model.describe_change(
         _as_the_editor_saves_it(CLASS_DIAGRAM_MODEL), _as_the_editor_saves_it(empty)
     )

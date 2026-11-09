@@ -141,3 +141,16 @@ def test_a_project_renamed_twice_is_still_a_conflict():
     with pytest.raises(MergeConflict) as conflict:
         merge_documents({"project": {"name": "A"}}, {"project": {"name": "B"}}, {"project": {"name": "C"}})
     assert conflict.value.path == "project.name"
+
+
+def test_two_peoples_assistant_conversations_are_no_conflict():
+    def saved(turns):
+        return {"project": {"name": "Shop", "assistantConversation": {"turns": turns, "updatedAt": "t"}}}
+
+    repo = saved([{"role": "user", "content": "A shop"}])
+    ana = saved([{"role": "user", "content": "A shop"}, {"role": "user", "content": "Add Order"}])
+    ben = saved([{"role": "user", "content": "A shop"}, {"role": "user", "content": "Add Invoice"}])
+
+    merged = merge_documents(repo, ben, ana)
+
+    assert merged["project"]["assistantConversation"] == ben["project"]["assistantConversation"]

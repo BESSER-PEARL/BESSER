@@ -18,6 +18,7 @@ from pathlib import Path
 
 import httpx
 
+from besser.utilities.provenance import readme_about
 from besser.utilities.web_modeling_editor.backend.services.deployment.render_blueprint import RENDER_DEPLOY_URL
 from besser.utilities.web_modeling_editor.backend.services.deployment.repo_model import commit_origin, with_origin
 
@@ -38,6 +39,11 @@ _PAGE_SIZE = 100
 _MAX_REPO_PAGES = 10
 _MAX_BRANCH_PAGES = 10
 
+
+# Caps on an unpacked archive, shared by a repo imported from GitHub and generated code
+# uploaded to be pushed (see GitHubService.download_repo_tarball for the reasoning).
+MAX_EXTRACTED_ARCHIVE_BYTES = 500 * 1024 * 1024  # 500 MB
+MAX_ARCHIVE_MEMBERS = 50_000
 
 # A commit retries once when the branch moved between reading its head and
 # updating it; moving again within that window is a real race, reported as one.
@@ -110,12 +116,12 @@ class GitHubService:
     # download, not the expansion: 100 MB of gzip holds ~100 GB. Source gzips
     # 3-5x, so 5x the compressed cap is the lowest ceiling that still admits
     # every archive the download already accepted.
-    _DEFAULT_MAX_EXTRACTED_BYTES = 500 * 1024 * 1024  # 500 MB
+    _DEFAULT_MAX_EXTRACTED_BYTES = MAX_EXTRACTED_ARCHIVE_BYTES
 
     # Companion cap on member count. Empty files weigh nothing against the
     # byte cap but still cost an inode each, and the extracted tree is copied
     # again as a run seed and again into the packaging zip.
-    _DEFAULT_MAX_ARCHIVE_MEMBERS = 50_000
+    _DEFAULT_MAX_ARCHIVE_MEMBERS = MAX_ARCHIVE_MEMBERS
 
     async def download_repo_tarball(
         self,
@@ -912,8 +918,10 @@ class GitHubService:
         owner: str = "",
         repo_name: str = "",
         deployment_type: str = "webapp",
+        description: Optional[str] = "",
     ) -> str:
-        """Generate README.md content."""
+        """Generate README.md content; ``description`` is the project's."""
+        about = readme_about(description, "Generated")
         if deployment_type == "chatbot":
             readme = f"""<div align=\"center\">
 
@@ -927,11 +935,12 @@ class GitHubService:
                 readme += f"""[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/{owner}/{repo_name})
 """
 
-            readme += """
+            readme += f"""
 A standalone chatbot generated from an Agent Diagram using the [BESSER Web Modeling Editor](https://editor.besser-pearl.org).
 
 </div>
 
+{about}
 ## Project Structure
 
 ```
@@ -976,11 +985,12 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
             readme += f"""[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/{owner}/{repo_name})
 """
 
-        readme += """
+        readme += f"""
 A full-stack web application generated from visual models using the [BESSER Web Modeling Editor](https://editor.besser-pearl.org), a low-code open-source platform.
 
 </div>
 
+{about}
 """
 
         if deploy_instructions:

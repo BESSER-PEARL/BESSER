@@ -10,7 +10,8 @@ the same B-UML source). The model is data, so it is merged as data instead:
   unique scalars (an Apollon class's attribute ids);
 - a value both sides changed differently is a conflict, except layout,
   timestamps and what each person had open, where this side's value is kept
-  (two people moving the same box is not worth a pull request), and who added an
+  (two people moving the same box is not worth a pull request) and each person's
+  own assistant conversation, and who added an
   element and the project's own id and creation date, where the repository's
   value is kept: it was there first. Opening a repository gives the local project
   a new id and date, so those two differ for everyone who opened it.
@@ -21,11 +22,13 @@ diagram type and for both editor engines.
 
 from typing import Any
 
-# Keys that only place or date things, or say what someone had open; when both sides changed one, ours is kept.
+# Keys that only place or date things, or say what someone had open, and the saver's own assistant
+# conversation (its turns have no ids to merge by); when both sides changed one, ours is kept.
 OURS_WINS_KEYS = frozenset({
     "bounds", "position", "measured", "width", "height", "path",
     "exportedAt", "lastUpdate", "updatedAt", "lastModified",
     "editorVersion", "currentDiagramType", "currentDiagramIndices",
+    "assistantConversation",
 })
 # Who added an element; the commit already in the repository was first.
 THEIRS_WINS_KEYS = frozenset({"addedBy", "addedAt"})

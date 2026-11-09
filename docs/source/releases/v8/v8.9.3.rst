@@ -4,8 +4,8 @@ Version 8.9.3
 Patch release: **the modeling assistant keeps your conversation, sticks to
 modeling and draws compositions the right way round; the editor asks before
 generating a model with warnings; a generated SQL file can be saved to
-GitHub; and validation catches model mistakes that break the generated
-code**. Fixes for issues
+GitHub; validation catches model mistakes that break the generated code;
+and the GUI editor maps how its pages link**. Fixes for issues
 `#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_ to
 `#752 <https://github.com/BESSER-PEARL/BESSER/issues/752>`_. One new endpoint
 (``POST /besser_api/spec-driven/import-generated-code``), new design checks in
@@ -84,6 +84,16 @@ Highlights
   The issue's other half, the short Command Code model list, is not in this
   release: the list comes from the deployment's model catalog
   (``BESSER_MODEL_CATALOG``), which has to list the models.
+* **A map of the GUI's pages and links.** **Map** in the GUI editor's Pages
+  panel shows the pages and the links and navigate buttons between them,
+  resolved the way the GUI processor and the generated app resolve them: a
+  navigate button by its target page, a link by the route the app gives a
+  page (``/`` and the page name in lower case, spaces as hyphens; ``/`` is the
+  first page). The navigation bar is one entry instead of a link per page. It
+  lists the pages no link reaches and the links to a page that does not
+  exist. The map is read-only:
+  clicking a page opens it, and clicking a broken link selects it
+  (`BESSER-Web-Modeling-Editor#271 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/271>`_).
 * **The welcome dialog is translated.** Its text was written in English; it is
   now available in all six editor languages. Reported in
   `#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_.
@@ -164,8 +174,10 @@ folds in #262 to #267, and
 `#269 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/269>`_
 releases ``develop`` to ``main``;
 `#270 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/270>`_
-adds the v1 project and NexaCRM template fixes. The ``frontend`` submodule
-points at #270's merge. The editor's version, shown in its About dialog and
+adds the v1 project and NexaCRM template fixes, and
+`#271 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/271>`_
+adds the GUI navigation map. The ``frontend`` submodule points at #271's
+merge. The editor's version, shown in its About dialog and
 stamped into JSON exports, is now ``8.9.3``. Its own notes are ``docs/source/releases/v8.9.3.rst`` in the
 editor repository.
 

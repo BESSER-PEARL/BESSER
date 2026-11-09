@@ -633,8 +633,16 @@ async def import_generated_code(content: bytes, file_name: str, registry: SmartR
     is_zip = name.lower().endswith(".zip")
     run_id = uuid.uuid4().hex
     run_dir = create_run_workspace(run_id)
+    writing = asyncio.ensure_future(asyncio.to_thread(_store_generated_code, content, name, is_zip, run_dir))
     try:
-        stored = await asyncio.to_thread(_store_generated_code, content, name, is_zip, run_dir)
+        stored = await asyncio.shield(writing)
+    except asyncio.CancelledError:
+        # A thread cannot be stopped: let it finish before removing what it
+        # wrote (or it recreates the run directory), and before the caller
+        # gives back the run slot.
+        await asyncio.wait([writing])
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
     except BaseException:
         shutil.rmtree(run_dir, ignore_errors=True)
         raise

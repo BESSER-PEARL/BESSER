@@ -217,3 +217,34 @@ def test_the_generated_sql_is_pushed_to_github(signed_in, monkeypatch):
     assert pushed["library.sql"] == SQL
     assert "buml/diagrams.json" in pushed
     assert not [path for path in pushed if path.split("/")[-1].startswith(".besser_")]
+
+
+def test_a_cancelled_upload_waits_for_its_writer_then_leaves_nothing(monkeypatch):
+    """The writer thread cannot be stopped; removing the run while it writes left an orphan tree."""
+    import threading
+
+    started, release, written = threading.Event(), threading.Event(), []
+
+    def slow_store(content, name, is_zip, run_dir):
+        started.set()
+        release.wait(5)
+        os.makedirs(os.path.join(run_dir, "late"), exist_ok=True)
+        written.append(run_dir)
+        return os.path.join(run_dir, name)
+
+    monkeypatch.setattr(github_sync, "_store_generated_code", slow_store)
+
+    async def scenario():
+        task = asyncio.create_task(
+            github_sync.import_generated_code(SQL, "library.sql", current_runtime().registry))
+        await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        await asyncio.sleep(0.05)
+        assert not task.done()  # still waiting for the writer
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert written and not os.path.exists(written[0])
+    assert current_runtime().registry._entries == {}

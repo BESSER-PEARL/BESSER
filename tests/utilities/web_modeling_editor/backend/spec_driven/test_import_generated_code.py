@@ -138,7 +138,7 @@ def test_a_zip_reaching_outside_the_run_is_refused(signed_in, tmp_path, unsafe):
 
 
 def test_a_zip_past_the_member_cap_is_refused(signed_in, monkeypatch):
-    monkeypatch.setattr(github_sync, "_MAX_GENERATED_CODE_MEMBERS", 2)
+    monkeypatch.setattr(github_sync, "MAX_ARCHIVE_MEMBERS", 2)
     response = _upload("app.zip", _zip({"a": b"1", "b": b"2", "c": b"3"}), SESSION)
 
     assert response.status_code == 400
@@ -148,6 +148,38 @@ def test_a_zip_past_the_member_cap_is_refused(signed_in, monkeypatch):
 def test_an_upload_past_the_size_cap_is_refused(signed_in, monkeypatch):
     monkeypatch.setattr(router_module, "MAX_GENERATED_CODE_BYTES", 8)
     assert _upload("library.sql", SQL, SESSION).status_code == 413
+
+
+def test_a_zip_holding_a_file_and_a_folder_of_one_name_is_refused(signed_in):
+    response = _upload("app.zip", _zip({"a": b"1", "a/b": b"2"}), SESSION)
+
+    assert response.status_code == 400
+    assert current_runtime().registry._entries == {}
+
+
+def test_a_zip_file_that_is_not_named_zip_is_one_file(signed_in):
+    """A ``.jar`` (or ``.xlsx``) is a ZIP container, but a generator's single output file."""
+    archive = _zip({"META-INF/MANIFEST.MF": b"Manifest-Version: 1.0\n"})
+    response = _upload("app.jar", archive, SESSION)
+
+    assert response.status_code == 200
+    entry = _entry(response.json()["run_id"])
+    assert not entry.is_zip
+    assert {f for f in _files(entry.temp_dir) if not f.startswith(".besser_")} == {"app.jar"}
+
+
+def test_storing_takes_a_run_slot_and_gives_it_back(signed_in, monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(current_runtime().slots, "try_acquire", lambda: False)
+        assert _upload("library.sql", SQL, SESSION).status_code == 429
+    assert current_runtime().registry._entries == {}
+
+    released = []
+    real_release = current_runtime().slots.release
+    monkeypatch.setattr(current_runtime().slots, "release", lambda: (released.append(1), real_release()))
+    assert _upload("library.sql", SQL, SESSION).status_code == 200
+    assert _upload("bad.zip", b"PK not a zip", SESSION).status_code == 400
+    assert released == [1, 1]
 
 
 def test_a_besser_file_name_is_refused(signed_in):

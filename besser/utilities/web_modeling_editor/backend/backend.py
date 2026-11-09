@@ -26,6 +26,7 @@ from besser.utilities.web_modeling_editor.backend.middleware import setup_middle
 
 # Backend constants (no circular dependency risk)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    MAX_REQUEST_SIZE,
     API_VERSION,
     DEFAULT_CORS_ORIGINS,
 )
@@ -83,7 +84,6 @@ from besser.utilities.web_modeling_editor.backend.settings import BackendSetting
 
 logger = logging.getLogger(__name__)
 
-MAX_REQUEST_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

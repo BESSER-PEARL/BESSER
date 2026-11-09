@@ -114,8 +114,8 @@ Endpoints
        ``file``: the ZIP or single file ``/generate-output`` returned) as a
        run, so ``push-to-github`` can push it; returns its ``run_id``. A ZIP
        is unpacked (no links, no ``.besser_*`` files, 50,000 files and 500 MB
-       at most), any other file is the run's only file. Upload limit 100 MB
-       (``413`` above it). Requires an ``X-GitHub-Session`` header.
+       at most), any other file is the run's only file. Upload limit 50 MB,
+       the backend's request size limit (``413`` above it). Requires an ``X-GitHub-Session`` header.
 
 Request body
 ------------

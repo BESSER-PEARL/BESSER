@@ -44,12 +44,17 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     PushSmartToGitHubRequest,
     PushSmartToGitHubResponse,
 )
-from besser.utilities.web_modeling_editor.backend.constants.constants import SMART_PUSH_TEMP_DIR_PREFIX
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    MAX_REQUEST_SIZE,
+    SMART_PUSH_TEMP_DIR_PREFIX,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
+    MAX_ARCHIVE_MEMBERS,
+    MAX_EXTRACTED_ARCHIVE_BYTES,
     content_hash,
     create_github_service,
 )
@@ -546,11 +551,10 @@ async def _import_repo_as_run(
     return run_id, extract_dir
 
 
-# Caps on generator output uploaded to be pushed, the same as on a repo
-# imported from GitHub: the upload is bounded by the router, its expansion here.
-MAX_GENERATED_CODE_BYTES = 100 * 1024 * 1024
-_MAX_GENERATED_CODE_EXTRACTED_BYTES = 500 * 1024 * 1024
-_MAX_GENERATED_CODE_MEMBERS = 50_000
+# Cap on generator output uploaded to be pushed: the request size limit, which
+# rejects a larger body before the router sees it. Its expansion is capped like
+# a repo imported from GitHub.
+MAX_GENERATED_CODE_BYTES = MAX_REQUEST_SIZE
 # Where the uploaded file itself is kept, for the run's download: a
 # ``.besser_*`` name, so a push of the run never commits it.
 GENERATED_CODE_FILENAME = ".besser_generated_code"
@@ -577,13 +581,17 @@ def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str) -> None:
             raise ValueError(f"Unsafe path in the generated code: {info.filename!r}")
         total += info.file_size
         members.append((info, target))
-        if len(members) > _MAX_GENERATED_CODE_MEMBERS or total > _MAX_GENERATED_CODE_EXTRACTED_BYTES:
+        if len(members) > MAX_ARCHIVE_MEMBERS or total > MAX_EXTRACTED_ARCHIVE_BYTES:
             raise ValueError("The generated code is too large to save to GitHub.")
-    for info, target in members:
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        # The reader stops at the declared size, which the caps above counted.
-        with archive.open(info) as source, open_plain_write(target, "wb", root=dest_abs) as handle:
-            shutil.copyfileobj(source, handle)
+    try:
+        for info, target in members:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            # The reader stops at the declared size, which the caps above counted.
+            with archive.open(info) as source, open_plain_write(target, "wb", root=dest_abs) as handle:
+                shutil.copyfileobj(source, handle)
+    except OSError as exc:
+        # E.g. both ``a`` and ``a/b``: the archive has no tree a run can hold.
+        raise ValueError("The generated ZIP could not be unpacked.") from exc
 
 
 def _generated_file_name(file_name: str) -> str:
@@ -592,6 +600,23 @@ def _generated_file_name(file_name: str) -> str:
     if not name or name in (".", "..") or fnmatch.fnmatch(name, _RUN_INTERNAL_FILES):
         raise ValueError("The generated file has no usable name.")
     return name
+
+
+def _store_generated_code(content: bytes, name: str, is_zip: bool, run_dir: str) -> str:
+    """Write the uploaded file into ``run_dir`` (a ZIP also unpacked there); returns the stored file's path."""
+    if is_zip:
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                _extract_generated_zip(archive, run_dir)
+        except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+            # Damaged, encrypted, or packed with a method Python cannot read.
+            raise ValueError("The generated ZIP could not be read.") from exc
+        stored = os.path.join(run_dir, GENERATED_CODE_FILENAME)
+    else:
+        stored = os.path.join(run_dir, name)
+    with open_plain_write(stored, "wb", root=run_dir) as handle:
+        handle.write(content)
+    return stored
 
 
 async def import_generated_code(content: bytes, file_name: str, registry: SmartRunRegistry) -> str:
@@ -603,22 +628,13 @@ async def import_generated_code(content: bytes, file_name: str, registry: SmartR
     tree's only file. Returns the run id.
     """
     name = _generated_file_name(file_name)
-    is_zip = zipfile.is_zipfile(io.BytesIO(content))
+    # A generator names its ZIP output ``*.zip``; any other file (a ``.jar`` or
+    # ``.xlsx`` is a ZIP too) is pushed as it is.
+    is_zip = name.lower().endswith(".zip")
     run_id = uuid.uuid4().hex
     run_dir = create_run_workspace(run_id)
     try:
-        if is_zip:
-            try:
-                with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                    await asyncio.to_thread(_extract_generated_zip, archive, run_dir)
-            except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
-                # Damaged, encrypted, or packed with a method Python cannot read.
-                raise ValueError("The generated ZIP could not be read.") from exc
-            stored = os.path.join(run_dir, GENERATED_CODE_FILENAME)
-        else:
-            stored = os.path.join(run_dir, name)
-        with open_plain_write(stored, "wb", root=run_dir) as handle:
-            handle.write(content)
+        stored = await asyncio.to_thread(_store_generated_code, content, name, is_zip, run_dir)
     except BaseException:
         shutil.rmtree(run_dir, ignore_errors=True)
         raise

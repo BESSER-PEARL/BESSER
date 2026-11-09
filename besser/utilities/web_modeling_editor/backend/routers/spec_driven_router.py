@@ -960,10 +960,26 @@ async def import_generated_code_run(
         raise HTTPException(status_code=413, detail="The generated code is too large to save to GitHub.")
     if not content:
         raise HTTPException(status_code=400, detail="The generated file is empty.")
+    # Storing writes up to the archive caps to disk, so it takes a run slot
+    # (BESSER_LLM_MAX_CONCURRENT_RUNS), like an import from GitHub.
+    if not runtime.slots.try_acquire():
+        raise HTTPException(
+            status_code=429,
+            detail="Too many imports and generation runs are in flight right now. Retry in a moment.",
+        )
     try:
         run_id = await import_generated_code(content, file.filename or "", runtime.registry)
     except ValueError as exc:
+        # Unsafe paths, the archive caps, a damaged ZIP, an unusable file name.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("Unexpected error in import_generated_code_run")
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred while storing the generated code.",
+        )
+    finally:
+        runtime.slots.release()
     return ImportGeneratedCodeResponse(run_id=run_id)
 
 

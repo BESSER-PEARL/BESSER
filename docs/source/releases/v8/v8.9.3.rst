@@ -62,7 +62,10 @@ Highlights
   asks *Generate anyway* or *Fix the model first*, and names the first
   warnings. Declining sends no request. Project-level generation (web app,
   Qiskit, neural network, Docker Compose), GitHub and Render deploys and
-  Spec-Driven runs do not validate first, so they do not ask. Reported in
+  Spec-Driven runs do not validate first, so they do not ask. Validating a
+  user diagram no longer reports the warnings of BESSER's own user reference
+  model, which the user cannot fix, so generating from a user diagram does not
+  ask about them. Reported in
   `#752 <https://github.com/BESSER-PEARL/BESSER/issues/752>`_.
 * **Validation catches models whose generated code breaks.** See
   :ref:`v8.9.3-design-checks` below

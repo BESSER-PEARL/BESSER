@@ -41,22 +41,14 @@ def _call(method: str, url: str, **kwargs) -> httpx.Response:
 
 
 def _model(*classes: str, attributes: tuple = ()) -> dict:
-    """An Apollon class diagram; each name in ``attributes`` is an attribute of the first class."""
-    elements = {}
-    for index, name in enumerate(classes):
-        elements[f"id-{name}"] = {
-            "id": f"id-{name}", "type": "Class", "name": name, "owner": None,
-            "bounds": {"x": index * 300, "y": 0, "width": 200, "height": 100},
-            "attributes": [f"id-{a}" for a in attributes] if index == 0 else [], "methods": [],
-        }
-    for attribute in attributes:
-        elements[f"id-{attribute}"] = {
-            "id": f"id-{attribute}", "type": "ClassAttribute", "name": f"+ {attribute}: str", "owner": f"id-{classes[0]}",
-            "bounds": {"x": 0, "y": 40, "width": 200, "height": 30},
-        }
-    return {"version": "3.0.0", "type": "ClassDiagram", "size": {"width": 800, "height": 600},
-            "interactive": {"elements": {}, "relationships": {}}, "elements": elements, "relationships": {},
-            "assessments": {}}
+    """A v4 class diagram; each name in ``attributes`` is an attribute row of the first class."""
+    nodes = [{
+        "id": f"id-{name}", "type": "class", "position": {"x": index * 300, "y": 0}, "width": 200, "height": 100,
+        "data": {"name": name, "methods": [], "attributes": [
+            {"id": f"id-{a}", "name": a, "attributeType": "str", "visibility": "public"} for a in attributes
+        ] if index == 0 else []},
+    } for index, name in enumerate(classes)]
+    return {"version": "4.0.0", "type": "ClassDiagram", "nodes": nodes, "edges": [], "assessments": {}}
 
 
 def _envelope(model: dict, attribution: dict | None = None) -> dict:
@@ -297,7 +289,9 @@ def test_stamping_touches_no_diagram():
 
 
 def _with_relationship(model: dict, relationship_id: str = "rel-1") -> dict:
-    return {**model, "relationships": {relationship_id: {"id": relationship_id, "type": "ClassBidirectional"}}}
+    edge = {"id": relationship_id, "type": "ClassBidirectional", "source": model["nodes"][0]["id"],
+            "target": model["nodes"][0]["id"], "data": {}}
+    return {**model, "edges": [edge]}
 
 
 def test_a_new_relationship_is_credited_to_who_added_it():

@@ -5,6 +5,7 @@ import tempfile
 import shutil
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.settings import subprocess_timeout
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
 # Marker of the trailing "database connection" section of the SQLAlchemy module.
@@ -192,7 +193,8 @@ with open(sql_file_path, "w") as f:
 
             # Run the temporary Python file (in the temp dir, so it leaves nothing behind)
             result = subprocess.run(
-                [sys.executable, temp_py_path], text=True, capture_output=True, cwd=temp_dir, check=False
+                [sys.executable, temp_py_path], text=True, capture_output=True, cwd=temp_dir, check=False,
+                timeout=subprocess_timeout(),
             )
             src_sql = os.path.join(temp_dir, f"tables_{self.sql_dialect}.sql")
             if result.returncode != 0 or not os.path.isfile(src_sql):

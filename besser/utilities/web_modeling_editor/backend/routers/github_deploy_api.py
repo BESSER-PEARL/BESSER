@@ -5,6 +5,7 @@ This endpoint generates a web app and pushes it to a GitHub repository
 in the user's account, enabling one-click deployment to platforms like Render.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -237,7 +238,7 @@ async def deploy_webapp_to_github(
                     openai_api_key=extract_openai_api_key(agent_config),
                     config_yaml=raw_yaml if isinstance(raw_yaml, str) else None,
                 )
-                generator.generate()
+                await asyncio.to_thread(generator.generate)
 
                 _write_personalization_user_profiles(temp_dir, agent_config)
                 _add_chatbot_deployment_configs(
@@ -416,7 +417,7 @@ async def deploy_webapp_to_github(
                 # shared disk, so the agent cannot open the backend's SQLite file.
                 link_agent_database=False,
             )
-            generator.generate()
+            await asyncio.to_thread(generator.generate)
 
             # Add deployment configuration files
             _add_deployment_configs(

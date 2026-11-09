@@ -105,6 +105,8 @@ if 'DIALECT_PLACEHOLDER' == 'mssql':
 if 'DIALECT_PLACEHOLDER' == 'sqlite':
     # SQLite matches names case-insensitively and keeps them as written, so a mixed-case name
     # ("createdAt") needs no quotes there; reserved words and illegal characters still get them.
+    # _requires_quotes is private SQLAlchemy API: after an upgrade, test_sqlite_quotes_only_names_that_need_it
+    # says whether it still exists.
     _preparer = _ddl_dialect.identifier_preparer
     _requires_quotes = _preparer._requires_quotes
     _preparer._requires_quotes = lambda value: _requires_quotes(value.lower())

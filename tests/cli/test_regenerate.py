@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import shutil
 
 import pytest
 
@@ -69,7 +70,8 @@ def test_json_reports_what_happened_to_each_file(besser, model, write, classes):
         "warnings": ["the model's changes were merged into your edits; a clean merge can still break, "
                      "so run your tests: out/classes.py"],
         "files": ["out/classes.py"],
-        "generator": "python", "model": model, "output_dir": "out", "adopted": False,
+        "generator": "python", "model": model, "output_dir": "out", "dry_run": False,
+        "used": {"domain": "library_model"}, "adopted": False,
         "written": [], "merged": ["out/classes.py"], "conflicted": [], "deleted": [],
         "kept_removed_from_model": [], "not_restored": [], "not_merged": [], "differs_from_model": [],
     }
@@ -153,14 +155,34 @@ def test_an_option_reaches_the_generator(besser, model, tmp_path):
 
 
 @needs_pygit2
-def test_a_directory_written_by_generate_is_refused_until_it_is_adopted(besser, model, write, classes):
+def test_a_directory_written_by_generate_merges_a_hand_edit(besser, model, write, classes):
     besser("generate", "python", model, "-o", "out")
+    classes.write_text(HAND_EDIT + classes.read_text())
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+
+    run = besser("regenerate", "python", model, "-o", "out", "--json")
+
+    assert run.returncode == 0 and run.json["merged"] == ["out/classes.py"]
+    assert classes.read_text().startswith(HAND_EDIT) and "def isbn(self)" in classes.read_text()
+
+
+def _generate_without_record(besser, model, tmp_path):
+    """A folder as an older BESSER's 'besser generate' left it: generated code and no record."""
+    assert besser("generate", "python", model, "-o", "out").returncode == 0
+    (tmp_path / "out" / RECORD).unlink()
+
+
+@needs_pygit2
+def test_a_directory_generated_without_a_record_is_refused_until_it_is_adopted(besser, model, write, classes,
+                                                                              tmp_path):
+    _generate_without_record(besser, model, tmp_path)
 
     refused = besser("regenerate", "python", model, "-o", "out")
 
     assert refused.returncode == 2
     assert "out holds generated files (classes.py) but no .besser_generated.json" in refused.stderr
-    assert "'besser regenerate python <that model> -o out --adopt'" in refused.stderr
+    assert ("Record it once with the model those files came from: "
+            "'besser regenerate python <that model> -o out --adopt'") in refused.stderr
 
     adopted = besser("regenerate", "python", model, "-o", "out", "--adopt", "--json")
     assert adopted.returncode == 0
@@ -175,8 +197,8 @@ def test_a_directory_written_by_generate_is_refused_until_it_is_adopted(besser, 
 
 
 @needs_pygit2
-def test_adopting_says_which_files_differ_from_the_model(besser, model, write, classes):
-    besser("generate", "python", model, "-o", "out")
+def test_adopting_says_which_files_differ_from_the_model(besser, model, write, classes, tmp_path):
+    _generate_without_record(besser, model, tmp_path)
     write("library.py", LIBRARY_MODEL_WITH_ISBN)
 
     run = besser("regenerate", "python", model, "-o", "out", "--adopt")
@@ -202,18 +224,18 @@ def test_generate_refuses_a_regenerated_directory_and_points_to_regenerate(besse
 
 
 @needs_pygit2
-def test_generate_force_overwrites_a_regenerated_directory_and_drops_its_record(besser, model, classes, tmp_path):
+def test_generate_force_overwrites_a_regenerated_directory_and_records_what_it_wrote(besser, model, classes,
+                                                                                    tmp_path):
     besser("regenerate", "python", model, "-o", "out")
+    first_record = (tmp_path / "out" / RECORD).read_bytes()
     classes.write_text(HAND_EDIT + classes.read_text())
 
     run = besser("generate", "python", model, "-o", "out", "--force", "--json")
 
-    assert run.returncode == 0
+    assert run.returncode == 0 and run.json["recorded"] is True and run.json["warnings"] == []
     assert not classes.read_text().startswith(HAND_EDIT)
-    assert not (tmp_path / "out" / RECORD).exists()
-    [warning] = run.json["warnings"]
-    assert warning.startswith("removed out/.besser_generated.json: it recorded the output this run overwrote.")
-    assert "'besser regenerate python library.py -o out --adopt'" in warning
+    # The same record a first regenerate run writes.
+    assert (tmp_path / "out" / RECORD).read_bytes() == first_record
 
 
 def test_a_generator_that_does_not_support_it_is_a_usage_error(besser, model, tmp_path):
@@ -258,3 +280,127 @@ def test_a_model_with_validation_errors_is_not_regenerated_from(besser, model, w
     assert run.returncode == 1
     assert run.json["errors"][-1] == "nothing was generated: the model has validation errors"
     assert classes.read_text() == before
+
+
+# ── --dry-run ───────────────────────────────────────────────────────────────
+
+
+def _tree(folder) -> dict:
+    """Every file under ``folder``, by path, with its bytes: what a dry run must leave as it was."""
+    return {path.relative_to(folder).as_posix(): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
+
+
+@pytest.fixture
+def edited(besser, model, write, classes, tmp_path):
+    """``out`` generated, then hand-edited, and the model changed since: the next run merges."""
+    besser("generate", "python", model, "-o", "out")
+    classes.write_text(HAND_EDIT + classes.read_text())
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+    return tmp_path / "out"
+
+
+@needs_pygit2
+def test_dry_run_reports_the_merge_and_changes_nothing(besser, model, edited):
+    before = _tree(edited)
+
+    run = besser("regenerate", "python", model, "-o", "out", "--dry-run", "--json")
+
+    assert run.returncode == 0
+    assert run.json["dry_run"] is True and run.json["files"] == []
+    assert run.json["merged"] == ["out/classes.py"]
+    assert run.json["warnings"] == ["dry run: the model's changes were merged into your edits; a clean merge can "
+                                    "still break, so run your tests: out/classes.py"]
+    assert _tree(edited) == before
+
+
+@needs_pygit2
+def test_dry_run_text_says_nothing_was_written(besser, model, edited):
+    run = besser("regenerate", "python", model, "-o", "out", "--dry-run")
+
+    assert run.stdout == (
+        "Dry run: nothing was written.\n"
+        "Regenerating out with the 'python' generator would change 1 file (1 merged):\n"
+        "  merged  out/classes.py\n"
+    )
+
+
+@needs_pygit2
+def test_dry_run_of_a_conflict_fails_and_writes_no_markers(besser, model, edited, classes):
+    classes.write_text(classes.read_text().replace(BOOK_CONSTRUCTOR, "def __init__(self, title: str, pages: int = 0,"))
+    before = _tree(edited)
+
+    run = besser("regenerate", "python", model, "-o", "out", "--dry-run", "--json")
+
+    assert run.returncode == 1 and run.json["conflicted"] == ["out/classes.py"]
+    assert run.json["errors"] == ["out/classes.py: your edit and the model change the same lines: regenerate "
+                                  "would write conflict markers into it"]
+    assert _tree(edited) == before
+    assert besser("regenerate", "python", model, "-o", "out").returncode == 1
+
+
+@needs_pygit2
+def test_dry_run_of_a_first_run_creates_nothing(besser, model, tmp_path):
+    run = besser("regenerate", "python", model, "-o", "out", "--dry-run", "--json")
+
+    assert run.returncode == 0 and run.json["written"] == ["out/classes.py"]
+    assert not (tmp_path / "out").exists()
+
+
+@needs_pygit2
+def test_dry_run_of_an_adoption_writes_no_record(besser, model, tmp_path):
+    _generate_without_record(besser, model, tmp_path)
+
+    run = besser("regenerate", "python", model, "-o", "out", "--adopt", "--dry-run")
+
+    assert run.returncode == 0
+    assert run.stdout.startswith("Dry run: nothing was written.\nAdopting would record out as the 'python' generator")
+    assert not (tmp_path / "out" / RECORD).exists()
+
+
+@needs_pygit2
+def test_dry_run_refusals_name_the_output_directory(besser, model, tmp_path):
+    _generate_without_record(besser, model, tmp_path)
+
+    run = besser("regenerate", "python", model, "-o", "out", "--dry-run", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"][0].startswith("out holds generated files (classes.py) but no .besser_generated.json")
+
+
+# ── generate --keep-edits ───────────────────────────────────────────────────
+
+
+@needs_pygit2
+def test_generate_keep_edits_is_regenerate(besser, model, edited, tmp_path):
+    before = _tree(edited)
+    regenerated = besser("regenerate", "python", model, "-o", "out", "--json")
+    after_regenerate = _tree(edited)
+    shutil.rmtree(edited)
+    for path, content in before.items():
+        (edited / path).parent.mkdir(parents=True, exist_ok=True)
+        (edited / path).write_bytes(content)
+
+    kept = besser("generate", "python", model, "-o", "out", "--keep-edits", "--json")
+
+    assert kept.returncode == regenerated.returncode == 0
+    assert kept.json == regenerated.json and kept.json["command"] == "regenerate"
+    assert _tree(edited) == after_regenerate
+
+
+@needs_pygit2
+def test_generate_keep_edits_dry_run_is_regenerate_dry_run(besser, model, edited):
+    before = _tree(edited)
+
+    kept = besser("generate", "python", model, "-o", "out", "--keep-edits", "--dry-run", "--json")
+
+    assert kept.json == besser("regenerate", "python", model, "-o", "out", "--dry-run", "--json").json
+    assert kept.json["dry_run"] is True and kept.json["merged"] == ["out/classes.py"]
+    assert _tree(edited) == before
+
+
+def test_generate_keep_edits_with_force_is_a_usage_error(besser, model, tmp_path):
+    run = besser("generate", "python", model, "-o", "out", "--keep-edits", "--force", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == ["--keep-edits and --force cannot be combined (see 'besser generate --help')"]
+    assert not (tmp_path / "out").exists()

@@ -31,6 +31,7 @@ def test_an_editor_project_becomes_a_buml_file(besser, write, tmp_path):
     assert run.json == {
         "ok": True, "command": "convert", "exit_code": 0, "errors": [], "warnings": [], "notes": [],
         "files": ["models/project.py"], "input": "project.json", "output": "models/project.py",
+        "dry_run": False,
     }
     assert _class_names(tmp_path / "models" / "project.py") == ["Book"]
 
@@ -98,3 +99,44 @@ def test_standard_input_of_the_type_of_the_output_is_a_usage_error(besser, tmp_p
     assert run.returncode == 2
     assert "got a B-UML script on standard input -> copy.py" in run.stderr
     assert not (tmp_path / "copy.py").exists()
+
+
+# ── --dry-run ───────────────────────────────────────────────────────────────
+
+
+def test_dry_run_says_it_would_create_the_target_and_writes_nothing(besser, model, tmp_path):
+    run = besser("convert", model, "-o", "out/project.json", "--dry-run")
+    as_json = besser("convert", model, "-o", "out/project.json", "--dry-run", "--json")
+
+    assert run.returncode == 0
+    assert run.stdout == "Dry run: nothing was written.\nConverting library.py (1 model) would create out/project.json\n"
+    assert as_json.json["dry_run"] is True and as_json.json["files"] == []
+    assert as_json.json["would_write"] == {"out/project.json": "new"}
+    assert not (tmp_path / "out").exists()
+
+
+def test_dry_run_says_it_would_overwrite_the_target_and_leaves_it(besser, model, write, tmp_path):
+    write("project.json", {"mine": True})
+
+    run = besser("convert", model, "-o", "project.json", "--dry-run", "--json")
+
+    assert run.returncode == 0 and run.json["would_write"] == {"project.json": "changed"}
+    assert json.loads((tmp_path / "project.json").read_text()) == {"mine": True}
+
+
+def test_dry_run_says_when_the_target_would_not_change(besser, write, tmp_path):
+    besser("convert", write("project.json", PROJECT_EXPORT), "-o", "library.py")
+    before = (tmp_path / "library.py").read_bytes()
+
+    run = besser("convert", "project.json", "-o", "library.py", "--dry-run")
+
+    assert run.returncode == 0
+    assert run.stdout.endswith("would leave library.py as it is: it holds the same\n")
+    assert (tmp_path / "library.py").read_bytes() == before
+
+
+def test_dry_run_of_an_input_that_does_not_load_fails_as_a_real_run_does(besser, write, tmp_path):
+    run = besser("convert", write("crash.py", "1 / 0\n"), "-o", "project.json", "--dry-run", "--json")
+
+    assert run.returncode == 2 and run.json["dry_run"] is True
+    assert not (tmp_path / "project.json").exists()

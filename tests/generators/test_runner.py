@@ -13,6 +13,7 @@ from besser.generators.runner import (
     GeneratorInputError,
     build_generator,
     check_options,
+    preview_generator,
     regenerate_generator,
     run_generator,
 )
@@ -147,6 +148,29 @@ def test_regenerate_generator_refuses_a_generator_that_does_not_take_part(simple
 def test_regenerate_generator_checks_the_input_as_run_generator_does(simple_library_book_model, tmp_path):
     with pytest.raises(GeneratorInputError, match="unknown option"):
         regenerate_generator("python", {"domain": simple_library_book_model}, tmp_path / "out", {"dbms": "x"})
+
+
+@pytest.mark.skipif(importlib.util.find_spec("pygit2") is None, reason="regenerate() needs pygit2 (besser[regen])")
+def test_a_dry_run_regeneration_reports_and_writes_nothing(simple_library_book_model, tmp_path):
+    report = regenerate_generator("python", {"domain": simple_library_book_model}, tmp_path / "out", dry_run=True)
+
+    assert report.written == ["classes.py"] and not (tmp_path / "out").exists()
+
+
+def test_run_generator_with_record_writes_the_record_regenerate_merges_against(simple_library_book_model, tmp_path):
+    files = run_generator("python", {"domain": simple_library_book_model}, tmp_path / "out", record=True)
+
+    assert files == ["classes.py"] and (tmp_path / "out" / RECORD_FILENAME).is_file()
+
+
+def test_preview_generator_says_what_a_run_would_write(simple_library_book_model, tmp_path):
+    models = {"domain": simple_library_book_model}
+    run_generator("python", models, tmp_path / "out")
+
+    plan = preview_generator("python", models, tmp_path / "out", record=True)
+
+    assert plan == {RECORD_FILENAME: "new", "classes.py": "unchanged"}
+    assert not (tmp_path / "out" / RECORD_FILENAME).exists()
 
 
 @pytest.mark.parametrize("spec", GENERATORS, ids=lambda spec: spec.id)

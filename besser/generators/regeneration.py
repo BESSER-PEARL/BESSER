@@ -4,6 +4,10 @@
 result into the output folder three ways: what it generated last time (the
 record file in the folder), the folder as it is now, and the new output. An edit
 is either kept or flagged, never overwritten.
+
+``record_output()`` generates and writes that record without merging, so a folder
+it wrote regenerates from the start; it needs no pygit2. ``preview_output()`` and
+``preview_regeneration()`` say what the two would change, and change nothing.
 """
 
 from __future__ import annotations
@@ -46,6 +50,11 @@ _UNRESOLVED = re.compile(rb"^" + re.escape(_YOUR_EDIT) + rb"\r?$", re.MULTILINE)
 _PATHS_NAMED = 3  # in the refusal of a folder without a record
 _NOT_OUTPUT = frozenset({".git", "__pycache__", "node_modules"})
 _DEFAULT_MODE = 0o644
+# Scratch folders: the generator's output, and the copy a preview merges into. The editor
+# backend's hourly cleanup removes stale ``besser_*`` folders.
+_SCRATCH_PREFIX = "besser_regenerate_"
+# What a preview says of each file it would write.
+NEW, CHANGED, UNCHANGED = "new", "changed", "unchanged"
 # A Spec-Driven app keeps its own base and line authorship. A merge here would update neither: the
 # next modify run would read these lines as a person's edits.
 _SPEC_DRIVEN_RECORDS = (GENERATOR_OUTPUT_FILENAME, ATTRIBUTION_FILENAME)
@@ -57,6 +66,10 @@ class RegenerationError(Exception):
 
 class UnrecordedOutputError(RegenerationError):
     """The folder holds generated files and no record of them: it has to be adopted first."""
+
+
+class NotRecordableError(RegenerationError):
+    """The generator, with its options, or the folder cannot take a record; ``generate()`` still can."""
 
 
 @dataclass
@@ -87,13 +100,15 @@ class RegenerationReport:
 def regenerate_output(generator: GeneratorInterface, adopt: bool = False) -> RegenerationReport:
     """See :meth:`GeneratorInterface.regenerate`."""
     _require_support(generator)
+    if not merge_available():
+        raise RegenerationError('Regenerating needs pygit2: pip install "besser[regen]"')
     folder = generator.output_dir
     os.makedirs(folder, exist_ok=True)
     name = type(generator).__name__
     record = _load_record(folder, name)
     _require_usable_state(folder, record, adopt)
 
-    output, modes = _generate_in_scratch(generator)
+    output, modes = generate_in_scratch(generator)
     new = {rel: content for rel, content in output.items() if is_text(content)}
     base = dict(record["files"]) if record else {}
     current = _read_files(folder, set(base) | set(new))
@@ -124,25 +139,119 @@ def regenerate_output(generator: GeneratorInterface, adopt: bool = False) -> Reg
     return report
 
 
+def record_output(generator: GeneratorInterface) -> list[str]:
+    """Generate into the output folder, overwriting, and record the output as a first ``regenerate()`` does.
+
+    ``regenerate()`` then merges into the folder without adopting it. Recording needs no
+    pygit2, only a merge does. Files the generator does not produce are left alone, and the
+    record is the same bytes for the same output.
+
+    Returns:
+        The files written, sorted, relative to the output folder with ``/``.
+
+    Raises:
+        NotRecordableError: The generator or the folder cannot take a record; the generator has not run.
+        RegenerationError: A folder or link is where a file goes; nothing was written.
+    """
+    _require_support(generator)
+    folder = generator.output_dir
+    _require_not_spec_driven(folder)
+    output, modes = generate_in_scratch(generator)
+    _require_writable_paths(folder, output)
+    os.makedirs(folder, exist_ok=True)
+    for rel, content in sorted(output.items()):
+        _write(folder, rel, content, modes.get(rel, _DEFAULT_MODE))
+    write_atomic_plain(os.path.join(folder, RECORD_FILENAME), _first_record(generator, output),
+                       root=folder, newline="")
+    return sorted(output)
+
+
+def preview_output(generator: GeneratorInterface, record: bool = False) -> dict[str, str]:
+    """What generating into the output folder would write, without writing it: path -> ``NEW``, ``CHANGED``
+    or ``UNCHANGED``, sorted. With ``record``, as :func:`record_output` would, record included.
+
+    The generator runs in a scratch folder, so it must not act outside its output: one that would
+    (a backend that pushes an image) is refused.
+
+    Raises:
+        NotRecordableError: With ``record``, the generator or the folder cannot take a record.
+        RegenerationError: The generator would act outside its output, or, with ``record``,
+            a folder or link is where a file goes.
+    """
+    refusal = generator._regeneration_refusal()
+    if refusal:
+        raise RegenerationError(f"{type(generator).__name__} cannot preview its output: {refusal}")
+    folder = generator.output_dir
+    if record:
+        _require_support(generator)
+        _require_not_spec_driven(folder)
+    output, _ = generate_in_scratch(generator)
+    planned = dict(output)
+    if record:
+        _require_writable_paths(folder, output)
+        planned[RECORD_FILENAME] = _first_record(generator, output).encode("utf-8")
+    return {rel: _status(folder, rel, content) for rel, content in sorted(planned.items())}
+
+
+def preview_regeneration(generator: GeneratorInterface, adopt: bool = False) -> RegenerationReport:
+    """What ``regenerate(adopt)`` would do, done on a scratch copy of the output folder, which is left as it is.
+
+    Raises:
+        RegenerationError: As ``regenerate()``, naming the output folder.
+    """
+    _require_support(generator)
+    folder = generator.output_dir
+    if os.path.lexists(folder) and not os.path.isdir(folder):
+        raise RegenerationError(f"{folder} is not a folder.")
+    scratch = tempfile.mkdtemp(prefix=_SCRATCH_PREFIX)
+    copy = os.path.join(scratch, "output")
+    try:
+        if os.path.isdir(folder):
+            # Links are copied as links, so the copy is refused where the folder would be.
+            shutil.copytree(folder, copy, symlinks=True, ignore=shutil.ignore_patterns(*_NOT_OUTPUT))
+        generator.output_dir = copy
+        try:
+            return regenerate_output(generator, adopt)
+        except RegenerationError as exc:
+            raise type(exc)(str(exc).replace(copy, folder)) from exc
+    finally:
+        generator.output_dir = folder
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _status(folder: str, rel: str, content: bytes) -> str:
+    path = os.path.join(folder, *rel.split("/"))
+    if not os.path.lexists(path):
+        return NEW
+    if is_plain_file(path, root=folder):
+        with open_plain(path, "rb", root=folder) as handle:
+            if handle.read() == content:
+                return UNCHANGED
+    return CHANGED
+
+
 def _require_support(generator: GeneratorInterface) -> None:
+    """What a record needs: a stable output and an explicit folder. A merge also needs pygit2."""
     if not generator.regenerable:
-        raise RegenerationError(f"{type(generator).__name__} cannot regenerate: its output differs from run to run "
+        raise NotRecordableError(f"{type(generator).__name__} cannot regenerate: its output differs from run to run "
                                 "for one model, so a merge could not tell a model change from noise.")
     refusal = generator._regeneration_refusal()
     if refusal:
-        raise RegenerationError(f"{type(generator).__name__} cannot regenerate: {refusal}")
+        raise NotRecordableError(f"{type(generator).__name__} cannot regenerate: {refusal}")
     if generator.output_dir is None:
-        raise RegenerationError("Regenerating needs an explicit output_dir: "
-                                "it says which folder's record and edits to use.")
-    if not merge_available():
-        raise RegenerationError('Regenerating needs pygit2: pip install "besser[regen]"')
+        raise NotRecordableError("Regenerating needs an explicit output_dir: "
+                                 "it says which folder's record and edits to use.")
+
+
+def _require_not_spec_driven(folder: str) -> None:
+    for name in _SPEC_DRIVEN_RECORDS:
+        if os.path.lexists(os.path.join(folder, name)):
+            raise NotRecordableError(f"{folder} is a Spec-Driven Agent app (it has {name}): "
+                                     "change its model through a modify run, which keeps its authorship record.")
 
 
 def _require_usable_state(folder: str, record: dict | None, adopt: bool) -> None:
-    for name in _SPEC_DRIVEN_RECORDS:
-        if os.path.lexists(os.path.join(folder, name)):
-            raise RegenerationError(f"{folder} is a Spec-Driven Agent app (it has {name}): "
-                                    "change its model through a modify run, which keeps its authorship record.")
+    _require_not_spec_driven(folder)
     if adopt and record:
         raise RegenerationError(f"{folder} already has {RECORD_FILENAME}: there is nothing to adopt.")
     for rel in (record or {}).get("conflicted", []):
@@ -178,9 +287,13 @@ def _require_writable_paths(folder: str, output: dict[str, bytes]) -> None:
             raise RegenerationError(f"Cannot write {rel}: a folder or link is already at that path.")
 
 
-def _generate_in_scratch(generator: GeneratorInterface) -> tuple[dict[str, bytes], dict[str, int]]:
-    """Run the generator elsewhere: its ``generate()`` may overwrite or delete the output folder."""
-    scratch = tempfile.mkdtemp(prefix="besser_regenerate_")
+def generate_in_scratch(generator: GeneratorInterface) -> tuple[dict[str, bytes], dict[str, int]]:
+    """Run the generator elsewhere, as its ``generate()`` may overwrite or delete the output folder.
+
+    Returns:
+        Its output and each file's mode, by path relative to the folder with ``/``.
+    """
+    scratch = tempfile.mkdtemp(prefix=_SCRATCH_PREFIX)
     output_dir = generator.output_dir
     try:
         generator.output_dir = scratch
@@ -349,10 +462,21 @@ def _inside(rel: str) -> bool:
 
 def _save_record(folder: str, files: dict[str, bytes], binaries: list[str], conflicted: list[str],
                  generator_name: str) -> None:
+    text = _record_text(files, binaries, conflicted, generator_name)
+    write_atomic_plain(os.path.join(folder, RECORD_FILENAME), text, root=folder, newline="")
+
+
+def _record_text(files: dict[str, bytes], binaries: list[str], conflicted: list[str], generator_name: str) -> str:
     record = {"format": _RECORD_FORMAT, "generator": generator_name, "binaries": binaries, "conflicted": conflicted,
               "files": {rel: lf(content).decode("utf-8") for rel, content in files.items()}}
-    text = json.dumps(record, indent=1, sort_keys=True, ensure_ascii=False)
-    write_atomic_plain(os.path.join(folder, RECORD_FILENAME), text, root=folder, newline="")
+    return json.dumps(record, indent=1, sort_keys=True, ensure_ascii=False)
+
+
+def _first_record(generator: GeneratorInterface, output: dict[str, bytes]) -> str:
+    """The record a first ``regenerate()`` writes of ``output``: its text files, and the names of the rest."""
+    text = {rel: content for rel, content in output.items() if is_text(content)}
+    return _record_text(generator._without_secrets(text), sorted(set(output) - set(text)), [],
+                        type(generator).__name__)
 
 
 def _log(folder: str, report: RegenerationReport) -> None:

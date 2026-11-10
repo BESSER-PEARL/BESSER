@@ -1,15 +1,19 @@
 """``besser generate``: one generator, run on a model file into a directory."""
 
 import copy
+import json
 
 from tests.cli.conftest import (
     CLASS_DIAGRAM,
     INVALID_MODEL,
     LIBRARY_MODEL,
+    LIBRARY_MODEL_WITH_ISBN,
     PROJECT_EXPORT,
     TWO_DOMAIN_MODELS,
     WARNING_MODEL,
 )
+
+RECORD = ".besser_generated.json"
 
 
 def test_it_writes_the_files_and_prints_them(besser, model, tmp_path):
@@ -25,9 +29,12 @@ def test_json_lists_the_files_under_the_output_directory_as_given(besser, model,
 
     assert run.returncode == 0
     assert run.json == {
-        "ok": True, "command": "generate", "exit_code": 0, "errors": [], "warnings": [], "notes": [],
+        "ok": True, "command": "generate", "exit_code": 0, "errors": [], "warnings": [],
+        "notes": ["recorded the output in generated/models/.besser_generated.json: 'besser regenerate pydantic "
+                  f"{model} -o generated/models' brings it up to a changed model and keeps your edits"],
         "files": ["generated/models/pydantic_classes.py"],
-        "generator": "pydantic", "model": model, "output_dir": "generated/models",
+        "generator": "pydantic", "model": model, "output_dir": "generated/models", "dry_run": False,
+        "recorded": True, "used": {"domain": "library_model"},
     }
     assert (tmp_path / "generated" / "models" / "pydantic_classes.py").is_file()
 
@@ -209,7 +216,7 @@ def test_a_second_run_into_the_same_directory_is_refused(besser, model):
     run = besser("generate", "python", model, "-o", "out")
 
     assert run.returncode == 2 and run.stdout == ""
-    assert "error: out is not empty" in run.stderr
+    assert "error: out holds generated code and the record of it (.besser_generated.json)" in run.stderr
 
 
 def test_an_empty_output_directory_is_written_to(besser, model, tmp_path):
@@ -240,3 +247,117 @@ def test_the_output_directory_is_required(besser, model):
 
     assert run.returncode == 2
     assert "the following arguments are required: -o/--output" in run.stderr
+
+
+# ── the record 'besser regenerate' merges against ──────────────────────────
+
+
+def _tree(folder) -> dict:
+    """Every file under ``folder``, by path, with its bytes: what a dry run must leave as it was."""
+    return {path.relative_to(folder).as_posix(): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
+
+
+def test_it_records_the_output_of_a_generator_that_supports_regenerate(besser, model, tmp_path):
+    run = besser("generate", "python", model, "-o", "out", "--json")
+
+    record = json.loads((tmp_path / "out" / RECORD).read_text())
+    assert run.json["recorded"] is True and run.json["files"] == ["out/classes.py"]
+    assert record["generator"] == "PythonGenerator"
+    assert record["files"] == {"classes.py": (tmp_path / "out" / "classes.py").read_text()}
+    assert run.json["notes"] == [
+        "recorded the output in out/.besser_generated.json: 'besser regenerate python library.py -o out' "
+        "brings it up to a changed model and keeps your edits"
+    ]
+
+
+def test_recording_does_not_need_pygit2(besser, model, write, tmp_path):
+    # 'python -m' puts the working directory first on sys.path, so this module stands in for pygit2.
+    write("pygit2.py", "raise ImportError('hidden by the test')\n")
+
+    run = besser("generate", "python", model, "-o", "out", "--json")
+    merge = besser("regenerate", "python", model, "-o", "out")
+
+    assert run.returncode == 0 and run.json["recorded"] is True
+    assert (tmp_path / "out" / RECORD).is_file()
+    assert merge.returncode == 2 and "regenerate needs the pygit2 package" in merge.stderr
+
+
+def test_the_record_is_the_same_bytes_for_the_same_model(besser, model, tmp_path):
+    besser("generate", "backend", model, "-o", "first")
+    besser("generate", "backend", model, "-o", "second")
+
+    assert (tmp_path / "first" / RECORD).read_bytes() == (tmp_path / "second" / RECORD).read_bytes()
+
+
+def test_force_writes_a_fresh_record_of_what_it_wrote(besser, model, write, tmp_path):
+    besser("generate", "python", model, "-o", "out")
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+
+    run = besser("generate", "python", model, "-o", "out", "--force", "--json")
+
+    record = json.loads((tmp_path / "out" / RECORD).read_text())
+    assert run.returncode == 0 and run.json["recorded"] is True and run.json["warnings"] == []
+    assert record["files"]["classes.py"] == (tmp_path / "out" / "classes.py").read_text()
+    assert "isbn" in record["files"]["classes.py"]
+
+
+def test_a_generator_without_regenerate_support_writes_no_record(besser, model, tmp_path):
+    run = besser("generate", "supabase", model, "-o", "out", "--json")
+
+    assert run.returncode == 0
+    assert run.json["recorded"] is False and run.json["notes"] == []
+    assert not (tmp_path / "out" / RECORD).exists()
+
+
+# ── --dry-run ───────────────────────────────────────────────────────────────
+
+
+def test_dry_run_lists_what_it_would_write_and_writes_nothing(besser, model, tmp_path):
+    run = besser("generate", "python", model, "-o", "out", "--dry-run", "--json")
+
+    assert run.returncode == 0
+    assert run.json["dry_run"] is True and run.json["recorded"] is False and run.json["files"] == []
+    assert run.json["would_write"] == {"out/.besser_generated.json": "new", "out/classes.py": "new"}
+    assert not (tmp_path / "out").exists()
+
+
+def test_dry_run_says_so_first(besser, model):
+    run = besser("generate", "python", model, "-o", "out", "--dry-run")
+
+    assert run.stdout == (
+        "Dry run: nothing was written.\n"
+        "The 'python' generator would write 2 files in out (2 new):\n"
+        "  new  out/.besser_generated.json\n"
+        "  new  out/classes.py\n"
+    )
+
+
+def test_dry_run_over_generated_code_tells_changed_from_unchanged(besser, model, write, tmp_path):
+    besser("generate", "python", model, "-o", "out")
+    before = _tree(tmp_path / "out")
+
+    same = besser("generate", "python", model, "-o", "out", "--force", "--dry-run", "--json")
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+    changed = besser("generate", "python", model, "-o", "out", "--force", "--dry-run", "--json")
+
+    assert same.json["would_write"] == {"out/.besser_generated.json": "unchanged", "out/classes.py": "unchanged"}
+    assert changed.json["would_write"] == {"out/.besser_generated.json": "changed", "out/classes.py": "changed"}
+    assert _tree(tmp_path / "out") == before
+
+
+def test_dry_run_still_refuses_a_directory_that_is_not_empty(besser, model, write, tmp_path):
+    write("out/classes.py", "# my own work\n")
+
+    run = besser("generate", "python", model, "-o", "out", "--dry-run", "--json")
+
+    assert run.returncode == 2 and run.json["dry_run"] is True
+    assert run.json["errors"][0].startswith("out is not empty and generating overwrites what is there")
+    assert _tree(tmp_path / "out") == {"classes.py": b"# my own work\n"}
+
+
+def test_dry_run_of_a_generator_without_regenerate_support_lists_no_record(besser, model, tmp_path):
+    run = besser("generate", "supabase", model, "-o", "out", "--dry-run", "--json")
+
+    [path] = run.json["would_write"]
+    assert run.returncode == 0 and path.endswith("_librarymodel.sql")
+    assert not (tmp_path / "out").exists()

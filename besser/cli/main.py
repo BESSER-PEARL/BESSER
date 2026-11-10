@@ -30,7 +30,8 @@ PROG = "besser"
 
 _EXECUTES_PYTHON = (
     "A B-UML .py model is Python code and is EXECUTED, with your permissions, to load it: "
-    "only pass files you trust. Nothing but the file you name is executed, and its "
+    "only pass files you trust. Nothing but the files you name is executed (and, with "
+    "'validate --exec-py', the .py files found in a directory you name), and a file's "
     "'if __name__ == \"__main__\":' block does not run. A .json model is parsed as data."
 )
 _MODEL_HELP = "a B-UML .py file or an editor .json export; - reads either from standard input"
@@ -55,18 +56,23 @@ exit status:
      a model file that does not load, an output folder generate or regenerate
      refuses
 
-With --json, standard output is one JSON object with the keys ok, errors,
-warnings and files (plus the command's own); everything a model or a
-generator prints goes to standard error.
+With --json, standard output is one JSON object with the keys ok, command,
+exit_code, errors, warnings, notes and files (plus the command's own);
+everything a model or a generator prints goes to standard error.
 
 examples:
-  besser new model.py
-  besser validate model.py --json
-  besser info model.py
-  besser generators
+  besser new model.py                          a starter model to edit
+  besser validate model.py --json              errors and warnings, as JSON
+  besser validate models/ --strict             every editor .json export under models/
+  besser validate models/ --exec-py --ocl      ... and the .py models, with their OCL constraints
+  besser info project.json                     the models, classes and generators of a file
+  besser generators                            the generators and their options
   besser generate sqlalchemy model.py -o out --option dbms=postgresql
-  besser regenerate backend model.py -o app
-  besser convert model.py -o project.json
+  besser generate backend model.py -o app --dry-run    what would be written
+  besser regenerate backend model.py -o app    after a model change: keeps your edits
+  besser convert model.py -o project.json      B-UML .py <-> editor JSON
+  eval "$(besser completion bash)"             tab completion (also zsh, fish)
+  besser mcp --root .                          the commands as MCP tools for an AI agent
 """
 
 
@@ -88,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "--json", action="store_true", default=argparse.SUPPRESS,
-        help="print one JSON object on standard output (keys: ok, errors, warnings, files, ...)",
+        help="print one JSON object on standard output (keys: ok, command, exit_code, errors, warnings, notes, files, ...)",
     )
     common.add_argument(
         "-q", "--quiet", action="store_true", default=argparse.SUPPRESS,
@@ -143,7 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
         "A directory is searched, recursively, for model files. Only its .json files are loaded\n"
         "unless --exec-py is given, since loading a .py model executes it; a .py file named on\n"
         "the command line is always loaded.\n\n"
-        "Exit status: 0 no errors, 1 errors (or warnings with --strict), 2 a file does not load.\n\n"
+        "Exit status, that of the worst file: 0 no errors, 1 errors (or warnings with --strict),\n"
+        "2 a file does not load or there is nothing to check.\n\n"
         + _EXECUTES_PYTHON,
     )
     validate.add_argument(
@@ -157,7 +164,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument(
         "--ocl", action="store_true",
-        help="also check the models' OCL constraints: parse each one, and evaluate them on object models",
+        help="also check the models' OCL constraints: parse each one, and evaluate them on object models "
+             '(needs "besser[ocl]")',
     )
 
     info = add_command(
@@ -200,8 +208,9 @@ def build_parser() -> argparse.ArgumentParser:
         "An edited file takes the model's changes (merged). Where an edit and the model changed the\n"
         "same lines, conflict markers are written and the exit status is 1; resolve them, then run\n"
         "the command again.\n\n"
-        "A directory written by 'besser generate' has no record: run regenerate once with --adopt\n"
-        "and the model it was generated from, before changing the model.\n\n"
+        "'besser generate' starts the record too. A directory generated without one (by an older\n"
+        "BESSER, or by other means) needs one run with --adopt and the model it was generated from,\n"
+        "before changing the model.\n\n"
         "Needs pygit2 (pip install \"besser[regen]\"); 'besser generators' says which generators\n"
         "support it.\n\n" + _EXECUTES_PYTHON,
     )
@@ -234,7 +243,8 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = add_command(
         "mcp", "serve the commands to an AI agent over MCP (stdio)",
         "Run a Model Context Protocol server on standard input and output, exposing validate,\n"
-        "info, generators, generate and convert as tools to an MCP client (an AI coding agent).\n\n"
+        "info, generators, generate, regenerate and convert as tools to an MCP client (an AI\n"
+        "coding agent).\n\n"
         "Tools only read and write files under --root. A .py model is Python code: the tools\n"
         "load .json models only, unless --exec-py is given.\n\n"
         'Needs the MCP SDK (pip install "besser[mcp]").',

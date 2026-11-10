@@ -92,6 +92,32 @@ the editor backend's packages. They are not part of the core install; the
 command prints the ``pip install -r .../requirements.txt`` line to run when
 they are missing.
 
+.. _cli-several-diagrams:
+
+Several models of a kind
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+A generator reads one model of each kind it needs. When the file holds several
+of a kind, ``--use NAME`` names the one to read, by the name ``besser info``
+lists it under or by the model's own name (an editor diagram's model is named
+after its title).
+
+Without ``--use``, an editor project picks for you: the editor stores which
+diagram of each type is open (``currentDiagramIndices``), and the command reads
+that diagram's model and says so in a note (``notes`` and ``used`` in the JSON
+output). ``besser info`` marks that model ``(current in the editor)``
+(``"current": true`` in its JSON):
+
+.. code-block:: console
+
+   $ besser generate python project.json -o out
+   note: project.json holds 2 domain models (Library, Shop); using Shop, the project's current ClassDiagram (--use NAME picks another)
+   $ besser generate python project.json -o out --use Library
+
+A ``.py`` file, or a project that stores no current diagram for that type, has
+no such default: the command lists the models and asks for ``--use``. So does a
+project whose current diagram is out of range or empty, and the error says why.
+
 ``besser new``
 --------------
 
@@ -141,25 +167,95 @@ model) is reported with exit status 2, with the line of the file that raised:
    $ besser validate crash.py
    error: crash.py: line 2: ZeroDivisionError: division by zero
 
-Several files are checked in one run; a shell glob covers a folder:
+Several files are checked in one run, and a directory is searched for model
+files, recursively and in sorted order:
 
 .. code-block:: console
 
-   $ besser validate models/*.py
-   models/library.py: 1 model
-     library_model (DomainModel): ok
-   models/shop.py: 1 model
-     shop_model (DomainModel): ok
+   $ besser validate models
+   models/library.json: 1 model
+     Library (DomainModel): ok
+   models/nested/book.json: 1 model
+     Library (DomainModel): ok
+   skipped: models/package.json: not an editor export (no 'diagrams' or 'model' object)
+   skipped: models/shop.py: a .py model is executed when loaded; pass --exec-py to load it
    OK: 0 errors, 0 warnings
+   note: 1 .py file found in a directory skipped: loading a .py model executes it; pass --exec-py to load them
+
+What a directory search checks:
+
+* Its ``.json`` files that are editor exports. Other JSON files
+  (``package.json``, ``tsconfig.json``) are skipped as not a model; a JSON file
+  you name yourself must be a model.
+* Its ``.py`` files only with ``--exec-py``, since loading a ``.py`` model
+  executes it. Without the flag they are listed as skipped and not run. With
+  it, a ``.py`` file found that defines no model is skipped. A ``.py`` file
+  named on the command line is always loaded.
+* Not hidden directories (``.git``, ``.venv``, ...) nor ``venv``, ``env``,
+  ``node_modules``, ``__pycache__`` and ``site-packages``, which hold
+  third-party files.
+* Not what a symbolic link leads to outside the directory. A link to a file
+  inside it counts (once, with the file); a linked directory is not entered.
+
+A file reached twice (named, and found in a directory) is checked once. A run
+with nothing to check, such as an empty directory, exits with status 2.
 
 The exit status is that of the worst file: 2 when one does not load (the
-others are still validated), else 1 when one has errors. With several files,
-each message of ``errors`` and ``warnings`` starts with the file it is about.
-The command takes files, not a folder: it would have to execute every ``.py``
-file found in it, and only the files you name are executed.
+others are still validated), else 1 when one has errors (or warnings, with
+``--strict``). With several files, or a directory, each message of ``errors``
+and ``warnings`` starts with the file it is about. With ``--json``, the
+command adds:
 
-The command runs ``validate()`` only. It does not evaluate OCL constraints on
-an object model, which the editor's validation also does.
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Key
+     - Value
+   * - ``model_files``
+     - The files checked, directories expanded (the skipped ones are not in it).
+   * - ``models``
+     - Per model of every file: ``file``, ``name``, ``kind``, ``type``,
+       ``validated``, ``errors`` and ``warnings``.
+   * - ``results``
+     - Per file checked: ``file``, ``ok``, ``exit_code``, ``errors``,
+       ``warnings`` (each starting with the model's name) and its ``models``.
+       A file that does not load has exit code 2, its load error and no models.
+   * - ``skipped``
+     - Per file found and not checked: ``file`` and ``reason``.
+
+OCL constraints
+~~~~~~~~~~~~~~~
+
+``--ocl`` also checks the OCL constraints of the domain models, as the editor's
+validation does: every constraint (invariants, pre- and postconditions) is
+parsed, and the invariants are evaluated on each object model of the same file
+that instantiates the domain model. A constraint that does not parse is an
+error of the domain model; an invariant an object model violates is an error
+of the object model. Both start with ``OCL constraint`` and the constraint:
+
+.. code-block:: console
+
+   $ besser validate books.py --ocl
+   books.py: 2 models
+     book_model (DomainModel): 1 error, 0 warnings
+       error: OCL constraint [Book inv broken]: 'context Book inv broken: self.pages >' - line 1, column 37: Expression ends unexpectedly — the operand on the right is missing.
+     shelf (ObjectModel): 1 error, 0 warnings
+       error: OCL constraint [Book inv positive_pages]: 'context Book inv positive_pages: self.pages > 0' - Constraint violation: Evaluates to False
+   FAILED: 2 errors, 0 warnings
+   note: OCL: 2 constraints parsed, invariants evaluated on 1 object model
+
+An invariant the evaluator cannot handle yet is reported as a warning on the
+object model, not as a violation.
+
+The check needs the B-OCL evaluator (``pip install "besser[ocl]"``) and, like a
+``.json`` model, the editor backend's packages. When they are missing the
+constraints are not checked, and a warning says what to install: the run does
+not fail, except with ``--strict``.
+
+The check is opt-in. It needs those optional packages, and the evaluator
+works by building Python expressions from the constraint and the object
+model's values and calling ``eval()`` on them.
 
 ``besser info``
 ---------------
@@ -222,6 +318,8 @@ The list ends with the generators ``besser regenerate`` works with.
 Schema property (``type``, ``enum``, ``default``, ``description``), and
 ``supports_regenerate`` (``true`` or ``false``) for each generator.
 
+.. _cli-generate:
+
 ``besser generate``
 -------------------
 
@@ -239,13 +337,51 @@ The command:
    (warnings are printed and do not stop it);
 #. runs the generator into the ``-o`` directory, which is created if missing
    and must be empty;
+#. records what it wrote in ``.besser_generated.json``, in that directory, when
+   the generator works with ``besser regenerate`` (``besser generators`` says
+   which do), and says so in a note;
 #. prints the files the run created or rewrote.
 
 ``generate`` overwrites what it generates, so it refuses (exit status 2) a
 directory that is not empty, and nothing is written. ``--force`` writes into it
-anyway, overwriting the files of the same names. To update generated code
-after a model change and keep the edits made in it, use
-:ref:`besser regenerate <cli-regenerate>`.
+anyway, overwriting the files of the same names, and records what it wrote in
+place of the old record. Files the generator does not produce are left alone.
+
+The record is what :ref:`besser regenerate <cli-regenerate>` merges against: to
+update generated code after a model change and keep the edits made in it, run
+``besser regenerate`` (or ``besser generate --keep-edits``, the same command)
+on the directory. Keep the record with the code (commit it). Writing it needs
+no extra package; only the merge needs ``pygit2``. ``"recorded"`` in the JSON
+output says whether it was written. It is not written for a generator that
+does not take part in ``regenerate``, nor, with a warning, when the generator's
+options or the directory rule it out (a backend that pushes a Docker image, a
+Spec-Driven Agent app).
+
+``--keep-edits`` makes ``generate`` run ``besser regenerate`` with the same
+arguments: the output, the exit status and the JSON (``"command":
+"regenerate"``) are those of ``regenerate``. It cannot be combined with
+``--force``, which overwrites edits (exit status 2).
+
+**Dry run.** ``--dry-run`` runs the generator in a scratch folder and lists
+what a real run would write, each file ``new``, ``changed`` (it differs from
+the file in the directory) or ``unchanged``, the record included. Nothing is
+written, and the ``-o`` directory is not created:
+
+.. code-block:: console
+
+   $ besser generate python library.py -o out --dry-run
+   Dry run: nothing was written.
+   The 'python' generator would write 2 files in out (2 new):
+     new  out/.besser_generated.json
+     new  out/classes.py
+
+A dry run is refused where the run would be: a directory that is not empty
+without ``--force``, a model with validation errors, an unknown option. With
+``--json``, ``files`` is empty and ``would_write`` maps each path to its
+status. A generator that would act outside its directory (a backend that pushes
+a Docker image) is not run, and the dry run is refused. For a generator whose
+output differs from run to run, a file can read as ``changed`` when the model
+is not, and a note says so.
 
 An option is a keyword argument of the generator's constructor, given as
 ``--option name=value``; repeat ``--option`` for several. The value is read as
@@ -333,20 +469,36 @@ status 1:
 Edit the file so the markers are gone. Until then the next ``regenerate``
 changes nothing and exits with status 2.
 
-**A directory written by** ``besser generate`` has no record, so edits in it
-cannot be told from generated code and ``regenerate`` refuses it (status 2).
-Adopt it once with ``--adopt`` and the model it was generated from, before
-you change the model. This changes no file:
+**A directory written by** ``besser generate`` has its record, so
+``regenerate`` merges into it from the first run. A directory generated without
+one (by an older BESSER, or by other means) cannot have its edits told from
+generated code, and ``regenerate`` refuses it (status 2). Adopt it once with
+``--adopt`` and the model it was generated from, before you change the model.
+This changes no file:
 
 .. code-block:: console
 
-   $ besser generate python library.py -o out
    $ besser regenerate python library.py -o out --adopt
    Recorded out as the 'python' generator's output for library.py; no file was changed. 'besser regenerate' now keeps the edits made in it.
 
 Files that differ from that model's output are listed in a warning and count
-as your edits from then on. If you plan to edit the generated code, start
-with ``regenerate`` instead of ``generate``.
+as your edits from then on.
+
+**Dry run.** ``--dry-run`` runs the same merge on a scratch copy of the
+directory and reports what the run would do, with the same lists, warnings
+(starting with ``dry run:``) and exit status: 1 when the merge would write
+conflict markers. The directory is left byte for byte as it was, and with
+``--json`` ``files`` is empty:
+
+.. code-block:: console
+
+   $ besser regenerate python library.py -o out --dry-run
+   Dry run: nothing was written.
+   Regenerating out with the 'python' generator would change 1 file (1 merged):
+     merged  out/classes.py
+   warning: dry run: the model's changes were merged into your edits; a clean merge can still break, so run your tests: out/classes.py
+
+``generate --keep-edits`` is this command; see :ref:`besser generate <cli-generate>`.
 
 ``regenerate`` takes the same ``--option`` and ``--use`` as ``generate``. Give
 the same options on every run: a different option changes the output like a
@@ -363,8 +515,8 @@ The command is refused with status 2, and nothing is written, when:
 
 ``besser generate`` and a regenerated directory: ``generate`` refuses a
 directory holding ``.besser_generated.json`` and prints the ``regenerate``
-command to run. With ``--force`` it overwrites the hand edits and removes the
-record, which described the output it replaced, and says so in a warning.
+command to run. With ``--force`` it overwrites the hand edits and writes a
+fresh record of what it wrote.
 
 ``besser convert``
 ------------------
@@ -384,6 +536,17 @@ export writes. An existing output file is overwritten. With ``-`` as the
 input, the direction follows the output's extension and what standard input
 holds.
 
+``--dry-run`` converts into a scratch file, so it fails and warns as the real
+conversion would, and says whether the output would be created, overwritten, or
+left as it is because it holds the same. Nothing is written (``would_write`` in
+the JSON output):
+
+.. code-block:: console
+
+   $ besser convert library.py -o library.json --dry-run
+   Dry run: nothing was written.
+   Converting library.py (1 model) would create library.json
+
 Both directions reuse the editor's converters, so they share their limits:
 
 * The editor has no diagram for a Terraform ``deployment`` model or a feature
@@ -393,6 +556,30 @@ Both directions reuse the editor's converters, so they share their limits:
   associations keep their names.
 * A model written in Python has no layout: the converter computes the
   positions of its elements.
+
+``besser completion``
+---------------------
+
+Prints a completion script for bash, zsh or fish on standard output. Load it
+from the shell's start-up file:
+
+.. code-block:: console
+
+   $ eval "$(besser completion bash)"     # in ~/.bashrc
+   $ eval "$(besser completion zsh)"      # in ~/.zshrc, after compinit
+   $ besser completion fish > ~/.config/fish/completions/besser.fish
+
+The script completes the command names (zsh and fish show each one's help),
+every option of the command being typed, the values of an option with fixed
+choices, the generator ids after ``generate`` and ``regenerate``, model files
+(``.py`` and ``.json`` first, and directories), a directory after ``-o`` of
+``generate`` and ``regenerate`` and a file after ``-o`` of ``convert``.
+
+It is generated from the command's own argument parser, so it follows the
+installed version of BESSER. The generator ids are written into the script:
+print it again after installing a version that adds a generator. With
+``--json`` the object holds ``shell`` and ``script``, the text printed without
+it.
 
 .. _cli-json:
 
@@ -439,16 +626,19 @@ Each command adds its own:
      - ``generators``: per generator its ``id``, ``summary``, ``category``,
        ``models``, ``options`` and ``supports_regenerate``.
    * - ``generate``
-     - ``generator``, ``model`` and ``output_dir``.
+     - ``generator``, ``model``, ``output_dir``, ``dry_run`` and ``recorded``
+       (whether ``.besser_generated.json`` was written); with ``--dry-run``,
+       ``would_write``: path -> ``new``, ``changed`` or ``unchanged``.
    * - ``regenerate``
-     - Those of ``generate``, ``adopted``, and one list of paths per outcome:
+     - ``generator``, ``model``, ``output_dir``, ``dry_run``, ``adopted``, and one list of paths per outcome:
        ``written``, ``merged``, ``conflicted``, ``deleted``,
        ``kept_removed_from_model``, ``not_restored``, ``not_merged`` and
        ``differs_from_model`` (the fields of ``RegenerationReport``).
    * - ``new``
      - ``model``: the file written.
    * - ``convert``
-     - ``input`` and ``output``.
+     - ``input``, ``output`` and ``dry_run``; with ``--dry-run``,
+       ``would_write``, as for ``generate``.
 
 .. code-block:: console
 
@@ -497,6 +687,63 @@ Standard output carries the result only. Whatever a model file or a generator
 prints while it runs, and the log messages of BESSER, go to standard error.
 Without ``--json``, error and warning lines go to standard error too, except
 those ``validate`` lists under each model in its report.
+
+``besser mcp``
+--------------
+
+``besser mcp`` runs a `Model Context Protocol <https://modelcontextprotocol.io>`_
+server on standard input and output, so an MCP client (an AI coding agent)
+calls the commands as tools instead of running them in a shell. It needs the
+MCP SDK:
+
+.. code-block:: console
+
+   $ pip install "besser[mcp]"
+   $ besser mcp --root .
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - Option
+     - Effect
+   * - ``--root DIR``
+     - The directory the tools read and write (default: the current directory).
+   * - ``--exec-py``
+     - Lets the tools load B-UML ``.py`` model files, which executes them.
+       Without it the tools load editor ``.json`` exports only.
+
+The tools are ``validate``, ``info``, ``generators``, ``generate``,
+``regenerate`` and ``convert``. Each takes the command's arguments by name
+(``generate``: ``generator``, ``model``, ``output_dir``, and optionally
+``options``, ``use``, ``force``, ``dry_run``) and returns the command's
+:ref:`--json object <cli-json>`, as structured content and as JSON text; the
+result is flagged as an error when ``ok`` is false. ``options`` is an object,
+``{"dbms": "postgresql"}``, or a list of ``"name=value"`` strings as
+``--option`` takes them. ``tools/list`` gives each tool's input schema.
+
+The server confines the tools:
+
+* every path is resolved, ``..`` and symbolic links included, and refused
+  unless it is inside ``--root``; so is a folder holding a symbolic link that
+  leads out of it;
+* ``-`` (standard input) is not a model file: standard input is the protocol;
+* a ``.py`` model is refused unless the server was started with ``--exec-py``;
+* ``generate`` refuses a non-empty ``output_dir`` unless ``force`` is true,
+  as the command does.
+
+Everything a model file or a generator prints goes to the server's standard
+error. Tools run one at a time. To add the server to Claude Code:
+
+.. code-block:: console
+
+   $ claude mcp add besser -- besser mcp --root .
+
+Other clients take the same command in their MCP configuration, for example:
+
+.. code-block:: json
+
+   {"mcpServers": {"besser": {"command": "besser", "args": ["mcp", "--root", "."]}}}
 
 Use from a coding agent or a script
 -----------------------------------

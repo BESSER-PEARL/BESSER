@@ -3,9 +3,10 @@
 A generator's registry entry says what its constructor takes:
 ``GeneratorSpec.models`` are its model arguments, in order, and
 ``GeneratorSpec.options`` its keyword arguments. ``run_generator`` builds the
-generator from them, runs it and returns the files it wrote;
-``regenerate_generator`` builds it the same way and merges its output into a
-folder that holds edits. The web editor backend
+generator from them, runs it and returns the files it wrote, optionally with the
+record ``regenerate`` merges against; ``regenerate_generator`` builds it the same
+way and merges its output into a folder that holds edits; ``preview_generator``
+says what a run would write, writing nothing. The web editor backend
 (``services/generation/dispatch.py``) and the ``besser`` command line both
 generate through this module.
 """
@@ -13,13 +14,11 @@ generate through this module.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import Any, Callable, Mapping
 
+from besser.generators import regeneration
 from besser.generators.generator_interface import GeneratorInterface
 from besser.generators.registry import GENERATORS, GeneratorSpec, get_generator
-
-if TYPE_CHECKING:
-    from besser.generators.regeneration import RegenerationReport
 
 
 class GeneratorInputError(ValueError):
@@ -197,10 +196,14 @@ def run_generator(
     models: Mapping[str, Any],
     output_dir: str,
     options: Mapping[str, Any] | None = None,
+    record: bool = False,
 ) -> list[str]:
     """Run the generator ``generator_id`` and return the files it wrote.
 
     The arguments are those of :func:`build_generator`; ``output_dir`` is created if missing.
+    With ``record``, the run also writes the record :meth:`GeneratorInterface.regenerate`
+    merges against (:func:`besser.generators.regeneration.record_output`), so a later
+    regeneration keeps the edits made in ``output_dir``.
 
     Returns:
         The files the run created or rewrote, sorted, relative to ``output_dir`` with ``/``.
@@ -208,8 +211,13 @@ def run_generator(
     Raises:
         GeneratorInputError: Unknown generator, a model the generator reads is missing,
             or an unknown or invalid option. Nothing was written.
+        NotRecordableError: With ``record``, the generator or the folder cannot take a record;
+            nothing was written.
+        RegenerationError: With ``record``, a folder or link is where a file goes; nothing was written.
     """
     generator = build_generator(generator_id, models, output_dir, options)
+    if record:
+        return regeneration.record_output(generator)
     output_dir = os.fspath(output_dir)
     before = _file_states(output_dir)
     generator.generate()
@@ -222,14 +230,40 @@ def regenerate_generator(
     output_dir: str,
     options: Mapping[str, Any] | None = None,
     adopt: bool = False,
-) -> RegenerationReport:
+    dry_run: bool = False,
+) -> regeneration.RegenerationReport:
     """Bring ``output_dir`` up to ``models`` with the generator ``generator_id``, keeping edits made in it.
 
     The arguments are those of :func:`build_generator`; ``adopt`` and the report are those of
-    :meth:`GeneratorInterface.regenerate`.
+    :meth:`GeneratorInterface.regenerate`. With ``dry_run``, the report is of the same run on a
+    copy of ``output_dir``, which is left as it is.
 
     Raises:
         GeneratorInputError: As :func:`build_generator`. Nothing was written.
         RegenerationError: The folder cannot be regenerated safely; no generated file was changed.
     """
-    return build_generator(generator_id, models, output_dir, options).regenerate(adopt=adopt)
+    generator = build_generator(generator_id, models, output_dir, options)
+    if dry_run:
+        return regeneration.preview_regeneration(generator, adopt)
+    return generator.regenerate(adopt=adopt)
+
+
+def preview_generator(
+    generator_id: str,
+    models: Mapping[str, Any],
+    output_dir: str,
+    options: Mapping[str, Any] | None = None,
+    record: bool = False,
+) -> dict[str, str]:
+    """What :func:`run_generator` with these arguments would write, writing nothing.
+
+    Returns:
+        Path relative to ``output_dir`` (with ``/``) -> ``"new"``, ``"changed"`` or ``"unchanged"``,
+        sorted; with ``record``, the record is among them.
+
+    Raises:
+        GeneratorInputError: As :func:`build_generator`.
+        NotRecordableError, RegenerationError: As :func:`besser.generators.regeneration.preview_output`.
+    """
+    generator = build_generator(generator_id, models, output_dir, options)
+    return regeneration.preview_output(generator, record=record)

@@ -1,6 +1,7 @@
 """
 This module generates Django code using Jinja2 templates based on BUML models.
 """
+import importlib.util
 import logging
 import os
 import re
@@ -734,14 +735,15 @@ JAZZMIN_SETTINGS = {{
             # startapp imports the new settings module; keep its .pyc files
             # out of the generated tree.
             subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
-            try:
-                subprocess.run(['django-admin', 'startproject', self.project_name],
-                               cwd=base_dir, check=True, env=subprocess_env,
-                               timeout=subprocess_timeout())
-            except FileNotFoundError as exc:
+            # `python -m django` is django-admin run by this interpreter, so it
+            # works when the environment's scripts directory is not on PATH.
+            if importlib.util.find_spec('django') is None:
                 raise RuntimeError(
-                    'The Django generator needs django-admin: pip install "besser[django]"'
-                ) from exc
+                    'The Django generator needs Django: pip install "besser[django]"'
+                )
+            subprocess.run([sys.executable, '-m', 'django', 'startproject', self.project_name],
+                           cwd=base_dir, check=True, env=subprocess_env,
+                           timeout=subprocess_timeout())
             subprocess.run([sys.executable, 'manage.py', 'startapp',
                                 self.app_name], cwd=project_dir, check=True,
                            env=subprocess_env, timeout=subprocess_timeout())

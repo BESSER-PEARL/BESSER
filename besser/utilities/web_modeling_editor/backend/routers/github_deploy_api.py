@@ -42,6 +42,7 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
     agent_model_to_code,
 )
+from besser.generators.docker_compose.agent_dependencies import baf_dependency_extras
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.provenance import write_generation_provenance
@@ -717,6 +718,28 @@ def _resolve_intent_recognition_technology(agent_config: object) -> str:
     return ""
 
 
+def _agent_needs_torch(base_dir: str, agent_file: str, ic_tech: str) -> bool:
+    """Whether the generated agent at ``agent_file`` (relative to ``base_dir``) builds a PyTorch component.
+
+    The BAF generator also emits the classical (PyTorch) intent classifier for an
+    agent with no intent classifier set and no LLM, so the config alone is not enough.
+    ``agent_file`` is derived from the user's agent name, so a path that resolves
+    outside ``base_dir`` is never opened.
+    """
+    root = os.path.realpath(base_dir)
+    agent_path = os.path.realpath(os.path.join(root, agent_file))
+    if not agent_path.startswith(root + os.sep):
+        logger.warning("Agent file %r is outside the generation directory; installing PyTorch only for classical IC",
+                       agent_file)
+        return ic_tech == "classical"
+    try:
+        with open(agent_path, encoding="utf-8") as agent_source:
+            return "torch" in baf_dependency_extras(agent_source.read())
+    except OSError:
+        logger.warning("Generated agent %s not found; installing PyTorch only for classical IC", agent_file)
+        return ic_tech == "classical"
+
+
 def _write_personalization_user_profiles(directory: str, agent_config: object) -> None:
     """Emit user_profiles.json when personalization mappings are present."""
     if not isinstance(agent_config, dict):
@@ -805,7 +828,16 @@ def _add_chatbot_deployment_configs(
     needs_user_db = _has_personalization(agent_config)
     db_name = _fit_chatbot_db_name(app_name, service_suffix) if needs_user_db else None
 
-    if ic_tech == "classical":
+    # The BAFGenerator writes the agent file as f"{model.name}.py" with the
+    # name normalized through safe_var_name(name, lowercase=False) (case
+    # preserved, spaces and special chars → underscores). agent_slug() lowercases,
+    # which mismatches the actual file on disk: e.g. "Greeting Agent" → file
+    # "Greeting_Agent.py" but agent_slug → "greeting_agent" — Render then fails
+    # to find the script. Mirror the BAFGenerator's transformation here.
+    raw_agent_name = getattr(agent_model, "name", "agent")
+    agent_script = f"{safe_var_name(raw_agent_name, lowercase=False)}.py"
+
+    if _agent_needs_torch(directory, agent_script, ic_tech):
         build_cmd = (
             "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.3.2 "
             "--extra-index-url https://download.pytorch.org/whl/cpu "
@@ -845,14 +877,6 @@ def _add_chatbot_deployment_configs(
         "openai_cfg['api_key'] = api_key if api_key else openai_cfg.get('api_key', ''); "
         "yaml.safe_dump(c, open('config.yaml','w'))"
     )
-    # The BAFGenerator writes the agent file as f"{model.name}.py" with the
-    # name normalized through safe_var_name(name, lowercase=False) (case
-    # preserved, spaces and special chars → underscores). agent_slug() lowercases,
-    # which mismatches the actual file on disk: e.g. "Greeting Agent" → file
-    # "Greeting_Agent.py" but agent_slug → "greeting_agent" — Render then fails
-    # to find the script. Mirror the BAFGenerator's transformation here.
-    raw_agent_name = getattr(agent_model, "name", "agent")
-    agent_script = f"{safe_var_name(raw_agent_name, lowercase=False)}.py"
     start_cmd = f'python -c "{yaml_patch}" && python -u "{agent_script}"'
 
     env_var_lines: list[str] = [
@@ -1057,7 +1081,7 @@ def _add_deployment_configs(
         cfg = agent_configs.get(agent.name) or {}
         ic_tech = cfg.get("intentRecognitionTechnology") if isinstance(cfg, dict) else None
 
-        if ic_tech == "classical":
+        if _agent_needs_torch(directory, os.path.join("agents", slug, agent_script), ic_tech):
             # Classical IC needs PyTorch CPU + scikit-learn, plus [llms] for unconditional imports in generated code
             # Single pip call with --extra-index-url so PyTorch CPU resolves from the wheel index while the rest comes from PyPI.
             # BAFGenerator does NOT emit a requirements.txt, so everything has to be pinned inline here.

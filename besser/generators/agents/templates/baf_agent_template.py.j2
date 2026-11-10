@@ -335,22 +335,10 @@ from guis.{{ gui_module }} import gui as {{ gui_module }}
 ){% endif %}
 {% endmacro %}
 
-{% set ic_llm_ns = namespace(name='') %}
-{% if config and 'llm' in config and config['llm'] is mapping and config['llm'].get('name') %}
-{% set ic_llm_ns.name = config['llm']['name'] %}
-{% elif agent.default_llm_name %}
-{% set ic_llm_ns.name = agent.default_llm_name %}
-{% elif agent.llms and agent.llms|length > 0 %}
-{% set ic_llm_ns.name = agent.llms[0].name %}
-{% elif config and 'llm' in config and config['llm'] is mapping and config['llm'].get('model') %}
-{% set ic_llm_ns.name = config['llm']['model'] %}
-{% else %}
-{% set ic_llm_ns.name = 'gpt-4o-mini' if a2a else '' %}
-{% endif %}
 {% set ic_config_set = namespace(value=false) %}
 {% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' %}
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name={{ ic_llm_ns.name | string | tojson }},
+    llm_name={{ ic_llm_name | string | tojson }},
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
@@ -429,10 +417,15 @@ agent.use_db_handler()
 agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
 {% set ic_config_set.value = true %}
 {% endif %}
-{% if not ic_config_set.value %}
+{% if not ic_config_set.value and classical_ic_fallback %}
+# WARNING: no intent classifier is set and no LLM is configured, so this agent uses
+# BAF's classical intent classifier, which needs PyTorch (pip install besser-agentic-framework[torch]).
+ic_config = SimpleIntentClassifierConfiguration()
+agent.set_default_ic_config(ic_config)
+{% elif not ic_config_set.value %}
 # Default to LLM-based intent classification (avoids PyTorch dependency)
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name={{ ic_llm_ns.name | string | tojson }},
+    llm_name={{ ic_llm_name | string | tojson }},
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,

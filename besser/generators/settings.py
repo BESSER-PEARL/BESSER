@@ -8,7 +8,7 @@ from pydantic import BeforeValidator, Field
 from pydantic_core import PydanticUseDefault
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# django-admin startproject/startapp and the SQL DDL dump take a few seconds;
+# Django's startproject/startapp and the SQL DDL dump take a few seconds;
 # two minutes leaves room for a slow host while still freeing a stuck worker.
 DEFAULT_SUBPROCESS_TIMEOUT_SECONDS = 120.0
 
@@ -31,7 +31,7 @@ class GeneratorSettings(BaseSettings):
 
     subprocess_timeout_seconds: Annotated[float, BeforeValidator(_positive_float)] = Field(
         DEFAULT_SUBPROCESS_TIMEOUT_SECONDS, validation_alias="BESSER_GENERATOR_SUBPROCESS_TIMEOUT",
-        description="Seconds a generator's child process (django-admin, the SQL DDL script) may run.")
+        description="Seconds a generator's child process (Django's startproject/startapp, the SQL DDL script) may run.")
 
 
 def subprocess_timeout() -> float:

@@ -36,9 +36,10 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[nn,dev]"
           pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+      # pytest-xdist (dev extra): one worker per core.
       - name: Run tests
         run: |
-          python -m pytest tests/ -q --tb=short
+          python -m pytest tests/ -n auto -q --tb=short
 
   lint:
     runs-on: ubuntu-latest

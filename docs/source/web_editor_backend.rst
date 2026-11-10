@@ -988,7 +988,7 @@ agent: :doc:`spec_driven_agent/configuration`.
 **Code generation** (read per call):
 
 - ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT`` (``120``) -- Seconds a generator's child
-  process may run (Django's ``django-admin startproject`` / ``startapp``, the SQL
+  process may run (Django's ``startproject`` / ``startapp``, the SQL
   generator's DDL script). Past it the child is killed and the request answers
   504. A blank, unparsable or non-positive value gives the default.
 

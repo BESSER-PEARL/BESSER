@@ -46,8 +46,10 @@ How it works
 ``regenerate()`` runs the generator in a scratch folder, then merges three versions of
 each file: what it generated last time, the file as it is now, and the new output.
 What it generated last time is recorded in ``.besser_generated.json`` in the output
-folder, so keep that file with your code. Files the generator does not produce are
-never read or changed.
+folder, so keep that file with your code. The record also names the BESSER version that
+wrote it (``besser_version``): a generator can change between versions, so the ``besser``
+command notes when another version regenerates the folder. Files the generator does not
+produce are never read or changed.
 
 Every edit is kept or flagged, never overwritten:
 

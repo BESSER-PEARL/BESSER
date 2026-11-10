@@ -51,14 +51,17 @@ That's a working REST API with a database, CRUD endpoints and validation, genera
 
 **From the command line:** the same install gives you the `besser` command, for a terminal, a CI job or a coding agent ([docs](https://besser.readthedocs.io/en/latest/cli.html)):
 
-    besser new model.py                             # a starter model to edit
+    besser new model.py                             # a starter model to edit (--kind: state_machine, gui, bpmn, ...)
+    besser schema domain                            # the B-UML classes and arguments to write it with
     besser validate model.py --json                 # errors and warnings of a B-UML model
     besser validate models/ --ocl                   # every editor export in a folder, with OCL constraints
     besser info model.py                            # its classes and the generators that read it
     besser generators                               # every generator and its options
     besser generate backend model.py -o library_api # run one, print the files it wrote
     besser regenerate backend model.py -o library_api   # after a model change: keeps your hand edits
+    besser build                                    # every output listed in besser.toml, edits kept
     besser convert model.py -o model.json           # B-UML <-> editor project
+    besser convert diagram.plantuml -o model.py     # import PlantUML, draw.io, CSV, RDF/OWL, SDMX, Python code
     eval "$(besser completion bash)"                # tab completion (bash, zsh, fish)
 
 `generate` records what it wrote; `regenerate` (or `generate --keep-edits`) then merges the model's changes into code you have edited and lists the conflicts, and needs `pip install "besser[regen]"`. `--dry-run` on `generate`, `regenerate` and `convert` shows what would change and writes nothing. `besser mcp` serves the same commands to an AI agent as MCP tools (`pip install "besser[mcp]"`).

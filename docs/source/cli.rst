@@ -19,8 +19,11 @@ runs the same command.
 
    * - Command
      - What it does
-   * - ``besser new <file.py>``
-     - Writes a starter model to edit.
+   * - ``besser new <file> [--kind KIND]``
+     - Writes a starter model to edit, of any model kind (``--list`` names them).
+   * - ``besser schema [topic]``
+     - Describes the formats: the B-UML classes of a model kind, the editor
+       project JSON Schema, the ``--json`` output, ``besser.toml``.
    * - ``besser validate <model|dir>...``
      - Runs ``validate()`` on every model in each file or directory;
        ``--ocl`` checks the OCL constraints too.
@@ -33,8 +36,12 @@ runs the same command.
        and records them for ``regenerate``. ``--keep-edits`` is ``regenerate``.
    * - ``besser regenerate <generator> <model> -o <dir>``
      - Brings generated code up to the model and keeps the edits made in it.
+   * - ``besser build [output]...``
+     - Generates every output listed in ``besser.toml``: ``generate`` the first
+       time, ``regenerate`` afterwards.
    * - ``besser convert <in> -o <out>``
-     - Converts a B-UML ``.py`` file to an editor JSON project, or back.
+     - Converts a B-UML ``.py`` file to an editor JSON project, or back, and
+       imports PlantUML, draw.io, CSV, RDF/OWL, SDMX and Python code as models.
    * - ``besser completion bash|zsh|fish``
      - Prints a shell completion script.
    * - ``besser mcp``
@@ -43,7 +50,7 @@ runs the same command.
    * - ``besser --version``
      - Prints the installed BESSER version.
 
-``generate``, ``regenerate`` and ``convert`` take ``--dry-run``: they print the
+``generate``, ``regenerate``, ``build`` and ``convert`` take ``--dry-run``: they print the
 files they would write or change, and write nothing.
 
 Every command takes these options, before or after the command name:
@@ -63,12 +70,14 @@ Every command takes these options, before or after the command name:
        ``convert``, ``new``). Errors are still printed, and so is the output of
        a command whose output is the result: ``completion`` (so
        ``eval "$(besser completion bash -q)"`` works), ``generators``,
-       ``info`` and ``--version``. A ``validate --strict`` run that fails on
+       ``info``, ``schema``, ``new --list`` and ``--version``. A ``validate --strict`` run that fails on
        warnings alone prints ``error: N warnings (--strict)`` and the warnings.
        With ``--json`` the JSON object is still printed, whole.
    * - ``-v``, ``--verbose``
      - Prints the Python traceback of a model file that does not load, or of a
        generator that fails, on standard error, before the one-line error.
+
+.. _cli-model-files:
 
 Model files
 -----------
@@ -91,7 +100,8 @@ A ``<model>`` is one of:
    ``python model.py``. The same holds for a script given on standard input:
    do not pipe a download you have not read into ``besser validate -``.
 
-   Nothing but the files you name is executed (and, with
+   Nothing but the files you name is executed (and those ``besser.toml`` names
+   for ``build``, and, with
    ``validate --exec-py``, the ``.py`` files found in a directory you name). A file's
    ``if __name__ == "__main__":`` block does not run, and its directory is not
    added to the import path, so it imports installed packages only (set
@@ -161,15 +171,98 @@ editor.
 .. code-block:: console
 
    $ besser new model.py
-   Wrote a starter model to model.py. Next:
+   Wrote a starter domain model to model.py. Next:
      besser validate model.py
      besser info model.py
      besser generate python model.py -o out
+     besser schema domain          the classes to write it with
 
-Writes a small, commented domain model (a library, its books and their
-authors) that validates without warnings and that every generator reading a
-domain model runs on. Edit it into your own. The file must be a ``.py`` file;
-an existing file is kept unless you pass ``--force``.
+Writes a small, commented model that validates without warnings, to edit into
+your own. Without ``--kind`` it is a domain model (a library, its books and
+their authors) that every generator reading a domain model runs on.
+``--kind`` picks another kind of model, and ``--list`` names them:
+
+.. code-block:: console
+
+   $ besser new --list
+   Kinds (besser new FILE --kind KIND; FILE is a .py file, or a .json file for the editor):
+     domain          a class diagram: a library, its books and their authors
+     object          an object diagram: instances of a small domain model
+     state_machine   a state machine: the life of an order
+     agent           a conversational agent: intents, states and replies
+     gui             a GUI model over a domain model: screens that list its classes
+     nn              a neural network: a small image classifier
+     quantum         a quantum circuit: a Bell state
+     bpmn            a BPMN process: check an order, then ship or reject it
+     deployment      a cloud deployment: a containerized application on a cluster
+     uml_deployment  a UML deployment diagram: where an application's parts run
+     component       a UML component diagram: components and their interfaces
+     kg              a knowledge graph: classes, individuals and the edges between them
+     feature         a feature model: the features of a product line
+     project         a project: several models in one file
+   $ besser new machine.py --kind state_machine
+
+A starter that needs another model holds it too: the ``object`` and ``gui``
+starters define the domain model they refer to. Each one names, in its header,
+a generator that runs on it when one reads its kind.
+
+A ``.py`` file is a B-UML script, the format to write and edit. A ``.json``
+file is the same starter as an editor project (``besser new model.json --kind
+bpmn``), which needs the :ref:`backend packages <cli-model-files>`; the editor
+has no diagram for the ``deployment`` and ``feature`` kinds, which are ``.py``
+only. An existing file is kept unless you pass ``--force``.
+
+``besser schema``
+-----------------
+
+Prints what a model is written with, so that nobody has to guess a class or an
+argument name. Without a topic it lists the topics:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - Topic
+     - What it prints
+   * - a model kind (``domain``, ``state_machine``, ...)
+     - The package to import from, the classes it defines with their
+       constructor arguments, types and defaults, the values it exports
+       (``StringType``, ...), the editor diagram of the kind and the generators
+       that read it. It is read from the metamodel when the command runs, so
+       it is the API of the BESSER that is installed.
+   * - ``project``
+     - The ``Project`` class of a ``.py`` file and the JSON Schema of an editor
+       project file, from the model the editor backend validates it with. The
+       schema fixes the project's own keys; what a diagram's ``model`` holds
+       is free-form there, and ``besser new model.json --kind KIND`` writes
+       an example of each.
+   * - ``result``
+     - The JSON Schema of the object every command prints with ``--json``
+       (see :ref:`cli-json`).
+   * - ``config``
+     - An example ``besser.toml`` (see :ref:`besser build <cli-build>`).
+
+.. code-block:: console
+
+   $ besser schema state_machine
+   state_machine: a StateMachine, from besser.BUML.metamodel.state_machine
+     A state machine model.
+     a starter to edit: besser new model.py --kind state_machine
+     in editor JSON: a StateMachineDiagram of the project ('besser schema project'); besser new model.json --kind state_machine writes one
+     generators that read it: none
+
+   Classes (from besser.BUML.metamodel.state_machine import ...), with their constructor arguments:
+     ...
+     Event(name: str)
+         The representation of an event (i.e., external or internal stimuli or input) that may cause the transition of state in a state machine.
+     State(sm: StateMachine, name: str, initial: bool = False, final: bool = False)
+         A state of a state machine.
+     StateMachine(name: str)
+         A state machine model.
+
+With ``--json``, a kind's ``description`` gives each class's ``name``,
+``signature``, ``doc``, ``bases``, ``abstract`` and ``parameters`` (``name``,
+``type``, ``default``, ``required``).
 
 ``besser validate``
 -------------------
@@ -280,6 +373,17 @@ command adds:
        A file that does not load has exit code 2, its load error and no models.
    * - ``skipped``
      - Per file found and not checked: ``file`` and ``reason``.
+   * - ``diagnostics``
+     - Every error and warning of the run with where it is: ``severity``
+       (``error`` or ``warning``), ``file``, ``model`` (absent for a file that
+       does not load and for a project's own errors), ``message`` and, when it
+       is known, ``line``.
+
+``line`` is the line of a ``.py`` model file to edit: the line a file fails
+at when it does not load, and otherwise the line where the element a message
+names is defined (its ``name="..."`` argument), when exactly one line defines
+it. The text report ends such a message with ``(model.py, line 39)``. An
+editor JSON file has no lines: its messages name the element.
 
 .. _cli-ocl:
 
@@ -367,7 +471,9 @@ shown ``(current in the editor)``, and a note says when the file holds several
 models of a kind with none current (see :ref:`cli-several-diagrams`).
 ``besser info --json`` gives ``models`` (``name``, ``kind``, ``type``,
 ``model_name``, ``current``, ``counts`` and, for a domain model, ``classes``,
-``enumerations`` and ``associations``) and ``generators``.
+``enumerations`` and ``associations``; for the other kinds ``elements``, the
+names of what the model holds per collection, as in ``states: created, paid``)
+and ``generators``.
 
 ``besser generators``
 ---------------------
@@ -426,7 +532,9 @@ The command:
 #. records what it wrote in ``.besser_generated.json``, in that directory, when
    the generator works with ``besser regenerate`` (``besser generators`` says
    which do), and says so in a note;
-#. prints the files the run created or rewrote.
+#. prints the files the run created or rewrote. A generator that writes no
+   file has failed (exit status 1): it logged what it could not generate,
+   on standard error.
 
 ``-o`` names a directory: a file there, or at one of its parents, is refused
 with exit status 2 before anything runs (``out is a file: -o takes a
@@ -626,6 +734,11 @@ each file the run would change to ``written``, ``merged``, ``conflicted`` or
 
 ``generate --keep-edits`` is this command; see :ref:`besser generate <cli-generate>`.
 
+The record names the BESSER version that wrote it (``besser_version``). When
+another version regenerates the directory, a note says so (``out was generated
+with BESSER 8.9.2 and this is BESSER 8.9.3``): a generator can change between
+versions, and a file then changes without the model having changed.
+
 ``regenerate`` takes the same ``--option`` and ``--use`` as ``generate``. Give
 the same options on every run: a different option changes the output like a
 model change does.
@@ -646,6 +759,65 @@ directory holding ``.besser_generated.json`` and prints the ``regenerate``
 command to run. With ``--force`` it overwrites the hand edits and writes a
 fresh record of what it wrote.
 
+.. _cli-build:
+
+``besser build``
+----------------
+
+A project usually has several outputs, each with its generator, directory and
+options. ``besser.toml`` lists them once, and ``besser build`` generates them
+all (``besser schema config`` prints this example):
+
+.. code-block:: toml
+
+   # besser.toml: what 'besser build' generates. Paths are relative to this file.
+
+   model = "model.py"              # the model file every output reads, unless it names its own
+
+   [output.api]                    # one table per output; 'besser build api' builds this one alone
+   generator = "backend"           # a generator id ('besser generators' lists them)
+   dir = "generated/api"           # where its code goes
+   options = { http_methods = ["GET", "POST"] }   # the generator's options, typed
+
+   [output.db]
+   generator = "sqlalchemy"
+   dir = "generated/db"
+   model = "other_model.py"        # optional: this output's own model file
+   use = ["library_model"]         # optional: the model to read when the file holds several of a kind
+   options = { dbms = "postgresql" }
+   overwrite = false               # optional: true regenerates from scratch, discarding edits made in dir
+
+.. code-block:: console
+
+   $ besser build
+   [api] backend: model.py -> generated/api: ok
+     Generated 11 files in generated/api with the 'backend' generator:
+       ...
+   [db] sqlalchemy: model.py -> generated/db: ok
+     Generated 1 file in generated/db with the 'sqlalchemy' generator:
+       generated/db/sql_alchemy.py
+   OK: 2 outputs, 0 failed
+
+Each output is built as the two commands above build it:
+
+* into a missing or empty directory, as :ref:`besser generate <cli-generate>`;
+* into a directory that holds something, as :ref:`besser regenerate
+  <cli-regenerate>`: the model's changes are merged into the edits made there;
+* with ``overwrite = true``, as ``besser generate --force``, every time. A
+  generator that does not support ``regenerate`` needs it for a second build,
+  and the error says so.
+
+``besser build api db`` builds the outputs named; ``-c FILE`` reads another
+file than ``besser.toml`` in the current directory; ``--dry-run`` writes
+nothing and reports what each output would write. An output that fails does
+not stop the others, and the exit status is the worst output's. An unknown
+key, a value of the wrong type or a missing ``generator``, ``dir`` or model is
+exit status 2, naming the file and the table. With ``--json``, ``outputs``
+holds, per output, its ``name`` and the whole object of the ``generate`` or
+``regenerate`` run that built it; ``errors``, ``warnings`` and ``notes`` repeat
+their messages, each starting with the output's name, and ``files`` lists all
+the files written.
+
 ``besser convert``
 ------------------
 
@@ -664,6 +836,59 @@ export writes. An existing output file is overwritten. With ``-`` as the
 input, the direction follows the output's extension and what standard input
 holds. ``-o`` names a file: a directory there, or a file at one of its parents,
 is exit status 2 (``out/library.json cannot be created: out is a file``).
+
+**Importing another notation.** The same command turns a file that is not
+B-UML into a model, written as ``.py`` or ``.json``. The notation follows the
+input's extension, or ``--from`` when the extension does not say. These files
+are read as data by BESSER's importers: nothing in them is executed, and no
+import calls a language model or the network.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 26 60
+
+   * - ``--from``
+     - Extensions
+     - What is read
+   * - ``plantuml``
+     - ``.plantuml``, ``.puml``, ``.pu``
+     - A :doc:`PlantUML class diagram <buml_language/model_building/plantuml_structural>`,
+       as a domain model. A syntax error is exit status 2 with its line and column.
+   * - ``drawio``
+     - ``.drawio``
+     - A draw.io (diagrams.net) UML class diagram, as a domain model.
+   * - ``csv``
+     - ``.csv``
+     - CSV files with a header row, as a domain model: a class per file, its
+       columns as attributes, and an association where a column names another
+       file's id (``author_id``). The only format that takes several inputs.
+   * - ``rdf``
+     - ``.ttl``, ``.owl``, ``.rdf``, ``.nt``, ``.n3``
+     - An OWL / RDF / SHACL file, as a knowledge graph.
+   * - ``sdmx``
+     - (name it)
+     - An SDMX-ML 2.1 structure message, a downloaded ``.xml`` file, as a
+       domain model.
+   * - ``code``
+     - (name it; a directory)
+     - Python code: its SQLAlchemy models, Django models, Pydantic models and
+       dataclasses, as a domain model. The sources are parsed, not run.
+
+.. code-block:: console
+
+   $ besser convert library.plantuml -o library.py
+   Converted library.plantuml (1 model) to library.py
+   $ besser convert author.csv book.csv -o books.py
+   $ besser convert src/ -o model.py --from code
+   $ besser convert ontology.ttl -o graph.py                     # a knowledge graph
+   $ besser convert ontology.ttl -o model.py --class-diagram     # its class diagram
+   $ besser convert graph.py -o graph.ttl                        # back to RDF
+
+``--class-diagram`` writes, for each knowledge graph of the input (imported, or
+of a ``.py`` or ``.json`` model file), the class diagram derived from it:
+classes, attributes, associations and OCL constraints. A knowledge graph is
+also written as RDF: ``-o`` with ``.ttl`` (Turtle), ``.owl`` or ``.rdf``
+(RDF/XML). An import is not validated: run ``besser validate`` on the result.
 
 ``--dry-run`` converts into a scratch file, so it fails and warns as the real
 conversion would, and says whether the output would be created, overwritten,
@@ -686,6 +911,10 @@ Both directions reuse the editor's converters, so they share their limits:
   associations keep their names.
 * A model written in Python has no layout: the converter computes the
   positions of its elements.
+* What a diagram cannot draw is not in the JSON: a state machine transition's
+  condition (``with_condition``), a quantum circuit's classical registers, an
+  agent's configuration properties. Keep the ``.py`` file as the source when a
+  model uses them.
 
 ``besser completion``
 ---------------------
@@ -716,8 +945,9 @@ it.
 JSON output and exit status
 ---------------------------
 
-With ``--json``, standard output is exactly one JSON object. These keys are
-on every command and are stable:
+With ``--json``, standard output is exactly one JSON object. ``besser schema
+result`` prints its JSON Schema, and the test suite checks every command's
+output against it. These keys are on every command and are stable:
 
 .. list-table::
    :header-rows: 1
@@ -763,7 +993,8 @@ Each command adds its own:
        and ``models``; ``models``: every file's models in one list, per model
        its ``file``, ``name``, ``kind``, ``type``, ``validated``, ``errors``
        and ``warnings``; ``skipped``: per file a directory search left out,
-       its ``file`` and ``reason``.
+       its ``file`` and ``reason``; ``diagnostics``: every error and warning
+       with its ``severity``, ``file``, ``model``, ``message`` and ``line``.
    * - ``info``
      - ``model``, ``models`` (each with ``current``: the diagram the editor
        project marks as current) and ``generators``.
@@ -785,10 +1016,20 @@ Each command adds its own:
        ``--dry-run``, ``would_write``: path -> ``written``, ``merged``,
        ``conflicted`` or ``deleted``.
    * - ``new``
-     - ``model``: the file written.
+     - ``model``, the file written, and its ``kind``; with ``--list``,
+       ``kinds``: per kind its ``kind``, ``summary``, ``generators`` and
+       ``editor_diagram``.
+   * - ``schema``
+     - ``topic``; ``topics`` without one; ``description`` for a model kind
+       (and ``project``); ``schema`` for ``project`` and ``result``;
+       ``example`` for ``config``.
+   * - ``build``
+     - ``config``, ``dry_run`` and ``outputs``: per output its ``name`` and
+       the object of the run that built it.
    * - ``convert``
-     - ``input``, ``output`` and ``dry_run``; with ``--dry-run``,
-       ``would_write``, as for ``generate``.
+     - ``input`` (the first of ``inputs``), ``inputs``, ``output``,
+       ``dry_run`` and ``models`` (per model written its ``name``, ``kind``
+       and ``type``); with ``--dry-run``, ``would_write``, as for ``generate``.
    * - ``completion``
      - ``shell`` and ``script``.
    * - ``--version``
@@ -881,8 +1122,9 @@ MCP SDK:
        :ref:`OCL constraints <cli-ocl>`). Without it the tools load editor
        ``.json`` exports only and only parse their OCL constraints.
 
-The tools are ``validate``, ``info``, ``generators``, ``generate``,
-``regenerate`` and ``convert``. Each takes the command's arguments by name
+The tools are ``new``, ``schema``, ``validate``, ``info``, ``generators``,
+``generate``, ``regenerate`` and ``convert`` (``besser build`` is not one: a
+client passes each output's arguments itself). Each takes the command's arguments by name
 (``generate``: ``generator``, ``model``, ``output_dir``, and optionally
 ``options``, ``use``, ``force``, ``dry_run``; ``validate`` takes ``paths``, a
 list, where the others take one ``model``) and returns the command's
@@ -930,30 +1172,104 @@ Other clients take the same command in their MCP configuration, for example:
 
    {"mcpServers": {"besser": {"command": "besser", "args": ["mcp", "--root", "."]}}}
 
-Use from a coding agent or a script
------------------------------------
+What the command leaves out
+---------------------------
 
-The command is meant to be driven by AI coding agents (Claude Code, Cursor,
-Codex, ...) and CI jobs as much as by people: no prompts, stable exit
-statuses, and JSON on request. A typical loop for an agent that writes a
-B-UML model:
+The command covers every model kind of B-UML, every registered generator and
+every importer that reads a file as data. It leaves out, on purpose:
+
+* everything that calls a language model: the :doc:`Spec-Driven Agent
+  <spec_driven_agent/index>`, image and mockup to model, the LLM-assisted knowledge
+  graph clean-up. A coding agent that drives the command is the model writer;
+* the textual grammars whose reader builds Python code from the file and
+  executes it (the :doc:`deployment <buml_language/model_building/deployment_grammar>`
+  and :doc:`neural network <buml_language/model_building/nn_grammar>` grammars):
+  write those models in B-UML (``besser new --kind deployment``, ``--kind nn``);
+* fetching an SDMX structure from a provider's API (``convert --from sdmx``
+  reads a downloaded file) and XLSX workbooks (export the sheet as CSV);
+* what the editor's server does for a signed-in user: deploying to GitHub or
+  Render, rendering a diagram as SVG.
+
+.. _cli-agents:
+
+Using BESSER from a coding agent
+--------------------------------
+
+The command is built for AI coding agents (Claude Code, Cursor, Codex, ...)
+as much as for people and CI jobs. The agent is the modeller: it writes the
+B-UML model itself, and the command is its toolbox around the model. There is
+no command that calls a language model. What an agent can rely on:
+
+* no prompts, and nothing read from standard input unless ``-`` is given;
+* ``--json`` on every command, one object with one
+  :ref:`documented schema <cli-json>` (``besser schema result``);
+* exit status 0, 1 or 2 with the same meaning everywhere;
+* errors that name the file, the element and, for a ``.py`` model, the line;
+* ``besser schema KIND`` and ``besser new --kind KIND`` instead of guessing the
+  metamodel's API;
+* ``--dry-run`` before anything is written, and ``regenerate`` so that a model
+  change never discards the code the agent or you edited.
+
+The loop:
 
 .. code-block:: console
 
-   $ besser new model.py                         # a starter model to edit
-   $ besser generators --json                    # what can be generated, with which options
-   $ besser validate model.py --json             # fix every entry of "errors", then repeat
-   $ besser info model.py --json                 # what the model holds, which generators read it
-   $ besser regenerate backend model.py -o app --json  # "files" lists what to read next
-   $ besser convert model.py -o model.json       # open the model in the editor
+   $ besser new --list                           # the kinds of model there are
+   $ besser new model.py                         # 1. a starter to edit (--kind for another kind)
+   $ besser schema domain                        #    the classes and arguments to write it with
+   $ # 2. edit model.py
+   $ besser validate model.py --json             # 3. check it
+   {
+     "ok": false,
+     "exit_code": 1,
+     "errors": ["library_model: Attribute 'joined' of class 'Member' has type 'Date', which is not in the domain model 'Library'. ... Add 'Date' to the model or use a primitive type."],
+     "diagnostics": [{"severity": "error", "file": "model.py", "model": "library_model", "message": "Attribute 'joined' ...", "line": 39}],
+     "...": "..."
+   }
+   $ # 4. fix line 39, validate again until "ok" is true
+   $ besser info model.py --json                 #    what the model holds, which generators read it
+   $ besser generators --json                    #    their options
+   $ besser generate backend model.py -o app --json      # 5. generate; "files" lists what was written
+   $ # 6. edit the generated code, change the model
+   $ besser regenerate backend model.py -o app --dry-run # 7. what a model change would do to it
+   $ besser regenerate backend model.py -o app --json    #    do it: "merged", and "conflicted" to resolve on exit 1
+   $ besser convert model.py -o model.json       #    hand the model to the editor
 
-``besser generate`` records what it wrote, so the agent, or you, can edit the
-generated code and still change the model later: the next ``regenerate`` (or
-``generate --keep-edits``) keeps those edits, and ``conflicted`` lists the files
-to resolve when it exits with status 1. ``--dry-run`` shows what a run would
-change before it does. ``besser validate -`` checks a model from standard input
-before it is written to a file. An agent with MCP support can use
-:ref:`besser mcp <cli-mcp>` instead of a shell.
+(The JSON is shortened: the command prints every key, one per line.) With
+several outputs, write them once in ``besser.toml`` and replace steps 5 to 7
+with :ref:`besser build <cli-build>`, which generates the first time and
+regenerates afterwards.
+
+``besser generate`` records what it wrote, so the generated code can be edited
+and the model still changed later: the next ``regenerate`` (or ``generate
+--keep-edits``) keeps those edits, and ``conflicted`` lists the files to
+resolve when it exits with status 1. ``besser validate -`` checks a model from
+standard input before it is written to a file. An agent with MCP support can
+use :ref:`besser mcp <cli-mcp>` instead of a shell.
+
+To teach an agent the loop in a repository that uses BESSER, put this in its
+``AGENTS.md`` (or ``CLAUDE.md``):
+
+.. code-block:: markdown
+
+   ## BESSER models
+
+   The application's code under `generated/` is generated from `model.py`, a B-UML
+   model, with the `besser` command. Change the model, not the generated structure.
+
+   - Format: `besser schema domain` (the classes of a class diagram and their
+     arguments); `besser new example.py --kind KIND` writes a working example;
+     `besser new --list` names the kinds.
+   - After every edit of `model.py`: `besser validate model.py --strict --json`.
+     Fix each entry of `diagnostics` (it has `file`, `line`, `message`) and repeat
+     until `ok` is true. Exit status: 0 ok, 1 errors, 2 the file does not load.
+   - Then `besser build --json` (outputs are listed in `besser.toml`). It keeps
+     hand edits in the generated code. On exit status 1, resolve the conflict
+     markers in the files of `conflicted` and run it again.
+   - `besser build --dry-run` shows what would change. Never pass `--force` or set
+     `overwrite = true` unless asked: it discards hand edits.
+   - `model.py` is executed when loaded: do not add code to it that does anything
+     but build the model.
 
 In CI, ``besser validate models/ --strict`` fails the job on any error or
 warning in the editor exports under ``models/`` (add ``--exec-py`` for the

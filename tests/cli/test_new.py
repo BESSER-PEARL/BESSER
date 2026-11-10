@@ -65,6 +65,12 @@ def test_without_a_file_it_says_what_to_give(besser):
     assert run.stderr == "error: name the file to write (besser new model.py), or pass --list for the kinds\n"
 
 
+def test_there_is_a_starter_for_every_model_kind():
+    from besser.cli.loading import MODEL_KINDS
+
+    assert set(STARTERS) == {kind for kind, _ in MODEL_KINDS} | {"project"}
+
+
 def test_list_names_every_kind_and_writes_nothing(besser, tmp_path):
     run = besser("new", "--list", "--json")
 

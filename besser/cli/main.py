@@ -1,4 +1,4 @@
-"""``besser``: validate and inspect B-UML models, run generators and convert model files.
+"""``besser``: start, describe, validate and inspect B-UML models, run generators and convert model files.
 
 This module is the console-script entry point registered in ``setup.cfg``;
 ``python -m besser`` runs it too.
@@ -34,19 +34,21 @@ PROG = "besser"
 
 _EXECUTES_PYTHON = (
     "A B-UML .py model is Python code and is EXECUTED, with your permissions, to load it: "
-    "only pass files you trust. Nothing but the files you name is executed (and, with "
-    "'validate --exec-py', the .py files found in a directory you name), and a file's "
+    "only pass files you trust. Nothing but the files you name is executed (and those besser.toml "
+    "names for 'build', and, with 'validate --exec-py', the .py files found in a directory you name), and a file's "
     "'if __name__ == \"__main__\":' block does not run. A .json model is parsed as data."
 )
 _MODEL_HELP = "a B-UML .py file or an editor .json export; - reads either from standard input"
 
 _DESCRIPTION = f"""\
-Validate and inspect B-UML models, run BESSER's code generators and convert
-model files.
+Start, validate and inspect B-UML models, run BESSER's code generators and
+convert model files. Every command takes --json, asks nothing and exits with
+0, 1 or 2: it is made to be driven by a coding agent or a script as well as
+by hand.
 
-A model file is a B-UML Python script (.py) or a Web Modeling Editor export
-(.json: a project or a single diagram). Where a command takes a model file,
-- reads it from standard input.
+A model file is a B-UML Python script (.py), the format to write and edit, or
+a Web Modeling Editor export (.json: a project or a single diagram). Where a
+command takes a model file, - reads it from standard input.
 
 {_EXECUTES_PYTHON}
 """
@@ -55,18 +57,20 @@ _EPILOG = """\
 exit status:
   0  success
   1  the command ran and failed: validation errors (or warnings with --strict),
-     a generator that raised, conflicts left by regenerate
+     a generator that raised or wrote nothing, conflicts left by regenerate
   2  the command could not run: bad arguments, an unknown generator or option,
-     a model file that does not load, an output folder generate or regenerate
-     refuses
+     a model file or besser.toml that does not load, an output folder generate
+     or regenerate refuses
 
 With --json, standard output is one JSON object with the keys ok, command,
-exit_code, errors, warnings, notes and files (plus the command's own);
-everything a model or a generator prints goes to standard error.
+exit_code, errors, warnings, notes and files (plus the command's own;
+'besser schema result' prints its JSON Schema); everything a model or a
+generator prints goes to standard error.
 
-examples:
-  besser new model.py                          a starter model to edit
-  besser validate model.py --json              errors and warnings, as JSON
+examples, in the order of a session:
+  besser new model.py                          a starter model to edit (--list: the other kinds)
+  besser schema domain                         the classes and arguments to write it with
+  besser validate model.py --json              errors and warnings, with file and line, as JSON
   besser validate models/ --strict             every editor .json export under models/
   besser validate models/ --exec-py --ocl      ... and the .py models, with their OCL constraints
   besser info project.json                     the models, classes and generators of a file
@@ -74,7 +78,9 @@ examples:
   besser generate sqlalchemy model.py -o out --option dbms=postgresql
   besser generate backend model.py -o app --dry-run    what would be written
   besser regenerate backend model.py -o app    after a model change: keeps your edits
+  besser build                                 every output listed in besser.toml, edits kept
   besser convert model.py -o project.json      B-UML .py <-> editor JSON
+  besser convert diagram.plantuml -o model.py  import another notation (see convert --help)
   eval "$(besser completion bash)"             tab completion (also zsh, fish)
   besser mcp --root .                          the commands as MCP tools for an AI agent
 """
@@ -109,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "-q", "--quiet", action="store_true", default=argparse.SUPPRESS,
-        help="print only errors and the output of completion, generators, info and --version "
+        help="print only errors and the output of completion, generators, info, schema and --version "
              "(and, with --strict, the warnings that fail the run)",
     )
     common.add_argument(

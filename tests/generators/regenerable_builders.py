@@ -5,10 +5,10 @@ twice into ``<folder>/<id>`` and prints the second run's report as JSON. A secon
 run with the same model must change nothing.
 """
 import dataclasses
+import importlib.util
 import json
 import logging
 import os
-import shutil
 import sys
 
 from besser.BUML.metamodel.structural import (
@@ -199,7 +199,7 @@ BUILDERS = {
     "tensorflow": _tensorflow,
     "forecaster": _forecaster,
 }
-if shutil.which("django-admin"):  # DjangoGenerator runs `django-admin startproject`.
+if importlib.util.find_spec("django"):  # DjangoGenerator runs `python -m django startproject`.
     BUILDERS["django"] = _django
 
 

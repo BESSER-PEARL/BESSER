@@ -2,7 +2,7 @@ Django Generator
 ================
 
 BESSER provides a code generator for `Django web applications <https://www.djangoproject.com/>`_.
-It runs ``django-admin``, so install Django with the extra:
+It runs Django's ``startproject`` and ``startapp`` commands, so install Django with the extra:
 ``pip install "besser[django]"``.
 
 You can create the application in two ways:

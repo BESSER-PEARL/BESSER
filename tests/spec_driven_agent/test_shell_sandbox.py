@@ -73,7 +73,7 @@ def leaky_process():
     """
     env = {**os.environ, "BESSER_FREE_LLM_TOKEN": _MARKER}
     proc = subprocess.Popen(
-        ["python", "-c", "import time; time.sleep(120)"],
+        [sys.executable, "-c", "import time; time.sleep(120)"],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     # Give the exec time to land before anything reads /proc.

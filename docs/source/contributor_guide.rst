@@ -146,10 +146,11 @@ Create a virtual environment
    venv\Scripts\activate              # Windows (cmd / PowerShell)
 
 Keep the environment activated in every terminal you use. The commands below
-(``pytest``, ``besser-wme-backend``) and the ``django-admin`` command the Django
-generator calls are installed into it. A user-level ``pip install`` outside a
-virtual environment puts them in ``~/.local/bin`` on Linux, which is not on the
-default ``PATH``; the Django generator tests then skip.
+(``pytest``, ``besser-wme-backend``) are installed into it. A user-level
+``pip install`` outside a virtual environment puts them in ``~/.local/bin`` on
+Linux, which is not on the default ``PATH``; run them through the interpreter
+instead (``python -m pytest``). BESSER starts its own child processes with the
+interpreter that runs it, so the generators do not depend on ``PATH``.
 
 Install dependencies
 ~~~~~~~~~~~~~~~~~~~~

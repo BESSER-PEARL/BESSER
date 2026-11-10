@@ -2,6 +2,8 @@
 
 import json
 import os
+import shlex
+import sys
 
 import pytest
 
@@ -30,6 +32,10 @@ def simple_model():
 @pytest.fixture
 def executor(tmp_path, simple_model):
     return ToolExecutor(workspace=str(tmp_path), domain_model=simple_model)
+
+
+# The test's own interpreter: a bare `python` needs an activated environment on PATH.
+PYTHON = shlex.quote(sys.executable)
 
 
 @pytest.fixture
@@ -269,18 +275,18 @@ class TestPathNormalization:
 class TestExecutionTools:
 
     def test_run_command_success(self, shell_executor):
-        result = _call(shell_executor, "run_command", {"command": "python -c \"print('hello')\" "})
+        result = _call(shell_executor, "run_command", {"command": f"{PYTHON} -c \"print('hello')\" "})
         assert result["success"] is True
         assert "hello" in result["stdout"]
 
     def test_run_command_failure(self, shell_executor):
-        result = _call(shell_executor, "run_command", {"command": "python -c \"raise ValueError('boom')\" "})
+        result = _call(shell_executor, "run_command", {"command": f"{PYTHON} -c \"raise ValueError('boom')\" "})
         assert result["success"] is False
         assert "boom" in result["stderr"]
 
     def test_run_command_in_subdir(self, shell_executor):
         _call(shell_executor, "write_file", {"path": "subdir/test.py", "content": "print('sub')"})
-        result = _call(shell_executor, "run_command", {"command": "python test.py", "working_dir": "subdir"})
+        result = _call(shell_executor, "run_command", {"command": f"{PYTHON} test.py", "working_dir": "subdir"})
         assert result["success"] is True
         assert "sub" in result["stdout"]
 
@@ -290,7 +296,7 @@ class TestExecutionTools:
         old_timeout = mod.COMMAND_TIMEOUT
         mod.COMMAND_TIMEOUT = 1  # 1 second
         try:
-            result = _call(shell_executor, "run_command", {"command": "python -c \"import time; time.sleep(10)\" "})
+            result = _call(shell_executor, "run_command", {"command": f"{PYTHON} -c \"import time; time.sleep(10)\" "})
             assert "error" in result and "timed out" in result["error"]
         finally:
             mod.COMMAND_TIMEOUT = old_timeout
@@ -300,7 +306,7 @@ class TestExecutionTools:
         assert "error" in result
 
     def test_install_dependencies_custom_command(self, shell_executor):
-        result = _call(shell_executor, "install_dependencies", {"command": "python --version"})
+        result = _call(shell_executor, "install_dependencies", {"command": f"{PYTHON} --version"})
         assert result["exit_code"] == 0
 
 

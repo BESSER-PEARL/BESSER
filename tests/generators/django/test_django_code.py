@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import shutil
 
@@ -10,10 +11,10 @@ from besser.BUML.metamodel.gui import GUIModel, Module, DataList, \
     DataSourceElement, Screen
 from tests.generators.regenerable_builders import library, library_gui
 
-# DjangoGenerator shells out to ``django-admin startproject``.
+# DjangoGenerator runs ``python -m django startproject``.
 pytestmark = pytest.mark.skipif(
-    shutil.which("django-admin") is None,
-    reason="django-admin is not on PATH (activate the virtual environment)",
+    importlib.util.find_spec("django") is None,
+    reason="Django is not installed",
 )
 
 

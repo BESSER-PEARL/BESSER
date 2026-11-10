@@ -2,6 +2,7 @@
 
 Every edit is either kept or flagged; ``generate()`` itself is unchanged.
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -901,7 +902,7 @@ def test_python_keeps_a_helper_through_a_model_change(tmp_path):
     assert "shelf_size" in text and "isbn" in text and not report.conflicted
 
 
-@pytest.mark.skipif(shutil.which("django-admin") is None, reason="needs django-admin")
+@pytest.mark.skipif(importlib.util.find_spec("django") is None, reason="needs Django")
 def test_django_keeps_edits_own_files_and_its_secret_key(tmp_path):
     """DjangoGenerator.generate() deletes the project folder; regenerate() must not."""
     from besser.generators.django import DjangoGenerator
@@ -933,7 +934,7 @@ def test_django_keeps_edits_own_files_and_its_secret_key(tmp_path):
     assert moved in settings.read_text(encoding="utf-8")
 
 
-@pytest.mark.skipif(shutil.which("django-admin") is None, reason="needs django-admin")
+@pytest.mark.skipif(importlib.util.find_spec("django") is None, reason="needs Django")
 def test_django_runs_no_code_planted_in_the_recorded_key(tmp_path):
     from besser.generators.django import DjangoGenerator
 

@@ -47,7 +47,7 @@ def test_json_describes_each_model(besser, model):
 
     assert result["ok"] is True and result["command"] == "info" and result["model"] == model
     assert result["models"] == [{
-        "name": "library_model", "kind": "domain", "type": "DomainModel", "model_name": "LibraryModel",
+        "name": "library_model", "kind": "domain", "type": "DomainModel", "model_name": "LibraryModel", "current": False,
         "counts": {"classes": 2, "enumerations": 0, "associations": 1, "generalizations": 0, "constraints": 0},
         "classes": [
             {"name": "Library", "is_abstract": False, "parents": [], "methods": [],

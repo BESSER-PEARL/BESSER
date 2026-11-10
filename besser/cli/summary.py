@@ -91,13 +91,18 @@ def _domain_details(model: DomainModel) -> dict[str, Any]:
     }
 
 
-def describe_model(loaded: LoadedModel) -> dict[str, Any]:
-    """One model as ``besser info --json`` shows it: what it is, what it holds, and a domain model's content."""
+def describe_model(loaded: LoadedModel, current: bool = False) -> dict[str, Any]:
+    """One model as ``besser info --json`` shows it: what it is, what it holds, and a domain model's content.
+
+    ``current``: the model is that of the diagram the editor project marks as current, among
+    several of its kind; generators read it when ``--use`` names none.
+    """
     entry = {
         "name": loaded.name,
         "kind": loaded.kind,
         "type": type(loaded.model).__name__,
         "model_name": getattr(loaded.model, "name", None),
+        "current": current,
         "counts": _COUNTS.get(loaded.kind, _count())(loaded.model),
     }
     if loaded.kind == "domain":
@@ -114,7 +119,10 @@ def summary_lines(entry: dict[str, Any]) -> list[str]:
     title = f"{entry['name']} ({entry['type']}"
     if entry.get("model_name") and entry["model_name"] != entry["name"]:
         title += f" '{entry['model_name']}'"
-    lines = [f"  {title}){': ' + counts if counts else ''}"]
+    title += ")"
+    if entry.get("current"):
+        title += " (current in the editor)"
+    lines = [f"  {title}{': ' + counts if counts else ''}"]
     for cls in entry.get("classes", []):
         header = f"{'abstract ' if cls['is_abstract'] else ''}class {cls['name']}"
         if cls["parents"]:

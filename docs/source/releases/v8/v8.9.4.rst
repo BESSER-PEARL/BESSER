@@ -31,6 +31,10 @@ Highlights
   details in the server log only. ``docker-compose.prod.yml`` sets it to
   ``false``
   (`#770 <https://github.com/BESSER-PEARL/BESSER/pull/770>`_).
+* **Security: OCL invariants are checked for syntax only on the server by
+  default;** ``BESSER_ENABLE_OCL_EVALUATION=true`` re-enables their evaluation
+  against object and user diagrams in ``/validate-diagram``
+  (`#782 <https://github.com/BESSER-PEARL/BESSER/pull/782>`_).
 * **Model names that would break Python code are refused before generation.**
   The SQLAlchemy, SQL, Python classes, Pydantic, FastAPI backend and Django
   generators check every name they write into code with

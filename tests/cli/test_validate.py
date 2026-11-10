@@ -24,6 +24,10 @@ def test_json_output_has_the_stable_keys(besser, model):
         "file": model, "name": "library_model", "kind": "domain", "type": "DomainModel",
         "validated": True, "errors": [], "warnings": [],
     }]
+    assert result["results"] == [
+        {"file": model, "ok": True, "exit_code": 0, "errors": [], "warnings": [], "models": result["models"]},
+    ]
+    assert result["skipped"] == []
 
 
 def test_validation_errors_exit_1(besser, write):

@@ -9,6 +9,11 @@
     schema's; the two drifted the moment derived attributes were added. -#}
 {{ not is_server_owned_attribute(attr) }}
 {%- endmacro -%}
+{#- An enum attribute's member name, as SQLAlchemy's Enum column binds it. An
+    optional enum left empty arrives as None, and None.name is a 500. -#}
+{%- macro _enum_name(expr, attr) -%}
+{%- if attr.is_optional -%}({{ expr }}.name if {{ expr }} is not None else None){%- else -%}{{ expr }}.name{%- endif -%}
+{%- endmacro -%}
 {#- Integer keys match digits only, so /<link>/{id}/<relationship>/ routes of the same
     association class are not captured by the pair route (and answered 422). #}
 {%- macro int_segment(end) -%}{% if pk_types.get(end.type_name, 'int') == 'int' %}:int{% endif %}{%- endmacro -%}
@@ -386,7 +391,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         {{ end.name }}_id={{ end.name }}_target,
         {% endfor %}
         {% for attribute in assoc_classes[class.name].attributes|sort(attribute='name') %}
-        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %}{% if not loop.last %},{% endif %}
+        {{ attribute.name }}={% if attribute.is_enum %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower}}_data.{{ attribute.name }}{% endif %}{% if not loop.last %},{% endif %}
         {% endfor %}
         )
 
@@ -513,7 +518,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for attrparent in parent.attributes|sort(attribute='name') %}
     {% if _client_supplied(attrparent) | trim == 'True' %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.name') %}
+    {% do ns_args.args.append(attrparent.name ~ '=' ~ _enum_name(class.name|lower ~ '_data.' ~ attrparent.name, attrparent)) %}
     {% else %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name) %}
     {% endif %}
@@ -523,7 +528,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for attribute in class.attributes|sort(attribute='name') %}
     {% if _client_supplied(attribute) | trim == 'True' %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.name') %}
+    {% do ns_args.args.append(attribute.name ~ '=' ~ _enum_name(class.name|lower ~ '_data.' ~ attribute.name, attribute)) %}
     {% else %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name) %}
     {% endif %}
@@ -649,7 +654,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             else:
                 db_{{x[1] | lower}} = {{x[1]}}(
                     {%for attr in lk_class.attributes|sort(attribute='name')%}
-                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.name{% endif %}{% if not loop.last %}, {% endif %}
+                    {{attr.name}}={% if attr.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name('x.' ~ attr.name, attr) }}{% else %}x.{{attr.name}}{% endif %}{% if not loop.last %}, {% endif %}
                     {%endfor%}
                 )
             database.add(db_{{x[1] | lower}})
@@ -772,7 +777,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for attrparent in parent.attributes|sort(attribute='name') %}
             {% if _client_supplied(attrparent) | trim == 'True' %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.name') %}
+            {% do ns_bulk_args.args.append(attrparent.name ~ '=' ~ _enum_name('item_data.' ~ attrparent.name, attrparent)) %}
             {% else %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name) %}
             {% endif %}
@@ -782,7 +787,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for attribute in class.attributes|sort(attribute='name') %}
             {% if _client_supplied(attribute) | trim == 'True' %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.name') %}
+            {% do ns_bulk_args.args.append(attribute.name ~ '=' ~ _enum_name('item_data.' ~ attribute.name, attribute)) %}
             {% else %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name) %}
             {% endif %}
@@ -892,7 +897,7 @@ async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
     {% for attribute in assoc_classes[class.name].attributes|sort(attribute='name') if not attribute.is_id %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.is_enum %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
     {% endfor %}
     database.commit()
     database.refresh(db_{{ class.name | lower }})
@@ -915,13 +920,13 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     {% for parent in all_parents %}
     {% for attribute in parent.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
     {% endif %}
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
     {% endif %}
     {% endfor %}
     {# Update foreign key relationships -#}

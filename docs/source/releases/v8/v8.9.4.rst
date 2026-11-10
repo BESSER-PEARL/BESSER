@@ -95,8 +95,12 @@ Web Modeling Editor
 
 The editor's version, shown in its About dialog and stamped into JSON
 exports, is ``8.9.4``. The ``frontend`` submodule points at the editor's
-`#277 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/277>`_,
-which brings:
+v8.9.4 release
+(`#280 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/280>`_),
+which brings
+`#277 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/277>`_
+and
+`#276 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/276>`_:
 
 * **Old browser projects open again.** A project stored in the browser before
   the quantum circuit and BPMN diagram types was refused on load, although the
@@ -113,14 +117,31 @@ which brings:
 * **Fewer type errors.** The themed SVG shapes declare their colour props and
   the agent's modification types gained the class and attribute flags it
   sends: ``tsc`` reports 83 errors instead of 350.
+* **The auto-fix line no longer keeps spinning.** When the agent answered the
+  editor's repair request with a message or an error instead of a model, or
+  sent a model the editor could not apply, "Validation found N issue(s) in the
+  diagram — fixing them now…" never settled. It is now replaced with "The
+  assistant could not fix N validation issue(s) automatically:" and the
+  issues; only replies to the repair's own turn settle it
+  (`#276 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/276>`_).
 
 Modeling agent
 --------------
 
-Deploy the modeling agent ``v8.1.2`` alongside: *promote attribute* now links
-the new class as a part of the original one, the way the editor draws a
-composition
-(`modeling-agent#71 <https://github.com/BESSER-PEARL/modeling-agent/pull/71>`_).
+Deploy the modeling agent ``v8.1.2`` alongside
+(`modeling-agent#73 <https://github.com/BESSER-PEARL/modeling-agent/pull/73>`_):
+
+* *Promote attribute* now links the new class as a part of the original one,
+  the way the editor draws a composition
+  (`modeling-agent#71 <https://github.com/BESSER-PEARL/modeling-agent/pull/71>`_).
+* **Honest modification and repair replies.** A modification reply names the
+  real member instead of whatever the model wrote (prose, garbled tokens or
+  internal context), and asks which member was meant when it is in no class;
+  the create reply no longer counts the invariant the mandatory-cycle guard
+  adds as a rule the user mentioned; and a failed auto-fix replies "The diagram
+  is unchanged…" instead of asking the user to rephrase a message they never
+  wrote, while the editor lists the open issues
+  (`modeling-agent#70 <https://github.com/BESSER-PEARL/modeling-agent/pull/70>`_).
 
 Upgrade notes
 -------------

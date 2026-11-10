@@ -489,7 +489,7 @@ from baf.library.entity.base_entities import {{ entity.name }}
 {% if is_class(entity, 'CustomEntity') %}
 {{ entity.name }} = agent.new_entity('{{ entity.name }}',
     {% if entity.description %}
-    description='{{ entity.description }}',
+    description='{{ entity.description | py_str }}',
     {%  endif %}
     entries={
         {% for entry in entity.entries %}
@@ -660,7 +660,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
    ``session.get('key')`` (``{user_message}`` resolves to the last user message).
    Lines are emitted unindented; call sites apply ``| trim | indent(4)``. #}
 {% macro assign_text(var, text, use_session_vars) %}
-{{ var }} = '{{ text | replace('\\', '\\\\') | replace("'", "\\'") }}'
+{{ var }} = '{{ text | py_str }}'
 {% if use_session_vars %}
 {% for key in extract_braced_vars(text) %}
 {% if key == 'user_message' %}
@@ -754,9 +754,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% if action.use_session_vars %}
     {{ assign_text('reply_text', action.message, true) | trim | indent(4) }}
     {% elif use_personalized_messages %}
-    reply_text = choose_variant_for_message('{{ action.message }}', session)
+    reply_text = choose_variant_for_message('{{ action.message | py_str }}', session)
     {% else %}
-    reply_text = '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'"  ) }}'
+    reply_text = '{{ action.message | py_str }}'
     {% endif %}
     session.reply(reply_text)
     {% if speech_enabled %}
@@ -903,14 +903,14 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {{ assign_text('_ws_msg', action.message, true) | trim | indent(4) }}
     platform.reply_markdown(session, _ws_msg)
     {% else %}
-    platform.reply_markdown(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    platform.reply_markdown(session, '{{ action.message | py_str }}')
     {% endif %}
     {% elif is_class(action, 'WebSocketReplyHTML') %}
     {% if action.use_session_vars %}
     {{ assign_text('_ws_msg', action.message, true) | trim | indent(4) }}
     platform.reply_html(session, _ws_msg)
     {% else %}
-    platform.reply_html(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    platform.reply_html(session, '{{ action.message | py_str }}')
     {% endif %}
     {% elif is_class(action, 'WebSocketReplySpeech') %}
     {% if action.use_session_vars %}
@@ -922,9 +922,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% endif %}
     {% else %}
     {% if action.audio_speed is not none %}
-    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}', audio_speed={{ action.audio_speed }})
+    platform.reply_speech(session, '{{ action.message | py_str }}', audio_speed={{ action.audio_speed }})
     {% else %}
-    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    platform.reply_speech(session, '{{ action.message | py_str }}')
     {% endif %}
     {% endif %}
     {% elif is_class(action, 'WebSocketReplyOptions') %}

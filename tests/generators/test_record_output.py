@@ -191,3 +191,13 @@ def test_preview_regeneration_refusals_name_the_folder_not_the_copy(tmp_path):
     with pytest.raises(UnrecordedOutputError) as refusal:
         preview_regeneration(FilesGenerator({"app.py": APP}, str(out)))
     assert str(refusal.value).startswith(f"{out} holds generated files (app.py)")
+    assert refusal.value.folder == str(out) and refusal.value.files == ["app.py"]
+
+
+@pytest.mark.parametrize("output", ["out", "out/app"], ids=["a file", "under a file"])
+def test_recording_into_a_file_is_refused(tmp_path, output):
+    (tmp_path / "out").write_bytes(b"mine\n")
+
+    with pytest.raises(RegenerationError, match="folder"):
+        record_output(FilesGenerator({"app.py": APP}, str(tmp_path / output)))
+    assert (tmp_path / "out").read_bytes() == b"mine\n"

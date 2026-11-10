@@ -120,8 +120,9 @@ def test_the_next_run_refuses_until_the_conflict_is_resolved(folder):
     regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
     before = read(folder)
 
-    with pytest.raises(RegenerationError, match="app.py"):
+    with pytest.raises(regeneration_module.ConflictsPendingError, match="app.py") as refusal:
         regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 12\n")})
+    assert refusal.value.folder == str(folder) and refusal.value.files == ["app.py"]
     assert read(folder) == before
 
     (folder / "app.py").write_bytes(APP.replace(b"return 1\n", b"return 100\n"))
@@ -186,8 +187,29 @@ def test_a_folder_generated_before_is_refused_then_adopted(tmp_path):
 
 
 def test_adopting_a_folder_that_has_a_record_is_refused(folder):
-    with pytest.raises(RegenerationError, match="already"):
+    with pytest.raises(regeneration_module.AlreadyRecordedError, match="already") as refusal:
         regen(folder, {"app.py": APP}, adopt=True)
+    assert refusal.value.folder == str(folder)
+
+
+def test_the_refusal_of_an_unrecorded_folder_names_its_generated_files(tmp_path):
+    out = tmp_path / "out"
+    files = {f"m{index}.py": APP for index in range(5)}
+    FilesGenerator(files, output_dir=str(out)).generate()
+
+    with pytest.raises(regeneration_module.UnrecordedOutputError) as refusal:
+        regen(out, files)
+    assert refusal.value.folder == str(out) and refusal.value.files == sorted(files)
+    assert refusal.value.named_files() == "m0.py, m1.py, m2.py, ..."
+
+
+@pytest.mark.parametrize("output", ["out", "out/app"], ids=["a file", "under a file"])
+def test_an_output_folder_that_is_a_file_is_refused(tmp_path, output):
+    (tmp_path / "out").write_bytes(b"mine\n")
+
+    with pytest.raises(RegenerationError, match="folder"):
+        regen(tmp_path / output, {"app.py": APP})
+    assert (tmp_path / "out").read_bytes() == b"mine\n"
 
 
 def test_windows_line_endings_are_kept_and_do_not_read_as_edits(folder):

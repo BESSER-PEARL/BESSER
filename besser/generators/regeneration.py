@@ -63,9 +63,63 @@ _SPEC_DRIVEN_RECORDS = (GENERATOR_OUTPUT_FILENAME, ATTRIBUTION_FILENAME)
 class RegenerationError(Exception):
     """The folder cannot be regenerated safely. Raised before any generated file is written."""
 
+    def _naming(self, copy: str, folder: str) -> RegenerationError:
+        """The same refusal, naming ``folder`` where it names ``copy`` (the scratch copy a preview merges into)."""
+        return type(self)(str(self).replace(copy, folder))
+
 
 class UnrecordedOutputError(RegenerationError):
-    """The folder holds generated files and no record of them: it has to be adopted first."""
+    """The folder holds generated files and no record of them: it has to be adopted first.
+
+    Attributes:
+        folder: The output folder.
+        files: The generated files already in it, relative to it with ``/``, sorted.
+    """
+
+    def __init__(self, folder: str, files: list[str]):
+        self.folder, self.files = folder, list(files)
+        super().__init__(f"{folder} holds generated files ({self.named_files()}) but no {RECORD_FILENAME}, so edits "
+                         "cannot be told from generated code. Run regenerate(adopt=True) once on a generator holding "
+                         "the model those files came from.")
+
+    def named_files(self) -> str:
+        """The first few of ``files``, comma-separated, with ``...`` when there are more."""
+        more = ", ..." if len(self.files) > _PATHS_NAMED else ""
+        return ", ".join(self.files[:_PATHS_NAMED]) + more
+
+    def _naming(self, copy: str, folder: str) -> UnrecordedOutputError:
+        return type(self)(self.folder.replace(copy, folder), self.files)
+
+
+class ConflictsPendingError(RegenerationError):
+    """Files still hold the conflict markers the last regeneration wrote.
+
+    Attributes:
+        folder: The output folder.
+        files: The files with markers, relative to it with ``/``, sorted.
+    """
+
+    def __init__(self, folder: str, files: list[str]):
+        self.folder, self.files = folder, list(files)
+        super().__init__(f"Resolve the conflict markers in {', '.join(self.files)} first.")
+
+    def _naming(self, copy: str, folder: str) -> ConflictsPendingError:
+        return type(self)(self.folder.replace(copy, folder), self.files)
+
+
+class AlreadyRecordedError(RegenerationError):
+    """``adopt`` on a folder that already has its record.
+
+    Attributes:
+        folder: The output folder.
+    """
+
+    def __init__(self, folder: str):
+        self.folder = folder
+        super().__init__(f"{folder} already has {RECORD_FILENAME}: there is nothing to adopt.")
+
+    def _naming(self, copy: str, folder: str) -> AlreadyRecordedError:
+        return type(self)(self.folder.replace(copy, folder))
 
 
 class NotRecordableError(RegenerationError):
@@ -103,7 +157,7 @@ def regenerate_output(generator: GeneratorInterface, adopt: bool = False) -> Reg
     if not merge_available():
         raise RegenerationError('Regenerating needs pygit2: pip install "besser[regen]"')
     folder = generator.output_dir
-    os.makedirs(folder, exist_ok=True)
+    _make_folder(folder)
     name = type(generator).__name__
     record = _load_record(folder, name)
     _require_usable_state(folder, record, adopt)
@@ -158,7 +212,7 @@ def record_output(generator: GeneratorInterface) -> list[str]:
     _require_not_spec_driven(folder)
     output, modes = generate_in_scratch(generator)
     _require_writable_paths(folder, output)
-    os.makedirs(folder, exist_ok=True)
+    _make_folder(folder)
     for rel, content in sorted(output.items()):
         _write(folder, rel, content, modes.get(rel, _DEFAULT_MODE))
     write_atomic_plain(os.path.join(folder, RECORD_FILENAME), _first_record(generator, output),
@@ -213,7 +267,7 @@ def preview_regeneration(generator: GeneratorInterface, adopt: bool = False) -> 
         try:
             return regenerate_output(generator, adopt)
         except RegenerationError as exc:
-            raise type(exc)(str(exc).replace(copy, folder)) from exc
+            raise exc._naming(copy, folder) from exc
     finally:
         generator.output_dir = folder
         shutil.rmtree(scratch, ignore_errors=True)
@@ -228,6 +282,16 @@ def _status(folder: str, rel: str, content: bytes) -> str:
             if handle.read() == content:
                 return UNCHANGED
     return CHANGED
+
+
+def _make_folder(folder: str) -> None:
+    """Create the output folder if missing; a file at its path, or at a parent's, is a refusal."""
+    if os.path.lexists(folder) and not os.path.isdir(folder):
+        raise RegenerationError(f"{folder} is not a folder.")
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except (FileExistsError, NotADirectoryError) as exc:
+        raise RegenerationError(f"Cannot create the folder {folder}: a file is where one of its folders goes.") from exc
 
 
 def _require_support(generator: GeneratorInterface) -> None:
@@ -253,24 +317,23 @@ def _require_not_spec_driven(folder: str) -> None:
 def _require_usable_state(folder: str, record: dict | None, adopt: bool) -> None:
     _require_not_spec_driven(folder)
     if adopt and record:
-        raise RegenerationError(f"{folder} already has {RECORD_FILENAME}: there is nothing to adopt.")
+        raise AlreadyRecordedError(folder)
+    pending = []
     for rel in (record or {}).get("conflicted", []):
         path = os.path.join(folder, *rel.split("/"))
         if is_plain_file(path, root=folder):
             with open_plain(path, "rb", root=folder) as handle:
                 if _UNRESOLVED.search(handle.read()):
-                    raise RegenerationError(f"Resolve the conflict markers in {rel} first.")
+                    pending.append(rel)
+    if pending:
+        raise ConflictsPendingError(folder, sorted(pending))
 
 
 def _require_no_generated_files(folder: str, output: dict[str, bytes]) -> None:
     """Without a record, edits cannot be told from generated code in a file the generator also produces."""
     existing = sorted(rel for rel in output if os.path.lexists(os.path.join(folder, *rel.split("/"))))
     if existing:
-        raise UnrecordedOutputError(
-            f"{folder} holds generated files ({', '.join(existing[:_PATHS_NAMED])}"
-            f"{', ...' if len(existing) > _PATHS_NAMED else ''}) but no "
-            f"{RECORD_FILENAME}, so edits cannot be told from generated code. Run regenerate(adopt=True) once on a "
-            "generator holding the model those files came from.")
+        raise UnrecordedOutputError(folder, existing)
 
 
 def _require_writable_paths(folder: str, output: dict[str, bytes]) -> None:

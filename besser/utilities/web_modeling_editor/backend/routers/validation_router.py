@@ -46,7 +46,7 @@ from besser.utilities.web_modeling_editor.backend.services.validators import (
 )
 
 # Centralized error handling
-from besser.utilities.web_modeling_editor.backend.dependencies import KgConsistencySlotsDep
+from besser.utilities.web_modeling_editor.backend.dependencies import KgConsistencySlotsDep, SettingsDep
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -58,10 +58,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/besser_api", tags=["validation"])
 
+OCL_SYNTAX_ONLY_WARNING = (
+    "OCL invariants were checked for syntax only; evaluation is disabled on this server "
+    "(BESSER_ENABLE_OCL_EVALUATION)."
+)
+
 
 @router.post("/validate-diagram", response_model=ValidationResponse)
 @handle_endpoint_errors("validate_diagram")
-async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep):
+async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep, settings: SettingsDep):
     """
     Validate diagram by converting to BUML and running metamodel validation.
 
@@ -246,7 +251,13 @@ async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlot
     if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram", "UserDiagram"] and len(validation_errors) == 0:
         try:
             if diagram_type in ["ObjectDiagram", "UserDiagram"] and object_model:
-                ocl_results = check_ocl_constraint(buml_model, object_model)
+                # Off by default: the evaluator runs Python built from the diagram's values.
+                evaluate = settings.ocl_evaluation_enabled
+                ocl_results = check_ocl_constraint(buml_model, object_model, evaluate=evaluate)
+                # A user diagram's invariants are BESSER's reference model's, not the
+                # user's (see Step 1); their entries in valid_constraints say it.
+                if not evaluate and diagram_type == "ObjectDiagram" and buml_model.constraints:
+                    validation_warnings.append(OCL_SYNTAX_ONLY_WARNING)
             else:
                 ocl_results = check_ocl_constraint(buml_model)
 
@@ -281,10 +292,10 @@ async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlot
 
 @router.post("/check-ocl", response_model=ValidationResponse)
 @handle_endpoint_errors("check_ocl")
-async def check_ocl(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep):
+async def check_ocl(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep, settings: SettingsDep):
     """
     Deprecated: Use /validate-diagram instead.
     This endpoint is kept for backwards compatibility and redirects to the new unified validation.
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
-    return await validate_diagram(input_data, kg_slots)
+    return await validate_diagram(input_data, kg_slots, settings)

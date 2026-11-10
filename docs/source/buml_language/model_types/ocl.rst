@@ -95,10 +95,14 @@ Validating constraints against an object diagram
 ------------------------------------------------
 
 On a class diagram, ``/validate-diagram`` checks that each constraint parses.
-On an object (or user) diagram it also evaluates each invariant on the objects
-with the `B-OCL Interpreter <https://github.com/BESSER-PEARL/B-OCL-Interpreter>`_
-(the ``bocl`` package). Preconditions and postconditions are only
-syntax-checked.
+On an object (or user) diagram a server with ``BESSER_ENABLE_OCL_EVALUATION``
+on also evaluates each invariant on the objects with the
+`B-OCL Interpreter <https://github.com/BESSER-PEARL/B-OCL-Interpreter>`_
+(the ``bocl`` package). The setting is off by default: invariants are then
+checked for syntax only, each is listed as *Syntax valid; not evaluated against
+the object diagram: evaluation is disabled on this server*, and an object
+diagram gets a warning saying so (see :doc:`/web_editor_backend`).
+Preconditions and postconditions are only syntax-checked.
 
 The interpreter cannot yet evaluate the following constructs. They parse, but
 the interpreter would crash on them or return a wrong result:

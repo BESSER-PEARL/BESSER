@@ -736,8 +736,9 @@ class TestValidateDiagram:
         assert data["isValid"] is True
         assert data["warnings"] == []
 
-    def test_validate_user_diagram_runs_ocl_check(self, client, monkeypatch):
-        """UserDiagram validation should execute OCL checking with object model context."""
+    def test_validate_user_diagram_runs_ocl_check(self, client, monkeypatch, route_settings):
+        """With evaluation enabled, UserDiagram validation evaluates OCL against the object model."""
+        route_settings.ocl_evaluation_enabled = True
         from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
 
         class _DummyObjectModel:
@@ -752,9 +753,9 @@ class TestValidateDiagram:
         def _fake_process_object_diagram(_input_data, _domain_model):
             return _DummyObjectModel()
 
-        def _fake_check_ocl_constraint(_domain_model, object_model=None):
+        def _fake_check_ocl_constraint(_domain_model, object_model=None, evaluate=True):
             observed["called"] = True
-            observed["with_object_model"] = object_model is not None
+            observed["with_object_model"] = object_model is not None and evaluate
             return {
                 "success": True,
                 "message": "OCL executed",

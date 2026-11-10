@@ -3,6 +3,11 @@
 Standard output carries the command's result and nothing else: one JSON
 object with ``--json``, a short report otherwise. Whatever a model file or a
 generator prints while it runs goes to standard error, or nowhere with ``--quiet``.
+
+``--quiet`` drops the diagnostics (notes, warnings, what models and generators print)
+and the report of a command that writes or checks files; it keeps the output of a
+command whose output is what was asked for (``Result.text_is_result``: a completion
+script, the version, the generators, a model's summary) and every error.
 """
 
 from __future__ import annotations
@@ -53,6 +58,9 @@ class Result:
     shown_in_text: frozenset[str] = frozenset()
     # The traceback behind a model or generator failure, printed with ``--verbose``.
     traceback: str = ""
+    # ``text`` is what the command was run for (a completion script, the version), not a report
+    # of what it did: printed with ``--quiet`` too.
+    text_is_result: bool = False
 
     def as_json(self) -> dict[str, Any]:
         """The JSON output: the keys every command has, then the command's own."""
@@ -83,8 +91,10 @@ def format_traceback(exc: BaseException) -> str:
 def print_result(result: Result, as_json: bool) -> None:
     """Print ``result``: JSON on standard output, or the report with its diagnostics on standard error.
 
-    ``--quiet`` prints the errors only (the JSON object is printed as it is); ``--verbose`` adds
-    the traceback of a failure on standard error.
+    ``--quiet`` prints the errors, and ``text`` only when it is the result (``text_is_result``);
+    a run that fails on its warnings alone (``validate --strict``) prints them too, since they
+    are why it failed. The JSON object is printed whole. ``--verbose`` adds the traceback of a
+    failure on standard error.
     """
     if _verbosity == VERBOSE and result.traceback:
         print(result.traceback, file=sys.stderr, end="")
@@ -92,8 +102,7 @@ def print_result(result: Result, as_json: bool) -> None:
         print(json.dumps(result.as_json(), indent=2))
         return
     if _verbosity == QUIET:
-        for error in result.errors:
-            print(f"error: {error}", file=sys.stderr)
+        _print_quiet(result)
         return
     if result.text:
         print(result.text)
@@ -105,6 +114,18 @@ def print_result(result: Result, as_json: bool) -> None:
     for error in result.errors:
         if error not in result.shown_in_text:
             print(f"error: {error}", file=sys.stderr)
+
+
+def _print_quiet(result: Result) -> None:
+    if result.text and result.text_is_result:
+        print(result.text)
+    for error in result.errors:
+        print(f"error: {error}", file=sys.stderr)
+    if result.exit_code == EXIT_FAILED and not result.errors and result.warnings:
+        count = len(result.warnings)
+        print(f"error: {count} warning{'' if count == 1 else 's'} (--strict)", file=sys.stderr)
+        for warning in result.warnings:
+            print(f"warning: {warning}", file=sys.stderr)
 
 
 @contextlib.contextmanager

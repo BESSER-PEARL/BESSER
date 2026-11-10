@@ -185,3 +185,71 @@ def test_quiet_and_verbose_together_is_a_usage_error(besser, model):
 
     assert run.returncode == 2
     assert run.stderr == "error: --quiet and --verbose cannot be combined (see 'besser --help')\n"
+
+
+@pytest.mark.parametrize("args", [["--version"], ["completion", "bash"], ["generators"], ["info", "library.py"]],
+                         ids=["version", "completion", "generators", "info"])
+def test_quiet_keeps_the_output_that_is_the_result(besser, model, args):
+    plain = besser(*args)
+    quiet = besser(*args, "-q")
+
+    assert quiet.returncode == plain.returncode == 0
+    assert quiet.stdout == plain.stdout != ""
+    assert quiet.stderr == ""
+
+
+def test_quiet_eval_of_the_completion_script_defines_the_function(besser):
+    script = besser("completion", "bash", "-q").stdout
+
+    assert "complete -F _besser besser" in script
+
+
+def test_quiet_with_strict_prints_the_warnings_that_fail_the_run(besser, write):
+    run = besser("validate", write("warn.py", WARNING_MODEL), "--strict", "-q")
+
+    assert run.returncode == 1 and run.stdout == ""
+    first, *rest = run.stderr.splitlines()
+    assert first == "error: 1 warning (--strict)"
+    assert len(rest) == 1 and rest[0].startswith("warning: library_model: ") and "Shelf" in rest[0]
+
+
+@pytest.mark.parametrize("flag", ["-q", "-v", "--json"])
+def test_version_takes_the_common_options(besser, flag):
+    run = besser("--version", flag)
+
+    assert run.returncode == 0 and run.stderr == ""
+    if flag == "--json":
+        assert run.json["command"] == "version" and run.json["version"] == get_besser_version()
+    else:
+        assert run.stdout == f"besser {get_besser_version()}\n"
+
+
+@pytest.mark.parametrize(("args", "command"), [
+    (["generate", "python", "m.py", "-o", "out", "--keep-edits", "--force"], "generate"),
+    (["validate", "m.py", "-q", "-v"], "validate"),
+    (["--version", "-q", "-v"], "version"),
+    (["validate"], "validate"),
+    (["generate", "python", "m.py", "-o", "out", "--adopt"], "generate"),
+    (["--bogus"], ""),
+])
+def test_a_usage_error_names_the_command_it_is_about(besser, args, command):
+    run = besser(*args, "--json")
+
+    assert run.returncode == 2
+    assert run.json["ok"] is False and run.json["command"] == command
+
+
+def test_an_unknown_option_of_a_command_points_to_the_command_help(besser):
+    run = besser("generate", "python", "m.py", "-o", "out", "--adopt")
+
+    assert run.returncode == 2
+    assert run.stderr == "error: unrecognized arguments: --adopt (see 'besser generate --help')\n"
+
+
+def test_a_run_does_not_import_the_mcp_server():
+    """It builds the tools from every generator class: loading it on each run made every command slow."""
+    probe = ("import sys; from besser.cli.main import main; main(['--version']); "
+             "print('besser.cli.mcp_server' in sys.modules, 'besser.generators.django' in sys.modules)")
+    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True, timeout=120)
+
+    assert run.stdout.splitlines()[-1] == "False False"

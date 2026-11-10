@@ -436,4 +436,4 @@ def completion_script(shell: str, parser: argparse.ArgumentParser) -> Result:
     The script is the text printed on standard output; with ``--json`` it is the ``script`` key.
     """
     script = _RENDERERS[shell](describe(parser, _generator_ids()))
-    return Result(command="completion", data={"shell": shell, "script": script}, text=script)
+    return Result(command="completion", data={"shell": shell, "script": script}, text=script, text_is_result=True)

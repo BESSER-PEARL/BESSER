@@ -7,6 +7,7 @@ import dataclasses
 import json
 import logging
 import os
+import shlex
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ from besser.cli.loading import (
     LoadedModels,
     MissingDependencyError,
     ModelLoadError,
+    NoModelError,
     load_models,
     missing_backend_dependency_message,
 )
@@ -120,17 +122,6 @@ class _FileCheck:
                 "errors": self.errors, "warnings": self.warnings, "models": self.models}
 
 
-def _load_found_python(path: str) -> LoadedModels | None:
-    """The models of a ``.py`` file found in a directory (with ``--exec-py``), or ``None`` when it holds none.
-
-    A directory holds Python files that are not models (helpers, generated
-    code): unlike a file named on the command line, one without a model is
-    skipped rather than failing the run.
-    """
-    loaded = loading._load_python(Path(path), loading._execute(Path(path)))
-    return loaded if loaded.models else None
-
-
 def _check_file(path: str, loaded: LoadedModels, strict: bool,
                 checker: Any | None, exec_py: bool) -> tuple[_FileCheck, OclOutcome | None]:
     """Run ``validate()``, and the OCL check when ``checker`` is given, on the models of ``loaded``.
@@ -152,13 +143,41 @@ def _check_file(path: str, loaded: LoadedModels, strict: bool,
     return check, outcome
 
 
-def _nothing_to_validate(model_paths: Sequence[str], found: ModelFiles) -> Result:
-    message = f"nothing to validate: no model file found in {', '.join(model_paths)}"
+# How the run says that .py files found in a directory were not loaded.
+_EXEC_PY_HINT = "pass --exec-py to load the .py files found in a directory"
+
+
+def _nothing_to_validate(model_paths: Sequence[str], found: ModelFiles, exec_py: bool) -> Result:
+    where = ", ".join(model_paths)
     skipped_py = sum(skipped.reason == SKIP_PY for skipped in found.skipped)
-    if skipped_py:
-        message += f" ({_plural(skipped_py, '.py file')} skipped; pass --exec-py to load them)"
+    if exec_py:
+        message = f"nothing to validate: no model file found in {where}"
+    elif skipped_py:
+        message = (f"nothing to validate: no editor .json export found in {where} "
+                   f"({_plural(skipped_py, '.py file')} skipped; {_EXEC_PY_HINT})")
+    else:
+        message = (f"nothing to validate: no editor .json export found in {where} "
+                   "(.py models in a directory are loaded with --exec-py)")
     skipped = [{"file": skipped.path, "reason": skipped.reason} for skipped in found.skipped]
     return failure("validate", message, data={"model_files": [], "models": [], "results": [], "skipped": skipped})
+
+
+def _ocl_note(constraints: int, evaluations: int, unevaluated: int) -> str:
+    """The run's one note on the OCL check, from its counts over every file (see ``OclOutcome``)."""
+    if not constraints:
+        return "OCL: the models have no OCL constraints"
+    note = f"OCL: {_plural(constraints, 'constraint')} checked"
+    if evaluations or not unevaluated:
+        note += f", invariants evaluated on {_plural(evaluations, 'object model')}"
+    if unevaluated:
+        note += (f"; invariants not evaluated on {_plural(unevaluated, 'object model')} of editor JSON: the OCL "
+                 "evaluator runs Python built from the models' values; pass --exec-py to evaluate them")
+    return note
+
+
+def _load_error_text(path: str, message: str) -> str:
+    """A file that does not load, as the report lists it among the files checked."""
+    return f"{path}: does not load: {message.removeprefix(f'{Path(path)}: ').removeprefix(f'{path}: ')}"
 
 
 def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = False, ocl: bool = False) -> Result:
@@ -181,16 +200,23 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
     traceback = ""
     constraints = evaluations = unevaluated = 0
     for model_file in found.files:
+        load_error = None
         try:
-            if model_file.explicit or not model_file.path.lower().endswith(".py"):
-                loaded = load_models(model_file.path)
-            elif (loaded := _load_found_python(model_file.path)) is None:
+            loaded = load_models(model_file.path)
+        except NoModelError as exc:
+            # A directory holds files that are not models (helpers, an empty project): skip what it holds;
+            # a file named on the command line must be a model.
+            if not model_file.explicit:
                 skipped.append(SkippedFile(model_file.path, SKIP_NO_MODEL))
                 continue
+            load_error = exc
         except ModelLoadError as exc:
-            checks.append(_FileCheck(file=model_file.path, exit_code=EXIT_USAGE, errors=[str(exc)],
-                                     load_error=str(exc)))
-            traceback += format_traceback(exc)
+            load_error = exc
+        if load_error is not None:
+            checks.append(_FileCheck(file=model_file.path, exit_code=EXIT_USAGE, errors=[str(load_error)],
+                                     load_error=str(load_error)))
+            lines.append(_load_error_text(model_file.path, str(load_error)))
+            traceback += format_traceback(load_error)
             continue
         check, outcome = _check_file(model_file.path, loaded, strict, checker, exec_py)
         checks.append(check)
@@ -200,7 +226,7 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
             unevaluated += outcome.unevaluated
         lines.extend(_validation_text(str(loaded.path), check.models, loaded.errors))
     if not checks:
-        return _nothing_to_validate(model_paths, dataclasses.replace(found, skipped=skipped))
+        return _nothing_to_validate(model_paths, dataclasses.replace(found, skipped=skipped), exec_py)
 
     # With one file a message starts with the model's name; with several, or a directory, with the file's too.
     several = found.searched_directory or len(checks) > 1
@@ -210,23 +236,17 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
     file_warnings = [f"{check.file}: {warning}" if several else warning
                      for check in checks for warning in check.warnings]
     # The report lists the files' messages; the run's own (OCL not installed) go to standard error.
-    shown_in_text = frozenset(errors + file_warnings)
+    # A lone file that does not load has no report: its error is printed on its own.
+    shown_in_text = frozenset(errors + file_warnings + (load_errors if several else []))
+    if not several and load_errors:
+        lines = []
     warnings = file_warnings + warnings
 
     skipped_py = sum(entry.reason == SKIP_PY for entry in skipped)
     if skipped_py:
-        notes.append(f"{_plural(skipped_py, '.py file')} found in a directory skipped: loading a .py model "
-                     "executes it; pass --exec-py to load them")
+        notes.append(f"{_plural(skipped_py, '.py file')} skipped; {_EXEC_PY_HINT}")
     if checker is not None and len(load_errors) < len(checks):
-        notes.append(
-            f"OCL: {_plural(constraints, 'constraint')} parsed, invariants evaluated on "
-            f"{_plural(evaluations, 'object model')}" if constraints else "OCL: the models have no OCL constraints"
-        )
-    if unevaluated:
-        notes.append(
-            f"OCL: invariants not evaluated on {_plural(unevaluated, 'object model')} of editor JSON: the OCL "
-            "evaluator runs Python built from the models' values; pass --exec-py to evaluate them"
-        )
+        notes.append(_ocl_note(constraints, evaluations, unevaluated))
 
     exit_code = max(check.exit_code for check in checks)
     if strict and warnings:
@@ -251,7 +271,6 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
             "results": [check.as_json() for check in checks],
             "skipped": [{"file": entry.path, "reason": entry.reason} for entry in skipped],
         },
-        # No report for a lone file that does not load: its error says it all.
         text="\n".join([*lines, *skipped_lines, verdict]) if lines or skipped_lines else "",
         shown_in_text=shown_in_text,
         traceback=traceback,
@@ -293,7 +312,7 @@ def info(model_path: str) -> Result:
                  f"{', '.join(runnable) or 'none'}")
     return Result(
         command="info", warnings=warnings, notes=notes, data={**data, "models": models, "generators": runnable},
-        text="\n".join(lines),
+        text="\n".join(lines), text_is_result=True,
     )
 
 
@@ -370,7 +389,7 @@ def generators() -> Result:
     return Result(
         command="generators",
         data={"generators": [_generator_entry(spec) for spec in GENERATORS]},
-        text="\n".join(lines),
+        text="\n".join(lines), text_is_result=True,
     )
 
 
@@ -412,6 +431,34 @@ def parse_options(spec: GeneratorSpec, assignments: list[str]) -> dict[str, Any]
     return options
 
 
+def _one_named(loaded: LoadedModels, kind: str, named: list[LoadedModel], use: Sequence[str],
+               current: loading.CurrentModel | None) -> tuple[LoadedModel, str]:
+    """The one of ``named``, the models of ``kind`` that ``use`` names, to read, and a note when the
+    project's current diagram told models of one name apart (empty otherwise).
+
+    Raises:
+        GeneratorInputError: ``use`` names several of them, or one name names several and none is current.
+    """
+    if len(named) == 1:
+        return named[0], ""
+    used = sorted({name for model in named for name in model.names.intersection(use)})
+    which = "; ".join(model.diagram or model.label for model in named)
+    if len(used) > 1:
+        raise GeneratorInputError(
+            f"--use names {len(named)} {kind} models of {loaded.path} ({', '.join(used)}) and a generator reads one"
+        )
+    if current is not None and any(model is current.model for model in named):
+        return current.model, (
+            f"{loaded.path} holds {len(named)} {kind} models named {used[0]} ({which}); using "
+            f"{current.model.diagram}, the project's current {current.diagram_type}"
+        )
+    reason = loaded.current_unresolved.get(kind, "it is none of them")
+    raise GeneratorInputError(
+        f"--use {used[0]} is ambiguous: {loaded.path} holds {len(named)} {kind} models of that name ({which}) "
+        f"and the project names no current one to choose ({reason}); rename the diagrams in the editor"
+    )
+
+
 def _models_for(
     spec: GeneratorSpec, loaded: LoadedModels, use: Sequence[str] = (),
 ) -> tuple[dict[str, LoadedModel], list[str]]:
@@ -440,7 +487,11 @@ def _models_for(
             names = ", ".join(model.name for model in candidates)
             named = [model for model in candidates if model.names.intersection(use)]
             current = loaded.current.get(kind)
-            if not named and current is not None:
+            if named:
+                model, note = _one_named(loaded, kind, named, use, current)
+                named = [model]
+                notes.extend([note] if note else [])
+            elif current is not None:
                 named = [current.model]
                 notes.append(
                     f"{loaded.path} holds {len(candidates)} {kind} models ({names}); using {current.model.name}, "
@@ -469,20 +520,49 @@ def _find_generator(command: str, generator_id: str, data: dict[str, Any]) -> Ge
         )) from None
 
 
+@dataclasses.dataclass
+class _GeneratorInput:
+    """What the generator runs on, as read from the command line."""
+
+    models: dict[str, Any]  # kind -> the model
+    options: dict[str, Any]
+    warnings: list[str]
+    notes: list[str]
+    # The model names a later run passes as --use to read the same models (see ``_rerun_use``).
+    use: list[str]
+
+
+def _rerun_use(chosen: dict[str, LoadedModel], loaded: LoadedModels, use: Sequence[str]) -> list[str]:
+    """The ``--use`` names that make another run read the models of ``chosen``.
+
+    A kind needs one when ``--use`` was given or the file holds several models of it (the
+    project's current diagram, picked without ``--use``, may change before the next run), and
+    gets one when the name tells the model from the others of its kind.
+    """
+    names = []
+    for kind, model in chosen.items():
+        candidates = loaded.of_kind(kind)
+        if (use or len(candidates) > 1) and sum(model.name in other.names for other in candidates) == 1:
+            names.append(model.name)
+    return names
+
+
 def _generator_input(
     command: str, spec: GeneratorSpec, model_path: str, option_assignments: list[str], use: Sequence[str],
     data: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str]]:
-    """The models the generator reads, by kind, its options, the validation warnings and notes on the models.
+) -> _GeneratorInput:
+    """The models the generator reads and its options, refused when the models have errors.
 
     Adds ``used`` to ``data``: kind -> the name of the model read.
 
     Raises:
-        _Stopped: The file does not load, an option does not parse, or a model has validation errors.
+        _Stopped: The file does not load, an option does not parse, a model has validation errors,
+            or the diagrams of an editor project reference ones it does not hold.
     """
     try:
         options = parse_options(spec, option_assignments)
-        models, notes = _models_for(spec, load_models(model_path), use)
+        loaded = load_models(model_path)
+        models, notes = _models_for(spec, loaded, use)
     except (GeneratorInputError, ModelLoadError) as exc:
         raise _Stopped(failure(command, str(exc), data=data, cause=exc)) from exc
     data["used"] = {kind: model.name for kind, model in models.items()}
@@ -492,9 +572,61 @@ def _generator_input(
     errors = [f"{report['name']}: {error}" for report in reports for error in report["errors"]]
     if errors:
         errors.append("nothing was generated: the model has validation errors")
+    elif loaded.errors:
+        errors = [*loaded.errors, "nothing was generated: the project's diagrams reference elements or diagrams "
+                                  "it does not hold"]
+    if errors:
         raise _Stopped(Result(command=command, exit_code=EXIT_FAILED, errors=errors, warnings=warnings,
                               notes=notes, data=data))
-    return {kind: model.model for kind, model in models.items()}, options, warnings, notes
+    return _GeneratorInput({kind: model.model for kind, model in models.items()}, options, warnings, notes,
+                           _rerun_use(models, loaded, use))
+
+
+def _regenerate_command(spec: GeneratorSpec, model_path: str | None, output_dir: str,
+                        option_assignments: Sequence[str], use: Sequence[str], adopt: bool = False) -> str:
+    """The ``besser regenerate`` command line for this output, quoted for the shell and for the message.
+
+    ``model_path`` ``None`` is a placeholder for the model to give.
+    """
+    tail = ["-o", output_dir, *(word for assignment in option_assignments for word in ("--option", assignment)),
+            *(word for name in use for word in ("--use", name))]
+    if adopt:
+        tail.append("--adopt")
+    model = "<that model>" if model_path is None else shlex.quote(model_path)
+    command = f"{shlex.join(['besser', 'regenerate', spec.id])} {model} {shlex.join(tail)}"
+    # In single quotes as the other commands named in messages, unless shell quoting is in it.
+    return f'"{command}"' if "'" in command else f"'{command}'"
+
+
+def _needs_regen_extra() -> str:
+    """What a suggested ``regenerate`` needs installed first, when it is not."""
+    return "" if merge_available() else f" (needs {_REGEN_EXTRA})"
+
+
+def _file_in_the_way(path: Path) -> Path | None:
+    """The nearest of ``path``'s parents that exists, when it is not a directory."""
+    for parent in path.parents:
+        if os.path.lexists(parent):
+            return None if parent.is_dir() else parent
+    return None
+
+
+def _output_dir_problem(output_dir: str) -> str | None:
+    """Why ``-o`` cannot be the generator's output directory, or ``None`` when it can."""
+    folder = Path(output_dir)
+    if os.path.lexists(folder) and not folder.is_dir():
+        return f"{output_dir} is a file: -o takes a directory"
+    blocking = _file_in_the_way(folder)
+    if blocking is not None:
+        return f"{output_dir} cannot be created: {blocking.as_posix()} is a file"
+    return None
+
+
+def _require_output_dir(command: str, output_dir: str, data: dict[str, Any]) -> None:
+    """Raises: _Stopped: ``-o`` names a file, or a path under one."""
+    problem = _output_dir_problem(output_dir)
+    if problem:
+        raise _Stopped(failure(command, problem, data=data))
 
 
 def _generator_failure(command: str, spec: GeneratorSpec, exc: Exception, warnings: list[str],
@@ -508,24 +640,34 @@ def _generator_failure(command: str, spec: GeneratorSpec, exc: Exception, warnin
                   data=data, traceback=format_traceback(exc))
 
 
-def _require_no_output(spec: GeneratorSpec, model_path: str, output_dir: str, data: dict[str, Any]) -> None:
+def _holds_a_file(folder: Path) -> bool:
+    return any(path.is_file() for path in folder.rglob("*"))
+
+
+def _require_no_output(spec: GeneratorSpec, model_path: str, output_dir: str, option_assignments: list[str],
+                       use: Sequence[str], data: dict[str, Any]) -> None:
     """``generate`` overwrites: refuse a folder that holds something, unless ``--force`` says to.
+
+    The models are not loaded yet, so the ``regenerate`` command named gives ``--use`` as it was given.
 
     Raises:
         _Stopped: The folder has a regeneration record, or is not empty.
     """
     folder = Path(output_dir)
     if (folder / regeneration.RECORD_FILENAME).exists():
+        command = _regenerate_command(spec, model_path, output_dir, option_assignments, use)
         message = (
             f"{output_dir} holds generated code and the record of it ({regeneration.RECORD_FILENAME}): "
-            f"'besser regenerate {spec.id} {model_path} -o {output_dir}' brings it up to the model and keeps "
-            "hand edits; --force overwrites them"
+            f"{command} brings it up to the model and keeps hand edits{_needs_regen_extra()}; --force overwrites them"
         )
     elif folder.is_dir() and any(folder.iterdir()):
-        message = (
-            f"{output_dir} is not empty and generating overwrites what is there: pass --force to overwrite, "
-            "or keep hand edits with 'besser regenerate' (see 'besser regenerate --help')"
-        )
+        message = f"{output_dir} is not empty and generating overwrites what is there: pass --force to overwrite, "
+        if _holds_a_file(folder):
+            adopt = _regenerate_command(spec, model_path, output_dir, option_assignments, use, adopt=True)
+            message += (f"or keep hand edits with 'besser regenerate' (a folder generated without a record needs "
+                        f"{adopt} first; see 'besser regenerate --help')")
+        else:
+            message += "or keep hand edits with 'besser regenerate' (see 'besser regenerate --help')"
     else:
         return
     raise _Stopped(failure("generate", message, data=data))
@@ -544,19 +686,38 @@ def _with_record(spec: GeneratorSpec, output_dir: str, warnings: list[str],
     return run(False), False
 
 
-def _generate_dry_run(spec: GeneratorSpec, models: dict[str, Any], output_dir: str, options: dict[str, Any],
-                      warnings: list[str], notes: list[str], data: dict[str, Any]) -> Result:
-    """What ``generate`` would write, by file: new, changed or unchanged. Nothing is written."""
+def _record_note(spec: GeneratorSpec, model_path: str, output_dir: str, option_assignments: list[str],
+                 given: _GeneratorInput, dry_run: bool) -> str:
+    """The note that ``generate`` records its output, naming the ``regenerate`` command that merges into it."""
+    record = Path(output_dir, regeneration.RECORD_FILENAME).as_posix()
+    command = _regenerate_command(spec, model_path, output_dir, option_assignments, given.use)
+    if dry_run:
+        return (f"would record the output in {record}: {command} would then bring it up to a changed model "
+                f"and keep your edits{_needs_regen_extra()}")
+    return (f"recorded the output in {record}: {command} brings it up to a changed model and keeps your edits"
+            f"{_needs_regen_extra()}")
+
+
+def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, option_assignments: list[str],
+                      given: _GeneratorInput, data: dict[str, Any]) -> Result:
+    """What ``generate`` would write, by file: new, changed or unchanged. Nothing is written.
+
+    The record is bookkeeping, not output: it is not listed, and ``recorded`` says whether it would be written.
+    """
+    warnings, notes = given.warnings, given.notes
     try:
         with stdout_to_stderr():
-            plan, _ = _with_record(spec, output_dir, warnings, lambda record: preview_generator(
-                spec.id, models, output_dir, options, record=record))
+            plan, data["recorded"] = _with_record(spec, output_dir, warnings, lambda record: preview_generator(
+                spec.id, given.models, output_dir, given.options, record=record))
     except regeneration.RegenerationError as exc:
         return Result(command="generate", exit_code=EXIT_USAGE, errors=[str(exc)], warnings=warnings, notes=notes,
                       data=data, traceback=format_traceback(exc))
     except Exception as exc:
         return _generator_failure("generate", spec, exc, warnings, data, notes)
 
+    if data["recorded"]:
+        plan.pop(regeneration.RECORD_FILENAME, None)
+        notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=True))
     data["would_write"] = {Path(output_dir, rel).as_posix(): status for rel, status in plan.items()}
     if not spec.supports_regenerate and regeneration.CHANGED in plan.values():
         notes.append(f"the '{spec.id}' generator's output differs from run to run for one model, "
@@ -578,19 +739,21 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
                             "dry_run": dry_run, "recorded": False}
     try:
         spec = _find_generator("generate", generator_id, data)
-        # A dry run says what the run would do, and that includes this refusal.
+        # A dry run says what the run would do, and that includes these refusals.
+        _require_output_dir("generate", output_dir, data)
         if not force:
-            _require_no_output(spec, model_path, output_dir, data)
-        models, options, warnings, notes = _generator_input("generate", spec, model_path, option_assignments, use, data)
+            _require_no_output(spec, model_path, output_dir, option_assignments, use, data)
+        given = _generator_input("generate", spec, model_path, option_assignments, use, data)
     except _Stopped as stopped:
         return stopped.result
     if dry_run:
-        return _generate_dry_run(spec, models, output_dir, options, warnings, notes, data)
+        return _generate_dry_run(spec, model_path, output_dir, option_assignments, given, data)
 
+    warnings, notes = given.warnings, given.notes
     try:
         with stdout_to_stderr():
             written, data["recorded"] = _with_record(spec, output_dir, warnings, lambda record: run_generator(
-                spec.id, models, output_dir, options, record=record))
+                spec.id, given.models, output_dir, given.options, record=record))
     except regeneration.RegenerationError as exc:
         return Result(command="generate", exit_code=EXIT_USAGE, errors=[str(exc)], warnings=warnings, notes=notes,
                       data=data, traceback=format_traceback(exc))
@@ -598,11 +761,7 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
         return _generator_failure("generate", spec, exc, warnings, data, notes)
 
     if data["recorded"]:
-        notes.append(
-            f"recorded the output in {Path(output_dir, regeneration.RECORD_FILENAME).as_posix()}: "
-            f"'besser regenerate {spec.id} {model_path} -o {output_dir}' brings it up to a changed model "
-            "and keeps your edits"
-        )
+        notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=False))
     files = [Path(output_dir, path).as_posix() for path in written]
     lines = [f"Generated {_plural(len(files), 'file')} in {output_dir} with the '{spec.id}' generator:"]
     lines.extend(f"  {path}" for path in files)
@@ -622,17 +781,55 @@ def _without_regeneration_log() -> Iterator[None]:
         logger.setLevel(level)
 
 
-# Report list -> what the command says about the files in it; conflicts are errors instead.
+# Report list -> what the command says about the files in it, after the run and in a dry run;
+# conflicts are errors instead.
 _REPORT_WARNINGS = {
-    "merged": "the model's changes were merged into your edits; a clean merge can still break, so run your tests",
-    "kept_removed_from_model": "the model no longer produces these files and they may hold your work, so they were kept",
-    "not_restored": "you deleted these files and the model changed them; they stay deleted",
-    "not_merged": "these files clash with the model and cannot be merged as text; they were left as they were",
-    "differs_from_model": "these files differ from this model's output and count as your edits from now on "
-                          "(a long list usually means it is not the model they were generated from)",
+    "merged": (
+        "the model's changes were merged into your edits; a clean merge can still break, so run your tests",
+        "the model's changes would be merged into your edits; a clean merge can still break, so run your tests",
+    ),
+    "kept_removed_from_model": (
+        "the model no longer produces these files and they may hold your work, so they were kept",
+        "the model no longer produces these files and they may hold your work, so they would be kept",
+    ),
+    "not_restored": (
+        "you deleted these files and the model changed them; they stay deleted",
+        "you deleted these files and the model changes them; they would stay deleted",
+    ),
+    "not_merged": (
+        "these files clash with the model and cannot be merged as text; they were left as they were",
+        "these files clash with the model and cannot be merged as text; they would be left as they are",
+    ),
+    "differs_from_model": (
+        "these files differ from this model's output and count as your edits from now on "
+        "(a long list usually means it is not the model they were generated from)",
+        "these files differ from this model's output and would count as your edits from then on "
+        "(a long list usually means it is not the model they were generated from)",
+    ),
 }
-# Report list -> its label in the text report.
+# Report list -> its label in the text report. These lists are the files the run changes.
 _REPORT_LABELS = {"written": "written", "merged": "merged", "conflicted": "conflict", "deleted": "deleted"}
+_CONFLICT_MARKERS = "('<<<<<<< your edit' ... '>>>>>>> generated from your model')"
+
+
+def _regeneration_refusal(exc: regeneration.RegenerationError, spec: GeneratorSpec, output_dir: str,
+                          option_assignments: list[str], given: _GeneratorInput) -> str:
+    """What the command says of a folder ``regenerate()`` refuses: in its own words, with the next step."""
+    if isinstance(exc, regeneration.UnrecordedOutputError):
+        # 'besser generate' records its output: such a folder was generated by an older BESSER, or otherwise.
+        adopt = _regenerate_command(spec, None, output_dir, option_assignments, given.use, adopt=True)
+        return (f"{output_dir} holds generated files ({exc.named_files()}) but no {regeneration.RECORD_FILENAME}, "
+                "so your edits cannot be told from generated code. Record it once with the model those files came "
+                f"from: {adopt}, then regenerate with the changed model.")
+    if isinstance(exc, regeneration.ConflictsPendingError):
+        paths = ", ".join(Path(output_dir, rel).as_posix() for rel in exc.files)
+        holds = "holds" if len(exc.files) == 1 else "hold"
+        return (f"{paths} still {holds} the conflict markers of the last regenerate: resolve them "
+                f"{_CONFLICT_MARKERS}, then run regenerate again.")
+    if isinstance(exc, regeneration.AlreadyRecordedError):
+        return (f"{output_dir} already has {regeneration.RECORD_FILENAME}: there is nothing to adopt; "
+                "run it without --adopt")
+    return str(exc)
 
 
 def regenerate(generator_id: str, model_path: str, output_dir: str, option_assignments: list[str],
@@ -656,21 +853,18 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
                 "regenerate", f"regenerate needs the pygit2 package, which is not installed: {_REGEN_EXTRA}",
                 data=data,
             ))
-        models, options, warnings, notes = _generator_input("regenerate", spec, model_path, option_assignments, use, data)
+        _require_output_dir("regenerate", output_dir, data)
+        given = _generator_input("regenerate", spec, model_path, option_assignments, use, data)
     except _Stopped as stopped:
         return stopped.result
+    warnings, notes = given.warnings, given.notes
 
     try:
         with stdout_to_stderr(), _without_regeneration_log():
-            report = regenerate_generator(spec.id, models, output_dir, options, adopt=adopt, dry_run=dry_run)
+            report = regenerate_generator(spec.id, given.models, output_dir, given.options, adopt=adopt,
+                                          dry_run=dry_run)
     except regeneration.RegenerationError as exc:
-        message = str(exc)
-        if isinstance(exc, regeneration.UnrecordedOutputError):
-            # 'besser generate' records its output: such a folder was generated by an older BESSER, or otherwise.
-            message += (
-                f" Record it once with the model those files came from: 'besser regenerate {spec.id} <that model> "
-                f"-o {output_dir} --adopt', then regenerate with the changed model."
-            )
+        message = _regeneration_refusal(exc, spec, output_dir, option_assignments, given)
         return Result(command="regenerate", exit_code=EXIT_USAGE, errors=[message], warnings=warnings, notes=notes,
                       data=data, traceback=format_traceback(exc))
     except Exception as exc:
@@ -682,10 +876,13 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
         for name, paths in dataclasses.asdict(report).items()
     }
     data.update(lists, adopted=adopt)
+    if dry_run:
+        # Every file the run would change, with what it would do to it: the key every dry run has.
+        data["would_write"] = dict(sorted((path, name) for name in _REPORT_LABELS for path in lists[name]))
     # A dry run reports what the run would do, in the run's own words.
-    prefix = "dry run: " if dry_run else ""
     warnings.extend(
-        f"{prefix}{reason}: {', '.join(lists[name])}" for name, reason in _REPORT_WARNINGS.items() if lists[name]
+        f"dry run: {would}: {', '.join(lists[name])}" if dry_run else f"{done}: {', '.join(lists[name])}"
+        for name, (done, would) in _REPORT_WARNINGS.items() if lists[name]
     )
     if dry_run:
         errors = [f"{path}: your edit and the model change the same lines: regenerate would write conflict "
@@ -693,7 +890,7 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
     else:
         errors = [
             f"{path}: your edit and the model changed the same lines. Resolve the conflict markers "
-            "('<<<<<<< your edit' ... '>>>>>>> generated from your model'), then run regenerate again"
+            f"{_CONFLICT_MARKERS}, then run regenerate again"
             for path in lists["conflicted"]
         ]
     files = [] if dry_run else sorted(lists["written"] + lists["merged"] + lists["conflicted"])
@@ -793,6 +990,9 @@ def convert(input_path: str, output_path: str, dry_run: bool = False) -> Result:
     )
     if write is None or (not from_stdin and source.suffix.lower() != expected_source):
         return failure("convert", wrong_direction.format(held=source.name), data=data)
+    problem = _output_file_problem(target)
+    if problem:
+        return failure("convert", problem, data=data)
 
     try:
         loaded = load_models(input_path)
@@ -822,6 +1022,16 @@ def convert(input_path: str, output_path: str, dry_run: bool = False) -> Result:
         command="convert", warnings=warnings, files=[target.as_posix()], data=data,
         text=f"Converted {source} ({counts}) to {target}",
     )
+
+
+def _output_file_problem(target: Path) -> str | None:
+    """Why ``-o`` cannot be the converted file, or ``None`` when it can."""
+    if target.is_dir():
+        return f"{target.as_posix()} is a directory: -o takes a file"
+    blocking = _file_in_the_way(target)
+    if blocking is not None:
+        return f"{target.as_posix()} cannot be created: {blocking.as_posix()} is a file"
+    return None
 
 
 # A dry run's status of the target -> what converting would do to it.

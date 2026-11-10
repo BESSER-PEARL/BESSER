@@ -219,7 +219,9 @@ def test_a_file_that_does_not_load_exits_2_and_the_others_are_still_validated(be
     run = besser("validate", "missing.py", model, write("broken.py", INVALID_MODEL))
 
     assert run.returncode == 2
-    assert run.stderr == "error: missing.py: no such file\n"
+    # Listed in its place among the files checked, and not again on standard error.
+    assert run.stdout.startswith("missing.py: does not load: no such file\nlibrary.py: 1 model\n")
+    assert run.stderr == ""
     assert "library_model (DomainModel): ok" in run.stdout
     assert "broken_model (DomainModel): 1 error, 0 warnings" in run.stdout
     assert run.stdout.rstrip().endswith("FAILED: 2 errors, 0 warnings")

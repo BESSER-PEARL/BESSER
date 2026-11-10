@@ -1,17 +1,26 @@
 """``besser mcp``: the commands as MCP tools, spoken to over stdio as a client would."""
 
+import importlib.util
 import json
 import os
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
+from pathlib import Path
 
 import pytest
 
-from besser.cli.mcp_server import _option_assignments
+from besser.cli.mcp_server import _option_assignments, for_client
 from tests.cli.conftest import CLASS_DIAGRAM, LIBRARY_MODEL
 
 _TIMEOUT = 120
+# How long a response may take: a server that hangs fails the test instead of blocking it.
+_RESPONSE_TIMEOUT = 60
+
+needs_pygit2 = pytest.mark.skipif(importlib.util.find_spec("pygit2") is None,
+                                  reason='regenerate merges with pygit2: pip install "besser[regen]"')
 
 
 class McpServer:
@@ -24,11 +33,25 @@ class McpServer:
             [sys.executable, "-m", "besser", "mcp", "--root", str(root), *flags],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr, text=True,
         )
+        # Lines of standard output, read by a thread so that a response can be waited for with a timeout.
+        self.lines = queue.Queue()
+        threading.Thread(target=self._read_stdout, daemon=True).start()
         self.next_id = 0
         self.initialize = self.request("initialize", {
             "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "pytest", "version": "0"},
         })
         self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def _read_stdout(self):
+        for line in self.process.stdout:
+            self.lines.put(line)
+        self.lines.put("")  # end of output
+
+    def readline(self):
+        try:
+            return self.lines.get(timeout=_RESPONSE_TIMEOUT)
+        except queue.Empty:
+            pytest.fail(f"no response in {_RESPONSE_TIMEOUT} s: {self.read_stderr()}")
 
     def send(self, message):
         self.process.stdin.write(json.dumps(message) + "\n")
@@ -39,7 +62,7 @@ class McpServer:
         self.next_id += 1
         self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, **({"params": params} if params else {})})
         while True:
-            line = self.process.stdout.readline()
+            line = self.readline()
             assert line, f"the server exited: {self.read_stderr()}"
             message = json.loads(line)
             assert message["jsonrpc"] == "2.0"
@@ -58,14 +81,22 @@ class McpServer:
         return self.stderr.read()
 
     def close(self):
-        """Stop the server (end of input) and return what it wrote on standard error."""
+        """Stop the server (end of input) and return what it wrote on standard error.
+
+        Nothing may follow the session on standard output: it is the protocol's channel.
+        """
         if self.stderr.closed:
             return ""
         self.process.stdin.close()
         self.process.wait(timeout=_TIMEOUT)
+        after = []
+        while (line := self.readline()) != "":
+            after.append(line)
         self.process.stdout.close()
         stderr = self.read_stderr()
         self.stderr.close()
+        assert after == [], f"printed on standard output after the session: {after}"
+        assert self.process.returncode == 0, stderr
         return stderr
 
 
@@ -115,7 +146,10 @@ def test_validate_and_generate_return_the_cli_json(serve, json_model, tmp_path):
     assert validated["ok"] is True and validated["command"] == "validate"
     assert [model["kind"] for model in validated["models"]] == ["domain"]
     assert generated["ok"] is True and generated["errors"] == []
-    assert generated["files"] == [(tmp_path / "out" / "pydantic_classes.py").as_posix()]
+    # Paths as the client gave them: relative to the root.
+    assert generated["files"] == ["out/pydantic_classes.py"]
+    assert generated["model"] == "library.json" and generated["output_dir"] == "out"
+    assert validated["model_files"] == ["library.json"]
     assert "class Book" in (tmp_path / "out" / "pydantic_classes.py").read_text()
     assert sqlalchemy["ok"] is True
     assert "postgresql" in (tmp_path / "db" / "sql_alchemy.py").read_text()
@@ -129,7 +163,9 @@ def test_generate_refuses_a_folder_that_is_not_empty_unless_forced(serve, json_m
     forced = server.call("generate", generator="pydantic", model=json_model, output_dir="out", force=True)
 
     assert refused["ok"] is False and refused["exit_code"] == 2
-    assert "is not empty" in refused["errors"][0]
+    [message] = refused["errors"]
+    assert message.startswith("out is not empty and generating overwrites what is there: pass `force: true`")
+    assert "the `regenerate` tool" in message and "--" not in message and "besser" not in message
     assert forced["ok"] is True
 
 
@@ -205,3 +241,117 @@ def test_options_become_cli_assignments():
     ]
     assert _option_assignments(["dbms=sqlite"]) == ["dbms=sqlite"]
     assert _option_assignments(None) == []
+
+
+def test_messages_name_the_tools_and_their_arguments_and_paths_are_root_relative(serve, json_model, tmp_path):
+    server = serve()
+    server.call("generate", generator="pydantic", model=json_model, output_dir="out")
+    again = server.call("generate", generator="pydantic", model=json_model, output_dir="out")
+
+    [message] = again["errors"]
+    assert message.startswith("out holds generated code and the record of it (.besser_generated.json): "
+                              "the `regenerate` tool brings it up")
+    assert message.endswith("`force: true` overwrites them") and str(tmp_path) not in message
+
+
+@needs_pygit2
+def test_regenerate_keeps_an_edit_over_mcp(serve, json_model, tmp_path):
+    server = serve()
+    server.call("generate", generator="pydantic", model=json_model, output_dir="out")
+    generated = tmp_path / "out" / "pydantic_classes.py"
+    generated.write_text(generated.read_text() + "\n# my edit\n")
+
+    planned = server.call("regenerate", generator="pydantic", model=json_model, output_dir="out", dry_run=True)
+    regenerated = server.call("regenerate", generator="pydantic", model=json_model, output_dir="out")
+
+    assert planned["ok"] is True and planned["dry_run"] is True and planned["files"] == []
+    assert regenerated["ok"] is True and regenerated["command"] == "regenerate"
+    assert regenerated["output_dir"] == "out"
+    assert "# my edit" in generated.read_text()
+
+
+def test_regenerate_lists_only_the_generators_that_support_it(serve):
+    tools = {tool["name"]: tool for tool in serve().request("tools/list")["result"]["tools"]}
+
+    regenerable = tools["regenerate"]["inputSchema"]["properties"]["generator"]["enum"]
+    assert "pydantic" in regenerable
+    assert set(regenerable) < set(tools["generate"]["inputSchema"]["properties"]["generator"]["enum"])
+
+
+def test_generate_dry_run_writes_nothing_and_reports_root_relative_paths(serve, json_model, tmp_path):
+    result = serve().call("generate", generator="pydantic", model=json_model, output_dir="out", dry_run=True)
+
+    assert result["ok"] is True and result["files"] == []
+    assert result["would_write"]["out/pydantic_classes.py"] == "new"
+    assert not (tmp_path / "out").exists()
+
+
+def test_convert_writes_the_output_under_the_root(serve, json_model, tmp_path):
+    result = serve().call("convert", input=json_model, output="model.py")
+
+    assert result["ok"] is True, result["errors"]
+    assert result["files"] == ["model.py"]
+    assert result["input"] == "library.json" and result["output"] == "model.py"
+    assert "DomainModel(" in (tmp_path / "model.py").read_text()
+
+
+def test_an_unknown_tool_is_a_protocol_error(serve):
+    response = serve().request("tools/call", {"name": "frobnicate", "arguments": {}})
+
+    assert "unknown tool 'frobnicate'" in json.dumps(response)
+    assert "result" not in response or response["result"].get("isError") is True
+
+
+def test_a_symbolic_link_loop_in_an_output_folder_is_refused(serve, json_model, tmp_path):
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "a").symlink_to(tmp_path / "out" / "b")
+    (tmp_path / "out" / "b").symlink_to(tmp_path / "out" / "a")
+
+    result = serve().call("generate", generator="pydantic", model=json_model, output_dir="out", force=True)
+
+    assert result["ok"] is False and result["exit_code"] == 2
+    assert "is a symbolic link that does not resolve" in result["errors"][0]
+
+
+def test_nothing_follows_the_session_on_standard_output_with_json(serve):
+    server = serve("--json")
+    server.request("tools/list")
+    server.close()  # asserts that standard output ends with the session
+
+
+@pytest.mark.parametrize("flags", [[], ["--json"], ["-q"], ["-v"]])
+def test_a_root_that_does_not_exist_is_a_usage_error(tmp_path, flags):
+    run = subprocess.run([sys.executable, "-m", "besser", "mcp", "--root", "missing", *flags], cwd=tmp_path,
+                         capture_output=True, text=True, timeout=_TIMEOUT, check=False, stdin=subprocess.DEVNULL)
+
+    assert run.returncode == 2
+    if "--json" in flags:
+        assert json.loads(run.stdout)["command"] == "mcp"
+        assert json.loads(run.stdout)["errors"] == ["--root missing: no such directory"]
+    else:
+        assert run.stdout == "" and run.stderr == "error: --root missing: no such directory\n"
+
+
+def test_for_client_makes_paths_relative_and_names_the_tool_arguments():
+    root = Path("/work/project")
+    output = {
+        "files": ["/work/project/out/a.py"], "output_dir": "/work/project/out", "model": "/work/project",
+        "would_write": {"/work/project/out/a.py": "new"},
+        "errors": ["/work/project/m.json holds two: name it with --use NAME; --option takes name=value"],
+        "warnings": ["/work/projects/x stays: 'besser regenerate sql /work/project/m.json -o out --adopt'"],
+        "notes": ["2 .py files skipped; pass --exec-py to load them", "'besser new' is not a tool",
+                  "\"besser regenerate rest_api m.json -o out --option 'http_methods=GET, POST'\" keeps edits"],
+        "results": [{"errors": ["pass --force to overwrite, --dry-run and --strict"]}],
+        "generators": [{"description": "keeps --force as it is"}],
+    }
+
+    assert for_client(output, root) == {
+        "files": ["out/a.py"], "output_dir": "out", "model": ".",
+        "would_write": {"out/a.py": "new"},
+        "errors": ["m.json holds two: name it with the `use` argument; the `options` argument takes name=value"],
+        "warnings": ["/work/projects/x stays: the `regenerate` tool with `adopt: true`"],
+        "notes": ["2 .py files skipped; restart the server with --exec-py to load them", "'besser new' is not a tool",
+                  "the `regenerate` tool keeps edits"],
+        "results": [{"errors": ["pass `force: true` to overwrite, `dry_run: true` and `strict: true`"]}],
+        "generators": [{"description": "keeps --force as it is"}],
+    }

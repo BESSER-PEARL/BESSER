@@ -2,7 +2,9 @@
 
 Each tool calls the ``commands`` function the command line calls and returns
 the command's ``--json`` object (``Result.as_json()``), as structured content
-and as JSON text, flagged as an error when ``ok`` is false.
+and as JSON text, flagged as an error when ``ok`` is false. The object is
+worded for the client (:func:`for_client`): its paths are relative to ``--root``,
+and where a message names a CLI flag it names the tool argument instead.
 
 The tools work on files, so the server confines them: every path a tool is
 given is resolved (``..`` and symbolic links included) and must be inside
@@ -16,8 +18,10 @@ the command line never needs it.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import re
 import sys
 import threading
 import traceback
@@ -136,26 +140,98 @@ class Tools:
         for directory, subdirectories, files in os.walk(folder, followlinks=False):
             for name in (*subdirectories, *files):
                 entry = Path(directory, name)
-                if entry.is_symlink() and not entry.resolve().is_relative_to(self.root):
+                if not entry.is_symlink():
+                    continue
+                try:
+                    target = entry.resolve()
+                except (OSError, RuntimeError) as exc:  # a symbolic link loop
+                    raise _Refused(f"{entry} is a symbolic link that does not resolve: {exc}") from None
+                if not target.is_relative_to(self.root):
                     raise _Refused(f"{entry} is a symbolic link to a path outside the server's root {self.root}")
 
     # ── calls ───────────────────────────────────────────────────────────────
 
-    def call(self, name: str, arguments: dict[str, Any] | None) -> Result:
-        """Run the tool ``name`` with ``arguments``; a refused or invalid argument is a usage failure (2)."""
+    def call(self, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+        """Run the tool ``name`` with ``arguments`` and return its JSON object, worded for the client.
+
+        A refused or invalid argument is a usage failure (2).
+        """
         import jsonschema  # a dependency of the MCP SDK, which serve() has imported
 
-        spec = TOOLS_BY_NAME[name]
+        spec = tool_specs()[name]
         arguments = arguments or {}
         try:
             jsonschema.validate(arguments, spec.input_schema)
         except jsonschema.ValidationError as exc:
             where = ".".join(str(part) for part in exc.absolute_path)
-            return failure(name, f"invalid arguments: {where + ': ' if where else ''}{exc.message}")
+            return failure(name, f"invalid arguments: {where + ': ' if where else ''}{exc.message}").as_json()
         try:
-            return spec.run(self, arguments)
-        except _Refused as exc:
-            return failure(name, str(exc))
+            result = spec.run(self, arguments)
+        except _Refused as exc:  # its message names the root on purpose
+            return failure(name, str(exc)).as_json()
+        return for_client(result.as_json(), self.root)
+
+
+# ── wording for the client ──────────────────────────────────────────────────
+
+# A CLI command quoted in a message ('besser regenerate sql model.py -o out --adopt').
+# In single quotes, or double quotes when the command quotes an option value itself.
+_QUOTED_COMMAND = re.compile(r"""(['"])besser ([a-z]+)(.*?)\1""")
+# A flag the CLI's message names, and the tool argument that does the same.
+_FLAG_ARGUMENTS = (
+    ("pass --exec-py", "restart the server with --exec-py"),
+    ("--use NAME", "the `use` argument"),
+    ("--option", "the `options` argument"),
+)
+# CLI flags that are a tool's boolean argument of the same name ("--dry-run" -> "dry_run: true").
+_BOOLEAN_FLAG = re.compile(r"--(force|adopt|strict|ocl|dry-run)\b")
+_MESSAGE_KEYS = frozenset({"errors", "warnings", "notes"})
+
+
+def _boolean_argument(match: re.Match) -> str:
+    return f"`{match.group(1).replace('-', '_')}: true`"
+
+
+def _tool_wording(message: str) -> str:
+    """``message`` with the CLI commands and flags it names replaced by the tools and arguments."""
+    def tool(match: re.Match) -> str:
+        if match.group(2) not in tool_specs():
+            return match.group(0)
+        arguments = [_boolean_argument(flag) for flag in _BOOLEAN_FLAG.finditer(match.group(3))]
+        return f"the `{match.group(2)}` tool" + (f" with {', '.join(arguments)}" if arguments else "")
+
+    message = _QUOTED_COMMAND.sub(tool, message)
+    for flag, argument in _FLAG_ARGUMENTS:
+        message = message.replace(flag, argument)
+    return _BOOLEAN_FLAG.sub(_boolean_argument, message)
+
+
+def _root_relative(text: str, root: Path) -> str:
+    """``text`` with every path under ``root`` written relative to it (``root`` itself as ``.``)."""
+    if root == Path(root.anchor):  # --root / : every path is under it, and absolute is clearer
+        return text
+    for spelling in dict.fromkeys((str(root), root.as_posix())):
+        # The root followed by a separator, or by a character that cannot continue a file name.
+        text = re.sub(re.escape(spelling) + r"(?:[/\\]|(?![\w.-]))",
+                      lambda match: "" if match.group(0)[-1] in "/\\" else ".", text)
+    return text
+
+
+def for_client(value: Any, root: Path, key: str = "") -> Any:
+    """A tool's JSON object as the client reads it.
+
+    The commands are given absolute paths, so their output holds them: each is made relative to
+    ``root``, the paths the client passes. The messages (``errors``, ``warnings``, ``notes``, at any
+    depth) name CLI commands and flags: they name the tools and their arguments instead.
+    """
+    if isinstance(value, dict):
+        return {_root_relative(name, root): for_client(item, root, name) for name, item in value.items()}
+    if isinstance(value, list):
+        return [for_client(item, root, key) for item in value]
+    if isinstance(value, str):
+        text = _root_relative(value, root)
+        return _tool_wording(text) if key in _MESSAGE_KEYS else text
+    return value
 
 
 def _option_assignments(options: dict[str, Any] | list[str] | None) -> list[str]:
@@ -214,87 +290,95 @@ def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-_GENERATOR_IDS = [spec.id for spec in GENERATORS]
-_REGENERATE_IDS = [spec.id for spec in GENERATORS if spec.supports_regenerate]
+@functools.cache
+def tool_specs() -> dict[str, ToolSpec]:
+    """The tools, by name.
 
-TOOLS: tuple[ToolSpec, ...] = (
-    ToolSpec(
-        "validate",
-        "Load model files and run validate() on every model in them (the CLI's 'besser validate'). "
-        "A directory is searched for model files. ok is false on errors, or on warnings with strict.",
-        _object({
-            "paths": {"type": "array", "minItems": 1, "items": _MODEL,
-                      "description": "model files or directories of them, under the server's root"},
-            "strict": {"type": "boolean", "default": False, "description": "fail on warnings too"},
-            "ocl": {"type": "boolean", "default": False,
-                    "description": "also check OCL constraints: parse each, and evaluate them on object models"},
-        }, ["paths"]),
-        False, _validate,
-    ),
-    ToolSpec(
-        "info",
-        "Summarise a model file: its models, the classes, attributes and associations of a domain model, "
-        "and the ids of the generators that can run on it (the CLI's 'besser info').",
-        _object({"model": _MODEL}, ["model"]),
-        False, _info,
-    ),
-    ToolSpec(
-        "generators",
-        "List the generators: id, the models each reads, its options as JSON Schema, and whether "
-        "regenerate supports it (the CLI's 'besser generators').",
-        _object({}, []),
-        False, _generators,
-    ),
-    ToolSpec(
-        "generate",
-        "Validate the models a generator reads, run it into output_dir and list the files written "
-        "(the CLI's 'besser generate'). A model with validation errors is not generated from. "
-        "A non-empty output_dir is refused unless force is true, which overwrites; to keep hand edits "
-        "in generated code, use regenerate.",
-        _object({
-            "generator": {"type": "string", "enum": _GENERATOR_IDS, "description": "the generator id"},
-            "model": _MODEL,
-            "output_dir": {**_PATH, "description": "the folder to write to, under the server's root"},
-            "options": _OPTIONS,
-            "use": _USE,
-            "force": {"type": "boolean", "default": False,
-                      "description": "write into a folder that is not empty, overwriting files in it"},
-            "dry_run": _DRY_RUN,
-        }, ["generator", "model", "output_dir"]),
-        True, _generate,
-    ),
-    ToolSpec(
-        "regenerate",
-        "Bring generated code in output_dir up to a changed model and keep the edits made in it: a "
-        "three-way merge with the output recorded in .besser_generated.json (the CLI's 'besser regenerate'). "
-        "Conflicts get conflict markers and ok false. Needs besser[regen].",
-        _object({
-            "generator": {"type": "string", "enum": _REGENERATE_IDS,
-                          "description": "the generator id; only these generators support regenerate"},
-            "model": _MODEL,
-            "output_dir": {**_PATH, "description": "the folder holding the generated code, under the server's root"},
-            "options": _OPTIONS,
-            "use": _USE,
-            "adopt": {"type": "boolean", "default": False,
-                      "description": "record a folder generated without a record as this model's output, "
-                                     "changing no file"},
-            "dry_run": _DRY_RUN,
-        }, ["generator", "model", "output_dir"]),
-        True, _regenerate,
-    ),
-    ToolSpec(
-        "convert",
-        "Convert a B-UML .py model to an editor .json project, or an editor .json export to a B-UML .py "
-        "file; the direction follows the two extensions (the CLI's 'besser convert'). The output is overwritten.",
-        _object({
-            "input": {**_MODEL, "description": "the file to convert (.json, or .py if the server allows it)"},
-            "output": {**_PATH, "description": "the .py or .json file to write, under the server's root"},
-            "dry_run": _DRY_RUN,
-        }, ["input", "output"]),
-        True, _convert,
-    ),
-)
-TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
+    Built on first use: which generators support regenerate is known by importing each one's class.
+    """
+    generator_ids = [spec.id for spec in GENERATORS]
+    regenerate_ids = [spec.id for spec in GENERATORS if spec.supports_regenerate]
+    return {tool.name: tool for tool in _tools(generator_ids, regenerate_ids)}
+
+
+def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpec, ...]:
+    return (
+        ToolSpec(
+            "validate",
+            "Load model files and run validate() on every model in them (the CLI's 'besser validate'). "
+            "A directory is searched for model files. ok is false on errors, or on warnings with strict.",
+            _object({
+                "paths": {"type": "array", "minItems": 1, "items": _MODEL,
+                          "description": "model files or directories of them, under the server's root"},
+                "strict": {"type": "boolean", "default": False, "description": "fail on warnings too"},
+                "ocl": {"type": "boolean", "default": False,
+                        "description": "also check OCL constraints: parse each, and evaluate them on object models"},
+            }, ["paths"]),
+            False, _validate,
+        ),
+        ToolSpec(
+            "info",
+            "Summarise a model file: its models, the classes, attributes and associations of a domain model, "
+            "and the ids of the generators that can run on it (the CLI's 'besser info').",
+            _object({"model": _MODEL}, ["model"]),
+            False, _info,
+        ),
+        ToolSpec(
+            "generators",
+            "List the generators: id, the models each reads, its options as JSON Schema, and whether "
+            "regenerate supports it (the CLI's 'besser generators').",
+            _object({}, []),
+            False, _generators,
+        ),
+        ToolSpec(
+            "generate",
+            "Validate the models a generator reads, run it into output_dir and list the files written "
+            "(the CLI's 'besser generate'). A model with validation errors is not generated from. "
+            "A non-empty output_dir is refused unless force is true, which overwrites; to keep hand edits "
+            "in generated code, use regenerate.",
+            _object({
+                "generator": {"type": "string", "enum": generator_ids, "description": "the generator id"},
+                "model": _MODEL,
+                "output_dir": {**_PATH, "description": "the folder to write to, under the server's root"},
+                "options": _OPTIONS,
+                "use": _USE,
+                "force": {"type": "boolean", "default": False,
+                          "description": "write into a folder that is not empty, overwriting files in it"},
+                "dry_run": _DRY_RUN,
+            }, ["generator", "model", "output_dir"]),
+            True, _generate,
+        ),
+        ToolSpec(
+            "regenerate",
+            "Bring generated code in output_dir up to a changed model and keep the edits made in it: a "
+            "three-way merge with the output recorded in .besser_generated.json (the CLI's 'besser regenerate'). "
+            "Conflicts get conflict markers and ok false. Needs besser[regen].",
+            _object({
+                "generator": {"type": "string", "enum": regenerate_ids,
+                              "description": "the generator id; only these generators support regenerate"},
+                "model": _MODEL,
+                "output_dir": {**_PATH, "description": "the folder holding the generated code, under the server's root"},
+                "options": _OPTIONS,
+                "use": _USE,
+                "adopt": {"type": "boolean", "default": False,
+                          "description": "record a folder generated without a record as this model's output, "
+                                         "changing no file"},
+                "dry_run": _DRY_RUN,
+            }, ["generator", "model", "output_dir"]),
+            True, _regenerate,
+        ),
+        ToolSpec(
+            "convert",
+            "Convert a B-UML .py model to an editor .json project, or an editor .json export to a B-UML .py "
+            "file; the direction follows the two extensions (the CLI's 'besser convert'). The output is overwritten.",
+            _object({
+                "input": {**_MODEL, "description": "the file to convert (.json, or .py if the server allows it)"},
+                "output": {**_PATH, "description": "the .py or .json file to write, under the server's root"},
+                "dry_run": _DRY_RUN,
+            }, ["input", "output"]),
+            True, _convert,
+        ),
+    )
 
 
 def _instructions(tools: Tools) -> str:
@@ -306,8 +390,12 @@ def _instructions(tools: Tools) -> str:
     )
 
 
-def serve(root: str, exec_py: bool = False) -> Result:
-    """Serve the tools on standard input and output until the client disconnects."""
+def serve(root: str, exec_py: bool = False) -> Result | None:
+    """Serve the tools on standard input and output until the client disconnects.
+
+    Returns the failure that kept it from serving, or ``None`` once it has served: standard
+    output was the protocol's, so nothing is printed after the session.
+    """
     try:
         import anyio
         from anyio import to_thread
@@ -321,6 +409,7 @@ def serve(root: str, exec_py: bool = False) -> Result:
     if not Path(root).is_dir():
         return failure("mcp", f"--root {root}: no such directory")
     tools = Tools(Path(root), exec_py=exec_py)
+    specs = tool_specs()
     listed = [
         types.Tool(
             name=spec.name, description=spec.description, input_schema=spec.input_schema,
@@ -328,29 +417,28 @@ def serve(root: str, exec_py: bool = False) -> Result:
             annotations=types.ToolAnnotations(read_only_hint=not spec.writes, destructive_hint=spec.writes,
                                               open_world_hint=False),
         )
-        for spec in TOOLS
+        for spec in specs.values()
     ]
     # One command at a time: loading a model and running a generator use process-wide state
     # (standard output, the module cache), and commands may write the same files.
     one_at_a_time = threading.Lock()
 
-    def run_tool(name: str, arguments: dict[str, Any] | None) -> Result:
+    def run_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
         with one_at_a_time, stdout_to_stderr():
             try:
                 return tools.call(name, arguments)
             except Exception as exc:  # a defect in BESSER, as main() reports it
                 traceback.print_exc(file=sys.stderr)
-                return failure(name, f"unexpected {type(exc).__name__}: {exc}", EXIT_FAILED)
+                return failure(name, f"unexpected {type(exc).__name__}: {exc}", EXIT_FAILED).as_json()
 
     async def list_tools(ctx: Any, params: Any) -> Any:
         return types.ListToolsResult(tools=listed)
 
     async def call_tool(ctx: Any, params: Any) -> Any:
-        if params.name not in TOOLS_BY_NAME:
-            raise MCPError(types.INVALID_PARAMS, f"unknown tool {params.name!r}; tools: {', '.join(TOOLS_BY_NAME)}")
+        if params.name not in specs:
+            raise MCPError(types.INVALID_PARAMS, f"unknown tool {params.name!r}; tools: {', '.join(specs)}")
         # In a worker thread, so the server keeps answering (pings) while a generator runs.
-        result = await to_thread.run_sync(run_tool, params.name, params.arguments)
-        output = result.as_json()
+        output = await to_thread.run_sync(run_tool, params.name, params.arguments)
         return types.CallToolResult(
             content=[types.TextContent(text=json.dumps(output, indent=2))],
             structured_content=output, is_error=not output["ok"],
@@ -369,4 +457,4 @@ def serve(root: str, exec_py: bool = False) -> Result:
         anyio.run(run)
     except KeyboardInterrupt:
         pass
-    return Result(command="mcp")
+    return None

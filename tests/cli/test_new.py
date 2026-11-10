@@ -49,3 +49,23 @@ def test_a_name_that_is_not_a_python_file_is_a_usage_error(besser, tmp_path):
     assert run.returncode == 2
     assert run.stderr == "error: a B-UML model is a .py file; got model.json\n"
     assert not (tmp_path / "model.json").exists()
+
+
+def test_quiet_and_verbose_write_the_model_and_print_nothing_on_standard_error(besser, tmp_path):
+    for flag, name in (("-q", "quiet.py"), ("-v", "verbose.py")):
+        run = besser("new", name, flag)
+
+        assert run.returncode == 0
+        assert run.stderr == ""
+        assert "DomainModel(" in (tmp_path / name).read_text()
+
+
+def test_verbose_on_a_file_it_cannot_write_prints_the_traceback(besser, write):
+    # A file where the model's directory should be.
+    write("blocker", "")
+
+    run = besser("new", "blocker/model.py", "-v")
+
+    assert run.returncode == 1
+    assert "Traceback (most recent call last):" in run.stderr
+    assert run.stderr.rstrip().splitlines()[-1].startswith("error: cannot write blocker/model.py: ")

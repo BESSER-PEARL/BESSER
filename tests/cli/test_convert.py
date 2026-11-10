@@ -140,3 +140,53 @@ def test_dry_run_of_an_input_that_does_not_load_fails_as_a_real_run_does(besser,
 
     assert run.returncode == 2 and run.json["dry_run"] is True
     assert not (tmp_path / "project.json").exists()
+
+
+def test_a_dry_run_predicts_the_run(besser, model, write):
+    for source, target in ((model, "out/project.json"), (write("project.json", PROJECT_EXPORT), "out/library.py")):
+        dry = besser("convert", source, "-o", target, "--dry-run", "--json").json
+        real = besser("convert", source, "-o", target, "--json").json
+
+        assert dry["exit_code"] == real["exit_code"] == 0
+        assert list(dry["would_write"]) == real["files"] == [target]
+
+
+# ── -o ──────────────────────────────────────────────────────────────────────
+
+
+def test_an_output_under_a_file_is_a_usage_error(besser, model, write, tmp_path):
+    write("out", "mine\n")
+
+    for dry_run in ([], ["--dry-run"]):
+        run = besser("convert", model, "-o", "out/project.json", *dry_run)
+
+        assert run.returncode == 2
+        assert run.stderr == "error: out/project.json cannot be created: out is a file\n"
+    assert (tmp_path / "out").read_text() == "mine\n"
+
+
+def test_an_output_that_is_a_directory_is_a_usage_error(besser, model, tmp_path):
+    (tmp_path / "project.json").mkdir()
+
+    run = besser("convert", model, "-o", "project.json")
+
+    assert run.returncode == 2 and run.stderr == "error: project.json is a directory: -o takes a file\n"
+
+
+# ── --quiet and --verbose ───────────────────────────────────────────────────
+
+
+def test_quiet_prints_nothing_but_errors(besser, model, write):
+    done = besser("convert", model, "-o", "project.json", "--quiet")
+    failed = besser("convert", write("crash.py", "1 / 0\n"), "-o", "other.json", "--quiet")
+
+    assert done.returncode == 0 and done.stdout == "" and done.stderr == ""
+    assert failed.returncode == 2 and failed.stdout == ""
+    assert failed.stderr == "error: crash.py: line 1: ZeroDivisionError: division by zero\n"
+
+
+def test_verbose_adds_the_traceback_of_a_failure(besser, write):
+    run = besser("convert", write("crash.py", "1 / 0\n"), "-o", "project.json", "--verbose")
+
+    assert run.returncode == 2 and run.stdout == ""
+    assert "Traceback (most recent call last):" in run.stderr and "ZeroDivisionError" in run.stderr

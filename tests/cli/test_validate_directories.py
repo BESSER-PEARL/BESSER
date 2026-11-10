@@ -5,6 +5,7 @@ import os
 import pytest
 
 from besser.cli.discovery import (
+    SKIP_BROKEN_LINK,
     SKIP_LINKED_DIRECTORY,
     SKIP_NO_MODEL,
     SKIP_NOT_A_MODEL,
@@ -57,7 +58,8 @@ def test_python_files_found_are_skipped_and_not_executed_without_exec_py(besser,
 
     text = besser("validate", "models")
     assert f"skipped: models/shop.py: {SKIP_PY}" in text.stdout
-    assert "note: 1 .py file found in a directory skipped" in text.stderr
+    # The reason is on the skipped line, what to do about it in the one note.
+    assert "note: 1 .py file skipped; pass --exec-py to load the .py files found in a directory\n" in text.stderr
 
 
 def test_exec_py_loads_the_python_files_found(besser, write, tmp_path):
@@ -173,7 +175,10 @@ def test_an_empty_directory_is_a_usage_error(besser, tmp_path):
     run = besser("validate", "empty")
 
     assert run.returncode == 2
-    assert run.stderr == "error: nothing to validate: no model file found in empty\n"
+    assert run.stderr == ("error: nothing to validate: no editor .json export found in empty "
+                          "(.py models in a directory are loaded with --exec-py)\n")
+    with_exec_py = besser("validate", "empty", "--exec-py")
+    assert with_exec_py.stderr == "error: nothing to validate: no model file found in empty\n"
 
 
 def test_a_directory_of_python_files_only_says_to_pass_exec_py(besser, write):
@@ -182,7 +187,8 @@ def test_a_directory_of_python_files_only_says_to_pass_exec_py(besser, write):
 
     assert run.returncode == 2
     assert run.json["errors"] == [
-        "nothing to validate: no model file found in models (1 .py file skipped; pass --exec-py to load them)"
+        "nothing to validate: no editor .json export found in models "
+        "(1 .py file skipped; pass --exec-py to load the .py files found in a directory)"
     ]
     assert skipped(run.json) == {"models/library.py": SKIP_PY}
 
@@ -233,3 +239,82 @@ def test_strict_fails_a_directory_with_warnings_in_one_file(besser, write):
         ("models/good.py", 0), ("models/shelf.py", 1),
     ]
     assert run.json["warnings"][0].startswith("models/shelf.py: library_model: ")
+
+
+def test_a_file_named_and_found_without_exec_py_is_loaded_and_not_listed_as_skipped(besser, write, tmp_path):
+    write("models/library.json", CLASS_DIAGRAM)
+    write("models/shop.py", MARKING_MODEL)
+    run = besser("validate", "models", "models/shop.py", "--json")
+
+    assert run.returncode == 0
+    assert (tmp_path / "executed.marker").exists()
+    assert run.json["model_files"] == ["models/library.json", "models/shop.py"]
+    assert run.json["skipped"] == [] and run.json["notes"] == []
+
+
+@pytest.mark.parametrize("arguments", [("models", "models/helpers.py"), ("models/helpers.py", "models")],
+                         ids=["named-after", "named-before"])
+def test_a_named_file_must_be_a_model_wherever_it_is_named(besser, write, arguments):
+    write("models/library.py", LIBRARY_MODEL)
+    write("models/helpers.py", "VALUE = 1\n")
+    run = besser("validate", *arguments, "--exec-py", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == ["models/helpers.py: no B-UML model found"]
+    assert run.json["skipped"] == []
+
+
+def test_a_directory_named_twice_lists_each_skipped_file_once(besser, write):
+    write("models/library.json", CLASS_DIAGRAM)
+    write("models/shop.py", LIBRARY_MODEL)
+    run = besser("validate", "models", "models", "--json")
+
+    assert run.json["model_files"] == ["models/library.json"]
+    assert run.json["skipped"] == [{"file": "models/shop.py", "reason": SKIP_PY}]
+    assert run.json["notes"][0].startswith("1 .py file skipped;")
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symbolic links")
+def test_a_symbolic_link_loop_is_skipped_as_a_broken_link(besser, write, tmp_path):
+    write("model.json", CLASS_DIAGRAM)
+    try:
+        (tmp_path / "self.json").symlink_to("self.json")
+    except OSError:
+        pytest.skip("cannot create symbolic links here")
+    run = besser("validate", ".", "--json")
+
+    assert run.returncode == 0, run.stderr
+    assert run.json["model_files"] == ["model.json"]
+    assert skipped(run.json) == {"self.json": SKIP_BROKEN_LINK}
+
+
+def test_a_file_found_that_does_not_load_is_listed_in_its_place(besser, write):
+    write("models/a.json", CLASS_DIAGRAM)
+    write("models/b.py", "raise RuntimeError('broken')\n")
+    write("models/c.json", CLASS_DIAGRAM)
+    run = besser("validate", "models", "--exec-py")
+
+    assert run.returncode == 2
+    assert run.stdout.splitlines() == [
+        "models/a.json: 1 model", "  Library (DomainModel): ok",
+        "models/b.py: does not load: line 1: RuntimeError: broken",
+        "models/c.json: 1 model", "  Library (DomainModel): ok",
+        "FAILED: 1 error, 0 warnings",
+    ]
+    assert "error:" not in run.stderr
+    assert besser("validate", "models", "--exec-py", "--json").json["errors"] == [
+        "models/b.py: line 1: RuntimeError: broken",
+    ]
+
+
+def test_an_editor_project_found_with_only_empty_diagrams_is_skipped(besser, write):
+    write("models/library.json", CLASS_DIAGRAM)
+    empty = {"title": "New", "model": {"type": "ClassDiagram", "elements": {}, "relationships": {}}}
+    write("models/new.json", empty)
+
+    run = besser("validate", "models", "--json")
+
+    assert run.returncode == 0, run.json
+    assert skipped(run.json) == {"models/new.json": SKIP_NO_MODEL}
+    # Named on the command line it must hold a model.
+    assert besser("validate", "models/new.json").returncode == 2

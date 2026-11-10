@@ -2,6 +2,7 @@
 
 import copy
 import json
+import shlex
 
 from tests.cli.conftest import (
     CLASS_DIAGRAM,
@@ -205,7 +206,8 @@ def test_an_output_directory_that_is_not_empty_is_refused(besser, model, write, 
     assert run.json["files"] == []
     assert run.json["errors"] == [
         "out is not empty and generating overwrites what is there: pass --force to overwrite, "
-        "or keep hand edits with 'besser regenerate' (see 'besser regenerate --help')"
+        "or keep hand edits with 'besser regenerate' (a folder generated without a record needs "
+        "'besser regenerate python library.py -o out --adopt' first; see 'besser regenerate --help')"
     ]
     assert (tmp_path / "out" / "classes.py").read_text() == "# my own work\n"
 
@@ -316,8 +318,13 @@ def test_dry_run_lists_what_it_would_write_and_writes_nothing(besser, model, tmp
     run = besser("generate", "python", model, "-o", "out", "--dry-run", "--json")
 
     assert run.returncode == 0
-    assert run.json["dry_run"] is True and run.json["recorded"] is False and run.json["files"] == []
-    assert run.json["would_write"] == {"out/.besser_generated.json": "new", "out/classes.py": "new"}
+    # The record is bookkeeping, not output: "recorded" says the run would write it.
+    assert run.json["dry_run"] is True and run.json["recorded"] is True and run.json["files"] == []
+    assert run.json["would_write"] == {"out/classes.py": "new"}
+    assert run.json["notes"] == [
+        "would record the output in out/.besser_generated.json: 'besser regenerate python library.py -o out' "
+        "would then bring it up to a changed model and keep your edits"
+    ]
     assert not (tmp_path / "out").exists()
 
 
@@ -326,8 +333,7 @@ def test_dry_run_says_so_first(besser, model):
 
     assert run.stdout == (
         "Dry run: nothing was written.\n"
-        "The 'python' generator would write 2 files in out (2 new):\n"
-        "  new  out/.besser_generated.json\n"
+        "The 'python' generator would write 1 file in out (1 new):\n"
         "  new  out/classes.py\n"
     )
 
@@ -340,8 +346,8 @@ def test_dry_run_over_generated_code_tells_changed_from_unchanged(besser, model,
     write("library.py", LIBRARY_MODEL_WITH_ISBN)
     changed = besser("generate", "python", model, "-o", "out", "--force", "--dry-run", "--json")
 
-    assert same.json["would_write"] == {"out/.besser_generated.json": "unchanged", "out/classes.py": "unchanged"}
-    assert changed.json["would_write"] == {"out/.besser_generated.json": "changed", "out/classes.py": "changed"}
+    assert same.json["would_write"] == {"out/classes.py": "unchanged"}
+    assert changed.json["would_write"] == {"out/classes.py": "changed"}
     assert _tree(tmp_path / "out") == before
 
 
@@ -360,4 +366,124 @@ def test_dry_run_of_a_generator_without_regenerate_support_lists_no_record(besse
 
     [path] = run.json["would_write"]
     assert run.returncode == 0 and path.endswith("_librarymodel.sql")
+    assert not (tmp_path / "out").exists()
+
+
+# ── the regenerate command it names ─────────────────────────────────────────
+
+
+def _named_command(message: str) -> list[str]:
+    """The ``besser regenerate`` command quoted in ``message``, as its arguments."""
+    start = message.index("besser regenerate")
+    quote = message[start - 1]
+    return shlex.split(message[start:message.index(quote, start)])
+
+
+def test_the_regenerate_command_it_notes_reads_the_same_options_and_model(besser, write, tmp_path):
+    two = write("two.py", TWO_DOMAIN_MODELS)
+    run = besser("generate", "sqlalchemy", two, "-o", "out", "--option", "dbms=postgresql",
+                 "--use", "library_model", "--json")
+    [note] = run.json["notes"]
+
+    assert note == (
+        "recorded the output in out/.besser_generated.json: 'besser regenerate sqlalchemy two.py -o out "
+        "--option dbms=postgresql --use library_model' brings it up to a changed model and keeps your edits"
+    )
+    # Run as shown, it regenerates what generate wrote: nothing changes.
+    again = besser(*_named_command(note)[1:])
+    assert again.returncode == 0 and again.stdout == "out is up to date with two.py: no file changed.\n"
+
+
+def test_the_regenerate_command_quotes_an_option_value_for_the_shell(besser, model):
+    run = besser("generate", "rest_api", model, "-o", "out", "--option", "http_methods=GET, POST", "--json")
+
+    [note] = run.json["notes"]
+    assert "\"besser regenerate rest_api library.py -o out --option 'http_methods=GET, POST'\"" in note
+    assert _named_command(note)[-2:] == ["--option", "http_methods=GET, POST"]
+
+
+def test_the_refusal_of_a_recorded_directory_names_the_options_given(besser, model):
+    besser("generate", "sqlalchemy", model, "-o", "out", "--option", "dbms=postgresql")
+
+    run = besser("generate", "sqlalchemy", model, "-o", "out", "--option", "dbms=postgresql")
+
+    assert run.returncode == 2
+    assert "'besser regenerate sqlalchemy library.py -o out --option dbms=postgresql' brings it up" in run.stderr
+
+
+def test_without_pygit2_the_note_says_what_regenerate_needs(besser, model, write):
+    # 'python -m' puts the working directory first on sys.path, so this module stands in for pygit2.
+    write("pygit2.py", "raise ImportError('hidden by the test')\n")
+
+    [note] = besser("generate", "python", model, "-o", "out", "--json").json["notes"]
+
+    assert note.endswith('keeps your edits (needs pip install "besser[regen]")')
+
+
+# ── what the dry run predicts ───────────────────────────────────────────────
+
+
+def test_a_dry_run_predicts_the_run(besser, model, write):
+    for args in (["python", model, "-o", "out"], ["backend", model, "-o", "api"]):
+        dry = besser("generate", *args, "--dry-run", "--json").json
+        real = besser("generate", *args, "--json").json
+
+        assert dry["exit_code"] == real["exit_code"] == 0
+        assert sorted(dry["would_write"]) == real["files"]
+        assert dry["recorded"] is real["recorded"] is True
+
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+    dry = besser("generate", "python", model, "-o", "out", "--force", "--dry-run", "--json").json
+    real = besser("generate", "python", model, "-o", "out", "--force", "--json").json
+    assert dry["would_write"] == {"out/classes.py": "changed"} and real["files"] == ["out/classes.py"]
+
+
+# ── -o ──────────────────────────────────────────────────────────────────────
+
+
+def test_an_output_that_is_a_file_is_refused_before_the_run(besser, model, write, tmp_path):
+    write("out", "mine\n")
+
+    for dry_run in ([], ["--dry-run"]):
+        run = besser("generate", "python", model, "-o", "out", *dry_run, "--json")
+
+        assert run.returncode == 2
+        assert run.json["errors"] == ["out is a file: -o takes a directory"]
+    assert (tmp_path / "out").read_text() == "mine\n"
+
+
+def test_an_output_under_a_file_is_refused(besser, model, write):
+    write("out", "mine\n")
+
+    run = besser("generate", "python", model, "-o", "out/app", "--dry-run")
+
+    assert run.returncode == 2 and run.stderr == "error: out/app cannot be created: out is a file\n"
+
+
+# ── an editor project's diagrams ────────────────────────────────────────────
+
+
+def _project_with_a_dangling_reference() -> dict:
+    """The library project and a component diagram whose component realizes a class it does not hold."""
+    project = copy.deepcopy(PROJECT_EXPORT)
+    project["project"]["diagrams"]["ComponentDiagram"] = [{
+        "id": "diagram-2", "title": "Components",
+        "model": {"type": "ComponentDiagram", "relationships": {}, "elements": {
+            "component-1": {"id": "component-1", "name": "Catalog", "type": "Component", "owner": None,
+                            "bounds": {"x": 0, "y": 0, "width": 160, "height": 100},
+                            "realizes": ["missing-class"]},
+        }},
+    }]
+    return project
+
+
+def test_a_project_with_dangling_references_between_diagrams_is_not_generated_from(besser, write, tmp_path):
+    run = besser("generate", "python", write("project.json", _project_with_a_dangling_reference()), "-o", "out",
+                 "--json")
+
+    assert run.returncode == 1
+    assert run.json["errors"] == [
+        "Component 'Catalog' realizes unknown Class id 'missing-class'.",
+        "nothing was generated: the project's diagrams reference elements or diagrams it does not hold",
+    ]
     assert not (tmp_path / "out").exists()

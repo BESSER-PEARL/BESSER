@@ -51,3 +51,11 @@ def test_the_list_ends_with_the_generators_regenerate_supports(besser):
 
 def test_every_generator_says_what_it_generates():
     assert all(spec.summary for spec in GENERATORS)
+
+
+def test_quiet_and_verbose_print_nothing_on_standard_error(besser):
+    for flag in ("-q", "-v"):
+        run = besser("generators", flag)
+
+        assert run.returncode == 0
+        assert run.stderr == ""

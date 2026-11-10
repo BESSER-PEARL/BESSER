@@ -14,7 +14,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from besser.cli.loading import STDIN
 
@@ -26,7 +26,8 @@ MODEL_SUFFIXES = (".json", ".py")
 SKIPPED_DIRECTORIES = frozenset({"venv", "env", "node_modules", "__pycache__", "site-packages"})
 
 # Why a file found in a directory is not checked.
-SKIP_PY = "a .py model is executed when loaded; pass --exec-py to load it"
+# What to do about it is in the run's note, once (``besser validate``), not on every skipped file.
+SKIP_PY = "a .py model is executed when loaded"
 SKIP_NOT_A_MODEL = "not an editor export (no 'diagrams' or 'model' object)"
 SKIP_NOT_JSON = "not a JSON file"
 SKIP_OUTSIDE = "a symbolic link to a file outside the directory"
@@ -84,12 +85,27 @@ def _sniff_json(path: Path) -> str | None:
     return None if is_editor_export(data) else SKIP_NOT_A_MODEL
 
 
-def _search(argument: str, exec_py: bool, found: ModelFiles) -> None:
+def _file_key(path: str) -> str:
+    """What tells two paths to one file apart: its real path (standard input is itself)."""
+    return path if path == STDIN else os.path.realpath(path)
+
+
+def _resolves_inside(path: Path, real_root: Path) -> bool | None:
+    """Whether ``path`` resolves to a path under ``real_root``; ``None`` when it does not resolve (a link loop)."""
+    try:
+        return path.resolve().is_relative_to(real_root)
+    except (OSError, RuntimeError):  # RuntimeError: a symlink loop, before Python 3.13
+        return None
+
+
+def _search(argument: str, exec_py: bool, named: frozenset[str], found: ModelFiles) -> None:
     """Add the model files under the directory ``argument`` to ``found``.
 
-    Symbolic links are not followed out of the directory: a linked file counts
-    only when it resolves to a file inside it, and a linked directory is not
-    entered (it could lead outside, or back up into a loop).
+    A file of ``named`` (the keys of the files named on the command line) is
+    left to its own argument. Symbolic links are not followed out of the
+    directory: a linked file counts only when it resolves to a file inside it,
+    and a linked directory is not entered (it could lead outside, or back up
+    into a loop).
     """
     root = Path(argument)
     real_root = root.resolve()
@@ -105,11 +121,12 @@ def _search(argument: str, exec_py: bool, found: ModelFiles) -> None:
         for name in sorted(names):
             path = here / name
             suffix = path.suffix.lower()
-            if suffix not in MODEL_SUFFIXES:
+            if suffix not in MODEL_SUFFIXES or _file_key(str(path)) in named:
                 continue
-            if not path.resolve().is_relative_to(real_root):
+            inside = _resolves_inside(path, real_root)
+            if inside is False:
                 found.skipped.append(SkippedFile(str(path), SKIP_OUTSIDE))
-            elif not path.is_file():
+            elif inside is None or not path.is_file():
                 found.skipped.append(SkippedFile(str(path), SKIP_BROKEN_LINK))
             elif suffix == ".py" and not exec_py:
                 found.skipped.append(SkippedFile(str(path), SKIP_PY))
@@ -119,26 +136,37 @@ def _search(argument: str, exec_py: bool, found: ModelFiles) -> None:
                 found.files.append(ModelFile(str(path), explicit=False))
 
 
+def _unique(entries: list[Any], path: Callable[[Any], str]) -> list[Any]:
+    """``entries`` without the ones whose file an earlier entry already names."""
+    unique, seen = [], set()
+    for entry in entries:
+        key = _file_key(path(entry))
+        if key not in seen:
+            seen.add(key)
+            unique.append(entry)
+    return unique
+
+
 def find_model_files(arguments: list[str] | tuple[str, ...], exec_py: bool = False) -> ModelFiles:
     """The model files ``arguments`` name, in order: each file as given, each directory searched.
 
-    A file reached twice (named, and found in a directory) is checked once.
-    Arguments that are neither a directory nor a file are kept as given, for
-    the loader to report.
+    A file reached twice is checked, or listed as skipped, once. A file named
+    on the command line keeps the meaning of a named file wherever it is
+    named, before or after a directory holding it: it is loaded at its own
+    place in the arguments, never skipped. Arguments that are neither a
+    directory nor a file are kept as given, for the loader to report.
     """
+    is_directory = [argument != STDIN and Path(argument).is_dir() for argument in arguments]
+    named = frozenset(
+        _file_key(argument) for argument, directory in zip(arguments, is_directory) if not directory
+    )
     found = ModelFiles()
-    for argument in arguments:
-        if argument != STDIN and Path(argument).is_dir():
+    for argument, directory in zip(arguments, is_directory):
+        if directory:
             found.searched_directory = True
-            _search(argument, exec_py, found)
+            _search(argument, exec_py, named, found)
         else:
             found.files.append(ModelFile(argument, explicit=True))
-
-    unique, seen = [], set()
-    for model_file in found.files:
-        key = model_file.path if model_file.path == STDIN else os.path.realpath(model_file.path)
-        if key not in seen:
-            seen.add(key)
-            unique.append(model_file)
-    found.files = unique
+    found.files = _unique(found.files, lambda model_file: model_file.path)
+    found.skipped = _unique(found.skipped, lambda skipped: skipped.path)
     return found

@@ -109,3 +109,31 @@ def test_a_file_that_does_not_load_is_a_load_error(besser):
 
     assert run.returncode == 2
     assert run.stderr == "error: missing.py: no such file\n"
+
+
+def test_quiet_prints_no_notes_or_warnings(besser, write):
+    # Two domain models and no current one: info notes that generators need --use.
+    project = dict(PROJECT_EXPORT["project"])
+    project["diagrams"] = {"ClassDiagram": [
+        {**PROJECT_EXPORT["project"]["diagrams"]["ClassDiagram"][0], "id": "d1", "title": "One"},
+        {**PROJECT_EXPORT["project"]["diagrams"]["ClassDiagram"][0], "id": "d2", "title": "Two"},
+    ]}
+    model = write("two.json", {"project": project})
+    assert "note: two.json holds 2 domain models" in besser("info", model).stderr
+
+    run = besser("info", model, "-q")
+
+    assert run.returncode == 0
+    assert run.stderr == ""
+
+
+def test_verbose_prints_the_traceback_of_a_model_file_that_raises(besser, write):
+    model = write("crash.py", "def build():\n    return 1 / 0\n\nbuild()\n")
+
+    run = besser("info", model, "-v")
+
+    assert run.returncode == 2
+    assert "Traceback (most recent call last):" in run.stderr
+    assert 'crash.py", line 2, in build' in run.stderr
+    assert run.stderr.endswith("error: crash.py: line 2: ZeroDivisionError: division by zero\n")
+    assert "Traceback" not in besser("info", model).stderr

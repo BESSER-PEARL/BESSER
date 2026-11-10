@@ -12,7 +12,7 @@ import json
 import runpy
 import sys
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -91,6 +91,10 @@ class MissingDependencyError(ModelLoadError):
     """The editor backend's converters need packages that are not installed."""
 
 
+class NoModelError(ModelLoadError):
+    """The model file loads and holds no B-UML model."""
+
+
 @dataclass(frozen=True)
 class LoadedModel:
     """One B-UML model of a model file."""
@@ -99,6 +103,8 @@ class LoadedModel:
     name: str
     kind: str
     model: Any
+    # The editor diagram it was converted from, e.g. "ClassDiagram 1 (id 'd2')"; empty for a ``.py`` model.
+    diagram: str = ""
 
     @property
     def label(self) -> str:
@@ -133,7 +139,8 @@ class LoadedModels:
     errors: list[str] = field(default_factory=list)
     # Kind -> the model of the diagram the editor project marks as current (``currentDiagramIndices``).
     current: dict[str, CurrentModel] = field(default_factory=dict)
-    # Kind -> why the project's current-diagram marker for it names no model.
+    # Kind -> why the editor project names no current model for it, for each kind it holds several of
+    # and has no current one for.
     current_unresolved: dict[str, str] = field(default_factory=dict)
 
     def of_kind(self, kind: str) -> list[LoadedModel]:
@@ -162,7 +169,8 @@ def load_models(path: str | Path) -> LoadedModels:
     """Load the models of the ``.py`` or ``.json`` model file at ``path``, or of standard input for ``-``.
 
     Raises:
-        ModelLoadError: The file is missing, is neither kind, fails to load or holds no model.
+        NoModelError: The file loads and holds no model.
+        ModelLoadError: The file is missing, is neither kind or fails to load.
     """
     if str(path) == STDIN:
         path = _STDIN_PATH
@@ -182,7 +190,7 @@ def load_models(path: str | Path) -> LoadedModels:
         else:
             raise ModelLoadError(f"{path}: expected a B-UML .py file or an editor .json export")
     if not loaded.models:
-        raise ModelLoadError(f"{path}: no B-UML model found")
+        raise NoModelError(f"{path}: no B-UML model found")
     return loaded
 
 
@@ -285,80 +293,111 @@ def _load_json(path: Path, text: str) -> LoadedModels:
         LoadedModel(name=getattr(model, "name", None) or model_kind(model), kind=model_kind(model), model=model)
         for model in project.models
     ]
-    current, unresolved = _current_models(project_input, models)
+    positions, problems = _diagram_positions(project_input, models)
+    for (diagram_type, index), position in positions.items():
+        diagram_id = project_input.diagrams[diagram_type][index].id
+        models[position] = replace(models[position], diagram=f"{diagram_type} {index} (id {diagram_id!r})")
+    current, unresolved = _current_models(project_input, models, positions, problems)
     return LoadedModels(
         path=path, models=models, suffix=".json", project=project,
         errors=list(project._cross_diagram_errors["errors"]), current=current, current_unresolved=unresolved,
     )
 
 
-def _diagram_models(project_input: Any, models: list[LoadedModel]) -> dict[tuple[str, int], LoadedModel] | None:
-    """(diagram type, index in the project) -> the model converted from that diagram.
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _diagram_positions(
+    project_input: Any, models: list[LoadedModel],
+) -> tuple[dict[tuple[str, int], int], dict[str, str]]:
+    """(diagram type, index in the project) -> the position in ``models`` of the model converted from it,
+    and kind -> why the diagrams of that kind cannot be told apart by their model.
 
     ``json_to_buml_project`` converts the non-empty diagrams type by type, in the order of
-    ``_CONVERTED_DIAGRAM_KINDS``, so its models line up with them; ``None`` when they do not.
+    ``_CONVERTED_DIAGRAM_KINDS``, so its models line up with them. When they do not, no
+    position is known and every kind gets a reason. The converter caches a class diagram's
+    model by the diagram's id, so two diagrams sharing an id give one model twice: no
+    model of such a kind is taken for a given diagram's.
     """
     from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.project_converter import (
         _is_valid_diagram,
     )
 
-    has_class_diagram = bool(project_input.diagrams.get("ClassDiagram"))
-    produced = iter(models)
-    mapping = {}
+    def valid(diagram_type: str) -> list[tuple[int, Any]]:
+        return [(index, diagram) for index, diagram in enumerate(project_input.diagrams.get(diagram_type, []))
+                if _is_valid_diagram(diagram, diagram_type)]
+
+    kinds = dict.fromkeys(kind for _, kind in _CONVERTED_DIAGRAM_KINDS)
+    has_class_diagram = bool(valid("ClassDiagram"))
+    produced = iter(enumerate(models))
+    positions: dict[tuple[str, int], int] = {}
     for diagram_type, kind in _CONVERTED_DIAGRAM_KINDS:
         if diagram_type in _NEED_CLASS_DIAGRAM and not has_class_diagram:
             continue
-        for index, diagram in enumerate(project_input.diagrams.get(diagram_type, [])):
-            if not _is_valid_diagram(diagram, diagram_type):
-                continue
-            loaded = next(produced, None)
+        for index, _ in valid(diagram_type):
+            position, loaded = next(produced, (None, None))
             if loaded is None or loaded.kind != kind:
-                return None
-            mapping[diagram_type, index] = loaded
-    return mapping
+                return {}, dict.fromkeys(kinds, "its models do not line up with its diagrams")
+            positions[diagram_type, index] = position
+
+    problems: dict[str, str] = {}
+    for diagram_type, kind in _CONVERTED_DIAGRAM_KINDS:
+        ids = [diagram.id for diagram in project_input.diagrams.get(diagram_type, []) if diagram.id]
+        shared = next((diagram_id for diagram_id in ids if ids.count(diagram_id) > 1), None)
+        if shared is not None:
+            problems.setdefault(kind, f"two of its {diagram_type} diagrams share the id {shared!r}")
+    seen: set[int] = set()
+    for position in positions.values():
+        loaded = models[position]
+        if id(loaded.model) in seen:
+            problems.setdefault(loaded.kind, f"two of its diagrams convert to one {loaded.kind} model")
+        seen.add(id(loaded.model))
+    return positions, problems
 
 
 def _current_models(
-    project_input: Any, models: list[LoadedModel],
+    project_input: Any, models: list[LoadedModel], positions: dict[tuple[str, int], int], problems: dict[str, str],
 ) -> tuple[dict[str, CurrentModel], dict[str, str]]:
-    """The model of each kind's current diagram, and why the marker names none for some kinds.
+    """The model of each kind's current diagram, and why the project names none for some kinds.
 
-    Only kinds with several models need it, so only they get a reason. When the diagrams
+    Only kinds with several models need one, so only they get a reason. When the diagrams
     of two types make models of one kind (object and user diagrams), the project's
     ``currentDiagramType`` says which type's current diagram counts.
     """
     indices = project_input.currentDiagramIndices or {}
-    if not indices:
-        return {}, {}
-    count = {kind: sum(model.kind == kind for model in models) for kind, _ in MODEL_KINDS}
-    mapping = _diagram_models(project_input, models)
-    marked: dict[str, list[CurrentModel]] = {}
-    unresolved: dict[str, str] = {}
-    for diagram_type, kind in _CONVERTED_DIAGRAM_KINDS:
-        if diagram_type not in indices or count.get(kind, 0) < 2:
-            continue
-        index = indices[diagram_type]
-        diagrams = project_input.diagrams.get(diagram_type, [])
-        marker = f"its currentDiagramIndices.{diagram_type} is {index}"
-        if mapping is None:
-            unresolved[kind] = f"{marker}, but its models do not line up with its diagrams"
-        elif not 0 <= index < len(diagrams):
-            unresolved[kind] = f"{marker} and it holds {len(diagrams)} {diagram_type} diagram(s)"
-        elif (diagram_type, index) not in mapping:
-            title = diagrams[index].title or diagrams[index].id
-            unresolved[kind] = f"{marker}, an empty diagram ({title!r})"
-        else:
-            marked.setdefault(kind, []).append(CurrentModel(mapping[diagram_type, index], diagram_type))
     current: dict[str, CurrentModel] = {}
-    for kind, candidates in marked.items():
-        if len(candidates) > 1:
-            candidates = [c for c in candidates if c.diagram_type == project_input.currentDiagramType]
-        if len(candidates) == 1:
-            current[kind] = candidates[0]
-            unresolved.pop(kind, None)
+    unresolved: dict[str, str] = {}
+    for kind in dict.fromkeys(kind for _, kind in _CONVERTED_DIAGRAM_KINDS):
+        if sum(model.kind == kind for model in models) < 2:
+            continue
+        if kind in problems:
+            unresolved[kind] = problems[kind]
+            continue
+        types = [diagram_type for diagram_type, of in _CONVERTED_DIAGRAM_KINDS
+                 if of == kind and project_input.diagrams.get(diagram_type)]
+        marked, reasons = [], []
+        for diagram_type in (diagram_type for diagram_type in types if diagram_type in indices):
+            index = indices[diagram_type]
+            diagrams = project_input.diagrams[diagram_type]
+            marker = f"its currentDiagramIndices.{diagram_type} is {index}"
+            if not 0 <= index < len(diagrams):
+                reasons.append(f"{marker} and it holds {_plural(len(diagrams), diagram_type + ' diagram')}")
+            elif (diagram_type, index) not in positions:
+                title = diagrams[index].title or diagrams[index].id
+                reasons.append(f"{marker}, an empty diagram ({title!r})")
+            else:
+                marked.append(CurrentModel(models[positions[diagram_type, index]], diagram_type))
+        if len(marked) > 1:
+            chosen = [candidate for candidate in marked if candidate.diagram_type == project_input.currentDiagramType]
+            if len(chosen) != 1:
+                reasons = [f"it marks a current {' and '.join(c.diagram_type for c in marked)} "
+                           "and its currentDiagramType is neither"]
+            marked = chosen
+        if len(marked) == 1:
+            current[kind] = marked[0]
         else:
-            types = " and ".join(c.diagram_type for c in marked[kind])
-            unresolved[kind] = f"it marks a current {types} and its currentDiagramType is neither"
+            unresolved[kind] = "; ".join(reasons) or f"its currentDiagramIndices has no {' or '.join(types)} entry"
     return current, unresolved
 
 

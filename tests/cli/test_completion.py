@@ -1,6 +1,7 @@
 """``besser completion``: the scripts follow the parser, parse in their shell and complete in bash."""
 
 import argparse
+import re
 import shutil
 import subprocess
 
@@ -22,22 +23,50 @@ def _commands() -> dict[str, argparse.ArgumentParser]:
     return dict(subparsers.choices)
 
 
-def _long_options(parser: argparse.ArgumentParser) -> set[str]:
-    return {name for action in parser._actions for name in action.option_strings if name.startswith("--")}
+def _option_names(parser: argparse.ArgumentParser) -> list[str]:
+    """The option spellings of ``parser``, in its order, as the scripts list them."""
+    return [name for action in parser._actions if action.help != argparse.SUPPRESS for name in action.option_strings]
 
 
-@pytest.mark.parametrize("shell", COMPLETION_SHELLS)
-def test_the_script_names_every_command_option_and_generator(besser, shell):
-    run = besser("completion", shell)
-    assert run.returncode == 0, run.stderr
-    script = run.stdout
-    for name, subparser in _commands().items():
-        assert name in script
-        for option in _long_options(subparser):
-            # fish spells a long option "-l name"; bash and zsh spell it "--name".
-            assert (f"-l {option[2:]}" if shell == "fish" else option) in script, (name, option)
-    for generator_id in GENERATOR_IDS:
-        assert generator_id in script
+def test_bash_lists_exactly_the_options_of_each_command(besser):
+    script = besser("completion", "bash").stdout.splitlines()
+
+    for name, parser in {"": build_parser(), **_commands()}.items():
+        assert f"        \"{name}\") echo '{' '.join(_option_names(parser))}' ;;" in script, name
+    assert f"        \"generate 0\") echo 'words {' '.join(GENERATOR_IDS)}' ;;" in script
+    assert f"        \"regenerate 0\") echo 'words {' '.join(GENERATOR_IDS)}' ;;" in script
+
+
+def _zsh_blocks(script: str) -> dict[str, list[str]]:
+    """The option names in each command's ``_arguments`` block of the zsh script."""
+    blocks = re.findall(r"^ {16}([a-z]+)\)\n(.*?);;$", script, flags=re.MULTILINE | re.DOTALL)
+    return {name: re.findall(r"^ +'\*?(?:\([^)]*\))?(-[\w-]+)\[", body, flags=re.MULTILINE) for name, body in blocks}
+
+
+def test_zsh_lists_exactly_the_options_of_each_command(besser):
+    blocks = _zsh_blocks(besser("completion", "zsh").stdout)
+
+    assert blocks == {name: _option_names(parser) for name, parser in _commands().items()}
+
+
+def test_fish_lists_exactly_the_options_of_each_command(besser):
+    script = besser("completion", "fish").stdout.splitlines()
+
+    for name, parser in _commands().items():
+        prefix = f"complete -c besser -n '__fish_seen_subcommand_from {name}' "
+        spelled = [" ".join(re.findall(r"-[sl] [\w-]+", line[len(prefix):].split(" -d ")[0]))
+                   for line in script if line.startswith(prefix) and " -d " in line]
+        expected = [" ".join([f"-s {n[1:]}" for n in action.option_strings if not n.startswith("--")]
+                             + [f"-l {n[2:]}" for n in action.option_strings if n.startswith("--")])
+                    for action in parser._actions if action.option_strings and action.help != argparse.SUPPRESS]
+        assert spelled == expected, name
+    commands = [line.split(" -a ")[1].split(" ")[0] for line in script
+                if line.startswith("complete -c besser -n __fish_use_subcommand -a ")]
+    assert commands == list(_commands())
+
+
+def test_quiet_still_prints_the_script(besser):
+    assert besser("completion", "bash", "-q").stdout == besser("completion", "bash").stdout
 
 
 def test_the_script_is_the_same_on_every_run(besser):

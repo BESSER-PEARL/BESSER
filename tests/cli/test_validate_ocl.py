@@ -1,5 +1,6 @@
 """``besser validate --ocl``: the models' OCL constraints, parsed and evaluated on object models."""
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -10,7 +11,11 @@ import pytest
 from besser.cli.ocl_check import OCL_PREFIX
 from tests.cli.conftest import LIBRARY_MODEL, Run
 
-pytest.importorskip("bocl", reason="the OCL check needs besser[ocl]")
+# On the tests that check constraints; the ones about a missing evaluator run without it.
+needs_bocl = pytest.mark.skipif(importlib.util.find_spec("bocl") is None, reason="the OCL check needs besser[ocl]")
+# The note's end when invariants of editor JSON were not evaluated.
+NOT_EVALUATED = ("of editor JSON: the OCL evaluator runs Python built from the models' values; "
+                 "pass --exec-py to evaluate them")
 
 BOOK_MODEL = '''
 from besser.BUML.metamodel.object import AttributeLink, DataValue, Object, ObjectModel
@@ -44,21 +49,24 @@ def book_model(pages: int | None = None, broken: bool = False) -> str:
     return source + (OBJECTS.replace("PAGES", str(pages)) if pages is not None else "")
 
 
+@needs_bocl
 def test_a_valid_constraint_passes(besser, write):
     run = besser("validate", write("books.py", book_model()), "--ocl")
 
     assert run.returncode == 0
     assert "book_model (DomainModel): ok" in run.stdout
-    assert "note: OCL: 1 constraint parsed, invariants evaluated on 0 object models" in run.stderr
+    assert "note: OCL: 1 constraint checked, invariants evaluated on 0 object models\n" in run.stderr
 
 
+@needs_bocl
 def test_an_object_model_that_satisfies_the_constraints_passes(besser, write):
     run = besser("validate", write("books.py", book_model(pages=120)), "--ocl", "--json")
 
     assert run.returncode == 0, run.stdout
-    assert run.json["notes"] == ["OCL: 1 constraint parsed, invariants evaluated on 1 object model"]
+    assert run.json["notes"] == ["OCL: 1 constraint checked, invariants evaluated on 1 object model"]
 
 
+@needs_bocl
 def test_a_constraint_that_does_not_parse_fails_naming_it(besser, write):
     run = besser("validate", write("books.py", book_model(broken=True)), "--ocl", "--json")
 
@@ -68,6 +76,7 @@ def test_a_constraint_that_does_not_parse_fails_naming_it(besser, write):
     assert run.json["models"][0]["errors"] == [error.removeprefix("book_model: ")]
 
 
+@needs_bocl
 def test_an_object_model_that_violates_a_constraint_fails(besser, write):
     run = besser("validate", write("books.py", book_model(pages=-3)), "--ocl", "--json")
 
@@ -80,6 +89,7 @@ def test_an_object_model_that_violates_a_constraint_fails(besser, write):
     ]
 
 
+@needs_bocl
 def test_a_broken_constraint_is_reported_once_with_an_object_model(besser, write):
     run = besser("validate", write("books.py", book_model(pages=-3, broken=True)), "--ocl", "--json")
 
@@ -95,6 +105,7 @@ def test_without_ocl_the_constraints_are_not_checked(besser, write):
     assert run.returncode == 0 and run.json["notes"] == []
 
 
+@needs_bocl
 def test_a_model_without_constraints_says_so(besser, model):
     run = besser("validate", model, "--ocl", "--json")
 
@@ -102,6 +113,7 @@ def test_a_model_without_constraints_says_so(besser, model):
     assert run.json["notes"] == ["OCL: the models have no OCL constraints"]
 
 
+@needs_bocl
 def test_ocl_runs_on_every_file_of_a_directory(besser, write):
     write("models/good.py", book_model(pages=10))
     write("models/bad.py", book_model(pages=0))
@@ -115,20 +127,9 @@ def test_ocl_runs_on_every_file_of_a_directory(besser, write):
 
 
 @pytest.fixture
-def besser_without_bocl(tmp_path):
+def besser_without_bocl(besser_without):
     """Run ``python -m besser`` where importing ``bocl`` fails, as when ``besser[ocl]`` is not installed."""
-    shim = tmp_path / "shim" / "bocl"
-    shim.mkdir(parents=True)
-    (shim / "__init__.py").write_text("raise ModuleNotFoundError(\"No module named 'bocl'\", name='bocl')\n")
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(shim.parent), os.environ.get("PYTHONPATH")]))}
-
-    def run(*args) -> Run:
-        process = subprocess.run(
-            [sys.executable, "-m", "besser", *map(str, args)],
-            cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False, env=env,
-        )
-        return Run(process.returncode, process.stdout, process.stderr)
-    return run
+    return lambda *args: besser_without(("bocl",), *args)
 
 
 def test_without_bocl_ocl_is_skipped_with_a_warning_saying_what_to_install(besser_without_bocl, write):
@@ -180,6 +181,7 @@ def hostile_json(besser, write, tmp_path):
     return "hostile.json", marker
 
 
+@needs_bocl
 def test_invariants_of_editor_json_are_not_evaluated_without_exec_py(besser, hostile_json):
     model, marker = hostile_json
 
@@ -187,12 +189,13 @@ def test_invariants_of_editor_json_are_not_evaluated_without_exec_py(besser, hos
 
     assert not marker.exists()
     assert run.returncode == 0, run.stdout
-    assert run.json["notes"][-1] == (
-        "OCL: invariants not evaluated on 1 object model of editor JSON: the OCL evaluator runs Python "
-        "built from the models' values; pass --exec-py to evaluate them"
-    )
+    # One note on the check, which does not claim it evaluated anything.
+    assert run.json["notes"] == [
+        f"OCL: 1 constraint checked; invariants not evaluated on 1 object model {NOT_EVALUATED}",
+    ]
 
 
+@needs_bocl
 def test_exec_py_evaluates_the_invariants_of_editor_json(besser, write):
     source = write("books.py", book_model(pages=0))
     assert besser("convert", source, "-o", "books.json").returncode == 0
@@ -203,6 +206,7 @@ def test_exec_py_evaluates_the_invariants_of_editor_json(besser, write):
     assert any("positive_pages" in error and "Evaluates to False" in error for error in run.json["errors"])
 
 
+@needs_bocl
 def test_a_constraint_dropped_from_editor_json_is_an_error(besser, write):
     source = write("books.py", book_model(broken=True))
     assert besser("convert", source, "-o", "books.json").returncode == 0
@@ -211,3 +215,79 @@ def test_a_constraint_dropped_from_editor_json_is_an_error(besser, write):
 
     assert run.returncode == 1
     assert any(f"{OCL_PREFIX} dropped:" in error and "broken" in error for error in run.json["errors"]), run.json
+
+
+@needs_bocl
+def test_a_run_of_json_and_python_models_gives_one_note(besser, write):
+    source = write("books.py", book_model(pages=5))
+    assert besser("convert", source, "-o", "books.json").returncode == 0
+
+    run = besser("validate", "books.py", "books.json", "--ocl", "--json")
+
+    assert run.returncode == 0, run.json
+    assert run.json["notes"] == [
+        f"OCL: 2 constraints checked, invariants evaluated on 1 object model; invariants not evaluated on "
+        f"1 object model {NOT_EVALUATED}"
+    ]
+
+
+@needs_bocl
+def test_a_constraint_that_does_not_parse_counts_as_checked(besser, write):
+    run = besser("validate", write("books.py", book_model(broken=True)), "--ocl", "--json")
+
+    assert run.json["notes"] == ["OCL: 2 constraints checked, invariants evaluated on 0 object models"]
+
+
+# A second domain model and an object model of it: each object model is checked against its own classes.
+SECOND_DOMAIN = '''
+pen = Class(name="Pen", attributes={Property(name="ink", type=IntegerType)})
+ink = list(pen.attributes)[0]
+full = Constraint(name="full", context=pen, language="OCL", expression="context Pen inv full: self.ink > 50")
+pen_model = DomainModel(name="Pens", types={pen}, constraints={full})
+blue = Object(name="blue", classifier=pen, slots=[
+    AttributeLink(attribute=ink, value=DataValue(classifier=IntegerType, value=INK)),
+])
+desk = ObjectModel(name="Desk", objects={blue})
+'''
+
+
+@needs_bocl
+@pytest.mark.parametrize(("pages", "ink", "failing"), [(5, 80, []), (-1, 80, ["shelf"]), (5, 10, ["desk"])])
+def test_each_object_model_is_evaluated_against_the_domain_model_it_instantiates(besser, write, pages, ink, failing):
+    run = besser("validate", write("two.py", book_model(pages=pages) + SECOND_DOMAIN.replace("INK", str(ink))),
+                 "--ocl", "--json")
+
+    assert run.returncode == (1 if failing else 0), run.json
+    assert [error.split(":")[0] for error in run.json["errors"]] == failing
+    assert run.json["notes"] == ["OCL: 2 constraints checked, invariants evaluated on 2 object models"]
+
+
+@pytest.fixture
+def besser_without(tmp_path):
+    """Run ``python -m besser`` where importing the named top-level modules fails, as when they are not installed."""
+    def run(missing: tuple[str, ...], *args) -> Run:
+        shim = tmp_path / "shim"
+        shim.mkdir(exist_ok=True)
+        (shim / "sitecustomize.py").write_text(
+            "import sys\n" + "".join(f"sys.modules[{name!r}] = None\n" for name in missing)
+        )
+        env = {**os.environ,
+               "PYTHONPATH": os.pathsep.join(filter(None, [str(shim), os.environ.get("PYTHONPATH")]))}
+        process = subprocess.run(
+            [sys.executable, "-m", "besser", *map(str, args)],
+            cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False, env=env,
+        )
+        return Run(process.returncode, process.stdout, process.stderr)
+    return run
+
+
+def test_without_the_backend_packages_ocl_is_skipped_with_a_warning_saying_what_to_install(besser_without, write):
+    write("books.py", book_model(pages=-3, broken=True))
+    run = besser_without(("deep_translator",), "validate", "books.py", "--ocl", "--json")
+
+    assert run.returncode == 0, run.stdout
+    [warning] = run.json["warnings"]
+    assert warning.startswith(f"{OCL_PREFIX}s not checked: editor JSON needs the Web Modeling Editor backend's "
+                              "packages (missing module: 'deep_translator'); install them with: pip install -r ")
+    assert warning.endswith("requirements.txt")
+    assert besser_without(("deep_translator",), "validate", "books.py", "--ocl", "--strict").returncode == 1

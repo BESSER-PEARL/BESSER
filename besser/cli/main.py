@@ -12,10 +12,11 @@ import sys
 import traceback
 from typing import List, Optional
 
-from besser.cli import commands, mcp_server
+from besser.cli import commands
 from besser.cli.completion import COMPLETION_SHELLS, completion_script
 from besser.cli.output import (
     EXIT_FAILED,
+    EXIT_OK,
     NORMAL,
     QUIET,
     VERBOSE,
@@ -77,14 +78,21 @@ examples:
 
 
 class _UsageError(Exception):
-    """The arguments do not parse; carries argparse's message."""
+    """The arguments do not parse; carries the message and the command it is about ("" for none)."""
+
+    def __init__(self, message: str, command: str = ""):
+        super().__init__(message)
+        self.command = command
 
 
 class _Parser(argparse.ArgumentParser):
-    """An ``ArgumentParser`` that raises instead of exiting, so ``--json`` can report a usage error."""
+    """An ``ArgumentParser`` that raises instead of exiting, so ``--json`` can report a usage error.
+
+    A command's parser is named ``besser <command>``: its error names the command and points to its help.
+    """
 
     def error(self, message: str):
-        raise _UsageError(f"{message} (see '{self.prog} --help')")
+        raise _UsageError(f"{message} (see '{self.prog} --help')", self.prog.partition(" ")[2])
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,7 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "-q", "--quiet", action="store_true", default=argparse.SUPPRESS,
-        help="print errors only: no report, no warnings, nothing of what a model or a generator prints",
+        help="print only errors and the output of completion, generators, info and --version "
+             "(and, with --strict, the warnings that fail the run)",
     )
     common.add_argument(
         "-v", "--verbose", action="store_true", default=argparse.SUPPRESS,
@@ -149,6 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
         "A directory is searched, recursively, for model files. Only its .json files are loaded\n"
         "unless --exec-py is given, since loading a .py model executes it; a .py file named on\n"
         "the command line is always loaded.\n\n"
+        "--ocl evaluates invariants with Python built from the object models' values, so it\n"
+        "evaluates those of editor JSON only with --exec-py; a .py model's are evaluated, since\n"
+        "it was executed to load it.\n\n"
         "Exit status, that of the worst file: 0 no errors, 1 errors (or warnings with --strict),\n"
         "2 a file does not load or there is nothing to check.\n\n"
         + _EXECUTES_PYTHON,
@@ -160,12 +172,14 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--strict", action="store_true", help="fail (exit 1) on warnings too")
     validate.add_argument(
         "--exec-py", action="store_true",
-        help="also load (execute) the .py files found in a directory; without it they are skipped",
+        help="also load (execute) the .py files found in a directory, which are skipped without it; "
+             "with --ocl, also evaluate the invariants of editor JSON models",
     )
     validate.add_argument(
         "--ocl", action="store_true",
-        help="also check the models' OCL constraints: parse each one, and evaluate them on object models "
-             '(needs "besser[ocl]")',
+        help="also check the models' OCL constraints: parse each one and evaluate the invariants on the "
+             "object models, those of editor JSON only with --exec-py (the evaluator runs Python built from "
+             'their values); needs "besser[ocl]"',
     )
 
     info = add_command(
@@ -256,10 +270,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
+def _parse(parser: argparse.ArgumentParser, argv: List[str]) -> argparse.Namespace:
+    """``argv`` parsed; an unknown option is reported by the parser of the command it was given to."""
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        command_parser = _subparsers(parser).choices.get(args.command, parser)
+        command_parser.error(f"unrecognized arguments: {' '.join(unknown)}")
+    return args
+
+
+def _subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
+    return next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+
+
+def _command_name(args: argparse.Namespace) -> str:
+    return "version" if args.version else args.command or ""
+
+
+def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[Result]:
+    """Run the command ``args`` names; ``None`` when there is nothing to print (``mcp`` served)."""
     if args.version:
         version = get_besser_version()
-        return Result(command="version", data={"version": version}, text=f"{PROG} {version}")
+        return Result(command="version", data={"version": version}, text=f"{PROG} {version}", text_is_result=True)
     if args.command == "new":
         return commands.new(args.path, force=args.force)
     if args.command == "validate":
@@ -271,7 +303,8 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
     if args.command == "generate":
         if args.keep_edits:
             if args.force:
-                raise _UsageError(f"--keep-edits and --force cannot be combined (see '{PROG} generate --help')")
+                raise _UsageError(f"--keep-edits and --force cannot be combined (see '{PROG} generate --help')",
+                                  "generate")
             return commands.regenerate(args.generator, args.model, args.output, args.option, args.use,
                                        dry_run=args.dry_run)
         return commands.generate(args.generator, args.model, args.output, args.option, args.use, args.force,
@@ -284,6 +317,9 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
     if args.command == "completion":
         return completion_script(args.shell, parser)
     if args.command == "mcp":
+        # Imported here: it builds the tools from the generator registry, which no other command needs.
+        from besser.cli import mcp_server
+
         return mcp_server.serve(args.root, exec_py=args.exec_py)
     return failure("", f"a command is required\n\n{parser.format_usage().strip()} (see '{PROG} --help')")
 
@@ -291,7 +327,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
 def _verbosity(args: argparse.Namespace) -> int:
     quiet, verbose = getattr(args, "quiet", False), getattr(args, "verbose", False)
     if quiet and verbose:
-        raise _UsageError(f"--quiet and --verbose cannot be combined (see '{PROG} --help')")
+        raise _UsageError(f"--quiet and --verbose cannot be combined (see '{PROG} --help')", _command_name(args))
     return QUIET if quiet else VERBOSE if verbose else NORMAL
 
 
@@ -302,20 +338,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     as_json = "--json" in argv
     set_verbosity(NORMAL)
     try:
-        args = parser.parse_args(argv)
+        args = _parse(parser, argv)
         as_json = getattr(args, "json", False)
         set_verbosity(_verbosity(args))
         # --quiet also mutes the warnings BESSER logs, which would otherwise reach standard error.
         logging.disable(logging.WARNING if getattr(args, "quiet", False) else logging.NOTSET)
         result = _run(args, parser)
     except _UsageError as exc:
-        result = failure("", str(exc))
+        result = failure(exc.command, str(exc))
     except Exception as exc:
         # A defect in BESSER, not in the input: the traceback is what a bug report needs.
         traceback.print_exc()
         result = failure("", f"unexpected {type(exc).__name__}: {exc}", EXIT_FAILED)
     finally:
         logging.disable(logging.NOTSET)
+    if result is None:  # mcp served: standard output was the protocol's, and the session is over
+        return EXIT_OK
     print_result(result, as_json)
     return result.exit_code
 

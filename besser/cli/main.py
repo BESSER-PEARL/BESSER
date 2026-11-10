@@ -12,7 +12,8 @@ import sys
 import traceback
 from typing import List, Optional
 
-from besser.cli import commands
+from besser.cli import commands, mcp_server
+from besser.cli.completion import COMPLETION_SHELLS, completion_script
 from besser.cli.output import (
     EXIT_FAILED,
     NORMAL,
@@ -111,6 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
 
+    def add_dry_run(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--dry-run", action="store_true",
+                             help="print the files that would be written or changed, and write nothing")
+
     def add_generator_arguments(command: argparse.ArgumentParser, output_help: str) -> None:
         command.add_argument("generator", help="a generator id (see 'besser generators')")
         command.add_argument("model", help=_MODEL_HELP)
@@ -135,11 +140,25 @@ def build_parser() -> argparse.ArgumentParser:
     validate = add_command(
         "validate", "check models with their validate() rules",
         "Load each model file and run validate() on every model in it.\n\n"
+        "A directory is searched, recursively, for model files. Only its .json files are loaded\n"
+        "unless --exec-py is given, since loading a .py model executes it; a .py file named on\n"
+        "the command line is always loaded.\n\n"
         "Exit status: 0 no errors, 1 errors (or warnings with --strict), 2 a file does not load.\n\n"
         + _EXECUTES_PYTHON,
     )
-    validate.add_argument("model", nargs="+", help=_MODEL_HELP + "; several files are checked in one run")
+    validate.add_argument(
+        "model", nargs="+", metavar="model",
+        help=_MODEL_HELP + ", or a directory of them; several are checked in one run",
+    )
     validate.add_argument("--strict", action="store_true", help="fail (exit 1) on warnings too")
+    validate.add_argument(
+        "--exec-py", action="store_true",
+        help="also load (execute) the .py files found in a directory; without it they are skipped",
+    )
+    validate.add_argument(
+        "--ocl", action="store_true",
+        help="also check the models' OCL constraints: parse each one, and evaluate them on object models",
+    )
 
     info = add_command(
         "info", "summarise the models of a file",
@@ -165,6 +184,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_generator_arguments(generate, "directory to write to (created if missing); it must be empty")
     generate.add_argument("--force", action="store_true",
                           help="write into a directory that is not empty, overwriting files in it")
+    generate.add_argument(
+        "--keep-edits", action="store_true",
+        help="keep the edits made in the generated code: the same as 'besser regenerate'",
+    )
+    add_dry_run(generate)
 
     regenerate = add_command(
         "regenerate", "update generated code, keeping hand edits",
@@ -186,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--adopt", action="store_true",
         help="record a directory generated without a record as this model's output, changing no file",
     )
+    add_dry_run(regenerate)
 
     convert = add_command(
         "convert", "convert between B-UML .py and editor JSON",
@@ -195,6 +220,29 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("input", help="the file to convert (.py or .json); - reads it from standard input")
     convert.add_argument("-o", "--output", required=True, metavar="FILE",
                          help="the file to write (.json or .py); overwritten if it exists")
+    add_dry_run(convert)
+
+    completion = add_command(
+        "completion", "print a shell completion script",
+        "Print a completion script for bash, zsh or fish on standard output. To load it:\n\n"
+        "  bash  eval \"$(besser completion bash)\"         (in ~/.bashrc)\n"
+        "  zsh   eval \"$(besser completion zsh)\"          (in ~/.zshrc)\n"
+        "  fish  besser completion fish > ~/.config/fish/completions/besser.fish",
+    )
+    completion.add_argument("shell", choices=COMPLETION_SHELLS, help="the shell to complete for")
+
+    mcp = add_command(
+        "mcp", "serve the commands to an AI agent over MCP (stdio)",
+        "Run a Model Context Protocol server on standard input and output, exposing validate,\n"
+        "info, generators, generate and convert as tools to an MCP client (an AI coding agent).\n\n"
+        "Tools only read and write files under --root. A .py model is Python code: the tools\n"
+        "load .json models only, unless --exec-py is given.\n\n"
+        'Needs the MCP SDK (pip install "besser[mcp]").',
+    )
+    mcp.add_argument("--root", default=".", metavar="DIR",
+                     help="the directory the tools may read and write (default: the current directory)")
+    mcp.add_argument("--exec-py", action="store_true",
+                     help="let the tools load (execute) B-UML .py model files under --root")
     return parser
 
 
@@ -205,17 +253,28 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
     if args.command == "new":
         return commands.new(args.path, force=args.force)
     if args.command == "validate":
-        return commands.validate(args.model, strict=args.strict)
+        return commands.validate(args.model, strict=args.strict, exec_py=args.exec_py, ocl=args.ocl)
     if args.command == "info":
         return commands.info(args.model)
     if args.command == "generators":
         return commands.generators()
     if args.command == "generate":
-        return commands.generate(args.generator, args.model, args.output, args.option, args.use, args.force)
+        if args.keep_edits:
+            if args.force:
+                raise _UsageError(f"--keep-edits and --force cannot be combined (see '{PROG} generate --help')")
+            return commands.regenerate(args.generator, args.model, args.output, args.option, args.use,
+                                       dry_run=args.dry_run)
+        return commands.generate(args.generator, args.model, args.output, args.option, args.use, args.force,
+                                 dry_run=args.dry_run)
     if args.command == "regenerate":
-        return commands.regenerate(args.generator, args.model, args.output, args.option, args.use, args.adopt)
+        return commands.regenerate(args.generator, args.model, args.output, args.option, args.use, args.adopt,
+                                   dry_run=args.dry_run)
     if args.command == "convert":
-        return commands.convert(args.input, args.output)
+        return commands.convert(args.input, args.output, dry_run=args.dry_run)
+    if args.command == "completion":
+        return completion_script(args.shell, parser)
+    if args.command == "mcp":
+        return mcp_server.serve(args.root, exec_py=args.exec_py)
     return failure("", f"a command is required\n\n{parser.format_usage().strip()} (see '{PROG} --help')")
 
 

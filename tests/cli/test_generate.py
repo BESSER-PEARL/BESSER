@@ -25,7 +25,7 @@ def test_json_lists_the_files_under_the_output_directory_as_given(besser, model,
 
     assert run.returncode == 0
     assert run.json == {
-        "ok": True, "command": "generate", "errors": [], "warnings": [],
+        "ok": True, "command": "generate", "exit_code": 0, "errors": [], "warnings": [], "notes": [],
         "files": ["generated/models/pydantic_classes.py"],
         "generator": "pydantic", "model": model, "output_dir": "generated/models",
     }

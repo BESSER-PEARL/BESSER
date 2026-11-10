@@ -29,7 +29,7 @@ def test_an_editor_project_becomes_a_buml_file(besser, write, tmp_path):
 
     assert run.returncode == 0
     assert run.json == {
-        "ok": True, "command": "convert", "errors": [], "warnings": [],
+        "ok": True, "command": "convert", "exit_code": 0, "errors": [], "warnings": [], "notes": [],
         "files": ["models/project.py"], "input": "project.json", "output": "models/project.py",
     }
     assert _class_names(tmp_path / "models" / "project.py") == ["Book"]

@@ -90,7 +90,7 @@ def _validation_text(path: str, reports: list[dict[str, Any]], project_errors: l
     return lines
 
 
-def validate(model_paths: Sequence[str], strict: bool = False) -> Result:
+def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = False, ocl: bool = False) -> Result:
     """Run ``validate()`` on every model of each file."""
     # With one file a message starts with the model's name; with several, with the file's too.
     several = len(model_paths) > 1
@@ -388,7 +388,7 @@ def _require_no_output(spec: GeneratorSpec, model_path: str, output_dir: str, da
 
 
 def generate(generator_id: str, model_path: str, output_dir: str, option_assignments: list[str],
-             use: Sequence[str] = (), force: bool = False) -> Result:
+             use: Sequence[str] = (), force: bool = False, dry_run: bool = False) -> Result:
     """Validate the models the generator reads, then run it into ``output_dir``."""
     data: dict[str, Any] = {"generator": generator_id, "model": model_path, "output_dir": output_dir}
     try:
@@ -446,7 +446,7 @@ _REPORT_LABELS = {"written": "written", "merged": "merged", "conflicted": "confl
 
 
 def regenerate(generator_id: str, model_path: str, output_dir: str, option_assignments: list[str],
-               use: Sequence[str] = (), adopt: bool = False) -> Result:
+               use: Sequence[str] = (), adopt: bool = False, dry_run: bool = False) -> Result:
     """Bring ``output_dir`` up to the model with the generator, keeping the edits made in it."""
     data: dict[str, Any] = {"generator": generator_id, "model": model_path, "output_dir": output_dir}
     try:
@@ -565,7 +565,7 @@ _CONVERSIONS = {
 }
 
 
-def convert(input_path: str, output_path: str) -> Result:
+def convert(input_path: str, output_path: str, dry_run: bool = False) -> Result:
     """Convert a B-UML ``.py`` file to an editor JSON project, or the reverse."""
     data = {"input": input_path, "output": output_path}
     source, target = Path(input_path), Path(output_path)

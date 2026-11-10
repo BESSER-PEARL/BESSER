@@ -40,6 +40,9 @@ class Result:
     exit_code: int = EXIT_OK
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # What the command chose on its own and the user may want to know (e.g. which model it used):
+    # printed as "note: ..." on standard error, not with --quiet.
+    notes: list[str] = field(default_factory=list)
     # Files the command wrote, as paths the caller can open from its working directory.
     files: list[str] = field(default_factory=list)
     # The command's own keys in the JSON output.
@@ -52,12 +55,14 @@ class Result:
     traceback: str = ""
 
     def as_json(self) -> dict[str, Any]:
-        """The JSON output: ``ok``, ``errors``, ``warnings`` and ``files`` on every command."""
+        """The JSON output: the keys every command has, then the command's own."""
         return {
             "ok": self.exit_code == EXIT_OK,
             "command": self.command,
+            "exit_code": self.exit_code,
             "errors": self.errors,
             "warnings": self.warnings,
+            "notes": self.notes,
             "files": self.files,
             **self.data,
         }
@@ -92,6 +97,8 @@ def print_result(result: Result, as_json: bool) -> None:
         return
     if result.text:
         print(result.text)
+    for note in result.notes:
+        print(f"note: {note}", file=sys.stderr)
     for warning in result.warnings:
         if warning not in result.shown_in_text:
             print(f"warning: {warning}", file=sys.stderr)

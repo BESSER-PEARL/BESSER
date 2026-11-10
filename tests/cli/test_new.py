@@ -22,7 +22,7 @@ def test_json_lists_the_file(besser):
     result = besser("new", "models/shop.py", "--json").json
 
     assert result == {
-        "ok": True, "command": "new", "errors": [], "warnings": [], "files": ["models/shop.py"],
+        "ok": True, "command": "new", "exit_code": 0, "errors": [], "warnings": [], "notes": [], "files": ["models/shop.py"],
         "model": "models/shop.py",
     }
 

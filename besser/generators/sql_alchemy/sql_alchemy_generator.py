@@ -235,7 +235,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 + f"\n\nSupported types: {', '.join(sorted(self.TYPES))}."
             )
 
-    def generate(self, dbms: str = None, ocl_check_constraints: bool = None):
+    def generate(self, dbms: str = None, ocl_check_constraints: bool = None, methods: bool = True):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified
         output directory.
@@ -249,6 +249,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
             ocl_check_constraints (bool, optional): Translate simple OCL invariants of the model
             (comparisons of an attribute with a literal, joined by ``and``) into ``CheckConstraint``
             table arguments. Untranslatable constraints are skipped. Defaults to the generator's option.
+            methods (bool, optional): Write the code of the model's methods into the classes. ``SQLGenerator``
+            turns it off: it runs the module to print the tables, and must not run code taken from the model.
 
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py
@@ -301,6 +303,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 sort=sort_by_timestamp,
                 concrete_parents=concrete_parents,
                 check_constraints=check_constraints,
+                methods=methods,
             )
             f.write(generated_code)
             logger.info("Code generated in the location: %s", file_path)

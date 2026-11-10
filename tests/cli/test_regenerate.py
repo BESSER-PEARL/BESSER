@@ -539,3 +539,22 @@ def test_verbose_adds_the_traceback_of_a_refusal(besser, model, tmp_path):
     assert run.returncode == 2 and run.stdout == ""
     assert "Traceback (most recent call last):" in run.stderr
     assert "UnrecordedOutputError" in run.stderr
+
+
+@needs_pygit2
+def test_a_record_written_by_another_besser_version_is_noted(besser, model, tmp_path):
+    besser("generate", "python", model, "-o", "out")
+    record_path = tmp_path / "out" / ".besser_generated.json"
+    record = json.loads(record_path.read_text())
+    same = besser("regenerate", "python", model, "-o", "out", "--json")
+    record_path.write_text(json.dumps({**record, "besser_version": "0.0.1"}))
+
+    other = besser("regenerate", "python", model, "-o", "out", "--json")
+
+    assert record["besser_version"] == besser("--version", "--json").json["version"]
+    assert same.json["notes"] == []
+    assert other.returncode == 0
+    assert other.json["notes"] == [
+        f"out was generated with BESSER 0.0.1 and this is BESSER {record['besser_version']}: a file can change "
+        "because the generator did, not only the model"
+    ]

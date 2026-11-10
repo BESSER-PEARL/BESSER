@@ -426,10 +426,10 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
             for idx, qm in enumerate(quantum_models, start=1):
                 var_name = _suffixed_name("quantum_model", idx, n_quantum)
 
-                section = ""
-                if n_quantum > 1:
-                    label = _comment_safe(getattr(qm, "name", "")) or f"Quantum {idx}"
-                    section = f"# QUANTUM MODEL {idx}: \"{label}\" #\n\n"
+                # quantum_model_to_code writes no section header, and the editor's importer finds a
+                # circuit by its header: a lone circuit gets one too.
+                label = _comment_safe(getattr(qm, "name", "")) or f"Quantum {idx}"
+                section = f"# QUANTUM MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"quantum_model_{idx}.py")
                 quantum_model_to_code(

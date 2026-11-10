@@ -31,8 +31,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from besser.cli import commands
+from besser.cli.importing import IMPORT_FORMATS
 from besser.cli.loading import STDIN
 from besser.cli.output import EXIT_FAILED, Result, failure, stdout_to_stderr
+from besser.cli.starters import DEFAULT_KIND, STARTERS
 from besser.generators.registry import GENERATORS
 from besser.utilities.provenance import get_besser_version
 
@@ -83,7 +85,7 @@ class ToolSpec:
     name: str
     description: str
     input_schema: dict[str, Any]
-    # The tool writes files (generate, regenerate, convert).
+    # The tool writes files (new, generate, regenerate, convert).
     writes: bool
     run: Callable[[Tools, dict[str, Any]], Result]
 
@@ -196,7 +198,7 @@ def _boolean_argument(match: re.Match) -> str:
 # The positional arguments of a quoted command, as tool arguments in order.
 _POSITIONAL_ARGUMENTS = {
     "generate": ("generator", "model"), "regenerate": ("generator", "model"),
-    "info": ("model",), "convert": ("input",), "validate": ("paths",),
+    "info": ("model",), "convert": ("input",), "validate": ("paths",), "new": ("path",), "schema": ("topic",),
 }
 # A placeholder in a quoted command ("<that model>"): one argument.
 _PLACEHOLDER = re.compile(r"<[^<>]*>")
@@ -277,23 +279,6 @@ def for_client(value: Any, root: Path, key: str = "") -> Any:
     return value
 
 
-def _option_assignments(options: dict[str, Any] | list[str] | None) -> list[str]:
-    """Tool options as the CLI's ``name=value`` arguments, which ``commands.parse_options`` reads."""
-    if options is None:
-        return []
-    if isinstance(options, list):
-        return list(options)
-
-    def text(value: Any) -> str:
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, list):
-            return ",".join(text(item) for item in value)
-        return str(value)
-
-    return [f"{name}={text(value)}" for name, value in options.items()]
-
-
 def _validate(tools: Tools, args: dict[str, Any]) -> Result:
     paths = [str(tools.model_path(path)) for path in args["paths"]]
     return commands.validate(paths, strict=args.get("strict", False), exec_py=tools.exec_py,
@@ -311,7 +296,7 @@ def _generators(tools: Tools, args: dict[str, Any]) -> Result:
 def _generate(tools: Tools, args: dict[str, Any]) -> Result:
     return commands.generate(
         args["generator"], str(tools.model_path(args["model"])), str(tools.output_path(args["output_dir"], "output_dir")),
-        _option_assignments(args.get("options")), args.get("use", []), args.get("force", False),
+        commands.option_assignments(args.get("options")), args.get("use", []), args.get("force", False),
         dry_run=args.get("dry_run", False),
     )
 
@@ -319,14 +304,25 @@ def _generate(tools: Tools, args: dict[str, Any]) -> Result:
 def _regenerate(tools: Tools, args: dict[str, Any]) -> Result:
     return commands.regenerate(
         args["generator"], str(tools.model_path(args["model"])), str(tools.output_path(args["output_dir"], "output_dir")),
-        _option_assignments(args.get("options")), args.get("use", []), args.get("adopt", False),
+        commands.option_assignments(args.get("options")), args.get("use", []), args.get("adopt", False),
         dry_run=args.get("dry_run", False),
     )
 
 
 def _convert(tools: Tools, args: dict[str, Any]) -> Result:
-    return commands.convert(str(tools.model_path(args["input"], "input")),
-                            str(tools.output_path(args["output"], "output")), dry_run=args.get("dry_run", False))
+    inputs = [str(tools.model_path(value, "input")) for value in [args["input"], *args.get("more_inputs", [])]]
+    return commands.convert(inputs, str(tools.output_path(args["output"], "output")),
+                            dry_run=args.get("dry_run", False), source_format=args.get("from"),
+                            class_diagram=args.get("class_diagram", False))
+
+
+def _new(tools: Tools, args: dict[str, Any]) -> Result:
+    return commands.new(str(tools.output_path(args["path"], "path")), kind=args.get("kind", DEFAULT_KIND),
+                        force=args.get("force", False))
+
+
+def _schema(tools: Tools, args: dict[str, Any]) -> Result:
+    return commands.schema(args.get("topic"))
 
 
 def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -346,6 +342,26 @@ def tool_specs() -> dict[str, ToolSpec]:
 
 def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpec, ...]:
     return (
+        ToolSpec(
+            "new",
+            "Write a starter model of a kind to edit: a small, commented B-UML .py script, or the same model "
+            "as an editor .json project (the CLI's 'besser new'). An existing file is refused unless force is true.",
+            _object({
+                "path": {**_PATH, "description": "the .py or .json file to write, under the server's root"},
+                "kind": {"type": "string", "enum": list(STARTERS), "default": DEFAULT_KIND,
+                         "description": "the kind of model to start from"},
+                "force": {"type": "boolean", "default": False, "description": "overwrite the file if it exists"},
+            }, ["path"]),
+            True, _new,
+        ),
+        ToolSpec(
+            "schema",
+            "Describe a format: the B-UML classes of a model kind with their constructor arguments, the JSON "
+            "Schema of an editor project ('project') or of what every tool returns ('result'), or the "
+            "besser.toml file ('config'); without a topic, the topics (the CLI's 'besser schema').",
+            _object({"topic": {"type": "string", "enum": commands.schema_topics()}}, []),
+            False, _schema,
+        ),
         ToolSpec(
             "validate",
             "Load model files and run validate() on every model in them (the CLI's 'besser validate'). "
@@ -412,11 +428,19 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
         ),
         ToolSpec(
             "convert",
-            "Convert a B-UML .py model to an editor .json project, or an editor .json export to a B-UML .py "
-            "file; the direction follows the two extensions (the CLI's 'besser convert'). The output is overwritten.",
+            "Convert a B-UML .py model to an editor .json project or the reverse, or import another notation "
+            f"as a model ({', '.join(fmt.name for fmt in IMPORT_FORMATS)}); a knowledge graph is also written "
+            "as RDF (.ttl, .owl, .rdf). What is read follows the input's extension, or 'from'; what is written, "
+            "the output's (the CLI's 'besser convert'). The output is overwritten.",
             _object({
-                "input": {**_MODEL, "description": "the file to convert (.json, or .py if the server allows it)"},
-                "output": {**_PATH, "description": "the .py or .json file to write, under the server's root"},
+                "input": {**_MODEL, "description": "the file to convert (.json, or .py if the server allows it) "
+                                                   "or to import; a directory for from: code"},
+                "more_inputs": {"type": "array", "items": _PATH, "description": "further files, for from: csv"},
+                "output": {**_PATH, "description": "the .py, .json or RDF file to write, under the server's root"},
+                "from": {"type": "string", "enum": [fmt.name for fmt in IMPORT_FORMATS],
+                         "description": "the notation of the input, when its extension does not say"},
+                "class_diagram": {"type": "boolean", "default": False,
+                                  "description": "write the class diagram derived from each knowledge graph"},
                 "dry_run": _DRY_RUN,
             }, ["input", "output"]),
             True, _convert,
@@ -427,8 +451,8 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
 def _instructions(tools: Tools) -> str:
     loads = ".json and .py models" if tools.exec_py else ".json models only (.py models need --exec-py)"
     return (
-        "BESSER's command line as tools, on B-UML model files: validate, info, generators, generate, "
-        f"regenerate, convert. Paths are under {tools.root}. This server loads {loads}. "
+        "BESSER's command line as tools, on B-UML model files: new, schema, validate, info, generators, "
+        f"generate, regenerate, convert. Start with new (a starter model) and schema (its classes). Paths are under {tools.root}. This server loads {loads}. "
         "Each tool returns the CLI's --json object: ok, errors, warnings, notes, files and its own keys."
     )
 

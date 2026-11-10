@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from besser.cli.mcp_server import _option_assignments, for_client
+from besser.cli.commands import option_assignments as _option_assignments
+from besser.cli.mcp_server import for_client
 from tests.cli.conftest import CLASS_DIAGRAM, LIBRARY_MODEL
 
 _TIMEOUT = 120
@@ -126,7 +127,7 @@ def test_it_lists_the_commands_as_tools(serve):
 
     assert server.initialize["result"]["serverInfo"]["name"] == "besser"
     assert {name: tool["inputSchema"]["required"] for name, tool in tools.items()} == {
-        "validate": ["paths"], "info": ["model"], "generators": [],
+        "new": ["path"], "schema": [], "validate": ["paths"], "info": ["model"], "generators": [],
         "generate": ["generator", "model", "output_dir"], "regenerate": ["generator", "model", "output_dir"],
         "convert": ["input", "output"],
     }
@@ -341,7 +342,7 @@ def test_for_client_makes_paths_relative_and_names_the_tool_arguments():
         "would_write": {"/work/project/out/a.py": "new"},
         "errors": ["/work/project/m.json holds two: name it with --use NAME; --option takes name=value"],
         "warnings": ["/work/projects/x stays: 'besser regenerate sql /work/project/m.json -o out --adopt'"],
-        "notes": ["2 .py files skipped; pass --exec-py to load them", "'besser new' is not a tool",
+        "notes": ["2 .py files skipped; pass --exec-py to load them", "'besser completion' is not a tool",
                   "\"besser regenerate rest_api m.json -o out --option 'http_methods=GET, POST'\" keeps edits"],
         "results": [{"errors": ["pass --force to overwrite, --dry-run and --strict"]}],
         "generators": [{"description": "keeps --force as it is"}],
@@ -353,7 +354,7 @@ def test_for_client_makes_paths_relative_and_names_the_tool_arguments():
         "errors": ["m.json holds two: name it with the `use` argument; the `options` argument takes name=value"],
         "warnings": ['/work/projects/x stays: the `regenerate` tool with {"generator": "sql", "model": "m.json", '
                      '"output_dir": "out", "adopt": true}'],
-        "notes": ["2 .py files skipped; restart the server with --exec-py to load them", "'besser new' is not a tool",
+        "notes": ["2 .py files skipped; restart the server with --exec-py to load them", "'besser completion' is not a tool",
                   'the `regenerate` tool with {"generator": "rest_api", "model": "m.json", "output_dir": "out", '
                   '"options": ["http_methods=GET, POST"]} keeps edits'],
         "results": [{"errors": ["pass `force: true` to overwrite, `dry_run: true` and `strict: true`"]}],
@@ -374,3 +375,27 @@ def test_for_client_rewrites_only_paths_that_start_at_the_root():
         "errors": ["/data/app is a file", "model 'm.json' is bad"],
         "notes": ["see https://example.org/app/docs", "/app~1/x is another folder"],
     }
+
+
+def test_new_and_schema_start_a_model_under_the_root(serve, tmp_path):
+    server = serve()
+
+    written = server.call("new", path="models/machine.json", kind="state_machine")
+    described = server.call("schema", topic="state_machine")
+    outside = server.call("new", path="../machine.json")
+
+    assert written["ok"] and written["files"] == ["models/machine.json"]
+    assert server.call("validate", paths=["models/machine.json"], strict=True)["ok"]
+    assert "StateMachine" in [cls["name"] for cls in described["description"]["classes"]]
+    assert not outside["ok"] and "outside the server's root" in outside["errors"][0]
+    assert not (tmp_path.parent / "machine.json").exists()
+
+
+def test_convert_imports_another_notation(serve, write):
+    server = serve()
+    write("library.plantuml", "@startuml\nclass Book {\n  + title: str\n}\n@enduml\n")
+
+    converted = server.call("convert", input="library.plantuml", output="library.json")
+
+    assert converted["ok"] and converted["models"] == [{"name": "DomainModel", "kind": "domain", "type": "DomainModel"}]
+    assert server.call("info", model="library.json")["models"][0]["classes"][0]["name"] == "Book"

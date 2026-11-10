@@ -9,6 +9,7 @@ reads either from standard input.
 from __future__ import annotations
 
 import json
+import linecache
 import runpy
 import sys
 import traceback
@@ -131,7 +132,8 @@ class LoadedModels:
 
     path: Path
     models: list[LoadedModel]
-    # ".py" or ".json": what the file holds, whatever it is called (standard input has no name).
+    # ".py" or ".json": what the file holds, whatever it is called (standard input has no name);
+    # the name of the import format for a file ``convert`` imported (see ``besser.cli.importing``).
     suffix: str
     # The file's own ``Project``, when it defines one.
     project: Project | None = None
@@ -241,6 +243,9 @@ def _execute(path: Path, source: str | None = None) -> dict[str, Any]:
             if source is None:
                 return runpy.run_path(str(path), run_name=MODEL_RUN_NAME)
             namespace: dict[str, Any] = {"__name__": MODEL_RUN_NAME}
+            # A model that passes a function (Body(callable=...)) has its source read with inspect,
+            # which finds the text of code that is in no file in the line cache.
+            linecache.cache[str(path)] = (len(source), None, source.splitlines(keepends=True), str(path))
             exec(compile(source, str(path), "exec"), namespace)  # as run_path does with a file
             return namespace
     except SystemExit as exc:

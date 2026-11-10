@@ -137,3 +137,14 @@ def test_verbose_prints_the_traceback_of_a_model_file_that_raises(besser, write)
     assert 'crash.py", line 2, in build' in run.stderr
     assert run.stderr.endswith("error: crash.py: line 2: ZeroDivisionError: division by zero\n")
     assert "Traceback" not in besser("info", model).stderr
+
+
+def test_a_model_that_is_not_a_domain_model_lists_what_it_holds_by_name(besser):
+    besser("new", "machine.py", "--kind", "state_machine")
+
+    run = besser("info", "machine.py", "--json")
+    states = run.json["models"][0]["elements"]["states"]
+
+    assert run.json["models"][0]["counts"] == {"states": len(states)}
+    assert "created" in states
+    assert f"    states: {', '.join(states)}\n" in besser("info", "machine.py").stdout

@@ -22,7 +22,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from besser.utilities.provenance import ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME
+from besser.utilities.provenance import ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME, get_besser_version
 from besser.utilities.three_way_merge import lf, merge_available, merge_trees, same_text, with_endings_of
 from besser.utilities.workspace_fs import (
     is_link,
@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = ".besser_generated.json"
 _RECORD_FORMAT = 1
+# The record's key for the BESSER version that wrote it.
+_VERSION_KEY = "besser_version"
 _YOUR_EDIT = b"<<<<<<< your edit"
 _GENERATED = b">>>>>>> generated from your model"
 _UNRESOLVED = re.compile(rb"^" + re.escape(_YOUR_EDIT) + rb"\r?$", re.MULTILINE)
@@ -518,6 +520,22 @@ def _load_record(folder: str, generator_name: str) -> dict | None:
     return record
 
 
+def recorded_version(folder: str) -> str | None:
+    """The BESSER version that last wrote the record of ``folder``; ``None`` when there is no record,
+    it cannot be read, or an older BESSER wrote it without one.
+
+    A generator can change between versions, so a different one explains changes the model does not.
+    """
+    path = os.path.join(folder, RECORD_FILENAME)
+    if not os.path.lexists(path) or not is_plain_entry(path):
+        return None
+    try:
+        version = json.loads(read_plain_text(path, root=folder, encoding="utf-8") or "").get(_VERSION_KEY)
+    except (OSError, ValueError, AttributeError, RecursionError):
+        return None
+    return version if isinstance(version, str) else None
+
+
 def _inside(rel: str) -> bool:
     """A plain path inside the folder, whichever platform reads it, and not git's own."""
     return is_plain_relpath(rel) and ".git" not in (part.casefold() for part in rel.split("/"))
@@ -530,7 +548,8 @@ def _save_record(folder: str, files: dict[str, bytes], binaries: list[str], conf
 
 
 def _record_text(files: dict[str, bytes], binaries: list[str], conflicted: list[str], generator_name: str) -> str:
-    record = {"format": _RECORD_FORMAT, "generator": generator_name, "binaries": binaries, "conflicted": conflicted,
+    record = {"format": _RECORD_FORMAT, "generator": generator_name, _VERSION_KEY: get_besser_version(),
+              "binaries": binaries, "conflicted": conflicted,
               "files": {rel: lf(content).decode("utf-8") for rel, content in files.items()}}
     return json.dumps(record, indent=1, sort_keys=True, ensure_ascii=False)
 

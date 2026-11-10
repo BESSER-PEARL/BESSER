@@ -7,6 +7,7 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import shlex
 import tempfile
 from datetime import datetime, timezone
@@ -14,6 +15,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
 from besser.cli import loading
+from besser.cli import schema as schema_module
+from besser.cli.config import CONFIG_EXAMPLE, CONFIG_FILENAME, ConfigError, OutputConfig, load_config
+from besser.cli.importing import IMPORT_FORMATS, ImportFormat, format_of, import_format, import_models
 from besser.cli.discovery import SKIP_NO_MODEL, SKIP_PY, ModelFiles, SkippedFile, find_model_files
 from besser.cli.loading import (
     STDIN,
@@ -36,7 +40,7 @@ from besser.cli.output import (
     stdout_to_stderr,
 )
 from besser.cli.ocl_check import OclOutcome, OclUnavailable, check_ocl, load_checker
-from besser.cli.starter import STARTER_MODEL
+from besser.cli.starters import DEFAULT_KIND, STARTERS, starter_source
 from besser.cli.summary import describe_model, summary_lines
 from besser.generators import regeneration
 from besser.generators.registry import GENERATORS, GeneratorSpec, get_generator
@@ -46,6 +50,7 @@ from besser.generators.runner import (
     regenerate_generator,
     run_generator,
 )
+from besser.utilities.provenance import get_besser_version
 from besser.utilities.three_way_merge import merge_available
 
 # Model kinds the editor has no diagram for, so ``convert`` cannot write them to JSON.
@@ -86,7 +91,15 @@ def _validate_model(loaded: LoadedModel) -> dict[str, Any]:
     return report
 
 
-def _validation_text(path: str, reports: list[dict[str, Any]], project_errors: list[str]) -> list[str]:
+def _validation_text(path: str, reports: list[dict[str, Any]], project_errors: list[str],
+                     diagnostics: Sequence[Mapping[str, Any]] = ()) -> list[str]:
+    """The report of one file; a message whose line is known (see ``diagnostics``) ends with it."""
+    lines_of = {(entry.get("model"), entry["message"]): entry["line"] for entry in diagnostics if "line" in entry}
+
+    def located(model: str, message: str) -> str:
+        line = lines_of.get((model, message))
+        return f"{message} ({path}, line {line})" if line else message
+
     lines = [f"{path}: {plural(len(reports), 'model')}"]
     for report in reports:
         if not report["validated"] and not (report["errors"] or report["warnings"]):
@@ -96,10 +109,53 @@ def _validation_text(path: str, reports: list[dict[str, Any]], project_errors: l
         else:
             status = "ok"
         lines.append(f"  {report['name']} ({report['type']}): {status}")
-        lines.extend(f"    error: {error}" for error in report["errors"])
-        lines.extend(f"    warning: {warning}" for warning in report["warnings"])
+        lines.extend(f"    error: {located(report['name'], error)}" for error in report["errors"])
+        lines.extend(f"    warning: {located(report['name'], warning)}" for warning in report["warnings"])
     lines.extend(f"  error: {error}" for error in project_errors)
     return lines
+
+
+_QUOTED_NAME = re.compile(r"'([^']+)'")
+_LINE_IN_MESSAGE = re.compile(r": line (\d+): ")
+
+
+def _definition_line(source: str, message: str) -> int | None:
+    """The line of a B-UML script where an element the message names is defined (``name="X"``).
+
+    The first quoted name defined on exactly one line counts: "Attribute 'title' of class 'Book'"
+    gives the attribute's line when one attribute is called title, else the class's.
+    """
+    lines = source.splitlines()
+    for name in _QUOTED_NAME.findall(message):
+        definition = re.compile(r"""\bname\s*=\s*(['"])""" + re.escape(name) + r"\1")
+        found = [number for number, line in enumerate(lines, start=1) if definition.search(line)]
+        if len(found) == 1:
+            return found[0]
+    return None
+
+
+def _diagnostic(severity: str, file: str, message: str, model: str | None = None,
+                source: str | None = None) -> dict[str, Any]:
+    """One error or warning with where it is: the file, the model, and the line when it is known."""
+    entry: dict[str, Any] = {"severity": severity, "file": file}
+    if model is not None:
+        entry["model"] = model
+    entry["message"] = message
+    in_message = _LINE_IN_MESSAGE.search(message)
+    line = int(in_message.group(1)) if in_message else _definition_line(source, message) if source else None
+    if line is not None:
+        entry["line"] = line
+    return entry
+
+
+def _script_source(loaded: LoadedModels) -> str | None:
+    """The text of a ``.py`` model file, to find lines in; ``None`` for JSON and standard input."""
+    if loaded.suffix != ".py" or not loaded.path.is_file():
+        return None
+    try:
+        return loaded.path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 @dataclasses.dataclass
@@ -113,6 +169,8 @@ class _FileCheck:
     warnings: list[str] = dataclasses.field(default_factory=list)
     models: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     load_error: str = ""
+    # Every error and warning of the file, with where it is (see ``_diagnostic``).
+    diagnostics: list[dict[str, Any]] = dataclasses.field(default_factory=list)
 
     def as_json(self) -> dict[str, Any]:
         return {"file": self.file, "ok": self.exit_code == EXIT_OK, "exit_code": self.exit_code,
@@ -137,6 +195,12 @@ def _check_file(path: str, loaded: LoadedModels, strict: bool,
     check.errors.extend(loaded.errors)
     check.warnings = [f"{report['name']}: {warning}" for report in check.models for warning in report["warnings"]]
     check.exit_code = EXIT_FAILED if check.errors or (strict and check.warnings) else EXIT_OK
+    source = _script_source(loaded)
+    for report in check.models:
+        for severity in ("error", "warning"):
+            check.diagnostics.extend(_diagnostic(severity, path, message, report["name"], source)
+                                     for message in report[f"{severity}s"])
+    check.diagnostics.extend(_diagnostic("error", path, message) for message in loaded.errors)
     return check, outcome
 
 
@@ -156,7 +220,8 @@ def _nothing_to_validate(model_paths: Sequence[str], found: ModelFiles, exec_py:
         message = (f"nothing to validate: no editor .json export found in {where} "
                    "(.py models in a directory are loaded with --exec-py)")
     skipped = [{"file": skipped.path, "reason": skipped.reason} for skipped in found.skipped]
-    return failure("validate", message, data={"model_files": [], "models": [], "results": [], "skipped": skipped})
+    return failure("validate", message, data={"model_files": [], "models": [], "results": [], "skipped": skipped,
+                                               "diagnostics": []})
 
 
 def _ocl_note(constraints: int, evaluations: int, unevaluated: int) -> str:
@@ -211,7 +276,8 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
             load_error = exc
         if load_error is not None:
             checks.append(_FileCheck(file=model_file.path, exit_code=EXIT_USAGE, errors=[str(load_error)],
-                                     load_error=str(load_error)))
+                                     load_error=str(load_error),
+                                     diagnostics=[_diagnostic("error", model_file.path, str(load_error))]))
             lines.append(_load_error_text(model_file.path, str(load_error)))
             traceback += format_traceback(load_error)
             continue
@@ -221,7 +287,7 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
             constraints += outcome.constraints
             evaluations += outcome.evaluations
             unevaluated += outcome.unevaluated
-        lines.extend(_validation_text(str(loaded.path), check.models, loaded.errors))
+        lines.extend(_validation_text(str(loaded.path), check.models, loaded.errors, check.diagnostics))
     if not checks:
         return _nothing_to_validate(model_paths, dataclasses.replace(found, skipped=skipped), exec_py)
 
@@ -267,6 +333,7 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
             "models": [report for check in checks for report in check.models],
             "results": [check.as_json() for check in checks],
             "skipped": [{"file": entry.path, "reason": entry.reason} for entry in skipped],
+            "diagnostics": [diagnostic for check in checks for diagnostic in check.diagnostics],
         },
         text="\n".join([*lines, *skipped_lines, verdict]) if lines or skipped_lines else "",
         shown_in_text=shown_in_text,
@@ -316,26 +383,72 @@ def info(model_path: str) -> Result:
 # ── new ─────────────────────────────────────────────────────────────────────
 
 
-def new(path: str, force: bool = False) -> Result:
-    """Write a starter B-UML model to ``path``."""
-    data = {"model": path}
+def _starter_list() -> Result:
+    """The kinds ``new`` writes a starter for, with what each models and the generators that read it."""
+    kinds = []
+    for kind, starter in STARTERS.items():
+        generators = [spec.id for spec in GENERATORS if kind in spec.models]
+        kinds.append({"kind": kind, "summary": starter.summary, "generators": generators,
+                      "editor_diagram": schema_module.editor_diagram_type(kind)})
+    width = max(len(kind) for kind in STARTERS)
+    lines = ["Kinds (besser new FILE --kind KIND; FILE is a .py file, or a .json file for the editor):"]
+    lines.extend(f"  {entry['kind'].ljust(width)}  {entry['summary']}" for entry in kinds)
+    return Result(command="new", data={"kinds": kinds}, text="\n".join(lines), text_is_result=True)
+
+
+def _write_starter_json(kind: str, source: str, target: Path) -> list[str]:
+    """Write the starter as an editor project: the starter is loaded and converted, as ``convert`` does."""
+    from besser.utilities.web_modeling_editor.backend.constants.constants import TEMP_DIR_PREFIX
+
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as scratch:
+        script = Path(scratch, f"{target.stem}.py")
+        script.write_text(source, encoding="utf-8")
+        loaded = load_models(script)
+        with stdout_to_stderr():
+            return _write_editor_json(loaded, target)
+
+
+def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_kinds: bool = False) -> Result:
+    """Write the starter model of ``kind`` to ``path``: a B-UML script, or an editor project for ``.json``."""
+    if list_kinds:
+        return _starter_list()
+    data: dict[str, Any] = {"model": path, "kind": kind}
+    if path is None:
+        return failure("new", "name the file to write (besser new model.py), or pass --list for the kinds",
+                       data=data)
+    if kind not in STARTERS:
+        return failure("new", f"unknown kind '{kind}'; kinds: {', '.join(STARTERS)}", data=data)
     target = Path(path)
-    if target.suffix.lower() != ".py":
-        return failure("new", f"a B-UML model is a .py file; got {target.name}", data=data)
+    suffix = target.suffix.lower()
+    if suffix not in (".py", ".json"):
+        return failure("new", f"a model file is a B-UML .py file or an editor .json project; got {target.name}",
+                       data=data)
+    if suffix == ".json" and kind in _KINDS_WITHOUT_DIAGRAM:
+        return failure("new", f"the editor has no diagram for a {kind} model: write a .py file", data=data)
     if target.exists() and not force:
         return failure("new", f"{target} exists: pass --force to overwrite it", data=data)
+    warnings: list[str] = []
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(STARTER_MODEL.replace("MODEL_FILE", target.name), encoding="utf-8")
+        if suffix == ".py":
+            target.write_text(starter_source(kind, target.name), encoding="utf-8")
+        else:
+            warnings = _write_starter_json(kind, starter_source(kind, target.with_suffix(".py").name), target)
     except OSError as exc:
         return failure("new", f"cannot write {target}: {exc}", EXIT_FAILED, data, cause=exc)
+    except ModelLoadError as exc:  # editor JSON needs the backend's packages
+        return failure("new", str(exc), data=data, cause=exc)
+    shown = shlex.quote(str(target))
     lines = [
-        f"Wrote a starter model to {target}. Next:",
-        f"  besser validate {target}",
-        f"  besser info {target}",
-        f"  besser generate python {target} -o out",
+        f"Wrote a starter {kind} model to {target}. Next:",
+        f"  besser validate {shown}",
+        f"  besser info {shown}",
     ]
-    return Result(command="new", files=[target.as_posix()], data=data, text="\n".join(lines))
+    generator = STARTERS[kind].generator
+    if generator:
+        lines.append(f"  besser generate {generator} {shown} -o out")
+    lines.append(f"  besser schema {kind}          the classes to write it with")
+    return Result(command="new", warnings=warnings, files=[target.as_posix()], data=data, text="\n".join(lines))
 
 
 # ── generators ──────────────────────────────────────────────────────────────
@@ -759,6 +872,11 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
     except Exception as exc:
         return _generator_failure("generate", spec, exc, warnings, data, notes)
 
+    if not written:
+        # A generator that skips what it cannot generate logs why and returns: that is not a success.
+        return Result(command="generate", exit_code=EXIT_FAILED, warnings=warnings, notes=notes, data=data,
+                      errors=[f"the '{spec.id}' generator wrote no file; what it logged, on standard error, "
+                              "says why"])
     if data["recorded"]:
         notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=False))
     files = [Path(output_dir, path).as_posix() for path in written]
@@ -857,6 +975,10 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
     except _Stopped as stopped:
         return stopped.result
     warnings, notes = given.warnings, given.notes
+    recorded_by, running = regeneration.recorded_version(output_dir), get_besser_version()
+    if recorded_by is not None and recorded_by != running:
+        notes.append(f"{output_dir} was generated with BESSER {recorded_by} and this is BESSER {running}: "
+                     "a file can change because the generator did, not only the model")
 
     try:
         with stdout_to_stderr(), _without_regeneration_log():
@@ -969,49 +1091,156 @@ def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
     return warnings
 
 
-# Output suffix -> (the input suffix it converts from, the writer).
-_CONVERSIONS = {
-    ".json": (".py", _write_editor_json),
-    ".py": (".json", _write_buml),
+def _write_rdf(loaded: LoadedModels, output_path: Path) -> list[str]:
+    """Write the file's knowledge graph as RDF: Turtle, or RDF/XML for ``.owl`` and ``.rdf``."""
+    from besser.BUML.notations.kg_rdf import serialize_knowledge_graph
+
+    graphs = loaded.of_kind("kg")
+    if len(graphs) != 1:
+        held = ", ".join(model.label for model in loaded.models)
+        raise _Stopped(failure(
+            "convert", f"{output_path.name} is RDF, which is written from one knowledge graph, and {loaded.path} "
+                       f"holds {len(graphs) or 'none'} (it holds: {held})",
+        ))
+    text = serialize_knowledge_graph(graphs[0].model, fmt=_RDF_SERIALIZATIONS[output_path.suffix.lower()])
+    output_path.write_text(text, encoding="utf-8")
+    return [f"{model.label} was left out: RDF is written from the knowledge graph"
+            for model in loaded.models if model.kind != "kg"]
+
+
+# Output suffix of an RDF file -> its rdflib serialization.
+_RDF_SERIALIZATIONS = {".ttl": "turtle", ".owl": "xml", ".rdf": "xml"}
+# Output suffix -> (the format written, the writer). A format is what ``LoadedModels.suffix`` names.
+_WRITERS: dict[str, tuple[str, Callable[[LoadedModels, Path], list[str]]]] = {
+    ".json": (".json", _write_editor_json),
+    ".py": (".py", _write_buml),
+    **{suffix: ("rdf", _write_rdf) for suffix in _RDF_SERIALIZATIONS},
 }
+_SAME_FORMAT = (
+    "convert turns a B-UML .py file into an editor .json project, or a .json export into "
+    "a .py file; got {held} -> {target}"
+)
 
 
-def convert(input_path: str, output_path: str, dry_run: bool = False) -> Result:
-    """Convert a B-UML ``.py`` file to an editor JSON project, or the reverse."""
-    data: dict[str, Any] = {"input": input_path, "output": output_path, "dry_run": dry_run}
-    source, target = Path(input_path), Path(output_path)
-    expected_source, write = _CONVERSIONS.get(target.suffix.lower(), (None, None))
-    # Standard input has no name to tell what it holds: that is known once it is loaded.
-    from_stdin = input_path == STDIN
-    wrong_direction = (
-        "convert turns a B-UML .py file into an editor .json project, or a .json export into "
-        f"a .py file; got {{held}} -> {target.name}"
-    )
-    if write is None or (not from_stdin and source.suffix.lower() != expected_source):
-        return failure("convert", wrong_direction.format(held=source.name), data=data)
+def _import_formats_text() -> str:
+    return ", ".join(fmt.name for fmt in IMPORT_FORMATS)
+
+
+def _source_format(inputs: Sequence[str], source_format: str | None) -> ImportFormat | None:
+    """The import format to read ``inputs`` as; ``None`` for a model file (``.py``, ``.json``, standard input).
+
+    Raises:
+        ModelLoadError: The inputs are of no format ``convert`` reads, or of several.
+    """
+    if source_format is not None:
+        return import_format(source_format)
+    formats = []
+    for value in inputs:
+        path = Path(value)
+        if value == STDIN or path.suffix.lower() in (".py", ".json"):
+            formats.append(None)
+        elif path.is_dir():
+            raise ModelLoadError(f"{value} is a directory: name what it holds with --from "
+                                 f"({', '.join(fmt.name for fmt in IMPORT_FORMATS if fmt.directory)})")
+        elif not path.exists():
+            raise ModelLoadError(f"{value}: no such file")
+        else:
+            fmt = format_of(path)
+            if fmt is None:
+                known = ", ".join(suffix for fmt in IMPORT_FORMATS for suffix in fmt.suffixes)
+                raise ModelLoadError(
+                    f"{value}: convert reads a B-UML .py file, an editor .json export, or a file to import "
+                    f"({known}); name another file's format with --from ({_import_formats_text()})"
+                )
+            formats.append(fmt)
+    if len(inputs) > 1 and (formats[0] is None or not formats[0].several or len(set(formats)) > 1):
+        several = ", ".join(fmt.name for fmt in IMPORT_FORMATS if fmt.several)
+        raise ModelLoadError(f"convert reads one input; only these formats take several files: {several}")
+    return formats[0]
+
+
+def _derive_class_diagrams(loaded: LoadedModels) -> tuple[LoadedModels, list[str]]:
+    """``loaded`` with each knowledge graph replaced by the class diagram derived from it, and the warnings.
+
+    Raises:
+        _Stopped: The file holds no knowledge graph.
+    """
+    from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
+
+    if not loaded.of_kind("kg"):
+        held = ", ".join(model.label for model in loaded.models)
+        raise _Stopped(failure(
+            "convert", f"--class-diagram derives a class diagram from a knowledge graph and {loaded.path} "
+                       f"holds none (it holds: {held})",
+        ))
+    models, warnings = [], []
+    for model in loaded.models:
+        if model.kind != "kg":
+            models.append(model)
+            continue
+        result = kg_to_class_diagram(model.model)
+        warnings.extend(f"{model.name}: {warning.message}" for warning in result.warnings)
+        models.append(LoadedModel(name=result.domain_model.name, kind="domain", model=result.domain_model))
+    # The file's own Project holds the graphs: the models are wrapped in a new one.
+    return dataclasses.replace(loaded, models=models, project=None), warnings
+
+
+def convert(inputs: str | Sequence[str], output_path: str, dry_run: bool = False,
+            source_format: str | None = None, class_diagram: bool = False) -> Result:
+    """Convert a model file to another format, or import a file of another notation as a model.
+
+    ``source_format`` names the import format of ``inputs`` (see ``besser.cli.importing``) when
+    their suffix does not; ``class_diagram`` writes the class diagram derived from each
+    knowledge graph instead of the graph.
+    """
+    inputs = [inputs] if isinstance(inputs, str) else list(inputs)
+    data: dict[str, Any] = {"input": inputs[0], "inputs": inputs, "output": output_path, "dry_run": dry_run}
+    source, target = Path(inputs[0]), Path(output_path)
+    written_format, write = _WRITERS.get(target.suffix.lower(), (None, None))
+    if write is None:
+        return failure(
+            "convert", f"convert writes a B-UML .py file, an editor .json project or, from a knowledge graph, "
+                       f"RDF ({', '.join(_RDF_SERIALIZATIONS)}); got {target.name}", data=data,
+        )
     problem = _output_file_problem(target)
     if problem:
         return failure("convert", problem, data=data)
 
     try:
-        loaded = load_models(input_path)
+        fmt = _source_format(inputs, source_format)
+        # Refused before the file is loaded (a .py model is executed): there is nothing to convert.
+        if fmt is None and not class_diagram and source.suffix.lower() == written_format:
+            return failure("convert", _SAME_FORMAT.format(held=source.name, target=target.name), data=data)
+        if fmt is None:
+            loaded, warnings = load_models(inputs[0]), []
+        else:
+            loaded, warnings = import_models(fmt, inputs)
         source = loaded.path
-        if loaded.suffix != expected_source:
+        if class_diagram:
+            loaded, derived = _derive_class_diagrams(loaded)
+            warnings.extend(derived)
+        elif fmt is None and loaded.suffix == written_format:  # standard input: known once it is loaded
             held = "a B-UML script" if loaded.suffix == ".py" else "editor JSON"
-            return failure("convert", wrong_direction.format(held=f"{held} on standard input"), data=data)
+            return failure("convert", _SAME_FORMAT.format(held=f"{held} on standard input", target=target.name),
+                           data=data)
         if loaded.errors:
             return Result(command="convert", exit_code=EXIT_FAILED, errors=loaded.errors, data=data)
         if dry_run:
-            status, warnings = _convert_dry_run(loaded, target, write)
+            status, written_warnings = _convert_dry_run(loaded, target, write)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             with stdout_to_stderr():
-                warnings = write(loaded, target)
+                written_warnings = write(loaded, target)
+        warnings.extend(written_warnings)
+    except _Stopped as stopped:
+        return dataclasses.replace(stopped.result, data=data)
     except ModelLoadError as exc:
         return failure("convert", str(exc), data=data, cause=exc)
     except Exception as exc:
         return failure("convert", f"cannot convert {source}: {type(exc).__name__}: {exc}", EXIT_FAILED, data, exc)
 
+    data["models"] = [{"name": model.name, "kind": model.kind, "type": type(model.model).__name__}
+                      for model in loaded.models]
     counts = plural(len(loaded.models), "model")
     if dry_run:
         data["would_write"] = {target.as_posix(): status}
@@ -1059,3 +1288,149 @@ def _convert_dry_run(loaded: LoadedModels, target: Path, write: Callable[[Loaded
         return regeneration.NEW, warnings
     unchanged = target.is_file() and target.read_bytes() == content
     return (regeneration.UNCHANGED if unchanged else regeneration.CHANGED), warnings
+
+
+# ── build ───────────────────────────────────────────────────────────────────
+
+
+def option_assignments(options: Mapping[str, Any] | Sequence[str] | None) -> list[str]:
+    """Typed options ({name: value}, as a configuration file or a tool call gives them) as the
+    ``name=value`` arguments ``parse_options`` reads; a list of such arguments is returned as it is."""
+    if options is None:
+        return []
+    if not isinstance(options, Mapping):
+        return list(options)
+
+    def text(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, list):
+            return ",".join(text(item) for item in value)
+        return str(value)
+
+    return [f"{name}={text(value)}" for name, value in options.items()]
+
+
+def _build_output(output: OutputConfig, dry_run: bool) -> Result:
+    """Generate one output of the configuration: into an empty directory, or over it when the
+    output says ``overwrite``; otherwise bring the directory up to the model, keeping the edits made in it."""
+    assignments = option_assignments(output.options)
+    folder = Path(output.output_dir)
+    empty = not os.path.lexists(folder) or (folder.is_dir() and not any(folder.iterdir()))
+    try:
+        regenerable = get_generator(output.generator).supports_regenerate
+    except KeyError:  # generate reports it, naming the generators there are
+        regenerable = False
+    if empty or output.overwrite or not regenerable:
+        result = generate(output.generator, output.model, output.output_dir, assignments, output.use,
+                          force=output.overwrite, dry_run=dry_run)
+        if result.exit_code == EXIT_USAGE and not empty and not output.overwrite:
+            result.errors.append(f"to overwrite it on every build, set 'overwrite = true' in [output.{output.name}]")
+        return result
+    return regenerate(output.generator, output.model, output.output_dir, assignments, output.use, dry_run=dry_run)
+
+
+def build(names: Sequence[str] = (), config_path: str = CONFIG_FILENAME, dry_run: bool = False) -> Result:
+    """Generate the outputs the configuration file lists, or those of ``names``.
+
+    Each is generated as ``generate`` does the first time and as ``regenerate`` does afterwards.
+    The exit status is the worst output's; an output that fails does not stop the others.
+    """
+    data: dict[str, Any] = {"config": config_path, "dry_run": dry_run, "outputs": []}
+    try:
+        outputs = load_config(config_path)
+    except ConfigError as exc:
+        return failure("build", str(exc), data=data, cause=exc)
+    known = [output.name for output in outputs]
+    unknown = [name for name in names if name not in known]
+    if unknown:
+        return failure("build", f"{config_path} has no output named {', '.join(unknown)} (it has: {', '.join(known)})",
+                       data=data)
+    selected = [output for output in outputs if not names or output.name in names]
+
+    result = Result(command="build", data=data)
+    lines: list[str] = []
+    traceback = ""
+    for output in selected:
+        built = _build_output(output, dry_run)
+        data["outputs"].append({"name": output.name, **built.as_json()})
+        result.exit_code = max(result.exit_code, built.exit_code)
+        result.errors.extend(f"{output.name}: {error}" for error in built.errors)
+        result.warnings.extend(f"{output.name}: {warning}" for warning in built.warnings)
+        result.notes.extend(f"{output.name}: {note}" for note in built.notes)
+        result.files.extend(built.files)
+        traceback += built.traceback
+        status = "ok" if built.exit_code == EXIT_OK else "FAILED"
+        lines.append(f"[{output.name}] {output.generator}: {output.model} -> {output.output_dir}: {status}")
+        lines.extend(f"  {line}" for line in built.text.splitlines())
+    failed = sum(entry["exit_code"] != EXIT_OK for entry in data["outputs"])
+    lines.append(f"{'FAILED' if failed else 'OK'}: {plural(len(selected), 'output')}, {failed} failed")
+    result.text = "\n".join(lines)
+    result.traceback = traceback
+    return result
+
+
+# ── schema ──────────────────────────────────────────────────────────────────
+
+# Topic -> what it describes, besides the model kinds.
+_SCHEMA_TOPICS = {
+    "project": "an editor project file (.json), as a JSON Schema, and the Project class of a .py file",
+    "result": "the object every command prints with --json, as a JSON Schema",
+    "config": f"{CONFIG_FILENAME}, the file 'besser build' reads",
+}
+
+
+def schema_topics() -> list[str]:
+    """What ``besser schema`` takes: the model kinds, then the other formats."""
+    return [*STARTERS, *(topic for topic in _SCHEMA_TOPICS if topic not in STARTERS)]
+
+
+def _schema_overview() -> Result:
+    topics = [{"topic": kind, "summary": f"the B-UML classes of {STARTERS[kind].summary.partition(':')[0]} "
+                                         f"({root.__name__})"} for kind, root in loading.MODEL_KINDS]
+    topics.extend({"topic": topic, "summary": summary} for topic, summary in _SCHEMA_TOPICS.items())
+    width = max(len(entry["topic"]) for entry in topics)
+    lines = [
+        "A model file is a B-UML Python script (.py), which is what to write and edit, or a Web",
+        "Modeling Editor project (.json), which is what the editor opens. 'besser convert' turns",
+        "one into the other. 'besser new FILE --kind KIND' writes a working example of a kind.",
+        "",
+        "Topics (besser schema TOPIC):",
+        *(f"  {entry['topic'].ljust(width)}  {entry['summary']}" for entry in topics),
+    ]
+    return Result(command="schema", data={"topic": "", "topics": topics}, text="\n".join(lines),
+                  text_is_result=True)
+
+
+def schema(topic: str | None = None) -> Result:
+    """Describe a format the command reads or writes: a model kind, a project, the JSON output, the configuration."""
+    if not topic:
+        return _schema_overview()
+    data: dict[str, Any] = {"topic": topic}
+    if topic == "result":
+        data["schema"] = schema_module.result_schema()
+        text = json.dumps(data["schema"], indent=2)
+    elif topic == "config":
+        data["example"] = CONFIG_EXAMPLE
+        text = CONFIG_EXAMPLE.rstrip("\n")
+    elif topic == "project":
+        try:
+            data["schema"] = schema_module.project_schema()
+        except ModuleNotFoundError as exc:
+            if (exc.name or "").split(".")[0] in ("", "besser"):
+                raise
+            return failure("schema", missing_backend_dependency_message(exc), data=data, cause=exc)
+        data["description"] = {
+            "kind": "project", "root_class": "Project",
+            "doc": "In a .py file, a Project names the models the file holds; without one, every model bound "
+                   "to a top-level name counts.",
+            **schema_module.describe_package(schema_module.PROJECT_PACKAGE),
+        }
+        text = "\n".join([*schema_module.kind_text(data["description"]), "",
+                          "An editor project file (.json), as a JSON Schema:", json.dumps(data["schema"], indent=2)])
+    elif topic in schema_module.KIND_PACKAGES:
+        data["description"] = schema_module.describe_kind(topic)
+        text = "\n".join(schema_module.kind_text(data["description"]))
+    else:
+        return failure("schema", f"unknown topic '{topic}'; topics: {', '.join(schema_topics())}", data=data)
+    return Result(command="schema", data=data, text=text, text_is_result=True)

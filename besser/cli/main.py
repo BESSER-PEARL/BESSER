@@ -14,6 +14,9 @@ from typing import List, Optional
 
 from besser.cli import commands
 from besser.cli.completion import COMPLETION_SHELLS, completion_script
+from besser.cli.config import CONFIG_FILENAME
+from besser.cli.importing import IMPORT_FORMATS
+from besser.cli.starters import DEFAULT_KIND, STARTERS
 from besser.cli.output import (
     EXIT_FAILED,
     EXIT_OK,
@@ -147,10 +150,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     new = add_command(
         "new", "write a starter model file",
-        "Write a small, commented B-UML model (a library, its books and their authors) to start from.",
+        "Write a small, commented model to start from: a class diagram (a library, its books\n"
+        "and their authors) unless --kind names another kind of model. A .py file is a B-UML\n"
+        "script, the format to write and edit; a .json file is the same model as an editor project.\n\n"
+        "kinds:\n" + "".join(f"  {kind:<15} {starter.summary}\n" for kind, starter in STARTERS.items()),
     )
-    new.add_argument("path", help="the .py file to write")
+    new.add_argument("path", nargs="?", help="the .py or .json file to write")
+    new.add_argument("--kind", choices=list(STARTERS), default=DEFAULT_KIND,
+                     help=f"the kind of model to start from (default: {DEFAULT_KIND})")
+    new.add_argument("--list", action="store_true", dest="list_kinds", help="list the kinds and write nothing")
     new.add_argument("--force", action="store_true", help="overwrite the file if it exists")
+
+    schema = add_command(
+        "schema", "describe the model formats, the JSON output and besser.toml",
+        "Print what to write a model with: the B-UML classes of a model kind and their constructor\n"
+        "arguments, read from the metamodel; the JSON Schema of an editor project; the JSON Schema\n"
+        "of the object every command prints with --json; the besser.toml file 'besser build' reads.\n"
+        "Without a topic, list the topics.",
+    )
+    schema.add_argument("topic", nargs="?", choices=commands.schema_topics(),
+                        help="a model kind, project, result or config")
 
     validate = add_command(
         "validate", "check models with their validate() rules",
@@ -235,14 +254,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_dry_run(regenerate)
 
-    convert = add_command(
-        "convert", "convert between B-UML .py and editor JSON",
-        "Convert a B-UML .py file to an editor project (.json), or an editor export (.json)\n"
-        "to a B-UML .py file. The direction follows the two file extensions.\n\n" + _EXECUTES_PYTHON,
+    build = add_command(
+        "build", "generate every output listed in besser.toml",
+        "Generate the outputs a configuration file lists, so each generator's model, directory and\n"
+        "options are written once ('besser schema config' prints an example). An output is generated\n"
+        "as 'besser generate' does the first time, and brought up to the model as 'besser regenerate'\n"
+        "does afterwards, keeping the edits made in it. A generator that does not support regenerate\n"
+        "needs 'overwrite = true' to write over its output.\n\n"
+        "Exit status, that of the worst output: an output that fails does not stop the others.\n\n"
+        + _EXECUTES_PYTHON,
     )
-    convert.add_argument("input", help="the file to convert (.py or .json); - reads it from standard input")
+    build.add_argument("output_name", nargs="*", metavar="output",
+                       help="the outputs to build, by the NAME of their [output.NAME] table (default: all)")
+    build.add_argument("-c", "--config", default=CONFIG_FILENAME, metavar="FILE",
+                       help=f"the configuration file (default: {CONFIG_FILENAME} in the current directory)")
+    add_dry_run(build)
+
+    convert = add_command(
+        "convert", "convert a model file, or import another notation",
+        "Convert a B-UML .py file to an editor project (.json), or an editor export (.json)\n"
+        "to a B-UML .py file, or import a file of another notation as a model. What is read\n"
+        "follows the input's extension (or --from), what is written the output's.\n\n"
+        "imports (read as data: nothing in them is executed):\n"
+        + "".join(
+            f"  {fmt.name:<9} {', '.join(fmt.suffixes) or '(--from ' + fmt.name + ')'}\n"
+            f"            {fmt.summary}\n" for fmt in IMPORT_FORMATS
+        )
+        + "\nA knowledge graph is also written as RDF: -o graph.ttl (Turtle), .owl or .rdf (RDF/XML).\n\n"
+        + _EXECUTES_PYTHON,
+    )
+    convert.add_argument(
+        "input", nargs="+",
+        help="the file to convert (.py or .json; - reads either from standard input) or to import; "
+             "several files for --from csv",
+    )
     convert.add_argument("-o", "--output", required=True, metavar="FILE",
-                         help="the file to write (.json or .py); overwritten if it exists")
+                         help="the file to write (.py, .json, or .ttl/.owl/.rdf for a knowledge graph); "
+                              "overwritten if it exists")
+    convert.add_argument("--from", dest="source_format", choices=[fmt.name for fmt in IMPORT_FORMATS],
+                         help="the notation of the input, when its extension does not say")
+    convert.add_argument("--class-diagram", action="store_true",
+                         help="write the class diagram derived from each knowledge graph, instead of the graph")
     add_dry_run(convert)
 
     completion = add_command(
@@ -293,7 +345,11 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
         version = get_besser_version()
         return Result(command="version", data={"version": version}, text=f"{PROG} {version}", text_is_result=True)
     if args.command == "new":
-        return commands.new(args.path, force=args.force)
+        return commands.new(args.path, kind=args.kind, force=args.force, list_kinds=args.list_kinds)
+    if args.command == "schema":
+        return commands.schema(args.topic)
+    if args.command == "build":
+        return commands.build(args.output_name, config_path=args.config, dry_run=args.dry_run)
     if args.command == "validate":
         return commands.validate(args.model, strict=args.strict, exec_py=args.exec_py, ocl=args.ocl)
     if args.command == "info":
@@ -313,7 +369,8 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
         return commands.regenerate(args.generator, args.model, args.output, args.option, args.use, args.adopt,
                                    dry_run=args.dry_run)
     if args.command == "convert":
-        return commands.convert(args.input, args.output, dry_run=args.dry_run)
+        return commands.convert(args.input, args.output, dry_run=args.dry_run, source_format=args.source_format,
+                                class_diagram=args.class_diagram)
     if args.command == "completion":
         return completion_script(args.shell, parser)
     if args.command == "mcp":

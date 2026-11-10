@@ -267,3 +267,55 @@ def test_the_main_block_of_a_model_on_standard_input_does_not_run(besser):
     source = LIBRARY_MODEL + 'if __name__ == "__main__":\n    raise SystemExit("ran")\n'
 
     assert besser("validate", "-", stdin=source).returncode == 0
+
+
+def test_diagnostics_give_the_line_of_the_element_a_message_names(besser, write):
+    write("shop.py", """\
+        from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
+
+        book = Class(name="Book", attributes={
+            Property(name="title", type="Text"),
+        })
+        shelf = Class(name="Shelf")
+        shop = DomainModel(name="Shop", types={book, shelf})
+        """)
+
+    run = besser("validate", "shop.py", "--json")
+    text = besser("validate", "shop.py").stdout
+    by_severity = {entry["severity"]: entry for entry in run.json["diagnostics"]}
+
+    assert run.returncode == 1
+    assert by_severity["error"] == {
+        "severity": "error", "file": "shop.py", "model": "shop", "line": 4,
+        "message": run.json["models"][0]["errors"][0],
+    }
+    assert by_severity["warning"]["line"] == 6 and "'Shelf'" in by_severity["warning"]["message"]
+    assert "primitive type. (shop.py, line 4)\n" in text
+
+
+def test_diagnostics_give_the_line_a_file_fails_to_load_at(besser, write):
+    write("broken.py", "from besser.BUML.metamodel.structural import Class\n\nClass(name='two words')\n")
+
+    run = besser("validate", "broken.py", "--json")
+
+    assert run.returncode == 2
+    assert run.json["diagnostics"] == [
+        {"severity": "error", "file": "broken.py", "line": 3, "message": run.json["errors"][0]},
+    ]
+
+
+def test_a_json_model_has_diagnostics_without_lines(besser, write):
+    from tests.cli.conftest import CLASS_DIAGRAM
+
+    run = besser("validate", write("diagram.json", CLASS_DIAGRAM), "--strict", "--json")
+
+    assert all("line" not in entry for entry in run.json["diagnostics"])
+    assert len(run.json["diagnostics"]) == len(run.json["warnings"]) + len(run.json["errors"])
+
+
+def test_a_model_on_standard_input_may_pass_functions(besser, tmp_path):
+    besser("new", "machine.py", "--kind", "state_machine")
+
+    run = besser("validate", "-", stdin=(tmp_path / "machine.py").read_text())
+
+    assert run.returncode == 0, run.stderr

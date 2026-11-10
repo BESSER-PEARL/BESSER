@@ -1,7 +1,3 @@
-"""The model file ``besser new`` writes."""
-
-# ``MODEL_FILE`` stands for the name of the file it is written to.
-STARTER_MODEL = '''\
 """A starter B-UML model: a library, its books and their authors.
 
     besser validate MODEL_FILE                    check the model
@@ -54,4 +50,3 @@ library_model = DomainModel(
     types={library, book, author},
     associations={library_books, book_authors},
 )
-'''

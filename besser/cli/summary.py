@@ -9,11 +9,6 @@ from besser.cli.loading import LoadedModel
 from besser.utilities import sort_by_timestamp
 
 
-def _count(*attributes: str) -> Callable[[Any], dict[str, int]]:
-    """A counter of the model's collections of those names."""
-    return lambda model: {attribute: len(getattr(model, attribute)) for attribute in attributes}
-
-
 def _gui_counts(model: Any) -> dict[str, int]:
     return {"modules": len(model.modules), "screens": sum(len(module.screens) for module in model.modules)}
 
@@ -28,21 +23,48 @@ def _domain_counts(model: DomainModel) -> dict[str, int]:
     }
 
 
-# Model kind -> what is counted in a model of that kind (a feature model is a tree: nothing to count).
-_COUNTS: dict[str, Callable[[Any], dict[str, int]]] = {
-    "domain": _domain_counts,
-    "object": _count("objects", "links"),
-    "gui": _gui_counts,
-    "agent": _count("states", "intents"),
-    "state_machine": _count("states"),
-    "quantum": _count("qregs", "cregs", "operations"),
-    "nn": _count("layers", "sub_nns", "tensor_ops"),
-    "bpmn": _count("processes"),
-    "deployment": _count("clusters"),
-    "uml_deployment": _count("nodes", "artifacts"),
-    "component": _count("components", "interfaces"),
-    "kg": _count("nodes", "edges"),
+# Model kind -> the collections of a model of that kind that are counted, and listed by name
+# (a feature model is a tree: nothing to count).
+_COLLECTIONS: dict[str, tuple[str, ...]] = {
+    "object": ("objects", "links"),
+    "agent": ("states", "intents"),
+    "state_machine": ("states",),
+    "quantum": ("qregs", "cregs", "operations"),
+    "nn": ("layers", "sub_nns", "tensor_ops"),
+    "bpmn": ("processes",),
+    "deployment": ("clusters",),
+    "uml_deployment": ("nodes", "artifacts"),
+    "component": ("components", "interfaces"),
+    "kg": ("nodes", "edges"),
 }
+# Model kind -> what is counted when it is not the collections above.
+_COUNTS: dict[str, Callable[[Any], dict[str, int]]] = {"domain": _domain_counts, "gui": _gui_counts}
+# A collection longer than this is counted and not listed: a knowledge graph has thousands of nodes.
+_MAX_ELEMENTS_LISTED = 50
+
+
+def _counts(kind: str, model: Any) -> dict[str, int]:
+    if kind in _COUNTS:
+        return _COUNTS[kind](model)
+    return {attribute: len(getattr(model, attribute)) for attribute in _COLLECTIONS.get(kind, ())}
+
+
+def _elements(kind: str, model: Any) -> dict[str, list[str]]:
+    """The names of what the model holds, per collection whose elements all have one."""
+    if kind == "gui":
+        collections = {"modules": list(model.modules),
+                       "screens": [screen for module in model.modules for screen in module.screens]}
+    else:
+        collections = {attribute: list(getattr(model, attribute)) for attribute in _COLLECTIONS.get(kind, ())}
+    elements = {}
+    for attribute, items in collections.items():
+        names = [getattr(item, "name", None) for item in items]
+        if names and len(names) <= _MAX_ELEMENTS_LISTED and all(isinstance(name, str) and name for name in names):
+            # A set has no order of its own: the names are sorted so that two runs print the same.
+            elements[attribute] = names if isinstance(getattr(model, attribute, None), list) else sorted(names)
+    return elements
+
+
 # The singular of each counted name that is not the name without its "s".
 _SINGULAR = {"classes": "class", "processes": "process"}
 
@@ -103,10 +125,12 @@ def describe_model(loaded: LoadedModel, current: bool = False) -> dict[str, Any]
         "type": type(loaded.model).__name__,
         "model_name": getattr(loaded.model, "name", None),
         "current": current,
-        "counts": _COUNTS.get(loaded.kind, _count())(loaded.model),
+        "counts": _counts(loaded.kind, loaded.model),
     }
     if loaded.kind == "domain":
         entry.update(_domain_details(loaded.model))
+    else:
+        entry["elements"] = _elements(loaded.kind, loaded.model)
     return entry
 
 
@@ -123,6 +147,8 @@ def summary_lines(entry: dict[str, Any]) -> list[str]:
     if entry.get("current"):
         title += " (current in the editor)"
     lines = [f"  {title}{': ' + counts if counts else ''}"]
+    for collection, names in entry.get("elements", {}).items():
+        lines.append(f"    {collection.replace('_', ' ')}: {', '.join(names)}")
     for cls in entry.get("classes", []):
         header = f"{'abstract ' if cls['is_abstract'] else ''}class {cls['name']}"
         if cls["parents"]:

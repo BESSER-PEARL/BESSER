@@ -16,6 +16,8 @@ services:
       # (push-to-github) and writes repos imported from GitHub into it, which
       # the worker then seeds modify runs from. It never runs generation.
       - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
+      # Never run docker-compose for callers of a shared server (/deploy-app).
+      - BESSER_ENABLE_DOCKER_DEPLOY=false
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}

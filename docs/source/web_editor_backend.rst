@@ -643,7 +643,10 @@ Validation
 Deployment
 ^^^^^^^^^^
 
-- ``POST /deploy-app`` -- Docker Compose deployment for Django projects
+- ``POST /deploy-app`` -- Docker Compose deployment for Django projects, on the backend's own host.
+  Unless ``BESSER_ENABLE_DOCKER_DEPLOY`` says otherwise, served only to a local browser
+  (loopback connection, no proxy headers), 403 otherwise; a failed or timed-out
+  ``docker-compose`` answers 502 or 504 with the details in the server log.
 - ``POST /feedback`` -- User feedback submission
 
 Standalone Chatbot Deployment
@@ -908,6 +911,16 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
 - ``GITHUB_CLIENT_SECRET`` -- GitHub OAuth app secret
 - ``BESSER_DEPLOY_FROM_REPO`` (optional, default ``false``) -- offers "Go live"
   (``/github/app/go-live``), which deploys the project's own repository
+
+**Docker deployment:**
+
+- ``BESSER_ENABLE_DOCKER_DEPLOY`` (unset) -- controls ``POST /deploy-app``, which runs
+  ``docker-compose`` on the backend's own host and has no authentication. Unset, it
+  answers only requests from the backend's own machine: a loopback connection carrying
+  no ``Forwarded`` / ``X-Forwarded-For`` / ``X-Real-IP`` header, which is what the
+  editor's "Deploy locally" sends when backend and browser run on one machine.
+  ``true`` allows every caller, ``false`` refuses every caller (403).
+  ``docker-compose.prod.yml`` sets ``false``; a shared server should too.
 
 **Optional:**
 

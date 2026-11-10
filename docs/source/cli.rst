@@ -88,9 +88,11 @@ A ``<model>`` is one of:
    A ``.py`` model is Python code. ``validate``, ``info``, ``generate``,
    ``regenerate`` and ``convert`` **execute** it, with your permissions, to load
    the models it defines. Only pass files you trust, as you would with
-   ``python model.py``. The same holds for a script given on standard input.
+   ``python model.py``. The same holds for a script given on standard input:
+   do not pipe a download you have not read into ``besser validate -``.
 
-   Nothing but the file you name is executed. Its
+   Nothing but the files you name is executed (and, with
+   ``validate --exec-py``, the ``.py`` files found in a directory you name). A file's
    ``if __name__ == "__main__":`` block does not run, and its directory is not
    added to the import path, so it imports installed packages only (set
    ``PYTHONPATH`` yourself to import your own modules). Everything else at the

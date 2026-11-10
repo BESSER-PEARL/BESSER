@@ -76,13 +76,18 @@ besser-wme-backend --port 9000      # same, via the console script (--host, --po
 
 ### Command line
 ```bash
-besser validate model.py --json                       # exit 0 ok, 1 errors, 2 usage/load error
-besser generators                                     # ids, the models each reads, its options
-besser generate sqlalchemy model.py -o out --option dbms=postgresql
+besser new model.py                                   # a starter model
+besser validate model.py other.py --json              # exit 0 ok, 1 errors, 2 usage/load error
+besser info model.py                                  # models, classes, the generators that read the file
+besser generators                                     # ids, the models each reads, options, supports_regenerate
+besser generate sqlalchemy model.py -o out --option dbms=postgresql   # refuses a non-empty -o without --force
+besser regenerate sqlalchemy model.py -o out          # merge a model change into edited output (besser[regen])
 besser convert model.py -o project.json               # B-UML .py <-> editor JSON
 ```
-`besser` (`besser/cli/`, also `python -m besser`) takes a B-UML `.py` file, which it **executes**, or an editor
-JSON export, which needs the backend requirements. Documented in `docs/source/cli.rst`.
+`besser` (`besser/cli/`, also `python -m besser`) takes a B-UML `.py` file, which it **executes**, an editor
+JSON export, which needs the backend requirements, or `-` for either on standard input. `--use NAME` picks a
+model when the file holds several of a kind; `--json`, `--quiet` and `--verbose` go on every command.
+Documented in `docs/source/cli.rst`.
 The Spec-Driven Agent's Local (Ollama) provider needs `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`
 (the local `docker-compose.yml` sets it; running the backend alone does not). Gateway providers such as
 PIA, and the key dialog's model lists, come from the model catalog (`BESSER_MODEL_CATALOG`, default in
@@ -109,8 +114,8 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/llm/` | What every LLM call shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional retries, errors that never echo the provider's body), the one retry policy (`retry.py`, also used by the Spec-Driven Agent's clients), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers, the model catalog (`catalog.py`) and per-model token prices (`pricing.py`), both reading `data/`. The agent's provider clients are still in `spec_driven_agent/providers/llm_client.py` (they move with its split). `besser.utilities.llm_utils` re-exports the old names |
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
-| `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools + CLI); `runner.py` has `run_generator(id, models, output_dir, options)`, the one way the editor backend and the CLI build and run a generator (the agent's `tool_executor.py` still constructs them itself) |
-| `besser/cli/` | The `besser` command: `main.py` (argparse, exit status), `commands.py` (validate, generators, generate, convert), `loading.py` (model file -> B-UML models), `output.py` (`Result`, the `--json` shape) |
+| `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools + CLI); `runner.py` has `run_generator(id, models, output_dir, options)`, the one way the editor backend and the CLI build and run a generator, and `regenerate_generator`, which builds it the same way and calls `regenerate()` (`regeneration.py`: three-way merge into edited output, record in `.besser_generated.json`) (the agent's `tool_executor.py` still constructs them itself) |
+| `besser/cli/` | The `besser` command: `main.py` (argparse, exit status), `commands.py` (new, validate, info, generators, generate, regenerate, convert), `loading.py` (model file or standard input -> B-UML models), `summary.py` (what `info` shows of a model), `starter.py` (the model `new` writes), `output.py` (`Result`, the `--json` shape, `--quiet`/`--verbose`) |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app state on `app.state` — spec-driven runs, GitHub sign-in stores, agent-simulator limits, KG/SDMX slots — handed to routes by `dependencies.py`) |
 | `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |

@@ -24,6 +24,12 @@ It needs an explicit ``output_dir``, which also holds the record, and the option
 
 ``generate()`` is unchanged, and you never have to use ``regenerate()``.
 
+From a terminal, :ref:`besser regenerate <cli-regenerate>` does the same for a model file:
+
+.. code-block:: console
+
+    besser regenerate java library.py -o app
+
 How it works
 ------------
 
@@ -87,6 +93,8 @@ your edits from then on, so a long list usually means it was the wrong model.
     JavaGenerator(library_model, output_dir="app").regenerate(adopt=True)
 
     JavaGenerator(new_library_model, output_dir="app").regenerate()
+
+On the command line this is ``besser regenerate java library.py -o app --adopt``.
 
 Limits
 ------

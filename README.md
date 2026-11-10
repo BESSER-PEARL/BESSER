@@ -51,10 +51,15 @@ That's a working REST API with a database, CRUD endpoints and validation, genera
 
 **From the command line:** the same install gives you the `besser` command, for a terminal, a CI job or a coding agent ([docs](https://besser.readthedocs.io/en/latest/cli.html)):
 
+    besser new model.py                             # a starter model to edit
     besser validate model.py --json                 # errors and warnings of a B-UML model
+    besser info model.py                            # its classes and the generators that read it
     besser generators                               # every generator and its options
     besser generate backend model.py -o library_api # run one, print the files it wrote
+    besser regenerate backend model.py -o library_api   # after a model change: keeps your hand edits
     besser convert model.py -o model.json           # B-UML <-> editor project
+
+`regenerate` merges the model's changes into code you have edited and lists the conflicts; it needs `pip install "besser[regen]"`.
 
 A `.py` model is Python code and is executed to load it, so only pass files you trust.
 

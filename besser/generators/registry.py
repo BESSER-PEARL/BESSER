@@ -57,6 +57,23 @@ class GeneratorSpec:
     # ``/generate-output``, which carries one, cannot run it; None = one is enough.
     needs_beyond_one_diagram: str | None = None
     agent_tool: AgentTool | None = None
+    # The models the constructor takes, in argument order, before ``output_dir``:
+    # domain, gui, object, agent, quantum, nn, bpmn, deployment (the cloud
+    # infrastructure Terraform provisions) or uml_deployment (a UML deployment diagram).
+    models: tuple[str, ...] = ("domain",)
+    # JSON Schema ``properties`` of the constructor keyword arguments that are
+    # options but that the agent tool does not offer; see ``options``.
+    extra_options: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def options(self) -> dict[str, Any]:
+        """JSON Schema ``properties`` of every option ``run_generator`` accepts.
+
+        Each is a keyword argument of the generator's constructor: the agent
+        tool's parameters plus ``extra_options``.
+        """
+        offered = self.agent_tool.parameters if self.agent_tool else {}
+        return copy.deepcopy({**offered, **self.extra_options})
 
     def load_class(self) -> type:
         module_name, _, class_name = self.class_path.partition(":")
@@ -146,6 +163,13 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="django",
         class_path="besser.generators.django:DjangoGenerator",
+        extra_options={
+            "containerization": {
+                "type": "boolean",
+                "description": "Configure the project to run in Docker with PostgreSQL",
+                "default": False,
+            },
+        },
         category="web_framework",
         output_type="zip",
         file_extension=".zip",
@@ -169,6 +193,12 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="spring",
         class_path="besser.generators.spring.spring_backend_generator:SpringBackendGenerator",
+        extra_options={
+            "app_name": {"type": "string", "description": "Name of the application and of its main class"},
+            "package_name": {"type": "string", "description": "Root Java package of the generated sources"},
+            "spring_boot_version": {"type": "string", "description": "spring-boot-starter-parent version"},
+            "java_version": {"type": "string", "description": "java.version of the generated POM"},
+        },
         category="web_framework",
         output_type="zip",
         file_extension=".zip",
@@ -204,6 +234,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="web_app",
         class_path="besser.generators.web_app:WebAppGenerator",
+        models=("domain", "gui"),
         category="web_framework",
         output_type="zip",
         file_extension=".zip",
@@ -253,6 +284,14 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="sql",
         class_path="besser.generators.sql:SQLGenerator",
+        extra_options={
+            "sql_dialect": {
+                "type": "string",
+                "enum": _DBMS,
+                "description": "SQL dialect of the CREATE TABLE statements",
+                "default": "sqlite",
+            },
+        },
         category="database",
         output_type="file",
         file_extension=".sql",
@@ -314,6 +353,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="jsonobject",
         class_path="besser.generators.json:JSONObjectGenerator",
+        models=("object",),
         category="object_model",
         output_type="file",
         file_extension=".json",
@@ -334,6 +374,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="agent",
         class_path="besser.generators.agents.baf_generator:BAFGenerator",
+        models=("agent",),
         category="ai_agent",
         output_type="zip",
         file_extension=".zip",
@@ -352,6 +393,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="qiskit",
         class_path="besser.generators.qiskit:QiskitGenerator",
+        models=("quantum",),
         category="quantum",
         output_type="file",
         file_extension=".py",
@@ -421,6 +463,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="react",
         class_path="besser.generators.react:ReactGenerator",
+        models=("domain", "gui"),
         category="frontend",
         output_type="zip",
         file_extension=".zip",
@@ -441,6 +484,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="flutter",
         class_path="besser.generators.flutter:FlutterGenerator",
+        models=("domain", "gui"),
         category="frontend",
         output_type="zip",
         file_extension=".zip",
@@ -451,6 +495,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="terraform",
         class_path="besser.generators.terraform:TerraformGenerator",
+        models=("deployment",),
         category="deployment",
         output_type="zip",
         file_extension=".zip",
@@ -462,6 +507,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="bpmn",
         class_path="besser.generators.bpmn:BPMNGenerator",
+        models=("bpmn",),
         category="business_process",
         output_type="file",
         file_extension=".bpmn",
@@ -482,6 +528,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="docker_compose",
         class_path="besser.generators.docker_compose:DockerComposeGenerator",
+        models=("uml_deployment",),
         category="deployment",
         output_type="zip",
         file_extension=".zip",
@@ -493,6 +540,14 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="pytorch",
         class_path="besser.generators.nn.pytorch.pytorch_code_generator:PytorchGenerator",
+        models=("nn",),
+        extra_options={
+            "channel_last": {
+                "type": "boolean",
+                "description": "Permute the input and output of conv layers to the TensorFlow convention",
+                "default": False,
+            },
+        },
         category="neural_network",
         output_type="file",
         file_extension=".py",
@@ -519,6 +574,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="tensorflow",
         class_path="besser.generators.nn.tf.tf_code_generator:TFGenerator",
+        models=("nn",),
         category="neural_network",
         output_type="file",
         file_extension=".py",
@@ -548,6 +604,29 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="forecaster",
         class_path="besser.generators.nn.forecaster:TimeSeriesForecasterGenerator",
+        models=("nn",),
+        # The fields of ``ForecastConfig``, which checks them, and ``channel_last``.
+        extra_options={
+            "window": {"type": "integer", "description": "Number of past values the network sees"},
+            "horizon": {"type": "integer", "description": "Number of future values it returns"},
+            "season": {"type": "integer", "description": "Period of the series (12 for monthly data)"},
+            "difference": {"type": "integer", "description": "Lag of the difference: 0, 1 or the season"},
+            "log": {"type": "boolean", "description": "Forecast the logarithm of a positive series"},
+            "calendar": {"type": "boolean", "description": "Add the position in the season as inputs"},
+            "standardize": {"type": "boolean", "description": "Centre and scale on the training data"},
+            "seed": {"type": "integer", "description": "Train one network with this seed"},
+            "seeds": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "Train one network per seed and average their forecasts",
+            },
+            "description": {"type": "string", "description": "Text for the generated module's docstring"},
+            "channel_last": {
+                "type": "boolean",
+                "description": "Permute the input and output of conv layers to the TensorFlow convention",
+                "default": False,
+            },
+        },
         category="neural_network",
         output_type="file",
         file_extension=".py",
@@ -564,6 +643,18 @@ AGENT_TOOL_ORDER: tuple[str, ...] = (
     "rest_api", "react", "web_app", "rdf", "qiskit", "supabase", "jsonobject", "agent",
     "bpmn", "pytorch", "tensorflow",
 )
+
+
+def get_generator(generator_id: str) -> GeneratorSpec:
+    """The registry entry of ``generator_id``.
+
+    Raises:
+        KeyError: No generator has that id.
+    """
+    for spec in GENERATORS:
+        if spec.id == generator_id:
+            return spec
+    raise KeyError(generator_id)
 
 
 def agent_tools() -> tuple[AgentTool, ...]:

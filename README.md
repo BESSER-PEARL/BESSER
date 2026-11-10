@@ -49,6 +49,15 @@ BackendGenerator(model, output_dir="library_api").generate()   # FastAPI + SQLAl
 
 That's a working REST API with a database, CRUD endpoints and validation, generated from five lines of model.
 
+**From the command line:** the same install gives you the `besser` command, for a terminal, a CI job or a coding agent ([docs](https://besser.readthedocs.io/en/latest/cli.html)):
+
+    besser validate model.py --json                 # errors and warnings of a B-UML model
+    besser generators                               # every generator and its options
+    besser generate backend model.py -o library_api # run one, print the files it wrote
+    besser convert model.py -o model.json           # B-UML <-> editor project
+
+A `.py` model is Python code and is executed to load it, so only pass files you trust.
+
 **With your AI coding agent** (Claude Code, Cursor, Copilot, Cline, …): install the [BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) and just ask, e.g. *"model a library with books and authors in BESSER and generate a FastAPI backend"*. The agent builds a correct B-UML model and runs the right generator for you.
 
     npx skills add BESSER-PEARL/besser-skills --all

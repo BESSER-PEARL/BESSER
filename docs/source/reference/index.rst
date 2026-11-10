@@ -9,9 +9,13 @@ contract. For a walkthrough, start with :doc:`../start/index` or
    :maxdepth: 1
 
    ../generators
+   ../cli
    ../api
    ../web_editor_backend
    ../utilities
+
+The :doc:`besser command <../cli>` validates models, runs generators and
+converts model files from a terminal, a script or a coding agent.
 
 The :doc:`B-UML model types <../buml_language/model_types>` describe the
 language concepts. The :doc:`Python API <../api>` documents their constructors

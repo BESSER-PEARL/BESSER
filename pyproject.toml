@@ -33,6 +33,7 @@ root_package = "besser"
 name = "BESSER layers: a layer imports only the layers below it"
 type = "layers"
 layers = [
+    "besser.cli",
     "besser.utilities.web_modeling_editor",
     "besser.spec_driven_agent",
     "besser.generators",

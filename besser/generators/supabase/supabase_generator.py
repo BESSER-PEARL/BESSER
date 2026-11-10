@@ -24,6 +24,7 @@ class SupabaseGenerator(GeneratorInterface):
       - Every attribute with ``is_id=True`` becomes ``UUID PRIMARY KEY DEFAULT
         gen_random_uuid()`` -- except on the user-root class, where the id
         instead ``REFERENCES auth.users(id) ON DELETE CASCADE`` (no default).
+        A class with no ``is_id`` attribute gets that ``"id"`` column added.
       - FK columns targeting a class with an ``is_id`` PK are emitted as UUID.
       - The user-root class (default: the one named "User") is materialized as
         ``public.<name>`` mirroring ``auth.users`` via a ``handle_new_user``
@@ -177,6 +178,10 @@ class SupabaseGenerator(GeneratorInterface):
                 0,
                 '"id" UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE',
             )
+        # Every FK and junction column REFERENCES <table>(id), so a class
+        # modelled without is_id still needs that surrogate key.
+        elif not emitted_pk:
+            cols.insert(0, '"id" UUID PRIMARY KEY DEFAULT gen_random_uuid()')
 
         # Denormalized user_id for per-user classes (skip the user-root itself)
         if cls in per_user:

@@ -2,17 +2,19 @@
 
 A model file is a B-UML ``.py`` script or an editor JSON export (a project or
 one diagram). A ``.py`` file is Python code and is **executed**; a JSON file
-is parsed as data and converted with the editor backend's converters.
+is parsed as data and converted with the editor backend's converters. ``-``
+reads either from standard input.
 """
 
 from __future__ import annotations
 
 import json
 import runpy
+import sys
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from besser.BUML.metamodel.bpmn import BPMNModel
 from besser.BUML.metamodel.deployment import DeploymentModel
@@ -33,6 +35,12 @@ from besser.cli.output import stdout_to_stderr
 # ``__name__`` inside a model file while it loads: not "__main__", so the part
 # of a script guarded by ``if __name__ == "__main__":`` does not run.
 MODEL_RUN_NAME = "__besser_model__"
+
+# The model path that reads the model file from standard input, and how messages name it.
+STDIN = "-"
+_STDIN_PATH = Path("<stdin>")
+# What a project is called when its file gives no name.
+_STDIN_PROJECT_NAME = "model"
 
 # Model kind -> root class, most specific first (an Agent is a StateMachine).
 # The kinds a generator reads are those of ``GeneratorSpec.models``.
@@ -78,6 +86,11 @@ class LoadedModel:
     def label(self) -> str:
         return f"{self.name} ({type(self.model).__name__})"
 
+    @property
+    def names(self) -> frozenset[str]:
+        """What ``--use`` can call it: ``name`` and the model's own name."""
+        return frozenset(name for name in (self.name, getattr(self.model, "name", None)) if name)
+
 
 @dataclass
 class LoadedModels:
@@ -85,6 +98,8 @@ class LoadedModels:
 
     path: Path
     models: list[LoadedModel]
+    # ".py" or ".json": what the file holds, whatever it is called (standard input has no name).
+    suffix: str
     # The file's own ``Project``, when it defines one.
     project: Project | None = None
     # Dangling references between the diagrams of an editor project.
@@ -97,7 +112,11 @@ class LoadedModels:
         """The file's ``Project``, or its models wrapped in one named after the file."""
         if self.project is not None:
             return self.project
-        return Project(name=self.path.stem, models=[loaded.model for loaded in self.models])
+        return Project(name=_project_name(self.path), models=[loaded.model for loaded in self.models])
+
+
+def _project_name(path: Path) -> str:
+    return _STDIN_PROJECT_NAME if path == _STDIN_PATH else path.stem
 
 
 def model_kind(value: Any) -> str | None:
@@ -109,33 +128,46 @@ def model_kind(value: Any) -> str | None:
 
 
 def load_models(path: str | Path) -> LoadedModels:
-    """Load the models of the ``.py`` or ``.json`` model file at ``path``.
+    """Load the models of the ``.py`` or ``.json`` model file at ``path``, or of standard input for ``-``.
 
     Raises:
         ModelLoadError: The file is missing, is neither kind, fails to load or holds no model.
     """
-    path = Path(path)
-    if not path.is_file():
-        raise ModelLoadError(f"{path}: no such file")
-    suffix = path.suffix.lower()
-    if suffix == ".py":
-        loaded = _load_python(path)
-    elif suffix == ".json":
-        loaded = _load_json(path)
+    if str(path) == STDIN:
+        path = _STDIN_PATH
+        text = _read_text(path, sys.stdin.buffer.read)
+        # An editor export is one JSON object; no B-UML script starts with a brace.
+        suffix = ".json" if text.lstrip().startswith("{") else ".py"
+        loaded = _load_json(path, text) if suffix == ".json" else _load_python(path, _execute(path, text))
     else:
-        raise ModelLoadError(f"{path}: expected a B-UML .py file or an editor .json export")
+        path = Path(path)
+        if not path.is_file():
+            raise ModelLoadError(f"{path}: no such file")
+        suffix = path.suffix.lower()
+        if suffix == ".py":
+            loaded = _load_python(path, _execute(path))
+        elif suffix == ".json":
+            loaded = _load_json(path, _read_text(path, path.read_bytes))
+        else:
+            raise ModelLoadError(f"{path}: expected a B-UML .py file or an editor .json export")
     if not loaded.models:
         raise ModelLoadError(f"{path}: no B-UML model found")
     return loaded
 
 
-def _load_python(path: Path) -> LoadedModels:
-    """Execute a B-UML script and collect the models it defines.
+def _read_text(path: Path, read: Callable[[], bytes]) -> str:
+    try:
+        return read().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ModelLoadError(f"{path}: cannot be read as UTF-8 text: {exc}") from exc
+
+
+def _load_python(path: Path, namespace: dict[str, Any]) -> LoadedModels:
+    """Collect the models among ``namespace``, the top-level names of an executed B-UML script.
 
     A ``Project`` in the file says which models it holds; without one, every
     model bound to a top-level name counts.
     """
-    namespace = _execute(path)
     names = {id(value): name for name, value in reversed(list(namespace.items()))}
 
     projects = [value for value in namespace.values() if isinstance(value, Project)]
@@ -154,18 +186,24 @@ def _load_python(path: Path) -> LoadedModels:
         seen.add(id(value))
         name = names.get(id(value)) or getattr(value, "name", None) or kind
         models.append(LoadedModel(name=name, kind=kind, model=value))
-    return LoadedModels(path=path, models=models, project=projects[0] if len(projects) == 1 else None)
+    return LoadedModels(
+        path=path, models=models, suffix=".py", project=projects[0] if len(projects) == 1 else None,
+    )
 
 
-def _execute(path: Path) -> dict[str, Any]:
-    """Run the script at ``path`` and return its top-level names.
+def _execute(path: Path, source: str | None = None) -> dict[str, Any]:
+    """Run the script at ``path``, or ``source`` read from standard input, and return its top-level names.
 
     The file's directory is not added to ``sys.path``: the script imports
     installed packages, never a module that happens to sit beside it.
     """
     try:
         with stdout_to_stderr():
-            return runpy.run_path(str(path), run_name=MODEL_RUN_NAME)
+            if source is None:
+                return runpy.run_path(str(path), run_name=MODEL_RUN_NAME)
+            namespace: dict[str, Any] = {"__name__": MODEL_RUN_NAME}
+            exec(compile(source, str(path), "exec"), namespace)  # as run_path does with a file
+            return namespace
     except SystemExit as exc:
         raise ModelLoadError(f"{path}: the file exited (status {exc.code}) while loading") from exc
     except SyntaxError as exc:
@@ -177,11 +215,11 @@ def _execute(path: Path) -> dict[str, Any]:
         raise ModelLoadError(f"{path}: {where}{type(exc).__name__}: {exc}") from exc
 
 
-def _load_json(path: Path) -> LoadedModels:
+def _load_json(path: Path, text: str) -> LoadedModels:
     """Convert an editor export to B-UML with the editor backend's converters."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
         raise ModelLoadError(f"{path}: not a JSON file: {exc}") from exc
     payload = _project_payload(data, path)
 
@@ -216,7 +254,10 @@ def _load_json(path: Path) -> LoadedModels:
         LoadedModel(name=getattr(model, "name", None) or model_kind(model), kind=model_kind(model), model=model)
         for model in project.models
     ]
-    return LoadedModels(path=path, models=models, project=project, errors=list(project._cross_diagram_errors["errors"]))
+    return LoadedModels(
+        path=path, models=models, suffix=".json", project=project,
+        errors=list(project._cross_diagram_errors["errors"]),
+    )
 
 
 def _project_payload(data: Any, path: Path) -> dict[str, Any]:
@@ -236,9 +277,9 @@ def _project_payload(data: Any, path: Path) -> dict[str, Any]:
             "or a diagram (an object with 'model')"
         )
     # What the editor writes and the converters do not read.
-    project.setdefault("id", path.stem)
+    project.setdefault("id", _project_name(path))
     project.setdefault("type", "Project")
-    project.setdefault("name", path.stem)
+    project.setdefault("name", _project_name(path))
     project.setdefault("createdAt", "")
     return project
 

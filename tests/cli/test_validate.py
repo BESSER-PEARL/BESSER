@@ -1,5 +1,7 @@
 """``besser validate``: exit status, report and JSON output."""
 
+import json
+
 from tests.cli.conftest import CLASS_DIAGRAM, INVALID_MODEL, LIBRARY_MODEL, PROJECT_EXPORT, WARNING_MODEL
 
 
@@ -17,8 +19,9 @@ def test_json_output_has_the_stable_keys(besser, model):
     assert {"ok", "errors", "warnings", "files"} <= set(result)
     assert result["ok"] is True and result["command"] == "validate"
     assert result["errors"] == [] and result["warnings"] == [] and result["files"] == []
+    assert result["model_files"] == [model]
     assert result["models"] == [{
-        "name": "library_model", "kind": "domain", "type": "DomainModel",
+        "file": model, "name": "library_model", "kind": "domain", "type": "DomainModel",
         "validated": True, "errors": [], "warnings": [],
     }]
 
@@ -177,3 +180,84 @@ def test_an_editor_diagram_the_converter_refuses_is_a_load_error(besser, write):
 
     assert run.returncode == 2
     assert run.json["errors"][0].startswith("bad.json: cannot convert to B-UML: ")
+
+
+def test_several_files_are_validated_in_one_run(besser, model, write):
+    run = besser("validate", model, write("shelf.py", WARNING_MODEL))
+
+    assert run.returncode == 0
+    assert "library.py: 1 model\n  library_model (DomainModel): ok\n" in run.stdout
+    assert "shelf.py: 1 model\n  library_model (DomainModel): 0 errors, 1 warning\n" in run.stdout
+    assert run.stdout.rstrip().endswith("OK: 0 errors, 1 warning")
+
+
+def test_several_files_in_json_say_which_file_each_model_and_message_is_from(besser, model, write):
+    run = besser("validate", model, write("broken.py", INVALID_MODEL), "--json")
+
+    assert run.returncode == 1
+    assert run.json["model_files"] == ["library.py", "broken.py"]
+    assert [(report["file"], report["name"]) for report in run.json["models"]] == [
+        ("library.py", "library_model"), ("broken.py", "broken_model"),
+    ]
+    [error] = run.json["errors"]
+    assert error.startswith("broken.py: broken_model: Attribute 'title' of class 'Book' has type 'Text'")
+
+
+def test_one_file_with_errors_fails_the_run(besser, model, write):
+    run = besser("validate", write("broken.py", INVALID_MODEL), model)
+
+    assert run.returncode == 1
+    assert "library_model (DomainModel): ok" in run.stdout
+    assert run.stdout.rstrip().endswith("FAILED: 1 error, 0 warnings")
+
+
+def test_a_file_that_does_not_load_exits_2_and_the_others_are_still_validated(besser, model, write):
+    run = besser("validate", "missing.py", model, write("broken.py", INVALID_MODEL))
+
+    assert run.returncode == 2
+    assert run.stderr == "error: missing.py: no such file\n"
+    assert "library_model (DomainModel): ok" in run.stdout
+    assert "broken_model (DomainModel): 1 error, 0 warnings" in run.stdout
+    assert run.stdout.rstrip().endswith("FAILED: 2 errors, 0 warnings")
+
+    result = besser("validate", "missing.py", model, "--json").json
+    assert result["ok"] is False and result["errors"] == ["missing.py: no such file"]
+    assert [report["file"] for report in result["models"]] == ["library.py"]
+
+
+def test_a_python_model_is_read_from_standard_input(besser):
+    run = besser("validate", "-", "--json", stdin=LIBRARY_MODEL)
+
+    assert run.returncode == 0
+    assert run.json["models"] == [{
+        "file": "-", "name": "library_model", "kind": "domain", "type": "DomainModel",
+        "validated": True, "errors": [], "warnings": [],
+    }]
+    assert "<stdin>: 1 model" in besser("validate", "-", stdin=LIBRARY_MODEL).stdout
+
+
+def test_an_editor_export_is_read_from_standard_input(besser):
+    run = besser("validate", "-", stdin=json.dumps(PROJECT_EXPORT))
+
+    assert run.returncode == 0
+    assert "(DomainModel): ok" in run.stdout
+
+
+def test_a_model_on_standard_input_that_raises_names_the_line(besser):
+    run = besser("validate", "-", stdin="x = 1\nraise RuntimeError('no')\n")
+
+    assert run.returncode == 2
+    assert run.stderr == "error: <stdin>: line 2: RuntimeError: no\n"
+
+
+def test_empty_standard_input_is_a_load_error(besser):
+    run = besser("validate", "-")
+
+    assert run.returncode == 2
+    assert run.stderr == "error: <stdin>: no B-UML model found\n"
+
+
+def test_the_main_block_of_a_model_on_standard_input_does_not_run(besser):
+    source = LIBRARY_MODEL + 'if __name__ == "__main__":\n    raise SystemExit("ran")\n'
+
+    assert besser("validate", "-", stdin=source).returncode == 0

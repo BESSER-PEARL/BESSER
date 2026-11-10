@@ -3,7 +3,7 @@
 import json
 
 from besser.cli.loading import load_models
-from tests.cli.conftest import CLASS_DIAGRAM, PROJECT_EXPORT
+from tests.cli.conftest import CLASS_DIAGRAM, LIBRARY_MODEL, PROJECT_EXPORT
 
 
 def _class_names(path) -> list[str]:
@@ -74,3 +74,27 @@ def test_an_input_that_does_not_load_is_a_load_error_and_writes_nothing(besser, 
     assert run.returncode == 2
     assert run.json["ok"] is False and run.json["files"] == []
     assert not (tmp_path / "project.json").exists()
+
+
+def test_a_buml_script_on_standard_input_becomes_an_editor_project(besser, tmp_path):
+    run = besser("convert", "-", "-o", "project.json", stdin=LIBRARY_MODEL)
+
+    assert run.returncode == 0
+    assert run.stdout == "Converted <stdin> (1 model) to project.json\n"
+    assert _class_names(tmp_path / "project.json") == ["Book", "Library"]
+    assert json.loads((tmp_path / "project.json").read_text())["project"]["name"] == "model"
+
+
+def test_an_editor_export_on_standard_input_becomes_a_buml_file(besser, tmp_path):
+    run = besser("convert", "-", "-o", "library.py", stdin=json.dumps(PROJECT_EXPORT))
+
+    assert run.returncode == 0
+    assert _class_names(tmp_path / "library.py") == ["Book"]
+
+
+def test_standard_input_of_the_type_of_the_output_is_a_usage_error(besser, tmp_path):
+    run = besser("convert", "-", "-o", "copy.py", stdin=LIBRARY_MODEL)
+
+    assert run.returncode == 2
+    assert "got a B-UML script on standard input -> copy.py" in run.stderr
+    assert not (tmp_path / "copy.py").exists()

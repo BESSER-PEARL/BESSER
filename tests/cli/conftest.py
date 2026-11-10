@@ -24,6 +24,17 @@ holds = BinaryAssociation(name="holds", ends={
 library_model = DomainModel(name="LibraryModel", types={library, book}, associations={holds})
 '''
 
+# The library model with one more attribute on Book.
+LIBRARY_MODEL_WITH_ISBN = LIBRARY_MODEL.replace(
+    'Property(name="pages", type=IntegerType),',
+    'Property(name="pages", type=IntegerType), Property(name="isbn", type=StringType),',
+)
+
+# Two domain models and no Project: a generator cannot tell which one to read.
+TWO_DOMAIN_MODELS = LIBRARY_MODEL + '''
+draft = DomainModel(name="Draft", types={Class(name="Idea", attributes={Property(name="text", type=StringType)})})
+'''
+
 # validate() reports an error: the attribute's type is not in the model.
 INVALID_MODEL = '''
 from besser.BUML.metamodel.structural import Class, DomainModel, Property
@@ -79,11 +90,14 @@ class Run:
 
 @pytest.fixture
 def besser(tmp_path):
-    """Run ``python -m besser`` in ``tmp_path`` with the interpreter running the tests."""
-    def run(*args) -> Run:
+    """Run ``python -m besser`` in ``tmp_path`` with the interpreter running the tests.
+
+    ``stdin`` is the text the process reads on standard input.
+    """
+    def run(*args, stdin: str = "") -> Run:
         process = subprocess.run(
             [sys.executable, "-m", "besser", *map(str, args)],
-            cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False,
+            cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False, input=stdin,
         )
         return Run(process.returncode, process.stdout, process.stderr)
     return run

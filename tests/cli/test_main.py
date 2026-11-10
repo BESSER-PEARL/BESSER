@@ -13,7 +13,9 @@ from besser.cli import commands
 from besser.cli.main import main
 from besser.cli.output import stdout_to_stderr
 from besser.utilities.provenance import get_besser_version
-from tests.cli.conftest import PROJECT_EXPORT
+from tests.cli.conftest import INVALID_MODEL, LIBRARY_MODEL, PROJECT_EXPORT, WARNING_MODEL
+
+NOISY_MODEL = 'print("loading the model")\n' + WARNING_MODEL
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,11 +49,11 @@ def test_help_says_that_a_python_model_is_executed(besser):
 
     assert run.returncode == 0
     assert "is Python code and is EXECUTED" in " ".join(run.stdout.split())
-    for command in ("validate", "generators", "generate", "convert"):
-        assert command in run.stdout
+    for command in ("new", "validate", "info", "generators", "generate", "regenerate", "convert"):
+        assert f"\n    {command} " in run.stdout
 
 
-@pytest.mark.parametrize("command", ["validate", "generate", "convert"])
+@pytest.mark.parametrize("command", ["validate", "info", "generate", "regenerate", "convert"])
 def test_the_help_of_a_command_that_loads_a_model_says_it_too(besser, command):
     assert "is Python code and is EXECUTED" in " ".join(besser(command, "--help").stdout.split())
 
@@ -121,3 +123,65 @@ def test_output_of_a_model_or_generator_and_of_its_child_processes_goes_to_stand
     captured = capfd.readouterr()
     assert captured.out == "the result\n"
     assert "printed by a generator" in captured.err and "printed by its child process" in captured.err
+
+
+def test_quiet_prints_no_report_no_warning_and_nothing_the_model_prints(besser, write):
+    write("noisy.py", NOISY_MODEL)
+    plain = besser("generate", "python", "noisy.py", "-o", "plain")
+    quiet = besser("generate", "python", "noisy.py", "-o", "quiet", "--quiet")
+
+    assert plain.returncode == 0 and "Generated 1 file" in plain.stdout
+    assert "loading the model" in plain.stderr and "warning: " in plain.stderr
+    assert quiet.returncode == 0
+    assert quiet.stdout == "" and quiet.stderr == ""
+
+
+def test_quiet_still_prints_the_errors(besser, write):
+    run = besser("-q", "validate", write("noisy.py", NOISY_MODEL), "missing.py", write("broken.py", INVALID_MODEL))
+
+    assert run.returncode == 2 and run.stdout == ""
+    errors = run.stderr.splitlines()
+    assert errors[0] == "error: missing.py: no such file"
+    assert errors[1].startswith("error: broken.py: broken_model: Attribute 'title' of class 'Book' has type 'Text'")
+    assert len(errors) == 2
+
+
+def test_quiet_leaves_the_json_object_whole(besser, write):
+    run = besser("validate", write("noisy.py", NOISY_MODEL), "--json", "--quiet")
+
+    assert run.returncode == 0 and run.stderr == ""
+    assert len(run.json["warnings"]) == 1
+
+
+def test_verbose_prints_the_traceback_of_a_model_file_that_raises(besser, write):
+    write("crash.py", "def build():\n    raise RuntimeError('no')\n\nbuild()\n")
+    plain = besser("validate", "crash.py")
+    verbose = besser("validate", "crash.py", "--verbose")
+
+    assert plain.stderr == "error: crash.py: line 2: RuntimeError: no\n"
+    assert verbose.returncode == 2
+    assert "Traceback (most recent call last):" in verbose.stderr and "in build" in verbose.stderr
+    assert verbose.stderr.endswith("error: crash.py: line 2: RuntimeError: no\n")
+
+
+def test_verbose_prints_the_traceback_of_a_generator_that_raises(monkeypatch, tmp_path, capsys):
+    def broken_generator(*args, **kwargs):
+        raise RuntimeError("template missing")
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "library.py").write_text(LIBRARY_MODEL, encoding="utf-8")
+    monkeypatch.setattr(commands, "run_generator", broken_generator)
+
+    status = main(["-v", "generate", "python", "library.py", "-o", "out", "--json"])
+    captured = capsys.readouterr()
+
+    assert status == 1
+    assert json.loads(captured.out)["errors"] == ["the 'python' generator failed: RuntimeError: template missing"]
+    assert "Traceback (most recent call last):" in captured.err and "in broken_generator" in captured.err
+
+
+def test_quiet_and_verbose_together_is_a_usage_error(besser, model):
+    run = besser("validate", model, "--quiet", "--verbose")
+
+    assert run.returncode == 2
+    assert run.stderr == "error: --quiet and --verbose cannot be combined (see 'besser --help')\n"

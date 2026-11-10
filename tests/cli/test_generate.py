@@ -1,6 +1,15 @@
 """``besser generate``: one generator, run on a model file into a directory."""
 
-from tests.cli.conftest import CLASS_DIAGRAM, INVALID_MODEL, LIBRARY_MODEL, PROJECT_EXPORT, WARNING_MODEL
+import copy
+
+from tests.cli.conftest import (
+    CLASS_DIAGRAM,
+    INVALID_MODEL,
+    LIBRARY_MODEL,
+    PROJECT_EXPORT,
+    TWO_DOMAIN_MODELS,
+    WARNING_MODEL,
+)
 
 
 def test_it_writes_the_files_and_prints_them(besser, model, tmp_path):
@@ -125,11 +134,98 @@ def test_a_model_kind_the_file_does_not_hold_is_a_usage_error(besser, model):
 
 
 def test_several_models_of_the_kind_it_reads_is_a_usage_error(besser, write):
-    source = LIBRARY_MODEL + 'draft = DomainModel(name="Draft", types={Class(name="Idea")})\n'
-    run = besser("generate", "python", write("two.py", source), "-o", "out")
+    run = besser("generate", "python", write("two.py", TWO_DOMAIN_MODELS), "-o", "out")
 
     assert run.returncode == 2
-    assert "two.py holds 2 domain models (library_model, draft)" in run.stderr
+    assert ("two.py holds 2 domain models (library_model, draft) and the 'python' generator reads one: "
+            "name it with --use NAME") in run.stderr
+
+
+def test_use_picks_a_model_by_the_name_it_is_bound_to(besser, write, tmp_path):
+    run = besser("generate", "python", write("two.py", TWO_DOMAIN_MODELS), "-o", "out", "--use", "draft")
+    classes = (tmp_path / "out" / "classes.py").read_text()
+
+    assert run.returncode == 0
+    assert "class Idea" in classes and "class Book" not in classes
+
+
+def test_use_picks_a_model_by_its_own_name(besser, write, tmp_path):
+    run = besser("generate", "python", write("two.py", TWO_DOMAIN_MODELS), "-o", "out", "--use", "LibraryModel")
+    classes = (tmp_path / "out" / "classes.py").read_text()
+
+    assert run.returncode == 0
+    assert "class Book" in classes and "class Idea" not in classes
+
+
+def test_use_picks_a_diagram_of_an_editor_project_by_its_title(besser, write, tmp_path):
+    project = copy.deepcopy(PROJECT_EXPORT)
+    notes = copy.deepcopy(CLASS_DIAGRAM)
+    notes["title"] = "Notes"
+    notes["model"]["elements"]["class-1"]["name"] = "Note"
+    project["project"]["diagrams"]["ClassDiagram"].append({"id": "diagram-2", **notes})
+    write("project.json", project)
+
+    refused = besser("generate", "python", "project.json", "-o", "out")
+    run = besser("generate", "python", "project.json", "-o", "out", "--use", "Notes")
+    classes = (tmp_path / "out" / "classes.py").read_text()
+
+    assert refused.returncode == 2 and "project.json holds 2 domain models (Library, Notes)" in refused.stderr
+    assert run.returncode == 0
+    assert "class Note" in classes and "class Book" not in classes
+
+
+def test_use_with_a_name_the_file_does_not_hold_is_a_usage_error(besser, write, tmp_path):
+    run = besser("generate", "python", write("two.py", TWO_DOMAIN_MODELS), "-o", "out", "--use", "sketch")
+
+    assert run.returncode == 2
+    assert "error: two.py holds no model named sketch (it holds: library_model, draft)" in run.stderr
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_model_is_read_from_standard_input(besser, tmp_path):
+    run = besser("generate", "python", "-", "-o", "out", "--json", stdin=LIBRARY_MODEL)
+
+    assert run.returncode == 0
+    assert run.json["files"] == ["out/classes.py"] and run.json["model"] == "-"
+    assert "class Book" in (tmp_path / "out" / "classes.py").read_text()
+
+
+def test_an_output_directory_that_is_not_empty_is_refused(besser, model, write, tmp_path):
+    write("out/classes.py", "# my own work\n")
+    run = besser("generate", "python", model, "-o", "out", "--json")
+
+    assert run.returncode == 2
+    assert run.json["files"] == []
+    assert run.json["errors"] == [
+        "out is not empty and generating overwrites what is there: pass --force to overwrite, "
+        "or keep hand edits with 'besser regenerate' (see 'besser regenerate --help')"
+    ]
+    assert (tmp_path / "out" / "classes.py").read_text() == "# my own work\n"
+
+
+def test_a_second_run_into_the_same_directory_is_refused(besser, model):
+    assert besser("generate", "python", model, "-o", "out").returncode == 0
+
+    run = besser("generate", "python", model, "-o", "out")
+
+    assert run.returncode == 2 and run.stdout == ""
+    assert "error: out is not empty" in run.stderr
+
+
+def test_an_empty_output_directory_is_written_to(besser, model, tmp_path):
+    (tmp_path / "out").mkdir()
+
+    assert besser("generate", "python", model, "-o", "out").returncode == 0
+
+
+def test_force_overwrites_a_directory_that_is_not_empty(besser, model, write, tmp_path):
+    write("out/classes.py", "# my own work\n")
+    write("out/notes.txt", "kept\n")
+    run = besser("generate", "python", model, "-o", "out", "--force", "--json")
+
+    assert run.returncode == 0 and run.json["files"] == ["out/classes.py"]
+    assert "class Book" in (tmp_path / "out" / "classes.py").read_text()
+    assert (tmp_path / "out" / "notes.txt").read_text() == "kept\n"
 
 
 def test_a_model_file_that_does_not_load_is_a_usage_error(besser, write):

@@ -2,7 +2,7 @@
 
 Standard output carries the command's result and nothing else: one JSON
 object with ``--json``, a short report otherwise. Whatever a model file or a
-generator prints while it runs goes to standard error.
+generator prints while it runs goes to standard error, or nowhere with ``--quiet``.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import contextlib
 import json
 import os
 import sys
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
@@ -19,6 +20,16 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 # The command could not run: bad arguments, a model file that does not load.
 EXIT_USAGE = 2
+
+# How much is printed besides the result: set once per run by ``main``.
+QUIET, NORMAL, VERBOSE = -1, 0, 1
+_verbosity = NORMAL
+
+
+def set_verbosity(verbosity: int) -> None:
+    """Set what this run prints: ``QUIET``, ``NORMAL`` or ``VERBOSE``."""
+    global _verbosity
+    _verbosity = verbosity
 
 
 @dataclass
@@ -35,8 +46,10 @@ class Result:
     data: dict[str, Any] = field(default_factory=dict)
     # The report printed on standard output without ``--json``.
     text: str = ""
-    # True when ``text`` already shows the errors and warnings (``validate``).
-    text_has_diagnostics: bool = False
+    # The errors and warnings ``text`` already shows (``validate`` lists them under each model).
+    shown_in_text: frozenset[str] = frozenset()
+    # The traceback behind a model or generator failure, printed with ``--verbose``.
+    traceback: str = ""
 
     def as_json(self) -> dict[str, Any]:
         """The JSON output: ``ok``, ``errors``, ``warnings`` and ``files`` on every command."""
@@ -50,43 +63,67 @@ class Result:
         }
 
 
-def failure(command: str, message: str, exit_code: int = EXIT_USAGE, data: dict[str, Any] | None = None) -> Result:
-    """A result that reports one error."""
-    return Result(command=command, exit_code=exit_code, errors=[message], data=data or {})
+def failure(command: str, message: str, exit_code: int = EXIT_USAGE, data: dict[str, Any] | None = None,
+            cause: BaseException | None = None) -> Result:
+    """A result that reports one error; ``cause`` is the exception behind it, for ``--verbose``."""
+    return Result(command=command, exit_code=exit_code, errors=[message], data=data or {},
+                  traceback=format_traceback(cause) if cause else "")
+
+
+def format_traceback(exc: BaseException) -> str:
+    """The traceback of ``exc`` with the exceptions that caused it."""
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
 def print_result(result: Result, as_json: bool) -> None:
-    """Print ``result``: JSON on standard output, or the report with its diagnostics on standard error."""
+    """Print ``result``: JSON on standard output, or the report with its diagnostics on standard error.
+
+    ``--quiet`` prints the errors only (the JSON object is printed as it is); ``--verbose`` adds
+    the traceback of a failure on standard error.
+    """
+    if _verbosity == VERBOSE and result.traceback:
+        print(result.traceback, file=sys.stderr, end="")
     if as_json:
         print(json.dumps(result.as_json(), indent=2))
         return
+    if _verbosity == QUIET:
+        for error in result.errors:
+            print(f"error: {error}", file=sys.stderr)
+        return
     if result.text:
         print(result.text)
-    if not result.text_has_diagnostics:
-        for warning in result.warnings:
+    for warning in result.warnings:
+        if warning not in result.shown_in_text:
             print(f"warning: {warning}", file=sys.stderr)
-        for error in result.errors:
+    for error in result.errors:
+        if error not in result.shown_in_text:
             print(f"error: {error}", file=sys.stderr)
 
 
 @contextlib.contextmanager
 def stdout_to_stderr() -> Iterator[None]:
-    """Send everything written to standard output to standard error.
+    """Send everything written to standard output to standard error, or nowhere with ``--quiet``.
 
     Model files and generators print progress, and a generator's child process
     (``django-admin``) writes to the inherited descriptor, so both ``sys.stdout``
     and file descriptor 1 are redirected.
     """
     sys.stdout.flush()
-    try:
-        saved_fd = os.dup(1)
-        os.dup2(2, 1)
-    except OSError:  # a standard stream is closed: only sys.stdout can be redirected
-        saved_fd = None
-    try:
-        with contextlib.redirect_stdout(sys.stderr):
-            yield
-    finally:
-        if saved_fd is not None:
-            os.dup2(saved_fd, 1)
-            os.close(saved_fd)
+    with contextlib.ExitStack() as stack:
+        if _verbosity == QUIET:
+            target = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
+            target_fd = target.fileno()
+        else:
+            target, target_fd = sys.stderr, 2
+        try:
+            saved_fd = os.dup(1)
+            os.dup2(target_fd, 1)
+        except OSError:  # a standard stream is closed: only sys.stdout can be redirected
+            saved_fd = None
+        try:
+            with contextlib.redirect_stdout(target):
+                yield
+        finally:
+            if saved_fd is not None:
+                os.dup2(saved_fd, 1)
+                os.close(saved_fd)

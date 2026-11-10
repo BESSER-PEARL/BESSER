@@ -718,17 +718,25 @@ def _resolve_intent_recognition_technology(agent_config: object) -> str:
     return ""
 
 
-def _agent_needs_torch(agent_path: str, ic_tech: str) -> bool:
-    """Whether the generated agent at ``agent_path`` builds a PyTorch component.
+def _agent_needs_torch(base_dir: str, agent_file: str, ic_tech: str) -> bool:
+    """Whether the generated agent at ``agent_file`` (relative to ``base_dir``) builds a PyTorch component.
 
     The BAF generator also emits the classical (PyTorch) intent classifier for an
     agent with no intent classifier set and no LLM, so the config alone is not enough.
+    ``agent_file`` is derived from the user's agent name, so a path that resolves
+    outside ``base_dir`` is never opened.
     """
+    root = os.path.realpath(base_dir)
+    agent_path = os.path.realpath(os.path.join(root, agent_file))
+    if not agent_path.startswith(root + os.sep):
+        logger.warning("Agent file %r is outside the generation directory; installing PyTorch only for classical IC",
+                       agent_file)
+        return ic_tech == "classical"
     try:
-        with open(agent_path, encoding="utf-8") as agent_file:
-            return "torch" in baf_dependency_extras(agent_file.read())
+        with open(agent_path, encoding="utf-8") as agent_source:
+            return "torch" in baf_dependency_extras(agent_source.read())
     except OSError:
-        logger.warning("Generated agent %s not found; installing PyTorch only for classical IC", agent_path)
+        logger.warning("Generated agent %s not found; installing PyTorch only for classical IC", agent_file)
         return ic_tech == "classical"
 
 
@@ -829,7 +837,7 @@ def _add_chatbot_deployment_configs(
     raw_agent_name = getattr(agent_model, "name", "agent")
     agent_script = f"{safe_var_name(raw_agent_name, lowercase=False)}.py"
 
-    if _agent_needs_torch(os.path.join(directory, agent_script), ic_tech):
+    if _agent_needs_torch(directory, agent_script, ic_tech):
         build_cmd = (
             "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.3.2 "
             "--extra-index-url https://download.pytorch.org/whl/cpu "
@@ -1073,7 +1081,7 @@ def _add_deployment_configs(
         cfg = agent_configs.get(agent.name) or {}
         ic_tech = cfg.get("intentRecognitionTechnology") if isinstance(cfg, dict) else None
 
-        if _agent_needs_torch(os.path.join(directory, "agents", slug, agent_script), ic_tech):
+        if _agent_needs_torch(directory, os.path.join("agents", slug, agent_script), ic_tech):
             # Classical IC needs PyTorch CPU + scikit-learn, plus [llms] for unconditional imports in generated code
             # Single pip call with --extra-index-url so PyTorch CPU resolves from the wheel index while the rest comes from PyPI.
             # BAFGenerator does NOT emit a requirements.txt, so everything has to be pinned inline here.

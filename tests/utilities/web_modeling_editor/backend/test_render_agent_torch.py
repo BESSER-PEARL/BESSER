@@ -4,8 +4,11 @@ An agent with no intent classifier set and no LLM gets BAF's classical (PyTorch)
 classifier from the BAF generator, without ``intentRecognitionTechnology`` being
 ``classical`` in its config.
 """
+import builtins
 import json
 import pathlib
+
+import pytest
 
 from besser.BUML.metamodel.state_machine.agent import LLMOpenAI
 from besser.generators.agents.baf_generator import BAFGenerator
@@ -13,6 +16,7 @@ from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import (
     _add_chatbot_deployment_configs,
     _add_deployment_configs,
+    _agent_needs_torch,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.agent_diagram_processor import (
     process_agent_diagram,
@@ -21,6 +25,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 FIXTURE = (pathlib.Path(__file__).parents[3] / "generators" / "fixtures"
            / "library_template_agent_diagram.json")
 TORCH_INSTALL = "pip install torch==2.6.0+cpu"
+TORCH_AGENT = "ic_config = SimpleIntentClassifierConfiguration()\n"
 
 
 def _library_agent(with_llm=False):
@@ -59,3 +64,25 @@ def test_web_app_agent_without_llm_installs_torch(tmp_path):
 
 def test_web_app_agent_with_llm_does_not_install_torch(tmp_path):
     assert TORCH_INSTALL not in _web_app_blueprint(tmp_path, _library_agent(with_llm=True))
+
+
+@pytest.mark.parametrize("agent_file", ["../../etc/passwd", "../outside.py", "/etc/passwd"])
+def test_agent_file_outside_generation_dir_is_not_opened(tmp_path, monkeypatch, agent_file):
+    base_dir = tmp_path / "generated"
+    base_dir.mkdir()
+    # A torch-building agent outside base_dir: reading it would flip the answer for a non-classical IC.
+    (tmp_path / "outside.py").write_text(TORCH_AGENT, encoding="utf-8")
+    opened = []
+    real_open = builtins.open
+    monkeypatch.setattr(builtins, "open", lambda path, *a, **kw: opened.append(path) or real_open(path, *a, **kw))
+
+    assert _agent_needs_torch(str(base_dir), agent_file, "llm-based") is False
+    assert _agent_needs_torch(str(base_dir), agent_file, "classical") is True
+    assert opened == []
+
+
+def test_agent_file_inside_generation_dir_is_read(tmp_path):
+    (tmp_path / "agents" / "a").mkdir(parents=True)
+    (tmp_path / "agents" / "a" / "a.py").write_text(TORCH_AGENT, encoding="utf-8")
+
+    assert _agent_needs_torch(str(tmp_path), "agents/a/a.py", "llm-based") is True

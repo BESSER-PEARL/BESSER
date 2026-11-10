@@ -140,6 +140,15 @@ jobs:
           wheel-env/bin/besser validate model.py --strict
           wheel-env/bin/besser generate python model.py -o out
           test -f out/classes.py
+          wheel-env/bin/besser new starter.py
+          wheel-env/bin/besser validate starter.py model.py --strict
+          wheel-env/bin/besser info starter.py
+          # regenerate needs the regen extra, and says so on the base install
+          if wheel-env/bin/besser regenerate python starter.py -o app 2> regenerate.err; then exit 1; fi
+          grep -F 'pip install "besser[regen]"' regenerate.err
+          wheel-env/bin/pip install "$(ls $GITHUB_WORKSPACE/dist/*.whl)[regen]"
+          wheel-env/bin/besser regenerate python starter.py -o app
+          test -f app/classes.py -a -f app/.besser_generated.json
 
   docs:
     runs-on: ubuntu-latest

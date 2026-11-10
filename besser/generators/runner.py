@@ -3,18 +3,23 @@
 A generator's registry entry says what its constructor takes:
 ``GeneratorSpec.models`` are its model arguments, in order, and
 ``GeneratorSpec.options`` its keyword arguments. ``run_generator`` builds the
-generator from them, runs it and returns the files it wrote. The web editor
-backend (``services/generation/dispatch.py``) and the ``besser`` command line
-both generate through it.
+generator from them, runs it and returns the files it wrote;
+``regenerate_generator`` builds it the same way and merges its output into a
+folder that holds edits. The web editor backend
+(``services/generation/dispatch.py``) and the ``besser`` command line both
+generate through this module.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from besser.generators.generator_interface import GeneratorInterface
 from besser.generators.registry import GENERATORS, GeneratorSpec, get_generator
+
+if TYPE_CHECKING:
+    from besser.generators.regeneration import RegenerationReport
 
 
 class GeneratorInputError(ValueError):
@@ -144,28 +149,25 @@ def _file_states(directory: str) -> dict[str, tuple[int, int]]:
     return states
 
 
-def run_generator(
+def build_generator(
     generator_id: str,
     models: Mapping[str, Any],
     output_dir: str,
     options: Mapping[str, Any] | None = None,
-) -> list[str]:
-    """Run the generator ``generator_id`` and return the files it wrote.
+) -> GeneratorInterface:
+    """The generator ``generator_id``, built on ``models`` to write to ``output_dir``.
 
     Args:
         generator_id: The ``id`` of an entry of ``besser.generators.registry.GENERATORS``.
         models: The B-UML models to generate from, by kind (``GeneratorSpec.models``:
             ``{"domain": domain_model}``, ``{"domain": ..., "gui": ...}``, ...). Kinds the
             generator does not read are ignored.
-        output_dir: The directory to write to; created if missing.
+        output_dir: The directory it writes to.
         options: The generator's options (``GeneratorSpec.options``).
-
-    Returns:
-        The files the run created or rewrote, sorted, relative to ``output_dir`` with ``/``.
 
     Raises:
         GeneratorInputError: Unknown generator, a model the generator reads is missing,
-            or an unknown or invalid option. Nothing was written.
+            or an unknown or invalid option.
     """
     try:
         spec = get_generator(generator_id)
@@ -180,16 +182,54 @@ def run_generator(
             f"missing: {', '.join(missing)}."
         )
 
-    output_dir = os.fspath(output_dir)
     build = _BUILDERS.get(spec.id, _build)
     try:
-        generator = build(spec, [models[kind] for kind in spec.models], output_dir, options or {})
+        return build(spec, [models[kind] for kind in spec.models], os.fspath(output_dir), options or {})
     except GeneratorInputError:
         raise
     except ValueError as exc:
         # A constructor refuses a value the schema cannot express (a Java package name, a forecast window).
         raise GeneratorInputError(str(exc)) from exc
 
+
+def run_generator(
+    generator_id: str,
+    models: Mapping[str, Any],
+    output_dir: str,
+    options: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Run the generator ``generator_id`` and return the files it wrote.
+
+    The arguments are those of :func:`build_generator`; ``output_dir`` is created if missing.
+
+    Returns:
+        The files the run created or rewrote, sorted, relative to ``output_dir`` with ``/``.
+
+    Raises:
+        GeneratorInputError: Unknown generator, a model the generator reads is missing,
+            or an unknown or invalid option. Nothing was written.
+    """
+    generator = build_generator(generator_id, models, output_dir, options)
+    output_dir = os.fspath(output_dir)
     before = _file_states(output_dir)
     generator.generate()
     return sorted(path for path, state in _file_states(output_dir).items() if before.get(path) != state)
+
+
+def regenerate_generator(
+    generator_id: str,
+    models: Mapping[str, Any],
+    output_dir: str,
+    options: Mapping[str, Any] | None = None,
+    adopt: bool = False,
+) -> RegenerationReport:
+    """Bring ``output_dir`` up to ``models`` with the generator ``generator_id``, keeping edits made in it.
+
+    The arguments are those of :func:`build_generator`; ``adopt`` and the report are those of
+    :meth:`GeneratorInterface.regenerate`.
+
+    Raises:
+        GeneratorInputError: As :func:`build_generator`. Nothing was written.
+        RegenerationError: The folder cannot be regenerated safely; no generated file was changed.
+    """
+    return build_generator(generator_id, models, output_dir, options).regenerate(adopt=adopt)

@@ -1,5 +1,6 @@
 """``run_generator``: the calling contract the web editor backend and the ``besser`` CLI share."""
 
+import importlib.util
 import inspect
 
 import pytest
@@ -7,7 +8,14 @@ import pytest
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
 from besser.generators.registry import GENERATORS, get_generator
-from besser.generators.runner import GeneratorInputError, check_options, run_generator
+from besser.generators.regeneration import RECORD_FILENAME, RegenerationError
+from besser.generators.runner import (
+    GeneratorInputError,
+    build_generator,
+    check_options,
+    regenerate_generator,
+    run_generator,
+)
 
 # What a generator declares in ``GeneratorSpec.models``.
 MODEL_KINDS = {"domain", "gui", "object", "agent", "quantum", "nn", "bpmn", "deployment", "uml_deployment"}
@@ -105,6 +113,45 @@ def test_every_invalid_option_is_named_at_once():
 def test_a_value_the_constructor_refuses_is_an_input_error(simple_library_book_model, tmp_path):
     with pytest.raises(GeneratorInputError, match="package"):
         run_generator("spring", {"domain": simple_library_book_model}, tmp_path, {"package_name": "not a package"})
+
+
+def test_build_generator_builds_without_running(simple_library_book_model, tmp_path):
+    generator = build_generator(
+        "sqlalchemy", {"domain": simple_library_book_model}, tmp_path / "out", {"dbms": "postgresql"},
+    )
+
+    assert type(generator).__name__ == "SQLAlchemyGenerator" and generator.dbms == "postgresql"
+    assert generator.output_dir == str(tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("pygit2") is None, reason="regenerate() needs pygit2 (besser[regen])")
+def test_regenerate_generator_merges_into_the_folder_and_keeps_an_edit(simple_library_book_model, tmp_path):
+    models, classes = {"domain": simple_library_book_model}, tmp_path / "out" / "classes.py"
+    first = regenerate_generator("python", models, tmp_path / "out")
+    classes.write_text("# mine\n" + classes.read_text())
+
+    second = regenerate_generator("python", models, tmp_path / "out")
+
+    assert first.written == ["classes.py"] and (tmp_path / "out" / RECORD_FILENAME).is_file()
+    assert second.written == [] and second.conflicted == []
+    assert classes.read_text().startswith("# mine\n")
+
+
+def test_regenerate_generator_refuses_a_generator_that_does_not_take_part(simple_library_book_model, tmp_path):
+    with pytest.raises(RegenerationError, match="SupabaseGenerator cannot regenerate"):
+        regenerate_generator("supabase", {"domain": simple_library_book_model}, tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+def test_regenerate_generator_checks_the_input_as_run_generator_does(simple_library_book_model, tmp_path):
+    with pytest.raises(GeneratorInputError, match="unknown option"):
+        regenerate_generator("python", {"domain": simple_library_book_model}, tmp_path / "out", {"dbms": "x"})
+
+
+@pytest.mark.parametrize("spec", GENERATORS, ids=lambda spec: spec.id)
+def test_supports_regenerate_is_what_the_generator_class_says(spec):
+    assert spec.supports_regenerate is spec.load_class().regenerable
 
 
 def test_flutter_gets_the_main_page_of_the_gui_model(tmp_path):

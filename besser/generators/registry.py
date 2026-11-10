@@ -86,6 +86,15 @@ class GeneratorSpec:
         module_name, _, class_name = self.class_path.partition(":")
         return getattr(importlib.import_module(module_name), class_name)
 
+    @property
+    def supports_regenerate(self) -> bool:
+        """Whether the generator takes part in ``regenerate()`` (its class sets ``regenerable``).
+
+        Imports the generator class. One built with certain options can still refuse
+        (``GeneratorInterface._regeneration_refusal``).
+        """
+        return bool(self.load_class().regenerable)
+
 
 _DOMAIN = frozenset({"domain"})
 _DOMAIN_GUI = frozenset({"domain", "gui"})

@@ -55,6 +55,10 @@ class RegenerationError(Exception):
     """The folder cannot be regenerated safely. Raised before any generated file is written."""
 
 
+class UnrecordedOutputError(RegenerationError):
+    """The folder holds generated files and no record of them: it has to be adopted first."""
+
+
 @dataclass
 class RegenerationReport:
     """What a regeneration did. Paths are relative to the output folder, with ``/``."""
@@ -153,7 +157,7 @@ def _require_no_generated_files(folder: str, output: dict[str, bytes]) -> None:
     """Without a record, edits cannot be told from generated code in a file the generator also produces."""
     existing = sorted(rel for rel in output if os.path.lexists(os.path.join(folder, *rel.split("/"))))
     if existing:
-        raise RegenerationError(
+        raise UnrecordedOutputError(
             f"{folder} holds generated files ({', '.join(existing[:_PATHS_NAMED])}"
             f"{', ...' if len(existing) > _PATHS_NAMED else ''}) but no "
             f"{RECORD_FILENAME}, so edits cannot be told from generated code. Run regenerate(adopt=True) once on a "

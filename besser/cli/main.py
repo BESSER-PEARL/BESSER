@@ -317,7 +317,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
     if args.command == "completion":
         return completion_script(args.shell, parser)
     if args.command == "mcp":
-        # Imported here: it builds the tools from the generator registry, which no other command needs.
+        # Imported here: only this command needs the server (and the MCP SDK it imports).
         from besser.cli import mcp_server
 
         return mcp_server.serve(args.root, exec_py=args.exec_py)

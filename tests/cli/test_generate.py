@@ -212,6 +212,17 @@ def test_an_output_directory_that_is_not_empty_is_refused(besser, model, write, 
     assert (tmp_path / "out" / "classes.py").read_text() == "# my own work\n"
 
 
+def test_a_generator_without_regenerate_is_not_pointed_to_regenerate(besser, model, write):
+    write("out/notes.txt", "mine\n")
+    run = besser("generate", "supabase", model, "-o", "out", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == [
+        "out is not empty and generating overwrites what is there: pass --force to overwrite (the 'supabase' "
+        "generator does not support 'besser regenerate', which keeps hand edits)"
+    ]
+
+
 def test_a_second_run_into_the_same_directory_is_refused(besser, model):
     assert besser("generate", "python", model, "-o", "out").returncode == 0
 

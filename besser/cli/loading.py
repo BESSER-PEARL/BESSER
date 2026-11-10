@@ -30,7 +30,7 @@ from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.metamodel.uml_component import ComponentModel
 from besser.BUML.metamodel.uml_deployment import DeploymentModel as UMLDeploymentModel
-from besser.cli.output import stdout_to_stderr
+from besser.cli.output import plural, stdout_to_stderr
 
 # ``__name__`` inside a model file while it loads: not "__main__", so the part
 # of a script guarded by ``if __name__ == "__main__":`` does not run.
@@ -304,10 +304,6 @@ def _load_json(path: Path, text: str) -> LoadedModels:
     )
 
 
-def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
-
-
 def _diagram_positions(
     project_input: Any, models: list[LoadedModel],
 ) -> tuple[dict[tuple[str, int], int], dict[str, str]]:
@@ -382,7 +378,7 @@ def _current_models(
             diagrams = project_input.diagrams[diagram_type]
             marker = f"its currentDiagramIndices.{diagram_type} is {index}"
             if not 0 <= index < len(diagrams):
-                reasons.append(f"{marker} and it holds {_plural(len(diagrams), diagram_type + ' diagram')}")
+                reasons.append(f"{marker} and it holds {plural(len(diagrams), diagram_type + ' diagram')}")
             elif (diagram_type, index) not in positions:
                 title = diagrams[index].title or diagrams[index].id
                 reasons.append(f"{marker}, an empty diagram ({title!r})")

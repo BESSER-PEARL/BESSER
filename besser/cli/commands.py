@@ -32,6 +32,7 @@ from besser.cli.output import (
     Result,
     failure,
     format_traceback,
+    plural,
     stdout_to_stderr,
 )
 from besser.cli.ocl_check import OclOutcome, OclUnavailable, check_ocl, load_checker
@@ -66,10 +67,6 @@ class _Stopped(Exception):
         self.result = result
 
 
-def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
-
-
 # ── validate ────────────────────────────────────────────────────────────────
 
 
@@ -90,12 +87,12 @@ def _validate_model(loaded: LoadedModel) -> dict[str, Any]:
 
 
 def _validation_text(path: str, reports: list[dict[str, Any]], project_errors: list[str]) -> list[str]:
-    lines = [f"{path}: {_plural(len(reports), 'model')}"]
+    lines = [f"{path}: {plural(len(reports), 'model')}"]
     for report in reports:
         if not report["validated"] and not (report["errors"] or report["warnings"]):
             status = "no validation rules"
         elif report["errors"] or report["warnings"]:
-            status = f"{_plural(len(report['errors']), 'error')}, {_plural(len(report['warnings']), 'warning')}"
+            status = f"{plural(len(report['errors']), 'error')}, {plural(len(report['warnings']), 'warning')}"
         else:
             status = "ok"
         lines.append(f"  {report['name']} ({report['type']}): {status}")
@@ -154,7 +151,7 @@ def _nothing_to_validate(model_paths: Sequence[str], found: ModelFiles, exec_py:
         message = f"nothing to validate: no model file found in {where}"
     elif skipped_py:
         message = (f"nothing to validate: no editor .json export found in {where} "
-                   f"({_plural(skipped_py, '.py file')} skipped; {_EXEC_PY_HINT})")
+                   f"({plural(skipped_py, '.py file')} skipped; {_EXEC_PY_HINT})")
     else:
         message = (f"nothing to validate: no editor .json export found in {where} "
                    "(.py models in a directory are loaded with --exec-py)")
@@ -166,11 +163,11 @@ def _ocl_note(constraints: int, evaluations: int, unevaluated: int) -> str:
     """The run's one note on the OCL check, from its counts over every file (see ``OclOutcome``)."""
     if not constraints:
         return "OCL: the models have no OCL constraints"
-    note = f"OCL: {_plural(constraints, 'constraint')} checked"
+    note = f"OCL: {plural(constraints, 'constraint')} checked"
     if evaluations or not unevaluated:
-        note += f", invariants evaluated on {_plural(evaluations, 'object model')}"
+        note += f", invariants evaluated on {plural(evaluations, 'object model')}"
     if unevaluated:
-        note += (f"; invariants not evaluated on {_plural(unevaluated, 'object model')} of editor JSON: the OCL "
+        note += (f"; invariants not evaluated on {plural(unevaluated, 'object model')} of editor JSON: the OCL "
                  "evaluator runs Python built from the models' values; pass --exec-py to evaluate them")
     return note
 
@@ -244,14 +241,14 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
 
     skipped_py = sum(entry.reason == SKIP_PY for entry in skipped)
     if skipped_py:
-        notes.append(f"{_plural(skipped_py, '.py file')} skipped; {_EXEC_PY_HINT}")
+        notes.append(f"{plural(skipped_py, '.py file')} skipped; {_EXEC_PY_HINT}")
     if checker is not None and len(load_errors) < len(checks):
         notes.append(_ocl_note(constraints, evaluations, unevaluated))
 
     exit_code = max(check.exit_code for check in checks)
     if strict and warnings:
         exit_code = max(exit_code, EXIT_FAILED)
-    counts = f"{_plural(len(errors) + len(load_errors), 'error')}, {_plural(len(warnings), 'warning')}"
+    counts = f"{plural(len(errors) + len(load_errors), 'error')}, {plural(len(warnings), 'warning')}"
     if errors or load_errors:
         verdict = f"FAILED: {counts}"
     elif exit_code != EXIT_OK:
@@ -290,13 +287,13 @@ def info(model_path: str) -> Result:
 
     warnings = list(loaded.errors)
     notes = [
-        f"{loaded.path} holds {_plural(len(loaded.of_kind(kind)), kind + ' model')} and names no current one: "
+        f"{loaded.path} holds {plural(len(loaded.of_kind(kind)), kind + ' model')} and names no current one: "
         f"{reason}; generators need --use NAME"
         for kind, reason in loaded.current_unresolved.items()
     ]
     current = {id(marked.model) for marked in loaded.current.values()}
     models = []
-    lines = [f"{loaded.path}: {_plural(len(loaded.models), 'model')}"]
+    lines = [f"{loaded.path}: {plural(len(loaded.models), 'model')}"]
     for model in loaded.models:
         is_current = id(model) in current
         try:
@@ -661,13 +658,15 @@ def _require_no_output(spec: GeneratorSpec, model_path: str, output_dir: str, op
             f"{command} brings it up to the model and keeps hand edits{_needs_regen_extra()}; --force overwrites them"
         )
     elif folder.is_dir() and any(folder.iterdir()):
-        message = f"{output_dir} is not empty and generating overwrites what is there: pass --force to overwrite, "
-        if _holds_a_file(folder):
+        message = f"{output_dir} is not empty and generating overwrites what is there: pass --force to overwrite"
+        if not spec.supports_regenerate:
+            message += f" (the '{spec.id}' generator does not support 'besser regenerate', which keeps hand edits)"
+        elif _holds_a_file(folder):
             adopt = _regenerate_command(spec, model_path, output_dir, option_assignments, use, adopt=True)
-            message += (f"or keep hand edits with 'besser regenerate' (a folder generated without a record needs "
+            message += (f", or keep hand edits with 'besser regenerate' (a folder generated without a record needs "
                         f"{adopt} first; see 'besser regenerate --help')")
         else:
-            message += "or keep hand edits with 'besser regenerate' (see 'besser regenerate --help')"
+            message += ", or keep hand edits with 'besser regenerate' (see 'besser regenerate --help')"
     else:
         return
     raise _Stopped(failure("generate", message, data=data))
@@ -724,7 +723,7 @@ def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, opt
                      "so a file can read as changed when the model is not")
     counts = ", ".join(f"{list(plan.values()).count(status)} {status}" for status in _PREVIEW_STATUSES
                        if status in plan.values())
-    lines = [_DRY_RUN, f"The '{spec.id}' generator would write {_plural(len(plan), 'file')} in {output_dir}"
+    lines = [_DRY_RUN, f"The '{spec.id}' generator would write {plural(len(plan), 'file')} in {output_dir}"
                        f"{f' ({counts})' if counts else ''}:"]
     width = max((len(status) for status in plan.values()), default=0)
     lines.extend(f"  {status.ljust(width)}  {path}" for path, status in data["would_write"].items())
@@ -763,7 +762,7 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
     if data["recorded"]:
         notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=False))
     files = [Path(output_dir, path).as_posix() for path in written]
-    lines = [f"Generated {_plural(len(files), 'file')} in {output_dir} with the '{spec.id}' generator:"]
+    lines = [f"Generated {plural(len(files), 'file')} in {output_dir} with the '{spec.id}' generator:"]
     lines.extend(f"  {path}" for path in files)
     return Result(command="generate", warnings=warnings, notes=notes, files=files, data=data,
                   text="\n".join(lines))
@@ -914,7 +913,7 @@ def _regeneration_text(spec: GeneratorSpec, model_path: str, output_dir: str, li
                  "changed. 'besser regenerate' now keeps the edits made in it."]
     elif changed and dry_run:
         lines = [_DRY_RUN, f"Regenerating {output_dir} with the '{spec.id}' generator would change "
-                           f"{_plural(len(changed), 'file')} ({counts}):"]
+                           f"{plural(len(changed), 'file')} ({counts}):"]
     elif changed:
         lines = [f"Regenerated {output_dir} with the '{spec.id}' generator ({counts}):"]
     elif dry_run:
@@ -1013,7 +1012,7 @@ def convert(input_path: str, output_path: str, dry_run: bool = False) -> Result:
     except Exception as exc:
         return failure("convert", f"cannot convert {source}: {type(exc).__name__}: {exc}", EXIT_FAILED, data, exc)
 
-    counts = _plural(len(loaded.models), "model")
+    counts = plural(len(loaded.models), "model")
     if dry_run:
         data["would_write"] = {target.as_posix(): status}
         return Result(command="convert", warnings=warnings, data=data,

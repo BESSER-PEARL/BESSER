@@ -116,14 +116,18 @@ def print_result(result: Result, as_json: bool) -> None:
             print(f"error: {error}", file=sys.stderr)
 
 
+def plural(count: int, noun: str) -> str:
+    """``count`` and ``noun``, with an "s" unless ``count`` is 1: "1 model", "2 models"."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 def _print_quiet(result: Result) -> None:
     if result.text and result.text_is_result:
         print(result.text)
     for error in result.errors:
         print(f"error: {error}", file=sys.stderr)
     if result.exit_code == EXIT_FAILED and not result.errors and result.warnings:
-        count = len(result.warnings)
-        print(f"error: {count} warning{'' if count == 1 else 's'} (--strict)", file=sys.stderr)
+        print(f"error: {plural(len(result.warnings), 'warning')} (--strict)", file=sys.stderr)
         for warning in result.warnings:
             print(f"warning: {warning}", file=sys.stderr)
 

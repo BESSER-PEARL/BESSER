@@ -57,7 +57,7 @@ Every command takes these options, before or after the command name:
    * - ``--json``
      - :ref:`Machine-readable output <cli-json>`: one JSON object on standard output.
    * - ``-q``, ``--quiet``
-     - Drops the diagnostics: notes, warnings, BESSER's log messages and
+     - Drops the diagnostics: notes, warnings, BESSER's log warnings and
        whatever a model file or a generator prints, and the report of a command
        that checks or writes files (``validate``, ``generate``, ``regenerate``,
        ``convert``, ``new``). Errors are still printed, and so is the output of
@@ -280,6 +280,8 @@ command adds:
        A file that does not load has exit code 2, its load error and no models.
    * - ``skipped``
      - Per file found and not checked: ``file`` and ``reason``.
+
+.. _cli-ocl:
 
 OCL constraints
 ~~~~~~~~~~~~~~~
@@ -874,8 +876,10 @@ MCP SDK:
    * - ``--root DIR``
      - The directory the tools read and write (default: the current directory).
    * - ``--exec-py``
-     - Lets the tools load B-UML ``.py`` model files, which executes them.
-       Without it the tools load editor ``.json`` exports only.
+     - Lets the tools load B-UML ``.py`` model files, which executes them, and
+       lets ``validate`` with ``ocl`` evaluate the invariants of editor JSON (see
+       :ref:`OCL constraints <cli-ocl>`). Without it the tools load editor
+       ``.json`` exports only and only parse their OCL constraints.
 
 The tools are ``validate``, ``info``, ``generators``, ``generate``,
 ``regenerate`` and ``convert``. Each takes the command's arguments by name
@@ -892,7 +896,8 @@ The object is worded for the client: its paths (``files``, ``model``,
 messages) are relative to ``--root``, as the client gives them, and a message
 that names a command-line flag names the tool argument instead (``force:
 true`` for ``--force``, the ``use`` argument for ``--use NAME``, the
-``regenerate`` tool for ``'besser regenerate ...'``).
+``regenerate`` tool with its arguments as JSON for ``'besser regenerate ...'``).
+A symbolic link loop in a folder is skipped, as the command skips it.
 
 The server confines the tools:
 

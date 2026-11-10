@@ -250,7 +250,8 @@ def test_messages_name_the_tools_and_their_arguments_and_paths_are_root_relative
 
     [message] = again["errors"]
     assert message.startswith("out holds generated code and the record of it (.besser_generated.json): "
-                              "the `regenerate` tool brings it up")
+                              'the `regenerate` tool with {"generator": "pydantic", "model": "library.json", '
+                              '"output_dir": "out"} brings it up')
     assert message.endswith("`force: true` overwrites them") and str(tmp_path) not in message
 
 
@@ -302,15 +303,16 @@ def test_an_unknown_tool_is_a_protocol_error(serve):
     assert "result" not in response or response["result"].get("isError") is True
 
 
-def test_a_symbolic_link_loop_in_an_output_folder_is_refused(serve, json_model, tmp_path):
-    (tmp_path / "out").mkdir()
-    (tmp_path / "out" / "a").symlink_to(tmp_path / "out" / "b")
-    (tmp_path / "out" / "b").symlink_to(tmp_path / "out" / "a")
+def test_a_symbolic_link_loop_in_a_folder_is_skipped_as_the_command_does(serve, json_model, tmp_path):
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "library.json").write_text((tmp_path / json_model).read_text())
+    (tmp_path / "models" / "a").symlink_to(tmp_path / "models" / "b")
+    (tmp_path / "models" / "b").symlink_to(tmp_path / "models" / "a")
 
-    result = serve().call("generate", generator="pydantic", model=json_model, output_dir="out", force=True)
+    result = serve().call("validate", paths=["models"])
 
-    assert result["ok"] is False and result["exit_code"] == 2
-    assert "is a symbolic link that does not resolve" in result["errors"][0]
+    assert result["ok"] is True, result
+    assert result["model_files"] == ["models/library.json"]
 
 
 def test_nothing_follows_the_session_on_standard_output_with_json(serve):
@@ -349,9 +351,26 @@ def test_for_client_makes_paths_relative_and_names_the_tool_arguments():
         "files": ["out/a.py"], "output_dir": "out", "model": ".",
         "would_write": {"out/a.py": "new"},
         "errors": ["m.json holds two: name it with the `use` argument; the `options` argument takes name=value"],
-        "warnings": ["/work/projects/x stays: the `regenerate` tool with `adopt: true`"],
+        "warnings": ['/work/projects/x stays: the `regenerate` tool with {"generator": "sql", "model": "m.json", '
+                     '"output_dir": "out", "adopt": true}'],
         "notes": ["2 .py files skipped; restart the server with --exec-py to load them", "'besser new' is not a tool",
-                  "the `regenerate` tool keeps edits"],
+                  'the `regenerate` tool with {"generator": "rest_api", "model": "m.json", "output_dir": "out", '
+                  '"options": ["http_methods=GET, POST"]} keeps edits'],
         "results": [{"errors": ["pass `force: true` to overwrite, `dry_run: true` and `strict: true`"]}],
         "generators": [{"description": "keeps --force as it is"}],
+    }
+
+
+def test_for_client_rewrites_only_paths_that_start_at_the_root():
+    root = Path("/app")
+    output = {
+        "files": ["/app/out/frontend/src/app/page.tsx"], "output_dir": "/app",
+        "errors": ["/data/app is a file", "model '/app/m.json' is bad"],
+        "notes": ["see https://example.org/app/docs", "/app~1/x is another folder"],
+    }
+
+    assert for_client(output, root) == {
+        "files": ["out/frontend/src/app/page.tsx"], "output_dir": ".",
+        "errors": ["/data/app is a file", "model 'm.json' is bad"],
+        "notes": ["see https://example.org/app/docs", "/app~1/x is another folder"],
     }

@@ -22,6 +22,7 @@ import functools
 import json
 import os
 import re
+import shlex
 import sys
 import threading
 import traceback
@@ -144,8 +145,8 @@ class Tools:
                     continue
                 try:
                     target = entry.resolve()
-                except (OSError, RuntimeError) as exc:  # a symbolic link loop
-                    raise _Refused(f"{entry} is a symbolic link that does not resolve: {exc}") from None
+                except (OSError, RuntimeError):  # a symbolic link loop leads nowhere, so not out of the root
+                    continue
                 if not target.is_relative_to(self.root):
                     raise _Refused(f"{entry} is a symbolic link to a path outside the server's root {self.root}")
 
@@ -192,13 +193,54 @@ def _boolean_argument(match: re.Match) -> str:
     return f"`{match.group(1).replace('-', '_')}: true`"
 
 
+# The positional arguments of a quoted command, as tool arguments in order.
+_POSITIONAL_ARGUMENTS = {
+    "generate": ("generator", "model"), "regenerate": ("generator", "model"),
+    "info": ("model",), "convert": ("input",), "validate": ("paths",),
+}
+# A placeholder in a quoted command ("<that model>"): one argument.
+_PLACEHOLDER = re.compile(r"<[^<>]*>")
+
+
+def _tool_call(tool: str, command_line: str) -> str | None:
+    """The tool arguments of the CLI ``command_line`` (what follows 'besser <tool>'), as JSON; ``None`` if it
+    does not parse."""
+    try:
+        words = shlex.split(_PLACEHOLDER.sub(lambda match: shlex.quote(match.group(0)), command_line))
+    except ValueError:
+        return None
+    arguments: dict[str, Any] = {}
+    positional = iter(_POSITIONAL_ARGUMENTS.get(tool, ()))
+    words = iter(words)
+    for word in words:
+        if word in ("-o", "--output"):
+            arguments["output" if tool == "convert" else "output_dir"] = next(words, "")
+        elif word.startswith(("--option", "--use")):
+            name, _, value = word.partition("=")
+            value = value or next(words, "")
+            arguments.setdefault("options" if name == "--option" else "use", []).append(value)
+        elif _BOOLEAN_FLAG.fullmatch(word):
+            arguments[word[2:].replace("-", "_")] = True
+        elif word.startswith("-"):
+            return None
+        else:
+            name = next(positional, None)
+            if name is None:
+                return None
+            arguments[name] = [word] if name == "paths" else word
+    return json.dumps(arguments)
+
+
 def _tool_wording(message: str) -> str:
     """``message`` with the CLI commands and flags it names replaced by the tools and arguments."""
     def tool(match: re.Match) -> str:
         if match.group(2) not in tool_specs():
             return match.group(0)
-        arguments = [_boolean_argument(flag) for flag in _BOOLEAN_FLAG.finditer(match.group(3))]
-        return f"the `{match.group(2)}` tool" + (f" with {', '.join(arguments)}" if arguments else "")
+        arguments = _tool_call(match.group(2), match.group(3))
+        if arguments is None:
+            flags = [_boolean_argument(flag) for flag in _BOOLEAN_FLAG.finditer(match.group(3))]
+            return f"the `{match.group(2)}` tool" + (f" with {', '.join(flags)}" if flags else "")
+        return f"the `{match.group(2)}` tool with {arguments}"
 
     message = _QUOTED_COMMAND.sub(tool, message)
     for flag, argument in _FLAG_ARGUMENTS:
@@ -211,8 +253,9 @@ def _root_relative(text: str, root: Path) -> str:
     if root == Path(root.anchor):  # --root / : every path is under it, and absolute is clearer
         return text
     for spelling in dict.fromkeys((str(root), root.as_posix())):
-        # The root followed by a separator, or by a character that cannot continue a file name.
-        text = re.sub(re.escape(spelling) + r"(?:[/\\]|(?![\w.-]))",
+        # The root where a path starts (the text's start, or after a space, a quote or a bracket),
+        # followed by a separator, or by where a path ends (the text's end, a space, a quote, ...).
+        text = re.sub(r"""(?<![^\s'"(\[{,=])""" + re.escape(spelling) + r"""(?:[/\\]|(?=$|[\s'"):;,\]}]))""",
                       lambda match: "" if match.group(0)[-1] in "/\\" else ".", text)
     return text
 
@@ -312,7 +355,7 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
                           "description": "model files or directories of them, under the server's root"},
                 "strict": {"type": "boolean", "default": False, "description": "fail on warnings too"},
                 "ocl": {"type": "boolean", "default": False,
-                        "description": "also check OCL constraints: parse each, and evaluate them on object models"},
+                        "description": "also check OCL constraints: parse each, and evaluate the invariants on object models (for editor JSON only when the server was started with --exec-py)"},
             }, ["paths"]),
             False, _validate,
         ),

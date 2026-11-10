@@ -595,7 +595,9 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
         f.write("from besser.BUML.metamodel.structural.structural import Metadata\n\n")
 
         # Write metadata and project
-        f.write(f'metadata = Metadata(description="{_escape_python_string(project.metadata.description)}")\n')
+        # ``Project(name, models)`` has no metadata, and a Metadata no description, unless given one.
+        description = (project.metadata.description if project.metadata else None) or ""
+        f.write(f'metadata = Metadata(description="{_escape_python_string(description)}")\n')
         f.write("project = Project(\n")
         f.write(f'    name="{_escape_python_string(project.name)}",\n')
         f.write(f'    models=[{", ".join(model_vars)}],\n')

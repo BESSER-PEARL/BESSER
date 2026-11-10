@@ -1323,6 +1323,16 @@ class TestProjectBuilder:
 
         assert "TestProject" in code
 
+    def test_project_without_metadata_is_written(self, tmp_path):
+        """``Project(name, models)`` leaves metadata unset; the code gets an empty description."""
+        project = self._build_simple_project()
+        project.metadata = None
+        file_path = str(tmp_path / "project.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert 'metadata = Metadata(description="")' in f.read()
+
     def test_domain_model_included(self, tmp_path):
         """Domain model content is embedded in the project code."""
         project = self._build_simple_project()

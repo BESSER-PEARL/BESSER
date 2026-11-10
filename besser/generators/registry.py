@@ -64,6 +64,13 @@ class GeneratorSpec:
     # JSON Schema ``properties`` of the constructor keyword arguments that are
     # options but that the agent tool does not offer; see ``options``.
     extra_options: dict[str, Any] = field(default_factory=dict)
+    # What the generator produces, for a generator without an agent tool; see ``summary``.
+    label: str | None = None
+
+    @property
+    def summary(self) -> str:
+        """What the generator produces, in a few words: the agent tool's label, else ``label``."""
+        return self.agent_tool.label if self.agent_tool else self.label
 
     @property
     def options(self) -> dict[str, Any]:
@@ -154,6 +161,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="test_case",
         class_path="besser.generators.testgen:TestCaseGenerator",
+        label="pytest + Hypothesis test suite",
         category="object_oriented",
         output_type="file",
         file_extension=".py",
@@ -193,6 +201,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="spring",
         class_path="besser.generators.spring.spring_backend_generator:SpringBackendGenerator",
+        label="Spring Boot backend (JPA entities, repositories, services, REST controllers)",
         extra_options={
             "app_name": {"type": "string", "description": "Name of the application and of its main class"},
             "package_name": {"type": "string", "description": "Root Java package of the generated sources"},
@@ -484,6 +493,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="flutter",
         class_path="besser.generators.flutter:FlutterGenerator",
+        label="Flutter mobile app",
         models=("domain", "gui"),
         category="frontend",
         output_type="zip",
@@ -495,6 +505,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="terraform",
         class_path="besser.generators.terraform:TerraformGenerator",
+        label="Terraform configuration for multi-cloud deployment",
         models=("deployment",),
         category="deployment",
         output_type="zip",
@@ -528,6 +539,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="docker_compose",
         class_path="besser.generators.docker_compose:DockerComposeGenerator",
+        label="Docker Compose deployment",
         models=("uml_deployment",),
         category="deployment",
         output_type="zip",
@@ -604,6 +616,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="forecaster",
         class_path="besser.generators.nn.forecaster:TimeSeriesForecasterGenerator",
+        label="PyTorch time-series forecaster",
         models=("nn",),
         # The fields of ``ForecastConfig``, which checks them, and ``channel_last``.
         extra_options={

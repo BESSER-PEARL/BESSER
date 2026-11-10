@@ -53,15 +53,17 @@ That's a working REST API with a database, CRUD endpoints and validation, genera
 
     besser new model.py                             # a starter model to edit
     besser validate model.py --json                 # errors and warnings of a B-UML model
+    besser validate models/ --ocl                   # every editor export in a folder, with OCL constraints
     besser info model.py                            # its classes and the generators that read it
     besser generators                               # every generator and its options
     besser generate backend model.py -o library_api # run one, print the files it wrote
     besser regenerate backend model.py -o library_api   # after a model change: keeps your hand edits
     besser convert model.py -o model.json           # B-UML <-> editor project
+    eval "$(besser completion bash)"                # tab completion (bash, zsh, fish)
 
-`regenerate` merges the model's changes into code you have edited and lists the conflicts; it needs `pip install "besser[regen]"`.
+`generate` records what it wrote; `regenerate` (or `generate --keep-edits`) then merges the model's changes into code you have edited and lists the conflicts, and needs `pip install "besser[regen]"`. `--dry-run` on `generate`, `regenerate` and `convert` shows what would change and writes nothing. `besser mcp` serves the same commands to an AI agent as MCP tools (`pip install "besser[mcp]"`).
 
-A `.py` model is Python code and is executed to load it, so only pass files you trust.
+A `.py` model is Python code and is executed to load it, so only pass files you trust; in a folder, `validate` loads only the `.json` exports unless you add `--exec-py`.
 
 **With your AI coding agent** (Claude Code, Cursor, Copilot, Cline, …): install the [BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) and just ask, e.g. *"model a library with books and authors in BESSER and generate a FastAPI backend"*. The agent builds a correct B-UML model and runs the right generator for you.
 

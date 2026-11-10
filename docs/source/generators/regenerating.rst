@@ -30,6 +30,16 @@ From a terminal, :ref:`besser regenerate <cli-regenerate>` does the same for a m
 
     besser regenerate java library.py -o app
 
+To generate and start the record without pygit2, call ``record_output`` instead of
+``generate()``; ``besser generate`` does this for every generator that supports
+``regenerate()``, so a later ``regenerate()`` merges into the folder without adopting it:
+
+.. code-block:: python
+
+    from besser.generators.regeneration import record_output
+
+    record_output(JavaGenerator(library_model, output_dir="app"))   # needs no pygit2
+
 How it works
 ------------
 

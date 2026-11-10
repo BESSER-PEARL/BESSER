@@ -21,18 +21,28 @@ runs the same command.
      - What it does
    * - ``besser new <file.py>``
      - Writes a starter model to edit.
-   * - ``besser validate <model>...``
-     - Runs ``validate()`` on every model in each file.
+   * - ``besser validate <model|dir>...``
+     - Runs ``validate()`` on every model in each file or directory;
+       ``--ocl`` checks the OCL constraints too.
    * - ``besser info <model>``
      - Summarises the models of a file and names the generators that read it.
    * - ``besser generators``
      - Lists the generators, the models each reads and its options.
    * - ``besser generate <generator> <model> -o <dir>``
-     - Runs one generator into an empty directory and prints the files it wrote.
+     - Runs one generator into an empty directory, prints the files it wrote
+       and records them for ``regenerate``. ``--keep-edits`` is ``regenerate``.
    * - ``besser regenerate <generator> <model> -o <dir>``
      - Brings generated code up to the model and keeps the edits made in it.
    * - ``besser convert <in> -o <out>``
      - Converts a B-UML ``.py`` file to an editor JSON project, or back.
+   * - ``besser completion bash|zsh|fish``
+     - Prints a shell completion script.
+   * - ``besser mcp``
+     - Serves the commands as tools of an MCP server on standard input and
+       output, for an AI agent (``besser[mcp]``).
+
+``generate``, ``regenerate`` and ``convert`` take ``--dry-run``: they print the
+files they would write or change, and write nothing.
 
 Every command takes these options, before or after the command name:
 
@@ -597,16 +607,24 @@ on every command and are stable:
      - Value
    * - ``ok``
      - ``true`` when the exit status is 0.
+   * - ``command``
+     - The command that ran (empty when the arguments did not parse).
+   * - ``exit_code``
+     - The exit status: 0, 1 or 2 (see below).
    * - ``errors``
      - List of messages. For ``validate``, each starts with the model's name
        (after the file's, when several files are given).
    * - ``warnings``
      - List of messages; they never make ``ok`` false, except with ``--strict``.
+   * - ``notes``
+     - List of messages about what the command chose on its own: which model of
+       several it read, that it recorded its output, which ``.py`` files a
+       directory search skipped. Without ``--json`` they are ``note:`` lines on
+       standard error; ``--quiet`` drops them.
    * - ``files``
      - The files the command wrote, as paths under the ``-o`` you gave. For
-       ``regenerate``: the written, merged and conflicted files.
-   * - ``command``
-     - The command that ran (empty when the arguments did not parse).
+       ``regenerate``: the written, merged and conflicted files. Always empty
+       with ``--dry-run``.
 
 Each command adds its own:
 
@@ -617,20 +635,26 @@ Each command adds its own:
    * - Command
      - Keys
    * - ``validate``
-     - ``model_files`` (the files given) and ``models``: per model its
-       ``file``, ``name``, ``kind``, ``type``, ``validated``, ``errors`` and
-       ``warnings``.
+     - ``model_files``: the files checked, directories expanded; ``results``:
+       per file its ``file``, ``ok``, ``exit_code``, ``errors``, ``warnings``
+       and ``models``; ``models``: every file's models in one list, per model
+       its ``file``, ``name``, ``kind``, ``type``, ``validated``, ``errors``
+       and ``warnings``; ``skipped``: per file a directory search left out,
+       its ``file`` and ``reason``.
    * - ``info``
-     - ``model``, ``models`` and ``generators``.
+     - ``model``, ``models`` (each with ``current``: the diagram the editor
+       project marks as current) and ``generators``.
    * - ``generators``
      - ``generators``: per generator its ``id``, ``summary``, ``category``,
        ``models``, ``options`` and ``supports_regenerate``.
    * - ``generate``
      - ``generator``, ``model``, ``output_dir``, ``dry_run`` and ``recorded``
-       (whether ``.besser_generated.json`` was written); with ``--dry-run``,
-       ``would_write``: path -> ``new``, ``changed`` or ``unchanged``.
+       (whether ``.besser_generated.json`` was written), ``used`` (model kind ->
+       the name of the model read); with ``--dry-run``, ``would_write``: path ->
+       ``new``, ``changed`` or ``unchanged``.
    * - ``regenerate``
-     - ``generator``, ``model``, ``output_dir``, ``dry_run``, ``adopted``, and one list of paths per outcome:
+     - ``generator``, ``model``, ``output_dir``, ``dry_run``, ``used``,
+       ``adopted``, and one list of paths per outcome:
        ``written``, ``merged``, ``conflicted``, ``deleted``,
        ``kept_removed_from_model``, ``not_restored``, ``not_merged`` and
        ``differs_from_model`` (the fields of ``RegenerationReport``).
@@ -639,6 +663,12 @@ Each command adds its own:
    * - ``convert``
      - ``input``, ``output`` and ``dry_run``; with ``--dry-run``,
        ``would_write``, as for ``generate``.
+   * - ``completion``
+     - ``shell`` and ``script``.
+
+``generate --keep-edits`` prints what ``regenerate`` prints, ``command``
+included. A model file is ``model`` on every command that reads one and
+``model_files`` (a list) on ``validate``, which reads several.
 
 .. code-block:: console
 
@@ -646,24 +676,24 @@ Each command adds its own:
    {
      "ok": true,
      "command": "validate",
+     "exit_code": 0,
      "errors": [],
      "warnings": [],
+     "notes": [],
      "files": [],
-     "model_files": [
-       "library.py"
-     ],
+     "model_files": ["library.py"],
      "models": [
-       {
-         "file": "library.py",
-         "name": "library_model",
-         "kind": "domain",
-         "type": "DomainModel",
-         "validated": true,
-         "errors": [],
-         "warnings": []
-       }
-     ]
+       {"file": "library.py", "name": "library_model", "kind": "domain", "type": "DomainModel",
+        "validated": true, "errors": [], "warnings": []}
+     ],
+     "results": [
+       {"file": "library.py", "ok": true, "exit_code": 0, "errors": [], "warnings": [],
+        "models": [{"file": "library.py", "name": "library_model", "...": "as in models"}]}
+     ],
+     "skipped": []
    }
+
+(Shortened: the command prints one key per line.)
 
 .. list-table::
    :header-rows: 1
@@ -687,6 +717,8 @@ Standard output carries the result only. Whatever a model file or a generator
 prints while it runs, and the log messages of BESSER, go to standard error.
 Without ``--json``, error and warning lines go to standard error too, except
 those ``validate`` lists under each model in its report.
+
+.. _cli-mcp:
 
 ``besser mcp``
 --------------
@@ -762,14 +794,17 @@ B-UML model:
    $ besser regenerate backend model.py -o app --json  # "files" lists what to read next
    $ besser convert model.py -o model.json       # open the model in the editor
 
-Generating with ``regenerate`` from the first run lets the agent, or you, edit
-the generated code and still change the model later: the next ``regenerate``
-keeps those edits, and ``conflicted`` lists the files to resolve when it exits
-with status 1. ``besser validate -`` checks a model from standard input before
-it is written to a file.
+``besser generate`` records what it wrote, so the agent, or you, can edit the
+generated code and still change the model later: the next ``regenerate`` (or
+``generate --keep-edits``) keeps those edits, and ``conflicted`` lists the files
+to resolve when it exits with status 1. ``--dry-run`` shows what a run would
+change before it does. ``besser validate -`` checks a model from standard input
+before it is written to a file. An agent with MCP support can use
+:ref:`besser mcp <cli-mcp>` instead of a shell.
 
-In CI, ``besser validate model.py --strict`` fails the job on any error or
-warning.
+In CI, ``besser validate models/ --strict`` fails the job on any error or
+warning in the editor exports under ``models/`` (add ``--exec-py`` for the
+``.py`` models there, and ``--ocl`` for their OCL constraints).
 
 The `BESSER Skills <https://github.com/BESSER-PEARL/besser-skills>`_ teach an
 agent to write B-UML; the command gives it a way to check and run what it

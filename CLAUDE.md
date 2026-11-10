@@ -31,7 +31,7 @@ pip install -r docs/requirements.txt   # docs toolchain (optional)
 ### Testing
 ```bash
 python -m pytest tests/                                             # ALWAYS scope to tests/
-python -m pytest tests/ -q --tb=short                                 # what CI runs (Python 3.11 + 3.12)
+python -m pytest tests/ -n auto -q --tb=short                         # what CI runs (Python 3.11 + 3.12; -n is pytest-xdist, in the dev extra)
 python -m pytest tests/generators -k sqlalchemy                     # targeted
 python tests/BUML/metamodel/structural/library/library.py           # standalone example, verifies the install
 ```

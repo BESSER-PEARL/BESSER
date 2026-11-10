@@ -327,7 +327,7 @@ Run the full suite before pushing, scoped to ``tests/``:
 
    python -m pytest tests/
 
-CI runs ``python -m pytest tests/ -q --tb=short``.
+CI runs ``python -m pytest tests/ -n auto -q --tb=short``; ``-n auto`` is pytest-xdist (in the ``dev`` extra) with one worker per core.
 
 While iterating, target the area you are changing:
 

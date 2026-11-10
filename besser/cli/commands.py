@@ -71,7 +71,7 @@ def validate(model_path: str, strict: bool = False) -> Result:
     try:
         loaded = load_models(model_path)
     except ModelLoadError as exc:
-        return failure("validate", str(exc))
+        return failure("validate", str(exc), data={"model": model_path})
 
     reports = [_validate_model(model) for model in loaded.models]
     errors = [f"{report['name']}: {error}" for report in reports for error in report["errors"]]
@@ -215,13 +215,15 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
         spec = get_generator(generator_id)
     except KeyError:
         known = ", ".join(spec.id for spec in GENERATORS)
-        return failure("generate", f"unknown generator '{generator_id}'; available generators: {known}")
+        return failure(
+            "generate", f"unknown generator '{generator_id}'; available generators: {known}", data=data,
+        )
 
     try:
         options = parse_options(spec, option_assignments)
         models = _models_for(spec, load_models(model_path))
     except (GeneratorInputError, ModelLoadError) as exc:
-        return failure("generate", str(exc))
+        return failure("generate", str(exc), data=data)
 
     reports = [_validate_model(model) for model in models.values()]
     warnings = [f"{report['name']}: {warning}" for report in reports for warning in report["warnings"]]
@@ -251,7 +253,7 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
 
 
 def _write_buml(loaded: LoadedModels, output_path: Path) -> list[str]:
-    """Write the models as a B-UML project script; returns the warnings."""
+    """Write the models as a B-UML project script, as the editor's export does; it has no warnings."""
     from besser.utilities.buml_code_builder.project_builder import project_to_code
 
     project_to_code(project=loaded.as_project(), file_path=str(output_path))
@@ -307,6 +309,7 @@ def convert(input_path: str, output_path: str) -> Result:
             "convert",
             "convert turns a B-UML .py file into an editor .json project, or a .json export into "
             f"a .py file; got {source.name} -> {target.name}",
+            data=data,
         )
 
     try:
@@ -317,9 +320,9 @@ def convert(input_path: str, output_path: str) -> Result:
         with stdout_to_stderr():
             warnings = write(loaded, target)
     except ModelLoadError as exc:
-        return failure("convert", str(exc))
+        return failure("convert", str(exc), data=data)
     except Exception as exc:
-        return failure("convert", f"cannot convert {source}: {type(exc).__name__}: {exc}", EXIT_FAILED)
+        return failure("convert", f"cannot convert {source}: {type(exc).__name__}: {exc}", EXIT_FAILED, data)
 
     counts = _plural(len(loaded.models), "model")
     return Result(

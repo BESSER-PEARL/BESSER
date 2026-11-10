@@ -609,7 +609,8 @@ async def _generate_supabase(buml_model, config: dict, temp_dir: str) -> Generat
 async def _generate_sqlalchemy(buml_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate SQLAlchemy files."""
     dbms = DEFAULT_DBMS
-    if config and "dbms" in config:
+    # A null dbms is the default too, as it was when it went to generate(dbms=None).
+    if config and config.get("dbms") is not None:
         dbms = config["dbms"]
 
     await _run_generator("sqlalchemy", {"domain": buml_model}, temp_dir, {"dbms": dbms})

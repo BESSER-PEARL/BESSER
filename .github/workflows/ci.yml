@@ -127,6 +127,18 @@ jobs:
           assert templates, "generator templates missing from the wheel"
           print("wheel OK:", besser.__file__)
           EOF
+      - name: Run the besser command from the wheel
+        working-directory: ${{ runner.temp }}
+        run: |
+          cat > model.py <<'EOF'
+          from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
+          book = Class(name="Book", attributes={Property(name="title", type=StringType)})
+          model = DomainModel(name="Library", types={book})
+          EOF
+          wheel-env/bin/besser --version
+          wheel-env/bin/besser validate model.py --strict
+          wheel-env/bin/besser generate python model.py -o out
+          test -f out/classes.py
 
   docs:
     runs-on: ubuntu-latest

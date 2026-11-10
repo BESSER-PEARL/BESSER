@@ -50,9 +50,9 @@ class Result:
         }
 
 
-def failure(command: str, message: str, exit_code: int = EXIT_USAGE) -> Result:
+def failure(command: str, message: str, exit_code: int = EXIT_USAGE, data: dict[str, Any] | None = None) -> Result:
     """A result that reports one error."""
-    return Result(command=command, exit_code=exit_code, errors=[message])
+    return Result(command=command, exit_code=exit_code, errors=[message], data=data or {})
 
 
 def print_result(result: Result, as_json: bool) -> None:

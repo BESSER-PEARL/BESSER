@@ -12,7 +12,7 @@ import traceback
 from typing import List, Optional
 
 from besser.cli import commands
-from besser.cli.output import EXIT_FAILED, EXIT_OK, EXIT_USAGE, Result, failure, print_result
+from besser.cli.output import EXIT_FAILED, Result, failure, print_result
 from besser.utilities.provenance import get_besser_version
 
 PROG = "besser"
@@ -157,9 +157,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         result = failure("", f"unexpected {type(exc).__name__}: {exc}", EXIT_FAILED)
     print_result(result, as_json)
     return result.exit_code
-
-
-__all__ = ["EXIT_FAILED", "EXIT_OK", "EXIT_USAGE", "PROG", "build_parser", "main"]
 
 
 if __name__ == "__main__":

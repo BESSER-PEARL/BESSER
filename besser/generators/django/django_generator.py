@@ -12,6 +12,7 @@ from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSo
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
+from besser.generators.settings import subprocess_timeout
 from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
@@ -735,14 +736,15 @@ JAZZMIN_SETTINGS = {{
             subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
             try:
                 subprocess.run(['django-admin', 'startproject', self.project_name],
-                               cwd=base_dir, check=True, env=subprocess_env)
+                               cwd=base_dir, check=True, env=subprocess_env,
+                               timeout=subprocess_timeout())
             except FileNotFoundError as exc:
                 raise RuntimeError(
                     'The Django generator needs django-admin: pip install "besser[django]"'
                 ) from exc
             subprocess.run([sys.executable, 'manage.py', 'startapp',
                                 self.app_name], cwd=project_dir, check=True,
-                           env=subprocess_env)
+                           env=subprocess_env, timeout=subprocess_timeout())
 
             # Step 2: Update settings.py
             self.update_settings()

@@ -972,6 +972,13 @@ agent: :doc:`spec_driven_agent/configuration`.
 - ``GITHUB_REDIRECT_URI`` -- OAuth redirect URL (default: ``http://localhost:9000/besser_api/github/auth/callback``)
 - ``DEPLOYMENT_URL`` -- Frontend URL for OAuth redirects (default: ``http://localhost:8080``)
 
+**Code generation** (read per call):
+
+- ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT`` (``120``) -- Seconds a generator's child
+  process may run (Django's ``django-admin startproject`` / ``startapp``, the SQL
+  generator's DDL script). Past it the child is killed and the request answers
+  504. A blank, unparsable or non-positive value gives the default.
+
 **SDMX import** (``POST /sdmx-to-domain-model``, read once at startup):
 
 - ``BESSER_SDMX_ALLOW_CUSTOM_URL`` (off) -- Accept an SDMX API that is not one of

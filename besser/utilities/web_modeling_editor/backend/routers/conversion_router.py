@@ -682,7 +682,8 @@ async def get_svg(buml_file: UploadFile = File(...)):
 
     node_server_url = BackendSettings().wme_node_server_url.rstrip("/")
     try:
-        render_response = requests.post(
+        render_response = await asyncio.to_thread(
+            requests.post,
             f"{node_server_url}/api/svg",
             json={"model": diagram_json, "autoLayout": True},
             timeout=30,
@@ -854,7 +855,8 @@ async def get_json_model_from_image(
             raise HTTPException(status_code=400, detail="No valid image file found.")
         image_path = os.path.join(image_folder, image_files[0])
 
-        domain_model = image_to_buml(
+        domain_model = await asyncio.to_thread(
+            image_to_buml,
             image_path=image_path,
             openai_token=api_key,
             existing_model=existing_domain_model,
@@ -909,7 +911,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
             openai_api_key=extract_openai_api_key(config),
             output_dir=generation_output_dir,
         )
-        generator_instance.generate()
+        await asyncio.to_thread(generator_instance.generate)
 
         # Some generator implementations still emit files in temp_dir directly.
         candidate_paths = [

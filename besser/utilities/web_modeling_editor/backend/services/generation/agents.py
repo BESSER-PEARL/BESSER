@@ -187,21 +187,25 @@ async def generate_agent_output(json_data: dict) -> GeneratedOutput:
         return agent_zip_output(buf, name)
 
     if base_model_snapshot is not None and isinstance(variation_entries, list):
-        buf, name = handle_variation_generation(
+        buf, name = await asyncio.to_thread(
+            handle_variation_generation,
             json_data, config, base_model_snapshot, variation_entries, generate_agent_files,
             config_yaml=config_yaml,
         )
         return agent_zip_output(buf, name)
 
     if configuration_variants and isinstance(configuration_variants, list):
-        buf, name = handle_configuration_variants(
+        buf, name = await asyncio.to_thread(
+            handle_configuration_variants,
             json_data, configuration_variants, generate_agent_files,
             config_yaml=config_yaml,
         )
         return agent_zip_output(buf, name)
 
     if is_config_dict and 'personalizationMapping' in config:
-        buf, name = handle_personalized_agent(json_data, config, generate_agent_files, config_yaml=config_yaml)
+        buf, name = await asyncio.to_thread(
+            handle_personalized_agent, json_data, config, generate_agent_files, config_yaml=config_yaml,
+        )
         return agent_zip_output(buf, name)
 
     # Single agent fallback

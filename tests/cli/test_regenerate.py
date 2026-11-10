@@ -65,7 +65,7 @@ def test_json_reports_what_happened_to_each_file(besser, model, write, classes):
     result = besser("regenerate", "python", model, "-o", "out", "--json").json
 
     assert result == {
-        "ok": True, "command": "regenerate", "errors": [],
+        "ok": True, "command": "regenerate", "exit_code": 0, "errors": [], "notes": [],
         "warnings": ["the model's changes were merged into your edits; a clean merge can still break, "
                      "so run your tests: out/classes.py"],
         "files": ["out/classes.py"],

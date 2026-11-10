@@ -1,5 +1,6 @@
 """``besser validate --ocl``: the models' OCL constraints, parsed and evaluated on object models."""
 
+import json
 import os
 import subprocess
 import sys
@@ -150,3 +151,63 @@ def test_without_bocl_validate_still_runs_when_ocl_is_not_asked_for(besser_witho
     write("library.py", LIBRARY_MODEL)
 
     assert besser_without_bocl("validate", "library.py", "--strict").returncode == 0
+
+
+# An object value that breaks out of the string literal bocl builds for eval(): it writes MARKER when evaluated.
+HOSTILE_VALUE_MODEL = '''
+from besser.BUML.metamodel.object import AttributeLink, DataValue, Object, ObjectModel
+from besser.BUML.metamodel.structural import Class, Constraint, DomainModel, Property, StringType
+
+title = Property(name="title", type=StringType)
+book = Class(name="Book", attributes={title})
+named = Constraint(name="named", context=book, language="OCL", expression="context Book inv named: self.title <> 'x'")
+book_model = DomainModel(name="Books", types={book}, constraints={named})
+hostile = '" or open(MARKER, "w").write("ran") or "'
+novel = Object(name="novel", classifier=book, slots=[
+    AttributeLink(attribute=title, value=DataValue(classifier=StringType, value=hostile)),
+])
+shelf = ObjectModel(name="Shelf", objects={novel})
+'''
+
+
+@pytest.fixture
+def hostile_json(besser, write, tmp_path):
+    """The hostile model as an editor export, and the file its value writes when it runs."""
+    marker = tmp_path / "ran.txt"
+    source = write("hostile.py", HOSTILE_VALUE_MODEL.replace("MARKER", json.dumps(str(marker))))
+    assert besser("convert", source, "-o", "hostile.json").returncode == 0
+    assert not marker.exists()
+    return "hostile.json", marker
+
+
+def test_invariants_of_editor_json_are_not_evaluated_without_exec_py(besser, hostile_json):
+    model, marker = hostile_json
+
+    run = besser("validate", model, "--ocl", "--json")
+
+    assert not marker.exists()
+    assert run.returncode == 0, run.stdout
+    assert run.json["notes"][-1] == (
+        "OCL: invariants not evaluated on 1 object model of editor JSON: the OCL evaluator runs Python "
+        "built from the models' values; pass --exec-py to evaluate them"
+    )
+
+
+def test_exec_py_evaluates_the_invariants_of_editor_json(besser, write):
+    source = write("books.py", book_model(pages=0))
+    assert besser("convert", source, "-o", "books.json").returncode == 0
+
+    run = besser("validate", "books.json", "--ocl", "--exec-py", "--json")
+
+    assert run.returncode == 1
+    assert any("positive_pages" in error and "Evaluates to False" in error for error in run.json["errors"])
+
+
+def test_a_constraint_dropped_from_editor_json_is_an_error(besser, write):
+    source = write("books.py", book_model(broken=True))
+    assert besser("convert", source, "-o", "books.json").returncode == 0
+
+    run = besser("validate", "books.json", "--ocl", "--json")
+
+    assert run.returncode == 1
+    assert any(f"{OCL_PREFIX} dropped:" in error and "broken" in error for error in run.json["errors"]), run.json

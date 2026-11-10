@@ -5,6 +5,12 @@ every constraint of a domain model is parsed, and the invariants are evaluated
 on each object model of the same file that instantiates it. It needs the
 ``bocl`` evaluator (``besser[ocl]``) and the editor backend's packages, which
 are optional: without them the check is skipped with a warning.
+
+bocl evaluates an invariant by building Python source from the constraint and
+the object model's values and running ``eval()`` on it, so a crafted value runs
+code. Parsing is safe. Invariants are evaluated only when running the file's
+code was already allowed: a ``.py`` model (it was executed to load it), or
+``--exec-py``.
 """
 
 from __future__ import annotations
@@ -38,6 +44,8 @@ class OclOutcome:
     constraints: int = 0
     # (domain model, object model) pairs the invariants were evaluated on.
     evaluations: int = 0
+    # (domain model, object model) pairs left unevaluated: evaluating was not allowed.
+    unevaluated: int = 0
 
 
 def load_checker() -> Callable[..., dict[str, Any]]:
@@ -79,10 +87,12 @@ def _instantiates(object_model: Any, domain_model: Any) -> bool:
     return any(getattr(obj, "classifier", None) in types for obj in object_model.objects)
 
 
-def check_ocl(models: list[LoadedModel], checker: Callable[..., dict[str, Any]]) -> OclOutcome:
+def check_ocl(models: list[LoadedModel], checker: Callable[..., dict[str, Any]], evaluate: bool) -> OclOutcome:
     """Check the OCL constraints of the domain models among ``models`` with ``checker``.
 
-    A syntax error is reported on the domain model. An invariant an object
+    A syntax error is reported on the domain model, and so is a constraint the
+    editor JSON converter dropped because it does not parse. Only with
+    ``evaluate`` are the invariants evaluated (see the module docstring). An invariant an object
     model violates is reported on the object model, unless the constraint
     does not parse (it is already reported). An object model is paired with
     the domain models whose classes it instantiates, or, when none match,
@@ -102,9 +112,15 @@ def check_ocl(models: list[LoadedModel], checker: Callable[..., dict[str, Any]])
             label, message = _message(entry)
             broken.add(label)
             outcome.errors.setdefault(id(domain), []).append(message)
+        dropped = getattr(domain.model, "ocl_warnings", None) or []
+        outcome.constraints += len(dropped)
+        outcome.errors.setdefault(id(domain), []).extend(f"{OCL_PREFIX} dropped: {reason}" for reason in dropped)
         if constraints:
             for instance in _object_models_of(domain, domains, models):
-                _evaluate(domain, instance, broken, checker, outcome)
+                if evaluate:
+                    _evaluate(domain, instance, broken, checker, outcome)
+                else:
+                    outcome.unevaluated += 1
     return outcome
 
 

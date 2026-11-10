@@ -132,12 +132,16 @@ def _load_found_python(path: str) -> LoadedModels | None:
 
 
 def _check_file(path: str, loaded: LoadedModels, strict: bool,
-                checker: Any | None) -> tuple[_FileCheck, OclOutcome | None]:
-    """Run ``validate()``, and the OCL check when ``checker`` is given, on the models of ``loaded``."""
+                checker: Any | None, exec_py: bool) -> tuple[_FileCheck, OclOutcome | None]:
+    """Run ``validate()``, and the OCL check when ``checker`` is given, on the models of ``loaded``.
+
+    OCL invariants are evaluated when running the file's code is allowed: it is a
+    ``.py`` file, or ``exec_py`` (see ``besser.cli.ocl_check``).
+    """
     check = _FileCheck(file=path, models=[{"file": path, **_validate_model(model)} for model in loaded.models])
     outcome = None
     if checker is not None:
-        outcome = check_ocl(loaded.models, checker)
+        outcome = check_ocl(loaded.models, checker, evaluate=exec_py or loaded.suffix == ".py")
         for model, report in zip(loaded.models, check.models):
             report["errors"].extend(outcome.errors.get(id(model), []))
             report["warnings"].extend(outcome.warnings.get(id(model), []))
@@ -175,7 +179,7 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
     checks: list[_FileCheck] = []
     lines: list[str] = []
     traceback = ""
-    constraints = evaluations = 0
+    constraints = evaluations = unevaluated = 0
     for model_file in found.files:
         try:
             if model_file.explicit or not model_file.path.lower().endswith(".py"):
@@ -188,11 +192,12 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
                                      load_error=str(exc)))
             traceback += format_traceback(exc)
             continue
-        check, outcome = _check_file(model_file.path, loaded, strict, checker)
+        check, outcome = _check_file(model_file.path, loaded, strict, checker, exec_py)
         checks.append(check)
         if outcome is not None:
             constraints += outcome.constraints
             evaluations += outcome.evaluations
+            unevaluated += outcome.unevaluated
         lines.extend(_validation_text(str(loaded.path), check.models, loaded.errors))
     if not checks:
         return _nothing_to_validate(model_paths, dataclasses.replace(found, skipped=skipped))
@@ -216,6 +221,11 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
         notes.append(
             f"OCL: {_plural(constraints, 'constraint')} parsed, invariants evaluated on "
             f"{_plural(evaluations, 'object model')}" if constraints else "OCL: the models have no OCL constraints"
+        )
+    if unevaluated:
+        notes.append(
+            f"OCL: invariants not evaluated on {_plural(unevaluated, 'object model')} of editor JSON: the OCL "
+            "evaluator runs Python built from the models' values; pass --exec-py to evaluate them"
         )
 
     exit_code = max(check.exit_code for check in checks)

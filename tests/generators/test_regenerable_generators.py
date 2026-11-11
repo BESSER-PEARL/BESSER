@@ -3,10 +3,10 @@
 Unstable output would read as a model change on every run. Each run below is a fresh
 interpreter with a different ``PYTHONHASHSEED``; ``set`` order is what usually differs.
 """
+import importlib.util
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -66,7 +66,7 @@ def test_regenerable_matches_the_list_above(spec):
     assert generator_class.regenerable is (spec.id not in NOT_REGENERABLE)
 
 
-@pytest.mark.skipif(shutil.which("django-admin") is None, reason="Django is not covered: needs django-admin")
+@pytest.mark.skipif(importlib.util.find_spec("django") is None, reason="Django is not covered: needs Django")
 def test_django_is_among_the_generators_checked(runs):
     assert "django" in runs[SEEDS[0]][0]
 

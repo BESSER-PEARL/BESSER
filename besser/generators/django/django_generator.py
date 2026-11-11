@@ -1,6 +1,7 @@
 """
 This module generates Django code using Jinja2 templates based on BUML models.
 """
+import importlib.util
 import logging
 import os
 import re
@@ -12,6 +13,8 @@ from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSo
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
+from besser.generators.settings import subprocess_timeout
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
@@ -697,6 +700,7 @@ JAZZMIN_SETTINGS = {{
 
     def generate(self, *args):
         """Generates the Django project, app, and necessary configurations."""
+        require_valid_identifiers(self.model)
 
         try:
             # Step 1: Initialize Django project and app. Everything is anchored
@@ -731,16 +735,18 @@ JAZZMIN_SETTINGS = {{
             # startapp imports the new settings module; keep its .pyc files
             # out of the generated tree.
             subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
-            try:
-                subprocess.run(['django-admin', 'startproject', self.project_name],
-                               cwd=base_dir, check=True, env=subprocess_env)
-            except FileNotFoundError as exc:
+            # `python -m django` is django-admin run by this interpreter, so it
+            # works when the environment's scripts directory is not on PATH.
+            if importlib.util.find_spec('django') is None:
                 raise RuntimeError(
-                    'The Django generator needs django-admin: pip install "besser[django]"'
-                ) from exc
+                    'The Django generator needs Django: pip install "besser[django]"'
+                )
+            subprocess.run([sys.executable, '-m', 'django', 'startproject', self.project_name],
+                           cwd=base_dir, check=True, env=subprocess_env,
+                           timeout=subprocess_timeout())
             subprocess.run([sys.executable, 'manage.py', 'startapp',
                                 self.app_name], cwd=project_dir, check=True,
-                           env=subprocess_env)
+                           env=subprocess_env, timeout=subprocess_timeout())
 
             # Step 2: Update settings.py
             self.update_settings()

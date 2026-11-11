@@ -6,6 +6,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.pk_types import pk_python_types
 from besser.generators.structural_utils import (
     get_deferred_fk_associations,
@@ -49,6 +50,7 @@ class PydanticGenerator(GeneratorInterface):
         Returns:
             None, but store the generated code as a file named pydantic_classes.py
         """
+        require_valid_identifiers(self.model)
         file_path = self.build_generation_path(file_name="pydantic_classes.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")

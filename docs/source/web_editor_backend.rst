@@ -635,7 +635,9 @@ Refine KG dialog that precedes it.
 Validation
 ^^^^^^^^^^
 
-- ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints)
+- ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints).
+  OCL invariants are evaluated against an object or user diagram only when
+  ``BESSER_ENABLE_OCL_EVALUATION`` is on; otherwise they are checked for syntax only.
   For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
   consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
@@ -643,7 +645,10 @@ Validation
 Deployment
 ^^^^^^^^^^
 
-- ``POST /deploy-app`` -- Docker Compose deployment for Django projects
+- ``POST /deploy-app`` -- Docker Compose deployment for Django projects, on the backend's own host.
+  Unless ``BESSER_ENABLE_DOCKER_DEPLOY`` says otherwise, served only to a local browser
+  (loopback connection, no proxy headers), 403 otherwise; a failed or timed-out
+  ``docker-compose`` answers 502 or 504 with the details in the server log.
 - ``POST /feedback`` -- User feedback submission
 
 Standalone Chatbot Deployment
@@ -909,6 +914,28 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
 - ``BESSER_DEPLOY_FROM_REPO`` (optional, default ``false``) -- offers "Go live"
   (``/github/app/go-live``), which deploys the project's own repository
 
+**Docker deployment:**
+
+- ``BESSER_ENABLE_DOCKER_DEPLOY`` (unset) -- controls ``POST /deploy-app``, which runs
+  ``docker-compose`` on the backend's own host and has no authentication. Unset, it
+  answers only requests from the backend's own machine: a loopback connection carrying
+  no ``Forwarded`` / ``X-Forwarded-For`` / ``X-Real-IP`` header, which is what the
+  editor's "Deploy locally" sends when backend and browser run on one machine.
+  ``true`` allows every caller, ``false`` refuses every caller (403).
+  ``docker-compose.prod.yml`` sets ``false``; a shared server should too.
+
+**OCL evaluation:**
+
+- ``BESSER_ENABLE_OCL_EVALUATION`` (default ``false``) -- ``/validate-diagram``
+  (and ``/check-ocl``) evaluate OCL invariants against object and user diagrams.
+  Off, invariants are checked for syntax only and an object diagram's response
+  carries the warning *OCL invariants were checked for syntax only; evaluation
+  is disabled on this server*. The B-OCL evaluator runs Python text it builds
+  from the diagram's values; the backend accepts only literal and operator
+  expressions from it, but enabling evaluation is **unsafe for untrusted users**:
+  turn it on only on a local install or a server whose users are trusted.
+  ``docker-compose.prod.yml`` sets ``false``.
+
 **Optional:**
 
 - ``OPENAI_API_KEY`` -- OpenAI key consumed by:
@@ -971,6 +998,13 @@ agent: :doc:`spec_driven_agent/configuration`.
   persistent volume so sign-ins survive a restart
 - ``GITHUB_REDIRECT_URI`` -- OAuth redirect URL (default: ``http://localhost:9000/besser_api/github/auth/callback``)
 - ``DEPLOYMENT_URL`` -- Frontend URL for OAuth redirects (default: ``http://localhost:8080``)
+
+**Code generation** (read per call):
+
+- ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT`` (``120``) -- Seconds a generator's child
+  process may run (Django's ``startproject`` / ``startapp``, the SQL
+  generator's DDL script). Past it the child is killed and the request answers
+  504. A blank, unparsable or non-positive value gives the default.
 
 **SDMX import** (``POST /sdmx-to-domain-model``, read once at startup):
 

@@ -103,3 +103,15 @@ def test_rdf_enumerations_exist(domain_model, tmpdir):
     assert "ex:SENIOR rdf:type ex:MemberType" in rdf_code
     assert "ex:STUDENT rdf:type ex:MemberType" in rdf_code
     assert "ex:CHILD rdf:type ex:MemberType" in rdf_code
+
+def test_rdf_escapes_description_in_turtle_literal(domain_model, tmpdir):
+    """A quote or line break in a description stays inside its rdfs:comment literal."""
+    from besser.BUML.metamodel.structural import Metadata
+
+    book = next(t for t in domain_model.types if t.name == "Book")
+    book.metadata = Metadata(description='A "rare" book\nwith notes')
+    RDFGenerator(model=domain_model, output_dir=str(tmpdir)).generate()
+
+    with open(os.path.join(str(tmpdir), "vocabulary.ttl"), encoding="utf-8") as f:
+        content = f.read()
+    assert 'rdfs:comment "A \\"rare\\" book\\nwith notes"' in content

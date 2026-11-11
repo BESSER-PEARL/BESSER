@@ -11,8 +11,9 @@ import shutil
 import tempfile
 import uuid
 import asyncio
+import ipaddress
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -50,6 +51,8 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_DJANGO_APP_NAME,
 )
 
+from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
+
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
@@ -59,10 +62,29 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/besser_api", tags=["deployment"])
 
+# A reverse proxy in front of the backend sets one of these; the request then
+# comes from someone else even when the proxy connects over loopback.
+_FORWARDING_HEADERS = ("forwarded", "x-forwarded-for", "x-real-ip")
+
+
+def _is_loopback(address) -> bool:
+    try:
+        return ipaddress.ip_address(address[0]).is_loopback
+    except (TypeError, ValueError, IndexError):
+        return False
+
+
+def _is_local_request(request: Request) -> bool:
+    """True when the browser runs on the backend's own machine: a loopback
+    connection on both ends, not relayed by a proxy."""
+    return (_is_loopback(request.client)
+            and _is_loopback(request.scope.get("server"))
+            and not any(name in request.headers for name in _FORWARDING_HEADERS))
+
 
 @router.post("/deploy-app")
 @handle_endpoint_errors("deploy_app")
-async def deploy_app(input_data: DiagramInput):
+async def deploy_app(input_data: DiagramInput, request: Request, settings: SettingsDep):
     """
     Deploy application using Docker Compose.
 
@@ -75,6 +97,18 @@ async def deploy_app(input_data: DiagramInput):
     Raises:
         HTTPException: If deployment fails
     """
+    # This builds and starts containers on the backend's own Docker daemon,
+    # unauthenticated, so only a single-user local install may use it. An explicit
+    # BESSER_ENABLE_DOCKER_DEPLOY wins; unset, only local requests are served.
+    # (The docstring is in the editor's OpenAPI schema.)
+    enabled = settings.docker_deploy_enabled
+    if enabled is None:
+        enabled = _is_local_request(request)
+    if not enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Docker deployment is disabled on this server (set BESSER_ENABLE_DOCKER_DEPLOY to enable it).",
+        )
     with tempfile.TemporaryDirectory(prefix=f'{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_') as temp_dir:
         json_data = input_data.model_dump()
         generator = input_data.generator
@@ -97,6 +131,8 @@ async def deploy_app(input_data: DiagramInput):
             # Validate project_name to prevent path traversal
             if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_-]*$', project_name):
                 raise HTTPException(status_code=400, detail="Invalid project name")
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', app_name):
+                raise HTTPException(status_code=400, detail="Invalid app name")
 
             # Sanitize and resolve project directory safely within temp_dir
             project_dir = _safe_path(temp_dir, project_name)
@@ -122,6 +158,7 @@ async def deploy_app(input_data: DiagramInput):
                 raise ValueError("Django project generation failed: Output directory is empty")
 
             await asyncio.to_thread(run_docker_compose, directory=project_dir, project_name=project_name)
+            return {"status": "deployed", "project_name": project_name}
 
         else:
             raise ValueError("Deployment only possible for Django projects")

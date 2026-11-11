@@ -327,7 +327,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             )
 
         options = {"versions": ", ".join(slug for slug, _ in version_specs)} if multi else None
-        return zip_output(temp_dir, "web_app", options)
+        return await zip_output(temp_dir, "web_app", options)
 
 
 async def _handle_deployment_project_generation(
@@ -381,7 +381,7 @@ async def _handle_deployment_project_generation(
             agent_config_yamls_by_id=agent_config_yamls_by_id,
         )
         await asyncio.to_thread(generator_instance.generate)
-        return zip_output(temp_dir, generator_type)
+        return await zip_output(temp_dir, generator_type)
 
 
 def _process_deployment_payload(json_data: dict):
@@ -534,7 +534,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
     if not os.path.exists(project_dir) or not os.listdir(project_dir):
         raise ValueError("Django project generation failed: Output directory is empty")
 
-    return zip_output(project_dir, "django", {
+    return await zip_output(project_dir, "django", {
         "project_name": project_name, "app_name": app_name, "containerization": containerization,
     })
 
@@ -574,7 +574,7 @@ async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: 
     if not os.listdir(project_dir):
         raise ValueError("Spring Boot project generation failed: Output directory is empty")
 
-    return zip_output(project_dir, "spring", {
+    return await zip_output(project_dir, "spring", {
         "project_name": project_name, "app_name": app_name, "spring_boot_version": spring_boot_version,
         "java_version": java_version, "package_name": package_name,
     })
@@ -644,7 +644,7 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
 
     if mode == "smart_data":
         # For smart_data mode, we create a zip file with a specific name
-        return zip_output(
+        return await zip_output(
             temp_dir, "jsonschema", {"mode": mode}, file_name="smart_data_schemas.zip",
         )
     else:
@@ -680,7 +680,7 @@ async def _handle_deployment_diagram_generation(
     await asyncio.to_thread(generator_instance.generate)
 
     if generator_info.output_type == "zip":
-        return zip_output(temp_dir, generator_type)
+        return await zip_output(temp_dir, generator_type)
     return file_output(temp_dir, generator_type)
 
 
@@ -836,6 +836,6 @@ async def _generate_standard(buml_model, generator_class, generator_type: str, g
 
     # Return ZIP or single file based on generator info
     if generator_info.output_type == "zip":
-        return zip_output(temp_dir, generator_type)
+        return await zip_output(temp_dir, generator_type)
     else:
         return file_output(temp_dir, generator_type)

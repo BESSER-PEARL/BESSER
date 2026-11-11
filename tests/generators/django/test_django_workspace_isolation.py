@@ -1,6 +1,6 @@
 """Workspace-isolation tests for the Django generator.
 
-DjangoGenerator.generate() shells out to ``django-admin startproject`` /
+DjangoGenerator.generate() shells out to ``python -m django startproject`` /
 ``manage.py startapp`` and writes many template files. These tests pin down
 that every one of those filesystem effects lands under the generator's own
 output_dir — never in the calling process's current working directory — and
@@ -8,8 +8,8 @@ that regenerating into the same output_dir is idempotent (a leftover project
 directory from a previous run must not hard-fail the generation).
 """
 
+import importlib.util
 import os
-import shutil
 import subprocess
 import sys
 
@@ -28,9 +28,9 @@ from besser.generators.django import DjangoGenerator
 PROJECT_NAME = "iso_project"
 APP_NAME = "iso_app"
 
-requires_django_admin = pytest.mark.skipif(
-    shutil.which("django-admin") is None,
-    reason="django-admin is not available in this environment",
+requires_django = pytest.mark.skipif(
+    importlib.util.find_spec("django") is None,
+    reason="Django is not installed",
 )
 
 
@@ -258,9 +258,9 @@ def test_leftover_dir_outside_output_dir_is_never_deleted(
     assert (output_dir / PROJECT_NAME / "manage.py").exists()
 
 
-@requires_django_admin
+@requires_django
 def test_real_generate_twice_with_foreign_cwd(domain_model, tmp_path, monkeypatch):
-    """End-to-end run with the real django-admin: isolated and idempotent."""
+    """End-to-end run with the real Django: isolated and idempotent."""
     foreign_cwd, output_dir = _make_isolated_dirs(tmp_path, monkeypatch)
 
     gen = DjangoGenerator(

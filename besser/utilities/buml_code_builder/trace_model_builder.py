@@ -25,8 +25,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, TextIO, Tuple
 
 from besser.BUML.metamodel.traceability import (
     AIEvidence, Agent, Artifact, ChangeEvent, CodeArtifact, CodeGeneration, Confidence, Evidence, LLM,
-    Conversation, LogRecord, ModelArtifact, ModelingSession, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceElement,
-    TraceLink, TraceModel,
+    Conversation, LogRecord, ModelArtifact, ModelingSession, Operation, PromptArtifact, RequirementArtifact,
+    RequirementExtraction, RuleEvidence, ToolCall, TraceElement, TraceLink, TraceModel,
 )
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.utilities.buml_code_builder.common import (
@@ -45,7 +45,8 @@ TRACE_SECTION_KEYWORD = "TRACEABILITY"
 
 _IMPORTED_NAMES = (
     "TraceModel, Person, Agent, Editor, CodeGenerator, LLM, ModelArtifact, CodeArtifact, PromptArtifact,\n"
-    "    ModelingSession, CodeGeneration, Conversation, ExecutionStatus, ChangeEvent, ChangeKind, ToolCall, LogRecord, LogType,\n"
+    "    RequirementArtifact, RequirementKind,\n"
+    "    ModelingSession, CodeGeneration, RequirementExtraction, Conversation, ExecutionStatus, ChangeEvent, ChangeKind, ToolCall, LogRecord, LogType,\n"
     "    RuleEvidence, AIEvidence, Confidence, TraceLink,"
 )
 
@@ -211,13 +212,16 @@ class _TraceWriter:
         if isinstance(artifact, PromptArtifact):
             return (f"PromptArtifact({_string(artifact.name)}, content={_string(artifact.content)}, "
                     f"content_hash={_string(artifact.content_hash)}{parent}, {_common(artifact)})")
+        if isinstance(artifact, RequirementArtifact):
+            return (f"RequirementArtifact({_string(artifact.name)}, quote={_string(artifact.quote)}, "
+                    f"kind=RequirementKind.{artifact.kind.name}{parent}, {_common(artifact)})")
         raise TypeError(f"Unsupported artifact type {type(artifact).__name__}.")
 
     def _operation(self, index: int, operation: Operation):
         kind = type(operation).__name__
         actors = ", ".join(_comment_safe(a.name) for a in operation.performed_by)
         self.out.write(f"\n# Operation {index}: {kind} by {actors}\n")
-        if not isinstance(operation, (ModelingSession, CodeGeneration, Conversation)):
+        if not isinstance(operation, (ModelingSession, CodeGeneration, RequirementExtraction, Conversation)):
             raise TypeError(f"Unsupported operation type {kind}.")
         specific = ""
         if isinstance(operation, ModelingSession):

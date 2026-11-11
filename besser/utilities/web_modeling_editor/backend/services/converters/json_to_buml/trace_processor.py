@@ -12,14 +12,17 @@ from typing import Any, Callable, Dict, List, Optional
 from besser.BUML.metamodel.traceability import (
     LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
     Conversation, Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, ModelingSession, Person, PromptArtifact,
-    RuleEvidence, ToolCall, TraceLink, TraceModel,
+    RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.utilities.utils import parse_iso_timestamp
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 _ACTOR_TYPES = {"Person": Person, "Agent": Agent}
-_OPERATION_TYPES = {"ModelingSession": ModelingSession, "CodeGeneration": CodeGeneration, "Conversation": Conversation}
+_OPERATION_TYPES = {
+    "ModelingSession": ModelingSession, "CodeGeneration": CodeGeneration,
+    "RequirementExtraction": RequirementExtraction, "Conversation": Conversation,
+}
 _TOOL_TYPES = {"Editor": Editor, "CodeGenerator": CodeGenerator, "LLM": LLM}
 
 
@@ -133,6 +136,9 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
         elif kind == "PromptArtifact":
             artifact = _build(PromptArtifact, where, content=_field(raw, "content", where),
                               content_hash=_field(raw, "contentHash", where), **common)
+        elif kind == "RequirementArtifact":
+            artifact = _build(RequirementArtifact, where, quote=_field(raw, "quote", where),
+                              kind=_enum(RequirementKind, raw, "kind", where), **common)
         else:
             raise ConversionError(f"{where} has unknown type {kind!r}.")
         if artifact.id in artifacts:

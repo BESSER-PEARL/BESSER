@@ -144,7 +144,7 @@ def test_extraction_keeps_the_billing_tail_and_saturation_cannot_look_complete(t
     assert extracted[-1]["text"] == requirements[-1]["text"]
 
     # A noncompliant provider returning over maxItems must not lose any item.
-    for count in (ledger._MAX_REQUIREMENTS, ledger._MAX_REQUIREMENTS + 1):
+    for count in (ledger.MAX_REQUIREMENTS, ledger.MAX_REQUIREMENTS + 1):
         response = [{"text": f"Rule {i}", "kind": "rule"} for i in range(count)]
         extracted = ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": response}]))
         assert len(extracted) == count + 1

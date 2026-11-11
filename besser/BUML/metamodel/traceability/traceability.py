@@ -8,14 +8,16 @@ an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
 * An :class:`Operation` is performed by Actors and reads and writes Artifacts.
   Its kind is its class: :class:`ModelingSession` edits models and holds the granular
   :class:`ChangeEvent` records of what it did, :class:`CodeGeneration` (a
-  :class:`Transformation`) derives code from models, :class:`Conversation` is a
-  dialogue between a user and an agent. Whether a person or an agent did the
+  :class:`Transformation`) derives code from models, :class:`RequirementExtraction`
+  (a :class:`Transformation` too) derives requirements from a prompt, :class:`Conversation`
+  is a dialogue between a user and an agent. Whether a person or an agent did the
   work is told by its actors, not by its kind.
 * An operation reaches its Tools only through its :class:`ToolCall` records: each
   call invokes one tool and holds the :class:`LogRecord` messages exchanged with it
   (a prompt and its answer). The tools an operation used are derived from its calls.
 * A :class:`TraceLink` connects a source and a target Artifact (a class and the
-  code generated from it). :class:`Evidence` says why the link holds and
+  code generated from it, a requirement and the model element that realizes it).
+  :class:`Evidence` says why the link holds and
   :class:`Confidence` how sure it is; an operation may have a Confidence too.
 
 A trace is stored apart from the model it describes. It points at model
@@ -37,12 +39,14 @@ from besser.BUML.metamodel.structural import Element, Model
 __all__ = [
     "ExecutionStatus",
     "ChangeKind",
+    "RequirementKind",
     "LogType",
     "TraceElement",
     "Artifact",
     "ModelArtifact",
     "CodeArtifact",
     "PromptArtifact",
+    "RequirementArtifact",
     "Actor",
     "Person",
     "Agent",
@@ -57,6 +61,7 @@ __all__ = [
     "ModelingSession",
     "Transformation",
     "CodeGeneration",
+    "RequirementExtraction",
     "Conversation",
     "Evidence",
     "RuleEvidence",
@@ -95,6 +100,36 @@ class OutOfDateReason(Enum):
     UPSTREAM_CHANGED = "UPSTREAM_CHANGED"
     """Neither end changed, but something the source was derived from did: the source may need
     updating, and this link with it."""
+
+
+class RequirementKind(Enum):
+    """What a :class:`RequirementArtifact` asks for, which decides the models that can realize it.
+
+    The values are lowercase because the same words name a requirement's kind in the modeling
+    agent's protocol and the Spec-Driven Agent's requirements ledger.
+    """
+    DATA = "data"
+    """Entities, their attributes and their relationships."""
+    UNIQUENESS = "uniqueness"
+    """An identifier, or a value that must be unique."""
+    VALIDATION = "validation"
+    """The shape a value must have."""
+    RULE = "rule"
+    """A limit or a rule across entities."""
+    COMPUTED = "computed"
+    """A value worked out rather than typed in."""
+    TRANSITION = "transition"
+    """A state change, and when it is refused."""
+    ACTION = "action"
+    """A named operation and what it reports back."""
+    UI = "ui"
+    """A screen or an interaction."""
+    INTEGRATION = "integration"
+    """An external service the application uses (payments, email, ...)."""
+    QUALITY = "quality"
+    """A quality of the whole application: performance, security, accessibility, ..."""
+    TECHNICAL = "technical"
+    """A technology, platform or architecture the application must use."""
 
 
 class LogType(Enum):
@@ -479,6 +514,57 @@ class PromptArtifact(Artifact):
     def content_hash(self, content_hash: str):
         """str: Set the SHA-256 of the content."""
         self.__content_hash = _text(content_hash, "PromptArtifact", "content_hash")
+
+
+class RequirementArtifact(Artifact):
+    """One atomic requirement stated in a prompt.
+
+    A :class:`RequirementExtraction` writes it. A trace link from the :class:`PromptArtifact` it
+    was extracted from records where it comes from; trace links from it to model elements record
+    what realizes it.
+
+    Args:
+        name (str): The requirement, as one atomic statement.
+        quote (str): The words of the prompt that state it, verbatim.
+        kind (RequirementKind): What it asks for.
+        parent (Artifact): An artifact holding this one, if any.
+        id (str): Persistent identifier.
+        timestamp (datetime): When the requirement was extracted.
+    """
+
+    def __init__(self, name: str, quote: str, kind: RequirementKind, parent: Artifact = None,
+                 id: str = None, timestamp: datetime = None):
+        super().__init__(name, parent, id, timestamp)
+        self.quote: str = quote
+        self.kind: RequirementKind = kind
+
+    @property
+    def quote(self) -> str:
+        """str: Get the words of the prompt that state the requirement."""
+        return self.__quote
+
+    @quote.setter
+    def quote(self, quote: str):
+        """str: Set the words of the prompt that state the requirement.
+
+        Raises:
+            ValueError: If the quote is not a non-empty string.
+        """
+        self.__quote = _text(quote, "RequirementArtifact", "quote")
+
+    @property
+    def kind(self) -> RequirementKind:
+        """RequirementKind: Get what the requirement asks for."""
+        return self.__kind
+
+    @kind.setter
+    def kind(self, kind: RequirementKind):
+        """RequirementKind: Set what the requirement asks for.
+
+        Raises:
+            TypeError: If kind is not a RequirementKind.
+        """
+        self.__kind = _instance(kind, RequirementKind, "RequirementArtifact", "kind")
 
 
 class Actor(TraceElement, ABC):
@@ -899,7 +985,7 @@ class ChangeEvent(TraceElement):
 
 class Operation(TraceElement, ABC):
     """An activity on the project. Abstract: an operation is a :class:`ModelingSession`, a
-    :class:`CodeGeneration` or a :class:`Conversation`.
+    :class:`CodeGeneration`, a :class:`RequirementExtraction` or a :class:`Conversation`.
 
     ``started_at`` is the element's timestamp.
 
@@ -923,7 +1009,8 @@ class Operation(TraceElement, ABC):
                  reads: List[Artifact] = None, writes: List[Artifact] = None, confidence: "Confidence" = None,
                  id: str = None):
         if type(self) in (Operation, Transformation):
-            raise TypeError(f"{type(self).__name__} is abstract: use ModelingSession, CodeGeneration or Conversation.")
+            raise TypeError(f"{type(self).__name__} is abstract: use ModelingSession, CodeGeneration, "
+                            "RequirementExtraction or Conversation.")
         super().__init__(id, started_at)
         self.performed_by: List[Actor] = performed_by
         self.status: ExecutionStatus = status
@@ -1056,7 +1143,8 @@ class ModelingSession(Operation):
 
 class Transformation(Operation, ABC):
     """An operation that derives new artifacts from others (and the trace links
-    between them) without editing anything. Abstract: see :class:`CodeGeneration`."""
+    between them) without editing anything. Abstract: see :class:`CodeGeneration` and
+    :class:`RequirementExtraction`."""
 
 
 class CodeGeneration(Transformation):
@@ -1069,14 +1157,25 @@ class CodeGeneration(Transformation):
     """
 
 
+class RequirementExtraction(Transformation):
+    """A text-to-model transformation: the atomic requirements a prompt states, derived by an LLM.
+
+    It reads the :class:`PromptArtifact`, writes one :class:`RequirementArtifact` per
+    requirement and links the prompt to each. It calls at least one :class:`LLM` and writes
+    nothing but requirements (both checked by ``TraceModel.validate``). The
+    :class:`Conversation` whose turn gave the prompt is a separate operation, and so is the
+    :class:`ModelingSession` that reads the requirements to build the model.
+    """
+
+
 class Conversation(Operation):
     """A dialogue between a user and an agent (the BESSER assistant). Each turn is a
     :class:`ToolCall` to the LLM the agent answers with, holding the turn's messages.
 
     What it leads to varies, so it is not a :class:`Transformation`: a clarification question
-    writes nothing; stated requirements are artifacts it writes, linked from the
-    :class:`PromptArtifact` they came from; an edit or a generation it asks for is a separate
-    :class:`ModelingSession` or :class:`CodeGeneration`. At least one of its actors is an :class:`Agent`
+    writes nothing; what a turn leads to is a separate operation: a :class:`RequirementExtraction`
+    of the requirements its prompt states, a :class:`ModelingSession` for an edit, a
+    :class:`CodeGeneration` for a generation. At least one of its actors is an :class:`Agent`
     (checked by ``TraceModel.validate``).
     """
 
@@ -1497,6 +1596,13 @@ class TraceModel(Model):
             elif isinstance(operation, CodeGeneration):
                 if not any(isinstance(tool, (CodeGenerator, LLM)) for tool in operation.tools):
                     errors.append(f"{where} is a CodeGeneration that calls no CodeGenerator or LLM.")
+            elif isinstance(operation, RequirementExtraction):
+                if not any(isinstance(tool, LLM) for tool in operation.tools):
+                    errors.append(f"{where} is a RequirementExtraction that calls no LLM.")
+                for artifact in operation.writes:
+                    if not isinstance(artifact, RequirementArtifact):
+                        errors.append(f"{where} is a RequirementExtraction that writes {type(artifact).__name__} "
+                                      f"{artifact.id!r}: it writes only requirements.")
             elif isinstance(operation, Conversation):
                 if not any(isinstance(actor, Agent) for actor in operation.performed_by):
                     errors.append(f"{where} is a Conversation with no Agent among its actors.")

@@ -1669,6 +1669,12 @@ class SmartGenerationRunner:
             per_write_diagnostics=LLM_PER_WRITE_DIAGNOSTICS,
             enable_import_smoke_check=LLM_ENABLE_IMPORT_SMOKE_CHECK,
             enable_requirements_ledger=LLM_ENABLE_REQUIREMENTS_LEDGER,
+            # The modeling assistant's requirements, when the editor sent
+            # them: the ledger is built from them instead of extracted again.
+            stated_requirements=(
+                [item.model_dump(mode="json") for item in self.request.requirements]
+                if self.request.requirements is not None else None
+            ),
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,

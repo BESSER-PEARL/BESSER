@@ -284,6 +284,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
+        stated_requirements: list[dict] | None = None,
         assembly_issues: list[dict] | None = None,
     ):
         self.client = llm_client
@@ -400,6 +401,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # extracted; the verdicts of the last pass go to the recipe.
         self.enable_requirements_ledger = enable_requirements_ledger
         self._requirements: list[dict] | None = None
+        # Requirements the editor sent ({"id", "text", "kind"}, the modeling
+        # assistant's extraction): the ledger is built from them instead of
+        # extracting again, so its verdicts name the trace's requirements.
+        self._stated_requirements = stated_requirements
+        # Where the ledger came from, for the recipe: "editor", "extracted" or None.
+        self._requirements_source: str | None = None
         self._requirement_verdicts: list[dict] = []
         self._requirement_judgments: dict[str, list[dict]] = {}
         self._requirement_evidence_retries: set[str] = set()
@@ -3708,13 +3715,22 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ).encode("utf-8")).hexdigest()
 
     def _extract_requirements(self, instructions: str) -> None:
+        if self._stated_requirements is not None:
+            self._requirements = _requirements_ledger.stated_requirements_ledger(
+                self._stated_requirements, instructions)
+            self._stated_requirements = None  # decided once: used, or extract below
+            if self._requirements is not None:
+                self._requirements_source = "editor"
+                return
         # One initial attempt and one recovery attempt; failed extraction stays
         # unknown instead of being cached forever as a successful empty list.
         if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
             return
         self._requirement_extraction_attempts += 1
         self._requirements = _requirements_ledger.extract_requirements(instructions, self.client)
-        if self._requirements is None:
+        if self._requirements is not None:
+            self._requirements_source = "extracted"
+        else:
             # extract_requirements has five silent None paths; an empty list
             # in the recipe would read as "the user asked for nothing" rather
             # than "we never looked".
@@ -4480,6 +4496,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # The user's requirements with the last Phase 3 verdict on each:
             # what was NOT built is read here, not inferred from the code.
             "requirements": self._requirement_verdicts,
+            # "editor" when the ledger is the modeling assistant's extraction
+            # (verdicts carry its trace id as "ref"), "extracted" when the run
+            # extracted it, None when no ledger was built.
+            "requirements_source": self._requirements_source,
             "api_scenarios": api_scenario_snapshot(self._api_scenarios.values(), include_reports=True),
             "model_conversion_issues": getattr(self.domain_model, "conversion_issues", []) or [],
             "model_assembly_issues": self._assembly_issues,

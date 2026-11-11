@@ -106,10 +106,22 @@ def test_trace_with_edits_round_trips(traced):
     trace["artifacts"].append({"id": "prompt-1", "type": "PromptArtifact", "name": "Library",
                                "timestamp": "2026-10-29T09:58:00.000Z", "content": "Books have a title.",
                                "contentHash": "h"})
+    trace["artifacts"].append({"id": "prompt-1:R1", "type": "RequirementArtifact", "name": "A book has a title",
+                               "timestamp": "2026-10-29T09:58:00.000Z", "quote": "Books have a title",
+                               "kind": "data"})
+    trace["tools"].append({"id": "llm", "type": "LLM", "name": "gpt-6-luna", "provider": "openai",
+                           "timestamp": "2026-10-29T09:58:00.000Z"})
     trace["operations"].append({
         "id": "op-chat", "type": "Conversation", "status": "SUCCEEDED", "startedAt": "2026-10-29T09:58:00.000Z",
         "performedBy": [trace["actors"][0]["id"], "assistant"], "toolCalls": [], "reads": ["prompt-1"],
         "writes": [],
+    })
+    trace["operations"].append({
+        "id": "op-extraction", "type": "RequirementExtraction", "status": "SUCCEEDED",
+        "startedAt": "2026-10-29T09:58:00.000Z", "performedBy": ["assistant"],
+        "toolCalls": [{"id": "call-x", "toolId": "llm", "sequenceNumber": 0, "status": "SUCCEEDED",
+                       "startedAt": "2026-10-29T09:58:00.000Z", "logs": []}],
+        "reads": ["prompt-1"], "writes": ["prompt-1:R1"],
     })
     assert trace_buml_to_json(process_trace(trace)) == trace
 
@@ -122,7 +134,11 @@ def test_trace_with_edits_round_trips(traced):
     (lambda t: t["operations"][0].update(startedAt="yesterday"), "ISO 8601"),
     (lambda t: t["operations"][0].update(status="DONE"), "must be one of"),
     (lambda t: t["artifacts"][0].pop("name"), "missing 'name'"),
+    (lambda t: t["artifacts"].append({"id": "r", "type": "RequirementArtifact", "name": "R", "quote": "q",
+                                      "kind": "feature", "timestamp": "2026-10-29T09:58:00.000Z"}),
+     "must be one of"),
     (lambda t: t["operations"][0].update(performedBy=[]), "at least one Actor"),
+    (lambda t: t["operations"][0].update(type="RequirementExtraction"), "RequirementExtraction that calls no LLM"),
 ])
 def test_invalid_trace_is_a_conversion_error(traced, corrupt, message):
     trace = copy.deepcopy(traced["trace"])

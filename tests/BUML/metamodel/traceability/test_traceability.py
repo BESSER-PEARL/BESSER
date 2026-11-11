@@ -8,7 +8,8 @@ from besser.BUML.metamodel.structural import Class, DomainModel, Property, Strin
 from besser.BUML.metamodel.traceability import (
     LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
     Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Conversation, ModelingSession, Operation, OutOfDateReason,
-    Person, PromptArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel, Transformation,
+    Person, PromptArtifact, RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall,
+    TraceLink, TraceModel, Transformation,
 )
 
 T0 = datetime(2026, 10, 1, 12, 0, 0)
@@ -220,15 +221,21 @@ def test_a_conversation_may_write_nothing(generation_trace):
 
 
 def test_a_prompt_is_the_source_of_what_was_derived_from_it(generation_trace):
-    """Prompt -> requirement (made by the conversation) -> class (made by the agent's modeling)."""
+    """Prompt -> requirement (made by the extraction) -> class (made by the agent's modeling)."""
     trace, link, owner, book, _ = generation_trace
     assistant = trace.add_actor(Agent("BESSER modeling assistant"))
+    llm = trace.add_tool(LLM("gpt-6-luna", "openai"))
     earlier = T0 - timedelta(minutes=10)
     prompt = trace.add_artifact(PromptArtifact("Library prompt", "Books have a title.", "h", timestamp=earlier))
-    requirement = trace.add_artifact(ModelArtifact("R1", "req-1", "Requirement", timestamp=earlier))
-    chat = trace.add_operation(Conversation([owner, assistant], started_at=earlier, reads=[prompt],
-                                            writes=[requirement]))
-    trace.add_trace_link(TraceLink(prompt, requirement, chat, timestamp=earlier))
+    requirement = trace.add_artifact(RequirementArtifact("A book has a title", "Books have a title",
+                                                         RequirementKind.DATA, timestamp=earlier))
+    trace.add_operation(Conversation([owner, assistant], started_at=earlier, reads=[prompt],
+                                     tool_calls=[ToolCall(llm, 0, started_at=earlier)]))
+    extraction = trace.add_operation(RequirementExtraction(
+        [assistant], started_at=earlier, tool_calls=[ToolCall(llm, 0, started_at=earlier)],
+        reads=[prompt], writes=[requirement]))
+    assert isinstance(extraction, Transformation)
+    trace.add_trace_link(TraceLink(prompt, requirement, extraction, timestamp=earlier))
     edit = trace.add_operation(ModelingSession([assistant], [ChangeEvent(ChangeKind.CREATED, book, timestamp=earlier)],
                                         started_at=earlier))
     derived = trace.add_trace_link(TraceLink(requirement, book, edit, timestamp=earlier))
@@ -241,6 +248,16 @@ def test_a_prompt_is_the_source_of_what_was_derived_from_it(generation_trace):
 def test_a_prompt_has_content():
     with pytest.raises(ValueError):
         PromptArtifact("empty", "  ", "h")
+
+
+def test_a_requirement_quotes_the_prompt_and_has_a_kind():
+    requirement = RequirementArtifact("Room numbers are unique", "each room is identified by its number",
+                                      RequirementKind.UNIQUENESS)
+    assert (requirement.name, requirement.kind) == ("Room numbers are unique", RequirementKind.UNIQUENESS)
+    with pytest.raises(ValueError):
+        RequirementArtifact("Room numbers are unique", "  ", RequirementKind.UNIQUENESS)
+    with pytest.raises(TypeError):
+        RequirementArtifact("Room numbers are unique", "identified by its number", "uniqueness")
 
 
 def test_a_changed_source_spreads_downstream_as_upstream_changed(generation_trace):
@@ -337,6 +354,16 @@ def test_validation_checks_tool_calls(generation_trace):
     assert "references tool" in errors
     assert "sharing a sequence number" in errors
     assert "references log record" in errors
+
+
+def test_a_requirement_extraction_calls_an_llm_and_writes_only_requirements(generation_trace):
+    trace, _, owner, book, _ = generation_trace
+    editor = trace.add_tool(Editor("BESSER Web Modeling Editor"))
+    trace.add_operation(RequirementExtraction([owner], started_at=T0, tool_calls=[ToolCall(editor, 0, started_at=T0)],
+                                              writes=[book]))
+    errors = "\n".join(trace.validate(raise_exception=False)["errors"])
+    assert "RequirementExtraction that calls no LLM" in errors
+    assert f"RequirementExtraction that writes ModelArtifact {book.id!r}" in errors
 
 
 def test_a_code_generation_calls_a_generator_or_an_llm(generation_trace):

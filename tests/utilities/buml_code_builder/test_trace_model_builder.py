@@ -7,7 +7,7 @@ import pytest
 from besser.BUML.metamodel.traceability import (
     LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGenerator, Confidence, Editor,
     LogRecord, LogType, ModelArtifact, ModelingSession, CodeGeneration, Conversation, ExecutionStatus, Person, PromptArtifact,
-    RuleEvidence, ToolCall, TraceLink,
+    RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall, TraceLink,
     TraceModel,
 )
 from besser.utilities.buml_code_builder.trace_model_builder import trace_model_to_code
@@ -58,13 +58,19 @@ def trace():
     ]
     prompt = PromptArtifact("Library", 'Books have a "title".\nAnd pages.', "c" * 64, timestamp=_at(0))
     answer = LogRecord("Noted: Book(title, pages).", 0, LogType.OUTPUT_RESPONSE, timestamp=_at(0))
+    requirement = RequirementArtifact('A book has a "title"', 'Books have a "title".', RequirementKind.DATA,
+                                      timestamp=_at(0))
     chat = Conversation([owner, assistant], started_at=_at(0), reads=[prompt],
                         tool_calls=[ToolCall(llm, 0, started_at=_at(0), logs=[answer])])
-    links.append(TraceLink(prompt, book, modeling, [AIEvidence("llm", logs=[answer], timestamp=_at(1))],
+    extraction = RequirementExtraction([assistant], started_at=_at(0), reads=[prompt], writes=[requirement],
+                                       tool_calls=[ToolCall(llm, 0, started_at=_at(0))])
+    links.append(TraceLink(prompt, requirement, extraction,
+                           [RuleEvidence("quote found in the prompt", timestamp=_at(0))], timestamp=_at(0)))
+    links.append(TraceLink(requirement, book, modeling, [AIEvidence("llm", logs=[answer], timestamp=_at(1))],
                            timestamp=_at(1)))
     return TraceModel(project_id="project-1", actors=[owner, assistant], tools=[editor, generator, llm],
-                      artifacts=[lines, book, model, file, prompt], operations=[chat, modeling, generation],
-                      trace_links=links)
+                      artifacts=[lines, book, model, file, prompt, requirement],
+                      operations=[chat, extraction, modeling, generation], trace_links=links)
 
 
 def _code(trace, tmp_path) -> str:

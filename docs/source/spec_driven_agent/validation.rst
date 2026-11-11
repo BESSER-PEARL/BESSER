@@ -262,6 +262,16 @@ code change. Evidence must name a real application source file and quote an
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
 
+When the editor sends the modeling assistant's requirements (the request's
+``requirements`` field, see :doc:`api`), the ledger is built from them instead of
+extracted. Only the kinds that can be judged from code are judged (``uniqueness``,
+``validation``, ``rule``, ``computed``, ``transition``, ``action``, ``ui``,
+``integration``); ``data``, ``quality`` and ``technical`` requirements are not.
+Each verdict keeps the requirement's trace id as ``ref``, and the recipe's
+``requirements_source`` says where the ledger came from (``editor`` or
+``extracted``). The assistant extracts from the user's first request only, so a
+request carrying later messages is extracted as before, with a warning in the log.
+
 Model conversion losses
 -----------------------
 

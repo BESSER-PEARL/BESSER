@@ -21,8 +21,9 @@ from pathlib import Path
 import re
 import time
 
+from besser.BUML.metamodel.traceability import RequirementKind
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
-from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.planning.specification import MAX_REQUIREMENTS, validate_specification
 from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
@@ -38,7 +39,6 @@ VERBATIM_MARKER = "## The user's original request, verbatim"
 # generation_handler.py), inside the original request.
 LATER_REQUEST_MARKER = "## Subsequent user request, verbatim"
 
-_MAX_REQUIREMENTS = 128
 _EXTRACTION_INCOMPLETE = (
     "Requirement extraction reached its item limit; coverage of the full original "
     "specification is unverified. Complete extraction and audit the remaining "
@@ -46,6 +46,15 @@ _EXTRACTION_INCOMPLETE = (
     "verification obligation, not an application feature."
 )
 _STATUSES = ("implemented", "partial", "missing", "unverified")
+
+# The kinds of a requirement the editor sends that the judge checks against the
+# code. An entity existing (data) is the model, already generated; the stack
+# (technical) and qualities such as performance cannot be judged from source.
+JUDGED_KINDS = frozenset({
+    RequirementKind.UNIQUENESS.value, RequirementKind.VALIDATION.value, RequirementKind.RULE.value,
+    RequirementKind.COMPUTED.value, RequirementKind.TRANSITION.value, RequirementKind.ACTION.value,
+    RequirementKind.UI.value, RequirementKind.INTEGRATION.value,
+})
 
 # What the judge reads: the schemas and the ORM first (validators, unique
 # columns), then the routers (where rules are enforced), then the pages. A
@@ -176,7 +185,7 @@ _EXTRACT_SYSTEM_PROMPT = (
     "unstated authentication, authorization, user roles, integrations, or exhaustive "
     "accessibility/certification requirements. Extract the requested behavior, "
     "not a wish list of additional product features.\n"
-    f"- At most {_MAX_REQUIREMENTS} items. Never invent a requirement the "
+    f"- At most {MAX_REQUIREMENTS} items. Never invent a requirement the "
     "user did not state."
 )
 
@@ -188,7 +197,7 @@ _SUBMIT_REQUIREMENTS_TOOL = {
         "properties": {
             "requirements": {
                 "type": "array",
-                "maxItems": _MAX_REQUIREMENTS,
+                "maxItems": MAX_REQUIREMENTS,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -432,11 +441,42 @@ def extract_requirements(instructions: str, llm_client) -> list[dict] | None:
     # Preserve every returned item, even if a provider ignores maxItems. A full
     # response may still have omitted the specification's tail; neither slicing
     # it nor treating a saturated extraction as complete is safe.
-    if len(extracted) >= _MAX_REQUIREMENTS:
-        requirements.append({
-            "id": len(requirements) + 1, "text": _EXTRACTION_INCOMPLETE,
-            "kind": "verification",
-        })
+    if len(extracted) >= MAX_REQUIREMENTS:
+        requirements.append(_incomplete_extraction_item(len(requirements) + 1))
+    return requirements
+
+
+def _incomplete_extraction_item(rid: int) -> dict:
+    return {"id": rid, "text": _EXTRACTION_INCOMPLETE, "kind": "verification"}
+
+
+def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[dict] | None:
+    """The ledger built from the requirements the editor sent, or None when they
+    do not cover the request and it must be extracted instead.
+
+    ``stated`` items are ``{"id", "text", "kind"}``: the modeling assistant
+    extracted them from the user's request, and ``id`` is their artifact id in
+    the project trace. Each ledger item keeps it as ``ref``, so a verdict names
+    the requirement the trace links to model elements. Only the
+    :data:`JUDGED_KINDS` are judged.
+
+    The assistant extracts from the user's first request only. A request with
+    later messages (``LATER_REQUEST_MARKER``) states requirements the list
+    lacks, so the whole request is extracted instead.
+    """
+    if LATER_REQUEST_MARKER in original_request(instructions):
+        logger.warning(
+            "Requirements ledger: the request has later messages that the %d requirements "
+            "from the editor do not cover; extracting from the whole request instead", len(stated),
+        )
+        return None
+    judged = [item for item in stated if item["kind"] in JUDGED_KINDS]
+    requirements = [{"id": rid, "text": item["text"], "kind": item["kind"], "ref": item["id"]}
+                    for rid, item in enumerate(judged, start=1)]
+    # The assistant's extraction stops at the same cap as ours: a full list may
+    # have left the specification's tail out.
+    if len(stated) >= MAX_REQUIREMENTS:
+        requirements.append(_incomplete_extraction_item(len(requirements) + 1))
     return requirements
 
 
@@ -576,6 +616,15 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     return "\n\n".join(parts) + footer[:footer_budget]
 
 
+def _verdict_identity(rid: int, requirement: dict) -> dict:
+    """What a verdict repeats of its requirement: id, text, kind and, for a
+    requirement the editor sent, its trace artifact id (``ref``)."""
+    identity = {"id": rid, "text": requirement["text"], "kind": requirement.get("kind", "")}
+    if requirement.get("ref"):
+        identity["ref"] = requirement["ref"]
+    return identity
+
+
 def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
                 use_planning_model: bool) -> dict[int, dict]:
     """One judge call parsed into ``{id: verdict}``; empty when the call
@@ -596,9 +645,7 @@ def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
             continue
         status = str(item.get("status", "")).lower()
         verdicts[rid] = {
-            "id": rid,
-            "text": by_id[rid]["text"],
-            "kind": by_id[rid].get("kind", ""),
+            **_verdict_identity(rid, by_id[rid]),
             "status": status if status in _STATUSES else "unverified",
             "evidence": str(item.get("evidence") or "").strip(),
             "note": str(item.get("note") or "").strip(),
@@ -627,7 +674,7 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                  "rejected_evidence": str(item.get("evidence") or "")[:1500],
                  "verification_feedback": str(item.get("note") or "")[:1500]}
                 for item in previous_verdicts or []
-                if isinstance(item, dict) and item.get("id") in requested_ids][:_MAX_REQUIREMENTS]
+                if isinstance(item, dict) and item.get("id") in requested_ids][:MAX_REQUIREMENTS]
     repair_context = ("## Previous citation verification (diagnostic data, not application code)\n\n"
                       + json.dumps(feedback, ensure_ascii=True)[:16000] + "\n\n") if feedback else ""
     by_id = {r["id"]: r for r in requirements}
@@ -667,13 +714,13 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
             # No code citation (or model claim) can discharge incomplete
             # extraction. Only completing the extraction can remove this gate.
             verdicts[rid] = {
-                "id": rid, "text": req["text"], "kind": "verification",
+                **_verdict_identity(rid, req),
                 "status": "unverified", "evidence": "",
                 "note": "requirement extraction completeness has not been established",
             }
             continue
         verdicts.setdefault(rid, {
-            "id": rid, "text": req["text"], "kind": req.get("kind", ""),
+            **_verdict_identity(rid, req),
             "status": "unverified", "evidence": "", "note": "no verdict returned",
         })
     return [verdicts[rid] for rid in sorted(verdicts)]

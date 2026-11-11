@@ -88,6 +88,15 @@ Request body
        request. Longer input is rejected before generation, not truncated.
        Accepted instructions reach planning and requirement extraction in full;
        inventories and model summaries have separate context budgets.
+   * - ``requirements``
+     - list (optional)
+     - Requirements the modeling assistant extracted from the user's request,
+       each ``{"id", "text", "kind"}``: ``id`` is its ``RequirementArtifact`` id
+       in the project trace, ``kind`` a ``RequirementKind`` value (see
+       :doc:`../buml_language/model_types/traceability`). At most 128, ids
+       unique, text up to 1,000 characters. When given, the requirements ledger
+       judges these instead of extracting its own (see :doc:`validation`).
+       Left out, the run extracts them.
    * - ``api_key``
      - string (secret)
      - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``;

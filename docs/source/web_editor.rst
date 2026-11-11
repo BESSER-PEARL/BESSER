@@ -65,8 +65,8 @@ Traceability
 The *Traceability* page (in the project section of the sidebar, next to *Settings*)
 records and shows what happened to the project's models and the code generated from
 them. Class diagrams are recorded today; the page is project-wide so that other model
-types can join. Recording is off by default;
-turn on *Record traces for this project* on that page.
+types can join. Recording is on for a new project; *Record traces for this project*
+on that page turns it off or on.
 
 * **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
   class, attribute, method, enumeration, association, generalization or OCL
@@ -82,8 +82,24 @@ turn on *Record traces for this project* on that page.
   a deployment or a user's own key can change it. The
   elements an assistant edit created or changed are linked from the request that
   asked for it, kept then as a prompt, so the lineage reads request -> element ->
-  code. A conversation ends with *New chat* or after ten idle minutes.
-* **Shown.** A *Timeline* of sessions, generation runs and conversations, each naming the models
+  code. A conversation ends with *New chat* or after ten idle minutes. Before it
+  builds a whole class diagram from a request of 250 characters or more, the
+  assistant extracts the requirements the request states. The editor records that
+  extraction as an operation of its own, a call to the model the assistant reports,
+  writing one requirement per statement (its words, the quote of the request that
+  states it and its kind) linked from the prompt that states them, and links each
+  requirement to the elements the assistant says realize it: request -> requirement
+  -> element -> code. Such an element is linked from its requirement only; an element
+  no requirement covers (an identifier, a helper enumeration) stays linked from the
+  request directly, which shows what the assistant added on its own. When the
+  assistant builds from an earlier request (after you confirm a replace, or choose
+  *Update model + generate*), the requirements and the elements are linked from that
+  earlier request, not from your reply; that needs the requirements to find it, so a
+  request too short for them keeps the link from your reply. A Spec-Driven *Generate the code*
+  run is judged against the newest requirements whose model still stands, whatever
+  their kinds: once the elements the assistant built with them are deleted (the model
+  rebuilt from another request, a file or by hand), the run extracts its own.
+* **Shown.** A *Timeline* of sessions, requirement extractions, generation runs and conversations, each naming the models
   (diagrams) it changed or read; *Diagrams*, a tree of the project's diagrams, their
   elements and the elements' members, where a diagram shows the whole files generated
   from it, an element its lines, and both their history; and a *Coverage* matrix of
@@ -91,7 +107,7 @@ turn on *Record traces for this project* on that page.
   anything changed after a run is marked *out of date* (its generated code may no longer match);
   and a *Lineage* graph of the whole project, or of one diagram or element: what was
   derived from what, following trace links in both directions, column by column. It
-  starts with the diagrams, prompts and generation runs, the links between them
+  starts with the diagrams, prompts, requirements and generation runs, the links between them
   bundled (a pill counts them); clicking one shows its parts that take part in links
   (a diagram's elements, an element's attributes, methods and constraints, a run's
   files, a file's fragments), and the links then reach them. *Expand all*, zoom and

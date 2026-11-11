@@ -36,6 +36,14 @@ Concepts
   - **PromptArtifact** -- a message given to an agent, with its SHA-256. A message is
     kept as an artifact only when something is derived from it (it is the source of a
     trace link); the other messages of a conversation stay in the logs of its tool calls.
+  - **RequirementArtifact** -- one atomic requirement stated in a prompt: the statement
+    (its ``name``), the words of the prompt that state it (``quote``) and what it asks
+    for (``RequirementKind``: ``data``, ``uniqueness``, ``validation``, ``rule``,
+    ``computed``, ``transition``, ``action``, ``ui``, ``integration``, ``quality``,
+    ``technical``). The assistant extracts the requirements of an application request
+    before modeling it; a link from the ``PromptArtifact`` records where each comes
+    from, and links from it to model elements record what realizes it. A requirement
+    with no link to the model is one the model does not cover.
 
 - **Operation** -- an activity, performed by one or more **Actors** (``Person``,
   ``Agent``). It has a status (``ExecutionStatus``) and start/end times, reads and
@@ -51,14 +59,19 @@ Concepts
     one ``CodeGenerator`` or ``LLM`` (a deterministic generator, or an LLM writing the
     code; its links' evidence tells which). It is a **Transformation** (abstract): an operation that
     derives new artifacts and the trace links to them, and edits nothing.
+  - **RequirementExtraction** -- a text-to-model **Transformation**: the atomic requirements a
+    prompt states, derived by an ``LLM``. It reads the ``PromptArtifact``, writes one
+    ``RequirementArtifact`` per requirement (and nothing else) and links the prompt to each;
+    it calls at least one ``LLM``. When the editor holds no prompt stating the requirements
+    (the request was sent before the page was reloaded), it reads none and links none.
   - **Conversation** -- a dialogue between a user and an agent (the BESSER assistant);
     each turn is a tool call to the agent's ``LLM``, holding the turn's messages. At
     least one actor is an ``Agent``. What it leads
     to varies, so it is not a ``Transformation``: a clarification question writes
-    nothing; stated requirements are artifacts it writes, linked from the
-    ``PromptArtifact`` they came from; an edit or a generation it asks for is a separate
-    ``ModelingSession`` or ``CodeGeneration``. A chain such as prompt -> requirement -> class ->
-    code is made of trace links, each made by the operation that took that step.
+    nothing; what a turn leads to is a separate operation: a ``RequirementExtraction`` of the
+    requirements its prompt states, a ``ModelingSession`` for an edit, a ``CodeGeneration`` for
+    a generation. A chain such as prompt -> requirement -> class -> code is made of trace links,
+    each made by the operation that took that step.
 
 - **ToolCall** -- one use of a tool within an operation: an LLM prompted, a generator
   run, an editor session. It calls one tool, has its own ``ExecutionStatus``, start/end

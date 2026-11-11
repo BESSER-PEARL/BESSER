@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 import besser.BUML.metamodel.traceability.traceability as traceability_module
 from besser.BUML.metamodel.traceability import (
     AIEvidence, Artifact, ChangeEvent, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
-    ModelingSession, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel,
+    ModelingSession, Operation, PromptArtifact, RequirementArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
@@ -60,6 +60,8 @@ def _artifact(artifact: Artifact) -> Dict[str, Any]:
         _with_optional(data, content=artifact.content, startLine=artifact.start_line, endLine=artifact.end_line)
     elif isinstance(artifact, PromptArtifact):
         data.update(content=artifact.content, contentHash=artifact.content_hash)
+    elif isinstance(artifact, RequirementArtifact):
+        data.update(quote=artifact.quote, kind=artifact.kind.value)
     return data
 
 

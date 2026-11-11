@@ -283,6 +283,34 @@ def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_p
     assert load_checkpoint(str(tmp_path)) is None
 
 
+def test_phase3_repair_keeps_an_unfinished_phase2_resumable(simple_model, tmp_path, monkeypatch):
+    """Phase 2 dies on a provider error; the Phase 3 fix loop then runs. Its
+    state-only checkpoint must not replace the Phase 2 conversation, or a
+    resume skips the 38 editing turns the run never got."""
+    class _ProviderErrorOnTurn2(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            if len(self.calls) == 1:
+                self.calls.append({"messages": list(messages)})
+                raise RuntimeError("simulated provider 500 after retries")
+            return super().chat(system, messages, tools)
+
+    client = _ProviderErrorOnTurn2([_tool_use("c1")])
+    orch = LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=40, auto_fix_issues=True, use_streaming=False,
+    )
+    blocker = ValidationIssue("blocker", "python contract: app.py line 1: boom")
+    monkeypatch.setattr(orch, "_collect_validation_issues", lambda: [blocker])
+    monkeypatch.setattr(orch, "_apply_runtime_gate", lambda: None)
+    orch.run("Build a blog")
+
+    assert orch._phase2_stop_reason == "api_error"
+    assert len(client.calls) > 2, "the Phase 3 fix loop must have run"
+    saved = load_checkpoint(str(tmp_path))
+    assert saved is not None and saved.phase == "phase2"
+    assert saved.turn == 1 and saved.messages
+
+
 @pytest.mark.parametrize("external_edit", [False, True])
 def test_repair_resume_retains_corrected_state_but_rechecks_results(simple_model, tmp_path, monkeypatch, external_edit):
     source = tmp_path / "app.py"

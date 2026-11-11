@@ -301,7 +301,8 @@ class Phase3RepairMixin:
                 "last_validated_revision": last_validated_revision,
                 "last_obligations_revision": last_obligations_revision,
             }
-            self._save_phase3_checkpoint()
+            if self._may_save_phase3_checkpoint():
+                self._save_phase3_checkpoint()
 
         max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self.max_turns - self.total_turns)
         # Which guard ends this loop, for the trace. Reconstructing it from
@@ -1144,7 +1145,18 @@ class Phase3RepairMixin:
                 # that DID write would report zero writes to the outer cycle,
                 # the trace and the log.
                 return edits
-            self._save_phase3_checkpoint()
+            if self._may_save_phase3_checkpoint():
+                self._save_phase3_checkpoint()
+
+    def _may_save_phase3_checkpoint(self) -> bool:
+        """Whether a repair checkpoint may be written now.
+
+        It holds no conversation, so it must not replace the checkpoint of a
+        Phase 2 that stopped early (provider error, turn cap, edit loop): that
+        run stays resumable as Phase 2.
+        """
+        return (self._checkpoint_phase == "phase3" or self._phase2_exited_cleanly
+                or self._phase2_stop_reason == "validation_required")
 
     def _excerpts_for(
         self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3

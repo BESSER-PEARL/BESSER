@@ -32,6 +32,9 @@ class GeneratorInterface(ABC):
     # Opt-in for regenerate(): the output must be byte-identical for one model, or a merge
     # could not tell a model change from noise (tests/generators/test_regenerable_generators.py).
     regenerable = False
+    # The file, beside the generated entry point, that the generated code loads hand-written code
+    # from and that no generation writes (``extensions.py`` of the backend); None when there is none.
+    extension_file = None
 
     @abstractmethod
     def __init__(self, model: Model, output_dir: str = None):

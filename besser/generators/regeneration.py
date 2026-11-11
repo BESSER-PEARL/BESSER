@@ -22,6 +22,7 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from besser.generators.generated_header import mark_generated, without_header
 from besser.utilities.provenance import ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME, get_besser_version
 from besser.utilities.three_way_merge import lf, merge_available, merge_trees, same_text, with_endings_of
 from besser.utilities.workspace_fs import (
@@ -176,7 +177,10 @@ def regenerate_output(generator: GeneratorInterface, adopt: bool = False) -> Reg
 
     report = RegenerationReport()
     if adopt:
-        report.differs_from_model = sorted(rel for rel in new if not same_text(current.get(rel), new[rel]))
+        # A folder generated before files carried their header differs from the model's output by that line only.
+        report.differs_from_model = sorted(
+            rel for rel in new
+            if not same_text(current.get(rel), new[rel]) and not same_text(current.get(rel), without_header(new[rel])))
     else:
         # First, as a case rename already moves a file: through a planted link it would leave the folder.
         _require_writable_paths(folder, output)
@@ -355,6 +359,8 @@ def _require_writable_paths(folder: str, output: dict[str, bytes]) -> None:
 def generate_in_scratch(generator: GeneratorInterface) -> tuple[dict[str, bytes], dict[str, int]]:
     """Run the generator elsewhere, as its ``generate()`` may overwrite or delete the output folder.
 
+    Each file it writes is marked as generated (:func:`besser.generators.generated_header.mark_generated`).
+
     Returns:
         Its output and each file's mode, by path relative to the folder with ``/``.
     """
@@ -363,7 +369,8 @@ def generate_in_scratch(generator: GeneratorInterface) -> tuple[dict[str, bytes]
     try:
         generator.output_dir = scratch
         generator.generate()
-        return _read_tree(scratch)
+        files, modes = _read_tree(scratch)
+        return mark_generated(files, generator.extension_file), modes
     finally:
         generator.output_dir = output_dir
         shutil.rmtree(scratch, ignore_errors=True)

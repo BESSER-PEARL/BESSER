@@ -169,7 +169,8 @@ def test_preview_generator_says_what_a_run_would_write(simple_library_book_model
 
     plan = preview_generator("python", models, tmp_path / "out", record=True)
 
-    assert plan == {RECORD_FILENAME: "new", "classes.py": "unchanged"}
+    # A recorded run marks each file as generated, which a plain run does not.
+    assert plan == {RECORD_FILENAME: "new", "classes.py": "changed"}
     assert not (tmp_path / "out" / RECORD_FILENAME).exists()
 
 

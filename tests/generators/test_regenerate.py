@@ -47,11 +47,11 @@ def regen(folder, files, **kwargs):
     return FilesGenerator(files, output_dir=str(folder)).regenerate(**kwargs)
 
 
-def read(folder, rel="app.py"):
+def read(folder, rel="app.txt"):
     return (folder / rel).read_bytes()
 
 
-def edit(folder, old, new, rel="app.py"):
+def edit(folder, old, new, rel="app.txt"):
     path = folder / rel
     content = path.read_bytes()
     assert old in content
@@ -61,54 +61,54 @@ def edit(folder, old, new, rel="app.py"):
 @pytest.fixture
 def folder(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"app.py": APP})
+    regen(out, {"app.txt": APP})
     return out
 
 
 def test_the_first_run_writes_the_output_and_its_record(tmp_path):
     out = tmp_path / "out"
-    report = regen(out, {"app.py": APP, "pkg/mod.py": b"x = 1\n"})
+    report = regen(out, {"app.txt": APP, "pkg/mod.txt": b"x = 1\n"})
     assert read(out) == APP
-    assert sorted(report.written) == ["app.py", "pkg/mod.py"]
+    assert sorted(report.written) == ["app.txt", "pkg/mod.txt"]
     assert (out / RECORD_FILENAME).is_file()
 
 
 def test_generate_is_unchanged_and_writes_no_record(tmp_path):
     out = tmp_path / "out"
-    FilesGenerator({"app.py": APP}, output_dir=str(out)).generate()
+    FilesGenerator({"app.txt": APP}, output_dir=str(out)).generate()
     assert not (out / RECORD_FILENAME).exists()
 
 
 def test_an_edit_survives_a_model_change_elsewhere_in_the_file(folder):
     edit(folder, b"return 1\n", b"return 1  # mine\n")
-    report = regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+    report = regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert read(folder) == APP.replace(b"return 1\n", b"return 1  # mine\n").replace(b"return 3", b"return 33")
-    assert report.merged == ["app.py"] and not report.conflicted
+    assert report.merged == ["app.txt"] and not report.conflicted
 
 
 def test_a_file_nobody_edited_takes_the_new_output(folder):
-    report = regen(folder, {"app.py": APP.replace(b"return 1", b"return 11")})
-    assert report.written == ["app.py"] and not report.merged
+    report = regen(folder, {"app.txt": APP.replace(b"return 1", b"return 11")})
+    assert report.written == ["app.txt"] and not report.merged
     assert b"return 11" in read(folder)
 
 
 def test_a_run_with_no_model_change_touches_nothing(folder):
     edit(folder, b"return 1\n", b"return 1  # mine\n")
-    report = regen(folder, {"app.py": APP})
+    report = regen(folder, {"app.txt": APP})
     assert not (report.written or report.merged or report.conflicted or report.deleted)
     assert b"# mine" in read(folder)
 
 
 def test_the_users_own_files_are_never_touched(folder):
-    (folder / "mine.py").write_bytes(b"mine = 1\n")
-    regen(folder, {"app.py": APP.replace(b"return 1", b"return 11")})
-    assert read(folder, "mine.py") == b"mine = 1\n"
+    (folder / "mine.txt").write_bytes(b"mine = 1\n")
+    regen(folder, {"app.txt": APP.replace(b"return 1", b"return 11")})
+    assert read(folder, "mine.txt") == b"mine = 1\n"
 
 
 def test_a_clashing_edit_gets_markers_and_is_reported(folder):
     edit(folder, b"return 1\n", b"return 100\n")
-    report = regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
-    assert report.conflicted == ["app.py"]
+    report = regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
+    assert report.conflicted == ["app.txt"]
     assert read(folder) == (b"def a():\n"
                             b"<<<<<<< your edit\n    return 100\n=======\n    return 11\n"
                             b">>>>>>> generated from your model\n"
@@ -117,78 +117,78 @@ def test_a_clashing_edit_gets_markers_and_is_reported(folder):
 
 def test_the_next_run_refuses_until_the_conflict_is_resolved(folder):
     edit(folder, b"return 1\n", b"return 100\n")
-    regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
     before = read(folder)
 
-    with pytest.raises(regeneration_module.ConflictsPendingError, match="app.py") as refusal:
-        regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 12\n")})
-    assert refusal.value.folder == str(folder) and refusal.value.files == ["app.py"]
+    with pytest.raises(regeneration_module.ConflictsPendingError, match="app.txt") as refusal:
+        regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 12\n")})
+    assert refusal.value.folder == str(folder) and refusal.value.files == ["app.txt"]
     assert read(folder) == before
 
-    (folder / "app.py").write_bytes(APP.replace(b"return 1\n", b"return 100\n"))
-    report = regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n").replace(b"return 3", b"return 33")})
+    (folder / "app.txt").write_bytes(APP.replace(b"return 1\n", b"return 100\n"))
+    report = regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n").replace(b"return 3", b"return 33")})
     assert not report.conflicted
     assert b"return 100" in read(folder) and b"return 33" in read(folder)
 
 
 def test_an_unedited_file_the_model_dropped_is_deleted(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"app.py": APP, "old.py": b"old = 1\n"})
-    report = regen(out, {"app.py": APP})
-    assert report.deleted == ["old.py"] and not (out / "old.py").exists()
+    regen(out, {"app.txt": APP, "old.txt": b"old = 1\n"})
+    report = regen(out, {"app.txt": APP})
+    assert report.deleted == ["old.txt"] and not (out / "old.txt").exists()
 
 
 def test_an_edited_file_the_model_dropped_is_kept_and_reported(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"app.py": APP, "old.py": b"old = 1\n"})
-    edit(out, b"old = 1", b"old = 2  # mine", rel="old.py")
-    report = regen(out, {"app.py": APP})
-    assert report.kept_removed_from_model == ["old.py"] and b"# mine" in read(out, "old.py")
+    regen(out, {"app.txt": APP, "old.txt": b"old = 1\n"})
+    edit(out, b"old = 1", b"old = 2  # mine", rel="old.txt")
+    report = regen(out, {"app.txt": APP})
+    assert report.kept_removed_from_model == ["old.txt"] and b"# mine" in read(out, "old.txt")
 
 
 def test_a_deleted_file_the_model_changed_is_reported_not_restored(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"app.py": APP, "b.py": b"b = 1\n"})
-    (out / "b.py").unlink()
-    report = regen(out, {"app.py": APP, "b.py": b"b = 2\n"})
-    assert report.not_restored == ["b.py"] and not (out / "b.py").exists()
+    regen(out, {"app.txt": APP, "b.txt": b"b = 1\n"})
+    (out / "b.txt").unlink()
+    report = regen(out, {"app.txt": APP, "b.txt": b"b = 2\n"})
+    assert report.not_restored == ["b.txt"] and not (out / "b.txt").exists()
 
 
 def test_a_deleted_file_the_model_left_alone_stays_deleted(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"app.py": APP, "b.py": b"b = 1\n"})
-    (out / "b.py").unlink()
-    report = regen(out, {"app.py": APP, "b.py": b"b = 1\n"})
-    assert not (out / "b.py").exists() and not report.written
+    regen(out, {"app.txt": APP, "b.txt": b"b = 1\n"})
+    (out / "b.txt").unlink()
+    report = regen(out, {"app.txt": APP, "b.txt": b"b = 1\n"})
+    assert not (out / "b.txt").exists() and not report.written
 
 
 def test_a_file_the_user_created_where_the_model_adds_one_is_flagged(folder):
-    (folder / "new.py").write_bytes(b"mine = 1\n")
-    report = regen(folder, {"app.py": APP, "new.py": b"generated = 1\n"})
-    assert report.conflicted == ["new.py"]
-    assert b"mine = 1" in read(folder, "new.py") and b"generated = 1" in read(folder, "new.py")
+    (folder / "new.txt").write_bytes(b"mine = 1\n")
+    report = regen(folder, {"app.txt": APP, "new.txt": b"generated = 1\n"})
+    assert report.conflicted == ["new.txt"]
+    assert b"mine = 1" in read(folder, "new.txt") and b"generated = 1" in read(folder, "new.txt")
 
 
 def test_a_folder_generated_before_is_refused_then_adopted(tmp_path):
     out = tmp_path / "out"
-    FilesGenerator({"app.py": APP}, output_dir=str(out)).generate()
+    FilesGenerator({"app.txt": APP}, output_dir=str(out)).generate()
     edit(out, b"return 1\n", b"return 1  # mine\n")
 
     with pytest.raises(RegenerationError, match="adopt"):
-        regen(out, {"app.py": APP.replace(b"return 3", b"return 33")})
+        regen(out, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert b"return 33" not in read(out)
 
     before = read(out)
-    report = regen(out, {"app.py": APP}, adopt=True)  # the model those files came from
+    report = regen(out, {"app.txt": APP}, adopt=True)  # the model those files came from
     assert read(out) == before and not report.written
 
-    regen(out, {"app.py": APP.replace(b"return 3", b"return 33")})
+    regen(out, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert b"# mine" in read(out) and b"return 33" in read(out)
 
 
 def test_adopting_a_folder_that_has_a_record_is_refused(folder):
     with pytest.raises(regeneration_module.AlreadyRecordedError, match="already") as refusal:
-        regen(folder, {"app.py": APP}, adopt=True)
+        regen(folder, {"app.txt": APP}, adopt=True)
     assert refusal.value.folder == str(folder)
 
 
@@ -208,14 +208,14 @@ def test_an_output_folder_that_is_a_file_is_refused(tmp_path, output):
     (tmp_path / "out").write_bytes(b"mine\n")
 
     with pytest.raises(RegenerationError, match="folder"):
-        regen(tmp_path / output, {"app.py": APP})
+        regen(tmp_path / output, {"app.txt": APP})
     assert (tmp_path / "out").read_bytes() == b"mine\n"
 
 
 def test_windows_line_endings_are_kept_and_do_not_read_as_edits(folder):
-    (folder / "app.py").write_bytes(APP.replace(b"\n", b"\r\n"))
-    report = regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
-    assert report.written == ["app.py"] and not report.merged
+    (folder / "app.txt").write_bytes(APP.replace(b"\n", b"\r\n"))
+    report = regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
+    assert report.written == ["app.txt"] and not report.merged
     assert read(folder) == APP.replace(b"return 3", b"return 33").replace(b"\n", b"\r\n")
 
 
@@ -230,53 +230,53 @@ def test_binary_output_is_written_once_and_never_merged(tmp_path):
 
 def test_an_edit_in_another_encoding_that_clashes_is_kept_and_reported(folder):
     edited = APP.replace(b"return 1\n", b"return '\xe9'\n")
-    (folder / "app.py").write_bytes(edited)
-    report = regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    (folder / "app.txt").write_bytes(edited)
+    report = regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
     assert read(folder) == edited
-    assert report.not_merged == ["app.py"] and not report.conflicted
+    assert report.not_merged == ["app.txt"] and not report.conflicted
 
 
-BAD_PATHS = ["../evil.py", "/etc/evil.py", "a/../../evil.py", "C:/evil.py", "a\\..\\..\\evil.py", "link/../evil.py",
+BAD_PATHS = ["../evil.txt", "/etc/evil.txt", "a/../../evil.txt", "C:/evil.txt", "a\\..\\..\\evil.py", "link/../evil.txt",
              "nul\x00.py", ".git/hooks/pre-commit", ".GIT/config", "pkg/.git/config"]
 
 
 def _record(**changes):
     return json.dumps({"format": 1, "generator": "FilesGenerator", "binaries": [], "conflicted": [],
-                       "files": {"app.py": APP.decode("utf-8")}, **changes})
+                       "files": {"app.txt": APP.decode("utf-8")}, **changes})
 
 
 def test_a_complete_record_is_used(folder):
     (folder / RECORD_FILENAME).write_text(_record(), encoding="utf-8")
     edit(folder, b"return 1\n", b"return 1  # mine\n")
-    report = regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
-    assert report.merged == ["app.py"]
+    report = regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
+    assert report.merged == ["app.txt"]
 
 
 @pytest.mark.parametrize("rel", BAD_PATHS)
 def test_a_record_naming_a_path_it_must_not_touch_is_refused(folder, rel):
-    (folder / RECORD_FILENAME).write_text(_record(files={"app.py": APP.decode("utf-8"), rel: "x\n"}), encoding="utf-8")
+    (folder / RECORD_FILENAME).write_text(_record(files={"app.txt": APP.decode("utf-8"), rel: "x\n"}), encoding="utf-8")
     with pytest.raises(RegenerationError, match="record"):
-        regen(folder, {"app.py": APP})
+        regen(folder, {"app.txt": APP})
 
 
 @pytest.mark.parametrize("rel", BAD_PATHS)
 def test_a_record_listing_such_a_path_as_conflicted_is_refused(folder, rel):
     (folder / RECORD_FILENAME).write_text(_record(conflicted=[rel]), encoding="utf-8")
     with pytest.raises(RegenerationError, match="record"):
-        regen(folder, {"app.py": APP})
+        regen(folder, {"app.txt": APP})
 
 
 @pytest.mark.parametrize("content", [
     "{not json", "[]", '{"format": 1, "files": {}}',
-    _record(format=99), _record(files=3), _record(files=["app.py"]), _record(files={"app.py": 1}),
-    _record(conflicted="app.py"), _record(conflicted=[1]), _record(binaries="logo.png"), _record(binaries=[".git/x"]),
+    _record(format=99), _record(files=3), _record(files=["app.txt"]), _record(files={"app.txt": 1}),
+    _record(conflicted="app.txt"), _record(conflicted=[1]), _record(binaries="logo.png"), _record(binaries=[".git/x"]),
 ], ids=["not_json", "not_an_object", "missing_keys", "format", "files_number", "files_list", "file_not_text",
         "conflicted_string", "conflicted_not_paths", "binaries_string", "binaries_bad_path"])
 def test_an_unusable_record_is_refused_not_overwritten(folder, content):
     (folder / RECORD_FILENAME).write_text(content, encoding="utf-8")
     edit(folder, b"return 1\n", b"return 1  # mine\n")
     with pytest.raises(RegenerationError, match="record"):
-        regen(folder, {"app.py": APP})
+        regen(folder, {"app.txt": APP})
     assert b"# mine" in read(folder)
 
 
@@ -284,7 +284,7 @@ def test_without_pygit2_it_refuses_and_writes_nothing(folder, monkeypatch):
     monkeypatch.setattr(three_way_merge, "pygit2", None)
     edit(folder, b"return 1\n", b"return 1  # mine\n")
     with pytest.raises(RegenerationError, match=r"besser\[regen\]"):
-        regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+        regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert b"return 33" not in read(folder)
 
 
@@ -300,22 +300,22 @@ def test_a_generator_that_has_not_opted_in_is_refused(tmp_path):
 def test_a_spec_driven_app_is_refused_so_its_authorship_stays_true(tmp_path, name, adopt):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "app.py").write_bytes(APP)
+    (out / "app.txt").write_bytes(APP)
     (out / name).write_text("{}", encoding="utf-8")
     with pytest.raises(RegenerationError, match="Spec-Driven"):
-        regen(out, {"app.py": APP.replace(b"return 3", b"return 33")}, adopt=adopt)
+        regen(out, {"app.txt": APP.replace(b"return 3", b"return 33")}, adopt=adopt)
     assert read(out) == APP and not (out / RECORD_FILENAME).exists()
 
 
 def test_the_generators_output_dir_is_restored(tmp_path):
     out = str(tmp_path / "out")
-    generator = FilesGenerator({"app.py": APP}, output_dir=out)
+    generator = FilesGenerator({"app.txt": APP}, output_dir=out)
     generator.regenerate()
     assert generator.output_dir == out
 
 
 def test_a_failing_generator_changes_nothing(folder):
-    generator = FilesGenerator({"app.py": b"half\n"}, output_dir=str(folder))
+    generator = FilesGenerator({"app.txt": b"half\n"}, output_dir=str(folder))
     real_generate = generator.generate
 
     def broken():
@@ -331,7 +331,7 @@ def test_a_failing_generator_changes_nothing(folder):
 def test_merged_files_come_with_a_warning_to_run_the_tests(folder, caplog):
     edit(folder, b"return 1\n", b"return 1  # mine\n")
     with caplog.at_level("WARNING", logger=regeneration_module.__name__):
-        regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+        regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert "run your tests" in caplog.text
 
 
@@ -354,43 +354,43 @@ def test_a_full_disk_does_not_truncate_an_edit(folder, monkeypatch):
     edit(folder, b"return 1\n", b"return 1  # mine\n")
     edited = read(folder)
     with monkeypatch.context() as patch:
-        _fail_replacing(patch, "app.py")
+        _fail_replacing(patch, "app.txt")
         with pytest.raises(OSError):
-            regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+            regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert read(folder) == edited
     assert not list(folder.glob(".besser_tmp_*"))
 
-    report = regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
-    assert report.merged == ["app.py"] and b"# mine" in read(folder) and b"return 33" in read(folder)
+    report = regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
+    assert report.merged == ["app.txt"] and b"# mine" in read(folder) and b"return 33" in read(folder)
 
 
 def test_an_interrupted_first_run_resumes_without_adopting(tmp_path, monkeypatch):
     out = tmp_path / "out"
-    files = {"a.py": b"a = 1\n", "b.py": b"b = 1\n"}
+    files = {"a.txt": b"a = 1\n", "b.txt": b"b = 1\n"}
     with monkeypatch.context() as patch:
-        _fail_replacing(patch, "b.py")
+        _fail_replacing(patch, "b.txt")
         with pytest.raises(OSError):
             regen(out, files)
-    assert read(out, "a.py") == files["a.py"] and not (out / "b.py").exists()
+    assert read(out, "a.txt") == files["a.txt"] and not (out / "b.txt").exists()
 
     report = regen(out, files)
-    assert read(out, "b.py") == files["b.py"] and not report.conflicted
+    assert read(out, "b.txt") == files["b.txt"] and not report.conflicted
 
 
 def test_a_crash_after_a_conflict_cannot_nest_markers(tmp_path, monkeypatch):
     out = tmp_path / "out"
-    regen(out, {"a.py": APP, "z.py": b"z = 1\n"})
-    edit(out, b"return 1\n", b"return 100\n", rel="a.py")
-    changed = {"a.py": APP.replace(b"return 1\n", b"return 11\n"), "z.py": b"z = 2\n"}
+    regen(out, {"a.txt": APP, "z.txt": b"z = 1\n"})
+    edit(out, b"return 1\n", b"return 100\n", rel="a.txt")
+    changed = {"a.txt": APP.replace(b"return 1\n", b"return 11\n"), "z.txt": b"z = 2\n"}
     with monkeypatch.context() as patch:
-        _fail_replacing(patch, "z.py")
+        _fail_replacing(patch, "z.txt")
         with pytest.raises(OSError):
             regen(out, changed)
-    assert read(out, "a.py").count(b"<<<<<<< ") == 1
+    assert read(out, "a.txt").count(b"<<<<<<< ") == 1
 
-    with pytest.raises(RegenerationError, match="a.py"):
+    with pytest.raises(RegenerationError, match="a.txt"):
         regen(out, changed)
-    assert read(out, "a.py").count(b"<<<<<<< ") == 1
+    assert read(out, "a.txt").count(b"<<<<<<< ") == 1
 
 
 def test_a_folder_holding_only_other_files_needs_no_adoption(tmp_path):
@@ -398,18 +398,18 @@ def test_a_folder_holding_only_other_files_needs_no_adoption(tmp_path):
     out.mkdir()
     (out / "README.md").write_bytes(b"# mine\n")
     (out / ".git").mkdir()
-    report = regen(out, {"app.py": APP})
-    assert report.written == ["app.py"] and read(out, "README.md") == b"# mine\n"
+    report = regen(out, {"app.txt": APP})
+    assert report.written == ["app.txt"] and read(out, "README.md") == b"# mine\n"
 
 
 def test_adopting_says_which_files_differ_from_that_model(tmp_path):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "app.py").write_bytes(APP + b"# mine\n")
-    (out / "same.py").write_bytes(b"s = 1\n")
-    report = regen(out, {"app.py": APP, "same.py": b"s = 1\n", "absent.py": b"x = 1\n"}, adopt=True)
-    assert report.differs_from_model == ["absent.py", "app.py"]
-    assert not (out / "absent.py").exists()
+    (out / "app.txt").write_bytes(APP + b"# mine\n")
+    (out / "same.txt").write_bytes(b"s = 1\n")
+    report = regen(out, {"app.txt": APP, "same.txt": b"s = 1\n", "absent.txt": b"x = 1\n"}, adopt=True)
+    assert report.differs_from_model == ["absent.txt", "app.txt"]
+    assert not (out / "absent.txt").exists()
 
 
 def test_another_generators_folder_is_refused_not_deleted(folder):
@@ -417,13 +417,13 @@ def test_another_generators_folder_is_refused_not_deleted(folder):
         pass
 
     with pytest.raises(RegenerationError, match="FilesGenerator"):
-        OtherGenerator({"other.py": b"o = 1\n"}, output_dir=str(folder)).regenerate()
+        OtherGenerator({"other.txt": b"o = 1\n"}, output_dir=str(folder)).regenerate()
     assert read(folder) == APP
 
 
 def test_regenerating_needs_an_explicit_folder(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    generator = FilesGenerator({"app.py": APP})
+    generator = FilesGenerator({"app.txt": APP})
     with pytest.raises(RegenerationError, match="output_dir"):
         generator.regenerate()
     assert not (tmp_path / "output").exists()
@@ -444,39 +444,39 @@ def test_a_class_renamed_in_case_only_keeps_its_edit(tmp_path):
 
 @pytest.mark.parametrize("edited", [APP.replace(b"return 1\n", b"return '\x00'\n"), APP.replace(b"\n", b"\n\x00")])
 def test_a_clash_with_a_file_holding_nul_bytes_is_kept_and_reported(folder, edited):
-    (folder / "app.py").write_bytes(edited)
-    report = regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
-    assert read(folder) == edited and report.not_merged == ["app.py"]
+    (folder / "app.txt").write_bytes(edited)
+    report = regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
+    assert read(folder) == edited and report.not_merged == ["app.txt"]
 
 
 def test_a_folder_at_a_generated_path_fails_before_anything_is_written(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"a.py": b"a = 1\n", "b.py": b"b = 1\n"})
-    (out / "b.py").unlink()
-    (out / "b.py").mkdir()
-    with pytest.raises(RegenerationError, match="b.py"):
-        regen(out, {"a.py": b"a = 2\n", "b.py": b"b = 2\n"})
-    assert read(out, "a.py") == b"a = 1\n"
+    regen(out, {"a.txt": b"a = 1\n", "b.txt": b"b = 1\n"})
+    (out / "b.txt").unlink()
+    (out / "b.txt").mkdir()
+    with pytest.raises(RegenerationError, match="b.txt"):
+        regen(out, {"a.txt": b"a = 2\n", "b.txt": b"b = 2\n"})
+    assert read(out, "a.txt") == b"a = 1\n"
 
 
 def test_a_file_at_a_generated_parent_fails_before_anything_is_written(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"a.py": b"a = 1\n"})
+    regen(out, {"a.txt": b"a = 1\n"})
     (out / "pkg").write_bytes(b"mine\n")
     with pytest.raises(RegenerationError, match="pkg"):
-        regen(out, {"a.py": b"a = 2\n", "pkg/mod.py": b"m = 1\n"})
-    assert read(out, "a.py") == b"a = 1\n" and read(out, "pkg") == b"mine\n"
+        regen(out, {"a.txt": b"a = 2\n", "pkg/mod.txt": b"m = 1\n"})
+    assert read(out, "a.txt") == b"a = 1\n" and read(out, "pkg") == b"mine\n"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="needs symlinks and POSIX modes")
 def test_a_link_at_a_generated_path_is_refused(tmp_path):
-    outside = tmp_path / "outside.py"
+    outside = tmp_path / "outside.txt"
     outside.write_bytes(b"mine\n")
     out = tmp_path / "out"
-    regen(out, {"a.py": b"a = 1\n"})
-    (out / "link.py").symlink_to(outside)
-    with pytest.raises(RegenerationError, match="link.py"):
-        regen(out, {"a.py": b"a = 1\n", "link.py": b"x = 1\n"})
+    regen(out, {"a.txt": b"a = 1\n"})
+    (out / "link.txt").symlink_to(outside)
+    with pytest.raises(RegenerationError, match="link.txt"):
+        regen(out, {"a.txt": b"a = 1\n", "link.txt": b"x = 1\n"})
     assert outside.read_bytes() == b"mine\n"
 
 
@@ -497,15 +497,15 @@ def test_executable_bits_are_kept(tmp_path):
 
 def test_marker_text_inside_a_line_does_not_block_the_next_run(folder):
     edit(folder, b"return 1\n", b"return 100\n")
-    regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
-    (folder / "app.py").write_bytes(APP + b"SAMPLE = 'x <<<<<<< y'\n")
-    report = regen(folder, {"app.py": APP.replace(b"return 2", b"return 22")})
+    regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
+    (folder / "app.txt").write_bytes(APP + b"SAMPLE = 'x <<<<<<< y'\n")
+    report = regen(folder, {"app.txt": APP.replace(b"return 2", b"return 22")})
     assert not report.conflicted and b"return 22" in read(folder)
 
 
 def test_conflict_markers_say_which_side_is_which(folder):
     edit(folder, b"return 1\n", b"return 100\n")
-    regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
     assert b"<<<<<<< your edit\n" in read(folder) and b">>>>>>> generated from your model\n" in read(folder)
 
 
@@ -542,39 +542,39 @@ LONG = b"".join(b"line %d\n" % i for i in range(2000))
 
 def test_a_clash_in_a_file_with_a_late_nul_byte_keeps_every_byte(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"app.py": LONG + b"shared\nend\n"})
+    regen(out, {"app.txt": LONG + b"shared\nend\n"})
     edited = LONG + b"mine\nend\nbin\x00ary\nmy later edit\n"
-    (out / "app.py").write_bytes(edited)
-    report = regen(out, {"app.py": LONG + b"model\nend\n"})
+    (out / "app.txt").write_bytes(edited)
+    report = regen(out, {"app.txt": LONG + b"model\nend\n"})
     assert read(out) == edited
-    assert report.not_merged == ["app.py"] and not report.conflicted
+    assert report.not_merged == ["app.txt"] and not report.conflicted
 
 
 def test_a_late_nul_byte_survives_a_clean_merge(tmp_path):
     out = tmp_path / "out"
-    regen(out, {"app.py": b"first\n" + LONG + b"end\n"})
-    (out / "app.py").write_bytes(b"first\n" + LONG + b"end\nbin\x00ary\nmine\n")
-    report = regen(out, {"app.py": b"model\n" + LONG + b"end\n"})
+    regen(out, {"app.txt": b"first\n" + LONG + b"end\n"})
+    (out / "app.txt").write_bytes(b"first\n" + LONG + b"end\nbin\x00ary\nmine\n")
+    report = regen(out, {"app.txt": b"model\n" + LONG + b"end\n"})
     assert read(out) == b"model\n" + LONG + b"end\nbin\x00ary\nmine\n"
-    assert report.merged == ["app.py"]
+    assert report.merged == ["app.txt"]
 
 
 def test_control_characters_merge_like_any_other_text(tmp_path):
     out = tmp_path / "out"
     control = b"\x01" * 400 + b"\n"
-    regen(out, {"app.py": control + b"shared\n"})
-    (out / "app.py").write_bytes(control + b"mine\n")
-    report = regen(out, {"app.py": control + b"model\n"})
-    assert report.conflicted == ["app.py"]
+    regen(out, {"app.txt": control + b"shared\n"})
+    (out / "app.txt").write_bytes(control + b"mine\n")
+    report = regen(out, {"app.txt": control + b"model\n"})
+    assert report.conflicted == ["app.txt"]
     assert read(out) == control + b"<<<<<<< your edit\nmine\n=======\nmodel\n>>>>>>> generated from your model\n"
 
 
 def test_emptying_a_file_that_clashes_still_blocks_the_next_run(folder):
-    (folder / "app.py").write_bytes(b"")
-    changed = {"app.py": APP.replace(b"return 1\n", b"return 11\n")}
+    (folder / "app.txt").write_bytes(b"")
+    changed = {"app.txt": APP.replace(b"return 1\n", b"return 11\n")}
     report = regen(folder, changed)
-    assert report.conflicted == ["app.py"] and read(folder).startswith(b"<<<<<<< your edit\n")
-    with pytest.raises(RegenerationError, match="app.py"):
+    assert report.conflicted == ["app.txt"] and read(folder).startswith(b"<<<<<<< your edit\n")
+    with pytest.raises(RegenerationError, match="app.txt"):
         regen(folder, changed)
 
 
@@ -592,11 +592,11 @@ def test_a_case_rename_cannot_move_a_file_through_a_link(tmp_path, case_sensitiv
     outside = tmp_path / "outside"
     outside.mkdir()
     out = tmp_path / "out"
-    regen(out, {"PKG/mod.py": b"m = 1\n"})
+    regen(out, {"PKG/mod.txt": b"m = 1\n"})
     (out / "pkg").symlink_to(outside)
     with pytest.raises(RegenerationError, match="pkg"):
-        regen(out, {"pkg/mod.py": b"m = 1\n"})
-    assert not list(outside.iterdir()) and read(out, "PKG/mod.py") == b"m = 1\n"
+        regen(out, {"pkg/mod.txt": b"m = 1\n"})
+    assert not list(outside.iterdir()) and read(out, "PKG/mod.txt") == b"m = 1\n"
 
 
 def test_a_case_rename_never_overwrites_a_file_with_the_new_name(tmp_path, case_sensitive):
@@ -692,22 +692,22 @@ def test_a_users_own_marker_lines_are_neither_relabelled_nor_blocking(folder):
     own = b"<<<<<<< HEAD\n>>>>>>> theirs\n"
     edit(folder, b"return 1\n", b"return 100\n")
     edit(folder, b"return 3\n", b"return 3\n" + own)
-    regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
     assert own in read(folder) and read(folder).count(b"<<<<<<< your edit\n") == 1
 
-    (folder / "app.py").write_bytes(APP + own)
-    report = regen(folder, {"app.py": APP.replace(b"return 2", b"return 22")})
+    (folder / "app.txt").write_bytes(APP + own)
+    report = regen(folder, {"app.txt": APP.replace(b"return 2", b"return 22")})
     assert own in read(folder) and b"return 22" in read(folder) and not report.conflicted
 
 
 def test_a_binary_file_the_model_dropped_is_kept_and_reported(tmp_path, caplog):
     out = tmp_path / "out"
-    regen(out, {"app.py": APP, "logo.png": b"\x89PNG\x00one"})
+    regen(out, {"app.txt": APP, "logo.png": b"\x89PNG\x00one"})
     with caplog.at_level("WARNING", logger=regeneration_module.__name__):
-        report = regen(out, {"app.py": APP})
+        report = regen(out, {"app.txt": APP})
     assert read(out, "logo.png") == b"\x89PNG\x00one"
     assert report.kept_removed_from_model == ["logo.png"] and "logo.png" in caplog.text
-    assert not regen(out, {"app.py": APP}).kept_removed_from_model  # no longer recorded
+    assert not regen(out, {"app.txt": APP}).kept_removed_from_model  # no longer recorded
 
 
 def test_the_old_name_of_a_case_rename_on_a_case_sensitive_disk_is_reported(tmp_path, case_sensitive):
@@ -723,7 +723,7 @@ def test_a_full_disk_while_saving_the_record_keeps_the_old_one(folder, monkeypat
     with monkeypatch.context() as patch:
         _fail_replacing(patch, RECORD_FILENAME)
         with pytest.raises(OSError):
-            regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+            regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert (folder / RECORD_FILENAME).read_bytes() == before
 
 
@@ -735,13 +735,13 @@ def test_a_failed_merge_is_reported_and_changes_no_file(folder, monkeypatch):
     edited = read(folder)
     monkeypatch.setattr(regeneration_module, "merge_trees", broken)
     with pytest.raises(RegenerationError, match="merge failed.*boom"):
-        regen(folder, {"app.py": APP.replace(b"return 3", b"return 33")})
+        regen(folder, {"app.txt": APP.replace(b"return 3", b"return 33")})
     assert read(folder) == edited
 
 
 def test_a_conflict_in_a_crlf_file_keeps_crlf(folder):
-    (folder / "app.py").write_bytes(APP.replace(b"return 1\n", b"return 100\n").replace(b"\n", b"\r\n"))
-    regen(folder, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    (folder / "app.txt").write_bytes(APP.replace(b"return 1\n", b"return 100\n").replace(b"\n", b"\r\n"))
+    regen(folder, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
     content = read(folder)
     assert b"<<<<<<< your edit\r\n" in content and content.count(b"\n") == content.count(b"\r\n")
 
@@ -760,10 +760,10 @@ def test_adopting_keeps_generated_values_from_the_folder(tmp_path):
 
 def test_build_leftovers_are_not_output(tmp_path):
     out = tmp_path / "out"
-    report = regen(out, {"app.py": APP, ".git/config": b"x\n", "pkg/__pycache__/m.pyc": b"x\n",
+    report = regen(out, {"app.txt": APP, ".git/config": b"x\n", "pkg/__pycache__/m.pyc": b"x\n",
                          "web/node_modules/a.js": b"x\n"})
-    assert report.written == ["app.py"]
-    assert sorted(p.name for p in out.rglob("*") if p.is_file()) == [RECORD_FILENAME, "app.py"]
+    assert report.written == ["app.txt"]
+    assert sorted(p.name for p in out.rglob("*") if p.is_file()) == [RECORD_FILENAME, "app.txt"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="needs symlinks")
@@ -773,7 +773,7 @@ def test_a_record_that_is_a_link_is_refused(folder, tmp_path):
     (folder / RECORD_FILENAME).unlink()
     (folder / RECORD_FILENAME).symlink_to(elsewhere)
     with pytest.raises(RegenerationError, match="not a regular file"):
-        regen(folder, {"app.py": APP})
+        regen(folder, {"app.txt": APP})
 
 
 @pytest.mark.skipif(os.name == "nt", reason="needs symlinks")
@@ -787,8 +787,8 @@ def test_a_link_in_the_scratch_output_is_not_read(tmp_path):
             os.symlink(secret, self.build_generation_path("leak.txt"))
 
     out = tmp_path / "out"
-    report = LinkGenerator({"app.py": APP}, output_dir=str(out)).regenerate()
-    assert report.written == ["app.py"] and not (out / "leak.txt").exists()
+    report = LinkGenerator({"app.txt": APP}, output_dir=str(out)).regenerate()
+    assert report.written == ["app.txt"] and not (out / "leak.txt").exists()
 
 
 @pytest.fixture
@@ -806,25 +806,25 @@ def junction(tmp_path):
 def test_a_junction_at_a_generated_folder_is_refused(tmp_path, junction):
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "mod.py").write_bytes(b"mine\n")
+    (outside / "mod.txt").write_bytes(b"mine\n")
     out = tmp_path / "out"
-    regen(out, {"app.py": APP})
+    regen(out, {"app.txt": APP})
     junction(out / "pkg", outside)
     with pytest.raises(RegenerationError, match="pkg"):
-        regen(out, {"app.py": APP, "pkg/mod.py": b"m = 1\n"})
-    assert (outside / "mod.py").read_bytes() == b"mine\n"
+        regen(out, {"app.txt": APP, "pkg/mod.txt": b"m = 1\n"})
+    assert (outside / "mod.txt").read_bytes() == b"mine\n"
 
 
 def test_a_file_reached_through_a_junction_is_not_read_as_an_edit(tmp_path, junction):
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "mod.py").write_bytes(b"m = 1\n")
+    (outside / "mod.txt").write_bytes(b"m = 1\n")
     out = tmp_path / "out"
-    regen(out, {"pkg/mod.py": b"m = 1\n"})
+    regen(out, {"pkg/mod.txt": b"m = 1\n"})
     shutil.rmtree(out / "pkg")
     junction(out / "pkg", outside)
-    report = regen(out, {"app.py": APP})
-    assert (outside / "mod.py").read_bytes() == b"m = 1\n" and "pkg/mod.py" not in report.deleted
+    report = regen(out, {"app.txt": APP})
+    assert (outside / "mod.txt").read_bytes() == b"m = 1\n" and "pkg/mod.txt" not in report.deleted
 
 
 def test_merges_and_scratch_runs_leave_nothing_in_the_temp_folder(tmp_path, monkeypatch):
@@ -832,36 +832,36 @@ def test_merges_and_scratch_runs_leave_nothing_in_the_temp_folder(tmp_path, monk
     temp.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(temp))
     out = tmp_path / "out"
-    regen(out, {"app.py": APP})
+    regen(out, {"app.txt": APP})
     edit(out, b"return 1\n", b"return 100\n")
-    regen(out, {"app.py": APP.replace(b"return 1\n", b"return 11\n")})
+    regen(out, {"app.txt": APP.replace(b"return 1\n", b"return 11\n")})
     assert not list(temp.iterdir())
 
 
 @pytest.mark.parametrize("arrange, change, expected", [
-    ("edit", {"app.py": APP.replace(b"return 1\n", b"return 11\n")}, "Conflicts to resolve"),
-    ("delete", {"app.py": APP.replace(b"return 1\n", b"return 11\n")}, "left deleted"),
-    ("edit", {"other.py": b"o = 1\n"}, "may hold your work"),
-    ("binary", {"app.py": APP.replace(b"return 1\n", b"return 11\n")}, "cannot be merged"),
+    ("edit", {"app.txt": APP.replace(b"return 1\n", b"return 11\n")}, "Conflicts to resolve"),
+    ("delete", {"app.txt": APP.replace(b"return 1\n", b"return 11\n")}, "left deleted"),
+    ("edit", {"other.txt": b"o = 1\n"}, "may hold your work"),
+    ("binary", {"app.txt": APP.replace(b"return 1\n", b"return 11\n")}, "cannot be merged"),
 ], ids=["conflict", "not_restored", "kept", "not_merged"])
 def test_what_needs_attention_is_logged(folder, caplog, arrange, change, expected):
     if arrange == "edit":
         edit(folder, b"return 1\n", b"return 100\n")
     elif arrange == "delete":
-        (folder / "app.py").unlink()
+        (folder / "app.txt").unlink()
     else:
-        (folder / "app.py").write_bytes(APP.replace(b"return 1\n", b"return '\xe9'\n"))
+        (folder / "app.txt").write_bytes(APP.replace(b"return 1\n", b"return '\xe9'\n"))
     with caplog.at_level("WARNING", logger=regeneration_module.__name__):
         regen(folder, change)
-    assert expected in caplog.text and "app.py" in caplog.text
+    assert expected in caplog.text and "app.txt" in caplog.text
 
 
 def test_adopting_a_different_model_is_logged(tmp_path, caplog):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "app.py").write_bytes(b"something else\n")
+    (out / "app.txt").write_bytes(b"something else\n")
     with caplog.at_level("WARNING", logger=regeneration_module.__name__):
-        regen(out, {"app.py": APP}, adopt=True)
+        regen(out, {"app.txt": APP}, adopt=True)
     assert "read as edits from now on" in caplog.text
 
 

@@ -38,6 +38,8 @@ class BackendGenerator(GeneratorInterface):
     """
 
     regenerable = True
+    # Loaded by main_api.py when present; see the extension point in main_api.py.j2.
+    extension_file = "extensions.py"
 
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
                  api_title: str = None, api_description: str = None, api_version: str = None):
@@ -162,7 +164,7 @@ class BackendGenerator(GeneratorInterface):
         FROM python:3.9-slim
         WORKDIR /app
 
-        COPY main_api.py /app
+        COPY main_api.py extensions.py* /app/
         COPY database.py /app
         COPY bal_stdlib.py /app
         COPY pydantic_classes.py /app

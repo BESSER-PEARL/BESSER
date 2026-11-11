@@ -4009,7 +4009,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         - Explains what the user should do (environment issues)
         - Fixes the code (code bugs)
 
-        Returns the LLM's explanation/summary of what it did.
+        Returns the LLM's explanation/summary of what it did, or a
+        "Fix cycle stopped: <reason>" message when a cap, cancellation or
+        a failed/truncated/declined call ended the cycle first.
         """
         if not error_message or not error_message.strip():
             raise ValueError("Error message cannot be empty")
@@ -4047,8 +4049,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 break
         self._previous_errors.append(error_line)
 
-        if self._start_time is None:
-            self._start_time = time.monotonic()
+        # A fix request is a new request: it gets a full runtime window, not
+        # what generate() left of its own (which also bounds run_command).
+        self._start_time = time.monotonic()
 
         retry_note = ""
         if already_tried:
@@ -4079,19 +4082,28 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         max_fix_turns = 10
         llm_explanation = ""
 
-        for turn in range(max_fix_turns):
-            self.total_turns += 1
+        def stopped(reason: str, turns_done: int) -> str:
+            # Every early exit says why, and whether anything was changed.
+            progress = (f"after {turns_done} turn(s); check the files it changed"
+                        if turns_done else "no change was made")
+            logger.warning("Fix cycle stopped (%s), %s", reason, progress)
+            note = f"\n\nThe model's last note: {llm_explanation}" if llm_explanation else ""
+            return f"Fix cycle stopped: {reason} ({progress}).{note}"
 
-            if self._start_time is not None:
-                elapsed = time.monotonic() - self._start_time
-                if elapsed > self.max_runtime_seconds:
-                    break
+        for turn in range(max_fix_turns):
+            budget_stop = self._budget_stop_reason()
+            if budget_stop:
+                return stopped(budget_stop, turn)
+            self.total_turns += 1
 
             try:
                 response = self._chat_with_pending_force(system, messages)
+            except InvalidApiKeyError:
+                # The caller must report the bad key, not a fix summary.
+                raise
             except Exception as e:
                 logger.error("Fix cycle API call failed: %s", e)
-                break
+                return stopped(f"the LLM call failed: {e}", turn)
 
             # Fix-cycle calls can trigger the outage fallback too.
             self._notify_model_switch()
@@ -4101,29 +4113,52 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 if hasattr(block, "text") and block.text:
                     llm_explanation = block.text
 
-            if response["stop_reason"] == "end_turn":
+            stop_reason = response["stop_reason"]
+            if stop_reason == "end_turn":
                 logger.info("Fix cycle completed after %d turns", turn + 1)
-                break
+                return llm_explanation or "Fix cycle completed."
 
-            if response["stop_reason"] == "tool_use":
-                messages.append({"role": "assistant", "content": response["content"]})
-                tool_blocks = [
-                    block for block in response["content"]
-                    if hasattr(block, "type") and block.type == "tool_use" and getattr(block, "name", None)
-                ]
-                tool_results = self._execute_tool_blocks(tool_blocks, self.total_turns - 1)
-                messages.append({"role": "user", "content": tool_results})
+            if stop_reason in ("max_tokens", "length"):
+                # Like Phase 2, a truncated tool call is not executed.
+                return stopped("the model hit its output token limit", turn)
+            if stop_reason == "refusal":
+                category = response.get("refusal_category")
+                return stopped("the model declined this request"
+                               + (f" (safety category: {category})" if category else ""), turn)
+            if stop_reason != "tool_use":
+                return stopped(f"unexpected stop_reason: {stop_reason}", turn)
 
-                # Per-file modify-loop guard (mirrors Phase 2). The fix
-                # cycle is the most common offender — the LLM gets a
-                # single error to fix and starts dribbling out one-line
-                # modify_file calls instead of rewriting the file.
-                if self._apply_edit_loop_guards(messages, where="fix cycle"):
-                    break
-            else:
-                break
+            messages.append({"role": "assistant", "content": response["content"]})
+            tool_blocks = [
+                block for block in response["content"]
+                if hasattr(block, "type") and block.type == "tool_use" and getattr(block, "name", None)
+            ]
+            tool_results = self._execute_tool_blocks(tool_blocks, self.total_turns - 1)
+            messages.append({"role": "user", "content": tool_results})
 
-        return llm_explanation or "Fix cycle completed."
+            # Per-file modify-loop guard (mirrors Phase 2). The fix
+            # cycle is the most common offender — the LLM gets a
+            # single error to fix and starts dribbling out one-line
+            # modify_file calls instead of rewriting the file.
+            if self._apply_edit_loop_guards(messages, where="fix cycle"):
+                return stopped("the same edit was refused repeatedly", turn + 1)
+
+        return stopped(f"the {max_fix_turns}-turn limit was reached before the model finished", max_fix_turns)
+
+    def _budget_stop_reason(self) -> str:
+        """Why the run may not start another billable call, or "" if it may.
+
+        Same comparisons as ``_verification_call_allowed``: a cap exactly
+        reached is spent.
+        """
+        if self._should_continue is not None and not self._should_continue():
+            return "the run was cancelled"
+        if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
+            return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
+                    f"(${self.client.usage.estimated_cost:.2f} used)")
+        if self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds:
+            return f"the {self.max_runtime_seconds}s runtime cap was reached"
+        return ""
 
     # ==================================================================
     # Delegating methods

@@ -406,6 +406,127 @@ class TestFixError:
         assert orchestrator.total_turns <= 10
 
 
+class _ScriptedFixClient:
+    """Replays ``replies`` (then end_turn) and records the cost before each call."""
+    model = "mock-model"
+
+    def __init__(self, replies=(), cost_per_call=0.0, spent=0.0):
+        self.usage = UsageTracker("mock-model")
+        self.usage.seed_cost(spent)
+        self.replies = list(replies)
+        self.cost_per_call = cost_per_call
+        self.cost_before_calls: list[float] = []
+
+    def chat(self, system, messages, tools):
+        self.cost_before_calls.append(self.usage.estimated_cost)
+        self.usage.seed_cost(self.cost_per_call)
+        if self.replies:
+            reply = self.replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+        return {"stop_reason": "end_turn", "content": [MockBlock("text", text="Fixed the import.")]}
+
+
+def _list_files_reply(n):
+    return {"stop_reason": "tool_use", "content": [
+        MockBlock("tool_use", name="list_files", input={}, id=f"f{n}")]}
+
+
+class TestFixErrorBudgets:
+    """The fix cycle is billable: it honours the cost cap, its own runtime
+    window and cancellation, and says truthfully why it stopped."""
+
+    ERROR = "ImportError: No module named 'auth'"
+
+    def _orchestrator(self, simple_model, tmp_path, client, **kwargs):
+        kwargs.setdefault("max_cost_usd", 1.0)
+        kwargs.setdefault("max_runtime_seconds", 1200)
+        return LLMOrchestrator(
+            llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+            enable_tracing=False, enable_checkpointing=False, **kwargs,
+        )
+
+    def test_fix_cycle_gets_its_own_runtime_window(self, simple_model, tmp_path):
+        client = _ScriptedFixClient()
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+        # generate() started 25 minutes ago, past the 20-minute runtime cap.
+        orchestrator._start_time = time.monotonic() - 25 * 60
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        assert len(client.cost_before_calls) == 1
+        assert result == "Fixed the import."
+        assert orchestrator._time_left() > 1100
+
+    def test_fix_cycle_makes_no_call_when_cost_cap_is_spent(self, simple_model, tmp_path):
+        client = _ScriptedFixClient(spent=1.0)
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        assert client.cost_before_calls == []
+        assert "cost cap" in result and "no change was made" in result
+
+    def test_fix_cycle_stops_when_cost_cap_is_reached_midway(self, simple_model, tmp_path):
+        client = _ScriptedFixClient([_list_files_reply(n) for n in range(10)], cost_per_call=0.4)
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        # Calls start at $0.00, $0.40, $0.80; at $1.20 the cap is spent.
+        assert [round(c, 2) for c in client.cost_before_calls] == [0.0, 0.4, 0.8]
+        assert "cost cap" in result and "after 3 turn(s)" in result
+
+    def test_fix_cycle_honours_cancellation(self, simple_model, tmp_path):
+        client = _ScriptedFixClient()
+        orchestrator = self._orchestrator(simple_model, tmp_path, client, should_continue=lambda: False)
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        assert client.cost_before_calls == []
+        assert "cancelled" in result
+
+    def test_invalid_api_key_propagates(self, simple_model, tmp_path):
+        from besser.spec_driven_agent.errors import InvalidApiKeyError
+        client = _ScriptedFixClient([InvalidApiKeyError("bad key")])
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+
+        with pytest.raises(InvalidApiKeyError):
+            orchestrator.fix_error(self.ERROR)
+
+    def test_api_failure_is_reported(self, simple_model, tmp_path):
+        client = _ScriptedFixClient([RuntimeError("upstream 503")])
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        assert "LLM call failed" in result and "upstream 503" in result
+
+    @pytest.mark.parametrize("stop_reason, expected", [
+        ("max_tokens", "output token limit"),
+        ("length", "output token limit"),
+        ("refusal", "declined"),
+    ])
+    def test_truncation_and_refusal_are_reported(self, simple_model, tmp_path, stop_reason, expected):
+        client = _ScriptedFixClient([{"stop_reason": stop_reason, "content": []}])
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        assert expected in result
+        assert "completed" not in result
+
+    def test_turn_limit_is_reported(self, simple_model, tmp_path):
+        client = _ScriptedFixClient([_list_files_reply(n) for n in range(20)])
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        assert len(client.cost_before_calls) == 10
+        assert "10-turn limit" in result
+
+
 # ======================================================================
 # Standalone module tests (prompt_builder)
 # (gap_analyzer was deleted — the LLM plans its own tasks from the

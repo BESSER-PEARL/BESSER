@@ -1554,11 +1554,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.info("Phase 0.5: skipped for a %s target", self.target.description)
             return
 
-        stack_id = detect_stack(instructions)
+        # The routing answer decided the stack: words of the request may be
+        # its domain ("a cargo company", "rust-proof paint").
+        if self._routed:
+            stack_id = detect_stack(self._unsupported_stack)
+        else:
+            stack_id = detect_stack(instructions)
+            if stack_id is not None:
+                logger.warning("Phase 0.5: no routing answer; the %s template was picked "
+                               "from the request's keywords", stack_label(stack_id))
         if stack_id is None:
-            logger.debug(
-                "Phase 0.5: no recognised non-Python stack in instructions; skipping"
-            )
+            logger.debug("Phase 0.5: no stack with a template (routed stack %r); skipping",
+                         self._unsupported_stack)
             return
 
         try:

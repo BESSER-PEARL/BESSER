@@ -41,7 +41,7 @@ def test_a_failure_keeps_its_report_off_a_terminal(besser, write):
 def test_a_command_run_for_its_output_prints_all_of_it(besser, model):
     run = besser("info", model, output=None)
 
-    assert "class Book: title: str, pages: int" in run.stdout
+    assert "class Book: title:str, pages:int" in run.stdout
 
 
 def test_besser_output_full_prints_the_report_and_an_unknown_value_is_a_usage_error(besser, model):
@@ -123,8 +123,8 @@ def test_guide_prints_the_rules_in_little_space(besser):
     run = besser("guide", output=None)
 
     assert run.stdout == GUIDE
-    # Read on every turn of every session that works on the model: keep it near the 1.7 KB of the experiment.
-    assert len(GUIDE.encode("utf-8")) < 2500
+    # Re-read on every turn of every session: the experiment used 1.7 KB; the edit commands add about 0.9 KB.
+    assert len(GUIDE.encode("utf-8")) < 4000 and len(GUIDE.splitlines()) <= 60
 
 
 @needs_pygit2
@@ -173,6 +173,18 @@ def test_apply_prints_the_end_of_the_output_of_tests_that_fail(besser, model, wr
     assert "error: the tests failed (exit status 3)" in run.stderr
 
 
+@needs_pygit2
+def test_apply_prints_only_the_failing_tests_of_pytest(besser, model, write):
+    write("test_app.py", "def test_ok():\n    pass\n\n\ndef test_broken():\n    assert 1 == 2\n")
+    _config(write, f'test = "{sys.executable} -m pytest -q -p no:cacheprovider test_app.py"\n')
+    run = besser("apply", output=None)
+
+    assert run.returncode == 1
+    assert run.stdout.splitlines()[0] == "FAILED test_app.py::test_broken - assert 1 == 2"
+    assert "def test_broken" not in run.stdout  # not the traceback
+    assert run.stdout.splitlines()[1].startswith("1 failed, 1 passed")
+
+
 def test_apply_runs_no_test_after_a_build_that_fails(besser, write):
     write("library.py", "raise ValueError('broken')\n")
     _config(write, FAILING_TEST)
@@ -207,8 +219,8 @@ def test_info_shows_optional_attributes_defaults_constraints_and_routes(besser, 
     product = besser("info", "shop.py", "--json").json["models"][0]
     code = next(attribute for attribute in product["classes"][0]["attributes"] if attribute["name"] == "code")
 
-    assert "price: int" in text and "code: str? = 'X'" in text
-    assert "constraint positive on Product: context Product inv positive: self.price > 0" in text
+    assert "price:int" in text and "code:str?='X'" in text
+    assert "constraint positive on Product: self.price > 0" in text
     assert "backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/" in text
     assert product["backend_endpoints"]["Product"][2] == "GET /product/{product_id}/"
     assert code == {"name": "code", "type": "str", "optional": True, "default": "X"}

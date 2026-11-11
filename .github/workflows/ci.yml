@@ -146,6 +146,9 @@ jobs:
           wheel-env/bin/besser new starter.py
           wheel-env/bin/besser validate starter.py model.py --strict
           wheel-env/bin/besser info starter.py
+          # model edits on the starter, then one class in full
+          wheel-env/bin/besser model -f starter.py add-attribute Book isbn:str?
+          wheel-env/bin/besser info starter.py --class Book | grep -F 'isbn:str?'
           # a folder: .py models are skipped (they would be executed) unless --exec-py
           mkdir models && cp model.py starter.py models/
           if wheel-env/bin/besser validate models 2> validate.err; then exit 1; fi

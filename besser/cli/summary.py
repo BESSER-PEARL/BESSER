@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY, DomainModel
@@ -75,8 +76,10 @@ def _name(element: Any) -> str:
 
 
 def _multiplicity(end: Any) -> str:
+    """An end's multiplicity as ``besser model add-association`` takes it: 1, 0..1, *, 1..*."""
     low, high = end.multiplicity.min, end.multiplicity.max
-    high = "*" if high == UNLIMITED_MAX_MULTIPLICITY else high
+    if high == UNLIMITED_MAX_MULTIPLICITY:
+        return "*" if low == 0 else f"{low}..*"
     return str(low) if low == high else f"{low}..{high}"
 
 
@@ -156,6 +159,25 @@ def describe_model(loaded: LoadedModel, current: bool = False) -> dict[str, Any]
     return entry
 
 
+def attribute_text(attribute: dict[str, Any]) -> str:
+    """An attribute as ``besser model add-attribute`` takes it: ``name:type``, ``?`` when optional, ``=default``."""
+    text = f"{attribute['name']}:{attribute['type']}{'?' if attribute.get('optional') else ''}"
+    return text + (f"={attribute['default']!r}" if attribute.get("default") is not None else "")
+
+
+def end_text(end: dict[str, Any]) -> str:
+    """An association end as ``besser model add-association`` takes it: ``role:Class[multiplicity]``."""
+    return f"{end['name']}:{end['type']}[{end['multiplicity']}]"
+
+
+_OCL_HEADER = re.compile(r"^\s*context\s+\w+\s+inv\b[^:]*:\s*", re.IGNORECASE)
+
+
+def invariant_body(expression: str) -> str:
+    """An OCL invariant without its ``context X inv name:`` header, which ``info`` prints already."""
+    return _OCL_HEADER.sub("", expression, count=1)
+
+
 def summary_lines(entry: dict[str, Any]) -> list[str]:
     """The lines of the text report for one ``describe_model`` entry."""
     counts = ", ".join(
@@ -175,20 +197,16 @@ def summary_lines(entry: dict[str, Any]) -> list[str]:
         header = f"{'abstract ' if cls['is_abstract'] else ''}class {cls['name']}"
         if cls["parents"]:
             header += f"({', '.join(cls['parents'])})"
-        members = [
-            f"{attribute['name']}: {attribute['type']}{'?' if attribute.get('optional') else ''}"
-            + (f" = {attribute['default']!r}" if attribute.get("default") is not None else "")
-            for attribute in cls["attributes"]
-        ]
+        members = [attribute_text(attribute) for attribute in cls["attributes"]]
         members.extend(f"{method}()" for method in cls["methods"])
         lines.append(f"    {header}{': ' + ', '.join(members) if members else ''}")
     for enumeration in entry.get("enumerations", []):
         lines.append(f"    enumeration {enumeration['name']}: {', '.join(enumeration['literals'])}")
     for association in entry.get("associations", []):
-        ends = " -- ".join(f"{end['name']}: {end['type']} [{end['multiplicity']}]" for end in association["ends"])
-        lines.append(f"    association {association['name']}: {ends}")
+        lines.append(f"    association {association['name']}: {' '.join(map(end_text, association['ends']))}")
     for constraint in entry.get("constraints", []):
-        lines.append(f"    constraint {constraint['name']} on {constraint['context']}: {constraint['expression']}")
+        lines.append(f"    constraint {constraint['name']} on {constraint['context']}: "
+                     f"{invariant_body(constraint['expression'])}")
     if entry.get("backend_endpoints"):
         lines.append("    backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/, "
                      "/x/bulk|count|paginated|search/")
@@ -196,4 +214,60 @@ def summary_lines(entry: dict[str, Any]) -> list[str]:
             methods = [route for route in routes if "/methods/" in route]
             if methods:
                 lines.append(f"    {cls} methods: {', '.join(methods)}")
+    return lines
+
+
+def _signature(method: Any) -> str:
+    parameters = ", ".join(f"{parameter.name}:{_name(parameter.type)}" for parameter in method.parameters)
+    returns = f" -> {_name(method.type)}" if method.type is not None else ""
+    return f"{method.name}({parameters}){returns}"
+
+
+def describe_class(model: DomainModel, cls: Any) -> dict[str, Any]:
+    """One class as ``besser info --class`` shows it: its members, inherited ones, association ends,
+    constraints, and what the backend generator writes for it."""
+    association_of = {id(end): association.name for association in model.associations for end in association.ends}
+    inherited = [attribute for parent in sort_by_timestamp(cls.all_parents())
+                 for attribute in sort_by_timestamp(parent.attributes)]
+    return {
+        "name": cls.name,
+        "is_abstract": cls.is_abstract,
+        "parents": sorted(_name(parent) for parent in cls.parents()),
+        "attributes": [attribute_text(_attribute(attribute)) for attribute in sort_by_timestamp(cls.attributes)],
+        "inherited_attributes": [attribute_text(_attribute(attribute)) for attribute in inherited],
+        "methods": [_signature(method) for method in sort_by_timestamp(cls.methods)],
+        "ends": [f"{end_text({'name': end.name, 'type': _name(end.type), 'multiplicity': _multiplicity(end)})} "
+                 f"({association_of.get(id(end), '?')})"
+                 for end in sorted(cls.association_ends(), key=lambda end: end.name)],
+        "constraints": [f"{constraint.name}: {invariant_body(constraint.expression)}"
+                        for constraint in sorted(model.constraints, key=lambda c: c.name) if constraint.context is cls],
+        "backend_endpoints": _class_endpoints(cls),
+        "backend_code": [f"sql_alchemy.{cls.name} (table {cls.name.lower()})", f"pydantic_classes.{cls.name}Create",
+                         "database.get_db"],
+    }
+
+
+def _attribute(attribute: Any) -> dict[str, Any]:
+    return {"name": attribute.name, "type": _name(attribute.type), "optional": attribute.is_optional,
+            "default": _plain(attribute.default_value)}
+
+
+def _class_endpoints(cls: Any) -> list[str]:
+    from besser.generators.backend.endpoints import EXTRA_ROUTES, class_endpoints
+
+    path = f"/{cls.name.lower()}/"
+    return [*class_endpoints(cls), f"{path}{{{'|'.join(EXTRA_ROUTES)}}}/"]
+
+
+def class_lines(entry: dict[str, Any]) -> list[str]:
+    """The lines of ``besser info --class`` for one ``describe_class`` entry."""
+    header = f"{'abstract ' if entry['is_abstract'] else ''}class {entry['name']}"
+    if entry["parents"]:
+        header += f"({', '.join(entry['parents'])})"
+    lines = [header]
+    for label, key in (("attributes", "attributes"), ("inherited", "inherited_attributes"), ("methods", "methods"),
+                       ("ends", "ends"), ("constraints", "constraints"), ("backend routes", "backend_endpoints"),
+                       ("backend code", "backend_code")):
+        if entry[key]:
+            lines.append(f"  {label}: {', '.join(entry[key])}")
     return lines

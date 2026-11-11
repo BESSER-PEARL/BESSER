@@ -103,6 +103,11 @@ def _command(name: str, help_text: str, parser: argparse.ArgumentParser,
              generator_ids: tuple[str, ...]) -> Command:
     options, positionals = [], []
     for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction) and name:
+            # A command's own subcommands ('besser model add-class'): its first word.
+            positionals.append(Positional(name=action.dest, help=_help(action) or action.dest,
+                                          value=Value("words", tuple(action.choices)), many=False))
+            continue
         if isinstance(action, argparse._SubParsersAction) or action.help == argparse.SUPPRESS:
             continue
         if action.option_strings:

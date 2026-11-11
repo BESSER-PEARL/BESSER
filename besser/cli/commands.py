@@ -18,7 +18,15 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 from besser.cli import loading
 from besser.cli import schema as schema_module
 from besser.cli.agent_files import GUIDE, GeneratedDir, sync_ignore, write_agent_files
-from besser.cli.config import CONFIG_EXAMPLE, CONFIG_FILENAME, ConfigError, OutputConfig, load_config, load_test_command
+from besser.cli.config import (
+    CONFIG_EXAMPLE,
+    CONFIG_FILENAME,
+    ConfigError,
+    OutputConfig,
+    load_config,
+    load_default_model,
+    load_test_command,
+)
 from besser.cli.importing import IMPORT_FORMATS, ImportFormat, format_of, import_format, import_models
 from besser.cli.discovery import SKIP_NO_MODEL, SKIP_PY, ModelFiles, SkippedFile, find_model_files
 from besser.cli.loading import (
@@ -29,6 +37,7 @@ from besser.cli.loading import (
     ModelLoadError,
     NoModelError,
     load_models,
+    load_python_text,
     missing_backend_dependency_message,
 )
 from besser.cli.output import (
@@ -41,9 +50,10 @@ from besser.cli.output import (
     plural,
     stdout_to_stderr,
 )
+from besser.cli.model_edit import EditError, Edited, Operation, pick_domain_model, run_operation
 from besser.cli.ocl_check import OclOutcome, OclUnavailable, check_ocl, load_checker
 from besser.cli.starters import DEFAULT_KIND, STARTERS, starter_source
-from besser.cli.summary import describe_model, summary_lines
+from besser.cli.summary import class_lines, describe_class, describe_model, summary_lines
 from besser.generators import regeneration
 from besser.generators.registry import GENERATORS, GeneratorSpec, get_generator
 from besser.generators.runner import (
@@ -348,13 +358,16 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
 # ── info ────────────────────────────────────────────────────────────────────
 
 
-def info(model_path: str) -> Result:
-    """Summarise the models of the file and name the generators that can run on it."""
+def info(model_path: str, class_name: str | None = None) -> Result:
+    """Summarise the models of the file and name the generators that can run on it; or, with
+    ``class_name``, describe that class of its domain models."""
     data: dict[str, Any] = {"model": model_path}
     try:
         loaded = load_models(model_path)
     except ModelLoadError as exc:
         return failure("info", str(exc), data=data, cause=exc)
+    if class_name is not None:
+        return _class_info(loaded, class_name, data)
 
     warnings = list(loaded.errors)
     notes = [
@@ -376,12 +389,30 @@ def info(model_path: str) -> Result:
         models.append(entry)
         lines.extend(summary_lines(entry))
     runnable = [spec.id for spec in GENERATORS if all(loaded.of_kind(kind) for kind in spec.models)]
-    lines.append(f"Generators that read {'these models' if len(models) > 1 else 'this model'}: "
-                 f"{', '.join(runnable) or 'none'}")
+    generators_line = (f"Generators that read {'these models' if len(models) > 1 else 'this model'}: "
+                       f"{', '.join(runnable) or 'none'}")
     return Result(
         command="info", warnings=warnings, notes=notes, data={**data, "models": models, "generators": runnable},
-        text="\n".join(lines), text_is_result=True,
+        # A coding agent reads the model, not the list of generators besser.toml already chose from.
+        text="\n".join([*lines, generators_line]), brief="\n".join(lines), text_is_result=True,
     )
+
+
+def _class_info(loaded: LoadedModels, class_name: str, data: dict[str, Any]) -> Result:
+    """``info --class``: one class of the file's domain models, in full."""
+    found = [(model, model.model.get_class_by_name(class_name)) for model in loaded.of_kind("domain")]
+    found = [(model, cls) for model, cls in found if cls is not None]
+    if not found:
+        known = sorted({cls.name for model in loaded.of_kind("domain") for cls in model.model.get_classes()})
+        return failure("info", f"{loaded.path} has no class named '{class_name}' (it has: {', '.join(known) or 'none'})",
+                       EXIT_FAILED, data)
+    entries = [{"model": model.name, **describe_class(model.model, cls)} for model, cls in found]
+    lines = []
+    for entry in entries:
+        if len(entries) > 1:
+            lines.append(f"{entry['model']}:")
+        lines.extend(class_lines(entry))
+    return Result(command="info", data={**data, "classes": entries}, text="\n".join(lines), text_is_result=True)
 
 
 # ── new ─────────────────────────────────────────────────────────────────────
@@ -1485,9 +1516,25 @@ def build(names: Sequence[str] = (), config_path: str = CONFIG_FILENAME, dry_run
 
 # ── apply ───────────────────────────────────────────────────────────────────
 
-# The lines of the test command's output that 'apply' reports when the tests fail: the summary and the
-# failures before it, as pytest, unittest and npm print them last.
+# The lines of the test command's output that 'apply' keeps in its JSON, and prints when the tests fail
+# without a summary it knows: the end, where pytest, unittest and npm print their summary.
 _TEST_TAIL_LINES = 40
+# Where pytest lists the failing tests, one line each with its first error line.
+_PYTEST_SUMMARY = re.compile(r"^=+ short test summary info =+$")
+# The lines that name a failing test, in the output of a runner that prints no such section.
+_FAILURE_LINE = re.compile(r"^(FAILED|ERROR|FAIL:|ERROR:|not ok\b)")
+
+
+def _failing_lines(output: list[str]) -> list[str]:
+    """What to print of the output of tests that fail: pytest's short summary (one line per failing test
+    and the counts), or the lines that name a failure and the last line, or else the end of the output."""
+    start = next((index for index, line in enumerate(output) if _PYTEST_SUMMARY.match(line.strip())), None)
+    if start is not None:
+        return output[start + 1:]
+    failures = [line for line in output if _FAILURE_LINE.match(line.strip())]
+    if failures:
+        return [*failures, output[-1]] if output[-1] not in failures else failures
+    return output[-_TEST_TAIL_LINES:]
 
 
 def apply(config_path: str = CONFIG_FILENAME) -> Result:
@@ -1520,12 +1567,85 @@ def apply(config_path: str = CONFIG_FILENAME) -> Result:
     if process.returncode != 0:
         result.exit_code = EXIT_FAILED
         result.errors.append(f"the tests failed (exit status {process.returncode}): {command}")
-        result.text = "\n".join([*tail, f"{built.brief}; tests FAILED"])
+        result.text = "\n".join([*_failing_lines(output), f"{built.brief}; tests FAILED"])
         result.brief = ""
     else:
         result.text = f"{built.text}\ntests: {last}"
         result.brief = f"{built.brief}; tests: {last}"
     return result
+
+
+# ── model ───────────────────────────────────────────────────────────────────
+
+# The model file 'besser model' edits when none is named and there is no besser.toml naming one.
+DEFAULT_MODEL_FILE = "model.py"
+
+
+def default_model_path(config_path: str = CONFIG_FILENAME) -> str:
+    """The model file of ``besser.toml`` when it names one, else ``model.py``."""
+    try:
+        return load_default_model(config_path) or DEFAULT_MODEL_FILE
+    except ConfigError:
+        return DEFAULT_MODEL_FILE
+
+
+def _read_model_text(path: Path) -> str:
+    try:
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _Stopped(failure("model", f"{path}: cannot be read as UTF-8 text: {exc}")) from exc
+
+
+def model(operations: Sequence[Operation], model_path: str | None = None, use: Sequence[str] = ()) -> Result:
+    """Make ``operations`` on the domain model of a ``.py`` model file, and write it if the result is valid.
+
+    The file is written once, after every operation: when the new text loads, holds each change
+    and has no validation error the old text did not have. Otherwise nothing is written.
+    """
+    path = Path(model_path or default_model_path())
+    data: dict[str, Any] = {"model": path.as_posix(), "changes": []}
+    if path.suffix.lower() != ".py":
+        return failure("model", f"{path}: 'besser model' edits a B-UML .py file; for editor JSON, "
+                                f"'besser convert {path} -o model.py' first", data=data)
+    try:
+        raw = _read_model_text(path)
+    except _Stopped as stopped:
+        return stopped.result
+    # Edits are made on "\n" lines; a file written with "\r\n" gets them back.
+    crlf = "\r\n" in raw
+    text = raw.replace("\r\n", "\n")
+    try:
+        before = _validate_model(pick_domain_model(load_python_text(path, text)[0], use))
+        edits: list[Edited] = []
+        for operation in operations:
+            try:
+                edited = run_operation(path, text, operation, use)
+            except EditError as exc:
+                raise EditError(f"{operation.line}: {exc}") from exc
+            edits.append(edited)
+            text = edited.text
+    except (ModelLoadError, EditError) as exc:
+        return failure("model", f"{exc} ({path} not changed)", data=data, cause=exc)
+    try:
+        loaded_after = pick_domain_model(load_python_text(path, text)[0], use)
+    except (ModelLoadError, EditError) as exc:
+        return failure("model", f"the change would break {path} ({exc}); not changed: make it by hand",
+                       EXIT_FAILED, data, exc)
+    missed = [problem for edited in edits if (problem := edited.check(loaded_after.model))]
+    if missed:
+        return failure("model", f"the change did not land as expected ({'; '.join(missed)}); {path} not changed: "
+                                "make it by hand", EXIT_FAILED, data)
+    after = _validate_model(loaded_after)
+    new_errors = [error for error in after["errors"] if error not in before["errors"]]
+    data["changes"] = [edited.summary for edited in edits]
+    if new_errors:
+        return Result(command="model", exit_code=EXIT_FAILED, data=data,
+                      errors=[*new_errors, f"{path} not changed: the change makes the model invalid"])
+    path.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
+    warnings = [warning for edited in edits for warning in edited.warnings]
+    warnings += [f"still invalid: {error}" for error in after["errors"]]
+    line = f"{path}: {'; '.join(edited.summary for edited in edits)}"
+    return Result(command="model", files=[path.as_posix()], data=data, warnings=warnings, text=line, brief=line)
 
 
 # ── schema ──────────────────────────────────────────────────────────────────

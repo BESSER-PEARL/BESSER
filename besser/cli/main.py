@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shlex
 import sys
 import traceback
 from typing import List, Optional
@@ -16,6 +17,7 @@ from besser.cli import commands
 from besser.cli.completion import COMPLETION_SHELLS, completion_script
 from besser.cli.config import CONFIG_FILENAME
 from besser.cli.importing import IMPORT_FORMATS
+from besser.cli.model_edit import OPERATIONS, Operation
 from besser.cli.starters import DEFAULT_KIND, STARTERS
 from besser.cli.output import (
     EXIT_FAILED,
@@ -76,6 +78,8 @@ BESSER_OUTPUT=terse prints the summary on a terminal too.
 a coding agent's loop ('besser guide' prints its rules, 'init' writes them to AGENTS.md):
   besser init                                  model.py, besser.toml, AGENTS.md, CLAUDE.md, .ignore
   besser info model.py                         the model and the API's routes, in place of reading files
+  besser info model.py --class Deal            one class in full, with the generated names to import
+  besser model add-attribute Deal score:int=0  change the model without reading or patching model.py
   besser apply                                 after each model change: validate, build, run the tests
 
 examples, in the order of a session:
@@ -95,6 +99,73 @@ examples, in the order of a session:
   eval "$(besser completion bash)"             tab completion (also zsh, fish)
   besser mcp --root .                          the commands as MCP tools for an AI agent
 """
+
+
+_MODEL_EDIT_EXAMPLES = """\
+attributes are name:type, name:type? (optional) or name:type=default; types as 'besser info'
+prints them (str, int, float, bool, date, datetime, time, timedelta, any) or a class or
+enumeration of the model; an association end is role:Class[multiplicity] ([1], [0..1], [*], [1..*]).
+
+examples:
+  besser model add-class Invoice number:str total:float paid:bool=false
+  besser model add-attribute Contact source:str? phone:str
+  besser model add-association invoice_customer invoices:Invoice[*] customer:Contact[1]
+  besser model set-enum Stage LEAD WON LOST
+  besser model add-method Deal "discount(rate:float) -> float" --code "def discount(self, rate): ..."
+  besser model add-constraint Deal "self.amount >= 0" --name amount_positive
+  besser model rename Customer Account          (also Class.attribute, Enum.LITERAL, association)
+  besser model remove Contact.phone
+  besser model batch - <<'EOF'                  (several changes, one write)
+"""
+
+# Operation -> its arguments, named as the function of besser.cli.model_edit takes them.
+_MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
+    "add-class": [
+        (("name",), {"help": "the class name"}),
+        (("attributes",), {"nargs": "*", "metavar": "ATTRIBUTE", "help": "name:type, name:type? or name:type=default"}),
+        (("--parent",), {"metavar": "CLASS", "help": "the class it specializes"}),
+        (("--abstract",), {"action": "store_true", "help": "an abstract class"}),
+    ],
+    "add-attribute": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("attributes",), {"nargs": "+", "metavar": "ATTRIBUTE", "help": "name:type, name:type? or name:type=default"}),
+    ],
+    "add-association": [
+        (("name",), {"help": "the association name"}),
+        (("first",), {"metavar": "END", "help": "role:Class[multiplicity], e.g. invoices:Invoice[*]"}),
+        (("second",), {"metavar": "END", "help": "role:Class[multiplicity], e.g. customer:Contact[1]"}),
+        (("--composite",), {"action": "store_true", "help": "the first end is the whole, the second its parts"}),
+    ],
+    "add-method": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("signature",), {"help": "name(param:type, ...) -> type"}),
+        (("--code",), {"help": "the method's Python code (a def), which the backend runs"}),
+    ],
+    "add-constraint": [
+        (("class_name",), {"metavar": "CLASS", "help": "the context class"}),
+        (("expression",), {"help": "the OCL invariant, e.g. 'self.amount >= 0'"}),
+        (("--name",), {"help": "the constraint name (default: <class>_rule_<n>)"}),
+    ],
+    "set-enum": [
+        (("name",), {"help": "the enumeration (created if missing)"}),
+        (("literals",), {"nargs": "+", "metavar": "LITERAL", "help": "all its literals, in order"}),
+    ],
+    "rename": [
+        (("path",), {"help": "Class, Enumeration, association, constraint, Class.member or Enumeration.LITERAL"}),
+        (("new_name",), {"metavar": "NEW_NAME", "help": "the new name"}),
+    ],
+    "remove": [
+        (("path",), {"help": "Class, Enumeration, association, constraint, Class.member or Enumeration.LITERAL"}),
+    ],
+}
+
+
+def _add_model_file_options(parser: argparse.ArgumentParser) -> None:
+    """``--file`` and ``--use``, accepted before and after the operation."""
+    parser.add_argument("-f", "--file", default=argparse.SUPPRESS, metavar="MODEL",
+                        help="the .py model file (default: the model of besser.toml, else model.py)")
+    parser.add_argument("--use", action="append", default=argparse.SUPPRESS, metavar="NAME",
+                        help="the domain model to change, when the file holds several")
 
 
 class _UsageError(Exception):
@@ -194,8 +265,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_command(
         "guide", "print the rules for a coding agent",
-        "Print what a coding agent needs to work in a BESSER project, in about 2 KB: what not to read,\n"
-        "the one command per model change, and where hand-written code goes. 'besser new' and\n"
+        "Print what a coding agent needs to work in a BESSER project, in about 3 KB: what not to read,\n"
+        "the commands that change the model, the one command after a change, and where hand-written\n"
+        "code goes. 'besser new' and\n"
         "'besser init' write it to AGENTS.md.",
     )
 
@@ -245,6 +317,9 @@ def build_parser() -> argparse.ArgumentParser:
         "domain model, and the generators that can run on the file.\n\n" + _EXECUTES_PYTHON,
     )
     info.add_argument("model", help=_MODEL_HELP)
+    info.add_argument("--class", dest="class_name", metavar="CLASS",
+                      help="describe one class in full: members, inherited attributes, association ends, "
+                           "constraints, and the backend's routes and code names for it")
 
     add_command(
         "generators", "list the generators and their options",
@@ -317,6 +392,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply.add_argument("-c", "--config", default=CONFIG_FILENAME, metavar="FILE",
                        help=f"the configuration file (default: {CONFIG_FILENAME} in the current directory)")
+
+    model = add_command(
+        "model", "change the domain model of a .py file: add, rename, remove",
+        "Change the domain model of a B-UML .py file with one command per change, instead of\n"
+        "reading the file and editing it. Only the characters of the change are written: the\n"
+        "rest of the file, comments and layout, stays as it is. The file is written only when\n"
+        "the result loads, holds the change and is as valid as before; one line says what changed.\n\n"
+        "operations:\n" + "".join(f"  {name:<16} {summary}\n" for name, (summary, _) in OPERATIONS.items())
+        + "  batch            several operations, one per line of a file (- reads standard input), "
+        "written together\n\n" + _MODEL_EDIT_EXAMPLES + "\n" + _EXECUTES_PYTHON,
+    )
+    _add_model_file_options(model)
+    model_operations = model.add_subparsers(dest="operation", metavar="<operation>", parser_class=_Parser)
+    for name, (summary, _) in OPERATIONS.items():
+        operation = model_operations.add_parser(name, help=summary, description=summary, parents=[common])
+        _add_model_file_options(operation)
+        for argument, options in _MODEL_OPERATION_ARGUMENTS[name]:
+            operation.add_argument(*argument, **options)
+    batch = model_operations.add_parser(
+        "batch", parents=[common], help="several operations, one per line, written together",
+        description="Make the operations listed one per line in FILE (- reads standard input), each\n"
+                    "written as after 'besser model' (blank lines and # comments are skipped); the\n"
+                    "file is written once, when all of them apply.",
+    )
+    _add_model_file_options(batch)
+    batch.add_argument("source", nargs="?", default="-", metavar="FILE", help="the operations (default: -)")
 
     convert = add_command(
         "convert", "convert a model file, or import another notation",
@@ -408,7 +509,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
     if args.command == "validate":
         return commands.validate(args.model, strict=args.strict, exec_py=args.exec_py, ocl=args.ocl)
     if args.command == "info":
-        return commands.info(args.model)
+        return commands.info(args.model, args.class_name)
     if args.command == "generators":
         return commands.generators()
     if args.command == "generate":
@@ -423,6 +524,8 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
     if args.command == "regenerate":
         return commands.regenerate(args.generator, args.model, args.output, args.option, args.use, args.adopt,
                                    dry_run=args.dry_run)
+    if args.command == "model":
+        return _model(args, parser)
     if args.command == "convert":
         return commands.convert(args.input, args.output, dry_run=args.dry_run, source_format=args.source_format,
                                 class_diagram=args.class_diagram)
@@ -434,6 +537,42 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
 
         return mcp_server.serve(args.root, exec_py=args.exec_py)
     return failure("", f"a command is required\n\n{parser.format_usage().strip()} (see '{PROG} --help')")
+
+
+def _model_operation(args: argparse.Namespace) -> Operation:
+    """The operation ``args`` (parsed by an operation's parser) names."""
+    names = [argument[0].lstrip("-").replace("-", "_") for argument, _ in _MODEL_OPERATION_ARGUMENTS[args.operation]]
+    return Operation(args.operation, {name: getattr(args, name) for name in names})
+
+
+def _model(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
+    if not args.operation:
+        raise _UsageError(f"an operation is required (see '{PROG} model --help')", "model")
+    if args.operation != "batch":
+        operations = [_model_operation(args)]
+    else:
+        operation_parsers = _subparsers(_subparsers(parser).choices["model"]).choices
+        try:
+            text = sys.stdin.read() if args.source == "-" else open(args.source, encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _UsageError(f"cannot read {args.source}: {exc}", "model") from None
+        operations = []
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            try:
+                words = shlex.split(line)
+            except ValueError as exc:
+                raise _UsageError(f"{args.source}: line {number}: {exc}", "model") from None
+            if words[0] not in OPERATIONS:
+                raise _UsageError(f"{args.source}: line {number}: '{words[0]}' is not an operation "
+                                  f"({', '.join(OPERATIONS)})", "model")
+            parsed = operation_parsers[words[0]].parse_args(words[1:])
+            parsed.operation = words[0]
+            operations.append(_model_operation(parsed))
+        if not operations:
+            raise _UsageError(f"{args.source}: no operation", "model")
+    return commands.model(operations, getattr(args, "file", None), getattr(args, "use", []))
 
 
 def _verbosity(args: argparse.Namespace) -> int:

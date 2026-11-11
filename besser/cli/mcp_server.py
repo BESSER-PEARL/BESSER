@@ -286,7 +286,7 @@ def _validate(tools: Tools, args: dict[str, Any]) -> Result:
 
 
 def _info(tools: Tools, args: dict[str, Any]) -> Result:
-    return commands.info(str(tools.model_path(args["model"])))
+    return commands.info(str(tools.model_path(args["model"])), args.get("class"))
 
 
 def _generators(tools: Tools, args: dict[str, Any]) -> Result:
@@ -379,8 +379,10 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
         ToolSpec(
             "info",
             "Summarise a model file: its models, the classes, attributes and associations of a domain model, "
-            "and the ids of the generators that can run on it (the CLI's 'besser info').",
-            _object({"model": _MODEL}, ["model"]),
+            "and the ids of the generators that can run on it (the CLI's 'besser info'); with 'class', "
+            "that class in full.",
+            _object({"model": _MODEL, "class": {"type": "string", "description": "a class to describe in full: "
+                     "members, inherited attributes, association ends, constraints, backend routes"}}, ["model"]),
             False, _info,
         ),
         ToolSpec(

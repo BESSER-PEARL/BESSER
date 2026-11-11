@@ -196,6 +196,16 @@ def load_models(path: str | Path) -> LoadedModels:
     return loaded
 
 
+def load_python_text(path: Path, text: str) -> tuple[LoadedModels, dict[str, Any]]:
+    """The models of the B-UML script ``text``, run as the file at ``path``, and its top-level names.
+
+    Raises:
+        ModelLoadError: The script fails to run.
+    """
+    namespace = _execute(path, text)
+    return _load_python(path, namespace), namespace
+
+
 def _read_text(path: Path, read: Callable[[], bytes]) -> str:
     try:
         return read().decode("utf-8")

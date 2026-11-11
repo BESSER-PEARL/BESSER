@@ -87,6 +87,16 @@ def load_test_command(path: str) -> str | None:
     return _read_config(path).get("test") or None
 
 
+def load_default_model(path: str) -> str | None:
+    """The top-level ``model`` of the configuration file at ``path``, relative to the working directory.
+
+    Raises:
+        ConfigError: The file is missing, is not TOML, or holds a top-level key or value no command reads.
+    """
+    model = _read_config(path).get("model")
+    return (Path(path).parent / model).as_posix() if model else None
+
+
 def load_config(path: str) -> list[OutputConfig]:
     """The outputs of the configuration file at ``path``, in the file's order.
 

@@ -208,6 +208,15 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
                                                    "type, optional, default), enumerations, associations, "
                                                    "constraints and backend_endpoints (per class, 'METHOD /path/')"},
         "generators": {**_STRINGS, "description": "the ids of the generators that can run on the file"},
+        "classes": {"type": "array", "description": "with --class: per domain model holding it, the class's "
+                                                    "model, name, is_abstract, parents, attributes, "
+                                                    "inherited_attributes, methods, ends, constraints, "
+                                                    "backend_endpoints and backend_code"},
+    },
+    "model": {
+        "model": {"type": "string", "description": "the .py model file changed"},
+        "changes": {**_STRINGS, "description": "what each operation did, in a few words (empty when nothing "
+                                               "was written)"},
     },
     "generators": {
         "generators": {"type": "array", "description": "per generator: id, summary, category, models, options "

@@ -80,7 +80,8 @@ def test_every_command_prints_an_object_the_result_schema_accepts(besser, write,
     write("besser.toml", 'model = "library.py"\n[output.code]\ngenerator = "python"\ndir = "built"\n')
     runs = [
         ("--version",), ("new", "starter.py"), ("new", "--list"), ("schema",), ("schema", "domain"),
-        ("validate", model, "broken.py"), ("info", model), ("generators",),
+        ("validate", model, "broken.py"), ("info", model), ("info", model, "--class", "Book"), ("generators",),
+        ("model", "-f", model, "add-attribute", "Book", "isbn:str"), ("model", "-f", model, "remove", "Nope"),
         ("generate", "python", model, "-o", "out"), ("generate", "python", model, "-o", "dry", "--dry-run"),
         ("regenerate", "python", model, "-o", "out", "--dry-run"), ("build",), ("build", "--dry-run"),
         ("convert", "library.plantuml", "-o", "x.py"), ("completion", "bash"), ("nonsense",), ("generate",),

@@ -32,28 +32,44 @@ GUIDE = """\
 ## BESSER: model-driven code
 
 The folders listed in `besser.toml` (the `dir` of each output) are generated from the B-UML model by the
-`besser` command. These rules keep generated code out of your context, where it costs tokens on every turn.
+`besser` command. These rules keep generated code, the model file and BESSER itself out of your context.
 
-- Generated code is a black box: do not open, grep or edit it, and do not read `.besser_generated.json`.
-  `.ignore` keeps it out of searches. Do not read BESSER's documentation or sources either.
-- `besser info model.py` prints the model (classes, attributes, `?` optional, defaults, enumerations,
-  associations, constraints) and the backend's endpoints in about 1 KB. Read it instead of the model file.
-  To change the model, `grep -n` the lines you need and edit those.
-- One command per model change: `besser apply` (validates, builds every output, runs the `test` command of
-  `besser.toml`). It prints one line on success, and the errors with file and line otherwise. No separate
-  `validate`, no `--json`. Never `--force` or `overwrite = true`: they discard edits.
-- Hand-written code never goes into a generated file. Backend routes, middleware and startup hooks go in
-  `extensions.py` beside the generated `main_api.py`: `before_routers(app)` adds routes that win over the
-  generated ones, `setup(app)` adds the rest. Other code lives outside the generated folders and imports
-  the generated modules. A build never overwrites either.
-- Trust the build: check behaviour with tests, not by reading the output.
-- A model `.py` file is executed to load it: it only builds the model. A GUI model goes in the same file as
-  its domain model (the folder is not on `sys.path`).
+Read:
+- `besser info model.py`: the whole model in a few hundred tokens (`name:type`, `?` optional, `=default`,
+  associations as `role:Class[multiplicity]`, constraints). `besser info model.py --class X`: one class with
+  its association ends, routes and the generated names to import. Read these, not `model.py`.
+- Never open, grep or edit generated code or `.besser_generated.json` (`.ignore` hides them), BESSER's docs,
+  sources or `--help`.
+
+Change the model with `besser model` (one line back; the file is written only if the result is valid):
+- `besser model add-class Invoice number:str total:float paid:bool=false [--parent Base]`
+- `besser model add-attribute Contact source:str? score:int=0`
+- `besser model add-association invoice_contact invoices:Invoice[*] contact:Contact[1]`
+- `besser model set-enum Stage LEAD WON LOST` (creates or replaces the literals)
+- `besser model rename Customer Account`, `rename Contact.mail email`, `rename Stage.WON CLOSED`
+- `besser model remove Contact.phone` (a class goes with its associations)
+- `besser model add-method Deal "discount(rate:float) -> float"`, `add-constraint Deal "self.amount >= 0"`
+- Several changes in one call: `besser model batch - <<'EOF'` with one change per line.
+Do not write Python scripts that patch `model.py`; edit it by hand only where a command says so.
+
+Then one command: `besser apply` (validates, builds every output keeping your edits, runs the `test` command
+of `besser.toml`). One line on success; on failure only the errors or the failing tests. Never `--force`
+or `overwrite = true`: they discard edits.
+
+Hand-written code:
+- Never in a generated file. Backend routes, middleware and startup hooks go in `extensions.py` beside the
+  generated `main_api.py`: `before_routers(app)` adds routes that win over the generated ones, `setup(app)`
+  adds the rest. Other code lives outside the generated folders and imports the generated modules
+  (`sql_alchemy.X`, `pydantic_classes.XCreate`, `database.get_db`). A build never overwrites either.
+- Trust the build: check behaviour with tests that `besser apply` runs, not by reading the output.
+- A model `.py` file only builds the model. A GUI model goes in the same file as its domain model.
 
 What the `backend` generator gives per class `X` (path segment: the class name in lower case): `POST /x/`,
 `GET /x/`, `GET|PUT|DELETE /x/{x_id}/`, plus `/x/bulk/`, `/x/count/`, `/x/paginated/`, `/x/search/`, routes
 per association end and `/health`, `/statistics`. Bodies take the attributes and each association end by
-name (`"author": 3`, `"books": [1, 2]`). OCL constraints are enforced (422) only when they compare one
+name (`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (400 without it). `POST`, `PUT`
+and `GET /x/{x_id}/` answer `{"x": {attributes, "id", "<end>_id" per to-one end}, "<...>_ids": [...]}`;
+`GET /x/` a list of the inner objects. OCL constraints are enforced (422) only when they compare one
 attribute with a number or use `matches('regex')`; write other rules in `extensions.py`. A `Method` becomes
 `POST /x/{x_id}/methods/<name>/`. Run it from its folder: `uvicorn main_api:app` (`PORT`, `DATABASE_URL`).
 """

@@ -28,9 +28,9 @@ def test_it_prints_the_classes_attributes_and_associations(besser, model):
     assert run.stdout.splitlines()[:5] == [
         "library.py: 1 model",
         "  library_model (DomainModel 'LibraryModel'): 2 classes, 1 association",
-        "    class Library: name: str",
-        "    class Book: title: str, pages: int",
-        "    association holds: library: Library [1] -- books: Book [0..*]",
+        "    class Library: name:str",
+        "    class Book: title:str, pages:int",
+        "    association holds: library:Library[1] books:Book[*]",
     ]
 
 
@@ -59,7 +59,7 @@ def test_json_describes_each_model(besser, model):
         "enumerations": [],
         "associations": [{"name": "holds", "ends": [
             {"name": "library", "type": "Library", "multiplicity": "1"},
-            {"name": "books", "type": "Book", "multiplicity": "0..*"},
+            {"name": "books", "type": "Book", "multiplicity": "*"},
         ]}],
         "constraints": [],
         "backend_endpoints": {
@@ -95,7 +95,7 @@ def test_an_editor_project_is_summarised(besser, write):
     run = besser("info", write("project.json", PROJECT_EXPORT))
 
     assert run.returncode == 0
-    assert "    class Book: title: str\n" in run.stdout
+    assert "    class Book: title:str\n" in run.stdout
 
 
 def test_a_model_from_standard_input_is_summarised(besser):
@@ -109,7 +109,7 @@ def test_a_model_with_validation_errors_is_still_summarised(besser, write):
     run = besser("info", write("broken.py", INVALID_MODEL))
 
     assert run.returncode == 0
-    assert "    class Book: title: Text\n" in run.stdout
+    assert "    class Book: title:Text\n" in run.stdout
 
 
 def test_a_file_that_does_not_load_is_a_load_error(besser):

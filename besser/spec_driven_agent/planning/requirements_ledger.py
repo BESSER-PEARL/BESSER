@@ -669,8 +669,10 @@ def _compact(content: str) -> str:
 def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -> str:
     """Bounded source with explicit coverage gaps and optional focused excerpts.
 
-    Citation repair can prioritize a few cited files and read them beyond the
-    ordinary per-file cap, while keeping the same total prompt budget.
+    Citation repair reads the cited files beyond the ordinary per-file cap,
+    plus the schema files, and lists every other file as omitted: re-judging
+    a few requirements against the whole app cost as much as the full
+    judgment. With no resolvable focus path it falls back to the whole app.
     """
     files = _source_files(output_dir)
     focused = set()
@@ -683,11 +685,18 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
         candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
         if path and len(candidates) == 1:
             focused.add(candidates[0])
+    if focus_paths and not focused:
+        logger.warning("Requirements ledger: no cited path resolved for citation repair; "
+                       "the repair reads the whole app")
     footer_budget = min(6000, max(256, _DIGEST_MAX_TOTAL_CHARS // 10), _DIGEST_MAX_TOTAL_CHARS)
     source_budget = _DIGEST_MAX_TOTAL_CHARS - footer_budget
     entries = []
     unreadable = []
+    omitted_by_focus: list[str] = []
     for rel, full in files.items():
+        if focused and rel not in focused and _digest_priority(rel)[0] != 0:
+            omitted_by_focus.append(rel)
+            continue
         if Path(full).name in _DIGEST_SKIP_NAMES:
             unreadable.append(rel)
             continue
@@ -710,7 +719,7 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     entries.sort(key=lambda e: e[0])
     parts: list[str] = []
     total = 0
-    omitted = list(unreadable)
+    omitted = unreadable + omitted_by_focus
     truncated_paths = []
     for _, rel, chunk, truncated in entries:
         if total + len(chunk) + 2 > source_budget:
@@ -725,6 +734,8 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
         f"Files shown: {len(parts)}; truncated excerpts: {len(truncated_paths)}; "
         f"omitted/unreadable files: {len(omitted)}.\n"
         "Omitted or truncated code is unknown, not evidence of absent behavior.\n"
+        + ("This is a focused excerpt: only the cited files and the schema files are shown; "
+           "the rest of the application is omitted, not absent.\n" if omitted_by_focus else "")
         + ("Truncated files: " + ", ".join(truncated_paths) + "\n" if truncated_paths else "")
         + ("Omitted files: " + ", ".join(omitted) + "\n" if omitted else "")
     )

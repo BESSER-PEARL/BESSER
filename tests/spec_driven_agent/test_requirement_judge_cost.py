@@ -13,6 +13,8 @@ a run re-sent it without any chance of a different answer:
   validation pass, even with nothing changed: three passes, six calls.
 """
 
+import logging
+
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
@@ -111,3 +113,58 @@ def test_a_changed_specification_is_judged_again(orch, judge_calls):
     orch._collect_requirement_issues()
 
     assert len(judge_calls) == 2
+
+
+# --------------------------------------------------- citation repair digest
+
+
+@pytest.fixture
+def app(tmp_path):
+    _write(tmp_path, "backend/pydantic_classes.py", "class RoomCreate:\n    number: int\n")
+    _write(tmp_path, "backend/sql_alchemy.py", "number = mapped_column(Integer, unique=True)\n")
+    _write(tmp_path, "backend/routers/room.py", "def create_room():\n    raise HTTPException(409)\n")
+    _write(tmp_path, "backend/routers/booking.py", "def create_booking():\n    return 'booking'\n")
+    _write(tmp_path, "frontend/src/pages/Rooms.tsx", "export const Rooms = () => null;\n")
+    return tmp_path
+
+
+def test_the_repair_digest_holds_the_cited_and_schema_files_only(app):
+    digest = ledger.build_app_digest(str(app), focus_paths=["routers/room.py"])
+    source, coverage = digest.split("## Digest coverage")
+
+    assert source.startswith("### backend/routers/room.py")
+    assert "### backend/pydantic_classes.py" in source
+    assert "### backend/sql_alchemy.py" in source
+    assert "routers/booking.py" not in source and "Rooms.tsx" not in source
+    # The judge is told which files it was not shown, so it cannot read their
+    # absence as missing behaviour.
+    assert "backend/routers/booking.py" in coverage and "frontend/src/pages/Rooms.tsx" in coverage
+    assert "not evidence of absent behavior" in coverage
+
+
+def test_a_repair_with_no_resolvable_focus_reads_the_whole_app(app, caplog):
+    with caplog.at_level(logging.WARNING):
+        digest = ledger.build_app_digest(str(app), focus_paths=["nowhere.py"])
+
+    assert digest == ledger.build_app_digest(str(app))
+    assert "no cited path resolved" in caplog.text
+
+
+def test_the_citation_repair_call_sends_the_focused_digest(orch, tmp_path, monkeypatch):
+    """End to end through the orchestrator: one bad citation re-judges one
+    requirement against the file it cited, not against the whole app."""
+    _write(tmp_path, "routers/booking.py", "def create_booking():\n    return 'booking'\n")
+    digests = []
+
+    def judge(requirements, digest, client, **kwargs):
+        digests.append(digest)
+        return [dict(REQUIREMENT, status="implemented", evidence="routers/room.py: raise HTTPException(409)")]
+
+    monkeypatch.setattr(ledger, "judge_coverage", judge)
+    orch._collect_requirement_issues()  # the citation is not in room.py: unverified
+    orch._collect_requirement_issues()  # same source: the one citation repair
+
+    assert len(digests) == 2
+    assert "### routers/booking.py" in digests[0]
+    assert digests[1].startswith("### routers/room.py")
+    assert "### routers/booking.py" not in digests[1]

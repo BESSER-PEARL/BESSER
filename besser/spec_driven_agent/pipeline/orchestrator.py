@@ -3826,6 +3826,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 previous_verdicts=[item for item in self._requirement_verdicts
                                    if item["id"] in unknown_ids],
             )
+            # Only a verified 'implemented' replaces a verdict: the focused digest
+            # omits most of the app, so a 'missing' from it proves nothing.
             repaired = _requirements_ledger.verify_evidence(repair or [], self.output_dir)
             valid_ids = {item["id"] for item in repaired if item["status"] == "implemented"}
             replacements = {item["id"]: item for item in repair or [] if item["id"] in valid_ids}

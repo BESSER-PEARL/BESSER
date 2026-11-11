@@ -3796,8 +3796,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "requirement unverified: the requirements judge returned no verdicts; "
                 "coverage of the original specification has not been verified."
             ]
-        # Cache successful judgments only, keyed to all source/config bytes, not
-        # the clipped judge prompt. An unchanged app must not 'improve' by chance.
+        # Cache successful judgments only, keyed to the full bytes of the judged
+        # source, not the clipped prompt. An unchanged app must not 'improve' by chance.
         self._requirement_judgments[cache_key] = verdicts
         if len(self._requirement_judgments) > 8:
             self._requirement_judgments.pop(next(iter(self._requirement_judgments)))
@@ -3870,9 +3870,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return collect_frontend_contract_issues(self.output_dir)
 
     def _requirement_cache_key(self, requirements: list[dict]) -> str:
-        return hashlib.sha256((
-            self._workspace_revision() + json.dumps(requirements, sort_keys=True)
-        ).encode("utf-8")).hexdigest()
+        """What the judge answers: the source it reads, the requirements and
+        the specification. An edit elsewhere (README, a pin, a test) cannot
+        change its verdicts, so it must not pay for a new judgment."""
+        return hashlib.sha256(json.dumps([
+            _requirements_ledger.judged_source_fingerprint(self.output_dir),
+            requirements, self._instructions,
+        ], sort_keys=True).encode("utf-8")).hexdigest()
 
     def _extract_requirements(self, instructions: str) -> None:
         # One initial attempt and one recovery attempt; failed extraction stays

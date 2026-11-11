@@ -15,6 +15,7 @@ verdict lands in the recipe so the reviewer sees what was NOT built.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import logging
 from functools import lru_cache
@@ -612,6 +613,24 @@ def _source_files(output_dir: str) -> dict[str, str]:
                 continue
             files[source.relative_to(base).as_posix()] = str(source)
     return files
+
+
+def judged_source_fingerprint(output_dir: str) -> str:
+    """Hash of every file the judge and the citation check read: path and raw bytes.
+
+    Raw bytes, not the digest: the digest is clipped (an edit past its budget
+    still reaches the citation repair) and its comment stripping is a size
+    heuristic, so a comment-only edit re-judges.
+    """
+    fingerprint = hashlib.sha256()
+    for rel, full in sorted(_source_files(output_dir).items()):
+        try:
+            content = Path(full).read_bytes()
+        except OSError:
+            content = b"<unreadable>"
+        fingerprint.update(f"{rel}\0{len(content)}\0".encode("utf-8"))
+        fingerprint.update(content)
+    return fingerprint.hexdigest()
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")

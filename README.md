@@ -56,6 +56,7 @@ That's a working REST API with a database, CRUD endpoints and validation, genera
     besser validate model.py --json                 # errors and warnings of a B-UML model
     besser validate models/ --ocl                   # every editor export in a folder, with OCL constraints
     besser info model.py                            # its classes and the generators that read it
+    besser model add-attribute Book isbn:str?       # change the model in place: add, rename, remove, ...
     besser generators                               # every generator and its options
     besser generate backend model.py -o library_api # run one, print the files it wrote
     besser regenerate backend model.py -o library_api   # after a model change: keeps your hand edits

@@ -33,8 +33,13 @@ runs the same command.
    * - ``besser validate <model|dir>...``
      - Runs ``validate()`` on every model in each file or directory;
        ``--ocl`` checks the OCL constraints too.
-   * - ``besser info <model>``
-     - Summarises the models of a file and names the generators that read it.
+   * - ``besser info <model> [--class X]``
+     - Summarises the models of a file and names the generators that read it;
+       ``--class`` describes one class in full.
+   * - ``besser model <operation> ...``
+     - Changes the domain model of a ``.py`` file in place: add a class,
+       attribute, association, method or constraint, set an enumeration,
+       rename, remove. Comments and layout are kept.
    * - ``besser generators``
      - Lists the generators, the models each reads and its options.
    * - ``besser generate <generator> <model> -o <dir>``
@@ -284,8 +289,9 @@ is left alone.
 ``besser guide``
 ----------------
 
-Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 2 KB: the
-rules of the :ref:`frugal workflow <cli-agents>` and what the ``backend``
+Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 3 KB (41
+lines): the rules of the :ref:`frugal workflow <cli-agents>`, the ``besser model``
+commands, and what the ``backend``
 generator's API does, so that an agent needs neither the generated code nor
 this documentation. ``--json`` puts it in ``guide``.
 
@@ -527,10 +533,10 @@ The check is opt-in, since it needs those optional packages.
    $ besser info library.py
    library.py: 1 model
      library_model (DomainModel 'LibraryModel'): 2 classes, 1 association, 1 constraint
-       class Library: name: str
-       class Book: title: str, pages: int, isbn: str? = 'none'
-       association holds: library: Library [1] -- books: Book [0..*]
-       constraint pages_positive on Book: context Book inv pages_positive: self.pages > 0
+       class Library: name:str
+       class Book: title:str, pages:int, isbn:str?='none'
+       association holds: library:Library[1] books:Book[*]
+       constraint pages_positive on Book: self.pages > 0
        backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/, /x/bulk|count|paginated|search/
    Generators that read this model: python, java, pydantic, test_case, django, spring, backend, sqlalchemy, sql, supabase, jsonschema, rdf, rest_api
 
@@ -538,13 +544,32 @@ Each model is listed under the name the other commands call it (the variable
 it is bound to in a ``.py`` file, the diagram's title in an editor export),
 with its class and, in quotes, its own name when that differs. Then come the
 counts of what it holds (classes, objects, screens, states, ...) and, for a
-domain model, its classes with their attributes (``?`` marks an optional one,
-``= value`` its default), methods and parents, its enumerations, its
-associations and its constraints, in the order they were defined, then the
-routes the ``backend`` generator writes for each class (and for each method).
-The last line names the generators whose models the file holds. It is the
-model in about 1 KB: a coding agent reads it instead of the model file or the
+domain model, its classes with their attributes (``name:type``, ``?`` marks
+an optional one, ``=value`` its default), methods and parents, its
+enumerations, its associations (each end as ``role:Class[multiplicity]``) and
+its constraints (the OCL after ``context X inv name:``), in the order they were
+defined, then the routes the ``backend`` generator writes for each class (and
+for each method). Attributes and ends are written as :ref:`besser model
+<cli-model>` takes them. The last line names the generators whose models the
+file holds; :ref:`terse output <cli-terse>` leaves it out. It is the model in
+a few hundred tokens: a coding agent reads it instead of the model file or the
 generated code.
+
+``--class X`` describes one class in full: its own and inherited attributes,
+its methods with their signatures, the association ends it navigates (with
+the association's name), the constraints on it, the ``backend`` generator's
+routes for it and the generated names custom code imports (the SQLAlchemy
+class and its table, the Pydantic create schema, the session dependency):
+
+.. code-block:: console
+
+   $ besser info library.py --class Book
+   class Book
+     attributes: title:str, pages:int, isbn:str?='none'
+     ends: library:Library[1] (holds)
+     constraints: pages_positive: self.pages > 0
+     backend routes: POST /book/, GET /book/, GET /book/{book_id}/, PUT /book/{book_id}/, DELETE /book/{book_id}/, /book/{bulk|count|paginated|search}/
+     backend code: sql_alchemy.Book (table book), pydantic_classes.BookCreate, database.get_db
 
 The model is not validated: a model with errors is summarised too, and the
 errors of an editor project itself (a dangling reference between its diagrams)
@@ -560,6 +585,91 @@ models of a kind with none current (see :ref:`cli-several-diagrams`).
 for create, read, update, delete and each method); for the other kinds ``elements``, the
 names of what the model holds per collection, as in ``states: created, paid``)
 and ``generators``.
+
+.. _cli-model:
+
+``besser model``
+----------------
+
+.. code-block:: console
+
+   $ besser model add-attribute Book isbn:str? year:int=2000
+   model.py: added Book.isbn:str?, year:int=2000
+   $ besser model add-association loans loans:Book[*] borrower:Member[0..1]
+   $ besser model rename Book.title heading
+   $ besser model batch - <<'EOF'
+   add-class Tag label:str
+   add-association tagged tags:Tag[*] books:Book[*]
+   EOF
+
+Changes the domain model of a B-UML ``.py`` file with one command per change,
+so that a coding agent does not read the file or write a script that patches
+it. The file is the one named by ``-f FILE``, else the ``model`` of
+``besser.toml``, else ``model.py``; ``--use NAME`` picks the domain model when
+the file holds several.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 42 58
+
+   * - Operation
+     - What it does
+   * - ``add-class NAME [ATTRIBUTE...] [--parent CLASS] [--abstract]``
+     - A class, with its attributes and the generalization to its parent.
+   * - ``add-attribute CLASS ATTRIBUTE...``
+     - Attributes: ``name:type``, ``name:type?`` (optional) or
+       ``name:type=default``. Types are written as ``besser info`` prints them
+       (``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``,
+       ``time``, ``timedelta``, ``any``) or name a class or enumeration.
+   * - ``add-association NAME END END [--composite]``
+     - A binary association; each end is ``role:Class[multiplicity]`` with
+       ``[1]``, ``[0..1]``, ``[*]``, ``[1..*]`` or ``[n..m]``. ``--composite``
+       makes the first end the whole.
+   * - ``add-method CLASS 'name(param:type, ...) -> type' [--code CODE]``
+     - A method; ``--code`` is its Python code, which the ``backend`` runs.
+   * - ``add-constraint CLASS EXPRESSION [--name NAME]``
+     - An OCL invariant on the class (``context ... inv`` is added when the
+       expression does not start with it).
+   * - ``set-enum NAME LITERAL...``
+     - Creates the enumeration, or makes these its literals. A literal that
+       is an attribute's default is not removed.
+   * - ``rename PATH NEW_NAME``
+     - Renames a class, enumeration, association or constraint (``Name``), an
+       attribute, method or association end (``Class.member``) or a literal
+       (``Enumeration.LITERAL``). A variable that spells the old name is
+       renamed with it, and the OCL constraints that name it are updated.
+   * - ``remove PATH``
+     - Removes the element. A class goes with its associations,
+       generalizations and constraints; an association end with its
+       association.
+   * - ``batch [FILE]``
+     - The operations of ``FILE`` (``-``, the default, reads standard input),
+       one per line as written after ``besser model``; blank lines and ``#``
+       comments are skipped. The file is written once, when all apply.
+
+How the file keeps its form: the file is executed, as every command that reads
+it does, so each element and the top-level variable holding it are known;
+Python's ``ast`` gives where each is written. Only the characters of the
+change are replaced or inserted, and everything else, comments, blank lines
+and layout included, stays byte for byte (``\r\n`` line endings too). A new
+element follows its neighbours: a variable of its own when they have one (the
+form ``besser convert`` writes), inline in its set otherwise (the form
+``besser new`` writes), on a line of its own in a set written one item per
+line. A new enumeration goes before the classes, a new class before the
+associations, and a metamodel name the file does not import is added to its
+``besser.BUML.metamodel.structural`` import. When the file builds an element
+with its own code (a helper function), the change is one statement after the
+line that defines its variable (``Stage.literals = {...}``); when the element
+has no variable either, or a removed element is still used elsewhere (a GUI
+model's column), the command refuses and names the lines to change by hand.
+
+The file is written only when the new text loads, holds every change and has
+no validation error the old text did not have; one line says what changed.
+Otherwise nothing is written: exit status 2 when a change does not apply
+(an unknown class, an existing name, a malformed argument), 1 when it would
+make the model invalid or break the file. ``--json`` adds ``model`` and
+``changes`` (what each operation did). Editor JSON is not edited: convert it
+to ``.py`` first.
 
 ``besser generators``
 ---------------------
@@ -938,8 +1048,11 @@ The one command to run after a model change: ``besser build`` for every output
 (each model is validated first, and nothing is generated from a model with
 errors), then, when the build succeeded, the ``test`` command line of
 ``besser.toml``, run from its folder without a shell. It prints one line when
-everything passes; when the tests fail, the last 40 lines of their output, and
-exit status 1. Without a ``test`` key it builds and notes that no test ran;
+everything passes. When the tests fail it prints only the failing tests and
+exits with status 1: pytest's short test summary (one line per failing test
+with its first error line, then the counts), else the lines that name a
+failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``) and the last line, else
+the last 40 lines of the output. Without a ``test`` key it builds and notes that no test ran;
 ``-c FILE`` reads another configuration file. ``--json`` is the object of
 ``build`` with ``command`` ``apply`` and ``test``: its ``command``,
 ``exit_code`` and ``output_tail``, or ``null`` when no test ran.
@@ -1124,7 +1237,14 @@ Each command adds its own:
    * - ``info``
      - ``model``, ``models`` (each with ``current``: the diagram the editor
        project marks as current; for a domain model also ``constraints`` and
-       ``backend_endpoints``) and ``generators``.
+       ``backend_endpoints``) and ``generators``; with ``--class``,
+       ``classes``: per domain model holding it, the class's ``model``,
+       ``name``, ``is_abstract``, ``parents``, ``attributes``,
+       ``inherited_attributes``, ``methods``, ``ends``, ``constraints``,
+       ``backend_endpoints`` and ``backend_code``.
+   * - ``model``
+     - ``model``, the file, and ``changes``: what each operation did (empty
+       when nothing was written).
    * - ``generators``
      - ``generators``: per generator its ``id``, ``summary``, ``category``,
        ``models``, ``options`` and ``supports_regenerate``.
@@ -1363,18 +1483,21 @@ and what ``besser guide`` prints:
    agent needs; reading this page or BESSER's code costs more than the guide.
 3. **``besser info model.py`` instead of the model file**: the classes,
    attributes (optional, defaults), enumerations, associations, constraints and
-   the API's routes in about 1 KB. To change the model, the agent greps the
-   lines it needs and edits those.
-4. **One command per model change: ``besser apply``.** It validates, builds
-   every output of ``besser.toml`` and runs its ``test`` command, and prints
-   one line when all of it passes. No separate ``validate``, no ``--json``;
-   output is :ref:`terse <cli-terse>` off a terminal anyway.
-5. **Hand-written code never goes into a generated file**: the backend's goes
+   the API's routes in a few hundred tokens; ``--class X`` gives one class with
+   the generated names its custom code imports.
+4. **``besser model`` to change the model**: one command per change (or one
+   ``batch``), one line back, never a read of ``model.py`` nor a patch script.
+5. **Then one command: ``besser apply``.** It validates, builds every output
+   of ``besser.toml`` and runs its ``test`` command, and prints one line when
+   all of it passes, only the failing tests otherwise. No separate
+   ``validate``, no ``--json``; output is :ref:`terse <cli-terse>` off a
+   terminal anyway.
+6. **Hand-written code never goes into a generated file**: the backend's goes
    in ``extensions.py``, which ``main_api.py`` loads (see
    :doc:`generators/backend`); anything else lives outside the generated
    folders and imports them. A build then never meets an edit, so it never
    conflicts, and ``--force`` or ``overwrite = true`` are never needed.
-6. **Trust the build**: check behaviour with tests, not by reading the output.
+7. **Trust the build**: check behaviour with tests, not by reading the output.
 
 .. code-block:: console
 
@@ -1383,8 +1506,8 @@ and what ``besser guide`` prints:
    $ besser apply
    OK: 1 output, 0 failed: [backend] Generated 10 files in backend with the 'backend' generator; tests: 4 passed in 0.52s
    $ besser info model.py           # the model and its routes, when the agent needs them
-   $ # write extensions.py and its tests; after each model change:
-   $ besser apply
+   $ # write extensions.py and its tests; for each model change, one shell call:
+   $ besser model add-attribute Contact source:str? && besser apply
 
 The other commands remain for what the loop does not cover: ``--dry-run``
 before a risky change, ``regenerate`` to keep edits made in generated code
@@ -1397,6 +1520,32 @@ before it is written to a file. An agent with MCP support can use
 In CI, ``besser validate models/ --strict`` fails the job on any error or
 warning in the editor exports under ``models/`` (add ``--exec-py`` for the
 ``.py`` models there, and ``--ocl`` for their OCL constraints).
+
+What an agent setup can do
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The rules above are what BESSER can do from its side. In the experiment's
+best run (3.27M tokens, 133 API calls for 11 steps), the model itself was 6% of
+the tokens; most of the rest depends on how the agent is run, not on BESSER.
+For people who set up an agent for model-driven work:
+
+- **A small, stable prefix.** Each API call re-sends the harness's system
+  prompt and tool definitions (11.8k tokens per call in that run, 48% of all
+  tokens). A shorter system prompt, and only the tools the work uses (a shell
+  and a file editor: the run never used read, grep or glob tools), cut the
+  largest share. Keep the prefix identical between sessions so that it is
+  read from the cache rather than written again.
+- **Fewer calls.** Batch independent commands in one shell call (``besser
+  model ... && besser apply``); put the checks that were done by starting a
+  server and calling it with curl into the tests ``besser apply`` runs.
+- **Notes written once.** A hard line cap on a notes file made the agent spend
+  several calls at the end of a session counting and trimming lines. State the
+  test helpers in the notes so that later sessions do not re-read the tests.
+- **Short final answers**: the narration of each session is output, the most
+  expensive kind of token.
+- **A smaller model for mechanical model changes.** With ``besser model``, a
+  change such as "add a field" or "rename a class" is one command and one
+  ``apply``: a cheaper model can make it.
 
 The `BESSER Skills <https://github.com/BESSER-PEARL/besser-skills>`_ teach an
 agent to write B-UML; the command gives it a way to check and run what it

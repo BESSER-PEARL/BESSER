@@ -106,6 +106,8 @@ ROWS = [
      lambda: _env_bool("BESSER_DEPLOY_FROM_REPO", False), lambda s: s.deploy_from_repo),
     ("docker_deploy_enabled", "BESSER_ENABLE_DOCKER_DEPLOY", None,
      lambda: _sim_env_bool("BESSER_ENABLE_DOCKER_DEPLOY", None), lambda s: s.docker_deploy_enabled),
+    ("ocl_evaluation_enabled", "BESSER_ENABLE_OCL_EVALUATION", False,
+     lambda: _env_bool("BESSER_ENABLE_OCL_EVALUATION", False), lambda s: s.ocl_evaluation_enabled),
     ("llm_max_cost_usd_hard_cap", "BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0,
      lambda: _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0), lambda s: s.llm_max_cost_usd_hard_cap),
     ("llm_max_runtime_seconds_hard_cap", "BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 2400,

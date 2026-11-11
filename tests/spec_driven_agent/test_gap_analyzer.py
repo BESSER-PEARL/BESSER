@@ -576,6 +576,17 @@ class TestPresentEnumerationsAreNotGaps:
         )
         assert _drop_present_enumerations([task], _booking_model()) == [task]
 
+    @pytest.mark.parametrize("task", [
+        "Add a status enum dropdown (NOT_ARRIVED, CHECKED_IN, CHECKED_OUT) to the Booking form in the frontend.",
+        "Create a filter by enum value on GET /booking so clients can list NOT_ARRIVED, "
+        "CHECKED_IN or CHECKED_OUT bookings.",
+        "Add a select for enum NOT_ARRIVED / CHECKED_IN / CHECKED_OUT on the Booking page.",
+    ])
+    def test_a_task_that_uses_the_enumeration_in_ui_or_api_is_kept(self, task):
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
+
+        assert _drop_present_enumerations([task], _booking_model()) == [task]
+
     def test_no_model_means_no_filtering(self):
         from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 

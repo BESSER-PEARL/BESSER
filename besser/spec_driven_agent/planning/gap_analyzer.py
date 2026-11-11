@@ -409,9 +409,16 @@ def _drop_scaffold_conflicts(tasks: list) -> list[str]:
 
 # An add/create/define verb within three tokens of "enum": proposes the
 # enumeration itself, as opposed to using one ("add a cancel endpoint that
-# moves BookingCommercialStatus ...").
+# moves BookingCommercialStatus ..."). A UI or API word next to "enum" makes
+# the enumeration a means, not the object ("add a status enum dropdown",
+# "create a filter by enum value"), so the task is real work.
+_ENUM_USE_WORDS = (
+    r"(?:drop-?downs?|selects?|selectors?|pickers?|filters?|fields?|values?|columns?|badges?|chips?|"
+    r"inputs?|options?|radios?|labels?|params?|parameters?|query|forms?|endpoints?)\b"
+)
 _ADD_ENUM_RE = re.compile(
-    r"\b(?:add|create|introduce|define|declare)\b(?:\s+\S+){0,3}?\s+enum",
+    rf"\b(?:add|create|introduce|define|declare)\b(?:\s+(?!{_ENUM_USE_WORDS})\S+){{0,3}}?"
+    rf"\s+enum\w*\b(?!\s+{_ENUM_USE_WORDS})",
     re.IGNORECASE,
 )
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")

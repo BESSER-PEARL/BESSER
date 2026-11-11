@@ -4204,6 +4204,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             design_system=design_system,
             target=self.target,
             previous_target=self._previous_target,
+            routed_stack=self._unsupported_stack if self._routed else None,
             # Without both, the runtime-verification runbook never renders.
             allow_shell=self.allow_shell_tools,
             output_dir=self.output_dir,

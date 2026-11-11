@@ -126,6 +126,7 @@ def build_system_prompt(
     design_system: str = "",
     target: Target | None = None,
     previous_target: Target | None = None,
+    routed_stack: str | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -177,6 +178,8 @@ def build_system_prompt(
             the pre-target rules.
         previous_target: The seed's target when a modify run builds another
             kind of software; it lifts the keep-the-stack constraint.
+        routed_stack: The routing answer's ``unsupported_stack``, ``None``
+            without one; picks the idiom block over the request's keywords.
 
     Returns:
         The full system prompt string.
@@ -466,7 +469,7 @@ def build_system_prompt(
     # stack_metadata.idiom_guidance_section for the detection + content.
     # The idiom blocks assume a web / server project.
     builds_other = target is not None and target.kind == OTHER
-    idiom_section = "" if builds_other else idiom_guidance_section(instructions)
+    idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
     # Named only when offered: tools.py withholds these without a domain model.
     model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
 

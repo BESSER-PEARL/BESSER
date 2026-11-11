@@ -898,3 +898,28 @@ def test_judge_digest_lists_or_includes_init_py(tmp_path):
     assert "### inventory/database.py" in source
     assert "pkg/__init__.py" not in digest  # empty after comments: nothing to judge
     assert "bal_stdlib.py" not in source and "Omitted files: bal_stdlib.py" in coverage
+
+
+# ------------------------------------------------ LLM output that bends the schema
+
+
+@pytest.mark.parametrize("rid", ["R1", "r1", "#1", "1.", "R1.", " R1 ", "1", 1, 1.0])
+def test_a_verdict_id_in_the_listings_own_form_is_accepted(rid):
+    """The judge reads requirements listed as ``R1. text`` and may echo ``R1``.
+    Discarding those verdicts made the whole reply count as no verdict: the
+    full digest went again to the primary model, then total failure."""
+    client = _ToolClient([{"verdicts": [{"id": rid, "status": "missing", "note": "n"}]}])
+
+    verdicts = ledger.judge_coverage([{"id": 1, "text": "a", "kind": "rule"}], "### x.py\nx = 1", client)
+
+    assert verdicts[0]["status"] == "missing" and verdicts[0]["note"] == "n"
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("rid", ["R1a", "one", "1.5", 1.5, True, "R", "", None, [1]])
+def test_a_verdict_id_that_names_no_requirement_is_still_rejected(rid, monkeypatch):
+    monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
+    payload = {"verdicts": [{"id": rid, "status": "implemented"}]}
+    client = _ToolClient([payload, payload])
+
+    assert ledger.judge_coverage([{"id": 1, "text": "a", "kind": "rule"}], "", client) is None

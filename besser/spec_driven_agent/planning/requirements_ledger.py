@@ -748,6 +748,23 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     return "\n\n".join(parts) + footer[:footer_budget]
 
 
+# The listing names requirements "R1. text"; a judge may echo "R1" or "1.".
+_VERDICT_ID_RE = re.compile(r"\s*[Rr#]?(\d+)\.?\s*")
+
+
+def _verdict_id(value) -> int | None:
+    """A verdict's requirement id, or None. ``int()`` alone rejected "R1" and
+    truncated 1.5 and True to requirement 1."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    match = _VERDICT_ID_RE.fullmatch(value) if isinstance(value, str) else None
+    return int(match.group(1)) if match else None
+
+
 def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
                 use_planning_model: bool) -> dict[int, dict]:
     """One judge call parsed into ``{id: verdict}``; empty when the call
@@ -760,10 +777,7 @@ def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
     for item in (payload or {}).get("verdicts") or []:
         if not isinstance(item, dict):
             continue
-        try:
-            rid = int(item.get("id"))
-        except (TypeError, ValueError):
-            continue
+        rid = _verdict_id(item.get("id"))
         if rid not in by_id:
             continue
         status = str(item.get("status", "")).lower()

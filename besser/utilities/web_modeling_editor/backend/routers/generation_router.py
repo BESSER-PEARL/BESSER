@@ -71,7 +71,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ValidationError,
 )
 from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
-    ensure_not_legacy_model,
+    ensure_not_legacy_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ async def recommend_agent_config_llm(
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
-    ensure_not_legacy_model(user_profile_model, "UserDiagram", "userProfileModel")
+    ensure_not_legacy_payload(user_profile_model, "UserDiagram", "userProfileModel")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
@@ -204,7 +204,7 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
     # gui_personalization_utils (mirroring agent_personalization). The router
     # only resolves the API key, delegates off the event loop, and shapes the
     # HTTP response; @handle_endpoint_errors maps ValidationError/GenerationError.
-    ensure_not_legacy_model(payload.get("userProfileModel"), "UserDiagram", "userProfileModel")
+    ensure_not_legacy_payload(payload.get("userProfileModel"), "UserDiagram", "userProfileModel")
     result = await asyncio.to_thread(
         run_gui_personalization,
         payload.get("guiPage"),
@@ -254,7 +254,7 @@ async def recommend_agent_config_mapping(
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
-    ensure_not_legacy_model(user_profile_model, "UserDiagram", "userProfileModel")
+    ensure_not_legacy_payload(user_profile_model, "UserDiagram", "userProfileModel")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}

@@ -25,7 +25,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
 from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
-    ensure_not_legacy_model,
+    ensure_not_legacy_payload,
 )
 AgentZipGenerator = Callable[[Any, Optional[Dict[str, Any]]], Tuple[io.BytesIO, str]]
 
@@ -145,11 +145,11 @@ def normalize_personalization_mapping(
                 ),
             )
 
-        ensure_not_legacy_model(
+        ensure_not_legacy_payload(
             user_profile_payload, "UserDiagram", f"personalizationMapping[{index}].user_profile",
         )
         agent_model_json = entry.get('agent_model')
-        ensure_not_legacy_model(
+        ensure_not_legacy_payload(
             agent_model_json, "AgentDiagram", f"personalizationMapping[{index}].agent_model",
         )
 

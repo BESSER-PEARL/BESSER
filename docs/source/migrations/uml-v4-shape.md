@@ -1355,12 +1355,20 @@ Model `type` on the wire and project bucket key: **`"DeploymentDiagram"`**
   `services/validators/legacy_format.py`, run by the `DiagramInput` /
   `SimulationSessionInput` model validators — so also for every diagram
   nested in a `ProjectInput` — and explicitly on the raw-dict bodies of
-  `/github/deploy-webapp` and the `userProfileModel` of the
-  personalization endpoints). A model is legacy when it has a UML `type`
-  and a `version` starting with `3.`, or `elements` / `relationships` and
-  no `nodes`, including an object diagram's `referenceDiagramData`.
-  `GUINoCodeDiagram` (GrapesJS) and `QuantumCircuitDiagram` models keep
-  their own formats and are never treated as legacy. The message tells the
+  `/github/deploy-webapp`, the `existing_model` of
+  `/get-json-model-from-image`, and the `userProfileModel` and
+  `personalizationMapping` models of the personalization endpoints, bare
+  or wrapped as `{title, model}`). `nodes` content decides first: a model
+  with a non-empty `nodes` list is v4 whatever its `version` says, as in
+  the editor. Otherwise a model is legacy when its `elements` /
+  `relationships` are populated (even beside an empty `nodes`), when it
+  has a UML `type` and a `version` starting with `3.`, or when it has
+  `elements` / `relationships` and no `nodes`; the same holds for an
+  object diagram's `referenceDiagramData`.
+  `GUINoCodeDiagram` (GrapesJS), `QuantumCircuitDiagram` and
+  `KnowledgeGraphDiagram` models keep their own formats and are never
+  treated as legacy; inside a project the bucket key decides this, not
+  the model's own `type`. The message tells the
   user to open the diagram in the current editor, whose migrator upgrades it
   on load, or to re-export it from there. Saving a v3 project to GitHub is
   storage and still succeeds; `/github/project/save` skips the B-UML export

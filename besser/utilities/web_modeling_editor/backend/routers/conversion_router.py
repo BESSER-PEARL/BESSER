@@ -138,7 +138,7 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
 from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
-    ensure_not_legacy_model,
+    ensure_not_legacy_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -846,6 +846,7 @@ async def get_json_model_from_image(
     if existing_model:
         try:
             existing_json = json.loads(existing_model)
+            ensure_not_legacy_payload(existing_json, "ClassDiagram", "existing_model")
             if existing_json.get("model", {}).get("nodes") or existing_json.get("nodes"):
                 payload = existing_json if "model" in existing_json else {"title": "Existing", "model": existing_json}
                 existing_domain_model = process_class_diagram(payload)
@@ -905,7 +906,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         logger.debug("[Agent transform] config: %s", json.dumps(sanitize_config(base_config), indent=2, default=str))
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
-        ensure_not_legacy_model(user_profile_payload, "UserDiagram", "config.userProfileModel")
+        ensure_not_legacy_payload(user_profile_payload, "UserDiagram", "config.userProfileModel")
         if isinstance(user_profile_payload, dict):
             config["userProfileModel"] = generate_user_profile_document(user_profile_payload)
         elif isinstance(config, dict) and "userProfileModel" in config:

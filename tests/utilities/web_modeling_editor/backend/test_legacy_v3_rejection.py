@@ -159,6 +159,34 @@ class TestDetection:
         assert not is_legacy_v3_model({"elements": {}}, "QuantumCircuitDiagram")
         assert not is_legacy_v3_model({"elements": {}}, "KnowledgeGraphDiagram")
 
+    def test_populated_v3_maps_with_empty_nodes_are_legacy(self):
+        # Converted to an empty model with HTTP 200 while "nodes" alone decided.
+        v3 = _v3_model()
+        assert is_legacy_v3_model({**v3, "version": "4.0.0", "nodes": [], "edges": []})
+        assert is_legacy_v3_model({"type": "ClassDiagram", "nodes": [], "elements": v3["elements"]})
+        assert is_legacy_v3_model({"type": "ClassDiagram", "nodes": [], "relationships": {"r1": {"id": "r1"}}})
+        # Empty leftovers beside "nodes" are not v3 content.
+        assert not is_legacy_v3_model({"type": "ClassDiagram", "nodes": [], "elements": {}, "relationships": {}})
+
+    def test_non_empty_nodes_are_v4_whatever_the_version_says(self):
+        model = {**_v4_class_model(), "version": "3.0.0"}
+        assert model["nodes"]
+        assert not is_legacy_v3_model(model)
+        assert not is_legacy_v3_model({**model, "elements": _v3_model()["elements"]})
+        DiagramInput(**_diagram(model))
+        # The version rule still holds without node content.
+        assert is_legacy_v3_model({**model, "nodes": []})
+
+    def test_bucket_decides_the_exemption_not_the_model_type(self):
+        mislabelled = {**_v3_model(), "type": "GUINoCodeDiagram"}
+        assert is_legacy_v3_model(mislabelled, "ClassDiagram")
+        assert not is_legacy_v3_model(mislabelled, "GUINoCodeDiagram")
+        assert not is_legacy_v3_model(mislabelled)
+        with pytest.raises(LegacyDiagramFormatError, match="'Domain'"):
+            ProjectInput(**_project(mislabelled))
+        with pytest.raises(LegacyDiagramFormatError):
+            ensure_project_not_legacy({"ClassDiagram": [{"title": "D", "model": mislabelled}]})
+
     def test_error_is_a_conversion_error(self):
         assert issubclass(LegacyDiagramFormatError, ConversionError)
 
@@ -325,6 +353,40 @@ def test_agent_config_recommendation_rejects_v3_user_profile(monkeypatch, endpoi
     ))
 
 
+def test_personalize_gui_page_rejects_wrapped_v3_user_profile():
+    body = {
+        "guiPage": {"components": [], "css": []},
+        "userProfileModel": {"title": "Profile", "model": _v3_model("UserDiagram")},
+    }
+    _assert_legacy_rejected(_post("/besser_api/personalize-gui-page", json=body))
+
+
+@pytest.mark.parametrize("wrap", [False, True], ids=["bare", "wrapped"])
+def test_image_import_rejects_v3_existing_model(monkeypatch, wrap):
+    from besser.BUML.metamodel.structural import DomainModel
+    from besser.utilities.web_modeling_editor.backend.routers import conversion_router
+
+    # Before the guard the v3 model was dropped and the image imported without it.
+    monkeypatch.setattr(conversion_router, "image_to_buml", lambda **_: DomainModel(name="FromImage"))
+    existing = {"title": "Existing", "model": _v3_model()} if wrap else _v3_model()
+    response = _post(
+        "/besser_api/get-json-model-from-image",
+        files={"image_file": ("diagram.png", b"\x89PNG\r\n\x1a\n" + b"\0" * 16, "image/png")},
+        data={"api_key": "sk-test", "existing_model": json.dumps(existing)},
+    )
+    _assert_legacy_rejected(response)
+
+
+def test_class_diagram_with_populated_v3_maps_and_empty_nodes_is_rejected():
+    model = {**_v3_model(), "version": "4.0.0", "nodes": [], "edges": []}
+    _assert_legacy_rejected(_post("/besser_api/export-buml", json=_diagram(model)))
+
+
+def test_project_with_mislabelled_v3_class_diagram_is_rejected():
+    project = _project({**_v3_model(), "type": "GUINoCodeDiagram"})
+    _assert_legacy_rejected(_post("/besser_api/export-project-as-buml", json=project))
+
+
 def test_github_deploy_webapp_rejects_v3_before_calling_github(monkeypatch):
     from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api as gda
 
@@ -369,7 +431,9 @@ def _v4_user_model() -> Dict[str, Any]:
 @pytest.mark.parametrize("entry", [
     {"user_profile": _v3_model("UserDiagram")},
     {"user_profile": _v4_user_model(), "agent_model": _v3_model("AgentDiagram")},
-], ids=["v3-user-profile", "v3-agent-model"])
+    {"user_profile": {"title": "Profile", "model": _v3_model("UserDiagram")}},
+    {"user_profile": _v4_user_model(), "agent_model": {"title": "Variant", "model": _v3_model("AgentDiagram")}},
+], ids=["v3-user-profile", "v3-agent-model", "wrapped-v3-user-profile", "wrapped-v3-agent-model"])
 def test_generate_output_rejects_v3_personalization_mapping(entry):
     payload = _diagram(
         _v4_agent_model(), generator="agent",

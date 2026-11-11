@@ -33,21 +33,37 @@ LEGACY_V3_HINT = (
 )
 
 
+def _is_non_uml(model: Mapping[str, Any], diagram_type: Optional[str]) -> bool:
+    """The project bucket / ``diagram_type`` decides when one is given, so a
+    model cannot exempt itself by its own ``type``; ``model['type']`` is used
+    only without one."""
+    if diagram_type:
+        return diagram_type in NON_UML_DIAGRAM_TYPES
+    return model.get("type") in NON_UML_DIAGRAM_TYPES
+
+
 def is_legacy_v3_model(model: Any, diagram_type: Optional[str] = None) -> bool:
     """Return True when ``model`` is a UML diagram in the legacy v3 shape.
 
-    A model is legacy when it declares a UML ``type`` and a ``version``
-    starting with ``"3."``, or when it carries the v3 ``elements`` /
-    ``relationships`` maps and no v4 ``nodes``. GUI, quantum and Knowledge
-    Graph diagrams (by ``diagram_type`` or ``model['type']``) are never
-    legacy; the version rule also needs a ``type`` because GrapesJS GUI models
-    carry their own, unrelated ``version`` and no ``type``.
+    ``nodes`` content decides first: a model with a non-empty ``nodes`` list is
+    v4 whatever its ``version`` says (the editor reads it the same way).
+    Otherwise a model is legacy when its ``elements`` / ``relationships`` maps
+    are populated, when it declares a UML ``type`` and a ``version`` starting
+    with ``"3."``, or when it has those maps and no ``nodes`` key. GUI,
+    quantum and Knowledge Graph diagrams are never legacy; the version rule
+    also needs a ``type`` because GrapesJS GUI models carry their own,
+    unrelated ``version`` and no ``type``.
     """
     if not isinstance(model, Mapping):
         return False
-    model_type = model.get("type")
-    if diagram_type in NON_UML_DIAGRAM_TYPES or model_type in NON_UML_DIAGRAM_TYPES:
+    if _is_non_uml(model, diagram_type):
         return False
+    nodes = model.get("nodes")
+    if isinstance(nodes, list) and nodes:
+        return False
+    if model.get("elements") or model.get("relationships"):
+        return True
+    model_type = model.get("type")
     version = model.get("version")
     if (
         isinstance(model_type, str) and model_type
@@ -70,7 +86,7 @@ def ensure_v4_shape(
     converters assume this shape and would otherwise fail with a 500."""
     if not isinstance(model, Mapping):
         return
-    if diagram_type in NON_UML_DIAGRAM_TYPES or model.get("type") in NON_UML_DIAGRAM_TYPES:
+    if _is_non_uml(model, diagram_type):
         return
     what = f"Diagram '{title}'" if title else "The diagram"
     for key in ("nodes", "edges"):
@@ -119,6 +135,18 @@ def ensure_not_legacy_model(
     """Raise :class:`LegacyDiagramFormatError` if ``model`` is a legacy v3 UML model."""
     if is_legacy_v3_model(model, diagram_type):
         raise LegacyDiagramFormatError(legacy_v3_message(model, diagram_type, title))
+
+
+def ensure_not_legacy_payload(
+    payload: Any,
+    diagram_type: Optional[str] = None,
+    title: Optional[str] = None,
+) -> None:
+    """Check a model nested in a request config, given bare or wrapped as
+    ``{title, model: <model>}`` (the converters unwrap the same way)."""
+    while isinstance(payload, Mapping):
+        ensure_not_legacy_model(payload, diagram_type, title)
+        payload = payload.get("model")
 
 
 def _as_diagram_list(value: Any) -> Iterable[Any]:

@@ -10,6 +10,7 @@ import json
 import re
 
 from besser.BUML.metamodel.state_machine.agent import Agent, GUIReplyAction
+from besser.utilities.template_escaping import register_escaping_filters
 from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
@@ -418,6 +419,31 @@ class BAFGenerator(GeneratorInterface):
                     else loaded_config
                 )
 
+    def _intent_classifier_llm_name(self) -> str:
+        """Name of the LLM the default LLM intent classifier uses; ``''`` when none is configured."""
+        config = self.config if isinstance(self.config, dict) else {}
+        llm_config = config.get('llm') if isinstance(config.get('llm'), dict) else {}
+        if llm_config.get('name'):
+            return llm_config['name']
+        if self.model.default_llm_name:
+            return self.model.default_llm_name
+        if self.model.llms:
+            return self.model.llms[0].name
+        if llm_config.get('model'):
+            return llm_config['model']
+        return 'gpt-4o-mini' if self.a2a_descriptor else ''
+
+    def _uses_classical_ic_fallback(self, ic_llm_name: str) -> bool:
+        """True when no intent classifier is chosen and no LLM is configured for one.
+
+        BAF's LLM classifier looks the LLM up by name and swallows the KeyError
+        of an empty name, so every message would fall back; the template then
+        emits BAF's classical (PyTorch) classifier instead.
+        """
+        config = self.config if isinstance(self.config, dict) else {}
+        technology_chosen = config.get('intentRecognitionTechnology') in ('llm-based', 'classical')
+        return not technology_chosen and self.model.default_ic_config is None and not ic_llm_name
+
     def generate(self):
         """
         Generates the BAF agent code and saves it to the specified output directory.
@@ -517,6 +543,7 @@ class BAFGenerator(GeneratorInterface):
         env.filters['python_repr'] = repr
         env.filters['json_literal'] = json_literal
         env.filters['yaml_scalar'] = yaml_scalar
+        register_escaping_filters(env)
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
@@ -581,6 +608,16 @@ class BAFGenerator(GeneratorInterface):
             deployment_component_bindings = materialize_deployment_components(
                 self.model, self.build_generation_dir())
 
+        # Resolved after personalization, which can change the model's LLMs.
+        ic_llm_name = self._intent_classifier_llm_name()
+        classical_ic_fallback = self._uses_classical_ic_fallback(ic_llm_name)
+        if classical_ic_fallback:
+            logger.warning(
+                "Agent '%s' has no intent classifier set and no LLM configured: it uses BAF's classical "
+                "intent classifier, which needs PyTorch.",
+                self.model.name,
+            )
+
         if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             logger.info("Generating agent with personalization mappings")
             with open(agent_path, mode="w", encoding="utf-8") as f:
@@ -592,6 +629,8 @@ class BAFGenerator(GeneratorInterface):
                     gui_modules=list(gui_modules),
                     a2a=self.a2a_descriptor,
                     deployment_component_bindings=deployment_component_bindings,
+                    ic_llm_name=ic_llm_name,
+                    classical_ic_fallback=classical_ic_fallback,
                 )
                 f.write(generated_code)
         else:
@@ -604,6 +643,8 @@ class BAFGenerator(GeneratorInterface):
                     gui_modules=list(gui_modules),
                     a2a=self.a2a_descriptor,
                     deployment_component_bindings=deployment_component_bindings,
+                    ic_llm_name=ic_llm_name,
+                    classical_ic_fallback=classical_ic_fallback,
                 )
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)
@@ -626,7 +667,7 @@ class BAFGenerator(GeneratorInterface):
             readme_template = env.get_template('readme.txt.j2')
             readme_path = self.build_generation_path(file_name="readme.txt")
             with open(readme_path, mode="w", encoding="utf-8") as f:
-                generated_code = readme_template.render(agent=self.model)
+                generated_code = readme_template.render(agent=self.model, classical_ic_fallback=classical_ic_fallback)
                 f.write(generated_code)
             logger.info("Agent readme file generated at %s", readme_path)
 

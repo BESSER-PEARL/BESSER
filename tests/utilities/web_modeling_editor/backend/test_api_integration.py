@@ -300,6 +300,22 @@ class TestGenerateOutput:
         assert response.status_code == 400, response.text
         assert missing in response.json()["detail"]
 
+    def test_generator_subprocess_timeout_answers_504(self, client, class_diagram_input, monkeypatch):
+        """A generator child process that runs past its limit is a 504 naming the limit, not a hung request."""
+        import subprocess
+        from unittest import mock
+
+        def _timeout(cmd, *args, timeout=None, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, timeout)
+
+        monkeypatch.setenv("BESSER_GENERATOR_SUBPROCESS_TIMEOUT", "3")
+        with mock.patch("besser.generators.sql.sql_generator.subprocess.run", side_effect=_timeout):
+            response = client.post("/besser_api/generate-output", json={**class_diagram_input, "generator": "sql"})
+        assert response.status_code == 504, response.text
+        detail = response.json()["detail"]
+        assert "timed out" in detail and "3 seconds" in detail
+        assert "python" not in detail.lower()
+
     def test_generate_python_single_class(self, client, single_class_input):
         """Generate Python from a single-class diagram."""
         response = client.post("/besser_api/generate-output", json=single_class_input)
@@ -783,8 +799,9 @@ class TestValidateDiagram:
         assert data["isValid"] is True
         assert data["warnings"] == []
 
-    def test_validate_user_diagram_runs_ocl_check(self, client, monkeypatch):
-        """UserDiagram validation should execute OCL checking with object model context."""
+    def test_validate_user_diagram_runs_ocl_check(self, client, monkeypatch, route_settings):
+        """With evaluation enabled, UserDiagram validation evaluates OCL against the object model."""
+        route_settings.ocl_evaluation_enabled = True
         from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
 
         class _DummyObjectModel:
@@ -799,9 +816,9 @@ class TestValidateDiagram:
         def _fake_process_object_diagram(_input_data, _domain_model):
             return _DummyObjectModel()
 
-        def _fake_check_ocl_constraint(_domain_model, object_model=None):
+        def _fake_check_ocl_constraint(_domain_model, object_model=None, evaluate=True):
             observed["called"] = True
-            observed["with_object_model"] = object_model is not None
+            observed["with_object_model"] = object_model is not None and evaluate
             return {
                 "success": True,
                 "message": "OCL executed",

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import io
 import logging
 import os
@@ -302,20 +301,11 @@ async def handle_multi_language_generation(
                 variant_output_dir = os.path.join(variant_dir, output_dir)
 
                 agent_file = os.path.join(variant_dir, f"agent_model_{lang}.py")
+                # Shipped in the ZIP, never imported: it holds the user's code verbatim.
                 agent_model_to_code(agent_model, agent_file)
-                # spec_from_file_location takes the absolute path; no sys.path edit needed.
-                spec = importlib.util.spec_from_file_location(
-                    f"agent_model_{lang}", agent_file
-                )
-                agent_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(agent_module)
 
-                # gui_models is serialized by agent_model_to_code; no patch needed.
-                model_for_generator = (
-                    agent_module.agent if hasattr(agent_module, 'agent') else agent_model
-                )
                 generator = generator_class(
-                    model_for_generator,
+                    agent_model,
                     output_dir=variant_output_dir,
                     config=variant_config,
                     openai_api_key=extract_openai_api_key(variant_config),

@@ -64,7 +64,7 @@ Quality Assurance
 
      python -m pytest tests/
 
-  This is what CI runs (with ``-q --tb=short``).
+  CI runs ``python -m pytest tests/ -n auto -q --tb=short`` (``-n auto`` is pytest-xdist, in the ``dev`` extra).
   See :doc:`contributor_guide` for the full testing guidance.
 * Build the documentation (``cd docs && make html``) when altering files under
   ``docs/`` or when the change impacts user-facing guidance.

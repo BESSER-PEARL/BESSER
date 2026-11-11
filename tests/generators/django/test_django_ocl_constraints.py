@@ -227,7 +227,7 @@ class TestConstraintWithMethods:
         birthday = Method(name="birthday", code="def birthday(self):\n    self.age += 1\n    return self.age\n")
         output = _render_models(self._model([birthday]))
         compile(output, "<generated>", "exec")
-        assert "            raise ValidationError(errors)\n    def birthday(self):" in output
+        assert "            raise ValidationError(errors)\n\n    def birthday(self):" in output
 
     def test_method_without_code_after_clean_compiles(self):
         output = _render_models(self._model([Method(name="older")]))

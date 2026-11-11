@@ -2795,12 +2795,21 @@ class DomainModel(Model):
         writes these names verbatim as class, field or variable names, so the
         generated Python does not parse, and Java and TypeScript do not compile.
         """
-        for label, name in self._code_names():
-            if not name.isidentifier():
-                errors.append(
-                    f"{label} is not a valid identifier: generated code uses the name as written, "
-                    f"so it will not parse. Use letters, digits and '_' only, not starting with a digit."
-                )
+        errors.extend(self.invalid_identifier_names())
+
+    def invalid_identifier_names(self) -> list[str]:
+        """One message per name a generator emits as code that is not a valid identifier.
+
+        Code generators call this before rendering: the name setter accepts
+        quotes, ``;`` and newlines, and a name written verbatim into generated
+        Python would otherwise become code.
+        """
+        return [
+            f"{label} is not a valid identifier: generated code uses the name as written, "
+            f"so it will not parse. Use letters, digits and '_' only, not starting with a digit."
+            for label, name in self._code_names()
+            if not name.isidentifier()
+        ]
 
     def _validate_attribute_types(self, errors: list[str]):
         """Report an attribute typed by a class or enumeration that is not in the model.

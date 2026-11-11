@@ -54,13 +54,14 @@ def test_docker_image_build_without_docker_names_the_extra(tmp_path, monkeypatch
         generator.build_and_push_docker_image(str(tmp_path))
 
 
-def test_django_generator_without_django_admin_names_the_extra(tmp_path, monkeypatch):
+def test_django_generator_without_django_names_the_extra(tmp_path, monkeypatch):
     from besser.generators.django import DjangoGenerator
 
-    def missing_command(*args, **kwargs):
-        raise FileNotFoundError(2, "No such file or directory", args[0][0])
+    def no_subprocess(*args, **kwargs):
+        raise AssertionError(f"ran {args[0]} although Django is not installed")
 
-    monkeypatch.setattr(subprocess, "run", missing_command)
+    monkeypatch.setitem(sys.modules, "django", None)
+    monkeypatch.setattr(subprocess, "run", no_subprocess)
     with pytest.raises(RuntimeError, match=r'besser\[django\]'):
         DjangoGenerator(model=_model(), project_name="myproject", app_name="app",
                         output_dir=str(tmp_path)).generate()

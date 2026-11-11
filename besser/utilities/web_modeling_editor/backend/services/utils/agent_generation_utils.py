@@ -481,9 +481,11 @@ def collect_agents_from_diagrams(
         if not model:
             continue
         # The deploy endpoint additionally required a non-empty ``nodes`` list;
-        # treat that as the unified contract so both paths reject blank diagrams.
+        # treat that as the unified contract so both paths skip blank diagrams.
         if agent_diagram_without_states(model):
-            raise HTTPException(status_code=400, detail=agent_without_states_message(entry_dict.get("title")))
+            # One agent still being drawn must not block the other diagrams of the project.
+            logger.warning("Skipping agent diagram '%s': it has no states.", entry_dict.get("title") or "Agent")
+            continue
         if isinstance(model, dict) and not model.get("nodes"):
             continue
         agent_model = process_agent_diagram(entry_dict)

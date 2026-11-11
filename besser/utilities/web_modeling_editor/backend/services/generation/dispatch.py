@@ -80,7 +80,6 @@ from besser.utilities.web_modeling_editor.backend.services.governance.swarm_bind
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     agent_diagram_without_states,
-    agent_without_states_message,
     collect_agents_from_diagrams,
     normalize_personalization_mapping,
 )
@@ -359,7 +358,9 @@ async def _handle_deployment_project_generation(
             entry_dict = entry.model_dump()
             model = entry_dict.get("model")
             if agent_diagram_without_states(model):
-                raise ValidationError(agent_without_states_message(entry_dict.get("title")))
+                # One agent still being drawn must not block Docker Compose for the project.
+                logger.warning("Skipping agent diagram '%s': it has no states.", entry_dict.get("title") or "Agent")
+                continue
             if not entry_dict.get("id") or not (isinstance(model, dict) and model.get("nodes")):
                 continue
             agent_config = entry_dict.get("config")

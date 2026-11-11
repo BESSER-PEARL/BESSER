@@ -1,15 +1,21 @@
-"""An agent diagram with intents or LLMs but no states is reported, not skipped.
+"""An agent diagram with intents or LLMs but no states cannot become an agent.
 
-Such a diagram used to be skipped silently by the paths that build every
-agent of a project (web app / Docker Compose generation, GitHub deploy), so
-the agent simply went missing from the output.
+Asking for exactly that agent (single-diagram generation, standalone chatbot
+deploy) is an error. The paths that build every agent of a project (web app /
+Docker Compose generation, web-app deploy) skip it with a warning in the log,
+so one agent still being drawn does not block the rest of the project.
 """
 
 import asyncio
+import io
+import logging
+import zipfile
+
+import json
+import os
 
 import httpx
 import pytest
-from fastapi import HTTPException
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
@@ -24,6 +30,7 @@ _COMPONENTS_ONLY = {
         "b1": {"id": "b1", "type": "AgentIntentBody", "name": "hi", "owner": "i1"},
     },
 }
+FIXTURES_V4 = os.path.join(os.path.dirname(__file__), "..", "..", "..", "fixtures", "v4")
 _EMPTY = {"version": "4.0.0", "type": "AgentDiagram", "nodes": [], "edges": []}
 
 
@@ -43,18 +50,28 @@ def _isolate_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
 
-def test_collect_agents_reports_an_agent_without_states():
-    with pytest.raises(HTTPException) as exc_info:
-        collect_agents_from_diagrams([_entry(_COMPONENTS_ONLY)])
-    assert exc_info.value.status_code == 400
-    assert "'Helper' has no states" in exc_info.value.detail
+def _skip_warnings(caplog):
+    return [r.getMessage() for r in caplog.records
+            if r.levelno == logging.WARNING and "Skipping agent diagram 'Helper': it has no states" in r.getMessage()]
+
+
+def test_collect_agents_skips_an_agent_without_states_with_a_warning(caplog):
+    with open(os.path.join(FIXTURES_V4, "agent_diagram_basic.json"), encoding="utf-8") as f:
+        drawn = json.load(f)
+
+    with caplog.at_level(logging.WARNING):
+        agents, configs, _ = collect_agents_from_diagrams([_entry(_COMPONENTS_ONLY), drawn])
+
+    assert [agent.name for agent in agents] == ["GreetBot"]
+    assert list(configs) == ["GreetBot"]
+    assert len(_skip_warnings(caplog)) == 1
 
 
 def test_collect_agents_still_skips_an_empty_placeholder():
     assert collect_agents_from_diagrams([_entry(_EMPTY)])[0] == []
 
 
-def test_docker_compose_reports_an_agent_without_states():
+def test_docker_compose_skips_an_agent_without_states_with_a_warning(caplog):
     deployment = {"version": "4.0.0", "type": "DeploymentDiagram", "edges": [], "nodes": [
         {"id": "host", "type": "deploymentNode", "position": {"x": 0, "y": 0}, "width": 300,
          "height": 200, "data": {"name": "Host", "stereotype": "node", "isComponentHeaderShown": True}},
@@ -66,9 +83,13 @@ def test_docker_compose_reports_an_agent_without_states():
         "diagrams": {"DeploymentDiagram": [{"id": "d", "title": "Infra", "model": deployment}],
                      "AgentDiagram": [_entry(_COMPONENTS_ONLY)]},
     }
-    response = _post("/besser_api/generate-output-from-project", json=project)
-    assert response.status_code == 400, response.text
-    assert "'Helper' has no states" in response.json()["detail"]
+    with caplog.at_level(logging.WARNING):
+        response = _post("/besser_api/generate-output-from-project", json=project)
+
+    assert response.status_code == 200, response.text
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert "docker-compose.yml" in archive.namelist()
+    assert len(_skip_warnings(caplog)) == 1
 
 
 def test_saving_to_github_keeps_the_model_files_of_an_agent_without_states():

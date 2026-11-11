@@ -539,17 +539,22 @@ class Phase3RepairMixin:
         return {i.message for i in issues
                 if i.message.lower().startswith(cls._STARTUP_BLOCKER_PREFIXES)}
 
-    def _phase3_tree_score(self, issues: list[ValidationIssue]) -> tuple[int, int, int, int]:
+    def _phase3_tree_score(self, issues: list[ValidationIssue]) -> tuple[int, int, int, int, int]:
         """Rank one tree. LOWER is better; compare lexicographically.
 
-        ``(boot broken, entities not confirmed created, actions not confirmed
-        effective, hard blockers)`` - the runtime evidence, with the blocker
-        count last because it is the weakest signal: it correlates only at
-        noise level with whether the delivered app works. Boot dominates on
-        purpose, so a tree that starts can never be discarded for one that
-        does not.
+        ``(boot broken, backends not measured, entities not confirmed created,
+        actions not confirmed effective, hard blockers)`` - the runtime
+        evidence, with the blocker count last because it is the weakest
+        signal: it correlates only at noise level with whether the delivered
+        app works. Boot dominates on purpose, so a tree that starts can never
+        be discarded for one that does not.
 
-        The middle two come from the probe's own per-entity and per-action
+        A backend the probe ran on THIS tree but could not measure (it timed
+        out, could not launch, lacked a dependency) is counted next: a hung
+        startup yields one ``did not run`` finding and nothing else, and
+        without this component that tree would outrank every measured one.
+
+        The next two come from the probe's own per-entity and per-action
         records where it measured THIS tree. Counting issue strings instead
         would re-derive facts already held and count what was rendered: an
         action the probe silently confirmed effective and one it never reached
@@ -559,10 +564,12 @@ class Phase3RepairMixin:
         boot_broken = int(bool(self._startup_blockers(issues)))
         facts = getattr(self, "_runtime_probe_facts", None)
         measured = None
+        unmeasured = 0
         if facts and facts[0] == self._workspace_revision():
             entities = actions = 0
             for backend in facts[1]:
                 if backend.get("boot") != "ok":
+                    unmeasured += 1
                     continue
                 measured = True
                 for entry in (backend.get("entities") or {}).values():
@@ -577,7 +584,7 @@ class Phase3RepairMixin:
                     entities += 1
                 elif "action call:" in message or "action unverified:" in message:
                     actions += 1
-        return boot_broken, entities, actions, len(_hard_blockers(issues))
+        return boot_broken, unmeasured, entities, actions, len(_hard_blockers(issues))
 
     def _runtime_gate_finding(self) -> str | None:
         """The gate's refusal text, or None when the app is clear to ship.
@@ -700,7 +707,7 @@ class Phase3RepairMixin:
         self, entry_blockers: list[ValidationIssue],
         final_issues: list[ValidationIssue],
         source_changed: bool,
-        entry_score: tuple[int, int, int, int] | None = None,
+        entry_score: tuple[int, int, int, int, int] | None = None,
     ) -> bool:
         """Ship the pre-Phase-3 tree when repair ended worse than it began.
 

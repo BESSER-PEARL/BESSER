@@ -144,8 +144,10 @@ The three phases
    and as many as the turns Phase 2 left over. The loop stops when blockers
    reach zero, after two consecutive rounds without progress, or after three
    rounds that change the tree without improving it. Every strictly better
-   tree is re-snapshotted, ranked by whether the app boots, then entities it
-   cannot create, then actions it cannot run, then the blocker count. A
+   tree is re-snapshotted, ranked by whether the app boots, then backends the
+   runtime probe could not measure (a startup that hangs ranks behind every
+   measured tree), then entities it cannot create, then actions it cannot
+   run, then the blocker count. A
    repair that ends worse is rolled back to the best snapshot, not merely to
    the last round; the pre-Phase-3 tree is the first snapshot, so a failed
    repair can never cost you the Phase 2 work. Non-blocker findings are recorded but never burn fix turns.

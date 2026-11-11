@@ -476,7 +476,7 @@ def test_an_unverified_create_is_not_counted_as_an_observed_defect(orch):
     )
 
     assert _hard_blockers([inconclusive]) == []
-    assert orch._phase3_tree_score([inconclusive]) == (0, 1, 0, 0)
+    assert orch._phase3_tree_score([inconclusive]) == (0, 0, 1, 0, 0)
     assert inconclusive.severity == "blocker"
 
 
@@ -534,3 +534,73 @@ def test_an_obligation_that_discharges_no_blocker_is_not_progress(orch):
                       entry=unverified, calls=[[("test_api", True), ("read_file", True)]])
 
     assert attempts == 1
+
+
+# ---------------------------------------------------------------------------
+# 7. A tree the probe could not measure never outranks one it measured
+# ---------------------------------------------------------------------------
+
+def _probe_blockers(orch, report):
+    """The blockers validation derives from one probe report."""
+    from besser.spec_driven_agent.validation.constructibility import _issues_from_report
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+
+    raw = _issues_from_report(report, "backend")
+    raw = ["runtime unverified: " + i if i.startswith("validation:") else i for i in raw]
+    raw = orch._apply_scenario_evidence(raw)
+    return [i for i in map(_classify_issue, raw) if i.severity == "blocker"]
+
+
+_BOOTS_ONE_CREATE_REFUSED = {"boot": "ok", "action_calls": [], "entities": {
+    **{f"E{i}": {"verdict": "created", "path": f"/e{i}/"} for i in range(4)},
+    "E4": {"verdict": "rejected", "path": "/e4/",
+           "attempts": [{"outcome": "rejected", "status": 422, "body": "bad", "payload": {}}]},
+}}
+_PROBE_TIMED_OUT = {"boot": "probe_error", "error": "timed out after 90s"}
+
+
+def test_a_tree_the_probe_could_not_measure_is_not_kept_over_a_measured_one(orch):
+    """A repair made startup hang: the probe timed out, so the tree carried
+    only a ``runtime unverified: ... did not run`` blocker and scored
+    (0,0,0,0) - better than the entry tree that boots with 4 of 5 creates
+    confirmed. It was re-snapshotted as the best tree and the final rollback
+    check kept it, so an app that may not start shipped over one that does."""
+    state = {"attempt": 0, "rev": 0}
+    reports = {0: _BOOTS_ONE_CREATE_REFUSED, 1: _PROBE_TIMED_OUT}
+
+    def collect():
+        rev = state["rev"]
+        orch._runtime_probe_facts = (f"rev-{rev}", [{"backend": "backend", **reports[rev]}])
+        return _probe_blockers(orch, reports[rev])
+
+    def fix(blockers, is_first_attempt):
+        state["attempt"] += 1
+        if state["attempt"] == 1:
+            state["rev"] = 1  # the edit that makes startup hang
+            return 1
+        return 0  # writes nothing: the replay guard ends the loop
+
+    with patch.object(orch, "_collect_validation_issues", side_effect=collect), \
+            patch.object(orch, "_create_snapshot") as snap, \
+            patch.object(orch, "_restore_snapshot", return_value=True) as restore, \
+            patch.object(orch, "_invoke_phase3_fix_loop", side_effect=fix), \
+            patch.object(orch, "_workspace_revision",
+                         side_effect=lambda: f"rev-{state['rev']}"):
+        orch._run_phase3_validation()
+
+    snap.assert_not_called()
+    restore.assert_called_once()
+    assert orch._phase3_rolled_back is True
+
+
+def test_an_unmeasured_tree_ranks_behind_every_measured_tree_that_boots(orch):
+    with patch.object(orch, "_workspace_revision", return_value="rev"):
+        orch._runtime_probe_facts = ("rev", [{"backend": "backend", **_BOOTS_ONE_CREATE_REFUSED}])
+        measured = orch._phase3_tree_score(_probe_blockers(orch, _BOOTS_ONE_CREATE_REFUSED) + _blockers(9))
+        orch._runtime_probe_facts = ("rev", [{"backend": "backend", **_PROBE_TIMED_OUT}])
+        unmeasured = orch._phase3_tree_score(_probe_blockers(orch, _PROBE_TIMED_OUT))
+
+    assert measured < unmeasured
+    # A workspace no probe measured (no backend, probe off) ranks as before.
+    orch._runtime_probe_facts = None
+    assert orch._phase3_tree_score(_blockers(2)) == (0, 0, 0, 0, 2)

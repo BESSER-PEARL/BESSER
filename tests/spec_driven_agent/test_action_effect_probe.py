@@ -367,7 +367,7 @@ def test_the_tree_score_ranks_on_the_probe_record_not_on_issue_strings(tmp_path)
     )
     lint = [ValidationIssue("blocker", f"ruff: x.py:1:1: F821 undefined name 'x' #{n}")
             for n in range(5)]
-    assert orch._phase3_tree_score(lint) == (0, 0, 0, 5)
+    assert orch._phase3_tree_score(lint) == (0, 0, 0, 0, 5)
 
     orch._runtime_probe_facts = (orch._workspace_revision(), [{
         "backend": "web_app/backend", "boot": "ok",
@@ -376,8 +376,8 @@ def test_the_tree_score_ranks_on_the_probe_record_not_on_issue_strings(tmp_path)
     }])
     # One entity the app cannot create and one action that does nothing,
     # measured - not counted off the strings, which name neither.
-    assert orch._phase3_tree_score(lint) == (0, 1, 1, 5)
+    assert orch._phase3_tree_score(lint) == (0, 0, 1, 1, 5)
     # Stale facts (measured on a tree that is no longer the one being ranked)
     # fall back rather than describe the wrong tree.
     orch._runtime_probe_facts = ("some-other-revision", orch._runtime_probe_facts[1])
-    assert orch._phase3_tree_score(lint) == (0, 0, 0, 5)
+    assert orch._phase3_tree_score(lint) == (0, 0, 0, 0, 5)

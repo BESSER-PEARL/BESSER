@@ -1,4 +1,4 @@
-"""The frugal workflow for a coding agent: terse output off a terminal, the agent files, init, guide and apply."""
+"""BESSER's defaults for coding agents: terse output off a terminal, the agent files, init, guide and apply."""
 
 import importlib.util
 import json
@@ -123,7 +123,7 @@ def test_guide_prints_the_rules_in_little_space(besser):
     run = besser("guide", output=None)
 
     assert run.stdout == GUIDE
-    # Re-read on every turn of every session: the experiment used 1.7 KB; the edit commands add about 0.9 KB.
+    # Re-read on every turn of every session, so it stays small.
     assert len(GUIDE.encode("utf-8")) < 4000 and len(GUIDE.splitlines()) <= 60
 
 

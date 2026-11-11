@@ -290,7 +290,7 @@ is left alone.
 ----------------
 
 Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 3 KB (41
-lines): the rules of the :ref:`frugal workflow <cli-agents>`, the ``besser model``
+lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
 commands, and what the ``backend``
 generator's API does, so that an agent needs neither the generated code nor
 this documentation. ``--json`` puts it in ``guide``.
@@ -1459,17 +1459,9 @@ everywhere, names the file, the element and the line of an error, and takes
 
 What costs an agent is not the command but what it reads: every file, help
 text and command output stays in its context and is read again on each later
-turn of the session. In an internal experiment, an agent (Claude Opus) built a
-small application (7 entities, a FastAPI backend and a React frontend) in 11
-steps, an initial build and 10 change requests, once by hand and once with
-BESSER. Following the earlier guidance of this page (``validate --json`` after
-each edit, then ``build --json``; learn the metamodel from ``besser schema``
-and ``besser new``; edit the generated code), the BESSER run used **7.13M
-tokens, 1.69 times the 4.21M of hand-coding**: most of the difference went to
-reading generated code back, BESSER's documentation and sources, and the model
-file. Following the rules below, it used **3.27M tokens, 22% fewer than
-hand-coding**, for the same quality. One run per arm, on one
-small application: read the numbers as an indication, not a benchmark.
+turn of the session. So BESSER's defaults for coding agents are about what
+the agent does not read: generated code, BESSER's documentation and sources,
+and the model file.
 
 The rules are what ``besser init`` (and ``besser new``) write to ``AGENTS.md``,
 and what ``besser guide`` prints:
@@ -1524,16 +1516,14 @@ warning in the editor exports under ``models/`` (add ``--exec-py`` for the
 What an agent setup can do
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The rules above are what BESSER can do from its side. In the experiment's
-best run (3.27M tokens, 133 API calls for 11 steps), the model itself was 6% of
-the tokens; most of the rest depends on how the agent is run, not on BESSER.
-For people who set up an agent for model-driven work:
+The rules above are what BESSER can do from its side; most of what an agent
+reads depends on how the agent is run, not on BESSER. For people who set up an
+agent for model-driven work:
 
 - **A small, stable prefix.** Each API call re-sends the harness's system
-  prompt and tool definitions (11.8k tokens per call in that run, 48% of all
-  tokens). A shorter system prompt, and only the tools the work uses (a shell
-  and a file editor: the run never used read, grep or glob tools), cut the
-  largest share. Keep the prefix identical between sessions so that it is
+  prompt and tool definitions, often the largest share of all tokens. A
+  shorter system prompt, and only the tools the work uses (often a shell and a
+  file editor), cut it. Keep the prefix identical between sessions so that it is
   read from the cache rather than written again.
 - **Fewer calls.** Batch independent commands in one shell call (``besser
   model ... && besser apply``); put the checks that were done by starting a

@@ -78,7 +78,7 @@ besser-wme-backend --port 9000      # same, via the console script (--host, --po
 ```bash
 besser init                                           # model.py, besser.toml, AGENTS.md (+ CLAUDE.md import), .ignore
 besser new model.py --kind domain                     # a starter model of any kind (--list names them), + agent guide
-besser guide                                          # the frugal rules for a coding agent (what AGENTS.md gets)
+besser guide                                          # the defaults for coding agents (what AGENTS.md gets)
 besser schema domain                                  # the classes of a kind; also: project, result, config
 besser validate model.py other.py --json              # exit 0 ok, 1 errors, 2 usage/load error
 besser info model.py                                  # models, classes, the generators that read the file

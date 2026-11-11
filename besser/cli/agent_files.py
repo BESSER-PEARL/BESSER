@@ -1,10 +1,7 @@
-"""The files that teach a coding agent the frugal BESSER workflow: ``AGENTS.md``, ``CLAUDE.md`` and ``.ignore``.
+"""The files that set BESSER's defaults for a coding agent: ``AGENTS.md``, ``CLAUDE.md`` and ``.ignore``.
 
 Every token an agent reads is re-read on each later turn of its session, so the guide is short
-and tells it what not to read: generated code, BESSER's docs and sources, the model file. In an
-internal experiment (a 7-entity application built in 11 steps), an agent following these rules
-used 3.27M tokens against 4.21M for hand-coding the same application; with the earlier guidance
-(validate, then build, with --json; read the generated code) it used 7.13M.
+and tells it what not to read: generated code, BESSER's docs and sources, the model file.
 
 ``besser new`` and ``besser init`` write these files; ``besser build`` keeps the ``.ignore`` block
 in step with the outputs of ``besser.toml``; ``besser guide`` prints the guide.

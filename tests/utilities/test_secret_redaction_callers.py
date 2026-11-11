@@ -104,7 +104,7 @@ def test_the_agent_transform_endpoint_logs_its_config_redacted(caplog):
     caplog.set_level(logging.DEBUG)
     with TestClient(app, raise_server_exceptions=False) as client:
         client.post("/besser_api/transform-agent-model-json", json={
-            "title": "a", "model": {"type": "AgentDiagram", "elements": {}, "relationships": {}},
+            "title": "a", "model": {"version": "4.0.0", "type": "AgentDiagram", "nodes": [], "edges": []},
             "config": {"openai_api_key": KEY, "language": "en"}})
 
     logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("[Agent transform] config")]

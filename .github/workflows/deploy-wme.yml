@@ -22,7 +22,8 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Pushing images to artefacts.list.lu from GitHub-hosted runners takes ~20+ min (run 43038262597 was cancelled at 20 min).
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

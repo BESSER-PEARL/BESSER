@@ -635,7 +635,9 @@ Refine KG dialog that precedes it.
 Validation
 ^^^^^^^^^^
 
-- ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints)
+- ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints).
+  OCL invariants are evaluated against an object or user diagram only when
+  ``BESSER_ENABLE_OCL_EVALUATION`` is on; otherwise they are checked for syntax only.
   For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
   consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
@@ -921,6 +923,18 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
   editor's "Deploy locally" sends when backend and browser run on one machine.
   ``true`` allows every caller, ``false`` refuses every caller (403).
   ``docker-compose.prod.yml`` sets ``false``; a shared server should too.
+
+**OCL evaluation:**
+
+- ``BESSER_ENABLE_OCL_EVALUATION`` (default ``false``) -- ``/validate-diagram``
+  (and ``/check-ocl``) evaluate OCL invariants against object and user diagrams.
+  Off, invariants are checked for syntax only and an object diagram's response
+  carries the warning *OCL invariants were checked for syntax only; evaluation
+  is disabled on this server*. The B-OCL evaluator runs Python text it builds
+  from the diagram's values; the backend accepts only literal and operator
+  expressions from it, but enabling evaluation is **unsafe for untrusted users**:
+  turn it on only on a local install or a server whose users are trusted.
+  ``docker-compose.prod.yml`` sets ``false``.
 
 **Optional:**
 

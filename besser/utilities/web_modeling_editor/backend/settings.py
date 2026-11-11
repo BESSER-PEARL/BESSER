@@ -118,6 +118,12 @@ class BackendSettings(BaseSettings):
         None, validation_alias="BESSER_ENABLE_DOCKER_DEPLOY",
         description="POST /deploy-app (docker-compose on this host): true allows, false answers 403, "
                     "unset allows loopback requests only.")
+    # The B-OCL evaluator runs Python text built from the object diagram's
+    # values, so evaluating invariants is for servers whose users are trusted.
+    ocl_evaluation_enabled: _Flag = Field(
+        False, validation_alias="BESSER_ENABLE_OCL_EVALUATION",
+        description="/validate-diagram evaluates OCL invariants against object and user diagrams; "
+                    "off, it checks their syntax only.")
 
     # -- Spec-Driven Agent: per-run caps -----------------------------------
     # The UI reads the hard caps from /spec-driven/config, so they are what a

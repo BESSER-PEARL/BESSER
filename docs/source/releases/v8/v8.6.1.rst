@@ -1,0 +1,77 @@
+Version 8.6.1
+=============
+
+Patch release: **models are configuration**. The LLM providers and models the
+key dialog offers, the endpoint of a gateway provider and the rates a gateway
+bills now come from one model catalog file instead of code, so adding,
+removing or repricing a model is an edit and a restart, not a release. The
+model lists are brought up to date (Claude Sonnet 5.5 and Haiku 5.5, GPT-6.1
+Sol, Devstral), and the free tier keeps serving when one of its free models
+reaches the end of its free period.
+
+Model catalog
+-------------
+
+* **One catalog for providers, models and gateway rates.** BESSER ships a
+  public default in
+  ``besser/spec_driven_agent/providers/data/model_catalog.json``. A
+  deployment points ``BESSER_MODEL_CATALOG`` at its own JSON file, which is
+  merged over the default: a provider is replaced or removed per id, and
+  ``"replace": true`` swaps the whole catalog. A missing or malformed file
+  stops the backend and the modeling agent at startup, naming the file and
+  the field. See :doc:`../../spec_driven_agent/models`.
+* **The key dialog renders the catalog.** ``GET /besser_api/spec-driven/config``
+  returns ``providers`` (ids, labels, key hints and models, without endpoints
+  or rates), and the editor's key dialog shows exactly those. When the config
+  cannot be read, the dialog still offers Anthropic, OpenAI, Mistral, Nebius
+  and Local with *Recommended default* and *Custom model ID*.
+* **Gateway providers resolve their endpoint on the server.** A provider with
+  a ``base_url`` in the catalog is a gateway. The editor sends only its
+  provider id; the backend and the modeling agent run its calls against the
+  catalog's endpoint, never a URL from the request, so a gateway needs no
+  ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` or
+  ``BESSER_AGENT_ALLOW_CUSTOM_BASE_URL``. The public default holds no
+  gateway.
+* **Defaults and request rules in the catalog too.** The model marked
+  ``"default": true`` is what a run uses when the user picks none
+  (*Recommended default*). A model's optional ``request`` object
+  (``forced_tool_choice``, ``thinking_can_be_disabled``,
+  ``reasoning_effort_for_tools``) tells BESSER how a model whose API differs
+  must be called, so the next such model is also a catalog edit.
+* **Pricing reads the catalog.** A run is priced at the catalog's gateway rate
+  for the endpoint it uses, then at a rate the catalog sets on a vendor model,
+  then at the vendored list price. The modeling agent prices its calls from
+  the same file.
+
+.. important::
+   **Upgrading an install that uses a gateway provider.** The gateway is no
+   longer built into the editor or the backend. Add it to a catalog file,
+   mount that file into the backend, the Spec-Driven worker and the modeling
+   agent, and set ``BESSER_MODEL_CATALOG`` on all three; otherwise the
+   provider no longer appears in the key dialog. An install without a gateway
+   needs no change.
+
+Current models
+--------------
+
+* **Default lists.** Anthropic: Claude Fable 5.1, Opus 5.5, Sonnet 5.5 (the
+  new default) and Haiku 5.5. OpenAI: GPT-6.1 Sol, GPT-6 Sol (the new
+  default, replacing GPT-4o) and GPT-6 Luna. Mistral: Large, Devstral, Medium
+  and Small. The previous generations (Claude Opus 5, Sonnet 5, the 4.x
+  models, GPT-5.x, GPT-4o) leave the lists; any of them can still be entered
+  as a custom model ID.
+* **Claude Sonnet 5.5 runs.** It rejects a forced ``tool_choice`` and
+  ``thinking: {"type": "disabled"}``, which a Spec-Driven run sends for forced
+  tool calls, so every run on it failed. It is now called like Claude Opus 5.5
+  (``auto`` plus an instruction naming the tool). Claude Haiku 5.5 needs no
+  change.
+
+Spec-Driven Agent
+-----------------
+
+* **An ended free model moves to the next free model.** A free model whose
+  free period has ended answers ``403``. Every ``403`` was read as a rejected
+  key, which skipped all the models on that endpoint and sent free-tier runs
+  straight to the self-hosted fallback. A ``403`` that refuses one model while
+  the key is accepted now moves the run to the next model on the same
+  endpoint.

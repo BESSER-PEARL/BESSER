@@ -20,11 +20,13 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response as StarletteResponse
 
+from besser.llm.catalog import load_model_catalog
 from besser.utilities.provenance import get_besser_version, get_build_sha
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
 # Backend constants (no circular dependency risk)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    MAX_REQUEST_SIZE,
     API_VERSION,
     DEFAULT_CORS_ORIGINS,
 )
@@ -56,14 +58,10 @@ from besser.utilities.web_modeling_editor.backend.services.cleanup import (
     schedule_cleanup,
 )
 
-# Deployment routers (already separate files)
-from besser.utilities.web_modeling_editor.backend.services.deployment import (
-    github_oauth_router,
-    github_deploy_router,
-)
-
 # Application routers
 from besser.utilities.web_modeling_editor.backend.routers import (
+    github_oauth,
+    github_deploy_api,
     generation_router,
     conversion_router,
     kg_router,
@@ -75,18 +73,18 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     traceability_router,
 )
 
-# Spec-driven download registry — started/cancelled in the lifespan below
+# Per-app state, built in the lifespan (see dependencies.py)
+from besser.utilities.web_modeling_editor.backend.services.agent_simulation import AgentSimulatorState
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
+from besser.utilities.web_modeling_editor.backend.services.kg.validation import consistency_check_slots
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import sdmx_import_slots
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
-    DURABLE_RUN_MANAGER,
-    SMART_RUN_REGISTRY,
+    SpecDrivenRuntime,
 )
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    LLM_DOWNLOAD_TTL_SECONDS,
-)
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 logger = logging.getLogger(__name__)
 
-MAX_REQUEST_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -182,15 +180,6 @@ class RequestSizeLimitMiddleware:
 # Startup: environment variable validation
 # ---------------------------------------------------------------------------
 
-_OPTIONAL_ENV_VARS = [
-    "GITHUB_CLIENT_ID",  # GitHub sign-in, push and deploy; drawing and generation work without them
-    "GITHUB_CLIENT_SECRET",
-    "SMTP_PASSWORD",
-    "OPENAI_API_KEY",
-    "AGENT_SIMULATOR_API_TOKEN",  # live agent simulation returns 503 without it
-]
-
-
 def _validate_env_vars() -> None:
     """Log a warning for each optional environment variable that is not set.
 
@@ -198,8 +187,19 @@ def _validate_env_vars() -> None:
     application is **not** terminated: services which do not depend on the
     missing variables keep working (graceful degradation).
     """
-    for var in _OPTIONAL_ENV_VARS:
-        if not os.environ.get(var):
+    settings = BackendSettings()
+    optional = {
+        # GitHub sign-in, push and deploy; drawing and generation work without them
+        "GITHUB_CLIENT_ID": settings.github_client_id,
+        "GITHUB_CLIENT_SECRET": settings.github_client_secret.get_secret_value(),
+        "SMTP_PASSWORD": settings.smtp_password.get_secret_value(),
+        # Not a backend setting: the code that uses it reads it.
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+        # Live agent simulation returns 503 without it
+        "AGENT_SIMULATOR_API_TOKEN": settings.agent_simulator_api_token.get_secret_value(),
+    }
+    for var, value in optional.items():
+        if not value:
             logger.warning(
                 "Optional environment variable %s is not set. "
                 "Related functionality will be unavailable.", var,
@@ -207,25 +207,37 @@ def _validate_env_vars() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     _validate_env_vars()
+    # A broken BESSER_MODEL_CATALOG stops startup here rather than silently
+    # dropping a provider from the key dialog.
+    load_model_catalog()
 
     # Run an immediate cleanup of stale temp files left from previous runs,
     # then schedule a background task that repeats every hour.
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
+    # Routes reach this state through the dependencies in dependencies.py.
+    app.state.github_sessions = GitHubSessions.create(get_settings())
+    app.state.agent_simulator = AgentSimulatorState.create(get_settings())
+    app.state.kg_consistency_slots = consistency_check_slots()
+    app.state.sdmx_import_slots = sdmx_import_slots()
+    runtime = SpecDrivenRuntime.create(get_settings())
+    app.state.spec_driven = runtime
+    logger.info("Spec-driven runtime started (%d run slots)", get_settings().llm_max_concurrent_runs)
+
     # Download metadata lives beside artifacts on the persistent run volume,
     # so a backend/container restart does not invalidate a completed result.
-    await SMART_RUN_REGISTRY.restore_persisted()
+    await runtime.registry.restore_persisted()
 
     # Sweep expired spec-driven generation download entries every minute.
     smart_gen_sweeper = asyncio.create_task(
-        SMART_RUN_REGISTRY.periodic_sweep(),
+        runtime.registry.periodic_sweep(),
         name="spec-driven-registry-sweeper",
     )
     durable_run_sweeper = asyncio.create_task(
-        DURABLE_RUN_MANAGER.periodic_sweep(LLM_DOWNLOAD_TTL_SECONDS),
+        runtime.durable_runs.periodic_sweep(get_settings().llm_download_ttl_seconds),
         name="spec-driven-durable-run-sweeper",
     )
 
@@ -247,6 +259,8 @@ async def lifespan(_: FastAPI):
         await durable_run_sweeper
     except asyncio.CancelledError:
         pass
+    runtime.close()
+    logger.info("Spec-driven runtime stopped")
 
 
 # Initialize FastAPI application
@@ -262,7 +276,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 
 # Configure CORS middleware
-_cors_env = os.environ.get("CORS_ORIGINS", "")
+_cors_env = get_settings().cors_origins
 ALLOWED_ORIGINS = [origin.strip() for origin in _cors_env.split(",") if origin.strip()] if _cors_env else DEFAULT_CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
@@ -281,8 +295,8 @@ setup_middleware(app)
 
 
 # Include GitHub OAuth and deployment routers
-app.include_router(github_oauth_router, prefix="/besser_api")
-app.include_router(github_deploy_router, prefix="/besser_api")
+app.include_router(github_oauth.router, prefix="/besser_api")
+app.include_router(github_deploy_api.router, prefix="/besser_api")
 
 # Include application routers
 app.include_router(generation_router.router)

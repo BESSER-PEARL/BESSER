@@ -21,8 +21,7 @@ from besser.BUML.metamodel.structural import (
 # Library / Book / Author domain model (the most commonly duplicated fixture)
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def library_book_author_model():
+def library_book_author():
     """A Library-Book-Author domain model with two associations.
 
     This is the canonical "library" model used across many generator tests
@@ -73,6 +72,12 @@ def library_book_author_model():
         associations={lib_book_assoc, book_author_assoc},
     )
     return model
+
+
+@pytest.fixture
+def library_book_author_model():
+    """See :func:`library_book_author`."""
+    return library_book_author()
 
 
 # ---------------------------------------------------------------------------

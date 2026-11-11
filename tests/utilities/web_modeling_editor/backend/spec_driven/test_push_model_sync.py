@@ -24,8 +24,8 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
@@ -34,6 +34,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -64,6 +65,25 @@ class _CapturingGitHubService:
     async def get_branches(self, owner, repo_name, per_page=100):
         return ["main"]
 
+    async def get_default_branch(self, owner, repo_name):
+        return "main"
+
+    async def get_branch_head(self, owner, repo_name, branch):
+        return "a" * 40
+
+    async def get_tree_entries(self, owner, repo_name, commit_sha):
+        return {}
+
+    async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
+        return None
+
+    async def add_topic(self, owner, repo_name, topic):
+        self.topics = getattr(self, "topics", []) + [topic]
+
+    async def create_pull_request(self, owner, repo_name, head, base, title, body):
+        self.pull_request = dict(head=head, base=base, title=title)
+        return {"number": 7, "html_url": f"https://github.com/{owner}/{repo_name}/pull/7"}
+
     async def push_directory_to_repo(
         self,
         owner,
@@ -72,17 +92,22 @@ class _CapturingGitHubService:
         commit_message="",
         branch="main",
         preserve_existing_files=False,
+        base_commit_sha=None,
+        keep_path=None,
+        model_merge=None,
+        base_hashes=None,
     ):
         path = os.path.join(directory_path, "buml", "diagrams.json")
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as fh:
                 self.pushed_diagrams_json = json.load(fh)
-        return {"commit_sha": "deadbeef", "total_files": 1, "uploaded_files": []}
+        return {"commit_sha": "d" * 40, "total_files": 1, "uploaded_files": [], "status": "pushed",
+                "own_commit_sha": "d" * 40}
 
 
 def _install(monkeypatch, fake):
-    monkeypatch.setattr(router_module, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(router_module, "get_user_token", lambda sid: "fake-token")
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(router_module, "get_user_token", lambda _sessions, sid: "fake-token")
 
 
 def _export(name: str) -> dict:
@@ -113,7 +138,7 @@ def _seed_run(run_id: str, *, updated_export: dict | None) -> str:
         created_at=time.time(),
         updated_project_export=updated_export,
     )
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, entry))
+    asyncio.run(current_runtime().registry.put(run_id, entry))
     return tmp
 
 
@@ -145,6 +170,8 @@ def test_push_prefers_updated_project_export(monkeypatch):
     assert fake.pushed_diagrams_json is not None
     # The model-synced export won — not the request's.
     assert fake.pushed_diagrams_json["name"] == "UPDATED_PROJECT"
+    # ...and comes back, so the editor shows the model the repo now holds.
+    assert r.json()["project_export"]["name"] == "UPDATED_PROJECT"
 
 
 def test_push_falls_back_to_request_export_when_no_delta(monkeypatch):
@@ -164,3 +191,4 @@ def test_push_falls_back_to_request_export_when_no_delta(monkeypatch):
     assert r.status_code == 200
     assert fake.pushed_diagrams_json is not None
     assert fake.pushed_diagrams_json["name"] == "REQUEST_PROJECT"
+    assert r.json()["project_export"] is None  # the editor already holds this model

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from besser.spec_driven_agent.planning.specification import MAX_REQUIREMENT_CHARS, MAX_REQUIREMENTS
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import SmartGenerationRunner
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_done_verdict import _cleanup
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed import (
     _FakeClient,
@@ -52,8 +53,8 @@ def test_the_runner_hands_the_requirements_to_the_orchestrator(monkeypatch):
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **kwargs: _FakeClient())
     monkeypatch.setattr(runner_module, "LLMOrchestrator", CaptureRequirements)
     try:
-        asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(requirements=[REQUIREMENT]))))
-        asyncio.run(_collect_frames(SmartGenerationRunner(_build_request())))
+        asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(requirements=[REQUIREMENT]), runtime=current_runtime())))
+        asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
     finally:
         _cleanup()
     assert observed == [[REQUIREMENT], None]

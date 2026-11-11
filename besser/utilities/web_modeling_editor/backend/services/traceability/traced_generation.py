@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List
 
 from besser.utilities.generation_trace import FileTrace, GeneratedFile, build_generation_trace, shift_regions
-from besser.utilities.provenance import add_generation_provenance_to_zip, get_besser_version, with_version_comment
+from besser.utilities.provenance import add_generation_provenance_to_zip, get_besser_version
 from besser.utilities.web_modeling_editor.backend.config import get_filename_for_generator, get_generator_info
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_DBMS,
@@ -32,7 +32,10 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     trace_buml_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import GenerationError, ValidationError
-from besser.utilities.web_modeling_editor.backend.services.utils.zip_utils import zip_directory
+from besser.utilities.web_modeling_editor.backend.services.generation.downloads import (
+    with_version_comment,
+    zip_directory,
+)
 
 logger = logging.getLogger(__name__)
 

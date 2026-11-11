@@ -67,7 +67,8 @@ def _requests(client) -> list[dict]:
 
 
 NEW_ANTHROPIC = ["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5",
-                 "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]
+                 "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5",
+                 "claude-haiku-5-5", "claude-haiku-4-5"]
 
 
 @pytest.mark.parametrize("model", NEW_ANTHROPIC)
@@ -81,7 +82,7 @@ def test_no_sampling_parameter_reaches_an_anthropic_model(model, force):
 
 
 @pytest.mark.parametrize("model", [
-    "claude-fable-5-1", "claude-fable-5", "claude-opus-5-5",
+    "claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5",
     "us.anthropic.claude-fable-5-1", "anthropic.claude-opus-5-5",
 ])
 def test_a_forced_call_never_disables_thinking_where_that_is_a_400(model):
@@ -91,8 +92,9 @@ def test_a_forced_call_never_disables_thinking_where_that_is_a_400(model):
         assert "thinking" not in request
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5",
-                                   "claude-sonnet-4-6", "claude-opus-4-8"])
+# Haiku 5.5 accepts disabled thinking at its default effort (medium).
+@pytest.mark.parametrize("model", ["claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5",
+                                   "claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"])
 def test_models_that_accept_it_keep_the_forced_tool_and_thinking_off(model):
     """PIA (Bedrock) takes a forced tool only with thinking off: unchanged."""
     client = _claude(model, _tool_use())
@@ -114,7 +116,7 @@ def test_fable_5_keeps_its_forced_tool_choice():
 # Forced-tool fallback on Fable 5.1 / Opus 5.5
 # ----------------------------------------------------------------------
 
-@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5"])
+@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"])
 def test_forced_tool_becomes_auto_plus_an_instruction_and_parses_the_call(model):
     client = _claude(model, _tool_use(payload={"items": ["x", "y"]}))
 

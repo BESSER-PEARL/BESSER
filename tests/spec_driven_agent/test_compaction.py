@@ -812,3 +812,33 @@ def test_compaction_makes_no_llm_call(tmp_path, monkeypatch):
         work_state=TestWorkStateInSummary.WORK_STATE,
     )
     assert first[0]["content"] == second[0]["content"]
+
+
+def test_tokenizer_fallback_warns(monkeypatch, caplog):
+    """tiktoken downloads cl100k_base on first use with no timeout; offline it
+    stalled about 21 s and then counted characters/4 without a word
+    (review 2026-10-30, R3). The fallback must be visible."""
+    import logging
+
+    import tiktoken
+
+    import besser.spec_driven_agent.agent.compaction as c
+
+    def offline(name):
+        raise ConnectionError("no route to openaipublic.blob.core.windows.net")
+
+    monkeypatch.setattr(tiktoken, "get_encoding", offline)
+    monkeypatch.setattr(c, "_TOKENIZER", None)
+    monkeypatch.setattr(c, "_TOKENIZER_LOADED", False)
+    with caplog.at_level(logging.WARNING, logger=c.__name__):
+        assert c._count_tokens("x" * 400) == 100
+    assert any("TIKTOKEN_CACHE_DIR" in r.message for r in caplog.records)
+
+
+def test_dockerfile_prefetches_the_tokenizer():
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parents[2] / "Dockerfile").read_text(encoding="utf-8")
+    base_stage = dockerfile.split("FROM python-deps AS backend")[0]
+    assert "ENV TIKTOKEN_CACHE_DIR=" in base_stage
+    assert "tiktoken.get_encoding('cl100k_base')" in base_stage

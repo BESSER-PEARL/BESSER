@@ -18,12 +18,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from besser.llm.pricing import get_pricing, is_free_local_model
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     LLMProvider,
     NebiusProvider,
-    _get_pricing,
-    _is_free_local_model,
     _needs_reasoning_none_for_tools,
     _openai_max_tokens_key,
     _resolve_nebius_api_key,
@@ -123,10 +122,10 @@ class TestNebiusPricing:
     def test_namespaced_qwen_id_is_not_mistaken_for_a_free_local_model(self):
         # A vendor-namespaced id is served by a gateway, so somebody is being
         # billed. Pricing it at $0 would silently disable max_cost_usd.
-        assert _is_free_local_model(NEBIUS_MODEL.lower()) is False
+        assert is_free_local_model(NEBIUS_MODEL.lower()) is False
 
     def test_target_model_uses_the_nebius_row(self):
-        p = _get_pricing(NEBIUS_MODEL)
+        p = get_pricing(NEBIUS_MODEL)
         # Console endpoint properties.
         assert p["input"] == 0.1
         assert p["output"] == 0.3
@@ -135,14 +134,14 @@ class TestNebiusPricing:
         # Without the Nebius row this id lands on the protective gpt-4o
         # default ($2.50/$10) and aborts a cheap run at a fraction of the
         # budget the user actually authorised.
-        assert _get_pricing(NEBIUS_MODEL)["input"] != 2.5
+        assert get_pricing(NEBIUS_MODEL)["input"] != 2.5
 
     def test_pricing_is_case_insensitive(self):
-        assert _get_pricing(NEBIUS_MODEL.lower()) == _get_pricing(NEBIUS_MODEL)
+        assert get_pricing(NEBIUS_MODEL.lower()) == get_pricing(NEBIUS_MODEL)
 
     def test_self_hosted_qwen_tag_is_still_free(self):
         # The Nebius row must not broaden into the free tier's Ollama tags.
-        assert _get_pricing("qwen3-coder:30b")["input"] == 0.0
+        assert get_pricing("qwen3-coder:30b")["input"] == 0.0
 
 
 # ======================================================================

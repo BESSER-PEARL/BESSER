@@ -4,15 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS, validate_specification
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    LLM_MAX_COST_USD_HARD_CAP,
-    LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
-    LLM_MAX_TURNS_HARD_CAP,
-)
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
     SmartPreviewRequest,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _build_request,
 )
@@ -68,15 +64,15 @@ class TestRequestValidators:
     def test_max_cost_clamped_to_hard_cap(self):
         """Values above the hard cap are silently clamped."""
         req = _build_request(max_cost_usd=9999.0)
-        assert req.max_cost_usd == LLM_MAX_COST_USD_HARD_CAP
+        assert req.max_cost_usd == get_settings().llm_max_cost_usd_hard_cap
 
     def test_max_runtime_clamped_to_hard_cap(self):
         req = _build_request(max_runtime_seconds=999_999)
-        assert req.max_runtime_seconds == LLM_MAX_RUNTIME_SECONDS_HARD_CAP
+        assert req.max_runtime_seconds == get_settings().llm_max_runtime_seconds_hard_cap
 
     def test_max_turns_clamped_to_hard_cap(self):
         req = _build_request(max_turns=999_999)
-        assert req.max_turns == LLM_MAX_TURNS_HARD_CAP
+        assert req.max_turns == get_settings().llm_max_turns_hard_cap
 
     def test_valid_llm_model_format_accepted(self):
         req = _build_request(llm_model="claude-sonnet-4-6")

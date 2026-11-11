@@ -5,6 +5,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
 from besser.utilities.generation_trace import FileTrace, TraceExtension, extract_trace_regions
 from besser.utilities.utils import sort_by_timestamp
@@ -26,6 +27,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+        dbms (str, optional): The default for ``generate``'s ``dbms``, and what ``regenerate`` uses.
+            Defaults to "sqlite".
+        ocl_check_constraints (bool, optional): The default for ``generate``'s ``ocl_check_constraints``,
+            and what ``regenerate`` uses. Defaults to False.
 
     Attributes:
         traced_files (dict[str, FileTrace]): After ``generate()``, ``sql_alchemy.py`` with the lines rendered
@@ -78,8 +83,13 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "Optional_",        # typing.Optional
     }
 
-    def __init__(self, model: DomainModel, output_dir: str = None):
+    regenerable = True
+
+    def __init__(self, model: DomainModel, output_dir: str = None, dbms: str = "sqlite",
+                 ocl_check_constraints: bool = False):
         super().__init__(model, output_dir)
+        self.dbms = dbms
+        self.ocl_check_constraints = ocl_check_constraints
         # Work on an instance-level copy so per-model enum entries never leak
         # into the class-level mapping (and never mask validation errors for
         # other models generated in the same process).
@@ -231,7 +241,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 + f"\n\nSupported types: {', '.join(sorted(self.TYPES))}."
             )
 
-    def generate(self, dbms: str = "sqlite", ocl_check_constraints: bool = False):
+    def generate(self, dbms: str = None, ocl_check_constraints: bool = None):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified
         output directory.
@@ -241,14 +251,18 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         Args:
             dbms (str, optional): The database management system to be used. Values allowed:
-            "sqlite", "postgresql", "mysql", "mssql", "mariadb", or "oracle". Defaults to "sqlite".
+            "sqlite", "postgresql", "mysql", "mssql", "mariadb", or "oracle". Defaults to the generator's ``dbms``.
             ocl_check_constraints (bool, optional): Translate simple OCL invariants of the model
             (comparisons of an attribute with a literal, joined by ``and``) into ``CheckConstraint``
-            table arguments. Untranslatable constraints are skipped. Defaults to False.
+            table arguments. Untranslatable constraints are skipped. Defaults to the generator's option.
 
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py
         """
+        require_valid_identifiers(self.model)
+        dbms = self.dbms if dbms is None else dbms
+        if ocl_check_constraints is None:
+            ocl_check_constraints = self.ocl_check_constraints
         if dbms not in self.VALID_DBMS:
             raise ValueError(f"Invalid DBMS. Valid options are {', '.join(self.VALID_DBMS)}.")
         

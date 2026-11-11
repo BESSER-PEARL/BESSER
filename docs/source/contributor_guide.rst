@@ -146,10 +146,11 @@ Create a virtual environment
    venv\Scripts\activate              # Windows (cmd / PowerShell)
 
 Keep the environment activated in every terminal you use. The commands below
-(``pytest``, ``besser-wme-backend``) and the ``django-admin`` command the Django
-generator calls are installed into it. A user-level ``pip install`` outside a
-virtual environment puts them in ``~/.local/bin`` on Linux, which is not on the
-default ``PATH``; the Django generator tests then skip.
+(``pytest``, ``besser-wme-backend``) are installed into it. A user-level
+``pip install`` outside a virtual environment puts them in ``~/.local/bin`` on
+Linux, which is not on the default ``PATH``; run them through the interpreter
+instead (``python -m pytest``). BESSER starts its own child processes with the
+interpreter that runs it, so the generators do not depend on ``PATH``.
 
 Install dependencies
 ~~~~~~~~~~~~~~~~~~~~
@@ -248,13 +249,22 @@ We use **Ruff** for linting (run automatically in CI):
 
 .. code-block:: bash
 
-   pip install ruff
-   ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 \
-     --ignore E501 --exclude "*/BESSERActionLanguageParser.py"
+   pip install ruff import-linter==2.15
+   ruff check besser/
+   lint-imports
 
-That is exactly the invocation CI runs, so reproducing it locally gives the
-same verdict. A bare ``ruff check .`` uses Ruff's default rule set over the
-whole tree and will disagree in both directions.
+The rules live in ``pyproject.toml`` (``[tool.ruff]`` and
+``[tool.importlinter]``), so this is exactly what CI runs. Lint ``besser/``
+rather than ``.``: CI does not lint the tests.
+
+``lint-imports`` enforces the package layers. From top to bottom:
+``besser.utilities.web_modeling_editor`` (the editor backend),
+``besser.spec_driven_agent``, ``besser.generators``, ``besser.BUML.notations``
+and ``besser.BUML.metamodel``. A module imports only from the layers below it,
+and ``besser.utilities`` outside the backend never imports the generators, the
+agent or the backend. Inside the backend, ``services/`` never imports
+``routers/``. The few known exceptions are listed in
+``ignore_imports``, each with the change that removes it.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 
@@ -264,9 +274,9 @@ Working in core packages
 * **Generators** (``besser/generators/``) — inherit from
   :class:`~besser.generators.generator_interface.GeneratorInterface`; place
   Jinja2 templates in ``generators/<name>/templates/``; register the
-  generator in
-  ``besser/utilities/web_modeling_editor/backend/config/generators.py`` if it
-  should be exposed via the web editor.
+  generator with one entry in ``besser/generators/registry.py``, which the
+  web editor and the Spec-Driven Agent both read (see
+  :doc:`generators/build_generator`).
 * **Metamodel** (``besser/BUML/metamodel/``) — keep changes
   backward-compatible where possible; mirror existing patterns (private
   fields with validating setters, ``Element → NamedElement → …`` hierarchy).
@@ -288,7 +298,9 @@ Working in core packages
   durable ownership and event replay. A new tool needs its declaration in
   ``agent/tools.py``, an entry in ``_TOOL_MODEL_REQUIREMENTS`` in the same file
   (so it is only offered when the models it needs are present), and a handler
-  in ``ToolExecutor._handlers``. See
+  in ``ToolExecutor._handlers``. A generator tool is declared instead by the
+  ``agent_tool`` of its entry in ``besser/generators/registry.py`` (which
+  carries its requirements), its id in ``AGENT_TOOL_ORDER`` and the handler. See
   :doc:`spec_driven_agent/index`.
 * **Bidirectional converters** — if you support a feature in
   ``json_to_buml/``, add the symmetric path in ``buml_to_json/``. Round-trips
@@ -316,7 +328,7 @@ Run the full suite before pushing, scoped to ``tests/``:
 
    python -m pytest tests/
 
-CI runs ``python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x``.
+CI runs ``python -m pytest tests/ -n auto -q --tb=short``; ``-n auto`` is pytest-xdist (in the ``dev`` extra) with one worker per core.
 
 While iterating, target the area you are changing:
 
@@ -374,6 +386,7 @@ Common pages to update:
   (``configuration.rst``)
 * ``web_editor.rst`` — editor workflows
 * ``web_editor_backend.rst`` — backend endpoints and environment variables
+* ``web_editor_github.rst`` — how the editor and the agent work with GitHub
 * ``utilities.rst`` — new utilities
 * ``contributor_guide.rst`` / ``ai_assistant_guide.rst`` — workflow changes
 
@@ -487,7 +500,7 @@ Step-by-step
    .. code-block:: bash
 
       python -m pytest tests/         # tests
-      ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741         --ignore E501 --exclude "*/BESSERActionLanguageParser.py"   # lint, as CI runs it
+      ruff check besser/              # lint, as CI runs it
       python docs/check_docs.py                                     # if you touched the docs
 
 4. **Push your branch:**

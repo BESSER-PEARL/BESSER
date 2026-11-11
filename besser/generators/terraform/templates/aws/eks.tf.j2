@@ -93,8 +93,8 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
         spec {
         {%for container in dep.containers%}
           container {
-            image = "{{container.application.image_repo}}"
-            name  = "{{container.name}}"
+            image = "{{container.application.image_repo | hcl_str}}"
+            name  = "{{container.name | hcl_str}}"
             resources {
               limits = {
                 cpu    = "{{container.resources_limit.cpu}}"

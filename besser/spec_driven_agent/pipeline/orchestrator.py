@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
+from besser.BUML.metamodel.structural import DomainModel
 from besser.spec_driven_agent.agent.compaction import (
     COMPACT_RESERVE_TOKENS,
     # Re-exported on purpose: callers and tests import the threshold from
@@ -51,6 +52,7 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
 )
 from besser.spec_driven_agent.planning.user_request import user_request
+from besser.spec_driven_agent.run_recap import request_text
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import evict_stale_file_bodies
 from besser.spec_driven_agent.validation.frontend_contract import (
@@ -87,10 +89,10 @@ from besser.spec_driven_agent.planning.gap_analyzer import analyze_gaps_via_llm
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
+from besser.llm.pricing import is_free_local_model
 from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
-    _is_free_local_model,
     _is_quota_exhausted,
 )
 from besser.spec_driven_agent.agent.prompt_builder import (
@@ -100,6 +102,24 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     build_endpoint_manifest,
     requests_frontend,
     _FRONTEND_ASK_RE,
+)
+from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
+from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
+from besser.spec_driven_agent.planning.generator_keywords import (
+    default_generator,
+    keyword_generator,
+)
+from besser.spec_driven_agent.planning.target import (
+    MODIFY_TOOL_PROPERTIES,
+    OTHER,
+    entity_requirements,
+    STACK_RULES,
+    STACK_TOOL_PROPERTIES,
+    TARGET_RULES,
+    TARGET_TOOL_PROPERTIES,
+    WEB_APP,
+    Routing,
+    Target,
 )
 from besser.spec_driven_agent.planning.stack_metadata import (
     effective_rivals,
@@ -126,6 +146,8 @@ from besser.spec_driven_agent.validation.toolchain import (
     _collect_cargo_issues,
     _collect_kotlinc_issues,
     _collect_ruff_issues,
+    _collect_uncompiled_source_issues,
+    format_python_files,
     _collect_tsc_issues,
     _demote_tsc_without_deps,
     _is_real_undefined_name,
@@ -135,7 +157,8 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
+from besser.utilities.secret_redaction import redact_trace_text
+from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
@@ -165,6 +188,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
+    EVENT_TARGET,
     EVENT_TOOL_CALL,
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
@@ -183,10 +207,8 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _WRITE_TOOLS_ON_RECORD,
     _APPLICATION_OUTPUT_DIRS,
     _APPLICATION_PRIMARY_TOOLS,
-    _BARE_LANG_RE,
     _EDIT_STREAK_TOOLS,
     _EDIT_TOOLS,
-    _HISTORY_EVICTION_ENABLED,
     _MAX_PARALLEL_WORKERS,
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_FIX_TURNS,
@@ -196,7 +218,10 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _READONLY_TOOLS,
     _RECIPE_EXCLUDED_DIRS,
     _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
+    _REVISION_HASH_CAP,
+    _REVISION_IGNORED_DIRS,
     _REVISION_IGNORED_SUFFIXES,
+    _REVISION_PATH_ONLY_SUFFIXES,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -211,9 +236,6 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _SNAPSHOT_STAGING_DIR,
     _TOOL_DETAIL_KEYS,
     _TOOL_DETAIL_MAX_CHARS,
-    _UNSUPPORTED_STACK_LITERALS,
-    _UNSUPPORTED_STACK_RE,
-    _names_unsupported_stack,
     _runtime_verdict,
     _tool_call_detail,
 )
@@ -222,6 +244,15 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
 from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin
+from besser.spec_driven_agent.pipeline.regeneration import Regeneration
+from besser.spec_driven_agent.settings import AgentSettings
+
+# Checkpoint history eviction (see history_eviction.py). When enabled, stale
+# file bodies in older messages are stubbed at the compaction checkpoint to cut
+# the re-sent context. OFF by default: it rewrites history the provider
+# re-serializes and is not yet verified end to end. Enable with
+# BESSER_LLM_HISTORY_EVICTION=1.
+_HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 
 
 class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
@@ -281,6 +312,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
+        previous_domain_model: DomainModel | None = None,
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
@@ -348,7 +380,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             object_model=object_model,
             bpmn_model=bpmn_model,
             nn_model=nn_model,
-            protect_scaffold=_is_free_local_model(_model_name),
+            protect_scaffold=is_free_local_model(_model_name),
             per_write_diagnostics=per_write_diagnostics,
             # The executor enforces this too. Hiding the tools from the
             # advertised list is not a gate: the model can name a tool it was
@@ -463,6 +495,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # builder to surface "these files were pre-created" to the LLM.
         self._phase0_5_stack: str | None = None
         self._phase0_5_files: list[str] = []
+        # What the run builds (planning/target.py), decided by the Phase 1
+        # selector call; None keeps the pre-target behaviour.
+        self.target: Target | None = None
+        # Notes from formatting the LLM's Python (format_python_files), for Phase 3.
+        self._format_notes: list[str] = []
+        # The seed's target when this modify run builds another kind.
+        self._previous_target: Target | None = None
+        # A modify run: the seed recipe's target and the routing call's answer
+        # (``_route_modify_request``); None when the call failed.
+        self._seed_target: Target | None = None
+        self._modify_routing: Routing | None = None
+        # The routing call's stack no generator builds ('' for none), and
+        # whether that call answered at all on this create run.
+        self._unsupported_stack = ""
+        self._routed = False
         self._inventory: str = ""
         # True once the client's per-call output-token limit was raised
         # above its default: by ``_apply_adaptive_budget`` for a pure
@@ -606,6 +653,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # is ``None`` unless at least one new class was actually added.
         self._source_project_export: dict | None = source_project_export
         self._updated_project_export: dict | None = None
+        # The classes model sync added (its LLM answer), so a resume replays them.
+        self._model_sync_classes: list[dict] = []
+        # The modify run's regeneration of the generated files (#659).
+        self._regeneration: Regeneration | None = None
+        # The model the app's stored generator output came from (modify runs), to
+        # rebuild the merge base after a BESSER upgrade (#659).
+        self._previous_domain_model = previous_domain_model
+        # Every file the seed run delivered (its recipe); None without a recipe.
+        self._seed_output_files: set[str] | None = None
+        # Generator files earlier runs' LLM edited, from the seed recipe.
+        self._seed_llm_modified: set[str] = set()
         # Why the model-sync call failed, for the trace and the recipe.
         self._model_sync_error: str | None = None
 
@@ -683,18 +741,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._start_time = time.monotonic()
         # Re-compute fingerprint now that we know the instructions — the
         # constructor-time value was hashed with an empty string.
-        self._project_fingerprint = compute_fingerprint(
-            instructions=instructions,
-            primary_kind=self.primary_kind,
-            domain_model=self.domain_model,
-            state_machines=self.state_machines,
-            gui_model=self.gui_model,
-            agent_model=self.agent_model,
-            object_model=self.object_model,
-            quantum_circuit=self.quantum_circuit,
-            bpmn_model=self.bpmn_model,
-            nn_model=self.nn_model,
-        )
+        self._project_fingerprint = self._compute_project_fingerprint(instructions)
         self._trace.write(
             EVENT_RUN_START,
             # bounded: trace display only, never a decision input
@@ -718,6 +765,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             phase="phase1",
             generator_used=self._generator_used,
         )
+        # The scaffold's generator is known now: add the model findings that
+        # only break what that generator emits.
+        self._collect_model_contract_issues()
 
         # -- Phase 0.5: Stack-metadata floor (only when no Phase 1 ran) ---
         # When Phase 1 picked a Python generator (Django / FastAPI /
@@ -748,6 +798,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             stop_reason=self._phase2_stop_reason,
             stop_detail=self._phase2_stop_detail,
         )
+
+        # Before Phase 3, so validation and the recipe describe the shipped layout.
+        self._format_python_output()
 
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
         # If Phase 3 fixes make things worse, we roll back here
@@ -801,6 +854,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Resume entry point
     # ==================================================================
 
+    def _compute_project_fingerprint(self, instructions: str) -> str:
+        """The fingerprint a checkpoint is saved with and a resume checks."""
+        return compute_fingerprint(
+            instructions=instructions,
+            primary_kind=self.primary_kind,
+            domain_model=self.domain_model,
+            state_machines=self.state_machines,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
+        )
+
     @ends_shell_session
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
@@ -827,18 +895,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 f"No checkpoint at {self.output_dir}; nothing to resume"
             )
 
-        expected = compute_fingerprint(
-            instructions=instructions,
-            primary_kind=self.primary_kind,
-            domain_model=self.domain_model,
-            state_machines=self.state_machines,
-            gui_model=self.gui_model,
-            agent_model=self.agent_model,
-            object_model=self.object_model,
-            quantum_circuit=self.quantum_circuit,
-            bpmn_model=self.bpmn_model,
-            nn_model=self.nn_model,
-        )
+        expected = self._compute_project_fingerprint(instructions)
         if expected != checkpoint.project_fingerprint:
             raise CheckpointMismatchError(
                 "Checkpoint fingerprint does not match the supplied "
@@ -872,6 +929,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._inventory = checkpoint.inventory
         self._generator_used = checkpoint.generator_used
+        self.target = Target.from_payload(checkpoint.target)
+        if checkpoint.modify is not None:
+            self._restore_modify_state(checkpoint.modify)
         self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
@@ -892,16 +952,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._trace.write(
             EVENT_RUN_START,
             resumed=True,
+            mode="modify" if self._modify_mode else "create",
             resume_from_turn=checkpoint.turn,
             resume_phase=checkpoint.phase,
             saved_at=checkpoint.saved_at,
         )
 
-        # -- Adaptive budget: same rule as a fresh run (``_generator_used``
+        # -- Budget: same rule as the run being resumed (``_generator_used``
         # was just restored from the checkpoint above). Resuming is the
         # common path for a run that previously broke out on a cost_cap /
         # timeout / max_tokens truncation, so this matters here too.
-        self._apply_adaptive_budget()
+        if self._modify_mode:
+            self._apply_modify_budget()
+        else:
+            self._apply_adaptive_budget()
 
         if checkpoint.phase == "phase2":
             self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
@@ -917,6 +981,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.executor.set_scaffold_family(
                 self._scaffold_family(), self._instructions)
 
+        self._format_python_output()
         self._create_snapshot()
         self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_resume")
         if (checkpoint.phase == "phase3" or self._phase2_exited_cleanly
@@ -928,6 +993,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             EVENT_PHASE_EXIT, phase="phase3",
             exit_reason=self._phase3_exit_reason,
         )
+        self._evaluate_fix_target_gate()
 
         elapsed = time.monotonic() - self._start_time
         self._save_recipe(instructions, elapsed)
@@ -1016,6 +1082,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # row with a clear "skipped — no model" message instead of
                 # silently jumping from `select` to `gap`.
                 self.on_progress(0, "__skipped__", "no_model")
+            self._decide_target(instructions)
             return
 
         generator_name = self._select_generator(instructions)
@@ -1063,6 +1130,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.info("Phase 1: No matching generator -- LLM will write from scratch")
             if self.on_progress:
                 self.on_progress(0, "__skipped__", "no_generator")
+            if self.target is not None and not self.target.is_web_app and self.on_phase_details:
+                self.on_phase_details(
+                    "generate",
+                    f"No BESSER generator builds a {self.target.description}: "
+                    "it is written from scratch")
 
     def _select_generator(self, instructions: str = "") -> str | None:
         """
@@ -1076,6 +1148,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # no LLM call, no keywords. Validated upstream against the
         # registered generator tools.
         if self.target_generator_bound:
+            # The approved full-stack web app settles the target, so it costs
+            # no call; any other approved generator (FastAPI also scaffolds a
+            # mobile app's API) still needs the decision.
+            if self.target_generator == "generate_web_app":
+                self._record_target(Target(WEB_APP, "full-stack web app", True))
+            else:
+                self._decide_target(instructions)
             if self.target_generator is None:
                 logger.info(
                     "Phase 1: caller explicitly selected no deterministic generator"
@@ -1087,61 +1166,47 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
             return self.target_generator
 
-        # Hard override: an explicitly-named language/stack BESSER has no
-        # generator for (Rust, C, C++, Kotlin, Go, ...) must build from scratch.
-        # The LLM selector below is unreliable here — it picks the nearest
-        # built-in (Python/Java) — so decide this deterministically first.
-        if _names_unsupported_stack(instructions):
-            logger.info(
-                "Phase 1: request names an unsupported-for-BESSER stack — "
-                "building from scratch (no deterministic generator)"
-            )
-            return None
-
-        # LLM decides first
         llm_result = self._select_generator_with_llm(instructions)
+        if self.target is None and self._can_route():
+            logger.warning(
+                "Phase 1: the generator selector did not decide the target; "
+                "deciding it with a separate call")
+            self._decide_target(instructions)
 
-        if llm_result and llm_result != "":
-            # LLM picked a specific generator — trust it
+        if llm_result:
             return llm_result
-
-        # LLM said "none" or failed — run keywords as safety net
-        keyword_result = self._select_generator_keyword(instructions)
-
-        if keyword_result and keyword_result != "":
-            # Keywords found a match — override LLM's "none"
-            logger.info("Phase 1: Keywords override LLM → %s", keyword_result)
+        # A non-web target never falls back to a web scaffold: keywords would
+        # turn "a mobile app with a REST API" back into FastAPI.
+        if self.target is not None and self.target.kind == OTHER:
+            if llm_result is None:
+                logger.warning("Phase 1: no generator decided for a %s; building from scratch",
+                               self.target.description or "non-web target")
+            return None
+        # A stack no generator builds is written from scratch ("a REST API in
+        # Go"), whether the selector said NONE or failed and the target call named it.
+        if self._unsupported_stack:
+            return None
+        if llm_result == "":
+            # A NONE from the prose protocol carries no stack field: it stands.
+            if not self._routed:
+                return None
+            # A routed NONE for a web app or backend with no unsupported stack
+            # contradicts the rules (every Python one gets a generator).
+            fallback = default_generator(self, instructions)
+            logger.warning("Phase 1: the selector answered NONE for a %s with no unsupported stack; "
+                           "using %s", self.target.kind if self.target else "request", fallback)
+            return fallback
+        # No routing answer at all (the provider failed): the last-resort keywords.
+        keyword_result = keyword_generator(self, instructions)
+        if keyword_result:
+            logger.warning("Phase 1: keyword fallback decided the generator: %s", keyword_result)
             return keyword_result
 
-        if llm_result == "" and (keyword_result is None or keyword_result == ""):
-            # Both LLM and keywords agree: no generator
-            return None
-
-        # Last resort: default based on the primary specialist model.
-        if self.primary_kind == "bpmn" and self.bpmn_model is not None:
-            return "generate_bpmn"
-        if self.primary_kind == "nn" and self.nn_model is not None:
-            lower = instructions.lower()
-            if "tensorflow" in lower or "keras" in lower:
-                return "generate_tensorflow"
-            return "generate_pytorch"
-        if self.primary_kind == "agent" and self.agent_model is not None:
-            return "generate_baf"
-        if self.primary_kind == "object" and self.object_model is not None:
-            return "generate_json_object"
-
-        # Legacy specialist/default ordering.
-        if self.quantum_circuit is not None:
-            return "generate_qiskit"
-        if self.gui_model and self.domain_model is not None:
-            return "generate_web_app"
-        if self.domain_model is not None:
-            try:
-                if self.domain_model.get_classes():
-                    return "generate_fastapi_backend"
-            except Exception:
-                pass
-        return None
+        fallback = default_generator(self, instructions)
+        if fallback:
+            logger.warning("Phase 1: no generator decided; defaulting to %s for the loaded models",
+                           fallback)
+        return fallback
 
     def _select_generator_with_llm(self, instructions: str) -> str | None:
         """Use a cheap LLM call to pick the best generator for Phase 1."""
@@ -1218,13 +1283,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 + "\n".join(f"  • {line}" for line in available_models) + "\n\n"
                 "Available BESSER generators:\n"
                 + "\n".join(gen_lines) + "\n"
-                "- NONE → write from scratch (for frameworks BESSER doesn't support: NestJS, Next.js, Express, Spring Boot, Go, etc.)\n\n"
+                "- NONE → write from scratch (anything no generator above produces: a native mobile or desktop app, a CLI, NestJS, Next.js, Spring Boot, Go, ...)\n\n"
                 "RULES:\n"
                 "- Pick the generator that best covers the MAIN part of the request\n"
                 "- Even if the user asks for more than one thing (backend + frontend), pick the generator for the biggest part\n"
                 "- generate_fastapi_backend includes SQLAlchemy + Pydantic — don't pick those separately\n"
                 "- generate_web_app includes React + FastAPI + Docker — most complete if GUI available\n"
-                "- An app / UI / website request with no GUI model (and no named framework) → "
+                "- A web_app target with no GUI model (and no named framework) → "
                 "generate_fastapi_backend; its React frontend is written in the customization phase\n"
                 "- If a Quantum circuit is present and the user asks for quantum/Qiskit code → generate_qiskit\n"
                 "- If state machines are present, pick the generator that fits the rest of the request — "
@@ -1235,11 +1300,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "- Agent/chatbot/BAF requests with an Agent model: generate_baf\n"
                 "- JSON fixture/seed requests with an Object model: generate_json_object\n"
                 "- Supabase requests with a Domain model: generate_supabase\n"
-                "- Answer NONE only when the user explicitly asks for a framework BESSER does not support (NestJS, Next.js, Express, Spring Boot, Go, Rust); a Python/FastAPI/Django request always gets a generator\n"
-                "- If the user says 'backend', 'API', 'FastAPI', or 'REST' → answer generate_fastapi_backend\n"
-                "- If the user says 'Django' → answer generate_django\n"
-                "\n"
-                "Reply with ONLY the generator name or NONE. One word. Nothing else."
+                "- Pick a generator only when its output IS what the user wants built. Answer NONE "
+                "for an 'other' target (native mobile or desktop app, CLI, game, extension, embedded, "
+                "bot) unless a generator above produces exactly that (e.g. Python classes for a Python "
+                "library), and for a framework BESSER does not support (NestJS, Next.js, Express, "
+                "Spring Boot, Go, Rust). A Python / FastAPI / Django web app or backend always gets a "
+                "generator\n"
+                "- For a web_app or backend target: 'backend', 'API', 'FastAPI' or 'REST' → "
+                "generate_fastapi_backend; 'Django' → generate_django\n"
             )
 
             # Use the main client with a short response.
@@ -1249,20 +1317,30 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
             registered_names = selectable_names
 
-            # Preferred path: force a choose_generator tool call so the
-            # answer is exact by construction (an enum), routed to the
-            # cheap planning sibling when one exists. Falls back to the
-            # legacy free-text protocol for clients that don't support
-            # tool_choice (older providers, gateways, duck-typed mocks).
-            if self._client_supports_structured_chat():
-                choice = self._select_generator_structured(prompt, registered_names)
-                if choice is not None:
-                    return choice
-                # Structured path failed entirely — fall through to text.
+            # Preferred path: the choose_generator answer (a forced tool call,
+            # or the same answer as JSON text on a gateway without one), routed
+            # to the cheap planning sibling when one exists. Falls back to the
+            # legacy one-word protocol when neither gives a usable answer.
+            routing = self._select_generator_structured(
+                f"{prompt}\n{TARGET_RULES}\n{STACK_RULES}", registered_names)
+            if routing is not None:
+                self._record_routing(routing)
+                if routing.generator in registered_names and routing.unsupported_stack:
+                    logger.warning(
+                        "Phase 1 (LLM): %s picked for a %s request, which no generator builds; "
+                        "building from scratch", routing.generator, routing.unsupported_stack)
+                    return ""
+                if routing.generator == "NONE":
+                    logger.info("Phase 1 (LLM): Explicitly no generator")
+                    return ""
+                if routing.generator in registered_names:
+                    logger.info("Phase 1 (LLM): Selected %s", routing.generator)
+                    return routing.generator
 
             response = self.client.chat(
                 system="You select the best code generator. Reply with only the generator name or NONE.",
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": (
+                    f"{prompt}\nReply with ONLY the generator name or NONE. One word. Nothing else.")}],
                 tools=[],
             )
 
@@ -1295,7 +1373,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return None  # fall through to keyword matching
 
         except Exception as e:
-            logger.debug("Phase 1: LLM selection skipped (%s), using keywords", e)
+            logger.warning("Phase 1: the generator selector failed (%s)", e)
             return None
 
     def _client_supports_structured_chat(self) -> bool:
@@ -1310,146 +1388,132 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return True
         return "force_tool" in params and "model_override" in params
 
-    def _select_generator_structured(
-        self, prompt: str, registered_names: list[str],
-    ) -> str | None:
-        """Selection via a forced choose_generator tool call.
+    def _can_route(self) -> bool:
+        """True when the client is a real provider that can answer ``choose_generator``."""
+        return hasattr(self.client, "_client")
 
-        Returns the generator name, ``""`` for an explicit NONE, or
-        ``None`` when the structured path failed (caller falls back to
-        the free-text protocol).
+    def _select_generator_structured(
+        self, prompt: str, registered_names: list[str], *, modify: bool = False,
+    ) -> Routing | None:
+        """One forced ``choose_generator`` call: the generator and what is built.
+
+        ``modify`` adds the fields only a modify run needs (a target change, a
+        failure report). A gateway that ignores ``tool_choice``, or a client with
+        no forced tools, is asked for the same answer as JSON text. Returns
+        ``None`` when no usable answer came back; the caller decides what to record.
         """
+        modify_properties = MODIFY_TOOL_PROPERTIES if modify else {}
         choose_tool = {
             "name": "choose_generator",
             "description": (
-                "Select the best BESSER generator for this request, or "
-                "NONE to write from scratch."
+                "Decide what the user wants built, and select the best BESSER "
+                "generator for it, or NONE to write from scratch."
             ),
             "input_schema": {
                 "type": "object",
+                # A modify run decides the change first, then the target it implies.
                 "properties": {
+                    **modify_properties,
+                    **TARGET_TOOL_PROPERTIES,
+                    **STACK_TOOL_PROPERTIES,
                     "generator": {
                         "type": "string",
                         "enum": registered_names + ["NONE"],
                     },
                 },
-                "required": ["generator"],
+                "required": [
+                    *modify_properties, *TARGET_TOOL_PROPERTIES, *STACK_TOOL_PROPERTIES, "generator",
+                ],
             },
         }
-        planning_model = getattr(self.client, "planning_model", None)
-        for model_override in dict.fromkeys([planning_model, None]):
-            try:
-                response = self.client.chat(
-                    system=(
-                        "You select the best code generator. Call "
-                        "choose_generator with your selection."
-                    ),
-                    messages=[{"role": "user", "content": prompt}],
-                    tools=[choose_tool],
-                    force_tool="choose_generator",
-                    model_override=model_override,
-                )
-            except Exception as exc:
-                logger.info(
-                    "Phase 1 (LLM): structured selection failed on %s (%s)",
-                    model_override or "primary", exc,
-                )
-                continue
-            for block in response.get("content", []):
-                block_type = getattr(block, "type", None) or (
-                    block.get("type") if isinstance(block, dict) else None
-                )
-                if block_type != "tool_use":
+        if self._client_supports_structured_chat():
+            # A modify run's answer can rebuild the whole app: the primary model decides it.
+            planning_model = None if modify else getattr(self.client, "planning_model", None)
+            for model_override in dict.fromkeys([planning_model, None]):
+                try:
+                    response = self.client.chat(
+                        system="You select the best code generator. Call choose_generator with your selection.",
+                        messages=[{"role": "user", "content": prompt}],
+                        tools=[choose_tool], force_tool="choose_generator",
+                        model_override=model_override,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Phase 1 (LLM): the generator selector failed on %s (%s)",
+                        model_override or "primary", exc,
+                    )
                     continue
-                payload = getattr(block, "input", None) or (
-                    block.get("input") if isinstance(block, dict) else None
-                )
-                choice = (payload or {}).get("generator", "")
-                if choice == "NONE":
-                    logger.info("Phase 1 (LLM): Explicitly no generator")
-                    return ""
-                if choice in registered_names:
-                    logger.info("Phase 1 (LLM): Selected %s", choice)
-                    return choice
-            # No usable tool_use block (gateway ignored tool_choice?) —
-            # don't retry the other model for this; bail to text protocol.
+                routing = self._routing_in(response)
+                if routing is not None:
+                    return routing
+                break  # the gateway ignored tool_choice: ask for the same answer as text
+            else:
+                return None  # every forced call raised: the provider is failing, not the format
+        # A client without forced tools, or a gateway that ignored them: the same
+        # answer as a JSON object in plain text.
+        schema = choose_tool["input_schema"]
+        try:
+            response = self.client.chat(
+                system="You select the best code generator. Reply with a JSON object holding your selection.",
+                messages=[{"role": "user", "content": (
+                    f"{prompt}\n\nReply with ONLY a JSON object with the keys "
+                    f"{', '.join(schema['required'])}; generator is one of "
+                    f"{', '.join(schema['properties']['generator']['enum'])}.")}],
+                tools=[],
+            )
+        except Exception as exc:
+            logger.warning("Phase 1 (LLM): the generator selector failed (%s)", exc)
             return None
-        return None
+        routing = self._routing_in(response)
+        if routing is None:
+            logger.warning("Phase 1 (LLM): the generator selector gave no usable answer")
+        return routing
 
-    def _select_generator_keyword(self, instructions: str) -> str | None:
-        """Keyword-based generator selection. Returns generator name, '' for none, or None if undecided."""
-        import re as _re
-        lower = instructions.lower()
+    @staticmethod
+    def _routing_in(response: dict) -> Routing | None:
+        """The choose_generator answer in a reply: its tool_use block, else a JSON object in its text."""
+        texts = []
+        for block in response.get("content", []):
+            block_type = getattr(block, "type", None) or (
+                block.get("type") if isinstance(block, dict) else None
+            )
+            if block_type == "tool_use":
+                return Routing.from_payload(getattr(block, "input", None) or (
+                    block.get("input") if isinstance(block, dict) else None
+                ))
+            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+            if isinstance(text, str):
+                texts.append(text)
+        return Routing.from_text("".join(texts))
 
-        def _has(word: str) -> bool:
-            return bool(_re.search(r'\b' + _re.escape(word) + r'\b', lower))
+    def _decide_target(self, instructions: str) -> None:
+        """Decide ``self.target`` when the generator is settled without the selector.
 
-        # Frameworks with NO BESSER generator → write from scratch
-        for fw in ("nestjs", "next.js", "nextjs", "express", "spring boot",
-                    "springboot", "laravel", "rails", "golang", "axum",
-                    "actix", "angular", "vue", "svelte", "nuxt"):
-            if _has(fw):
-                return ""
+        The same forced call as the selector, with NONE as the only generator.
+        """
+        if self.target is not None or not self._can_route():
+            return
+        routing = self._select_generator_structured(
+            f"User request: {user_request(instructions)}\n\n{TARGET_RULES}\n{STACK_RULES}\n"
+            "The generator is already settled: answer generator=NONE.",
+            [],
+        )
+        if routing is not None:
+            self._record_routing(routing)
 
-        # Specialist generators for the newer modeling artifacts.
-        if self.bpmn_model is not None and (
-            self.primary_kind == "bpmn"
-            or _has("bpmn")
-            or _has("workflow")
-            or "business process" in lower
-            or "process model" in lower
-        ):
-            return "generate_bpmn"
-        if self.nn_model is not None:
-            if _has("tensorflow") or _has("keras"):
-                return "generate_tensorflow"
-            if (
-                self.primary_kind == "nn"
-                or _has("pytorch")
-                or _has("torch")
-                or "neural network" in lower
-            ):
-                return "generate_pytorch"
-        if self.agent_model is not None and (
-            self.primary_kind == "agent"
-            or _has("baf")
-            or _has("chatbot")
-            or "agent framework" in lower
-        ):
-            return "generate_baf"
-        if self.object_model is not None and (
-            self.primary_kind == "object"
-            or "json object" in lower
-            or _has("fixture")
-            or _has("fixtures")
-            or "seed data" in lower
-        ):
-            return "generate_json_object"
-        if self.domain_model is not None and _has("supabase"):
-            return "generate_supabase"
+    def _record_routing(self, routing: Routing) -> None:
+        """A create run's routing answer: the target and the stack no generator builds."""
+        self._record_target(routing.target)
+        if routing.target is not None:
+            self._routed = True
+            self._unsupported_stack = routing.unsupported_stack
 
-        # Positive matches — check what user explicitly asked for
-        if _has("django"):
-            return "generate_django"
-        if _has("fastapi") or _has("fast api"):
-            if self.gui_model:
-                return "generate_web_app"  # full-stack is better when GUI available
-            return "generate_fastapi_backend"
-        if _has("backend") or _has("api") or _has("rest"):
-            if self.gui_model:
-                return "generate_web_app"
-            return "generate_fastapi_backend"
-        if _has("full-stack") or _has("fullstack") or _has("full stack") or _has("web app"):
-            if self.gui_model:
-                return "generate_web_app"
-            return "generate_fastapi_backend"
-        if _has("pydantic") and not _has("api") and not _has("backend"):
-            return "generate_pydantic"
-        if _has("sqlalchemy"):
-            return "generate_sqlalchemy"
-
-        # No clear keyword match — let caller decide
-        return None
+    def _record_target(self, target: Target | None) -> None:
+        if target is None:
+            return
+        self.target = target
+        logger.info("Phase 1: target %s (%s)", target.kind, target.description)
+        self._trace.write(EVENT_TARGET, **target.to_dict())
 
     # ==================================================================
     # Phase 0.5: Stack-metadata pre-generation
@@ -1482,6 +1546,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Python generator, the manifest is already on disk and almost
         # certainly more tailored than our static template would be.
         if self._generator_used:
+            return
+        # The templates are server projects (Spring Boot, axum, Next.js): a
+        # "Kotlin Android app" or a "Rust CLI" must not get one.
+        if self.target is not None and self.target.kind == OTHER:
+            logger.info("Phase 0.5: skipped for a %s target", self.target.description)
             return
 
         stack_id = detect_stack(instructions)
@@ -1764,6 +1833,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 modify_mode=self._modify_mode,
                 workspace_files=self._workspace_file_list(),
                 action_endpoints=self._expected_action_endpoints(),
+                target_description=(
+                    self.target.description
+                    if self.target is not None and not self.target.is_web_app else ""),
             )
             # The planning call may have switched the client to its
             # outage fallback model — surface that before Phase 2 turns.
@@ -1786,28 +1858,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # from-scratch path, so run() is unaffected.
                 and not self._modify_mode
             ):
-                # Backstop: the deterministic scaffold never includes auth,
-                # security, payments, email, integrations, or custom styling.
-                # A weak planner sometimes returns [] even when the request
-                # clearly asks for one of these — don't trust an empty list
-                # in that case; run Phase 2 from the instructions instead.
-                _markers = (
-                    "auth", "login", "log in", "sign in", "signin",
-                    "sign up", "signup", "register", "jwt", "oauth",
-                    "session", "password", "secur", "authoriz", "authentic",
-                    "permission", "payment", "stripe", "checkout", "email",
-                    "webhook", "integrat", "upload", "theme", "styling",
-                    " colour", " color",
-                )
-                _needs_custom = any(
-                    m in (instructions or "").lower() for m in _markers
-                ) or bool(self._deterministic_gap_tasks())
+                # The planner's prompt already refuses an empty list for auth,
+                # payments, styling and the like; the harness's own tasks still
+                # keep Phase 2 running.
+                _needs_custom = bool(self._deterministic_gap_tasks())
                 if _needs_custom:
                     logger.warning(
-                        "Phase 2: gap analysis returned empty, but the request "
-                        "asks for something the deterministic scaffold never "
-                        "produces (auth/security/custom) — running Phase 2 "
-                        "anyway instead of trusting the empty checklist."
+                        "Phase 2: gap analysis returned empty, but the harness "
+                        "has its own checklist tasks; running Phase 2 anyway."
                     )
                     gap_tasks = None  # don't tell Phase 2 "no gaps were found"
                 else:
@@ -1973,9 +2031,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         len(open_items), self._end_turn_task_nudges,
                         self._MAX_TASK_NUDGES,
                     )
-                    messages.append(
-                        {"role": "assistant", "content": response["content"]}
-                    )
+                    # An empty end_turn reply (no text, no tool calls) is not
+                    # replayed: OpenAI-compatible APIs reject an assistant
+                    # message with null content and no tool calls (400), and
+                    # Anthropic gets an empty turn mid-history.
+                    if response["content"]:
+                        messages.append(
+                            {"role": "assistant", "content": response["content"]}
+                        )
                     listing = "\n".join(
                         f"  {t['id']}. {t['text']}" for t in open_items
                     )
@@ -2554,6 +2617,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 ],
                 inventory=self._inventory,
                 generator_used=self._generator_used,
+                target=self.target.to_dict() if self.target else None,
                 estimated_cost_usd=float(self.client.usage.estimated_cost),
                 compaction_count=self._compaction_count,
                 project_fingerprint=self._project_fingerprint,
@@ -2566,6 +2630,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
                 locked_generators=sorted(self.executor.locked_generators),
+                modify=self._modify_checkpoint_state(),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:
@@ -2702,9 +2767,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             raw = self._apply_scenario_evidence(raw)
             # A clean list only counts as OK when a backend was actually booted;
             # "no backend here" must never read as "the app works".
-            self._record_runtime_verdict(
-                _runtime_verdict(raw) if self._probeable_backends() else None
-            )
+            try:
+                probed = bool(self._probeable_backends())
+            except Exception:
+                logger.warning("Backend discovery failed; no runtime verdict", exc_info=True)
+                probed = False
+            self._record_runtime_verdict(_runtime_verdict(raw) if probed else None)
         elif any(os.path.basename(p) == "main_api.py" for p in _python_files(self.output_dir)):
             self._record_runtime_verdict(None)
             raw.append("runtime unverified: backend startup/data-entry checks are disabled; this app has not been runtime verified")
@@ -2797,14 +2865,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return checked
 
     def _probeable_backends(self) -> list[str]:
-        """Generated FastAPI services the constructibility probe can drive."""
-        try:
-            from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
+        """Generated FastAPI services the constructibility probe can drive.
 
-            return _fastapi_backends(self.output_dir)
-        except Exception:
-            logger.debug("Backend discovery failed", exc_info=True)
-            return []
+        Raises when discovery fails: "no backend" would silence the runtime
+        gate, so the caller decides (the gate fails closed).
+        """
+        from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
+
+        return _fastapi_backends(self.output_dir)
 
     def _validate_app(self) -> dict:
         """Model-facing, revision-bound diagnostics with no additional LLM cost."""
@@ -3108,17 +3176,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Model-derived acceptance matrix: per entity — route present,
         # page present, create wired. REPORT-ONLY (warnings + recipe
         # field): a GUI-scoped run may legitimately omit entities, so
-        # these are visibility, never blockers.
-        try:
-            from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
-            self._acceptance_matrix = build_acceptance_matrix(
-                self.output_dir, self.domain_model,
-            )
-            raw_issues.extend(matrix_issues(self._acceptance_matrix))
-        except Exception as exc:
-            logger.warning("Acceptance matrix computation failed", exc_info=True)
-            raw_issues.append(_check_did_not_run(
-                "the acceptance matrix", f"it crashed: {type(exc).__name__}"))
+        # these are visibility, never blockers. It measures web routes and
+        # pages, so it says nothing about a native or CLI target.
+        if self.target is not None and not self.target.is_web_app:
+            logger.info("Phase 3: acceptance matrix not applicable to a %s target", self.target.kind)
+        else:
+            try:
+                from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
+                self._acceptance_matrix = build_acceptance_matrix(
+                    self.output_dir, self.domain_model,
+                )
+                raw_issues.extend(matrix_issues(self._acceptance_matrix))
+            except Exception as exc:
+                logger.warning("Acceptance matrix computation failed", exc_info=True)
+                raw_issues.append(_check_did_not_run(
+                    "the acceptance matrix", f"it crashed: {type(exc).__name__}"))
 
         execution_issues = self._collect_execution_issues()
         # An enabled ledger that extracted nothing verified nothing. Saying so
@@ -3142,6 +3214,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._format_notes)
+        raw_issues.extend(_collect_uncompiled_source_issues(
+            self.output_dir,
+            frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
         if self.enable_toolchain_validation:
             raw_issues.extend(self._collect_cargo_issues())
             raw_issues.extend(self._collect_kotlinc_issues())
@@ -3329,7 +3405,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     _WEBAPP_ASK_RE = _FRONTEND_ASK_RE
 
     def _asks_for_frontend(self) -> bool:
-        """The request wants a UI: web-app vocabulary, or a bare "app" on create."""
+        """The run must ship a web frontend: a ``web_app`` target, or, with no
+        target decided, web-app vocabulary or a bare "app" on create."""
+        if self.target is not None:
+            return self.target.is_web_app
         return requests_frontend(self._instructions, bare_app=not self._modify_mode)
 
     def _has_frontend_files(self) -> bool:
@@ -3370,8 +3449,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # Cheat-proof: done is refused until frontend files exist.
                 "verify": self._has_frontend_files,
             })
+        if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
+            # The requirements judge checks it in Phase 3 (agent_data); a modify
+            # run's app already has an agent, so only the judge applies there.
+            tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
+        if not self._modify_mode and self._scaffold_family() == "fastapi":
+            # A path the user wrote must exist verbatim, whatever the planner judged.
+            tasks.extend(requested_route_tasks(
+                self.output_dir, _requirements_ledger.original_request(self._instructions)))
         tasks.extend(item["text"] for item in self._requirements_for_validation()
                      if item.get("conversion_issue_id"))
         return tasks
@@ -3395,7 +3482,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Only the current source+requirements judgment can discharge it;
             # a stale verdict or a task_list claim cannot.
             verdicts = self._requirement_judgments.get(
-                self._requirement_cache_key(self._requirements_for_validation()), [],
+                self._requirement_cache_key(self._requirements_to_judge()), [],
             )
             verified_ids = {item["id"] for item in _requirements_ledger.verify_evidence(
                 verdicts, self.output_dir,
@@ -3620,6 +3707,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             next_id += 1
         return requirements
 
+    def _requirements_to_judge(self) -> list[dict]:
+        """What Phase 3 judges: the validation list, the agent's use of the
+        model's data, and the per-entity checks of a non-web app (reported,
+        never planned as obligations)."""
+        requirements = self._requirements_for_validation()
+        derived = [item for item in [agent_data_requirement(self.agent_model, self.domain_model)] if item]
+        if not self._generator_used:
+            # A BESSER generator built the base (a BAF chatbot, Python classes):
+            # per-entity screens are not what it delivers.
+            derived += entity_requirements(self.target, self.domain_model)
+        next_id = max((item["id"] for item in requirements), default=0) + 1
+        return requirements + [{"id": next_id + i, **item} for i, item in enumerate(derived)]
+
     def _collect_requirement_issues(self) -> list[str]:
         """``requirement:`` blockers for what the user asked for and the code
         does not do: the check of the app against the request itself, which
@@ -3645,7 +3745,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "treat this as an empty requirement list or verified completion."
                 ]
             return []  # Offline clients cannot run the optional LLM judge.
-        requirements = self._requirements_for_validation()
+        requirements = self._requirements_to_judge()
         if not requirements:
             return []
         digest = _requirements_ledger.build_app_digest(self.output_dir)
@@ -3700,13 +3800,40 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 verdicts = [replacements.get(item["id"], item) for item in verdicts]
                 self._requirement_judgments[cache_key] = verdicts
                 self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir)
-        # A frontend the user asked for but the tree lacks keeps UI items in scope.
-        has_frontend = bool(self._has_frontend_files() or self._asks_for_frontend())
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
-            self._requirement_verdicts, has_frontend)
+            self._requirement_verdicts, self._ui_in_scope())
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
+    def _format_python_output(self) -> None:
+        """Format the Python files the LLM wrote whole (``write_file``) in this run.
+
+        A file it only edited keeps its author's layout, generator files keep
+        the templates' own, and a modify run leaves the existing app alone. A
+        formatter that could not run is reported by Phase 3.
+        """
+        if self._modify_mode:
+            return
+        generated = {os.path.normcase(os.path.join(self.output_dir, p)) for p in self.executor._generator_files}
+        written = sorted(
+            os.path.relpath(path, self.output_dir).replace("\\", "/")
+            for path in self._llm_edited_paths_by(frozenset({"write_file"}))
+            if path.endswith(".py") and path not in generated
+        )
+        app_files = [rel for rel in written if not rel.startswith(("..", _SNAPSHOT_DIR, ".besser_"))]
+        self._format_notes = format_python_files(self.output_dir, app_files)
+        for note in self._format_notes:
+            logger.warning("Phase 2: %s", note)
+
+    def _ui_in_scope(self) -> bool:
+        """A UI the user asked for but the tree lacks keeps UI requirements in scope."""
+        return bool(
+            self._has_frontend_files() or self._asks_for_frontend()
+            or (self.target is not None and self.target.has_user_interface))
+
     def _collect_frontend_contract_issues(self) -> list[str]:
+        # Its route and HTTP-write checks describe a React web app.
+        if self.target is not None and not self.target.is_web_app:
+            return []
         return collect_frontend_contract_issues(self.output_dir)
 
     def _requirement_cache_key(self, requirements: list[dict]) -> str:
@@ -3749,30 +3876,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
     def _workspace_revision(self) -> str:
-        """Hash source/config state, excluding traces, caches and runtime data.
+        """Hash every authored file's path and content.
 
-        Every file's PATH counts, so writing or deleting one is progress
-        whatever its extension. Only the listed kinds are hashed by content;
-        the rest (binaries, sqlite files written by the boot probe) would
-        churn the revision without a source edit. ``_workspace_file_list``
-        has already dropped caches, vendor dirs and ``.besser_*``.
+        Runtime outputs (``_REVISION_IGNORED_SUFFIXES`` / ``_DIRS``) are
+        skipped entirely, and data the app writes counts by path only; ``_workspace_file_list`` has already dropped
+        dependency dirs and ``.besser_*``. A file is hashed up to
+        ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
+        stall the check.
         """
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
-        extensions = {
-            ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".html", ".css",
-            ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".txt", ".lock",
-            ".sql", ".rs", ".kt", ".java", ".go", ".c", ".cpp", ".h", ".rb", ".php",
-            # Stacks _UNSUPPORTED_STACK_RE sends to Phase 2 to build from
-            # scratch, plus the per-service Dockerfiles / build files a
-            # Phase 3 repair edits.
-            ".vue", ".svelte", ".dart", ".cs", ".swift", ".scala", ".ex",
-            ".mod", ".sum", ".md",
-        }
-        # ``.env`` and ``Dockerfile.backend`` have no usable splitext suffix.
-        basename_prefixes = ("Dockerfile", "Makefile", ".env")
         for rel in sorted(self._workspace_file_list()):
-            if rel.lower().endswith(_REVISION_IGNORED_SUFFIXES):
+            if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
+                    or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])):
                 continue
             path = os.path.realpath(os.path.join(workspace, rel))
             try:
@@ -3781,15 +3897,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             except ValueError:
                 continue
             fingerprint.update(rel.encode("utf-8"))
-            base = os.path.basename(rel)
-            if (os.path.splitext(rel)[1].lower() not in extensions
-                    and not base.startswith(basename_prefixes)):
+            if rel.lower().endswith(_REVISION_PATH_ONLY_SUFFIXES):
                 fingerprint.update(b"\0")
                 continue
             try:
                 with open(path, "rb") as source:
-                    for chunk in iter(lambda: source.read(65536), b""):
-                        fingerprint.update(chunk)
+                    fingerprint.update(source.read(_REVISION_HASH_CAP))
+                    fingerprint.update(str(os.fstat(source.fileno()).st_size).encode())
             except OSError:
                 fingerprint.update(b"<unreadable>")
             fingerprint.update(b"\0")
@@ -3807,7 +3921,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _llm_edited_paths(self) -> set[str]:
         """Delegate to the toolchain module."""
-        return _llm_edited_paths(self.output_dir, self.tool_calls_log, _WRITE_TOOLS_ON_RECORD)
+        return self._llm_edited_paths_by(_WRITE_TOOLS_ON_RECORD)
+
+    def _llm_edited_paths_by(self, tools: frozenset[str]) -> set[str]:
+        """Absolute, normalised paths the LLM wrote with these tools."""
+        return _llm_edited_paths(self.output_dir, self.tool_calls_log, tools)
 
     @staticmethod
     def _ruff_line_path(line: str) -> str:
@@ -4011,8 +4129,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # reads batch four to a turn.
         scaffold_snapshot = ""
         if (
-            os.environ.get("BESSER_LLM_INLINE_SCAFFOLD", "0").lower()
-            in ("1", "true")
+            AgentSettings().llm_inline_scaffold
             and (self._generator_used or self._phase0_5_files)
         ):
             try:
@@ -4063,6 +4180,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # flips it to prepend the "preserve what works" directive.
             modify_mode=self._modify_mode,
             design_system=design_system,
+            target=self.target,
+            previous_target=self._previous_target,
             # Without both, the runtime-verification runbook never renders.
             allow_shell=self.allow_shell_tools,
             output_dir=self.output_dir,
@@ -4230,21 +4349,47 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Loop detection
     # ==================================================================
 
+    # ``DomainModel.validate`` warnings that make any generated CRUD app
+    # unusable, whichever stack builds it. Matched case-insensitively on the
+    # message start, like ``_classify_issue``.
+    _MODEL_CONTRACT_WARNING_PREFIXES = (
+        "mandatory creation cycle",
+        "class names differ only in case",
+        "attribute names differ only in case",
+    )
+    # Warnings about what one family of BESSER generators emits: each was
+    # observed to stop that scaffold from loading (SyntaxError, a table
+    # defined twice, a Django system-check error), and is harmless to others,
+    # so it is promoted only once the generator that built the scaffold is known.
+    _SCAFFOLD_CONTRACT_WARNING_PREFIXES = {
+        "fastapi": (
+            "python keyword name", "empty enumeration", "join table name clash",
+            "foreign key column clash", "subclass declares 'id'", "class-typed attribute",
+        ),
+        "django": (
+            "python keyword name", "empty enumeration", "foreign key column clash",
+            "subclass declares 'id'", "attribute 'id' is not the identifier",
+        ),
+    }
+
     def _collect_model_contract_issues(self) -> None:
-        """Promote the domain model's constructibility warnings to blockers.
+        """Promote the domain model's errors and its fatal warnings to blockers.
 
-        ``DomainModel.validate`` only warns about a mandatory creation cycle:
-        an association with 1..1 on both ends is legal UML, and BESSER's own
-        ``user_reference_domain_model`` ships three of them. Here the intent
-        IS to generate a CRUD API, and a cycle makes that API unusable — if
-        ``BookingCreate`` requires a ReservedRoom id while
+        ``DomainModel.validate`` only warns about, e.g., a mandatory creation
+        cycle: an association with 1..1 on both ends is legal UML, and
+        BESSER's own ``user_reference_domain_model`` ships three of them. Here
+        the intent IS to generate a CRUD API, and a cycle makes that API
+        unusable — if ``BookingCreate`` requires a ReservedRoom id while
         ``ReservedRoomCreate`` requires a Booking id, neither class can ever
-        be created.
+        be created. Every validation error is promoted too: an invalid
+        identifier or a dangling type is broken code whatever is generated.
 
-        Recorded once, before Phase 1, and deliberately NOT part of
-        ``_collect_validation_issues``: the Phase 3 fix loop edits code, and
-        no edit to the generated code can repair the specification it was
-        generated from. Surfacing it early is the whole value.
+        Deliberately NOT part of ``_collect_validation_issues``: the Phase 3
+        fix loop edits code, and no edit to the generated code can repair the
+        specification it was generated from. Surfacing it early is the whole
+        value. Run before Phase 1 and again once the scaffold's generator is
+        known (``_SCAFFOLD_CONTRACT_WARNING_PREFIXES``); a finding already
+        recorded is not recorded twice.
 
         Kept in ``_model_contract_issues`` as well, because Phase 3 REPLACES
         ``_validation_issues`` with what ``_collect_validation_issues``
@@ -4255,12 +4400,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         try:
             result = self.domain_model.validate(raise_exception=False)
         except Exception:
-            logger.debug("Domain-model validation raised; skipping", exc_info=True)
+            logger.warning("Phase 0: domain-model validation raised; model contract not checked",
+                           exc_info=True)
             return
-        for warning in result.get("warnings", []):
-            if not warning.lower().startswith("mandatory creation cycle"):
+        prefixes = self._MODEL_CONTRACT_WARNING_PREFIXES + self._SCAFFOLD_CONTRACT_WARNING_PREFIXES.get(
+            self._scaffold_family() or "", ())
+        findings = list(result.get("errors", [])) + [
+            warning for warning in result.get("warnings", [])
+            if warning.lower().startswith(prefixes)
+        ]
+        recorded = {issue.message for issue in self._model_contract_issues}
+        for finding in findings:
+            issue = _classify_issue(f"model contract: {finding}")
+            if issue.message in recorded:
                 continue
-            issue = _classify_issue(f"model contract: {warning}")
             self._model_contract_issues.append(issue)
             self._validation_issues.append(issue)
             logger.warning("Phase 0: %s", issue.message)
@@ -4400,7 +4553,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "size": os.path.getsize(full),
                         "source": "generator" if rel in generator_files else "llm",
                     }
-                    if os.path.normcase(os.path.normpath(full)) in llm_edited:
+                    if os.path.normcase(os.path.normpath(full)) in llm_edited or rel in self._seed_llm_modified:
                         entry["llm_modified"] = True
                     output_files.append(entry)
         except Exception:
@@ -4462,7 +4615,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             and isinstance((tc.get("input") or {}).get("path"), str)
         })
         history.append({
-            "instructions": (instructions or "")[:300],
+            "instructions": request_text(instructions)[:300],  # bounded: one history line
             "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "mode": "modify" if self._modify_mode else "create",
             "files_touched": touched[:20],
@@ -4476,6 +4629,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "model": recipe_model,
             "llm_model": self.client.model,
             "generator_used": self._generator_used,
+            "target": self.target.to_dict() if self.target else None,
             "turns": self.total_turns,
             "tool_calls_count": len(self.tool_calls_log),
             "compactions": self._compaction_count,
@@ -4536,6 +4690,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         }
         if self._model_sync_error:
             recipe["model_sync_error"] = self._model_sync_error
+        # Modify runs only: how the model differs from the one the base app was
+        # built from, so the run card can say what changed in the model.
+        model_change = getattr(self, "_model_change", None) if self._modify_mode else None
+        if model_change is not None:
+            recipe["model_change"] = model_change.to_dict()
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did
@@ -4563,42 +4722,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
 
 
-# Credentials a tool call can carry that the provider-token patterns miss: a
-# bearer token in a probe command or request log, a login response's token
-# field (also inside JSON-escaped output), a bare JWT.
-_TRACE_CREDENTIAL_PATTERNS = (
-    (_re.compile(r"(?i)(authorization\\?[\"']?\s*[:=]\s*\\?[\"']?\s*(?:(?:bearer|basic|token)\s+)?)[^\s\"'\\,}]+"),
-     r"\1[REDACTED]"),
-    (_re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1[REDACTED]"),
-    (_re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), "[REDACTED]"),
-)
-
-
-_secret_redactor: Any = None
-
-
-def _redact_text_for_trace(text: str) -> str:
-    global _secret_redactor
-    if _secret_redactor is None:
-        # The artifact/SSE redaction. Loaded lazily: it lives in the web backend
-        # package, which the engine must not require.
-        try:
-            from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
-            _secret_redactor = redact_text
-        except Exception:
-            logger.debug("secret redaction unavailable for the trace", exc_info=True)
-            _secret_redactor = False
-    if _secret_redactor:
-        text = _secret_redactor(text, env_style=False)[0]
-    for pattern, replacement in _TRACE_CREDENTIAL_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
-
-
 def _redact_for_trace(value: Any) -> Any:
     """``value`` with credential-shaped strings replaced, recursively."""
     if isinstance(value, str):
-        return _redact_text_for_trace(value)
+        return redact_trace_text(value)
     if isinstance(value, list):
         return [_redact_for_trace(item) for item in value]
     if isinstance(value, dict):
@@ -4618,7 +4745,7 @@ def _trace_safe_input(tool_name: str, data: Any) -> Any:
 def _trace_result_excerpt(result: Any) -> dict:
     """The start of a tool result for the trace, redacted before it is cut."""
     text = result if isinstance(result, str) else json.dumps(result, default=str)
-    return {"chars": len(text), **_sanitize_for_log({"excerpt": _redact_text_for_trace(text)})}
+    return {"chars": len(text), **_sanitize_for_log({"excerpt": redact_trace_text(text)})}
 
 
 def _sanitize_for_log(data: Any) -> Any:

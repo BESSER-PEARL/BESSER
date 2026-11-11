@@ -78,9 +78,13 @@ and, at the top level, its volume and network:
        name: smartgen_network
        driver: bridge
 
-The backend mounts the same volume read-only (``smartgen_workspace:/workspace:ro``)
-so that push-to-GitHub and import-from-GitHub, which need the backend's OAuth
-session, can read the generated files.
+The backend mounts the same volume (``smartgen_workspace:/workspace``) with
+``BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs``, because push-to-GitHub and
+import-from-GitHub need the backend's OAuth session. Push reads the worker's
+finished runs from it. Import writes the repo into it as a run, which is where
+the worker finds it when a modify run seeds from that repo. A read-only mount
+breaks import: the modify run cannot see the repo and rebuilds from scratch.
+The backend never runs generation, so it creates no other runs there.
 
 Environment
 -----------
@@ -106,8 +110,9 @@ budget overrides (``BESSER_LLM_DEFAULT_MAX_COST_USD``,
   secrets. See :ref:`spec-driven-shell-tools`.
 - ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` -- the backend image has no
   compilers to run.
-- ``BESSER_LLM_RUN_WORKSPACE_ROOT`` and ``BESSER_LLM_RUN_STORE_PATH`` -- the
-  backend's ``/workspace`` is read-only, so runs created under it fail.
+- ``BESSER_LLM_RUN_WORKSPACE_ROOT`` and ``BESSER_LLM_RUN_STORE_PATH`` -- each
+  service sets its own in its ``environment`` block. The run store belongs to
+  the worker alone.
 - ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` -- keep it off on every hosted
   service (SSRF); the worker sets it to ``false`` explicitly.
 - ``BESSER_LLM_SHELL_SANDBOX=off`` -- a development opt-out that runs
@@ -208,6 +213,20 @@ would deploy is not defined there or when ``besser-wme-smartgen`` is not on the
 in both containers with the commit it built, then checks that the API answers
 ``200``.
 
+The model catalog (``BESSER_MODEL_CATALOG``) is validated strictly at startup:
+an unknown key, a value of the wrong type or a ``base_url`` without a host
+stops the backend and the worker (see :doc:`models`). A catalog edited by hand
+on the host is not checked by the workflow, so check it against the image you
+are about to deploy before you deploy:
+
+.. code-block:: bash
+
+   docker run --rm -e BESSER_MODEL_CATALOG=/catalog.json \
+     -v /home/ec2-user/model_catalog.json:/catalog.json:ro <backend image> \
+     python -c "from besser.llm.catalog import load_model_catalog as l; print(sorted(l().providers))"
+
+It prints the provider ids, or a ``ModelCatalogError`` naming the field.
+
 Verification
 ------------
 
@@ -231,7 +250,7 @@ Run these on the host, in the directory of its compose file:
    curl -s http://127.0.0.1:9001/besser_api/spec-driven/config | python3 -m json.tool | grep -E 'shell_tools_enabled|toolchain_validation_enabled'
    # ... and off in the backend
    docker compose exec -T besser-wme-backend python -c \
-     "import besser.utilities.web_modeling_editor.backend.constants.constants as c; print(c.LLM_ENABLE_SHELL_TOOLS, c.LLM_ENABLE_TOOLCHAIN_VALIDATION)"
+     "from besser.utilities.web_modeling_editor.backend.settings import get_settings as g; print(g().llm_enable_shell_tools, g().llm_enable_toolchain_validation)"
 
    # The API answers through the public URL
    curl -s -o /dev/null -w '%{http_code}\n' https://<editor-host>/besser_api/

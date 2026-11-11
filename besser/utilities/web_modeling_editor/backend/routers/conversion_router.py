@@ -9,7 +9,6 @@ import logging
 import os
 import tempfile
 import uuid
-import importlib.util
 import json
 
 import requests
@@ -27,6 +26,7 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
+from besser.utilities.secret_redaction import sanitize_config
 
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
@@ -111,7 +111,6 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_TEMP_DIR_PREFIX,
     CSV_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
-    AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
     KG_DIAGRAM_TYPE,
@@ -121,8 +120,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     ALLOWED_SPREADSHEET_EXTENSIONS,
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_BUML_EXTENSIONS,
-    BUML_EMIT_IDS,
 )
+from besser.utilities.web_modeling_editor.backend.dependencies import SdmxImportSlotsDep, SettingsDep
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 # Upload validation and async file I/O, shared with kg_router
 from besser.utilities.web_modeling_editor.backend.services.utils.upload_validation import (
@@ -196,7 +196,7 @@ router = APIRouter(prefix="/besser_api", tags=["conversion"])
 
 @router.post("/export-project-as-buml")
 @handle_endpoint_errors("export_project_as_buml")
-async def export_project_as_buml(input_data: ProjectInput = Body(...)):
+async def export_project_as_buml(settings: SettingsDep, input_data: ProjectInput = Body(...)):
     buml_project = json_to_buml_project(input_data)
 
     errors = buml_project._cross_diagram_errors["errors"]
@@ -206,7 +206,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
-        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=BUML_EMIT_IDS, trace=trace)
+        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=settings.buml_emit_ids, trace=trace)
         file_content = await read_file_async(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
@@ -217,7 +217,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 
 @router.post("/export-buml")
 @handle_endpoint_errors("export_buml")
-async def export_buml(input_data: DiagramInput):
+async def export_buml(input_data: DiagramInput, settings: SettingsDep):
     # Create unique temporary directory for this request
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         json_data = input_data.model_dump()
@@ -238,7 +238,7 @@ async def export_buml(input_data: DiagramInput):
         elif elements_data.get("type") == "ClassDiagram":
             buml_model = process_class_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "domain_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
+            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=settings.buml_emit_ids)
             file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
@@ -261,7 +261,7 @@ async def export_buml(input_data: DiagramInput):
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
             domain_model_to_code(
-                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=BUML_EMIT_IDS,
+                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=settings.buml_emit_ids,
             )
             file_content = await read_file_async(output_file_path, "rb")
             return Response(
@@ -376,6 +376,11 @@ async def export_buml(input_data: DiagramInput):
             )
 
 
+def _import_repair_warnings(repairs: list[str]) -> list[dict] | None:
+    """What the import changed to load a BUML file, in the response's warning shape."""
+    return [{"code": "buml-import-repaired", "message": message} for message in repairs] or None
+
+
 @router.post("/get-project-json-model", response_model=ProjectExportResponse)
 @handle_endpoint_errors("get_project_json_model")
 async def get_project_json_model(buml_file: UploadFile = File(...)):
@@ -384,13 +389,15 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
     validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
-    parsed_project = project_to_json(buml_content)
+    repairs: list[str] = []
+    parsed_project = project_to_json(buml_content, repairs)
 
     return {
         "project": parsed_project,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION,
         "trace": project_trace_to_json(buml_content, parsed_project),
+        "warnings": _import_repair_warnings(repairs),
     }
 
 @router.post("/get-json-model", response_model=DiagramExportResponse)
@@ -408,6 +415,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     # First, try to detect what type of file this is by analyzing the content
     diagram_data = None
     diagram_type = None
+    parse_error = None
+    repairs: list[str] = []
     safe_filename = os.path.basename(buml_file.filename) if buml_file.filename else ""
     diagram_title = safe_filename.rsplit('.', 1)[0] if safe_filename else "Imported Diagram"
 
@@ -460,7 +469,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     # Try to parse based on detected type
     if is_project:
         try:
-            parsed_project = project_to_json(buml_content)
+            parsed_project = project_to_json(buml_content, repairs)
 
             # project_to_json emits the schemaVersion=3 shape:
             #   { diagrams: { ClassDiagram: [ {id,title,model,...}, ... ], ... },
@@ -517,6 +526,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
 
         except Exception as project_error:
             logger.error("Project parsing failed: %s", str(project_error))
+            parse_error = project_error
 
     elif is_agent:
         try:
@@ -529,6 +539,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "AgentDiagram"
         except Exception as agent_error:
             logger.error("Agent diagram parsing failed: %s", str(agent_error))
+            parse_error = agent_error
 
     elif is_state_machine:
         try:
@@ -541,11 +552,12 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "StateMachineDiagram"
         except Exception as sm_error:
             logger.error("State machine parsing failed: %s", str(sm_error))
+            parse_error = sm_error
 
     elif is_domain_model:
         try:
             logger.info("Detected Domain Model (Class diagram), parsing...")
-            domain_model = parse_buml_content(buml_content)
+            domain_model = parse_buml_content(buml_content, repairs)
             if domain_model and len(domain_model.types) > 0:
                 diagram_json = class_buml_to_json(domain_model)
                 diagram_data = {
@@ -557,6 +569,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 raise ValueError("No types found in domain model")
         except Exception as class_error:
             logger.error("Class diagram parsing failed: %s", str(class_error))
+            parse_error = class_error
 
     elif is_gui_model:
         try:
@@ -569,6 +582,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "GUINoCodeDiagram"
         except Exception as gui_error:
             logger.error("GUI diagram parsing failed: %s", str(gui_error))
+            parse_error = gui_error
 
     elif is_nn_model:
         try:
@@ -581,6 +595,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "NNDiagram"
         except Exception as nn_error:
             logger.error("NN diagram parsing failed: %s", str(nn_error))
+            parse_error = nn_error
 
     elif is_bpmn:
         try:
@@ -593,6 +608,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = BPMN_DIAGRAM_TYPE
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
+            parse_error = bpmn_error
 
     elif is_kg:
         # A ConversionError from the converter names the actual problem and is
@@ -624,6 +640,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
 
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
+        if parse_error is not None:
+            raise ValueError(f"Could not import the BUML file: {parse_error}") from parse_error
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
             "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
@@ -640,7 +658,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         },
         "diagramType": diagram_type,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
-        "version": API_VERSION
+        "version": API_VERSION,
+        "warnings": _import_repair_warnings(repairs),
     }
 
 @router.post("/get-svg")
@@ -665,9 +684,10 @@ async def get_svg(buml_file: UploadFile = File(...)):
 
     diagram_json = class_buml_to_json(domain_model)
 
-    node_server_url = os.environ.get("WME_NODE_SERVER_URL", "http://localhost:8080").rstrip("/")
+    node_server_url = BackendSettings().wme_node_server_url.rstrip("/")
     try:
-        render_response = requests.post(
+        render_response = await asyncio.to_thread(
+            requests.post,
             f"{node_server_url}/api/svg",
             json={"model": diagram_json, "autoLayout": True},
             timeout=30,
@@ -766,7 +786,7 @@ async def get_sdmx_providers():
 
 @router.post("/sdmx-to-domain-model", response_model=DiagramExportResponse)
 @handle_endpoint_errors("sdmx_to_domain_model_endpoint")
-async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest):
+async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest, slots: SdmxImportSlotsDep):
     """
     Reads the structure of an SDMX dataflow (a preset provider or an https SDMX 2.1 API) and returns
     its B-UML domain model as JSON, in the same shape as ``/csv-to-domain-model``.
@@ -779,6 +799,7 @@ async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest):
         agency=request.agency,
         version=request.version,
         model_name=request.modelName,
+        slots=slots,
     )
 
     diagram_type = "ClassDiagram"
@@ -838,7 +859,8 @@ async def get_json_model_from_image(
             raise HTTPException(status_code=400, detail="No valid image file found.")
         image_path = os.path.join(image_folder, image_files[0])
 
-        domain_model = image_to_buml(
+        domain_model = await asyncio.to_thread(
+            image_to_buml,
             image_path=image_path,
             openai_token=api_key,
             existing_model=existing_domain_model,
@@ -870,7 +892,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         if base_config is None:
             raise HTTPException(status_code=400, detail="Config is required for transformation")
 
-        logger.debug("[Agent transform] config: %s", json.dumps(base_config, indent=2, default=str))
+        logger.debug("[Agent transform] config: %s", json.dumps(sanitize_config(base_config), indent=2, default=str))
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
         if isinstance(user_profile_payload, dict):
@@ -880,30 +902,20 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
         json_data["config"] = config
         # Convert to BUML model
+        # The generator takes the in-memory model. Serializing it to Python and
+        # importing that would run the user's code actions and tool code here.
         agent_model = process_agent_diagram(json_data)
-
-        # Persist BUML to file for generator import
-        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
-        agent_model_to_code(agent_model, agent_file)
-
-        # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
-        spec = importlib.util.spec_from_file_location("agent_model", agent_file)
-        agent_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent_module)
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
         generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
-        resolved_agent = getattr(agent_module, "agent", agent_model)
-        # gui_models is now serialized by agent_model_to_code, so the
-        # exec'd module's agent already carries it.
         generator_instance = generator_class(
-            resolved_agent,
+            agent_model,
             config=config,
             openai_api_key=extract_openai_api_key(config),
             output_dir=generation_output_dir,
         )
-        generator_instance.generate()
+        await asyncio.to_thread(generator_instance.generate)
 
         # Some generator implementations still emit files in temp_dir directly.
         candidate_paths = [

@@ -12,7 +12,7 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 from besser.spec_driven_agent.parsed_source import parse_source
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 
 _SKIP_DIRS = {

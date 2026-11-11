@@ -2,6 +2,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from besser.utilities.web_modeling_editor.backend.models.responses import ResponseModel
+
 
 class SdmxImportRequest(BaseModel):
     """Import a class diagram from the structure of an SDMX dataflow.
@@ -17,7 +19,7 @@ class SdmxImportRequest(BaseModel):
     modelName: Optional[str] = Field(None, max_length=100)
 
 
-class SdmxProvider(BaseModel):
+class SdmxProvider(ResponseModel):
     """A preset SDMX provider the editor offers."""
     key: str
     name: str
@@ -25,7 +27,7 @@ class SdmxProvider(BaseModel):
     agency: str
 
 
-class SdmxProvidersResponse(BaseModel):
+class SdmxProvidersResponse(ResponseModel):
     """The preset providers, and whether a custom SDMX API URL is accepted."""
     providers: list[SdmxProvider]
     customUrlAllowed: bool

@@ -29,7 +29,7 @@ from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
     data_types,
 )
-from besser.utilities.llm_utils import (
+from besser.llm import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_REQUEST_TIMEOUT,
     LLMUpstreamError,
@@ -56,7 +56,7 @@ _MAX_COMPLETION_TOKENS = 10000
 class LLMAnswerError(RuntimeError):
     """The model answered, but its answer is not a usable class diagram.
 
-    Distinct from :class:`~besser.utilities.llm_utils.LLMUpstreamError` (the
+    Distinct from :class:`~besser.llm.errors.LLMUpstreamError` (the
     call itself failed) and from a plain :class:`RuntimeError` (the KG file
     could not be read). The message may quote the model's answer, so it is meant
     for logs rather than an end user. Subclasses :class:`RuntimeError`, which is
@@ -75,7 +75,7 @@ def _ask_openai(
 ) -> str:
     """Send the conversion prompt plus the raw KG text; return the non-empty reply.
 
-    Goes through :func:`~besser.utilities.llm_utils.post_openai_chat`, so the
+    Goes through :func:`~besser.llm.openai_chat.post_openai_chat`, so the
     request has a timeout and a failure is an :class:`LLMUpstreamError` whose
     message never carries the provider's response body.
     """
@@ -431,7 +431,7 @@ def kg_to_plantuml(
     openai_token : str
         Your OpenAI API token.
     openai_model : str, optional
-        Model name to use, by default :data:`~besser.utilities.llm_utils.DEFAULT_OPENAI_MODEL`.
+        Model name to use, by default :data:`~besser.llm.openai_chat.DEFAULT_OPENAI_MODEL`.
     timeout : float, optional
         Seconds before the OpenAI request is abandoned.
     http_post : callable, optional
@@ -532,7 +532,7 @@ def kg_to_buml(
     openai_token : str
         Your OpenAI API token.
     openai_model : str, optional
-        Model name to use, by default :data:`~besser.utilities.llm_utils.DEFAULT_OPENAI_MODEL`.
+        Model name to use, by default :data:`~besser.llm.openai_chat.DEFAULT_OPENAI_MODEL`.
     timeout : float, optional
         Seconds before the OpenAI request is abandoned.
     http_post : callable, optional

@@ -31,6 +31,8 @@ class RESTAPIGenerator(GeneratorInterface):
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
+    regenerable = True
+
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, backend: bool = False, port: int = None, output_dir: str = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"]

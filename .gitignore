@@ -1,6 +1,5 @@
 __pycache__/
 .pytest_cache/
-/.idea/
 
 # virtual env
 Pipfile
@@ -22,17 +21,17 @@ buml.egg-info/
 
 # Sphinx documentation
 docs/_build/
+docs/build/
 
 # Build
-build
+/build/
 **/besser.egg-info/**
 
 # ANTLR
 **/.antlr/**
-besser/.idea/workspace.xml
+# IDE
+.idea/
 *.iml
-.idea/inspectionProfiles/profiles_settings.xml
-*.xml
 
 # Backend
 besser/utilities/web_modeling_editor/backend/output
@@ -46,8 +45,10 @@ generated/*
 .agents/
 .claude/
 skills-lock.json
-scripts/
-New folder/*
+/scripts/
+
+# Logs (BAF writes application.log in the current directory on import)
+*.log
 
 # Node
 node_modules/

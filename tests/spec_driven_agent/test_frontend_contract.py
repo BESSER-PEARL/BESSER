@@ -29,7 +29,7 @@ def _run(tmp_path, files: dict) -> list[str]:
         p = tmp_path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-    shim = types.SimpleNamespace(output_dir=str(tmp_path))
+    shim = types.SimpleNamespace(output_dir=str(tmp_path), target=None)
     return LLMOrchestrator._collect_frontend_contract_issues(shim)
 
 

@@ -264,6 +264,34 @@ class TestGenerateOutput:
         assert "Author" in body
         assert "Book" in body
 
+    @pytest.mark.parametrize("generator, missing", [
+        ("web_app", "GUINoCodeDiagram"),
+        ("react", "GUINoCodeDiagram"),
+        ("flutter", "GUINoCodeDiagram"),
+        ("terraform", "deployment model"),
+    ])
+    def test_generators_needing_a_second_model_answer_400(self, client, class_diagram_input, generator, missing):
+        """A class diagram alone crashed these generators' constructors: a bare 500."""
+        response = client.post("/besser_api/generate-output", json={**class_diagram_input, "generator": generator})
+        assert response.status_code == 400, response.text
+        assert missing in response.json()["detail"]
+
+    def test_generator_subprocess_timeout_answers_504(self, client, class_diagram_input, monkeypatch):
+        """A generator child process that runs past its limit is a 504 naming the limit, not a hung request."""
+        import subprocess
+        from unittest import mock
+
+        def _timeout(cmd, *args, timeout=None, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, timeout)
+
+        monkeypatch.setenv("BESSER_GENERATOR_SUBPROCESS_TIMEOUT", "3")
+        with mock.patch("besser.generators.sql.sql_generator.subprocess.run", side_effect=_timeout):
+            response = client.post("/besser_api/generate-output", json={**class_diagram_input, "generator": "sql"})
+        assert response.status_code == 504, response.text
+        detail = response.json()["detail"]
+        assert "timed out" in detail and "3 seconds" in detail
+        assert "python" not in detail.lower()
+
     def test_generate_python_single_class(self, client, single_class_input):
         """Generate Python from a single-class diagram."""
         response = client.post("/besser_api/generate-output", json=single_class_input)
@@ -648,6 +676,24 @@ class TestValidateDiagram:
         assert "warnings" in data
         assert isinstance(data["warnings"], list)
 
+    def test_design_check_warnings_leave_an_older_model_valid_and_generating(self, client, single_class_model):
+        """A model saved before the #756 design checks, which trips only their warnings, still generates."""
+        model = copy.deepcopy(single_class_model)
+        model["elements"]["class-1"]["attributes"].append("attr-2")
+        model["elements"]["attr-2"] = {"type": "Attribute", "name": "+ id: int"}  # 'id' not the identifier
+        model["elements"]["class-2"] = {"type": "Class", "name": "Note", "attributes": [], "methods": []}  # isolated
+        payload = {"title": "SavedBefore756", "model": model, "generator": "python"}
+
+        validation = client.post("/besser_api/validate-diagram", json=payload).json()
+        assert validation["isValid"] is True
+        assert validation["errors"] == []
+        assert any("is not the identifier" in w for w in validation["warnings"])
+        assert any("Isolated class" in w for w in validation["warnings"])
+
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        assert "class Person" in response.text
+
     def test_validate_missing_model_field(self, client):
         """Request with empty model dict should handle gracefully."""
         payload = {"title": "NoModel", "model": {}}
@@ -672,6 +718,23 @@ class TestValidateDiagram:
         data = response.json()
         assert data["isValid"] is False
         assert any("reference" in err.lower() for err in data["errors"])
+
+    def test_validate_user_diagram_has_no_reference_model_warnings(self, client):
+        """A user diagram is not warned about BESSER's own user reference model.
+
+        The editor asks before generating a model with warnings (WME #752); the
+        user cannot edit the reference model, so its warnings were a question
+        on every JSON Object generation from a user diagram.
+        """
+        from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
+
+        assert vr.user_reference_domain_model.validate(raise_exception=False)["warnings"]
+        payload = {"title": "UserProfile", "model": {"type": "UserDiagram", "elements": {}, "relationships": {}}}
+
+        data = client.post("/besser_api/validate-diagram", json=payload).json()
+
+        assert data["isValid"] is True
+        assert data["warnings"] == []
 
     def test_validate_user_diagram_runs_ocl_check(self, client, monkeypatch):
         """UserDiagram validation should execute OCL checking with object model context."""
@@ -1353,9 +1416,7 @@ class TestDockerComposeRouting:
 
     def test_single_docker_compose_uses_deploymentuml_handler(self, monkeypatch):
         from besser.utilities.web_modeling_editor.backend.models import DiagramInput
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
         async def fake_deployment_handler(*_args, **_kwargs):
             return "docker-compose-handler"
@@ -1364,13 +1425,13 @@ class TestDockerComposeRouting:
             pytest.fail("Docker Compose must not use the core class-diagram handler")
 
         monkeypatch.setattr(
-            router, "_handle_deployment_diagram_generation", fake_deployment_handler
+            dispatch, "_handle_deployment_diagram_generation", fake_deployment_handler
         )
         monkeypatch.setattr(
-            router, "_handle_class_diagram_generation", fake_class_handler
+            dispatch, "_handle_class_diagram_generation", fake_class_handler
         )
 
-        result = _run(router.generate_code_output(DiagramInput(
+        result = _run(dispatch.generate_from_diagram(DiagramInput(
             title="Deployment",
             model={
                 "type": "DeploymentDiagram",
@@ -1386,41 +1447,34 @@ class TestDockerComposeRouting:
         self, monkeypatch, class_diagram_model
     ):
         from besser.utilities.web_modeling_editor.backend.models import DiagramInput
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
+
+        from besser.utilities.web_modeling_editor.backend.services.exceptions import ValidationError
 
         async def fake_deployment_handler(*_args, **_kwargs):
             pytest.fail("Terraform must not enter the DeploymentUML handler")
 
-        async def fake_class_handler(*_args, **_kwargs):
-            return "master-fallback"
-
         monkeypatch.setattr(
-            router, "_handle_deployment_diagram_generation", fake_deployment_handler
-        )
-        monkeypatch.setattr(
-            router, "_handle_class_diagram_generation", fake_class_handler
+            dispatch, "_handle_deployment_diagram_generation", fake_deployment_handler
         )
 
-        result = _run(router.generate_code_output(DiagramInput(
-            title="Core deployment",
-            model=class_diagram_model,
-            generator="terraform",
-        )))
-
-        assert result == "master-fallback"
+        # No diagram carries its deployment model: refused up front (it reached
+        # the class-diagram handler and crashed there).
+        with pytest.raises(ValidationError, match="deployment model"):
+            _run(dispatch.generate_from_diagram(DiagramInput(
+                title="Core deployment",
+                model=class_diagram_model,
+                generator="terraform",
+            )))
 
     def test_project_docker_compose_uses_project_handler(self, monkeypatch):
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
         async def fake_project_handler(*_args, **_kwargs):
             return "docker-compose-project-handler"
 
         monkeypatch.setattr(
-            router, "_handle_deployment_project_generation", fake_project_handler
+            dispatch, "_handle_deployment_project_generation", fake_project_handler
         )
 
         project = self._project_input(
@@ -1433,15 +1487,14 @@ class TestDockerComposeRouting:
             },
         )
 
-        result = _run(router.generate_code_output_from_project(project))
+        result = _run(dispatch.generate_from_project(project))
 
         assert result == "docker-compose-project-handler"
 
     def test_project_docker_compose_maps_governance_dsl_validation_to_422(self, monkeypatch):
         from fastapi import HTTPException
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
         from besser.utilities.web_modeling_editor.backend.services.exceptions import (
             GovernanceDslValidationError,
         )
@@ -1453,7 +1506,7 @@ class TestDockerComposeRouting:
             )
 
         monkeypatch.setattr(
-            router,
+            dispatch,
             "_handle_deployment_project_generation",
             fake_project_handler,
         )
@@ -1469,7 +1522,7 @@ class TestDockerComposeRouting:
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            _run(router.generate_code_output_from_project(project))
+            _run(generation_router.generate_code_output_from_project(project))
 
         assert exc_info.value.status_code == 422
         assert "merging gateway 'gw1'" in exc_info.value.detail
@@ -1478,9 +1531,7 @@ class TestDockerComposeRouting:
     def test_project_terraform_bypasses_project_handler(
         self, monkeypatch, class_diagram_model
     ):
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
         async def fake_project_handler(*_args, **_kwargs):
             pytest.fail("Terraform must not enter the Docker Compose project handler")
@@ -1490,9 +1541,9 @@ class TestDockerComposeRouting:
             return "master-fallback"
 
         monkeypatch.setattr(
-            router, "_handle_deployment_project_generation", fake_project_handler
+            dispatch, "_handle_deployment_project_generation", fake_project_handler
         )
-        monkeypatch.setattr(router, "generate_code_output", fake_generate)
+        monkeypatch.setattr(dispatch, "generate_from_diagram", fake_generate)
 
         project = self._project_input(
             "terraform",
@@ -1500,7 +1551,7 @@ class TestDockerComposeRouting:
             class_diagram_model,
         )
 
-        result = _run(router.generate_code_output_from_project(project))
+        result = _run(dispatch.generate_from_project(project))
 
         assert result == "master-fallback"
 
@@ -1577,7 +1628,7 @@ class TestRecommendationEndpoints:
     def _bypass_github_auth(self, monkeypatch):
         """Neutralize the GitHub OAuth gate so the test can drive real logic."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
     def test_recommend_agent_config_llm_success_normalizes_output(self, client, monkeypatch):
         """LLM recommendation endpoint returns normalized config payload."""
@@ -1803,7 +1854,7 @@ class TestRecommendationEndpoints:
         )
         # The mapping endpoint does not require GitHub auth, but neutralize the
         # gate proactively in case item #1 adds it: our header is fake.
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
         payload = {
             "userProfileModel": self._build_user_profile_diagram_payload(age=72),
@@ -1847,7 +1898,7 @@ class TestRecommendationEndpoints:
         from besser.utilities.web_modeling_editor.backend.routers import (
             generation_router as gr,
         )
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
         canned_llm_response = {
             "presentation": {
@@ -1986,7 +2037,7 @@ class TestStandaloneChatbotDeploy:
         mocked PyGithub helper must be called with a render.yaml that
         contains ``python -u "<slug>.py"`` (the chatbot startCommand).
         """
-        from besser.utilities.web_modeling_editor.backend.services.deployment import (
+        from besser.utilities.web_modeling_editor.backend.routers import (
             github_deploy_api as deploy_mod,
         )
         from besser.utilities.web_modeling_editor.backend.routers import (
@@ -1994,8 +2045,8 @@ class TestStandaloneChatbotDeploy:
         )
 
         # Auth gate: pass through to the chatbot path with a fake token.
-        monkeypatch.setattr(deploy_mod, "get_user_token", lambda _session: "fake-token")
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(deploy_mod, "get_user_token", lambda _sessions, _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
         captured: Dict[str, Any] = {
             "create_calls": 0,
@@ -2020,6 +2071,9 @@ class TestStandaloneChatbotDeploy:
 
             async def get_branches(self, *_args, **_kwargs):
                 return ["main"]
+
+            async def get_default_branch(self, *_args, **_kwargs):
+                return "main"
 
             async def create_repository(self, *_args, **kwargs):
                 captured["create_calls"] += 1
@@ -2051,13 +2105,17 @@ class TestStandaloneChatbotDeploy:
                 return {"total_files": 7, "commit_sha": "deadbeef"}
 
             def get_deployment_urls(self, owner: str, repo_name: str):
+                # The two links GitHubService.get_deployment_urls always returns.
                 return {
+                    "github": f"https://github.com/{owner}/{repo_name}",
+                    "render": "https://render.com/deploy",
                     "render_dashboard": "https://dashboard.render.com/blueprints",
                 }
 
             def generate_readme_content(self, name, deploy_instructions=False,
-                                        owner="", repo_name="", deployment_type="webapp"):
+                                        owner="", repo_name="", deployment_type="webapp", description=""):
                 captured["deployment_type_in_readme"] = deployment_type
+                captured["description_in_readme"] = description
                 return f"# {name}\n"
 
         fake_service = _FakeGithubService()
@@ -2095,6 +2153,7 @@ class TestStandaloneChatbotDeploy:
         body = {
             "id": "proj-1",
             "name": "ChatProj",
+            "description": "Answers library questions.",
             "type": "Project",
             "diagrams": {
                 "AgentDiagram": [
@@ -2126,6 +2185,8 @@ class TestStandaloneChatbotDeploy:
         assert data["success"] is True
         # The README was rendered with deployment_type='chatbot'.
         assert captured["deployment_type_in_readme"] == "chatbot"
+        # ...and with the project's description (#750).
+        assert captured["description_in_readme"] == "Answers library questions."
 
         # PyGithub helper saw exactly one create + one push call.
         assert captured["create_calls"] == 1

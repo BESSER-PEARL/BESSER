@@ -20,9 +20,9 @@ from besser.utilities.sdmx_to_buml import (
     parse_structure,
 )
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import sdmx_reverse
 from tests.utilities.sdmx_to_buml.conftest import PUBLIC_ADDRESS, build_structure_xml, resolve_to
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 BASE_URL = "http://testserver"
 URL = "/besser_api/sdmx-to-domain-model"
@@ -51,7 +51,7 @@ def public_dns(monkeypatch):
 @pytest.fixture
 def custom_urls(monkeypatch):
     """Custom SDMX URLs accepted (they are off by default, as on a hosted server)."""
-    monkeypatch.setattr(backend_constants, "SDMX_ALLOW_CUSTOM_URL", True)
+    monkeypatch.setattr(get_settings(), "sdmx_allow_custom_url", True)
 
 
 @pytest.fixture
@@ -75,14 +75,14 @@ def test_providers_are_listed(monkeypatch):
     keys = {p["key"] for p in data["providers"]}
     assert {"eurostat", "ecb", "oecd", "lustat"} <= keys
     assert all(p["baseUrl"].startswith("https://") for p in data["providers"])
-    assert data["customUrlAllowed"] is backend_constants.SDMX_ALLOW_CUSTOM_URL
+    assert data["customUrlAllowed"] is get_settings().sdmx_allow_custom_url
 
 
 def test_custom_urls_are_off_by_default():
     """Like BESSER_LLM_ALLOW_CUSTOM_BASE_URL: a hosted server does not fetch arbitrary URLs for anyone."""
     if "BESSER_SDMX_ALLOW_CUSTOM_URL" in os.environ:
         pytest.skip("BESSER_SDMX_ALLOW_CUSTOM_URL is set in this environment")
-    assert backend_constants.SDMX_ALLOW_CUSTOM_URL is False
+    assert get_settings().sdmx_allow_custom_url is False
 
 
 def test_import_from_a_preset_provider(fake_fetch):
@@ -128,7 +128,7 @@ def test_private_hosts_are_refused(monkeypatch, custom_urls):
 
 
 def test_custom_urls_can_be_disabled(fake_fetch, monkeypatch):
-    monkeypatch.setattr(backend_constants, "SDMX_ALLOW_CUSTOM_URL", False)
+    monkeypatch.setattr(get_settings(), "sdmx_allow_custom_url", False)
     resp = _run(_post({"baseUrl": "https://stats.example.org/rest", "dataflow": "DF_TEST"}))
     assert resp.status_code == 400 and "disabled" in resp.json()["detail"]
     assert _run(_get("/besser_api/sdmx-providers")).json()["customUrlAllowed"] is False
@@ -152,9 +152,9 @@ def test_provider_errors_map_to_http_statuses(monkeypatch, public_dns, error, st
     assert resp.json()["detail"] == str(error)
 
 
-def test_imports_beyond_the_concurrency_cap_are_refused(monkeypatch, public_dns):
+def test_imports_beyond_the_concurrency_cap_are_refused(monkeypatch, public_dns, app_state):
     """Imports cannot fill the shared thread pool: past the cap the server answers 503 at once."""
-    monkeypatch.setattr(sdmx_reverse, "_import_slots", threading.BoundedSemaphore(1))
+    app_state.sdmx_import_slots = threading.BoundedSemaphore(1)
     started, release = threading.Event(), threading.Event()
 
     def slow_fetch(self, ref, **kwargs):
@@ -164,7 +164,7 @@ def test_imports_beyond_the_concurrency_cap_are_refused(monkeypatch, public_dns)
 
     monkeypatch.setattr(SDMXClient, "fetch_structure", slow_fetch)
     first = threading.Thread(target=sdmx_reverse.sdmx_to_domain_model, args=("DF_TEST",),
-                             kwargs={"provider": "ecb"})
+                             kwargs={"provider": "ecb", "slots": app_state.sdmx_import_slots})
     first.start()
     try:
         assert started.wait(5)

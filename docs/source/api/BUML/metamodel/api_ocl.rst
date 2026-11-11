@@ -25,7 +25,7 @@ Notations (parsing, pretty-printing, normalization)
    :members:
    :undoc-members:
 
-.. automodule:: besser.BUML.notations.ocl.pretty_printer
+.. automodule:: besser.BUML.metamodel.ocl.pretty_printer
    :members:
    :undoc-members:
 

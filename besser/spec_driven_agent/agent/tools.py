@@ -10,266 +10,16 @@ Four categories:
 
 from typing import Any
 
+from besser.generators.registry import agent_tools
+
 
 # ======================================================================
 # Generator tools
 # ======================================================================
 
-GENERATOR_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "generate_pydantic",
-        "description": (
-            "Generate Pydantic BaseModel classes from the domain model. "
-            "Produces validated data models with type hints and field validators. "
-            "Output: pydantic_classes.py"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "backend": {
-                    "type": "boolean",
-                    "description": "Generate 'Create' suffixed models for API request bodies",
-                    "default": False,
-                },
-                "nested_creations": {
-                    "type": "boolean",
-                    "description": "Allow nested entity creation in request bodies",
-                    "default": False,
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_sqlalchemy",
-        "description": (
-            "Generate SQLAlchemy ORM models from the domain model. "
-            "Produces table definitions with relationships, foreign keys, and inheritance. "
-            "Output: sql_alchemy.py"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "dbms": {
-                    "type": "string",
-                    "enum": ["sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"],
-                    "description": "Target database system",
-                    "default": "sqlite",
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_fastapi_backend",
-        "description": (
-            "Generate a complete, MODULAR FastAPI backend with CRUD endpoints, SQLAlchemy ORM, "
-            "and Pydantic models. This is the most complete backend generator. "
-            "Output: main_api.py (slim app) + database.py + routers/<Class>.py (endpoints per "
-            "class) + sql_alchemy.py + pydantic_classes.py + bal_stdlib.py + requirements.txt"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "http_methods": {
-                    "type": "array",
-                    "items": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
-                    "description": "HTTP methods to generate endpoints for",
-                    "default": ["GET", "POST", "PUT", "DELETE"],
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_django",
-        "description": (
-            "Generate a full Django project with models, views, templates, URL routing, "
-            "and admin panel. Output: full Django project directory"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "project_name": {"type": "string", "default": "myproject"},
-                "app_name": {"type": "string", "default": "myapp"},
-            },
-        },
-    },
-    {
-        "name": "generate_python_classes",
-        "description": (
-            "Generate plain Python classes with __init__, getters/setters, relationships. "
-            "Output: classes.py"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_java_classes",
-        "description": "Generate Java classes from the domain model. Output: .java files zipped.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_sql",
-        "description": "Generate raw SQL CREATE TABLE statements. Output: tables.sql",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_json_schema",
-        "description": "Generate JSON Schema from the domain model. Output: json_schema.json",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type": "string",
-                    "enum": ["regular", "smart_data"],
-                    "default": "regular",
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_rest_api",
-        "description": (
-            "Generate FastAPI REST endpoints + Pydantic models. "
-            "Lighter than generate_fastapi_backend (no ORM). "
-            "Output: rest_api.py + pydantic_classes.py"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "http_methods": {
-                    "type": "array",
-                    "items": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
-                    "default": ["GET", "POST", "PUT", "DELETE"],
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_react",
-        "description": (
-            "Generate a React TypeScript frontend from the domain model + GUI model. "
-            "REQUIRES a GUI model — fails without one. Output: full React app directory"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_flutter",
-        "description": (
-            "Generate a Flutter mobile app from the domain model + GUI model. "
-            "REQUIRES a GUI model. Output: full Flutter app directory"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_web_app",
-        "description": (
-            "Generate a complete full-stack web app: React frontend + FastAPI backend "
-            "+ Docker deployment. REQUIRES a GUI model. "
-            "Output: frontend/ + backend/ + docker-compose.yml"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_rdf",
-        "description": "Generate RDF/OWL vocabulary (Turtle format). Output: vocabulary.ttl",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_qiskit",
-        "description": (
-            "Generate a Qiskit Python script from the Quantum Circuit model. "
-            "REQUIRES a quantum circuit. Output: qiskit_circuit.py"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "backend_type": {
-                    "type": "string",
-                    "description": "Qiskit backend (default: aer_simulator)",
-                },
-                "shots": {
-                    "type": "integer",
-                    "description": "Number of shots for the simulation (default: 1024)",
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_supabase",
-        "description": (
-            "Generate Supabase-flavoured PostgreSQL DDL from the domain model — "
-            "UUID primary keys, auth.users mirroring, and Row-Level-Security (RLS) "
-            "policies. Output: a .sql file."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "user_root": {
-                    "type": "string",
-                    "description": "Class mapped to Supabase auth users (default: User)",
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_json_object",
-        "description": (
-            "Generate a JSON document of the object (instance) model — the concrete "
-            "instances and their attribute/relationship values (useful as seed data / "
-            "fixtures). REQUIRES an object model. Output: <model>.json"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_baf",
-        "description": (
-            "Generate a BESSER Agent Framework (BAF) chatbot/agent project from the "
-            "agent model. REQUIRES an agent model. Output: a Python BAF agent project."
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_bpmn",
-        "description": (
-            "Generate vendor-neutral BPMN 2.0 XML from the BPMN process model. "
-            "REQUIRES a BPMN model. Output: bpmn_diagram.bpmn"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "generate_pytorch",
-        "description": (
-            "Generate PyTorch neural-network training/eval code from the NN model. "
-            "REQUIRES a neural-network model (and PyTorch installed). Output: pytorch_nn.py"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "generation_type": {
-                    "type": "string",
-                    "enum": ["subclassing", "sequential"],
-                    "description": "PyTorch code style (default: subclassing)",
-                },
-            },
-        },
-    },
-    {
-        "name": "generate_tensorflow",
-        "description": (
-            "Generate TensorFlow/Keras neural-network training/eval code from the NN "
-            "model. REQUIRES a neural-network model (and TensorFlow installed). "
-            "Output: tf_nn.py"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "generation_type": {
-                    "type": "string",
-                    "enum": ["subclassing", "sequential"],
-                    "description": "TensorFlow code style (default: subclassing)",
-                },
-            },
-        },
-    },
-]
+# Declared in besser.generators.registry, with the web editor's generators.
+GENERATOR_TOOLS: list[dict[str, Any]] = [tool.schema() for tool in agent_tools()]
+
 
 # ======================================================================
 # File tools
@@ -846,30 +596,8 @@ def get_all_tools_including_generators() -> list[dict[str, Any]]:
 # entry in GENERATOR_TOOLS should appear here; failure modes are loud
 # (``assert`` below catches drift in tests).
 _TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
-    # Generators that need only the domain model
-    "generate_pydantic":        frozenset({"domain"}),
-    "generate_sqlalchemy":      frozenset({"domain"}),
-    "generate_fastapi_backend": frozenset({"domain"}),
-    "generate_django":          frozenset({"domain"}),
-    "generate_python_classes":  frozenset({"domain"}),
-    "generate_java_classes":    frozenset({"domain"}),
-    "generate_sql":             frozenset({"domain"}),
-    "generate_json_schema":     frozenset({"domain"}),
-    "generate_rest_api":        frozenset({"domain"}),
-    "generate_rdf":             frozenset({"domain"}),
-    # Generators that need domain + GUI
-    "generate_react":           frozenset({"domain", "gui"}),
-    "generate_flutter":         frozenset({"domain", "gui"}),
-    "generate_web_app":         frozenset({"domain", "gui"}),
-    # Supabase DDL is domain-only, like the other database generators
-    "generate_supabase":        frozenset({"domain"}),
-    # Generators driven by other models
-    "generate_qiskit":          frozenset({"quantum"}),
-    "generate_json_object":     frozenset({"object"}),
-    "generate_baf":             frozenset({"agent"}),
-    "generate_bpmn":            frozenset({"bpmn"}),
-    "generate_pytorch":         frozenset({"nn"}),
-    "generate_tensorflow":      frozenset({"nn"}),
+    # Generators: from their registry entry
+    **{tool.name: tool.requires for tool in agent_tools()},
     # Model-query tools need the domain model
     "query_class":              frozenset({"domain"}),
     "list_classes_with":        frozenset({"domain"}),
@@ -954,7 +682,7 @@ def get_tools_for(
         Whether a ``DomainModel`` is available.
     has_gui_model, has_agent_model, has_state_machines, has_quantum_circuit
         Whether the corresponding BUML model is populated. Currently only
-        GUI affects filtering (for React/Flutter/WebApp); agent / SM /
+        GUI affects filtering (for React/WebApp); agent / SM /
         quantum flags are accepted for forward compatibility as future
         tools key on them.
     """

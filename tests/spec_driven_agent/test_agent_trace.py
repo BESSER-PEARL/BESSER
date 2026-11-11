@@ -11,7 +11,7 @@ import tracemalloc
 import pytest
 
 from besser.spec_driven_agent.state import agent_trace as at
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+from besser.utilities.secret_redaction import (
     scrub_secret_files,
 )
 

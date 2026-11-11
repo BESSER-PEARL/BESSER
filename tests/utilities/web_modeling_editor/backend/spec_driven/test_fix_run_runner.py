@@ -29,7 +29,6 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartGenerationRunner,
     SmartRunEntry,
 )
@@ -41,16 +40,17 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed im
     _make_base_dir,
     _parse,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 def _cleanup_registry():
     async def _c():
         import shutil
 
-        async with SMART_RUN_REGISTRY._lock:
-            for entry in list(SMART_RUN_REGISTRY._entries.values()):
+        async with current_runtime().registry._lock:
+            for entry in list(current_runtime().registry._entries.values()):
                 shutil.rmtree(entry.temp_dir, ignore_errors=True)
-            SMART_RUN_REGISTRY._entries.clear()
+            current_runtime().registry._entries.clear()
 
     asyncio.run(_c())
 
@@ -85,7 +85,7 @@ def test_seeded_modify_run_emits_loading_your_app(tmp_path, monkeypatch):
 
     base_dir = _make_base_dir(tmp_path)
     base_id = "a" * 32
-    asyncio.run(SMART_RUN_REGISTRY.put(
+    asyncio.run(current_runtime().registry.put(
         base_id,
         SmartRunEntry(
             file_path=os.path.join(base_dir, "app", "main.py"),
@@ -100,7 +100,7 @@ def test_seeded_modify_run_emits_loading_your_app(tmp_path, monkeypatch):
         mode="modify", base_run_id=base_id,
         instructions="It 500s on save, please fix it",
     )
-    runner = SmartGenerationRunner(request, base_run_id=base_id, mode="modify")
+    runner = SmartGenerationRunner(request, runtime=current_runtime(), base_run_id=base_id, mode="modify")
     parsed = _frames(runner)
 
     assert _select_messages(parsed) == ["Loading your app"]
@@ -111,7 +111,7 @@ def test_from_scratch_run_emits_selecting_generator(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _StubOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     parsed = _frames(runner)
 
     assert _select_messages(parsed) == ["Selecting generator"]
@@ -145,7 +145,7 @@ def test_unresolved_fix_target_surfaces_honest_incomplete(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _UnresolvedFixOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
 
-    runner = SmartGenerationRunner(_build_request(instructions="fix the 400"))
+    runner = SmartGenerationRunner(_build_request(instructions="fix the 400"), runtime=current_runtime())
     parsed = _frames(runner)
 
     done = [p for p in parsed if p.get("event") == "done"][-1]
@@ -187,7 +187,7 @@ def test_run_trace_persisted_to_incident_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _TraceWritingOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     parsed = _frames(runner)
     assert parsed[-1]["event"] == "done"
 
@@ -203,7 +203,7 @@ def test_trace_persistence_is_noop_without_configured_dir(tmp_path, monkeypatch)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
 
     # Must not raise even though nothing is configured.
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     parsed = _frames(runner)
     assert parsed[-1]["event"] == "done"
 
@@ -233,7 +233,7 @@ def _persisted_trace(telemetry_dir, runner):
 def test_a_regular_run_trace_never_lands_in_the_study_dir(tmp_path, monkeypatch):
     telemetry_dir = _study_env(monkeypatch, tmp_path, enabled=True)
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     assert _frames(runner)[-1]["event"] == "done"
 
     assert not _persisted_trace(telemetry_dir, runner).exists(), (
@@ -246,7 +246,7 @@ def test_a_study_run_trace_is_kept_with_the_study_data(tmp_path, monkeypatch):
 
     runner = SmartGenerationRunner(
         _build_request(telemetry_session="session-abc", telemetry_participant="P3")
-    )
+    , runtime=current_runtime())
     assert _frames(runner)[-1]["event"] == "done"
 
     assert _persisted_trace(telemetry_dir, runner).is_file()
@@ -257,7 +257,7 @@ def test_a_study_run_keeps_no_trace_while_collection_is_off(tmp_path, monkeypatc
 
     runner = SmartGenerationRunner(
         _build_request(telemetry_session="session-abc", telemetry_participant="P3")
-    )
+    , runtime=current_runtime())
     assert _frames(runner)[-1]["event"] == "done"
 
     assert not _persisted_trace(telemetry_dir, runner).exists()

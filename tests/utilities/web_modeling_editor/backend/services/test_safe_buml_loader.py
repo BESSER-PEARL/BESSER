@@ -117,6 +117,33 @@ class TestHappyPath:
         result = safe_load_buml(content, allowed_names)
         assert result["first"] == 1
 
+    def test_set_union(self, allowed_names):
+        """Hand-written and third-party BUML builds ``types={...} | {...}``."""
+        content = (
+            "Person = Class(name='Person')\n"
+            "Status = Enumeration(name='Status')\n"
+            "domain_model = DomainModel(name='T', types={Person} | {Status})\n"
+        )
+        result = safe_load_buml(content, allowed_names)
+        assert {t.name for t in result["domain_model"].types} >= {"Person", "Status"}
+
+    def test_imports_are_skipped_and_aliases_bind_the_allowed_object(self, allowed_names):
+        content = (
+            "import datetime\n"
+            "from besser.BUML.metamodel.structural import (\n"
+            "    Class as Klass,\n"
+            "    DomainModel,\n"
+            ")\n"
+            "Person = Klass(name='Person')\n"
+            "domain_model = DomainModel(name='T', types={Person})\n"
+        )
+        result = safe_load_buml(content, allowed_names)
+        assert isinstance(result["Person"], Class)
+        assert "Klass" not in result
+
+    def test_a_leading_bom_is_ignored(self, allowed_names):
+        assert safe_load_buml("﻿x = 1\n", allowed_names)["x"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Rejected constructs
@@ -125,14 +152,28 @@ class TestHappyPath:
 class TestRejectedConstructs:
     """Disallowed AST shapes must raise ``SafeBumlLoaderError``."""
 
-    def test_import_statement_raises(self, allowed_names):
-        content = "import os\n"
-        with pytest.raises(SafeBumlLoaderError):
+    @pytest.mark.parametrize("content", [
+        "import os\nos.system('x')\n",
+        "from os import system\nsystem('x')\n",
+        "from os import system as run\nrun('x')\n",
+        "import os.path as osp\nosp.join('x')\n",
+    ])
+    def test_an_import_never_reaches_the_imported_module(self, allowed_names, content):
+        with pytest.raises(SafeBumlLoaderError, match=r"unknown"):
             safe_load_buml(content, allowed_names)
 
-    def test_from_import_statement_raises(self, allowed_names):
-        content = "from os import system\n"
-        with pytest.raises(SafeBumlLoaderError):
+    def test_an_import_below_the_top_level_raises(self, allowed_names):
+        content = "try:\n    import os\nexcept NameError:\n    pass\n"
+        with pytest.raises(SafeBumlLoaderError, match=r"Import"):
+            safe_load_buml(content, allowed_names)
+
+    def test_an_underscore_alias_raises(self, allowed_names):
+        with pytest.raises(SafeBumlLoaderError, match=r"underscore"):
+            safe_load_buml("from m import Class as _Class\n", allowed_names)
+
+    def test_an_alias_cannot_be_written_through(self, allowed_names):
+        content = "from m import Class as Klass\nKlass.validate = 1\n"
+        with pytest.raises(SafeBumlLoaderError, match=r"Assignment"):
             safe_load_buml(content, allowed_names)
 
     def test_function_definition_raises(self, allowed_names):

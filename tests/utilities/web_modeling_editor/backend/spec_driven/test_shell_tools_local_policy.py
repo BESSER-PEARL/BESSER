@@ -23,13 +23,13 @@ import httpx
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.constants import constants as C
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
     _build_project_body,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 BASE_URL = "http://testserver"
 
@@ -54,7 +54,7 @@ def test_the_hosted_deploy_reports_shell_tools_off():
 
 def test_a_local_deploy_that_opted_in_reports_it_on(monkeypatch):
     """Otherwise 'did my env var take?' has no answer short of an RCE probe."""
-    monkeypatch.setattr(C, "LLM_ENABLE_SHELL_TOOLS", True)
+    monkeypatch.setattr(get_settings(), "llm_enable_shell_tools", True)
 
     assert _config()["features"]["shell_tools_enabled"] is True
 

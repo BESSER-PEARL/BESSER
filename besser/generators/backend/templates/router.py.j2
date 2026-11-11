@@ -9,6 +9,11 @@
     schema's; the two drifted the moment derived attributes were added. -#}
 {{ not is_server_owned_attribute(attr) }}
 {%- endmacro -%}
+{#- An enum attribute's member name, as SQLAlchemy's Enum column binds it. An
+    optional enum left empty arrives as None, and None.name is a 500. -#}
+{%- macro _enum_name(expr, attr) -%}
+{%- if attr.is_optional -%}({{ expr }}.name if {{ expr }} is not None else None){%- else -%}{{ expr }}.name{%- endif -%}
+{%- endmacro -%}
 {#- Integer keys match digits only, so /<link>/{id}/<relationship>/ routes of the same
     association class are not captured by the pair route (and answered 422). #}
 {%- macro int_segment(end) -%}{% if pk_types.get(end.type_name, 'int') == 'int' %}:int{% endif %}{%- endmacro -%}
@@ -54,8 +59,10 @@ router = APIRouter()
         {% set name_end2 = lns.end2.name %}
         {% if lns.end2.is_navigable %}
         {# Lower-bound guard: the other class requires at least end1.min instances of this class
-           (self-associations are left alone: their ends are not distinguishable by type) #}
-        {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+           (self-associations are left alone: their ends are not distinguishable by type).
+           A composite whole has none: the ORM deletes its parts with it. #}
+        {% set is_whole = lns.end1.is_composite and lns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min, lns.end1.multiplicity.max, lns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
         {% if association.name in assoc_by_association %}
@@ -95,8 +102,10 @@ router = APIRouter()
         {% set name_end2 = plns.end2.name %}
         {% if plns.end2.is_navigable %}
         {# Lower-bound guard: the other class requires at least end1.min instances of this class
-           (self-associations are left alone: their ends are not distinguishable by type) #}
-        {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name %}
+           (self-associations are left alone: their ends are not distinguishable by type).
+           A composite whole has none: the ORM deletes its parts with it. #}
+        {% set is_whole = plns.end1.is_composite and plns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min, plns.end1.multiplicity.max, plns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
         {% if association.name in assoc_by_association %}
@@ -150,7 +159,7 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {% if ns.end_name_multiple or ns.one_to_many %}
             # Add many-to-many and one-to-many relationship objects (full details)
             {% for x in ns.end_name_multiple %}
-            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.{{ x[1] | pk }} == {{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
+            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.{{ x[1] | pk }} == {{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_item.{{ pk }}).all()
             item_dict['{{x[3]}}'] = []
             for {{x[1] | lower}}_obj in {{x[1] | lower}}_list:
                 {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
@@ -219,7 +228,7 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     result = []
     for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
         {% for x in ns.end_name_multiple %}
-        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.{{ pk }}).all()
+        {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_item.{{ pk }}).all()
         {% endfor %}
         {% for x in ns.assoc_links %}
         {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
@@ -327,7 +336,7 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.ge
 
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% endif %}
     {% if ns.assoc_links %}
@@ -382,7 +391,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         {{ end.name }}_id={{ end.name }}_target,
         {% endfor %}
         {% for attribute in assoc_classes[class.name].attributes|sort(attribute='name') %}
-        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %}{% if not loop.last %},{% endif %}
+        {{ attribute.name }}={% if attribute.is_enum %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower}}_data.{{ attribute.name }}{% endif %}{% if not loop.last %},{% endif %}
         {% endfor %}
         )
 
@@ -509,7 +518,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for attrparent in parent.attributes|sort(attribute='name') %}
     {% if _client_supplied(attrparent) | trim == 'True' %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.name') %}
+    {% do ns_args.args.append(attrparent.name ~ '=' ~ _enum_name(class.name|lower ~ '_data.' ~ attrparent.name, attrparent)) %}
     {% else %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name) %}
     {% endif %}
@@ -519,7 +528,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for attribute in class.attributes|sort(attribute='name') %}
     {% if _client_supplied(attribute) | trim == 'True' %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.name') %}
+    {% do ns_args.args.append(attribute.name ~ '=' ~ _enum_name(class.name|lower ~ '_data.' ~ attribute.name, attribute)) %}
     {% else %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name) %}
     {% endif %}
@@ -645,7 +654,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             else:
                 db_{{x[1] | lower}} = {{x[1]}}(
                     {%for attr in lk_class.attributes|sort(attribute='name')%}
-                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.name{% endif %}{% if not loop.last %}, {% endif %}
+                    {{attr.name}}={% if attr.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name('x.' ~ attr.name, attr) }}{% else %}x.{{attr.name}}{% endif %}{% if not loop.last %}, {% endif %}
                     {%endfor%}
                 )
             database.add(db_{{x[1] | lower}})
@@ -662,7 +671,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% for x in ns.assoc_links %}
     {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
@@ -768,7 +777,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for attrparent in parent.attributes|sort(attribute='name') %}
             {% if _client_supplied(attrparent) | trim == 'True' %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.name') %}
+            {% do ns_bulk_args.args.append(attrparent.name ~ '=' ~ _enum_name('item_data.' ~ attrparent.name, attrparent)) %}
             {% else %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name) %}
             {% endif %}
@@ -778,7 +787,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for attribute in class.attributes|sort(attribute='name') %}
             {% if _client_supplied(attribute) | trim == 'True' %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.name') %}
+            {% do ns_bulk_args.args.append(attribute.name ~ '=' ~ _enum_name('item_data.' ~ attribute.name, attribute)) %}
             {% else %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name) %}
             {% endif %}
@@ -888,7 +897,7 @@ async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
     {% for attribute in assoc_classes[class.name].attributes|sort(attribute='name') if not attribute.is_id %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.is_enum %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
     {% endfor %}
     database.commit()
     database.refresh(db_{{ class.name | lower }})
@@ -911,13 +920,13 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     {% for parent in all_parents %}
     {% for attribute in parent.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
     {% endif %}
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
     {% endif %}
     {% endfor %}
     {# Update foreign key relationships -#}
@@ -1028,8 +1037,8 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
         if len({{ class.name | lower }}_data.{{x[3]}}) < {{x[5]}}:
             raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
         {% endif %}
-        existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
-            {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}))]
+        existing_{{x[1] | lower}}_ids = [assoc._mapping["{{x[3]}}"] for assoc in database.execute(
+            {{x[4]}}.select().where({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower }}.{{ pk }}))]
 
         {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}})
         for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
@@ -1039,7 +1048,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
                 raise HTTPException(status_code=409, detail="{{x[1]}} " + str({{x[1]|lower}}_id) + " requires at least {{x[7]}} {{x[2]}}")
             {% endif %}
             association = {{x[4]}}.delete().where(
-                ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
+                ({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower }}.{{ pk }}) & ({{x[4]}}.c["{{x[3]}}"] == {{x[1]|lower}}_id))
             database.execute(association)
 
         new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}) - set(existing_{{x[1]|lower}}_ids)
@@ -1057,7 +1066,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.{{ pk }}).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()
     {% endfor %}
     {% for x in ns.assoc_links %}
     {{x[3]}}_ids = database.query({{x[4]}}.{{x[3]}}_id).filter({{x[4]}}.{{x[2]}}_id == db_{{ class.name | lower}}.{{ pk }}).all()
@@ -1179,8 +1188,8 @@ async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 
     # Check if relationship already exists
     existing = database.query({{x[4]}}).filter(
-        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
-        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+        ({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c["{{x[3]}}"] == {{ related_param_name }})
     ).first()
 
     if existing:
@@ -1203,8 +1212,8 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
 
     # Check if relationship exists
     existing = database.query({{x[4]}}).filter(
-        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
-        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+        ({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c["{{x[3]}}"] == {{ related_param_name }})
     ).first()
 
     if not existing:
@@ -1223,8 +1232,8 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
 
     # Delete the association
     association = {{x[4]}}.delete().where(
-        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) &
-        ({{x[4]}}.c.{{x[3]}} == {{ related_param_name }})
+        ({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id) &
+        ({{x[4]}}.c["{{x[3]}}"] == {{ related_param_name }})
     )
     database.execute(association)
     database.commit()
@@ -1239,7 +1248,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    {{x[1]|lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id).all()
+    {{x[1]|lower}}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_id).all()
     {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_([id[0] for id in {{x[1]|lower}}_ids])).all()
 
     return {

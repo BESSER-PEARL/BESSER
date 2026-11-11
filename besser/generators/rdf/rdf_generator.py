@@ -4,6 +4,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
+from besser.utilities.template_escaping import register_escaping_filters
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ class RDFGenerator(GeneratorInterface):
         "timedelta": "duration",
     }
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
 
@@ -46,6 +49,7 @@ class RDFGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
         env.globals["sort_by_timestamp"] = sort_by_timestamp
+        register_escaping_filters(env)
         template = env.get_template('rdf_template.j2')
         with open(file_path, mode="w") as f:
             generated_code = template.render(model=self.model, types=self.TYPES)

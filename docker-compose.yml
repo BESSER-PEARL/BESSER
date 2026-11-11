@@ -20,8 +20,8 @@ services:
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
       - AGENT_SIMULATOR_URL=${AGENT_SIMULATOR_URL:-http://besser-wme-agent-simulator:8001}
-      # Local stack only: lets the PIA and Local (e.g. Ollama) providers send
-      # their own base URL. Off in code and in docker-compose.prod.yml (SSRF).
+      # Local stack only: lets the Local (e.g. Ollama) provider send its own
+      # base URL. Off in code and in docker-compose.prod.yml (SSRF).
       - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=${BESSER_LLM_ALLOW_CUSTOM_BASE_URL:-true}
       # auto: shell sessions share this container's network unless it has
       # /dev/net/tun (add `devices: [/dev/net/tun:/dev/net/tun]` for a private
@@ -63,7 +63,7 @@ services:
   #     - ./.env
   #   environment:
   #     - PYTHONUNBUFFERED=1
-  #     # Local stack only: PIA / Ollama custom base URLs (see the backend).
+  #     # Local stack only: Ollama custom base URLs (see the backend).
   #     - BESSER_AGENT_ALLOW_CUSTOM_BASE_URL=${BESSER_AGENT_ALLOW_CUSTOM_BASE_URL:-true}
   #   ports:
   #     - "8765:8765"

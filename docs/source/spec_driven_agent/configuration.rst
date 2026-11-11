@@ -8,6 +8,29 @@ and by ``besser/spec_driven_agent/``; the live values of the caps and feature
 flags are reported by ``GET /besser_api/spec-driven/config``, which is what a
 client should read rather than hardcoding the figures below.
 
+Each variable is declared once, with its type, default and description: the
+agent's own (models, keyless tiers, provider calls, context budgets, shell
+sessions) on ``AgentSettings`` in ``besser/spec_driven_agent/settings.py``,
+and the backend's (the caps, run lifecycle and feature flags, the demo token,
+telemetry and incidents) on ``BackendSettings`` in
+``besser/utilities/web_modeling_editor/backend/settings.py`` (see
+:ref:`the backend's environment variables <web-editor-backend-env>`). Values
+the agent keeps in module constants (the context budgets, history eviction, the output-token
+ceilings, the SDK timeout, the rolling cache) are read when the module is
+imported; a malformed number there fails the import with an error naming the
+variable. The others are read at each use; a shell-session number that is not
+an integer logs a warning and uses its default.
+
+Models
+------
+
+- ``BESSER_MODEL_CATALOG`` -- Path to the deployment's model catalog, a JSON
+  file merged over the public default: the providers and models the key dialog
+  offers, gateway endpoints (such as ``pia``) and gateway rates. Set it on the
+  backend, the Spec-Driven worker and the modeling agent, with the same file
+  mounted in each. Read once at startup; a missing or malformed file stops the
+  service. See :doc:`models`.
+
 Keyless tiers
 -------------
 
@@ -24,7 +47,13 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
 - ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``BESSER_FREE_LLM_FALLBACK_MODEL`` /
   ``BESSER_FREE_LLM_FALLBACK_TOKEN`` -- A second,
   independently credentialed endpoint used as the last resort in the fallback
-  chain.
+  chain. A run moves along the chain when its endpoint is unavailable, out of
+  quota or credits, or rejects the server's token (an expired
+  ``BESSER_FREE_LLM_TOKEN``); a rejected token skips the alternative models
+  on the same endpoint, which share it. A refusal of one model while the
+  token is accepted (a model outside the plan, or a free period that ended)
+  moves to the next model on the same endpoint. A user's own key has no fallback: a
+  rejected key fails the run with ``INVALID_KEY``.
 - ``BESSER_SPONSORED_LLM_BASE_URL`` / ``BESSER_SPONSORED_LLM_TOKEN`` /
   ``BESSER_SPONSORED_LLM_MODEL`` -- An additional server-funded keyless tier,
   served through an OpenAI-compatible endpoint. The URL and token are
@@ -52,10 +81,11 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   its own OpenAI-compatible ``base_url``. Having the server open a
   user-supplied URL is an SSRF surface, so this is meant for local or
   single-tenant deployments. The local ``docker-compose.yml`` turns it on so
-  the editor's PIA (LIST's private AI gateway, an OpenAI-compatible endpoint
-  backed by AWS Bedrock) and Local (e.g. Ollama) providers work; it stays off in
-  code and in ``docker-compose.prod.yml``. For a backend started without
-  Docker, set ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` yourself.
+  the editor's Local (e.g. Ollama) provider works; it stays off in code and in
+  ``docker-compose.prod.yml``. For a backend started without Docker, set
+  ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` yourself. A gateway from the model
+  catalog (``BESSER_MODEL_CATALOG``) does not need it: its endpoint is the
+  operator's, not the request's.
 
 Caps and limits
 ---------------
@@ -185,6 +215,13 @@ Context and token budgets
   not send prompts of that size every turn. Models measured to serve a
   smaller window than they advertise are clamped below both values
   regardless.
+- ``TIKTOKEN_CACHE_DIR`` -- Where ``tiktoken`` keeps the ``cl100k_base`` file
+  the compaction threshold counts tokens with. The Docker images fetch it at
+  build time into ``/opt/tiktoken-cache``. Elsewhere it is downloaded on first
+  use with no timeout, so on a host without internet access pre-fetch it
+  (``python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"`` with
+  the variable set); without it tokens are estimated as characters/4, which
+  compacts earlier than needed, and a warning is logged.
 - ``BESSER_LLM_HISTORY_EVICTION`` (**off**) -- Opt into the lossless
   alternative to compaction: large file bodies in older messages are replaced
   by stubs pointing back to disk, instead of whole messages being summarised.
@@ -221,7 +258,8 @@ Storage and lifecycle
 - ``BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS`` (``2.0``) -- Cadence of the
   ``cost`` SSE tick.
 - ``BESSER_INCIDENT_LOG_DIR`` (``/app/incidents``) -- Where provider-incident
-  records (a failed endpoint, a fallback-chain switch) are written. When it is
+  records (a failed endpoint, a fallback-chain switch) are written, with
+  credentials redacted from their message, traceback and instructions. When it is
   set explicitly, every run's trace is also copied to its ``traces/``
   folder; when it is unset, only the traces of research-study runs are kept,
   in ``BESSER_TELEMETRY_DIR``. Study mode is described alongside the

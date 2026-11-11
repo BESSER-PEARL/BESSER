@@ -267,7 +267,9 @@ def test_a_book_target_does_not_claim_a_booking_finding():
     unrelated ``Book`` finding was promoted from warning to blocker and fed
     to the fix loop as the thing to repair.
     """
-    target = parse_reported_target("POST /book/ returns 500")
+    from besser.BUML.metamodel.structural import Class, DomainModel
+
+    target = parse_reported_target("POST /book/ returns 500", DomainModel(name="m", types={Class(name="Book")}))
     assert target is not None and target.entities
     assert not finding_matches_target(
         "create contract: POST /booking/ - observed a server failure creating Booking",
@@ -286,7 +288,9 @@ def test_a_booking_path_is_not_described_as_the_book_entity():
 
 def test_a_book_target_still_matches_its_own_findings():
     """The promotion the matcher exists for must keep working."""
-    target = parse_reported_target("POST /book/ returns 500")
+    from besser.BUML.metamodel.structural import Class, DomainModel
+
+    target = parse_reported_target("POST /book/ returns 500", DomainModel(name="m", types={Class(name="Book")}))
     assert target is not None
     for finding in (
         "data contract: routers/book.py line 12: `book_id: int` is wrong",

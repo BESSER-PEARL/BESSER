@@ -15,17 +15,26 @@ Features:
 - **Factory function** — ``create_llm_client()`` to instantiate the right provider
 """
 
-import json
 import logging
 import os
 import re
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from besser.llm import anthropic_client, openai_client
+from besser.llm.catalog import load_model_catalog
+from besser.llm.pricing import get_pricing, is_free_local_model
+from besser.llm.retry import (
+    backoff_seconds as _backoff_seconds,
+    is_quota_exhausted as _is_quota_exhausted,
+    is_rate_limit as _is_rate_limit,  # noqa: F401 - imported from here by tests
+    is_retryable_status as _is_retryable_status,
+    status_code as _status_code,
+)
 from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
 from besser.spec_driven_agent.providers.model_settings import (
     DEFAULT_MAX_OUTPUT_TOKENS,
@@ -37,6 +46,7 @@ from besser.spec_driven_agent.providers.model_settings import (
 )
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +55,7 @@ logger = logging.getLogger(__name__)
 # provider call can stall a turn for that long with no signal. 300s is
 # generous enough for a full 16k-token streaming turn while still
 # bounding the worst case.
-_DEFAULT_SDK_TIMEOUT_SECONDS = float(
-    os.environ.get("BESSER_LLM_CALL_TIMEOUT_SECONDS", "300")
-)
+_DEFAULT_SDK_TIMEOUT_SECONDS = AgentSettings().llm_call_timeout_seconds
 
 # Output-token ceiling used for from-scratch generation (no deterministic
 # Phase-1 scaffold to build on -- see LLMOrchestrator._apply_adaptive_budget).
@@ -67,9 +75,7 @@ _DEFAULT_SDK_TIMEOUT_SECONDS = float(
 # silently writing partial content -- see the ``stop_reason in
 # ("max_tokens", "length")`` handling in ``orchestrator.py``.  Env-tunable
 # since the safe ceiling depends on the model/provider in use.
-FROM_SCRATCH_MAX_TOKENS = int(
-    os.environ.get("BESSER_LLM_FROM_SCRATCH_MAX_TOKENS", "32768")
-)
+FROM_SCRATCH_MAX_TOKENS = AgentSettings().llm_from_scratch_max_tokens
 
 # Output-token ceiling used for modify/fix runs (LLMOrchestrator.modify()).
 # A modify/fix run routinely rewrites a whole existing file in a single
@@ -84,296 +90,15 @@ FROM_SCRATCH_MAX_TOKENS = int(
 # free tier it is $0 and on paid tiers it only costs when the extra output
 # is actually generated. Defaults to the from-scratch value; env-tunable
 # since the safe ceiling depends on the model/provider in use.
-MODIFY_MAX_TOKENS = int(
-    os.environ.get("BESSER_LLM_MODIFY_MAX_TOKENS", str(FROM_SCRATCH_MAX_TOKENS))
+_MODIFY_MAX_TOKENS_SETTING = AgentSettings().llm_modify_max_tokens
+MODIFY_MAX_TOKENS = (
+    FROM_SCRATCH_MAX_TOKENS if _MODIFY_MAX_TOKENS_SETTING is None else _MODIFY_MAX_TOKENS_SETTING
 )
 
 
 # ======================================================================
 # Cost tracking (inspired by claw-code/usage.rs)
 # ======================================================================
-
-# Pricing per million tokens (refreshed early 2026).
-# Sources: OpenAI public pricing page + OpenRouter / pricepertoken.com
-# corroboration for gpt-5.5. Anthropic rates are stable from 2025.
-# ``cache_read`` is OpenAI's prompt-caching discount (~10% of input);
-# ``cache_write`` is 0 for OpenAI since they don't charge a write
-# premium like Anthropic does.
-_MODEL_PRICING: dict[str, dict[str, float]] = {
-    # Anthropic Claude
-    "haiku":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,  "cache_read": 0.1},
-    "sonnet": {"input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.3},
-    "opus":   {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.5},
-    # Exact Anthropic ids the vendored table does not carry yet; without a row
-    # they land on the coarse tier above (Opus 5.5 at $15/$75, ~4x over).
-    # Cache write is the standard 1.25x of input.
-    "claude-opus-5-5": {"input": 4.0, "output": 20.0, "cache_write": 5.0, "cache_read": 0.2},
-    # OpenAI — early-2026 public rates
-    "gpt-4o-mini": {"input": 0.15, "output": 0.6,  "cache_write": 0, "cache_read": 0.075},
-    "gpt-4o":      {"input": 2.5,  "output": 10.0, "cache_write": 0, "cache_read": 1.25},
-    "gpt-5.6-sol":   {"input": 5.0, "output": 30.0, "cache_write": 0, "cache_read": 0.5},
-    # Official model pages (standard requests <=272K input).
-    "gpt-5.6-terra": {"input": 2.0, "output": 12.0, "cache_write": 0, "cache_read": 0.2},
-    "gpt-5.6-luna":  {"input": 0.2, "output": 1.2,  "cache_write": 0, "cache_read": 0.02},
-    # Official pricing page (2026-09-28). Not yet in the vendored table.
-    "gpt-6-sol":   {"input": 2.0, "output": 10.0, "cache_write": 0, "cache_read": 0.2},
-    "gpt-6-luna":  {"input": 0.1, "output": 0.5,  "cache_write": 0, "cache_read": 0.01},
-    "gpt-5.5":     {"input": 5.0,  "output": 30.0, "cache_write": 0, "cache_read": 0.5},
-    "gpt-5":       {"input": 1.25, "output": 10.0, "cache_write": 0, "cache_read": 0.125},
-    "o3-mini":     {"input": 1.1,  "output": 4.4,  "cache_write": 0, "cache_read": 0},
-    "o3":          {"input": 10.0, "output": 40.0, "cache_write": 0, "cache_read": 0},
-    # Mistral — public rates as of mid-2026. ``mistral-large-latest``
-    # currently bills at $2 / $6 per 1M (input / output). Mistral has no
-    # separate cache-write premium; prompt-caching reads, when used, are
-    # billed at the input rate (no published discount), so cache_read is
-    # set equal to input rather than a fictional cheaper tier.
-    # VERIFY: the ``-latest`` alias may route to Mistral Large 3
-    # ($0.50 / $1.50). Re-check https://mistral.ai/pricing/ if exactness
-    # matters; $2 / $6 is the conservative (higher) of the two.
-    "mistral-large": {"input": 2.0, "output": 6.0, "cache_write": 0, "cache_read": 2.0},
-    # Nebius Token Factory — open-weight models served on Nebius hardware.
-    # Read off the endpoint properties in the Nebius console:
-    # $0.10 / 1M in, $0.30 / 1M out (~70 tok/s). Nebius publishes these rates
-    # only in the console, not in fetchable docs. Nebius publishes no
-    # prompt-cache discount, so cache_read == input rather than a fictional
-    # cheaper tier (same reasoning as Mistral above).
-    "qwen3-30b-a3b": {"input": 0.1, "output": 0.3, "cache_write": 0, "cache_read": 0.1},
-}
-
-# Self-hosted / open-weight models served through an OpenAI-compatible
-# endpoint (Ollama, vLLM, LM Studio, ...) cost the platform nothing, so they
-# must be priced at $0 — otherwise the ``gpt-4o`` fallback below invents a
-# ~$2.50/$10-per-1M phantom cost that trips ``max_cost_usd`` and aborts the
-# run mid-generation with ``stop_reason="cost_cap"``. Matched case-insensitively
-# as substrings. Kept conservative (clearly open families only) so a genuinely
-# unknown *paid* cloud model still gets the protective fallback rate.
-_ZERO_PRICING: dict[str, float] = {
-    "input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0,
-}
-_FREE_LOCAL_MODEL_MARKERS = (
-    "qwen", "llama", "codellama", "deepseek", "mixtral",
-    "gemma", "starcoder", "granite", "phi-", "phi3", "phi4",
-    "devstral", "mistral-small", "codestral",
-    # Sponsored-tier zero-credit models (the ':free' suffix is the
-    # aggregator's own marker); zero pricing + no ghost planning model.
-    ":free", "longcat", "laguna",
-)
-
-
-def _is_free_local_model(model_lower: str) -> bool:
-    """True for models that cost the platform $0 — self-hosted, or free tiers.
-
-    Getting this wrong is expensive in both directions: a false positive prices
-    a paid model at $0 and SILENTLY DISABLES the cost cap, while a false
-    negative bills a self-hosted run that is actually free.
-
-    The decision therefore keys on how the model is IDENTIFIED, not on its
-    family: the gateway resells open-weight families, so ``Qwen/Qwen3.8-Max``
-    and ``deepseek/deepseek-v4-pro`` are billed cloud models that a family
-    allow-list priced at $0.
-
-    1. an explicit free marker (``:free`` / ``-free``) -- always free;
-    2. an Ollama ``name:tag`` id with no vendor namespace -- self-hosted;
-    3. a vendor-namespaced id (``vendor/model``) -- a gateway model, billed;
-    4. otherwise fall back to the family list, which still covers tagless
-       self-hosted ids.
-    """
-    if model_lower.endswith(":free") or model_lower.endswith("-free"):
-        return True
-    has_namespace = "/" in model_lower
-    if ":" in model_lower and not has_namespace:
-        return True
-    if has_namespace:
-        # Served by the gateway, so somebody is being billed for it. Fall
-        # through to the paid pricing path rather than assuming $0.
-        return False
-    if model_lower.endswith("-latest"):
-        # A vendor API alias, not a checkout. Mistral's paid ids are tagless
-        # and un-namespaced (``mistral-small-latest``, ``codestral-latest``,
-        # ...) and would otherwise match the family list below and price at
-        # $0, silently disabling the cost cap. Self-hosted Ollama says
-        # ``mistral-small:latest`` with a colon, which rule 2 already caught
-        # above, so nothing free is lost by treating the hyphen as billed.
-        return False
-    return any(marker in model_lower for marker in _FREE_LOCAL_MODEL_MARKERS)
-
-
-_VENDORED_PRICES_PATH = Path(__file__).with_name("data") / "model_prices.json"
-
-# Order is the tie-break, not a preference: one bare id can appear under
-# several vendors at wildly different rates (``mistral-large-latest`` is
-# $0.50/$1.50 direct and $8/$24 on Azure). Only vendors we actually call are
-# listed, so a resold id can never be priced at some third party's rate.
-_PRICE_LOOKUP_PREFIXES = ("", "anthropic/", "openai/", "mistral/", "nebius/")
-
-# Gateways bill their own rates, which the vendored table does not know: pricing
-# Command Code's Kimi-K3 from the Nebius row billed cached input at the full
-# input rate ($3 instead of $0.30 per 1M), so long runs hit the per-run cap
-# about 3x too early. Source: https://commandcode.ai/docs/resources/pricing-limits
-# (USD per 1M tokens, checked 2026-09-30). Keys: endpoint host, lower-cased id.
-_ROUTE_PRICING: dict[str, dict[str, dict[str, float]]] = {
-    "api.commandcode.ai": {
-        "moonshotai/kimi-k3": {"input": 3.0, "output": 15.0, "cache_write": 0.0, "cache_read": 0.30},
-        "qwen/qwen3.8-max-0902": {"input": 2.0, "output": 6.0, "cache_write": 0.0, "cache_read": 0.25},
-        "meta/muse-spark-1.3": {"input": 1.25, "output": 4.25, "cache_write": 0.0, "cache_read": 0.15},
-        "poolside/laguna-s-2.1-free": {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0},
-    },
-    # LIST's PIA gateway, its recommended models (rates per 1M, 2026-10-26).
-    # PIA publishes no cache rates, so cached tokens bill at the input rate.
-    "gateway.pia.private.list.lu": {
-        "claude-haiku-4-5-20251001": {"input": 1.1, "output": 5.5, "cache_write": 1.1, "cache_read": 1.1},
-        "gpt-6-luna": {"input": 0.1, "output": 0.5, "cache_write": 0.1, "cache_read": 0.1},
-        "claude-sonnet-5-5": {"input": 2.2, "output": 11.0, "cache_write": 2.2, "cache_read": 2.2},
-        "gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cache_write": 2.0, "cache_read": 2.0},
-        "claude-opus-5-5": {"input": 4.4, "output": 22.0, "cache_write": 4.4, "cache_read": 4.4},
-        "gpt-6-astra": {"input": 10.0, "output": 50.0, "cache_write": 10.0, "cache_read": 10.0},
-    },
-}
-
-
-def _route_pricing(model_id: str, route: "str | None") -> "dict[str, float] | None":
-    """The rate a known gateway publishes for ``model_id``, if any."""
-    if not route:
-        return None
-    host = (urlparse(route).hostname or route).lower()
-    return _ROUTE_PRICING.get(host, {}).get(model_id.lower())
-
-
-@lru_cache(maxsize=1)
-def _vendored_price_index() -> dict[str, dict[str, float]]:
-    """``_vendored_prices`` re-keyed lower-case for case-insensitive lookup.
-
-    Model ids reach us in whatever case the caller typed, and the published
-    keys are mixed case themselves (``nebius/Qwen/Qwen3-30B-A3B-Instruct-2507``).
-    An exact-case ``dict.get`` would silently miss and fall through to the
-    coarse tier table.
-    """
-    return {key.lower(): value for key, value in _vendored_prices().items()}
-
-
-@lru_cache(maxsize=1)
-def _vendored_prices() -> dict[str, dict[str, float]]:
-    """Published per-model rates, keyed by exact model id.
-
-    Vendored from litellm's ``model_prices_and_context_window.json`` (MIT),
-    reduced to the providers we call and the four fields we read. The data
-    file rather than the package: an ``import litellm`` would break the
-    offline on-prem install. Refresh with::
-
-        curl -s https://raw.githubusercontent.com/BerriAI/litellm/main/\\
-model_prices_and_context_window.json
-
-    then keep rows whose ``litellm_provider`` is anthropic/openai/mistral/
-    nebius/bedrock and the ``*_cost_per_token`` fields.
-
-    Returns ``{}`` if the file is missing (a wheel built without it), which
-    falls the caller through to ``_MODEL_PRICING`` rather than to $0 — an
-    absent price must never read as free, or the cost cap stops existing.
-    """
-    try:
-        with open(_VENDORED_PRICES_PATH, encoding="utf-8") as handle:
-            return json.load(handle)
-    except (OSError, ValueError):
-        logger.warning("Vendored model price table unreadable at %s; "
-                       "falling back to the built-in tier table",
-                       _VENDORED_PRICES_PATH)
-        return {}
-
-
-def _published_pricing(model_id: str) -> dict[str, float] | None:
-    """Exact-id rate for ``model_id``, or ``None`` when it is not published."""
-    table = _vendored_price_index()
-    if not table:
-        return None
-    # Per-TOKEN costs scaled to per-million land on values like
-    # 0.19999999999999998. Rounding keeps the published figure exact, so a
-    # rate reads as 0.2 rather than as float noise in every cost report.
-    def per_million(value: float) -> float:
-        return round(value * 1_000_000.0, 6)
-
-    for prefix in _PRICE_LOOKUP_PREFIXES:
-        row = table.get(f"{prefix}{model_id}".lower())
-        if row and row.get("input_cost_per_token") is not None:
-            read = row.get("cache_read_input_token_cost")
-            return {
-                "input": per_million(row["input_cost_per_token"]),
-                "output": per_million(row["output_cost_per_token"]),
-                "cache_write": per_million(
-                    row.get("cache_creation_input_token_cost", 0.0)),
-                # No published cache discount means reads bill at the input
-                # rate, not free — same reasoning as the Mistral/Nebius rows.
-                "cache_read": per_million(
-                    read if read is not None else row["input_cost_per_token"]),
-            }
-    return None
-
-
-def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None) -> dict[str, float]:
-    """Get the per-1M-token rates for a model ID.
-
-    Published per-model rates come first, from the vendored table. The
-    hand-typed ``_MODEL_PRICING`` below it is a fallback for ids nobody
-    publishes, and its Anthropic rows are coarse *tiers*: they cannot tell
-    ``claude-sonnet-4-6`` ($3/$15) from ``claude-sonnet-5`` ($2/$10), and the
-    ``opus`` row still carries Claude-3-era $15/$75 — 3x over every current
-    Opus, which trips ``max_cost_usd`` at a third of the intended spend.
-    Prices are external facts that drift silently, so prefer the table that
-    is refreshed over the one that is remembered.
-
-    Order matters in the OpenAI loop — longer / more-specific keys
-    must come first so e.g. ``gpt-5.5`` doesn't get mis-matched to
-    ``gpt-5`` (which is a substring) and silently billed at the
-    cheaper tier. Falls back to ``gpt-4o`` so an unknown *paid* model
-    gets a reasonable middle-tier rate; self-hosted/open models are
-    detected first and priced at $0.
-
-    ``billed`` is set when the route itself is a paid vendor API (Anthropic,
-    official OpenAI, Mistral, Nebius): the id-shape free heuristic is skipped
-    there, since ``codestral-2508`` on Mistral's API is not a local checkout.
-    """
-    routed = _route_pricing(model_id, route)
-    if routed is not None:
-        return routed
-    model_lower = model_id.lower()
-    # Self-hosted / free local models — never bill, never trip the cost cap.
-    if not billed and _is_free_local_model(model_lower):
-        return _ZERO_PRICING
-    published = _published_pricing(model_id)
-    if published is not None:
-        return published
-    # Exact Anthropic ids first: each is also inside a coarse tier below.
-    for key in ("claude-opus-5-5",):
-        if key in model_lower:
-            return _MODEL_PRICING[key]
-    # Anthropic tiers — unambiguous identifiers so order doesn't matter.
-    for tier in ("haiku", "sonnet", "opus"):
-        if tier in model_lower:
-            return _MODEL_PRICING[tier]
-    # Mistral tiers — match before the OpenAI fallback so a Mistral
-    # model never silently bills at the ``gpt-4o`` default rate.
-    for key in ("mistral-large",):
-        if key in model_lower:
-            return _MODEL_PRICING[key]
-    # Nebius Token Factory tiers. These ids are vendor-namespaced
-    # (``Qwen/Qwen3-30B-A3B-Instruct-2507``), so ``_is_free_local_model``
-    # correctly classifies them as billed rather than $0 — but without a row
-    # here they would then land on the ``gpt-4o`` fallback and be billed ~8x
-    # over, tripping ``max_cost_usd`` long before the user's real budget.
-    for key in ("qwen3-30b-a3b",):
-        if key in model_lower:
-            return _MODEL_PRICING[key]
-    # OpenAI: variant-specific GPT-5.6 / GPT-5.5 keys must precede the
-    # generic ``gpt-5`` substring or their spend would be under-counted.
-    for key in (
-        "gpt-4o-mini", "gpt-4o",
-        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-        "gpt-6-sol", "gpt-6-luna",
-        "gpt-5.5", "gpt-5", "o3-mini", "o3",
-    ):
-        if key in model_lower:
-            return _MODEL_PRICING[key]
-    return _MODEL_PRICING["gpt-4o"]  # default
-
 
 class UsageTracker:
     """Tracks token usage and estimated cost across all API calls."""
@@ -386,7 +111,7 @@ class UsageTracker:
         # the cost cap (it spends org credits) but is not the user's cost.
         self.billed_to_user = billed_to_user
         self.route = route
-        self.pricing = _get_pricing(model, billed, route)
+        self.pricing = get_pricing(model, billed, route)
         self.input_tokens = 0
         self.output_tokens = 0
         self.cache_creation_tokens = 0
@@ -450,7 +175,7 @@ class UsageTracker:
         self.cache_creation_tokens += cw
         self.cache_read_tokens += cr
         if model and model != self.model:
-            override = _get_pricing(model, self.billed, self.route)
+            override = get_pricing(model, self.billed, self.route)
             primary = self.pricing
             delta = (
                 inp * (override["input"] - primary["input"])
@@ -481,7 +206,7 @@ class UsageTracker:
         before = self.estimated_cost
         self.billed = billed
         self.route = route
-        self.pricing = _get_pricing(model, billed, route)
+        self.pricing = get_pricing(model, billed, route)
         self._extra_cost_usd += before - self.estimated_cost
 
     @property
@@ -661,11 +386,10 @@ class LLMProvider(ABC):
 # Retry logic (inspired by claw-code/claw_provider.rs)
 # ======================================================================
 
-_RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+# The shared policy (statuses, backoff, Retry-After cap, quota fail-fast) is
+# besser.llm.retry; the retry budget and the transport cap are this client's.
 _MAX_RETRIES = 4  # total 5 attempts, so a brief provider rate-limit
                   # doesn't kill a multi-turn customization run
-_INITIAL_BACKOFF = 0.5  # seconds
-_MAX_BACKOFF = 5.0  # seconds — cap for ordinary (5xx/timeout) retries
 
 
 def _resolve_max_retries(max_retries: int | None) -> int:
@@ -679,30 +403,6 @@ def _resolve_max_retries(max_retries: int | None) -> int:
     if max_retries < 0:
         raise ValueError("max_retries must not be negative")
     return max_retries
-
-
-# Rate limits (429) need a longer ceiling: some providers (notably
-# Mistral) throttle hard and only recover after several seconds. A
-# sub-second backoff just burns the retry budget and aborts the run.
-_RATELIMIT_MAX_BACKOFF = 30.0  # seconds
-
-
-# A status in the text only counts next to a status word: a bare "401" or
-# "500" also occurs inside token counts ("140133 tokens", "205000 tokens").
-_STATUS_IN_TEXT_RE = re.compile(
-    r"\b(?:error code|status(?: code)?|http(?:/[\d.]+)?)\s*[:=]?\s*([1-5]\d\d)\b",
-    re.IGNORECASE,
-)
-
-
-def _status_code(error: Exception) -> int | None:
-    """HTTP status of a provider error: SDK attribute first, then the text."""
-    for source in (error, getattr(error, "response", None)):
-        code = getattr(source, "status_code", None)
-        if isinstance(code, int):
-            return code
-    match = _STATUS_IN_TEXT_RE.search(str(error))
-    return int(match.group(1)) if match else None
 
 
 @lru_cache(maxsize=1)
@@ -752,9 +452,7 @@ def _is_retryable(error: Exception) -> bool:
         return True
     status = _status_code(error)
     if status is not None:
-        # Every 5xx, as the SDKs' own retry did: 529 (overloaded) and the 52x
-        # a Cloudflare tunnel returns are transient too.
-        return status in _RETRYABLE_STATUS_CODES or status >= 500
+        return _is_retryable_status(status)
     error_str = str(error).lower()
     return any(marker in error_str for marker in (
         "rate limit", "rate_limit", "rate-limited", "ratelimited",
@@ -772,47 +470,22 @@ def _is_model_unavailable(error: Exception) -> bool:
     for. Auth errors are excluded by the caller before this check.
     """
     s = str(error).lower()
-    return any(marker in s for marker in (
+    return _is_model_access_denied(error) or any(marker in s for marker in (
         "model_not_found", "model not found", "no such model",
         "unknown model", "invalid model", "does not exist",
-        "is not available", "not_found", "model_not_in_plan",
+        "is not available", "not_found",
     ))
 
 
-def _is_rate_limit(error: Exception) -> bool:
-    """True if the error is a provider rate-limit (HTTP 429)."""
-    status = _status_code(error)
-    if status is not None:
-        return status == 429
+# 403s that refuse one model, not the key: the model is outside the plan, or its
+# free period ended (Command Code: "The free <model> window has ended").
+_MODEL_ACCESS_DENIED_MARKERS = ("model_not_in_plan", "window has ended")
+
+
+def _is_model_access_denied(error: Exception) -> bool:
+    """True when the provider refuses this model to a key it otherwise accepts."""
     s = str(error).lower()
-    return (
-        "rate limit" in s
-        or "rate_limit" in s
-        or "rate-limited" in s
-        or "ratelimited" in s
-    )
-
-
-def _is_quota_exhausted(error: Exception) -> bool:
-    """True when a 429 is a DAILY/period quota exhaustion, not a transient throttle.
-
-    E.g. Command Code's free LongCat returns ``429 "You've used all 100 free LongCat 2.0 requests for today. Your
-    quota resets at …"``. That will not recover inside a retry window, so the
-    5-attempt backoff (0.5s → 30s cap) just burns ~15-40s per call before the
-    fallback finally engages. Classify it so callers skip retries and fall back
-    (or fail) immediately — and can tell the user *why*.
-    """
-    s = str(error).lower()
-    # An exhausted prepaid balance (Command Code: 400 "insufficient credits").
-    if "insufficient credits" in s or "purchase more credits" in s:
-        return True
-    if "429" not in s and "quota" not in s and "limit" not in s:
-        return False
-    return any(marker in s for marker in (
-        "used all", "requests for today", "quota resets", "daily limit",
-        "daily quota", "per day", "insufficient_quota", "quota exceeded",
-        "exceeded your current quota",
-    ))
+    return any(marker in s for marker in _MODEL_ACCESS_DENIED_MARKERS)
 
 
 def _normalize_model_id(name: str | None) -> str:
@@ -832,51 +505,9 @@ def _normalize_model_id(name: str | None) -> str:
     return s
 
 
-def _retry_after_seconds(error: Exception) -> float | None:
-    """Extract a server-provided ``Retry-After`` hint (seconds), if any.
-
-    The OpenAI/Mistral and Anthropic SDK error objects carry the HTTP
-    response, whose headers may include ``retry-after`` (delta-seconds).
-    Returns ``None`` when no usable hint is present.
-    """
-    resp = getattr(error, "response", None)
-    headers = getattr(resp, "headers", None)
-    if not headers:
-        return None
-    for key in ("retry-after", "Retry-After", "x-ratelimit-reset-after"):
-        try:
-            val = headers.get(key)
-        except Exception:
-            val = None
-        if not val:
-            continue
-        try:
-            secs = float(val)
-        except (TypeError, ValueError):
-            continue
-        if secs >= 0:
-            return secs
-    return None
-
-
-def _backoff_seconds(error: Exception, attempt: int) -> float:
-    """Seconds to wait before the next retry.
-
-    Honors a server-provided ``Retry-After`` (capped), otherwise uses
-    exponential backoff. Rate-limit (429) responses get a higher ceiling
-    so a throttled provider isn't abandoned after a sub-second wait.
-    """
-    retry_after = _retry_after_seconds(error)
-    rate_limited = _is_rate_limit(error)
-    if retry_after is not None:
-        return min(retry_after, _RATELIMIT_MAX_BACKOFF)
-    cap = _RATELIMIT_MAX_BACKOFF if rate_limited else _MAX_BACKOFF
-    return min(_INITIAL_BACKOFF * (2 ** attempt), cap)
-
-
 def _is_auth_error(error: Exception) -> bool:
     """Did the provider reject our credentials? Decided by status when known."""
-    if "model_not_in_plan" in str(error).lower():
+    if _is_model_access_denied(error):
         return False
     status = _status_code(error)
     if status is not None:
@@ -946,14 +577,6 @@ class ClaudeLLMClient(LLMProvider):
         timeout: float | None = None,
         max_retries: int | None = None,
     ):
-        try:
-            import anthropic
-        except ImportError:
-            raise ImportError(
-                "The 'anthropic' package is required for LLM generation. "
-                "Install it with: pip install besser[agents]"
-            ) from None
-
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
@@ -964,7 +587,7 @@ class ClaudeLLMClient(LLMProvider):
         if resolved_base:
             client_kwargs["base_url"] = resolved_base
 
-        self._client = anthropic.Anthropic(**client_kwargs)
+        self._client = anthropic_client(**client_kwargs)
         self._max_retries = _resolve_max_retries(max_retries)
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
@@ -984,7 +607,7 @@ class ClaudeLLMClient(LLMProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         if "haiku" in self._model.lower():
@@ -1282,7 +905,7 @@ def _with_tool_cache(tools: list[dict]) -> list[dict]:
 # per-turn input stays flat instead of growing with the transcript.
 # Anthropic path only (the OpenAI/free path caches automatically by prefix).
 # Set BESSER_LLM_ROLLING_CACHE=0 to opt out.
-_ROLLING_MESSAGE_CACHE = os.environ.get("BESSER_LLM_ROLLING_CACHE", "1") == "1"
+_ROLLING_MESSAGE_CACHE = AgentSettings().llm_rolling_cache
 
 
 def _with_message_cache(messages: list[dict]) -> list[dict]:
@@ -1464,6 +1087,11 @@ def _openai_messages_to_api(system: str, messages: list[dict]) -> list[dict]:
                                 "arguments": _json.dumps(block.get("input", {})),
                             },
                         })
+            if not text_parts and not tool_calls:
+                # Chat Completions accepts null assistant content only next to
+                # tool calls; an empty turn would fail the whole request (400).
+                logger.warning("Dropping an empty assistant message (no text, no tool calls) from the request")
+                continue
             assistant_msg: dict[str, Any] = {"role": "assistant"}
             if text_parts:
                 assistant_msg["content"] = "\n".join(text_parts)
@@ -1588,6 +1216,18 @@ def _openai_response_to_common(response, tools: list[dict] | None = None) -> dic
 # OpenAI provider
 # ======================================================================
 
+# Rough token size of English text and code, for an endpoint that reports no usage.
+_CHARS_PER_TOKEN = 4
+
+
+@dataclass
+class _EstimatedUsage:
+    """Token counts worked out locally, in the shape ``UsageTracker.record`` reads."""
+
+    input_tokens: int
+    output_tokens: int
+
+
 class _OpenAIUsageAdapter:
     """Adapter so ``UsageTracker.record()`` works with OpenAI usage objects.
 
@@ -1655,14 +1295,6 @@ class OpenAIProvider(LLMProvider):
         free_route: bool = False,
         max_retries: int | None = None,
     ):
-        try:
-            from openai import OpenAI
-        except ImportError:
-            raise ImportError(
-                "The 'openai' package is required for the OpenAI provider. "
-                "Install it with: pip install openai"
-            ) from None
-
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
@@ -1675,7 +1307,7 @@ class OpenAIProvider(LLMProvider):
         if default_headers:
             client_kwargs["default_headers"] = default_headers
 
-        self._client = OpenAI(**client_kwargs)
+        self._client = openai_client(**client_kwargs)
         self._max_retries = _resolve_max_retries(max_retries)
         # Kept because reasoning_effort support is endpoint-specific, not just
         # model-specific — see _needs_reasoning_none_for_tools.
@@ -1705,9 +1337,32 @@ class OpenAIProvider(LLMProvider):
         self._fallback_step = 0
         self._on_fallback = False
         self.fallback_reason: str | None = None
+        self._warned_no_stream_usage = False
 
     # True on a vendor that only serves paid API models (Mistral, Nebius).
     _PAID_VENDOR = False
+
+    def _record_stream_usage(self, usage: Any, api_messages: list, text: str, tool_calls: dict) -> None:
+        """Record a finished stream's usage, or estimate it when the endpoint sent none.
+
+        Unrecorded calls would leave the run's cost cap blind. The estimate has
+        no cache information, so it bills the whole history as fresh input and
+        errs high.
+        """
+        if usage:
+            self._usage.record(_OpenAIUsageAdapter(usage))
+            return
+        if not self._warned_no_stream_usage:
+            self._warned_no_stream_usage = True
+            logger.warning(
+                "Model %s reported no usage on a stream: estimating its tokens against the cost cap.",
+                self._model,
+            )
+        arguments = "".join(call["arguments"] for call in tool_calls.values())
+        self._usage.record(_EstimatedUsage(
+            input_tokens=len(str(api_messages)) // _CHARS_PER_TOKEN,
+            output_tokens=(len(text) + len(arguments)) // _CHARS_PER_TOKEN,
+        ))
 
     def _is_billed_route(self, base_url: str | None) -> bool:
         """Paid vendor API rather than a gateway / self-hosted endpoint."""
@@ -1717,17 +1372,23 @@ class OpenAIProvider(LLMProvider):
     def _has_fallback(self) -> bool:
         return self._fallback_step < len(self._fallback_chain)
 
-    def _activate_fallback(self, error: Exception) -> bool:
+    def _activate_fallback(self, error: Exception, past_endpoint: str | None = None) -> bool:
         """Switch to the configured fallback endpoint, if any.
+
+        ``past_endpoint``: skip the chain entries on this base URL. A rejected
+        key is rejected for every model behind it, so only another endpoint
+        (with its own credentials) can serve the call.
 
         Returns True when the switch happened (caller should retry the
         call), False when no fallback is configured or it is already
         active (caller should raise).
         """
+        if past_endpoint is not None:
+            while (self._fallback_step < len(self._fallback_chain)
+                   and self._fallback_chain[self._fallback_step][0] == past_endpoint):
+                self._fallback_step += 1
         if self._fallback_step >= len(self._fallback_chain):
             return False
-        from openai import OpenAI
-
         base_url, token, fb_model = self._fallback_chain[self._fallback_step]
         self._fallback_step += 1
         client_kwargs: dict[str, Any] = {
@@ -1744,7 +1405,7 @@ class OpenAIProvider(LLMProvider):
             self._model, error, self._fallback_step,
             len(self._fallback_chain), fb_model,
         )
-        self._client = OpenAI(**client_kwargs)
+        self._client = openai_client(**client_kwargs)
         self._base_url = base_url
         self._model = fb_model
         self._usage.reprice(fb_model, self._is_billed_route(base_url), base_url)
@@ -1752,7 +1413,11 @@ class OpenAIProvider(LLMProvider):
         # Why we fell back — lets the runner/UI say "free daily quota exhausted"
         # instead of a generic "primary unavailable" (the daily quota is the
         # common cause on the free tier).
-        self.fallback_reason = "quota_exhausted" if _is_quota_exhausted(error) else "unavailable"
+        self.fallback_reason = (
+            "quota_exhausted" if _is_quota_exhausted(error)
+            else "key_rejected" if past_endpoint is not None
+            else "unavailable"
+        )
         return True
 
     @property
@@ -1769,7 +1434,7 @@ class OpenAIProvider(LLMProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         if any(tier in self._model.lower() for tier in ("mini", "nano", "luna")):
@@ -1778,7 +1443,7 @@ class OpenAIProvider(LLMProvider):
         # route (not in its catalog): the OpenAI cheap sibling doesn't exist
         # there — a cheap-sibling override just burns two failing round-trips
         # per gap analysis before the primary-model retry kicks in.
-        if self._free_route or _is_free_local_model(self._model.lower()):
+        if self._free_route or is_free_local_model(self._model.lower()):
             return None
         return self.PLANNING_MODEL
 
@@ -1865,6 +1530,15 @@ class OpenAIProvider(LLMProvider):
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
+                    # Only the server-paid tiers have a fallback: there a rejected
+                    # key is the server's (e.g. an expired free-tier token), and
+                    # another endpoint can still serve the run. A user's own key
+                    # has no fallback and fails here, loudly.
+                    if self._activate_fallback(e, past_endpoint=self._base_url):
+                        return self.chat(
+                            system, messages, tools,
+                            force_tool=force_tool, model_override=model_override,
+                        )
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
@@ -1922,6 +1596,7 @@ class OpenAIProvider(LLMProvider):
                 collected_text = ""
                 tool_calls_accum: dict[int, dict] = {}
                 finish_reason = None
+                stream_usage = None
 
                 stream = self._client.chat.completions.create(**kwargs)
                 try:
@@ -1929,10 +1604,12 @@ class OpenAIProvider(LLMProvider):
                         # The served model name appears on every chunk
                         # in a stream; capture once.
                         self._usage.set_served_model(getattr(chunk, "model", None))
+                        # Gateways differ: a final usage-only chunk, usage on the
+                        # last content chunk, or a running total on every chunk.
+                        # The last one seen is the call's total in all three.
+                        if getattr(chunk, "usage", None):
+                            stream_usage = chunk.usage
                         if not chunk.choices:
-                            # Usage-only chunk at end of stream
-                            if chunk.usage:
-                                self._usage.record(_OpenAIUsageAdapter(chunk.usage))
                             continue
 
                         delta = chunk.choices[0].delta
@@ -1973,6 +1650,8 @@ class OpenAIProvider(LLMProvider):
                             close_fn()
                         except Exception:
                             pass
+
+                self._record_stream_usage(stream_usage, api_messages, collected_text, tool_calls_accum)
 
                 # Build final content blocks
                 content: list[Any] = []
@@ -2024,6 +1703,10 @@ class OpenAIProvider(LLMProvider):
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
+                    # As in chat(): a server-paid key falls back, a user's key fails.
+                    if self._activate_fallback(e, past_endpoint=self._base_url):
+                        yield from self.chat_stream(system, messages, tools)
+                        return
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
@@ -2108,7 +1791,7 @@ class MistralProvider(OpenAIProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         if "small" in self._model.lower():
@@ -2191,7 +1874,7 @@ class NebiusProvider(OpenAIProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         # None => use the primary model. Inheriting OpenAIProvider's
@@ -2210,6 +1893,15 @@ DEFAULT_MODELS: dict[str, str] = {
     "mistral": MistralProvider.DEFAULT_MODEL,
     "nebius": NebiusProvider.DEFAULT_MODEL,
 }
+
+
+def default_model(provider: str) -> str | None:
+    """The model a run uses when the request names none.
+
+    The model catalog's ``"default": true`` entry for the provider wins, so a
+    deployment changes a default by config; DEFAULT_MODELS is the fallback.
+    """
+    return load_model_catalog().flagged_default(provider) or DEFAULT_MODELS.get(provider)
 
 
 # ======================================================================
@@ -2292,56 +1984,69 @@ FREE_TIER_PROVIDER = "free"
 SPONSORED_PROVIDER = "sponsored"
 
 
-def sponsored_tier_model() -> str:
+def sponsored_tier_model(settings: AgentSettings | None = None) -> str:
     """Default model for the sponsored tier (from server env), or ``""``."""
-    return os.environ.get("BESSER_SPONSORED_LLM_MODEL", "").strip()
+    return (settings or AgentSettings()).sponsored_llm_model.strip()
+
+
+def sponsored_tier_available() -> bool:
+    """True when the server is configured with the sponsored (demo) tier."""
+    settings = AgentSettings()
+    return bool(
+        settings.sponsored_llm_base_url.strip()
+        and settings.sponsored_llm_token.get_secret_value().strip()
+        and sponsored_tier_model(settings)
+    )
 
 
 def _resolve_sponsored_tier_config() -> tuple[str, str, str]:
     """Return ``(base_url, token, default_model)`` for the sponsored tier."""
-    base_url = os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()
-    token = os.environ.get("BESSER_SPONSORED_LLM_TOKEN", "").strip()
+    settings = AgentSettings()
+    base_url = settings.sponsored_llm_base_url.strip()
+    token = settings.sponsored_llm_token.get_secret_value().strip()
     if not base_url or not token:
         raise ValueError(
             "The sponsored tier is not available on this server "
             "(BESSER_SPONSORED_LLM_BASE_URL / BESSER_SPONSORED_LLM_TOKEN "
             "are unset)."
         )
-    return base_url, token, sponsored_tier_model()
+    return base_url, token, sponsored_tier_model(settings)
 
 
-def free_tier_model() -> str:
+def free_tier_model(settings: AgentSettings | None = None) -> str:
     """The model served by the free tier (from server env), or ``""``."""
-    return os.environ.get("BESSER_FREE_LLM_MODEL", "").strip()
+    return (settings or AgentSettings()).free_llm_model.strip()
 
 
 def free_tier_available() -> bool:
     """True when the server is configured to offer the keyless free tier."""
+    settings = AgentSettings()
     return bool(
-        os.environ.get("BESSER_FREE_LLM_BASE_URL", "").strip()
-        and free_tier_model()
+        settings.free_llm_base_url.strip()
+        and free_tier_model(settings)
     )
 
 
-def _resolve_free_tier_config() -> tuple[str, str, str]:
+def _resolve_free_tier_config(settings: AgentSettings | None = None) -> tuple[str, str, str]:
     """Return ``(base_url, token, model)`` for the free tier from server env.
 
     Raises ``ValueError`` if the free tier is not configured, so a run started
     against an unconfigured server fails fast with a clear message rather than
     silently falling back to a paid provider.
     """
-    base_url = os.environ.get("BESSER_FREE_LLM_BASE_URL", "").strip()
-    model = free_tier_model()
+    settings = settings or AgentSettings()
+    base_url = settings.free_llm_base_url.strip()
+    model = free_tier_model(settings)
     if not base_url or not model:
         raise ValueError(
             "The free tier is not available on this server "
             "(BESSER_FREE_LLM_BASE_URL / BESSER_FREE_LLM_MODEL are unset)."
         )
-    token = os.environ.get("BESSER_FREE_LLM_TOKEN", "").strip()
+    token = settings.free_llm_token.get_secret_value().strip()
     return base_url, token, model
 
 
-def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
+def _resolve_free_fallback_config(settings: AgentSettings | None = None) -> tuple[str, str, str] | None:
     """Return ``(base_url, token, model)`` for the keyless-tier fallback
     endpoint, or ``None`` when no fallback is configured.
 
@@ -2351,17 +2056,18 @@ def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
     the provider switches to this endpoint for the rest of the run.
     Typically points at a self-hosted qwen endpoint.
     """
-    base_url = os.environ.get("BESSER_FREE_LLM_FALLBACK_BASE_URL", "").strip()
-    model = os.environ.get("BESSER_FREE_LLM_FALLBACK_MODEL", "").strip()
+    settings = settings or AgentSettings()
+    base_url = settings.free_llm_fallback_base_url.strip()
+    model = settings.free_llm_fallback_model.strip()
     if not base_url or not model:
         return None
-    token = os.environ.get("BESSER_FREE_LLM_FALLBACK_TOKEN", "").strip()
+    token = settings.free_llm_fallback_token.get_secret_value().strip()
     return base_url, token, model
 
 
-def free_fallback_model() -> str:
+def free_fallback_model(settings: AgentSettings | None = None) -> str:
     """The model served by the keyless-tier fallback endpoint, or ``""``."""
-    config = _resolve_free_fallback_config()
+    config = _resolve_free_fallback_config(settings)
     return config[2] if config else ""
 
 
@@ -2381,16 +2087,17 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
     ``chosen`` is skipped wherever it appears: a run already pinned to a model
     must never "fall back" to the model it is already using.
     """
+    settings = AgentSettings()
     chain: list[tuple[str, str, str]] = []
     try:
-        primary_base_url, primary_token, _ = _resolve_free_tier_config()
+        primary_base_url, primary_token, _ = _resolve_free_tier_config(settings)
     except ValueError:
         primary_base_url, primary_token = "", ""
     if primary_base_url:
-        for alt in free_alt_models():
+        for alt in free_alt_models(settings):
             if alt and alt != chosen:
                 chain.append((primary_base_url, primary_token, alt))
-    self_hosted = _resolve_free_fallback_config()
+    self_hosted = _resolve_free_fallback_config(settings)
     if self_hosted and self_hosted[2] != chosen:
         chain.append(self_hosted)
     return chain
@@ -2408,14 +2115,15 @@ def free_pilot_model() -> str:
     the configured id is not one the server actually offers -- advertising a
     default we would refuse to honour is worse than having none.
     """
-    model = os.environ.get("BESSER_PILOT_LLM_MODEL", "").strip()
+    settings = AgentSettings()
+    model = settings.pilot_llm_model.strip()
     if not model:
         return ""
-    offered = {free_tier_model(), free_fallback_model(), *free_alt_models()}
+    offered = {free_tier_model(settings), free_fallback_model(settings), *free_alt_models(settings)}
     return model if model in offered else ""
 
 
-def free_alt_models() -> list[str]:
+def free_alt_models(settings: AgentSettings | None = None) -> list[str]:
     """Extra keyless models served by the PRIMARY free endpoint, in order.
 
     Read from ``BESSER_FREE_LLM_ALT_MODELS`` (comma-separated model ids). These
@@ -2429,12 +2137,13 @@ def free_alt_models() -> list[str]:
     per model rather than per account, so an alt model adds capacity when the
     primary's daily quota runs out. Empty by default.
     """
-    raw = os.environ.get("BESSER_FREE_LLM_ALT_MODELS", "")
+    settings = settings or AgentSettings()
+    raw = settings.free_llm_alt_models
     if not raw.strip():
         return []
     # Ids already owned by another endpoint/token pair must not be re-served
     # from the primary's credentials.
-    taken = {m for m in (free_tier_model(), free_fallback_model()) if m}
+    taken = {m for m in (free_tier_model(settings), free_fallback_model(settings)) if m}
     models: list[str] = []
     for part in raw.split(","):
         model = part.strip()
@@ -2471,9 +2180,10 @@ def is_free_fallback_choice(requested: str | None) -> bool:
     start-event model name matches what the factory builds.
     """
     req = (requested or "").strip()
-    if not req or req == free_tier_model():
+    settings = AgentSettings()
+    if not req or req == free_tier_model(settings):
         return False
-    return req == free_fallback_model()
+    return req == free_fallback_model(settings)
 
 
 # ======================================================================
@@ -2492,8 +2202,9 @@ def create_llm_client(
 
     Args:
         provider: ``"anthropic"`` (default), ``"openai"``, ``"mistral"``,
-            ``"nebius"``, or ``"free"`` (server-hosted open-weight model;
-            needs no user key).
+            ``"nebius"``, ``"free"`` (server-hosted open-weight model;
+            needs no user key), or a gateway provider listed in the model
+            catalog (e.g. ``"pia"``).
         api_key: API key. If not provided, resolved from environment variables.
             Ignored for the ``"free"`` provider.
         model: Model identifier. Defaults to provider-specific default. For the
@@ -2504,7 +2215,8 @@ def create_llm_client(
             primary's token); any other value is ignored and the client is
             pinned to the server's primary model.
         base_url: Custom API base URL. Ignored for the ``"free"`` provider,
-            which reads its endpoint from server env.
+            which reads its endpoint from server env, and for a gateway
+            provider of the model catalog, whose endpoint is its ``base_url``.
         **kwargs: Additional keyword arguments passed to the provider constructor
             (e.g. ``max_tokens``).
 
@@ -2582,7 +2294,9 @@ def create_llm_client(
             free_route=True,
             **kwargs,
         )
-    elif provider == "anthropic":
+    if provider in DEFAULT_MODELS:
+        model = model or default_model(provider)
+    if provider == "anthropic":
         resolved_key = _resolve_api_key(api_key=api_key)
         resolved_base = _resolve_base_url(base_url=base_url)
         return ClaudeLLMClient(
@@ -2608,8 +2322,19 @@ def create_llm_client(
         # carries one is already rejected upstream by the runner's SSRF gate
         # unless BESSER_LLM_ALLOW_CUSTOM_BASE_URL is on.
         return NebiusProvider(api_key=resolved_key, model=model, **kwargs)
-    else:
-        raise ValueError(
-            f"Unknown provider: {provider!r}. Supported providers: "
-            f"'anthropic', 'openai', 'mistral', 'nebius'."
+    gateway_url = load_model_catalog().base_url(provider)
+    if gateway_url:
+        # A gateway from the deployment's model catalog (e.g. ``pia``): the
+        # endpoint is server config, so a request-supplied base_url is ignored.
+        if not api_key:
+            raise InvalidApiKeyError(f"No API key given for provider {provider!r}.")
+        return OpenAIProvider(
+            api_key=api_key,
+            model=model or load_model_catalog().default_model(provider),
+            base_url=gateway_url, **kwargs,
         )
+    raise ValueError(
+        f"Unknown provider: {provider!r}. Supported providers: "
+        f"'anthropic', 'openai', 'mistral', 'nebius', or a gateway listed "
+        f"in the model catalog."
+    )

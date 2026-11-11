@@ -1,38 +1,39 @@
 Version 8.4.1
 =============
 
-Patch release: **PIA model choice and billing**. Bring-your-own-key users on
-LIST's PIA gateway get a model that the gateway actually serves, PIA's
-recommended models in the model picker, and run costs priced at PIA's rates.
-No metamodel, API or generator output changes.
+Patch release: **gateway model choice and billing**. Bring-your-own-key users
+on an organisation's AI gateway get a model that the gateway actually serves,
+the gateway's recommended models in the model picker, and run costs priced at
+the gateway's rates. No metamodel, API or generator output changes.
 
 Web modeling editor
 -------------------
 
-* **PIA and Local preselect a real model.** Switching the key dialog's
-  provider to **PIA (LIST)** or **Local (self-hosted)** left the model on
+* **Gateway and Local preselect a real model.** Switching the key dialog's
+  provider to the gateway or to **Local (self-hosted)** left the model on
   "Recommended default". Neither provider has a server-side default model, so
   the backend could request a model the gateway does not serve. The dialog now
-  preselects the provider's first preset (Claude Sonnet 5.5 for PIA,
+  preselects the provider's first preset (Claude Sonnet 5.5 for the gateway,
   ``qwen2.5-coder:7b`` for Local) and keeps a custom model ID if one is set.
-* **PIA's recommended models.** The PIA model list now offers one Claude and
-  one GPT model per tier: Claude Sonnet 5.5 and GPT-6.1 Sol for writing,
-  analysis and coding, Claude Opus 5.5 and GPT-6 Astra for demanding planning
-  or coding, and Claude Haiku 4.5 and GPT-6 Luna for routine work.
+* **The gateway's recommended models.** The gateway's model list now offers
+  one Claude and one GPT model per tier: Claude Sonnet 5.5 and GPT-6.1 Sol for
+  writing, analysis and coding, Claude Opus 5.5 and GPT-6 Astra for demanding
+  planning or coding, and Claude Haiku 4.5 and GPT-6 Luna for routine work.
   ``gpt-5.4`` and ``gpt-5.4-mini`` are removed: the gateway lists them but
   rejects them as invalid model names. Other models the gateway serves can
   still be entered as a custom model ID.
-* **PIA hint wording.** The key hint no longer says that PIA "runs on LIST
-  infrastructure". PIA is LIST's governed gateway in front of cloud models.
+* **Gateway hint wording.** The key hint no longer says that the gateway runs
+  on the organisation's own infrastructure. It is a governed gateway in front
+  of cloud models.
 
 Spec-Driven Agent
 -----------------
 
-* **PIA runs priced at PIA's rates.** PIA bills its own rates, which neither
-  the vendored litellm price table nor the built-in tiers know. Its
-  recommended models were priced from the wrong source: ``claude-sonnet-5-5``
-  on the generic Sonnet rate, ``gpt-6.1-sol`` on the ``gpt-4o`` fallback, and
-  the Haiku 4.5 and Opus 5.5 ids at Anthropic's direct rates. They now have
-  rows in ``_ROUTE_PRICING`` under the gateway host, so the per-run cost cap
-  tracks what PIA charges. PIA publishes no cache rates, so cached tokens are
-  priced at the input rate.
+* **Gateway runs priced at the gateway's rates.** The gateway bills its own
+  rates, which neither the vendored litellm price table nor the built-in tiers
+  know. Its recommended models were priced from the wrong source:
+  ``claude-sonnet-5-5`` on the generic Sonnet rate, ``gpt-6.1-sol`` on the
+  ``gpt-4o`` fallback, and the Haiku 4.5 and Opus 5.5 ids at Anthropic's
+  direct rates. They now have rows in ``_ROUTE_PRICING`` under the gateway
+  host, so the per-run cost cap tracks what the gateway charges. The gateway
+  publishes no cache rates, so cached tokens are priced at the input rate.

@@ -85,3 +85,19 @@ def test_a_range_edit_counts_like_any_other_edit(orchestrator, tmp_path):
     summary = _recipe(orchestrator, tmp_path)["output_summary"]
 
     assert summary["generator_files_edited_by_llm"] == 1
+
+
+def test_a_modify_run_keeps_the_edits_of_earlier_runs(orchestrator, tmp_path):
+    """The flag came from this run's tool calls only, so a modify run that left an
+    edited generator file alone reported it unedited: 23 such files in 44 runs."""
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({"output_files": [
+        {"path": "scaffold_a.py", "source": "generator", "llm_modified": True},
+        {"path": "scaffold_b.py", "source": "generator"},
+    ]}), encoding="utf-8")
+    orchestrator._seed_generator_files_from_recipe()
+    orchestrator.tool_calls_log = []
+
+    files = {f["path"]: f for f in _recipe(orchestrator, tmp_path)["output_files"]}
+
+    assert files["scaffold_a.py"]["llm_modified"] is True
+    assert "llm_modified" not in files["scaffold_b.py"]

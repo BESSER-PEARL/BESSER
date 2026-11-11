@@ -149,3 +149,4 @@ The frontend is a Git submodule at
    :maxdepth: 1
 
    web_editor_backend
+   web_editor_github

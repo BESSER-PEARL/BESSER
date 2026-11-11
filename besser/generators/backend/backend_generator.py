@@ -1,9 +1,9 @@
 import configparser
 import logging
 import os
-import docker
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
@@ -41,6 +41,8 @@ class BackendGenerator(GeneratorInterface):
             by path relative to the output folder: ``sql_alchemy.py``, ``pydantic_classes.py``,
             ``main_api.py`` and the routers (see ``besser.utilities.generation_trace``).
     """
+
+    regenerable = True
 
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
                  api_title: str = None, api_description: str = None, api_version: str = None):
@@ -87,6 +89,11 @@ class BackendGenerator(GeneratorInterface):
                 logger.warning("Docker configuration file not found at path: %s", self.docker_config_path)
             return None
 
+    def _regeneration_refusal(self) -> "str | None":
+        if self.docker_image and self.config:
+            return "with docker_image and a Docker configuration it builds and pushes an image without your edits."
+        return None
+
     def generate(self):
         """
         Generates Backend model code based on the provided B-UML model and saves it to the specified output directory.
@@ -95,6 +102,7 @@ class BackendGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
         """
+        require_valid_identifiers(self.model)
         if self.output_dir is not None:
             backend_folder_path = self.output_dir
             os.makedirs(backend_folder_path, exist_ok=True)
@@ -189,6 +197,13 @@ class BackendGenerator(GeneratorInterface):
         repository = self.config["docker_repository"]
         tag = self.config["docker_tag"]
         full_image_name = f"{repository}/{image_name}:{tag}"
+
+        try:
+            import docker
+        except ImportError as exc:
+            raise ImportError(
+                'Building the Docker image needs the docker package: pip install "besser[docker]"'
+            ) from exc
 
         # Create docker client
         client = docker.from_env()

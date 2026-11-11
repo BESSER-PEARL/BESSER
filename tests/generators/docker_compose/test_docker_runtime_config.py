@@ -127,7 +127,7 @@ def test_tagged_peer_ports_match_the_worker_config(tmp_path):
 
 def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeypatch):
     from besser.utilities.web_modeling_editor.backend.models import DiagramInput
-    from besser.utilities.web_modeling_editor.backend.routers import generation_router as route
+    from besser.utilities.web_modeling_editor.backend.services.generation import dispatch as route
 
     captured = {}
     normalized = []

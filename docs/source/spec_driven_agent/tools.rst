@@ -123,7 +123,8 @@ Each of these calls a BESSER :doc:`code generator <../generators>` directly —
 the same deterministic generator you would run yourself from Python. They are
 what makes the agent an orchestrator rather than a code writer: for anything
 BESSER already templates, the LLM asks for the template output and edits it
-instead of writing it from scratch.
+instead of writing it from scratch. They are declared with the generators
+themselves, in ``besser/generators/registry.py``.
 
 .. list-table::
    :header-rows: 1
@@ -141,8 +142,6 @@ instead of writing it from scratch.
      - :doc:`Full Web App <../generators/full_web_app>`
    * - ``generate_react``
      - :doc:`React <../generators/react>`
-   * - ``generate_flutter``
-     - :doc:`Flutter <../generators/flutter>`
    * - ``generate_python_classes``
      - :doc:`Python <../generators/python>`
    * - ``generate_java_classes``
@@ -173,14 +172,17 @@ instead of writing it from scratch.
      - :doc:`TensorFlow <../generators/tensorflow>`
 
 The whole-application generators (``generate_web_app``, ``generate_django``,
-``generate_flutter``, ``generate_fastapi_backend``, ``generate_rest_api``) run
+``generate_fastapi_backend``, ``generate_rest_api``) run
 at most once per application. Once one of them has built the app (in Phase 1,
 or in the run a modify run continues), all of them are removed from the
 toolset and the agent's calls to them are refused: running one again would
 overwrite every edit made since. In a modify run on any other seed, only the
 generators whose output folder the seed already has (``backend/``,
-``web_app/``, ``django/``, ``flutter/``, ``rest_api/``) are refused. A resumed
-run keeps the same lock. To change the stack, start a fresh run.
+``web_app/``, ``django/``, ``rest_api/``) are refused. A resumed
+run keeps the same lock. To change the stack, start a fresh run. The lock covers
+the agent's calls only: when the model changed, a modify run itself regenerates
+the generated files and merges the change into edited ones (see
+:ref:`spec-driven-regeneration`).
 
 .. _spec-driven-shell-tools:
 
@@ -392,5 +394,7 @@ only there so a runaway command cannot fill the disk.
    ``besser/spec_driven_agent/agent/tools.py``, an entry in
    ``_TOOL_MODEL_REQUIREMENTS`` in the same file (so the tool is only offered
    when the models it needs are present), and a handler in
-   ``ToolExecutor._handlers`` (``agent/tool_executor.py``). See
-   :doc:`../contributor_guide`.
+   ``ToolExecutor._handlers`` (``agent/tool_executor.py``). A generator tool is
+   the ``agent_tool`` of the generator's entry in
+   ``besser/generators/registry.py`` (declaration and requirements in one), its
+   id in ``AGENT_TOOL_ORDER``, plus the handler. See :doc:`../contributor_guide`.

@@ -43,7 +43,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     create_llm_client,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class LLMGenerator(GeneratorInterface):
         llm_model: Model ID (default depends on provider).
         provider: LLM provider to use: ``"anthropic"``, ``"openai"``,
             ``"mistral"``, or ``"nebius"``.
-        gui_model: Optional GUI model (for React/Flutter/WebApp generators).
+        gui_model: Optional GUI model (for the React/WebApp generators).
         agent_model: Optional agent model (for BAF generator).
         agent_config: Optional agent config dict.
         output_dir: Where to write generated files (default: ./output).

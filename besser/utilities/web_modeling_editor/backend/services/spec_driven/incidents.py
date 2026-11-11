@@ -18,18 +18,29 @@ import re
 import shutil
 import threading
 
+from besser.utilities.secret_redaction import redact_text
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
+
 logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 
+_DEFAULT_INCIDENT_LOG_DIR = "/app/incidents"
+
 
 def _incident_path() -> str:
-    directory = os.environ.get("BESSER_INCIDENT_LOG_DIR", "/app/incidents")
+    configured = BackendSettings().incident_log_dir
+    directory = _DEFAULT_INCIDENT_LOG_DIR if configured is None else configured
     try:
         os.makedirs(directory, exist_ok=True)
     except Exception:
         return ""
     return os.path.join(directory, "incidents.jsonl")
+
+
+def _redacted(text: str | None) -> str:
+    """``text`` with credentials removed: exception text and tracebacks can quote one."""
+    return redact_text(text or "")[0]
 
 
 def record_incident(
@@ -54,9 +65,10 @@ def record_incident(
             "provider": provider,
             "model": model,
             "code": code,
-            "message": (message or "")[:2000],
-            "traceback": (traceback_text or "")[:8000] or None,
-            "instructions": (instructions or "")[:300] or None,
+            # Redacted before the cut, which could split a token past the pattern.
+            "message": _redacted(message)[:2000],
+            "traceback": _redacted(traceback_text)[:8000] or None,
+            "instructions": _redacted(instructions)[:300] or None,
         }
         line = json.dumps({k: v for k, v in entry.items() if v is not None},
                           ensure_ascii=False)
@@ -88,9 +100,10 @@ def persist_run_trace(
     try:
         if not run_id or not trace_path or not os.path.isfile(trace_path):
             return
-        base = os.environ.get("BESSER_INCIDENT_LOG_DIR")
+        settings = BackendSettings()
+        base = settings.incident_log_dir
         if not base and study_run:
-            base = os.environ.get("BESSER_TELEMETRY_DIR")
+            base = settings.telemetry_dir
         if not base:
             return
         dest_dir = os.path.join(base, "traces")

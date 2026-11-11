@@ -1,0 +1,5 @@
+# Production environment variables
+# Backend API URL - Update this with your deployed backend URL
+VITE_API_URL=https://library-app-backend-a1b2c3.onrender.com
+
+# For local development, use: http://localhost:8000 (backend) and ws://localhost:8765+ (agents)

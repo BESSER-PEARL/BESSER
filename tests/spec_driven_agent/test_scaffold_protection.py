@@ -1,6 +1,6 @@
 """The protect_scaffold configuration must not refuse into a dead end.
 
-``protect_scaffold`` is set from ``_is_free_local_model(model)``, which keys on
+``protect_scaffold`` is set from ``is_free_local_model(model)``, which keys on
 the SHAPE of the model id (``qwen3:30b`` self-hosted vs
 ``qwen/qwen3-30b-a3b-instruct-2507`` gateway), so every measured run so far ran
 with it OFF - and it switches ON in the on-prem install. Its refusals had never

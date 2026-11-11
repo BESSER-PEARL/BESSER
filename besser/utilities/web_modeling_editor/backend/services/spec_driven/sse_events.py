@@ -23,7 +23,7 @@ from typing import Any, Iterable, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+from besser.utilities.secret_redaction import (
     redact_data,
 )
 
@@ -40,7 +40,7 @@ class StartEvent(BaseSseEvent):
     event: Literal["start"] = "start"
     runId: str
     provider: Literal[
-        "anthropic", "openai", "mistral", "nebius", "free", "sponsored"
+        "anthropic", "openai", "mistral", "nebius", "free", "sponsored", "pia", "gateway"
     ]
     llmModel: str
     maxCost: float
@@ -244,6 +244,16 @@ class DoneEvent(BaseSseEvent):
     # written by any run's LLM, ``aiLinesThisRun`` only this run's. Best-effort:
     # ``None`` when the record could not be built.
     aiShare: Optional[dict[str, Any]] = None
+    # What this run changed, for the card's "What changed" summary.
+    # ``mode`` is "create" for a new app and "modify" for an update of an
+    # existing one; ``changedFiles`` are the paths the agent wrote, edited or
+    # deleted through its file tools (capped; ``changedFileCount`` is the
+    # total); ``modelChanges`` describe how the model differs from the one
+    # the base app was built from (modify runs only).
+    mode: Literal["create", "modify"] = "create"
+    changedFiles: list[str] = Field(default_factory=list)
+    changedFileCount: int = 0
+    modelChanges: list[str] = Field(default_factory=list)
 
 
 ErrorCode = Literal[

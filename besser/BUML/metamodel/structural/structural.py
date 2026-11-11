@@ -795,8 +795,6 @@ class Property(TypedElement):
 
     def opposite_end(self) -> "Property":
         """Property: Get the opposite end of the property if it is an association end."""
-        # Delayed import to avoid circular dependency
-        from besser.BUML.metamodel.structural import BinaryAssociation
         if self.owner and isinstance(self.owner, BinaryAssociation):
             for end in self.owner.ends:
                 if end != self:
@@ -2582,8 +2580,23 @@ class DomainModel(Model):
         self._validate_attribute_shadowing(errors)
         self._validate_member_name_collisions(errors)
         self._validate_unique_end_names(errors)
+        self._validate_identifier_names(errors)
+        self._validate_attribute_types(errors)
         self._validate_mandatory_cycles(warnings)
         self._validate_duplicate_associations(warnings)
+        self._validate_attribute_end_collisions(warnings)
+        self._validate_python_keyword_names(warnings)
+        self._validate_case_only_class_names(warnings)
+        self._validate_case_only_attribute_names(warnings)
+        self._validate_join_table_names(warnings)
+        self._validate_foreign_key_column_clashes(warnings)
+        self._validate_id_attributes(warnings)
+        self._validate_empty_enumerations(warnings)
+        self._validate_class_typed_attributes(warnings)
+        self._validate_isolated_classes(warnings)
+        self._validate_abstract_classes_without_concrete_subclass(warnings)
+        self._validate_shared_composite_parts(warnings)
+        self._validate_composite_whole_multiplicity(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2731,6 +2744,373 @@ class DomainModel(Model):
                 "duplicate foreign keys and a suffixed role name for one of "
                 "them; keep both only if they are genuinely different roles."
             )
+
+    def _code_names(self):
+        """Yield ``(label, name)`` for every model name a generator emits as a code identifier.
+
+        Classes, enumerations and their literals, attributes, methods and their
+        parameters, association ends, and the associations stored in a join
+        table (the SQLAlchemy generator names a variable after them; any other
+        association name only appears inside strings), in a stable order so
+        the messages built from it are deterministic.
+        """
+        for cls in sorted(self.get_classes(), key=lambda e: e.name):
+            yield f"Class '{cls.name}'", cls.name
+            for attr in sorted(cls.attributes, key=lambda e: e.name):
+                yield f"Attribute '{attr.name}' of class '{cls.name}'", attr.name
+            for method in sorted(cls.methods, key=lambda e: e.name):
+                yield f"Method '{method.name}' of class '{cls.name}'", method.name
+                for param in method.parameters:
+                    yield f"Parameter '{param.name}' of method '{cls.name}.{method.name}'", param.name
+        for enum in sorted(self.get_enumerations(), key=lambda e: e.name):
+            yield f"Enumeration '{enum.name}'", enum.name
+            for literal in sorted(enum.literals, key=lambda e: e.name):
+                yield f"Literal '{literal.name}' of enumeration '{enum.name}'", literal.name
+        join_tables = self._join_table_associations()
+        for association in sorted(self.__associations, key=lambda e: e.name):
+            if association in join_tables:
+                yield f"Many-to-many association '{association.name}'", association.name
+            for end in sorted(association.ends, key=lambda e: e.name):
+                yield f"Association end '{end.name}' of association '{association.name}'", end.name
+
+    def _join_table_associations(self) -> set:
+        """The associations the SQLAlchemy generator stores in a join table named after them.
+
+        Binary, many-to-many, and not the association of an association class
+        (that class is the join table).
+        """
+        association_class_links = {
+            t.association for t in self.__types if isinstance(t, AssociationClass)
+        }
+        return {
+            association for association in self.__associations
+            if len(association.ends) == 2 and association not in association_class_links
+            and all(end.multiplicity.max > 1 for end in association.ends)
+        }
+
+    def _validate_identifier_names(self, errors: list[str]):
+        """Report a name that is not a valid identifier (``2nd_name``, ``price$``).
+
+        The name setter only rejects spaces and hyphens. Every code generator
+        writes these names verbatim as class, field or variable names, so the
+        generated Python does not parse, and Java and TypeScript do not compile.
+        """
+        errors.extend(self.invalid_identifier_names())
+
+    def invalid_identifier_names(self) -> list[str]:
+        """One message per name a generator emits as code that is not a valid identifier.
+
+        Code generators call this before rendering: the name setter accepts
+        quotes, ``;`` and newlines, and a name written verbatim into generated
+        Python would otherwise become code.
+        """
+        return [
+            f"{label} is not a valid identifier: generated code uses the name as written, "
+            f"so it will not parse. Use letters, digits and '_' only, not starting with a digit."
+            for label, name in self._code_names()
+            if not name.isidentifier()
+        ]
+
+    def _validate_attribute_types(self, errors: list[str]):
+        """Report an attribute typed by a class or enumeration that is not in the model.
+
+        The twin of the association-end check in ``_validate_associations``:
+        generated code refers to a type it never defines. ``TypedElement``
+        keeps a type name it cannot resolve as a plain string, which is the
+        same defect.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if isinstance(attr.type, PrimitiveDataType) or attr.type in self.__types:
+                    continue
+                type_name = attr.type.name if isinstance(attr.type, Type) else str(attr.type)
+                errors.append(
+                    f"Attribute '{attr.name}' of class '{cls.name}' has type '{type_name}', "
+                    f"which is not in the domain model '{self.name}'. Generated code would refer to a type "
+                    f"it never defines. Add '{type_name}' to the model or use a primitive type."
+                )
+
+    def _validate_attribute_end_collisions(self, warnings: list[str]):
+        """Warn about a class reaching an attribute and an association end of the same name.
+
+        Generated code gives both the same member name. The Java generator's
+        class does not compile; the SQLAlchemy generator still emits a module
+        that loads, but the relationship replaces the attribute's mapping, so
+        the column is no longer read or written. A warning, since generation
+        itself succeeds. A name inherited on both sides is reported once, on
+        the class that declares one of them.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            own_names = {attr.name for attr in cls.attributes} | {end.name for end in cls.association_ends()}
+            attr_names = {attr.name for attr in cls.all_attributes()}
+            end_names = {end.name for end in cls.all_association_ends()}
+            for name in sorted((attr_names & end_names) & own_names):
+                warnings.append(
+                    f"Attribute and association end share a name: class '{cls.name}' has an attribute and an "
+                    f"association end both named '{name}'. Generated code gives a class one member per name: "
+                    f"the Java class does not compile, and in the SQLAlchemy model the relationship hides the "
+                    f"attribute's column. Rename one; if the attribute stores the related object, delete it and "
+                    f"keep the association."
+                )
+
+    def _validate_python_keyword_names(self, warnings: list[str]):
+        """Warn about a name that is a Python keyword (``from``, ``class``, ``None``).
+
+        Legal for the Java or TypeScript generators, so a warning, but the
+        Python-based generators (SQLAlchemy, FastAPI backend, Django, Pydantic,
+        Python classes) emit it verbatim and the generated module does not parse.
+        """
+        for label, name in self._code_names():
+            if keyword.iskeyword(name):
+                warnings.append(
+                    f"Python keyword name: {label} is the Python keyword '{name}'. The Python generators "
+                    f"(SQLAlchemy, FastAPI backend, Django, Pydantic) emit it verbatim, so the generated "
+                    f"code will not parse. Rename it, e.g. '{name}_' or a more specific name."
+                )
+
+    def _validate_case_only_class_names(self, warnings: list[str]):
+        """Warn about classes whose names differ only in case (``Order`` / ``order``).
+
+        The SQLAlchemy and Django generators derive table and model names in
+        lower case, so the second class redefines the first table and the
+        application does not start.
+        """
+        groups: dict[str, list[str]] = {}
+        for cls in self.get_classes():
+            groups.setdefault(cls.name.lower(), []).append(cls.name)
+        for names in sorted(groups.values()):
+            if len(names) < 2:
+                continue
+            listed = ", ".join(f"'{n}'" for n in sorted(names))
+            warnings.append(
+                f"Class names differ only in case: {listed}. Generated database tables are named in "
+                f"lower case, so these classes map to the same table '{names[0].lower()}' and the "
+                f"application fails at startup. Give the classes distinct names."
+            )
+
+    def _validate_case_only_attribute_names(self, warnings: list[str]):
+        """Warn about attributes of one class whose names differ only in case (``Name`` / ``name``).
+
+        Each becomes a column of the class's table, and SQLite (the generated
+        default) and MySQL compare column names case-insensitively, so the
+        table cannot be created.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            groups: dict[str, list[str]] = {}
+            for attr in cls.attributes:
+                groups.setdefault(attr.name.lower(), []).append(attr.name)
+            for names in sorted(groups.values()):
+                if len(names) < 2:
+                    continue
+                listed = ", ".join(f"'{n}'" for n in sorted(names))
+                warnings.append(
+                    f"Attribute names differ only in case: {listed} in class '{cls.name}'. They become "
+                    f"columns of one table, and SQLite and MySQL treat column names case-insensitively, "
+                    f"so the table cannot be created. Rename one of them."
+                )
+
+    def _validate_join_table_names(self, warnings: list[str]):
+        """Warn when a many-to-many association's join table takes the name of another table.
+
+        The SQLAlchemy generator (and with it the FastAPI backend and web app)
+        stores a many-to-many association without an association class in a
+        join table named after the association, in lower case, alongside one
+        table per class (also lower case). Two tables with one name stop the
+        application at startup ("Table 'enrollment' is already defined").
+        """
+        class_tables: dict[str, list[str]] = {}
+        for cls in self.get_classes():
+            class_tables.setdefault(cls.name.lower(), []).append(f"class '{cls.name}'")
+        join_tables: dict[str, list[str]] = {}
+        for association in self._join_table_associations():
+            join_tables.setdefault(association.name.lower(), []).append(
+                f"many-to-many association '{association.name}'")
+        for table, joins in sorted(join_tables.items()):
+            owners = sorted(class_tables.get(table, [])) + sorted(joins)
+            if len(owners) < 2:
+                continue
+            warnings.append(
+                f"Join table name clash: {' and '.join(owners)} map to the same table '{table}' "
+                f"(a many-to-many association gets a join table named after it, in lower case). The "
+                f"application fails at startup because the table is defined twice. Rename the association."
+            )
+
+    def _validate_foreign_key_column_clashes(self, warnings: list[str]):
+        """Warn about an attribute named like the foreign key generated for an association end.
+
+        A to-one end ``author`` is stored as a foreign-key column ``author_id``
+        (SQLAlchemy, FastAPI backend, Django). An attribute with that name is
+        the relational key modeled by hand: the generated FastAPI router passes
+        ``author_id=`` twice and does not compile, and Django reports a field
+        clash (models.E006).
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            attr_names = {attr.name.lower(): attr.name for attr in cls.attributes}
+            for end in sorted(cls.association_ends(), key=lambda e: e.name):
+                if end.multiplicity.max != 1:
+                    continue
+                column = f"{end.name}_id"
+                if column.lower() not in attr_names:
+                    continue
+                warnings.append(
+                    f"Foreign key column clash: attribute '{attr_names[column.lower()]}' of class "
+                    f"'{cls.name}' has the name of the foreign key generated for association end "
+                    f"'{end.name}' ('{column}'). The generated backend and Django define it twice and "
+                    f"fail to load. Delete the attribute; the association already stores the reference."
+                )
+
+    def _validate_id_attributes(self, warnings: list[str]):
+        """Warn about an attribute named ``id`` that clashes with the generated primary key.
+
+        A subclass inherits its parent's key as ``id`` (a foreign key to the
+        parent table in SQLAlchemy and Django), so its own ``id`` breaks the
+        inheritance mapping in both. On a root class, an ``id`` that is not
+        marked as the identifier is rejected by Django (models.E004), and the
+        SQLAlchemy generator silently makes it the primary key.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if attr.name.lower() != "id":
+                    continue
+                if cls.parents():
+                    warnings.append(
+                        f"Subclass declares 'id': class '{cls.name}' defines attribute '{attr.name}', but it "
+                        f"inherits its primary key 'id' from its parent class. The generated SQLAlchemy and "
+                        f"Django models cannot map the inheritance. Delete the attribute or rename it."
+                    )
+                elif attr.name == "id" and not attr.is_id:
+                    warnings.append(
+                        f"Attribute 'id' is not the identifier: class '{cls.name}' has an attribute 'id' that "
+                        f"is not marked as its identifier, while generated models reserve 'id' for the primary "
+                        f"key. Django rejects the model, and SQLAlchemy silently turns it into the key. Mark it "
+                        f"as the identifier (is_id) or rename it."
+                    )
+
+    def _validate_empty_enumerations(self, warnings: list[str]):
+        """Warn about an enumeration without literals.
+
+        No attribute of that type can hold a value, and the SQLAlchemy,
+        Pydantic (with them the FastAPI backend) and Django generators emit an
+        empty ``class Status(Enum):`` body, which does not parse, even when no
+        attribute uses the enumeration.
+        """
+        for enum in sorted(self.get_enumerations(), key=lambda e: e.name):
+            if not enum.literals:
+                warnings.append(
+                    f"Empty enumeration: '{enum.name}' has no literals, so no attribute of that type can hold "
+                    f"a value, and the SQLAlchemy, Pydantic and Django generators emit an empty class body that does "
+                    f"not parse. Add its literals, or delete it."
+                )
+
+    def _validate_class_typed_attributes(self, warnings: list[str]):
+        """Warn about an attribute whose type is a class of the model.
+
+        Legal UML, but a relationship drawn as an attribute: the persistence
+        generators only map primitive and enumeration types to columns (the
+        SQLAlchemy generator and the FastAPI backend refuse to generate), and
+        the relationship gets no foreign key or navigation.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if isinstance(attr.type, Class) and attr.type in self.__types:
+                    warnings.append(
+                        f"Class-typed attribute: attribute '{attr.name}' of class '{cls.name}' has the class "
+                        f"'{attr.type.name}' as its type. A database column cannot hold an object, so the "
+                        f"SQLAlchemy and FastAPI backend generators stop with an unsupported type. Replace the "
+                        f"attribute with an association from '{cls.name}' to '{attr.type.name}'."
+                    )
+
+    def _validate_isolated_classes(self, warnings: list[str]):
+        """Warn about a class with no attributes, methods, associations or generalizations.
+
+        Generation succeeds, but the class becomes a table with only a key
+        and a form with no fields: nearly always a class left unfinished.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            if isinstance(cls, AssociationClass) or cls.methods or cls.all_attributes():
+                continue
+            if cls.all_association_ends() or cls.parents() or cls.specializations():
+                continue
+            warnings.append(
+                f"Isolated class: '{cls.name}' has no attributes, methods, associations or generalizations, "
+                f"so the generated application stores and shows nothing for it. Add its attributes and "
+                f"relationships, or delete it."
+            )
+
+    def _validate_abstract_classes_without_concrete_subclass(self, warnings: list[str]):
+        """Warn about an abstract class that no concrete class specializes.
+
+        No object of the class can exist, so its attributes and associations
+        are unusable, and a mandatory end typed by it can never be satisfied.
+        The Spring generator maps an abstract class to no table at all.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            if not cls.is_abstract or any(not sub.is_abstract for sub in cls.all_specializations()):
+                continue
+            # An end typed by `cls` with min >= 1 makes every object at the other end need one.
+            required_by = sorted({
+                other.type.name
+                for association in cls.associations
+                for own in association.ends if own.type is cls and own.multiplicity.min >= 1
+                for other in association.ends if other is not own and other.type is not cls
+            })
+            consequence = (
+                f" Objects of {', '.join(repr(n) for n in required_by)} must each be linked to one through a "
+                f"mandatory association end, so they cannot be created either."
+                if required_by else ""
+            )
+            warnings.append(
+                f"Abstract class without concrete subclass: '{cls.name}' is abstract and no concrete class "
+                f"specializes it, so no '{cls.name}' object can exist.{consequence} Add a concrete subclass, "
+                f"or make '{cls.name}' concrete."
+            )
+
+    def _validate_shared_composite_parts(self, warnings: list[str]):
+        """Warn about a class that must belong to two composites at once.
+
+        A part belongs to at most one whole at a time. Two compositions that
+        each make the owner mandatory (``1`` at the whole's end) ask every part
+        to have two owners, and deleting either whole deletes the part the
+        other still requires.
+        """
+        owners: dict[str, list[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            for whole, part in ((ends[0], ends[1]), (ends[1], ends[0])):
+                if whole.is_composite and whole.multiplicity.min >= 1:
+                    owners.setdefault(part.type.name, []).append(f"'{whole.type.name}' ({association.name})")
+        for part, wholes in sorted(owners.items()):
+            if len(wholes) < 2:
+                continue
+            warnings.append(
+                f"Part with several mandatory owners: class '{part}' is a mandatory part of "
+                f"{' and '.join(sorted(wholes))}, but a part belongs to one whole at a time and deleting "
+                f"either whole deletes it. Make all but one of these compositions plain associations, or "
+                f"their owner ends optional (0..1)."
+            )
+
+    def _validate_composite_whole_multiplicity(self, warnings: list[str]):
+        """Warn about a composition whose whole end allows more than one whole.
+
+        A part belongs to one whole, so the whole's end is 1 or 0..1. With a
+        larger upper bound the generated backends cannot delete the parts with
+        their whole. Most often the diamond was drawn at the part's end.
+        """
+        for association in sorted(self.__associations, key=lambda a: a.name):
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            for whole, part in ((ends[0], ends[1]), (ends[1], ends[0])):
+                if whole.is_composite and whole.multiplicity.max > 1:
+                    warnings.append(
+                        f"Part with several wholes: in composition '{association.name}', each "
+                        f"'{part.type.name}' is a part of many '{whole.type.name}', but a part belongs to one "
+                        f"whole, so generated backends do not delete the parts with their whole. If the "
+                        f"diamond is at the wrong end, move it to '{part.type.name}'; otherwise set the "
+                        f"multiplicity at '{whole.type.name}' to 1 or 0..1."
+                    )
 
     def _validate_constraints(self, errors: list[str]):
         """Validate that constraint contexts reference classes in the model.

@@ -29,3 +29,11 @@ def normalize_relative_path(path: str) -> str:
     if not parts:
         raise ValueError(f"Path {path!r} does not contain any relative path segment.")
     return "/".join(parts)
+
+
+def is_repo_json_path(value: str) -> bool:
+    """A relative ``.json`` path inside a repository, without ``.`` or ``..`` segments."""
+    return (
+        value.endswith(".json") and not value.startswith("/") and "\\" not in value
+        and not any(part in ("", ".", "..") for part in value.split("/"))
+    )

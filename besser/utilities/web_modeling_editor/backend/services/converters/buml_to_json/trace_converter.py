@@ -23,7 +23,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
     structural_allowed_names,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
-    SAFE_DATETIME_MODULE, safe_load_buml, strip_buml_imports,
+    SAFE_DATETIME_MODULE, safe_load_buml,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -178,7 +178,7 @@ def parse_trace_code(content: str, context_code: Optional[str] = None) -> TraceM
         allowed_names[name] = getattr(traceability_module, name)
     code = f"{context_code}\n{content}" if context_code else content
     try:
-        local_vars = safe_load_buml(strip_buml_imports(code), allowed_names,
+        local_vars = safe_load_buml(code, allowed_names,
                                     max_ast_nodes=_TRACE_MAX_AST_NODES)
     except Exception as exc:
         raise ConversionError(f"Failed to load the traceability section: {exc}") from exc

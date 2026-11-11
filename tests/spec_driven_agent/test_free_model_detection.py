@@ -1,7 +1,7 @@
 """Deciding "is this model free" wrong disables the cost cap.
 
-`_get_pricing` asks `_is_free_local_model` first, and a True answer returns
-`_ZERO_PRICING`. Every call then costs $0, so `max_cost_usd` can never trip and
+`get_pricing` asks `is_free_local_model` first, and a True answer returns
+`ZERO_PRICING`. Every call then costs $0, so `max_cost_usd` can never trip and
 a run continues until the turn or time cap -- while the provider bills normally
 and the run card shows $0.00 throughout.
 
@@ -15,12 +15,7 @@ The rule now keys on how a model is IDENTIFIED rather than its family.
 """
 import pytest
 
-from besser.spec_driven_agent.providers.llm_client import (
-    _MODEL_PRICING,
-    _ZERO_PRICING,
-    _get_pricing,
-    _is_free_local_model,
-)
+from besser.llm.pricing import MODEL_PRICING, ZERO_PRICING, get_pricing, is_free_local_model
 
 
 @pytest.mark.parametrize("model_id, reason", [
@@ -31,8 +26,8 @@ from besser.spec_driven_agent.providers.llm_client import (
     ("inclusionai/ling-3.0-flash-sante:free", "explicit :free suffix"),
 ])
 def test_genuinely_free_models_are_free(model_id, reason):
-    assert _is_free_local_model(model_id.lower()) is True, reason
-    assert _get_pricing(model_id) == _ZERO_PRICING
+    assert is_free_local_model(model_id.lower()) is True, reason
+    assert get_pricing(model_id) == ZERO_PRICING
 
 
 @pytest.mark.parametrize("model_id", [
@@ -51,16 +46,16 @@ def test_gateway_models_are_billed_not_free(model_id):
     These are vendor-namespaced gateway models. Somebody is billed for them, so
     pricing them at $0 would switch the cost cap off.
     """
-    assert _is_free_local_model(model_id.lower()) is False
-    pricing = _get_pricing(model_id)
-    assert pricing != _ZERO_PRICING, (
+    assert is_free_local_model(model_id.lower()) is False
+    pricing = get_pricing(model_id)
+    assert pricing != ZERO_PRICING, (
         f"{model_id} priced at $0 -- max_cost_usd cannot trip for it"
     )
     assert pricing["input"] > 0 and pricing["output"] > 0
 
 
 @pytest.mark.parametrize("model_id, input_rate, output_rate", [
-    # Anthropic. The coarse ``_MODEL_PRICING`` tiers cannot express these:
+    # Anthropic. The coarse ``MODEL_PRICING`` tiers cannot express these:
     # one ``sonnet`` row cannot be both 4-6 and 5, and its ``opus`` row still
     # carries Claude-3-era $15/$75 -- 3x over, which trips ``max_cost_usd`` at
     # a third of the intended spend and aborts a healthy run.
@@ -80,31 +75,42 @@ def test_gateway_models_are_billed_not_free(model_id):
     ("Qwen/Qwen3-30B-A3B-Instruct-2507", 0.1, 0.3),
 ])
 def test_known_paid_models_bill_at_published_rates(model_id, input_rate, output_rate):
-    """Pinned as literals, not as ``_MODEL_PRICING[key]``.
+    """Pinned as literals, not as ``MODEL_PRICING[key]``.
 
     Asserting equality with the fallback table only proved the two agreed --
     it passed happily while that table billed every Opus 3x over. These are
     the published per-1M rates; a mismatch means either the vendored table
     went stale or a lookup regressed.
     """
-    pricing = _get_pricing(model_id)
+    pricing = get_pricing(model_id)
     assert pricing["input"] == pytest.approx(input_rate)
     assert pricing["output"] == pytest.approx(output_rate)
 
 
+@pytest.mark.parametrize("model_id, rates", [
+    # Anthropic's cache reads are 0.1x input and 5-minute writes 1.25x. Haiku
+    # 5.5 had no cache rates in the catalog and billed both at the input rate.
+    ("claude-haiku-5-5", {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125}),
+    ("claude-sonnet-5-5", {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_write": 2.5}),
+    ("claude-opus-5-5", {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_write": 5.0}),
+])
+def test_catalog_claude_models_bill_published_cache_rates(model_id, rates):
+    assert get_pricing(model_id, billed=True) == pytest.approx(rates)
+
+
 def test_an_unpublished_paid_model_still_falls_back_rather_than_going_free():
     """A missing price must never read as $0 -- that is the cost cap gone."""
-    pricing = _get_pricing("some-unlisted-vendor-model-2099")
-    assert pricing != _ZERO_PRICING
-    assert pricing == _MODEL_PRICING["gpt-4o"]
+    pricing = get_pricing("some-unlisted-vendor-model-2099")
+    assert pricing != ZERO_PRICING
+    assert pricing == MODEL_PRICING["gpt-4o"]
 
 
 def test_the_vendored_table_ships_and_is_readable():
     """Packaged via ``setup.cfg`` package_data; ``packages=find:`` does not
     see ``data/`` as a package, so a key naming it would be inert and every
     install would silently fall back to the coarse tiers."""
-    from besser.spec_driven_agent.providers.llm_client import _vendored_prices
-    table = _vendored_prices()
+    from besser.llm.pricing import vendored_prices
+    table = vendored_prices()
     assert table, "vendored price table is missing or empty"
     assert table["claude-sonnet-5"]["input_cost_per_token"] == pytest.approx(2e-06)
 
@@ -116,4 +122,4 @@ def test_the_self_hosted_fallback_stays_free(monkeypatch):
     monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3-coder:30b")
     fallback = free_fallback_model()
     if fallback:
-        assert _get_pricing(fallback) == _ZERO_PRICING
+        assert get_pricing(fallback) == ZERO_PRICING

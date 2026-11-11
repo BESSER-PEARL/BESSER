@@ -1,8 +1,10 @@
 """
 This module generates Django code using Jinja2 templates based on BUML models.
 """
+import importlib.util
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,6 +13,8 @@ from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSo
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
+from besser.generators.settings import subprocess_timeout
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
@@ -20,6 +24,11 @@ logger = logging.getLogger(__name__)
 ##############################
 #    Django Generator
 ##############################
+# One plain literal, as startproject writes it: the record is a file, so it must not supply code.
+_SECRET_KEY_LINE = re.compile(rb"^SECRET_KEY = '[^'\\\r\n]*'(?=\r?$)", re.MULTILINE)
+_RECORDED_SECRET_KEY = b"SECRET_KEY = 'not-in-the-record'"
+
+
 class DjangoGenerator(GeneratorInterface):
     """
     DjangoGenerator is responsible for generating Django executable code based on
@@ -39,6 +48,8 @@ class DjangoGenerator(GeneratorInterface):
         output_dir (str, optional): Directory where generated code will be saved. Defaults to None.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, project_name: str, app_name: str,
                  gui_model: GUIModel = None, containerization: bool = False,
                  module: Module = None, output_dir: str = None):
@@ -55,7 +66,7 @@ class DjangoGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
-        self.env.globals.update(normalize_code=normalize_method_code)
+        self.env.globals.update(normalize_code=normalize_method_code, sort_by_timestamp=sort_by_timestamp)
         register_default_literals(self.env)
         # Register custom Jinja2 tests once for all methods
         self.env.tests['is_Button'] = self.is_button
@@ -141,6 +152,26 @@ class DjangoGenerator(GeneratorInterface):
         """Check if the given value is an instance of Enumeration class."""
         return isinstance(value, Enumeration)
 
+    def _settings_path(self) -> str:
+        return f"{self.project_name}/{self.project_name}/settings.py"
+
+    def _keep_generated_values(self, previous: dict[str, bytes], generated: dict[str, bytes]) -> dict[str, bytes]:
+        """``startproject`` draws a new ``SECRET_KEY`` each run; rotating it would log every user out.
+
+        Once a record exists this carries over its placeholder, so the merge leaves the file's own line alone.
+        """
+        settings = self._settings_path()
+        key = _SECRET_KEY_LINE.search(previous[settings]) if settings in previous else None
+        if not key or settings not in generated:
+            return generated
+        return {**generated, settings: _SECRET_KEY_LINE.sub(lambda _: key.group(0), generated[settings], count=1)}
+
+    def _without_secrets(self, files: dict[str, bytes]) -> dict[str, bytes]:
+        settings = self._settings_path()
+        if settings not in files:
+            return files
+        return {**files, settings: _SECRET_KEY_LINE.sub(lambda _: _RECORDED_SECRET_KEY, files[settings], count=1)}
+
     ## DjangoGeneratorModelsFile:
     def generate_models(self):
 
@@ -221,7 +252,7 @@ class DjangoGenerator(GeneratorInterface):
 
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -265,7 +296,7 @@ class DjangoGenerator(GeneratorInterface):
         template = self.env.get_template('forms.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -315,7 +346,7 @@ class DjangoGenerator(GeneratorInterface):
         template = self.env.get_template('views.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -361,7 +392,7 @@ class DjangoGenerator(GeneratorInterface):
         template = self.env.get_template('home_page.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = sort_by_timestamp(self.module.screens)
 
@@ -400,17 +431,17 @@ class DjangoGenerator(GeneratorInterface):
 
         # Select the first module if none was specified
         if self.module is None:
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = self.module.screens
 
         # Generate HTML files for each screen in screens
-        for module in self.gui_model.modules:
-            for screen in module.screens:
+        for module in sort_by_timestamp(self.gui_model.modules):
+            for screen in sort_by_timestamp(module.screens):
             # Loop through view elements to find `source_name`
-                for component in screen.view_elements:
+                for component in sort_by_timestamp(screen.view_elements):
                     if self.is_list(component):  # Ensure it's a List component
-                        for source in component.list_sources:
+                        for source in sort_by_timestamp(component.list_sources):
                             if self.is_model_element(source):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
@@ -443,17 +474,17 @@ class DjangoGenerator(GeneratorInterface):
 
         # Select the first module if none was specified
         if self.module is None:
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = self.module.screens
 
         # Generate HTML files for each screen in screens
-        for module in self.gui_model.modules:
-            for screen in module.screens:
+        for module in sort_by_timestamp(self.gui_model.modules):
+            for screen in sort_by_timestamp(module.screens):
                 # Loop through view elements to find `source_name`
-                for component in screen.view_elements:
+                for component in sort_by_timestamp(screen.view_elements):
                     if self.is_list(component):  # Ensure it's a List component
-                        for source in component.list_sources:
+                        for source in sort_by_timestamp(component.list_sources):
                             if self.is_model_element(source):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
@@ -493,17 +524,17 @@ class DjangoGenerator(GeneratorInterface):
 
         # Select the first module if none was specified
         if self.module is None:
-            self.module = next(iter(self.gui_model.modules))
+            self.module = sort_by_timestamp(self.gui_model.modules)[0]
 
         screens = self.module.screens
 
         # Generate HTML files for each screen in screens
-        for module in self.gui_model.modules:
-            for screen in module.screens:
+        for module in sort_by_timestamp(self.gui_model.modules):
+            for screen in sort_by_timestamp(module.screens):
                 # Loop through view elements to find `source_name`
-                for component in screen.view_elements:
+                for component in sort_by_timestamp(screen.view_elements):
                     if self.is_list(component):  # Ensure it's a List component
-                        for source in component.list_sources:
+                        for source in sort_by_timestamp(component.list_sources):
                             if self.is_model_element(source):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
@@ -669,6 +700,7 @@ JAZZMIN_SETTINGS = {{
 
     def generate(self, *args):
         """Generates the Django project, app, and necessary configurations."""
+        require_valid_identifiers(self.model)
 
         try:
             # Step 1: Initialize Django project and app. Everything is anchored
@@ -703,11 +735,18 @@ JAZZMIN_SETTINGS = {{
             # startapp imports the new settings module; keep its .pyc files
             # out of the generated tree.
             subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
-            subprocess.run(['django-admin', 'startproject', self.project_name],
-                           cwd=base_dir, check=True, env=subprocess_env)
+            # `python -m django` is django-admin run by this interpreter, so it
+            # works when the environment's scripts directory is not on PATH.
+            if importlib.util.find_spec('django') is None:
+                raise RuntimeError(
+                    'The Django generator needs Django: pip install "besser[django]"'
+                )
+            subprocess.run([sys.executable, '-m', 'django', 'startproject', self.project_name],
+                           cwd=base_dir, check=True, env=subprocess_env,
+                           timeout=subprocess_timeout())
             subprocess.run([sys.executable, 'manage.py', 'startapp',
                                 self.app_name], cwd=project_dir, check=True,
-                           env=subprocess_env)
+                           env=subprocess_env, timeout=subprocess_timeout())
 
             # Step 2: Update settings.py
             self.update_settings()

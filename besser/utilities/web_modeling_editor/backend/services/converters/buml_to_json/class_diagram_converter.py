@@ -132,8 +132,38 @@ def structural_allowed_names() -> dict:
     }
 
 
-def parse_buml_content(content: str) -> DomainModel:
-    """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
+def _repairing_binary_association(warnings: list[str]):
+    """``BinaryAssociation`` that makes a composition's non-composite end navigable instead of failing.
+
+    Ecore containment usually has no opposite, so files converted from Ecore
+    write that end non-navigable. The JSON import repairs the same case.
+    """
+    def binary_association(name, ends, *args, **kwargs):
+        properties = [end for end in ends if isinstance(end, Property)]
+        if len(properties) == 2:
+            for whole, part in (properties, properties[::-1]):
+                if whole.is_composite is True and part.is_navigable is False:
+                    part.is_navigable = True
+                    message = (
+                        f"Association '{name}': the non-composite end '{part.name}' ({part.type.name}) "
+                        f"of a composition must be navigable; made it navigable."
+                    )
+                    logger.warning(message)
+                    warnings.append(message)
+        return BinaryAssociation(name, ends, *args, **kwargs)
+
+    return binary_association
+
+
+def parse_buml_content(content: str, warnings: list[str] | None = None) -> DomainModel:
+    """Parse B-UML content from a Python file and return a DomainModel and OCL constraints.
+
+    Args:
+        content: The BUML source.
+        warnings: Receives a message for every repair made to load the model.
+    """
+    if warnings is None:
+        warnings = []
     try:
         # If caller already passed a DomainModel instance, return it directly.
         if isinstance(content, DomainModel):
@@ -141,38 +171,20 @@ def parse_buml_content(content: str) -> DomainModel:
 
         # Allowlist of names that may appear in the BUML source. Everything
         # else is rejected by the safe loader.
-        allowed_names = structural_allowed_names()
+        allowed_names = {
+            **structural_allowed_names(),
+            "BinaryAssociation": _repairing_binary_association(warnings),
+        }
 
         # Ensure we have a string before preprocessing
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
-        # Strip a leading UTF-8 BOM so the sandboxed exec does not fail with
-        # "invalid non-printable character U+FEFF" for files saved with a BOM.
-        if content.startswith("﻿"):
-            content = content[1:]
-
-        # Pre-process the content to remove import and generator-related lines.
-        # All required types are already provided in safe_globals, so import
-        # statements are unnecessary and would fail in the sandboxed environment.
-        cleaned_lines = []
-        in_import_block = False
-        for line in content.splitlines():
-            stripped = line.lstrip()
-            if in_import_block:
-                # Continue skipping until we find the closing parenthesis
-                if ")" in line:
-                    in_import_block = False
-                continue
-            if stripped.startswith(("import ", "from ")):
-                # Check if this is a multi-line import (has open paren but no close)
-                if "(" in line and ")" not in line:
-                    in_import_block = True
-                continue
-            if any(gen in line for gen in ["Generator(", ".generate("]):
-                continue
-            cleaned_lines.append(line)
-        cleaned_content = "\n".join(cleaned_lines)
+        # Only the model is loaded, not a generator run at the end of the file.
+        cleaned_content = "\n".join(
+            line for line in content.splitlines()
+            if not any(gen in line for gen in ["Generator(", ".generate("])
+        )
 
         # Execute the cleaned B-UML content through the safe AST-based loader.
         local_vars = safe_load_buml(cleaned_content, allowed_names)

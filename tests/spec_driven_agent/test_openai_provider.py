@@ -9,6 +9,7 @@ import pytest
 
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
 
+from besser.llm.pricing import get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
     LLMProvider,
     OpenAIProvider,
@@ -17,7 +18,6 @@ from besser.spec_driven_agent.providers.llm_client import (
     _TextBlock,
     _ToolUseBlock,
     _anthropic_tools_to_openai,
-    _get_pricing,
     _needs_reasoning_none_for_tools,
     _openai_messages_to_api,
     _openai_response_to_common,
@@ -137,6 +137,16 @@ class TestOpenAIMessagesToAPI:
         assert tc["type"] == "function"
         assert tc["function"]["name"] == "read_file"
         assert json.loads(tc["function"]["arguments"]) == {"path": "main.py"}
+
+    def test_empty_assistant_message_is_dropped(self):
+        """No text and no tool calls would be sent as null content -> 400."""
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": []},
+            {"role": "user", "content": "Go on"},
+        ]
+        result = _openai_messages_to_api("sys", messages)
+        assert [m["role"] for m in result] == ["system", "user", "user"]
 
     def test_assistant_message_with_dict_blocks(self):
         """Dict-based content blocks also work."""
@@ -331,7 +341,7 @@ class TestOpenAIUsageAdapter:
 class TestOpenAIPricing:
 
     def test_gpt4o_pricing(self):
-        p = _get_pricing("gpt-4o")
+        p = get_pricing("gpt-4o")
         assert p["input"] == 2.5
         assert p["output"] == 10.0
         assert p["cache_write"] == 0
@@ -339,17 +349,17 @@ class TestOpenAIPricing:
         assert p["cache_read"] == 1.25
 
     def test_gpt4o_mini_pricing(self):
-        p = _get_pricing("gpt-4o-mini")
+        p = get_pricing("gpt-4o-mini")
         assert p["input"] == 0.15
         assert p["output"] == 0.6
 
     def test_gpt5_pricing(self):
         # Early-2026 rates; gpt-5.5 (the pricier tier) is matched first
-        # by _get_pricing so plain gpt-5 gets its own cheaper rate.
-        p = _get_pricing("gpt-5")
+        # by get_pricing so plain gpt-5 gets its own cheaper rate.
+        p = get_pricing("gpt-5")
         assert p["input"] == 1.25
         assert p["output"] == 10.0
-        p55 = _get_pricing("gpt-5.5")
+        p55 = get_pricing("gpt-5.5")
         assert p55["input"] == 5.0
         assert p55["output"] == 30.0
 
@@ -367,7 +377,7 @@ class TestOpenAIPricing:
         ],
     )
     def test_gpt56_variant_pricing(self, model, input_rate, output_rate):
-        pricing = _get_pricing(model)
+        pricing = get_pricing(model)
         assert pricing["input"] == input_rate
         assert pricing["output"] == output_rate
 
@@ -379,19 +389,19 @@ class TestOpenAIPricing:
         number stayed stale, and would have kept ``max_cost_usd`` firing at a
         fifth of the intended spend.
         """
-        p = _get_pricing("o3")
+        p = get_pricing("o3")
         assert p["input"] == 2.0
         assert p["output"] == 8.0
 
     def test_o3_mini_pricing(self):
-        p = _get_pricing("o3-mini")
+        p = get_pricing("o3-mini")
         assert p["input"] == 1.1
         assert p["output"] == 4.4
 
     def test_gpt4o_mini_not_matched_as_gpt4o(self):
         """gpt-4o-mini should get its own pricing, not gpt-4o's."""
-        p_mini = _get_pricing("gpt-4o-mini")
-        p_4o = _get_pricing("gpt-4o")
+        p_mini = get_pricing("gpt-4o-mini")
+        p_4o = get_pricing("gpt-4o")
         assert p_mini["input"] != p_4o["input"]
 
     def test_cost_estimation(self):
@@ -403,15 +413,15 @@ class TestOpenAIPricing:
 
     def test_claude_pricing_still_works(self):
         """Anthropic pricing unaffected by OpenAI additions."""
-        p = _get_pricing("claude-sonnet-4-20250514")
+        p = get_pricing("claude-sonnet-4-20250514")
         assert p["input"] == 3.0
         assert p["output"] == 15.0
 
     def test_unknown_model_defaults_to_gpt4o(self):
-        # _get_pricing falls back to the gpt-4o middle tier for unknown
+        # get_pricing falls back to the gpt-4o middle tier for unknown
         # *paid* model ids (see the function's docstring). A tagless name
         # that matches no open family must still get the protective rate.
-        p = _get_pricing("some-unknown-model")
+        p = get_pricing("some-unknown-model")
         assert p["input"] == 2.5
 
     @pytest.mark.parametrize(
@@ -429,7 +439,7 @@ class TestOpenAIPricing:
     def test_local_open_models_are_free(self, model):
         # Self-hosted / open-weight models must price at $0 so they never
         # trip max_cost_usd and abort a free run mid-generation.
-        p = _get_pricing(model)
+        p = get_pricing(model)
         assert p == {
             "input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0,
         }
@@ -438,7 +448,7 @@ class TestOpenAIPricing:
         # A genuinely-unknown *paid* cloud id (no colon, no open family)
         # keeps the protective gpt-4o fallback — the $0 rule must not
         # over-broaden and remove the cost cap for real spend.
-        assert _get_pricing("gpt-6-preview")["input"] == 2.5
+        assert get_pricing("gpt-6-preview")["input"] == 2.5
 
 
 # ======================================================================
@@ -763,6 +773,65 @@ class TestOpenAIProviderStream:
         assert provider.usage.input_tokens == 1000
         assert provider.usage.output_tokens == 500
         assert provider.usage.estimated_cost > 0
+
+    # Live evidence, production v8.8.0: free run 85843c37 on MiniMax stayed at 4,178
+    # tokens from turn 1 to turn 86, so the cost cap could not see its spend.
+    @staticmethod
+    def _text_chunk(text, finish_reason=None, usage=None):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content=text, tool_calls=None),
+                finish_reason=finish_reason,
+            )],
+            usage=usage,
+        )
+
+    @staticmethod
+    def _usage(prompt, completion):
+        return SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion, prompt_tokens_details=None)
+
+    def _stream(self, provider, chunks):
+        provider._client.chat.completions.create.return_value = iter(chunks)
+        return list(provider.chat_stream(
+            system="sys", messages=[{"role": "user", "content": "x" * 4000}], tools=[],
+        ))
+
+    def test_stream_records_usage_sent_on_a_chunk_with_choices(self):
+        """Some gateways put usage on the last content chunk, with no usage-only chunk."""
+        provider = _make_openai_provider()
+        self._stream(provider, [
+            self._text_chunk("hel"),
+            self._text_chunk("lo", finish_reason="stop", usage=self._usage(1000, 500)),
+        ])
+        assert provider.usage.api_calls == 1
+        assert provider.usage.input_tokens == 1000
+        assert provider.usage.output_tokens == 500
+
+    def test_stream_counts_running_usage_on_every_chunk_once(self):
+        """Usage repeated on every chunk is a running total, not one call per chunk."""
+        provider = _make_openai_provider()
+        self._stream(provider, [
+            self._text_chunk("a", usage=self._usage(1000, 1)),
+            self._text_chunk("b", usage=self._usage(1000, 2)),
+            self._text_chunk("c", finish_reason="stop", usage=self._usage(1000, 3)),
+        ])
+        assert provider.usage.api_calls == 1
+        assert provider.usage.input_tokens == 1000
+        assert provider.usage.output_tokens == 3
+
+    def test_a_stream_with_no_usage_is_estimated_so_the_cost_cap_still_sees_it(self, caplog):
+        provider = _make_openai_provider()
+        with caplog.at_level("WARNING"):
+            self._stream(provider, [self._text_chunk("y" * 400, finish_reason="stop")])
+            cost_after_one = provider.usage.estimated_cost
+            self._stream(provider, [self._text_chunk("y" * 400, finish_reason="stop")])
+
+        assert provider.usage.input_tokens >= 1000  # 4,000 chars of history
+        assert provider.usage.output_tokens == 200
+        assert 0 < cost_after_one < provider.usage.estimated_cost
+        warnings = [r.getMessage() for r in caplog.records if "reported no usage" in r.getMessage()]
+        assert len(warnings) == 1
+
 
     def test_streaming_cost_grows_across_turns(self):
         """End-to-end regression for the frozen-cost bug: simulate a

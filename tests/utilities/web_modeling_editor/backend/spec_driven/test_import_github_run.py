@@ -14,17 +14,19 @@ import tempfile
 import httpx
 import pytest
 from httpx._transports.asgi import ASGITransport
+from pydantic import ValidationError
 
 from besser.utilities.web_modeling_editor.backend.backend import app
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import ImportGitHubRunRequest
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
-)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -32,10 +34,16 @@ IMPORT_URL = "/besser_api/spec-driven/import-github-run"
 
 
 @pytest.fixture(autouse=True)
-def reset_registry():
+def reset_registry(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     asyncio.run(_clear_registry())
     yield
     asyncio.run(_clear_registry())
+
+
+def _head_of(branch: str) -> str:
+    """A fake 40-hex commit sha per branch."""
+    return (branch.encode().hex() * 40)[:40]
 
 
 # ---------------------------------------------------------------------
@@ -64,9 +72,10 @@ class _FakeGitHubService:
     that the registered run's ``temp_dir`` points at exactly that tree.
     """
 
-    def __init__(self, *, with_model=True, branches=None, get_branches_404=False):
+    def __init__(self, *, with_model=True, branches=None, get_branches_404=False, default_branch="main"):
         self._with_model = with_model
         self._branches = ["main"] if branches is None else branches
+        self._default_branch = default_branch
         self._get_branches_404 = get_branches_404
         self.extract_dir = None
         self.tarball_ref = None
@@ -82,9 +91,16 @@ class _FakeGitHubService:
             )
         return self._branches
 
-    async def download_repo_tarball(self, owner, repo, ref):
+    async def get_default_branch(self, owner, repo_name):
+        await self.get_branches(owner, repo_name)  # same 404 when the repo is missing
+        return self._default_branch
+
+    async def get_branch_head(self, owner, repo_name, branch):
+        return _head_of(branch)
+
+    async def download_repo_tarball(self, owner, repo, ref, dest_dir=None):
         self.tarball_ref = ref
-        d = tempfile.mkdtemp(prefix="besser_gh_import_test_")
+        d = dest_dir or tempfile.mkdtemp(prefix="besser_gh_import_test_")
         # A code file — the modify seed reads this via temp_dir.
         os.makedirs(os.path.join(d, "backend"), exist_ok=True)
         with open(os.path.join(d, "backend", "main.py"), "w", encoding="utf-8") as fh:
@@ -101,8 +117,8 @@ class _FakeGitHubService:
 
 def _install(monkeypatch, fake):
     """Patch the GitHub factory + token lookup in the router namespace."""
-    monkeypatch.setattr(router_module, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(router_module, "get_user_token", lambda sid: "fake-token")
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(router_module, "get_user_token", lambda _sessions, sid: "fake-token")
 
 
 def _post(body: dict, headers: dict | None = None) -> httpx.Response:
@@ -138,7 +154,7 @@ class TestImportGitHubRun:
 
         # The run is registered and its temp_dir is the extracted repo tree.
         run_id = data["run_id"]
-        entry = asyncio.run(SMART_RUN_REGISTRY.get(run_id))
+        entry = asyncio.run(current_runtime().registry.get(run_id))
         assert entry is not None
         assert entry.temp_dir == fake.extract_dir
 
@@ -157,7 +173,7 @@ class TestImportGitHubRun:
 
         # A run is still registered so the code can be used as a modify seed.
         run_id = data["run_id"]
-        entry = asyncio.run(SMART_RUN_REGISTRY.get(run_id))
+        entry = asyncio.run(current_runtime().registry.get(run_id))
         assert entry is not None
         assert entry.temp_dir == fake.extract_dir
 
@@ -169,8 +185,9 @@ class TestImportGitHubRun:
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200
         assert r.json()["branch"] == "dev"
-        # The resolved branch is the ref actually downloaded.
-        assert fake.tarball_ref == "dev"
+        # The resolved branch's head commit is what is downloaded and returned.
+        assert fake.tarball_ref == _head_of("dev")
+        assert r.json()["commit_sha"] == _head_of("dev")
 
     def test_missing_github_session_returns_401(self, monkeypatch):
         fake = _FakeGitHubService()
@@ -194,7 +211,7 @@ class TestImportGitHubRun:
         # the user must see why, not a generic 500.
         fake = _FakeGitHubService()
 
-        async def _too_large(owner, repo, ref):
+        async def _too_large(owner, repo, ref, dest_dir=None):
             raise ValueError(
                 "Repository archive exceeds the 100 MB size cap; refusing to download."
             )
@@ -216,13 +233,23 @@ class TestImportGitHubRun:
             ("test-owner", "my-app?ref=x"),
         ],
     )
-    def test_invalid_owner_or_repo_returns_400(self, monkeypatch, owner, repo):
+    def test_invalid_owner_or_repo_returns_422(self, monkeypatch, owner, repo):
+        """A request-model check like the other body fields: 422, not the backend's 400."""
         fake = _FakeGitHubService()
         _install(monkeypatch, fake)
 
         r = _post({"owner": owner, "repo": repo}, headers={"X-GitHub-Session": "sess"})
-        assert r.status_code == 400
+        assert r.status_code == 422
+        assert "Invalid GitHub owner or repository name." in r.json()["detail"][0]["msg"]
         assert fake.tarball_ref is None
+
+    def test_the_body_is_checked_before_the_session(self, monkeypatch):
+        """As for a missing ``owner``: a malformed body answers 422 even without a session."""
+        _install(monkeypatch, _FakeGitHubService())
+
+        assert _post({"owner": "../orgs", "repo": "my-app"}).status_code == 422
+        assert _post({"repo": "my-app"}).status_code == 422
+        assert _post({"owner": "test-owner", "repo": "my-app"}).status_code == 401
 
     def test_dotted_repo_name_is_accepted(self, monkeypatch):
         fake = _FakeGitHubService()
@@ -230,3 +257,25 @@ class TestImportGitHubRun:
 
         r = _post({"owner": "test_owner-1", "repo": "my.app_v2"}, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200
+
+
+class TestImportGitHubRunRequest:
+    """The service reads ``owner``, ``repo`` and ``model_path`` straight from the
+    request, so a request that holds an unchecked one cannot be built."""
+
+    @pytest.mark.parametrize("fields", [
+        {"owner": "../orgs"},
+        {"repo": "my-app/../../user"},
+        {"repo": ".."},
+        {"model_path": "../secrets.json"},
+        {"model_path": "buml/../../secrets.json"},
+        {"model_path": "/etc/passwd.json"},
+        {"model_path": "notes.txt"},
+    ])
+    def test_an_unsafe_name_or_path_is_refused(self, fields):
+        with pytest.raises(ValidationError):
+            ImportGitHubRunRequest(**{"owner": "ana", "repo": "shop", **fields})
+
+    def test_names_are_stripped_and_a_repo_json_path_is_kept(self):
+        req = ImportGitHubRunRequest(owner=" ana ", repo=" my.app_v2 ", model_path="models/library.json")
+        assert (req.owner, req.repo, req.model_path) == ("ana", "my.app_v2", "models/library.json")

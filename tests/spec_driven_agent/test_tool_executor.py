@@ -2,6 +2,8 @@
 
 import json
 import os
+import shlex
+import sys
 
 import pytest
 
@@ -30,6 +32,10 @@ def simple_model():
 @pytest.fixture
 def executor(tmp_path, simple_model):
     return ToolExecutor(workspace=str(tmp_path), domain_model=simple_model)
+
+
+# The test's own interpreter: a bare `python` needs an activated environment on PATH.
+PYTHON = shlex.quote(sys.executable)
 
 
 @pytest.fixture
@@ -269,18 +275,18 @@ class TestPathNormalization:
 class TestExecutionTools:
 
     def test_run_command_success(self, shell_executor):
-        result = _call(shell_executor, "run_command", {"command": "python -c \"print('hello')\" "})
+        result = _call(shell_executor, "run_command", {"command": f"{PYTHON} -c \"print('hello')\" "})
         assert result["success"] is True
         assert "hello" in result["stdout"]
 
     def test_run_command_failure(self, shell_executor):
-        result = _call(shell_executor, "run_command", {"command": "python -c \"raise ValueError('boom')\" "})
+        result = _call(shell_executor, "run_command", {"command": f"{PYTHON} -c \"raise ValueError('boom')\" "})
         assert result["success"] is False
         assert "boom" in result["stderr"]
 
     def test_run_command_in_subdir(self, shell_executor):
         _call(shell_executor, "write_file", {"path": "subdir/test.py", "content": "print('sub')"})
-        result = _call(shell_executor, "run_command", {"command": "python test.py", "working_dir": "subdir"})
+        result = _call(shell_executor, "run_command", {"command": f"{PYTHON} test.py", "working_dir": "subdir"})
         assert result["success"] is True
         assert "sub" in result["stdout"]
 
@@ -290,7 +296,7 @@ class TestExecutionTools:
         old_timeout = mod.COMMAND_TIMEOUT
         mod.COMMAND_TIMEOUT = 1  # 1 second
         try:
-            result = _call(shell_executor, "run_command", {"command": "python -c \"import time; time.sleep(10)\" "})
+            result = _call(shell_executor, "run_command", {"command": f"{PYTHON} -c \"import time; time.sleep(10)\" "})
             assert "error" in result and "timed out" in result["error"]
         finally:
             mod.COMMAND_TIMEOUT = old_timeout
@@ -300,7 +306,7 @@ class TestExecutionTools:
         assert "error" in result
 
     def test_install_dependencies_custom_command(self, shell_executor):
-        result = _call(shell_executor, "install_dependencies", {"command": "python --version"})
+        result = _call(shell_executor, "install_dependencies", {"command": f"{PYTHON} --version"})
         assert result["exit_code"] == 0
 
 
@@ -669,3 +675,74 @@ class TestExtendedPathPrefixNeverEscapes:
             ex._safe_path("../../../etc/passwd")
         with pytest.raises(ValueError):
             ex._safe_cwd("../../../")
+
+
+class TestWorkspaceConfinement:
+    """_safe_path is the one containment check; _safe_cwd goes through it."""
+
+    @pytest.mark.parametrize("resolver", ["_safe_path", "_safe_cwd"])
+    @pytest.mark.parametrize("escape", ["../outside", "a/../../outside", "a/b/../../../outside"])
+    def test_dot_dot_escape_is_blocked(self, executor, resolver, escape):
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            getattr(executor, resolver)(escape)
+
+    @pytest.mark.parametrize("resolver", ["_safe_path", "_safe_cwd"])
+    def test_absolute_path_outside_is_blocked(self, executor, tmp_path, resolver):
+        outside = tmp_path.parent / "elsewhere"
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            getattr(executor, resolver)(str(outside))
+        assert not outside.exists()  # _safe_cwd created nothing outside
+
+    def test_sibling_with_workspace_prefix_is_blocked(self, tmp_path, simple_model):
+        """A plain string-prefix test would let ``<ws>-evil`` through."""
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        ex = ToolExecutor(workspace=str(ws), domain_model=simple_model)
+        with pytest.raises(ValueError):
+            ex._safe_path("../ws-evil/file.txt")
+
+    @pytest.mark.parametrize("resolver", ["_safe_path", "_safe_cwd"])
+    def test_symlink_escape_is_blocked(self, tmp_path, simple_model, resolver):
+        ws, outside = tmp_path / "ws", tmp_path / "outside"
+        ws.mkdir()
+        outside.mkdir()
+        try:
+            (ws / "link").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable on this platform")
+        ex = ToolExecutor(workspace=str(ws), domain_model=simple_model)
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            getattr(ex, resolver)("link")
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            getattr(ex, resolver)("link/sub")
+
+    def test_symlink_escape_is_refused_by_file_tools(self, tmp_path, simple_model):
+        ws, outside = tmp_path / "ws", tmp_path / "outside"
+        ws.mkdir()
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret")
+        try:
+            (ws / "link").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable on this platform")
+        ex = ToolExecutor(workspace=str(ws), domain_model=simple_model)
+        read = json.loads(ex.execute("read_file", {"path": "link/secret.txt"}))
+        assert "error" in read and "secret" not in json.dumps(read).replace("secret.txt", "")
+        written = json.loads(ex.execute("write_file", {"path": "link/new.txt", "content": "x"}))
+        assert "error" in written
+        assert not (outside / "new.txt").exists()
+
+    def test_in_workspace_symlink_resolves_to_its_target(self, tmp_path, simple_model):
+        ws = tmp_path / "ws"
+        (ws / "real").mkdir(parents=True)
+        try:
+            (ws / "alias").symlink_to(ws / "real", target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks unavailable on this platform")
+        ex = ToolExecutor(workspace=str(ws), domain_model=simple_model)
+        assert ex._safe_path("alias/f.txt") == os.path.join(ex.workspace, "real", "f.txt")
+
+    def test_safe_cwd_creates_a_missing_directory_inside(self, executor, tmp_path):
+        cwd = executor._safe_cwd("new/dir")
+        assert os.path.isdir(cwd)
+        assert cwd == os.path.join(executor.workspace, "new", "dir")

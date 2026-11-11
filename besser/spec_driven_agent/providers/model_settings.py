@@ -13,7 +13,7 @@ What deliberately does NOT live here:
   default), and the precedence is the part that makes it correct. Flattening
   it into this table would lose the provenance ordering. Edit the tables in
   ``compaction.py``; this module intentionally keeps no copy.
-* **Pricing** -- ``llm_client._MODEL_PRICING``. Billing, not request shaping.
+* **Pricing** -- ``besser.llm.pricing``. Billing, not request shaping.
 
 Why rows are conservative: a wrong row is worse than a missing one. Every
 value below cites the vendor's own ``generation_config.json`` or model card,
@@ -21,7 +21,9 @@ or a probe recorded in the comment. Sampling defaults we cannot observe are
 left alone rather than guessed at.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+
+from besser.llm.catalog import load_model_catalog
 
 # Output-token ceiling when neither the caller nor a row below says otherwise.
 # Shared by the Claude / OpenAI / Mistral / Nebius providers.
@@ -128,7 +130,7 @@ _CLAUDE_ALWAYS_THINKING = ModelSettings(
     thinking_can_be_disabled=False,
 )
 _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL = ModelSettings(
-    # Fable 5.1 and Opus 5.5: thinking cannot be disabled, and
+    # Fable 5.1, Opus 5.5 and Sonnet 5.5: thinking cannot be disabled, and
     # tool_choice {"type": "tool"/"any"} is a 400 ("not supported for this
     # model").
     thinking_can_be_disabled=False,
@@ -138,7 +140,7 @@ _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL = ModelSettings(
 
 # Ordered longest-marker-first at import so a specific id always beats a
 # shorter family prefix. Matched as a lowercased substring, the same way
-# _get_pricing and compaction's window tables match.
+# get_pricing and compaction's window tables match.
 #
 # Markers are chosen not to overlap: "qwen3-30b-a3b-instruct-2507" and
 # "qwen3-coder" cannot both match one id. The Claude markers do overlap
@@ -161,6 +163,7 @@ _REGISTRY: tuple[tuple[str, ModelSettings], ...] = tuple(
             ("claude-fable-5", _CLAUDE_ALWAYS_THINKING),
             ("claude-fable-5-1", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
             ("claude-opus-5-5", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            ("claude-sonnet-5-5", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
         ),
         key=lambda row: len(row[0]),
         reverse=True,
@@ -171,14 +174,17 @@ _DEFAULTS = ModelSettings()
 
 
 def settings_for(model: str | None) -> ModelSettings:
-    """Settings for ``model``, or empty defaults when it is not in the table."""
+    """Settings for ``model``, or empty defaults when it is not in the table.
+
+    The model catalog's ``request`` block for this exact id, if any, overrides
+    the request quirks of the built-in row.
+    """
     if not model:
         return _DEFAULTS
     low = model.lower()
-    for marker, settings in _REGISTRY:
-        if marker in low:
-            return settings
-    return _DEFAULTS
+    settings = next((row for marker, row in _REGISTRY if marker in low), _DEFAULTS)
+    override = load_model_catalog().request_override(model)
+    return replace(settings, **override) if override else settings
 
 
 def sampling_kwargs(model: str | None) -> dict:

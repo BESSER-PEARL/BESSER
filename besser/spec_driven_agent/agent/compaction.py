@@ -17,7 +17,8 @@ import logging
 import os
 import urllib.request
 from typing import Any
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +29,13 @@ logger = logging.getLogger(__name__)
 # still needs gets RE-READ, which costs more than it saved. A threshold set
 # too low therefore does not "save context" - it produces a read/compact/
 # re-read spiral that can run until the runtime cap.
-COMPACT_TOKEN_THRESHOLD = max(
-    8_000, int(os.environ.get("BESSER_LLM_COMPACT_THRESHOLD", "80000") or 80_000)
-)
+_COMPACT_THRESHOLD_SETTING = AgentSettings().llm_compact_threshold
+COMPACT_TOKEN_THRESHOLD = _COMPACT_THRESHOLD_SETTING or 80_000
 # Set explicitly, the same variable is also a hard cap on the adaptive
 # threshold of every known-window model (see ``effective_threshold``): an
 # operator lowering it to cut cost gets exactly that, not silence. Unset,
 # the adaptive value stands, up to MAX_COMPACT_THRESHOLD.
-_OPERATOR_CAP: int | None = (
-    COMPACT_TOKEN_THRESHOLD if os.environ.get("BESSER_LLM_COMPACT_THRESHOLD") else None
-)
+_OPERATOR_CAP: int | None = _COMPACT_THRESHOLD_SETTING
 # The preserved tail is sized in TOKENS, not messages: six write_file turns
 # and six one-line turns differ by two orders of magnitude, so a fixed count
 # either frees nothing or leaves the model without its working set.
@@ -156,9 +154,7 @@ _USABLE_WINDOW_FRACTION = 0.8
 # paid plan, and prefill latency the runtime cap cannot absorb. 200k is 2.5x
 # the flat default and bounds the per-turn prompt at ~threshold + reserve
 # whatever the window says.
-MAX_COMPACT_THRESHOLD = int(
-    os.environ.get("BESSER_LLM_MAX_COMPACT_THRESHOLD", "200000") or 200_000
-)
+MAX_COMPACT_THRESHOLD = AgentSettings().llm_max_compact_threshold
 
 
 def _fetch_models(base_url: str, token: str) -> dict[str, int]:
@@ -185,11 +181,13 @@ def _fetch_catalog() -> dict[str, int]:
     fetched once; raises only when every configured endpoint failed (the
     caller caches that as unavailable).
     """
+    settings = AgentSettings()
     endpoints: list[tuple[str, str]] = []
-    for prefix in ("BESSER_FREE_LLM", "BESSER_SPONSORED_LLM"):
-        base_url = os.environ.get(f"{prefix}_BASE_URL", "").strip()
+    for base_url, token in ((settings.free_llm_base_url, settings.free_llm_token),
+                            (settings.sponsored_llm_base_url, settings.sponsored_llm_token)):
+        base_url = base_url.strip()
         if base_url and base_url not in (b for b, _ in endpoints):
-            endpoints.append((base_url, os.environ.get(f"{prefix}_TOKEN", "").strip()))
+            endpoints.append((base_url, token.get_secret_value().strip()))
     windows: dict[str, int] = {}
     failure: Exception | None = None
     for base_url, token in endpoints:
@@ -319,7 +317,11 @@ def _get_tokenizer():
     try:
         import tiktoken
         _TOKENIZER = tiktoken.get_encoding("cl100k_base")
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "tiktoken cl100k_base unavailable (%s: %s); estimating tokens as characters/4. "
+            "Pre-fetch it into TIKTOKEN_CACHE_DIR on hosts without internet access.",
+            type(exc).__name__, exc)
         _TOKENIZER = None
     return _TOKENIZER
 

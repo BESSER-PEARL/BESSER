@@ -349,6 +349,8 @@ _SUBMIT_REQUIREMENTS_TOOL = {
         "required": ["requirements"],
     },
 }
+_EXTRACTED_KINDS = frozenset(
+    _SUBMIT_REQUIREMENTS_TOOL["input_schema"]["properties"]["requirements"]["items"]["properties"]["kind"]["enum"])
 
 # The judge call (unlike the much smaller extraction call) intermittently
 # returns nothing usable within a second - an exception or empty completion,
@@ -565,11 +567,16 @@ def extract_requirements(instructions: str, llm_client) -> list[dict] | None:
         return None
     requirements: list[dict] = []
     for item in extracted:
-        text = str(item.get("text", "") if isinstance(item, dict) else item).strip()
-        if not text:
+        # A bare string is a requirement's text; a null or non-string text is
+        # none ("None" was judged and reported as a blocker).
+        text = item.get("text") if isinstance(item, dict) else item
+        if not isinstance(text, str) or not text.strip():
             continue
-        kind = str(item.get("kind", "")) if isinstance(item, dict) else ""
-        requirements.append({"id": len(requirements) + 1, "text": text, "kind": kind})
+        kind = item.get("kind") if isinstance(item, dict) else ""
+        # No client enforces the enum, and "verification" is the harness's own
+        # undischargeable gate: an unknown kind is no kind.
+        requirements.append({"id": len(requirements) + 1, "text": text.strip(),
+                             "kind": kind if kind in _EXTRACTED_KINDS else ""})
     # Preserve every returned item, even if a provider ignores maxItems. A full
     # response may still have omitted the specification's tail; neither slicing
     # it nor treating a saturated extraction as complete is safe.

@@ -923,3 +923,29 @@ def test_a_verdict_id_that_names_no_requirement_is_still_rejected(rid, monkeypat
     client = _ToolClient([payload, payload])
 
     assert ledger.judge_coverage([{"id": 1, "text": "a", "kind": "rule"}], "", client) is None
+
+
+def test_an_extracted_item_without_text_is_not_a_requirement():
+    """``str(None)`` turned a null item into the requirement "None", judged
+    and reported as the blocker "R1 — None is not implemented"."""
+    client = _ToolClient([{"requirements": [
+        {"text": None, "kind": "rule"}, None, {"text": 7}, {"kind": "rule"},
+        {"text": "Titles are unique", "kind": "uniqueness"}, "Books have at most 2000 pages",
+    ]}])
+
+    extracted = ledger.extract_requirements(INSTRUCTIONS, client)
+
+    assert extracted == [
+        {"id": 1, "text": "Titles are unique", "kind": "uniqueness"},
+        {"id": 2, "text": "Books have at most 2000 pages", "kind": ""},
+    ]
+
+
+@pytest.mark.parametrize("kind", [None, "verification", ledger.ENTITY_CRUD_KIND, "something else"])
+def test_an_extracted_kind_outside_the_schema_is_dropped(kind):
+    """No client enforces the schema's enum. 'verification' is the harness's
+    own extraction-incomplete gate, which no code can discharge: a user
+    requirement labelled so would be a blocker forever. ``None`` read "None"."""
+    client = _ToolClient([{"requirements": [{"text": "Titles are unique", "kind": kind}]}])
+
+    assert ledger.extract_requirements(INSTRUCTIONS, client)[0]["kind"] == ""

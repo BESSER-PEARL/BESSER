@@ -51,15 +51,23 @@ def test_json_describes_each_model(besser, model):
         "counts": {"classes": 2, "enumerations": 0, "associations": 1, "generalizations": 0, "constraints": 0},
         "classes": [
             {"name": "Library", "is_abstract": False, "parents": [], "methods": [],
-             "attributes": [{"name": "name", "type": "str"}]},
+             "attributes": [{"name": "name", "type": "str", "optional": False, "default": None}]},
             {"name": "Book", "is_abstract": False, "parents": [], "methods": [],
-             "attributes": [{"name": "title", "type": "str"}, {"name": "pages", "type": "int"}]},
+             "attributes": [{"name": "title", "type": "str", "optional": False, "default": None},
+                            {"name": "pages", "type": "int", "optional": False, "default": None}]},
         ],
         "enumerations": [],
         "associations": [{"name": "holds", "ends": [
             {"name": "library", "type": "Library", "multiplicity": "1"},
             {"name": "books", "type": "Book", "multiplicity": "0..*"},
         ]}],
+        "constraints": [],
+        "backend_endpoints": {
+            "Library": ["POST /library/", "GET /library/", "GET /library/{library_id}/", "PUT /library/{library_id}/",
+                        "DELETE /library/{library_id}/"],
+            "Book": ["POST /book/", "GET /book/", "GET /book/{book_id}/", "PUT /book/{book_id}/",
+                     "DELETE /book/{book_id}/"],
+        },
     }]
     assert "python" in result["generators"] and "react" not in result["generators"]
 

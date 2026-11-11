@@ -2,12 +2,17 @@
 
 Standard output carries the command's result and nothing else: one JSON
 object with ``--json``, a short report otherwise. Whatever a model file or a
-generator prints while it runs goes to standard error, or nowhere with ``--quiet``.
+generator prints while it runs goes to standard error, or nowhere with ``--quiet`` or terse output.
 
 ``--quiet`` drops the diagnostics (notes, warnings, what models and generators print)
 and the report of a command that writes or checks files; it keeps the output of a
 command whose output is what was asked for (``Result.text_is_result``: a completion
 script, the version, the generators, a model's summary) and every error.
+
+When standard output is not a terminal (a coding agent, a script, a CI log) the report is
+terse: a command with a one-line summary (``Result.brief``) prints it instead of its report,
+and notes are left out, since an agent re-reads every line on each later turn of its session.
+``BESSER_OUTPUT=full`` or ``terse`` overrides the choice; ``--json`` is always complete.
 """
 
 from __future__ import annotations
@@ -27,12 +32,32 @@ EXIT_FAILED = 1
 EXIT_USAGE = 2
 
 # How much is printed besides the result: set once per run by ``main``.
-QUIET, NORMAL, VERBOSE = -1, 0, 1
+QUIET, TERSE, NORMAL, VERBOSE = -2, -1, 0, 1
 _verbosity = NORMAL
+# Set to "full" or "terse" to choose the report regardless of whether standard output is a terminal.
+OUTPUT_ENV = "BESSER_OUTPUT"
+_OUTPUT_MODES = {"full": NORMAL, "terse": TERSE}
+
+
+def default_verbosity() -> int:
+    """``NORMAL`` when standard output is a terminal, ``TERSE`` otherwise, unless ``BESSER_OUTPUT`` says.
+
+    Raises:
+        ValueError: ``BESSER_OUTPUT`` is neither ``full`` nor ``terse``.
+    """
+    mode = os.environ.get(OUTPUT_ENV, "").strip().lower()
+    if mode:
+        if mode not in _OUTPUT_MODES:
+            raise ValueError(f"{OUTPUT_ENV} must be 'full' or 'terse', not '{mode}'")
+        return _OUTPUT_MODES[mode]
+    try:
+        return NORMAL if sys.stdout.isatty() else TERSE
+    except (AttributeError, ValueError):  # standard output replaced by an object without isatty, or closed
+        return TERSE
 
 
 def set_verbosity(verbosity: int) -> None:
-    """Set what this run prints: ``QUIET``, ``NORMAL`` or ``VERBOSE``."""
+    """Set what this run prints: ``QUIET``, ``TERSE``, ``NORMAL`` or ``VERBOSE``."""
     global _verbosity
     _verbosity = verbosity
 
@@ -61,6 +86,9 @@ class Result:
     # ``text`` is what the command was run for (a completion script, the version), not a report
     # of what it did: printed with ``--quiet`` too.
     text_is_result: bool = False
+    # The report in one line, printed instead of ``text`` when the output is terse; empty when
+    # ``text`` is what needs reading (validation errors, a model's summary).
+    brief: str = ""
 
     def as_json(self) -> dict[str, Any]:
         """The JSON output: the keys every command has, then the command's own."""
@@ -92,6 +120,7 @@ def print_result(result: Result, as_json: bool) -> None:
     """Print ``result``: JSON on standard output, or the report with its diagnostics on standard error.
 
     ``--quiet`` prints the errors, and ``text`` only when it is the result (``text_is_result``);
+    terse output prints ``brief`` instead of ``text`` when there is one, and no notes;
     a run that fails on its warnings alone (``validate --strict``) prints them too, since they
     are why it failed. The JSON object is printed whole. ``--verbose`` adds the traceback of a
     failure on standard error.
@@ -104,15 +133,19 @@ def print_result(result: Result, as_json: bool) -> None:
     if _verbosity == QUIET:
         _print_quiet(result)
         return
-    if result.text:
-        print(result.text)
-    for note in result.notes:
-        print(f"note: {note}", file=sys.stderr)
+    terse = _verbosity == TERSE and bool(result.brief)
+    shown_in_text = frozenset() if terse else result.shown_in_text
+    text = result.brief if terse else result.text
+    if text:
+        print(text)
+    if _verbosity != TERSE:
+        for note in result.notes:
+            print(f"note: {note}", file=sys.stderr)
     for warning in result.warnings:
-        if warning not in result.shown_in_text:
+        if warning not in shown_in_text:
             print(f"warning: {warning}", file=sys.stderr)
     for error in result.errors:
-        if error not in result.shown_in_text:
+        if error not in shown_in_text:
             print(f"error: {error}", file=sys.stderr)
 
 
@@ -134,7 +167,7 @@ def _print_quiet(result: Result) -> None:
 
 @contextlib.contextmanager
 def stdout_to_stderr() -> Iterator[None]:
-    """Send everything written to standard output to standard error, or nowhere with ``--quiet``.
+    """Send everything written to standard output to standard error, or nowhere with ``--quiet`` or terse output.
 
     Model files and generators print progress, and a generator's child process
     (``django-admin``) writes to the inherited descriptor, so both ``sys.stdout``
@@ -142,7 +175,7 @@ def stdout_to_stderr() -> Iterator[None]:
     """
     sys.stdout.flush()
     with contextlib.ExitStack() as stack:
-        if _verbosity == QUIET:
+        if _verbosity in (QUIET, TERSE):
             target = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
             target_fd = target.fileno()
         else:

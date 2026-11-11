@@ -14,6 +14,7 @@ CONFIG_EXAMPLE = '''\
 # besser.toml: what 'besser build' generates. Paths are relative to this file.
 
 model = "model.py"              # the model file every output reads, unless it names its own
+test = "python -m pytest -q"    # optional: what 'besser apply' runs after the build (no shell)
 
 [output.api]                    # one table per output; 'besser build api' builds this one alone
 generator = "backend"           # a generator id ('besser generators' lists them)
@@ -51,11 +52,11 @@ class OutputConfig:
     overwrite: bool = False
 
 
-def load_config(path: str) -> list[OutputConfig]:
-    """The outputs of the configuration file at ``path``, in the file's order.
+def _read_config(path: str) -> dict[str, Any]:
+    """The configuration file at ``path`` as TOML data, with its top-level keys checked.
 
     Raises:
-        ConfigError: The file is missing, is not TOML, or holds a key or a value ``build`` does not read.
+        ConfigError: The file is missing, is not TOML, or holds a top-level key or value no command reads.
     """
     file = Path(path)
     try:
@@ -67,12 +68,34 @@ def load_config(path: str) -> list[OutputConfig]:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: not a TOML file: {exc}") from exc
 
-    unknown = sorted(set(data) - {"model", "output"})
+    unknown = sorted(set(data) - {"model", "test", "output"})
     if unknown:
-        raise ConfigError(f"{path}: unknown key {', '.join(unknown)}; the file takes 'model' and [output.NAME] tables")
+        raise ConfigError(f"{path}: unknown key {', '.join(unknown)}; the file takes 'model', 'test' and "
+                          "[output.NAME] tables")
+    for key, what in (("model", "the path of a model file"), ("test", "a command line")):
+        if key in data and not isinstance(data[key], str):
+            raise ConfigError(f"{path}: {key} must be a string, {what}")
+    return data
+
+
+def load_test_command(path: str) -> str | None:
+    """The ``test`` command line of the configuration file at ``path``, or None when it has none.
+
+    Raises:
+        ConfigError: The file is missing, is not TOML, or holds a top-level key or value no command reads.
+    """
+    return _read_config(path).get("test") or None
+
+
+def load_config(path: str) -> list[OutputConfig]:
+    """The outputs of the configuration file at ``path``, in the file's order.
+
+    Raises:
+        ConfigError: The file is missing, is not TOML, or holds a key or a value ``build`` does not read.
+    """
+    file = Path(path)
+    data = _read_config(path)
     default_model = data.get("model")
-    if default_model is not None and not isinstance(default_model, str):
-        raise ConfigError(f"{path}: model must be a string, the path of a model file")
     tables = data.get("output", {})
     if not isinstance(tables, dict) or not tables or not all(isinstance(table, dict) for table in tables.values()):
         raise ConfigError(f"{path}: no output to build: add an [output.NAME] table with 'generator' and 'dir'")

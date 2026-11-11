@@ -24,6 +24,7 @@ from besser.cli.output import (
     QUIET,
     VERBOSE,
     Result,
+    default_verbosity,
     failure,
     print_result,
     set_verbosity,
@@ -66,6 +67,16 @@ With --json, standard output is one JSON object with the keys ok, command,
 exit_code, errors, warnings, notes and files (plus the command's own;
 'besser schema result' prints its JSON Schema); everything a model or a
 generator prints goes to standard error.
+
+When standard output is not a terminal (a coding agent, a script), a command
+that writes or checks files prints a one-line summary, the warnings and the
+errors, and no notes. BESSER_OUTPUT=full prints the whole report anyway;
+BESSER_OUTPUT=terse prints the summary on a terminal too.
+
+a coding agent's loop ('besser guide' prints its rules, 'init' writes them to AGENTS.md):
+  besser init                                  model.py, besser.toml, AGENTS.md, CLAUDE.md, .ignore
+  besser info model.py                         the model and the API's routes, in place of reading files
+  besser apply                                 after each model change: validate, build, run the tests
 
 examples, in the order of a session:
   besser new model.py                          a starter model to edit (--list: the other kinds)
@@ -115,12 +126,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "-q", "--quiet", action="store_true", default=argparse.SUPPRESS,
-        help="print only errors and the output of completion, generators, info, schema and --version "
+        help="print only errors and the output of completion, generators, guide, info, schema and --version "
              "(and, with --strict, the warnings that fail the run)",
     )
     common.add_argument(
         "-v", "--verbose", action="store_true", default=argparse.SUPPRESS,
-        help="print the traceback of a model file or generator that fails, on standard error",
+        help="print the whole report, even when standard output is not a terminal, and the traceback of a "
+             "model file or generator that fails, on standard error",
     )
 
     parser = _Parser(
@@ -166,6 +178,26 @@ def build_parser() -> argparse.ArgumentParser:
                      help=f"the kind of model to start from (default: {DEFAULT_KIND})")
     new.add_argument("--list", action="store_true", dest="list_kinds", help="list the kinds and write nothing")
     new.add_argument("--force", action="store_true", help="overwrite the file if it exists")
+    new.add_argument("--no-agent-files", dest="agent_files", action="store_false",
+                     help="write only the model, not the agent guide (AGENTS.md, CLAUDE.md) and .ignore beside it")
+
+    init = add_command(
+        "init", "set up a project for a coding agent",
+        "Write a starter model (model.py), a besser.toml that builds it (a 'backend' API for a\n"
+        "class diagram), the agent guide in AGENTS.md (imported by CLAUDE.md) and the .ignore\n"
+        "rules that keep the generated folders out of an agent's searches. A model or besser.toml\n"
+        "that exists is kept; the guide and the rules are blocks of their files, updated in place.",
+    )
+    init.add_argument("folder", nargs="?", default=".", help="the project folder (default: the current one)")
+    init.add_argument("--kind", choices=list(STARTERS), default=DEFAULT_KIND,
+                      help=f"the kind of model to start from (default: {DEFAULT_KIND})")
+
+    add_command(
+        "guide", "print the rules for a coding agent",
+        "Print what a coding agent needs to work in a BESSER project, in about 2 KB: what not to read,\n"
+        "the one command per model change, and where hand-written code goes. 'besser new' and\n"
+        "'besser init' write it to AGENTS.md.",
+    )
 
     schema = add_command(
         "schema", "describe the model formats, the JSON output and besser.toml",
@@ -276,6 +308,16 @@ def build_parser() -> argparse.ArgumentParser:
                        help=f"the configuration file (default: {CONFIG_FILENAME} in the current directory)")
     add_dry_run(build)
 
+    apply = add_command(
+        "apply", "build every output, then run the tests",
+        "The one command to run after a model change: 'besser build' (each model is validated first),\n"
+        "then, when the build succeeds, the 'test' command line of besser.toml, run from its folder\n"
+        "without a shell. Prints one line when everything passes, the errors or the end of the\n"
+        "test output otherwise. Exit status 1 when the build or the tests fail.\n\n" + _EXECUTES_PYTHON,
+    )
+    apply.add_argument("-c", "--config", default=CONFIG_FILENAME, metavar="FILE",
+                       help=f"the configuration file (default: {CONFIG_FILENAME} in the current directory)")
+
     convert = add_command(
         "convert", "convert a model file, or import another notation",
         "Convert a B-UML .py file to an editor project (.json), or an editor export (.json)\n"
@@ -351,7 +393,14 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
         version = get_besser_version()
         return Result(command="version", data={"version": version}, text=f"{PROG} {version}", text_is_result=True)
     if args.command == "new":
-        return commands.new(args.path, kind=args.kind, force=args.force, list_kinds=args.list_kinds)
+        return commands.new(args.path, kind=args.kind, force=args.force, list_kinds=args.list_kinds,
+                            agent_files=args.agent_files)
+    if args.command == "init":
+        return commands.init(args.folder, kind=args.kind)
+    if args.command == "guide":
+        return commands.guide()
+    if args.command == "apply":
+        return commands.apply(config_path=args.config)
     if args.command == "schema":
         return commands.schema(args.topic)
     if args.command == "build":
@@ -391,7 +440,16 @@ def _verbosity(args: argparse.Namespace) -> int:
     quiet, verbose = getattr(args, "quiet", False), getattr(args, "verbose", False)
     if quiet and verbose:
         raise _UsageError(f"--quiet and --verbose cannot be combined (see '{PROG} --help')", _command_name(args))
-    return QUIET if quiet else VERBOSE if verbose else NORMAL
+    if quiet:
+        return QUIET
+    if verbose:
+        return VERBOSE
+    if args.command == "mcp":  # standard output is the protocol's: what models print goes to standard error
+        return NORMAL
+    try:
+        return default_verbosity()
+    except ValueError as exc:
+        raise _UsageError(str(exc), _command_name(args)) from None
 
 
 def main(argv: Optional[List[str]] = None) -> int:

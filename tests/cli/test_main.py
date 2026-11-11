@@ -11,7 +11,7 @@ import pytest
 
 from besser.cli import commands
 from besser.cli.main import main
-from besser.cli.output import stdout_to_stderr
+from besser.cli.output import NORMAL, set_verbosity, stdout_to_stderr
 from besser.utilities.provenance import get_besser_version
 from tests.cli.conftest import INVALID_MODEL, LIBRARY_MODEL, PROJECT_EXPORT, WARNING_MODEL
 
@@ -115,6 +115,7 @@ def test_editor_json_without_the_backend_packages_says_how_to_install_them(monke
 
 
 def test_output_of_a_model_or_generator_and_of_its_child_processes_goes_to_standard_error(capfd):
+    set_verbosity(NORMAL)  # as a run on a terminal; terse output, as an earlier main() may leave it, drops it
     with stdout_to_stderr():
         print("printed by a generator")
         subprocess.run([sys.executable, "-c", "print('printed by its child process')"], check=True)

@@ -12,7 +12,8 @@ def test_it_writes_a_model_that_validates_without_warnings(besser, tmp_path):
     run = besser("new", "model.py")
 
     assert run.returncode == 0
-    assert run.stdout.startswith("Wrote a starter domain model to model.py. Next:\n  besser validate model.py\n")
+    assert run.stdout.startswith("Wrote a starter domain model to model.py, and the agent guide: AGENTS.md, "
+                                 "CLAUDE.md, .ignore. Next:\n  besser validate model.py\n")
     assert "besser validate model.py" in (tmp_path / "model.py").read_text()
     assert besser("validate", "model.py", "--strict").returncode == 0
 
@@ -29,7 +30,8 @@ def test_json_lists_the_file(besser):
     result = besser("new", "models/shop.py", "--json").json
 
     assert result == {
-        "ok": True, "command": "new", "exit_code": 0, "errors": [], "warnings": [], "notes": [], "files": ["models/shop.py"],
+        "ok": True, "command": "new", "exit_code": 0, "errors": [], "warnings": [], "notes": [],
+        "files": ["models/shop.py", "models/AGENTS.md", "models/CLAUDE.md", "models/.ignore"],
         "model": "models/shop.py", "kind": "domain",
     }
 

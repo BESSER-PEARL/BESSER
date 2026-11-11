@@ -128,7 +128,8 @@ def test_paths_are_relative_to_the_configuration_file(besser, write, model, tmp_
 @pytest.mark.parametrize("content, message", [
     (None, "besser.toml: no such file; 'besser schema config' prints an example to start from"),
     ("model = ", "besser.toml: not a TOML file: "),
-    ('modle = "library.py"\n', "besser.toml: unknown key modle; the file takes 'model' and [output.NAME] tables"),
+    ('modle = "library.py"\n', "besser.toml: unknown key modle; the file takes 'model', 'test' and "
+                                   "[output.NAME] tables"),
     ('model = "library.py"\n', "besser.toml: no output to build: add an [output.NAME] table with 'generator' and 'dir'"),
     ('[output.a]\ngenerator = "python"\n', "besser.toml: [output.a]: missing dir, model (or a top-level model)"),
     ('[output.a]\ngenerator = "python"\ndir = "o"\nmodel = "m.py"\noption = {}\n',

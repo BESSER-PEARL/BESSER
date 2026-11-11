@@ -317,8 +317,9 @@ def _convert(tools: Tools, args: dict[str, Any]) -> Result:
 
 
 def _new(tools: Tools, args: dict[str, Any]) -> Result:
+    # The tool writes the one file it names; an MCP client learns the workflow from the tools' descriptions.
     return commands.new(str(tools.output_path(args["path"], "path")), kind=args.get("kind", DEFAULT_KIND),
-                        force=args.get("force", False))
+                        force=args.get("force", False), agent_files=False)
 
 
 def _schema(tools: Tools, args: dict[str, Any]) -> Result:

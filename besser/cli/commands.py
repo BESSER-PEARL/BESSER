@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shlex
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +17,8 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
 from besser.cli import loading
 from besser.cli import schema as schema_module
-from besser.cli.config import CONFIG_EXAMPLE, CONFIG_FILENAME, ConfigError, OutputConfig, load_config
+from besser.cli.agent_files import GUIDE, GeneratedDir, sync_ignore, write_agent_files
+from besser.cli.config import CONFIG_EXAMPLE, CONFIG_FILENAME, ConfigError, OutputConfig, load_config, load_test_command
 from besser.cli.importing import IMPORT_FORMATS, ImportFormat, format_of, import_format, import_models
 from besser.cli.discovery import SKIP_NO_MODEL, SKIP_PY, ModelFiles, SkippedFile, find_model_files
 from besser.cli.loading import (
@@ -338,6 +340,8 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
         text="\n".join([*lines, *skipped_lines, verdict]) if lines or skipped_lines else "",
         shown_in_text=shown_in_text,
         traceback=traceback,
+        # A failure needs its report; a success is its verdict, with the warnings printed on their own.
+        brief=verdict if exit_code == EXIT_OK else "",
     )
 
 
@@ -408,8 +412,43 @@ def _write_starter_json(kind: str, source: str, target: Path) -> list[str]:
             return _write_editor_json(loaded, target)
 
 
-def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_kinds: bool = False) -> Result:
-    """Write the starter model of ``kind`` to ``path``: a B-UML script, or an editor project for ``.json``."""
+def _generated_dirs(config_path: Path) -> list[GeneratedDir]:
+    """The output folders the configuration file at ``config_path`` lists, relative to its folder; none
+    when there is no such file or it does not load (``build`` reports that)."""
+    try:
+        outputs = load_config(str(config_path))
+    except ConfigError:
+        return []
+    dirs = []
+    for output in outputs:
+        try:
+            path = Path(output.output_dir).relative_to(config_path.parent).as_posix()
+        except ValueError:  # outside the project: nothing of the project to keep out of searches
+            continue
+        try:
+            extension_file = get_generator(output.generator).load_class().extension_file
+        except (KeyError, ImportError):  # an unknown generator: build reports it
+            extension_file = None
+        dirs.append(GeneratedDir(path, extension_file))
+    return dirs
+
+
+def _write_agent_files(folder: Path, warnings: list[str]) -> list[str]:
+    """Write the agent guide and ignore rules in ``folder``; a file that cannot be written is a warning."""
+    try:
+        return write_agent_files(folder, _generated_dirs(folder / CONFIG_FILENAME))
+    except (OSError, UnicodeDecodeError) as exc:
+        warnings.append(f"the agent guide was not written in {folder}: {exc}")
+        return []
+
+
+def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_kinds: bool = False,
+        agent_files: bool = True) -> Result:
+    """Write the starter model of ``kind`` to ``path``: a B-UML script, or an editor project for ``.json``.
+
+    With ``agent_files``, also write the agent guide (``AGENTS.md``, imported by ``CLAUDE.md``) and the
+    ``.ignore`` rules that keep generated code out of an agent's searches, beside the model.
+    """
     if list_kinds:
         return _starter_list()
     data: dict[str, Any] = {"model": path, "kind": kind}
@@ -438,9 +477,13 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
         return failure("new", f"cannot write {target}: {exc}", EXIT_FAILED, data, cause=exc)
     except ModelLoadError as exc:  # editor JSON needs the backend's packages
         return failure("new", str(exc), data=data, cause=exc)
+    guide_files = _write_agent_files(target.parent, warnings) if agent_files else []
     shown = shlex.quote(str(target))
+    brief = f"Wrote a starter {kind} model to {target}"
+    if guide_files:
+        brief += f", and the agent guide: {', '.join(guide_files)}"
     lines = [
-        f"Wrote a starter {kind} model to {target}. Next:",
+        f"{brief}. Next:",
         f"  besser validate {shown}",
         f"  besser info {shown}",
     ]
@@ -448,7 +491,64 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
     if generator:
         lines.append(f"  besser generate {generator} {shown} -o out")
     lines.append(f"  besser schema {kind}          the classes to write it with")
-    return Result(command="new", warnings=warnings, files=[target.as_posix()], data=data, text="\n".join(lines))
+    return Result(command="new", warnings=warnings, files=[target.as_posix(), *guide_files], data=data,
+                  text="\n".join(lines), brief=f"{brief}.")
+
+
+# The output 'besser init' configures for a domain model: an API a coding agent can test.
+_INIT_GENERATOR = {DEFAULT_KIND: "backend"}
+_INIT_MODEL = "model.py"
+
+
+def _init_config(kind: str) -> str | None:
+    """The ``besser.toml`` of a new project whose model is of ``kind``; None when no generator reads it."""
+    generator = _INIT_GENERATOR.get(kind) or STARTERS[kind].generator
+    if generator is None:
+        return None
+    return (f'model = "{_INIT_MODEL}"\n'
+            '# test = "python -m pytest -q"   # what \'besser apply\' runs after the build\n\n'
+            f"[output.{generator}]\n"
+            f'generator = "{generator}"\n'
+            f'dir = "{generator}"\n')
+
+
+def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
+    """Set ``folder`` up as a BESSER project: a starter model, a ``besser.toml`` that builds it, and the
+    agent guide and ignore rules. A model or configuration file that exists is kept."""
+    root = Path(folder)
+    data: dict[str, Any] = {"folder": folder, "kind": kind}
+    if kind not in STARTERS:
+        return failure("init", f"unknown kind '{kind}'; kinds: {', '.join(STARTERS)}", data=data)
+    files: list[str] = []
+    notes: list[str] = []
+    warnings: list[str] = []
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        planned = {_INIT_MODEL: starter_source(kind, _INIT_MODEL), CONFIG_FILENAME: _init_config(kind)}
+        for name, text in planned.items():
+            target = root / name
+            if text is None:
+                notes.append(f"no {name}: no generator reads a {kind} model")
+            elif target.exists():
+                notes.append(f"kept {target.as_posix()}: it exists")
+            else:
+                target.write_text(text, encoding="utf-8")
+                files.append(target.as_posix())
+    except OSError as exc:
+        return failure("init", f"cannot write in {root}: {exc}", EXIT_FAILED, data, cause=exc)
+    files.extend(_write_agent_files(root, warnings))
+    brief = f"Set up {root.as_posix()}: wrote {', '.join(files) or 'nothing (all up to date)'}"
+    text = f"{brief}.\nNext: edit {_INIT_MODEL}, then run 'besser apply' (validate, build, test)."
+    return Result(command="init", warnings=warnings, notes=notes, files=files, data=data, text=text,
+                  brief=f"{brief}.")
+
+
+# ── guide ───────────────────────────────────────────────────────────────────
+
+
+def guide() -> Result:
+    """The guide a coding agent needs to work in a BESSER project: what 'new' and 'init' write to AGENTS.md."""
+    return Result(command="guide", data={"guide": GUIDE}, text=GUIDE.rstrip("\n"), text_is_result=True)
 
 
 # ── generators ──────────────────────────────────────────────────────────────
@@ -880,10 +980,10 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
     if data["recorded"]:
         notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=False))
     files = [Path(output_dir, path).as_posix() for path in written]
-    lines = [f"Generated {plural(len(files), 'file')} in {output_dir} with the '{spec.id}' generator:"]
-    lines.extend(f"  {path}" for path in files)
+    summary = f"Generated {plural(len(files), 'file')} in {output_dir} with the '{spec.id}' generator"
+    lines = [f"{summary}:", *(f"  {path}" for path in files)]
     return Result(command="generate", warnings=warnings, notes=notes, files=files, data=data,
-                  text="\n".join(lines))
+                  text="\n".join(lines), brief=f"{summary}.")
 
 
 @contextlib.contextmanager
@@ -1015,10 +1115,12 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
             for path in lists["conflicted"]
         ]
     files = [] if dry_run else sorted(lists["written"] + lists["merged"] + lists["conflicted"])
+    lines = _regeneration_text(spec, model_path, output_dir, lists, adopt, dry_run)
     return Result(
         command="regenerate", exit_code=EXIT_FAILED if errors else EXIT_OK, errors=errors, warnings=warnings,
-        notes=notes, files=files, data=data,
-        text="\n".join(_regeneration_text(spec, model_path, output_dir, lists, adopt, dry_run)),
+        notes=notes, files=files, data=data, text="\n".join(lines),
+        # The files merged or in conflict are named by the warnings and errors; a dry run is read for its list.
+        brief="" if dry_run else lines[0].rstrip(":"),
     )
 
 
@@ -1350,6 +1452,7 @@ def build(names: Sequence[str] = (), config_path: str = CONFIG_FILENAME, dry_run
 
     result = Result(command="build", data=data)
     lines: list[str] = []
+    briefs: list[str] = []
     traceback = ""
     for output in selected:
         built = _build_output(output, dry_run)
@@ -1363,10 +1466,65 @@ def build(names: Sequence[str] = (), config_path: str = CONFIG_FILENAME, dry_run
         status = "ok" if built.exit_code == EXIT_OK else "FAILED"
         lines.append(f"[{output.name}] {output.generator}: {output.model} -> {output.output_dir}: {status}")
         lines.extend(f"  {line}" for line in built.text.splitlines())
+        ok_brief = built.brief.rstrip(".") if built.exit_code == EXIT_OK else ""
+        briefs.append(f"[{output.name}] {ok_brief or status}")
     failed = sum(entry["exit_code"] != EXIT_OK for entry in data["outputs"])
-    lines.append(f"{'FAILED' if failed else 'OK'}: {plural(len(selected), 'output')}, {failed} failed")
+    verdict = f"{'FAILED' if failed else 'OK'}: {plural(len(selected), 'output')}, {failed} failed"
+    lines.append(verdict)
+    if not dry_run:
+        config_file = Path(config_path)
+        updated = sync_ignore(config_file.parent, _generated_dirs(config_file))
+        result.files.extend(updated)
+        result.notes.extend(f"updated {path}: the generated folders of {config_path}" for path in updated)
     result.text = "\n".join(lines)
+    # A dry run is read for its list of files.
+    result.brief = "" if dry_run else f"{verdict}: {' '.join(briefs)}"
     result.traceback = traceback
+    return result
+
+
+# ── apply ───────────────────────────────────────────────────────────────────
+
+# The lines of the test command's output that 'apply' reports when the tests fail: the summary and the
+# failures before it, as pytest, unittest and npm print them last.
+_TEST_TAIL_LINES = 40
+
+
+def apply(config_path: str = CONFIG_FILENAME) -> Result:
+    """Build every output of the configuration file, then run its ``test`` command: one call per model change.
+
+    The build validates each model first and generates nothing from one with errors. The tests run
+    only after a build that succeeded, from the configuration file's folder, without a shell.
+    """
+    built = build((), config_path=config_path)
+    result = dataclasses.replace(built, command="apply")
+    result.data = {**built.data, "test": None}
+    if built.exit_code != EXIT_OK:
+        return result
+    try:
+        command = load_test_command(config_path)
+    except ConfigError as exc:  # build read the same file: only a change in between gets here
+        return failure("apply", str(exc), data=result.data, cause=exc)
+    if command is None:
+        result.notes.append(f"no tests run: {config_path} has no 'test' command")
+        return result
+    try:
+        process = subprocess.run(shlex.split(command), cwd=Path(config_path).parent, capture_output=True,
+                                 text=True, check=False)
+    except (OSError, ValueError) as exc:
+        return failure("apply", f"cannot run the test command '{command}': {exc}", EXIT_FAILED, result.data, exc)
+    output = (process.stdout + process.stderr).strip().splitlines()
+    tail = output[-_TEST_TAIL_LINES:]
+    result.data["test"] = {"command": command, "exit_code": process.returncode, "output_tail": tail}
+    last = tail[-1].strip() if tail else "no output"
+    if process.returncode != 0:
+        result.exit_code = EXIT_FAILED
+        result.errors.append(f"the tests failed (exit status {process.returncode}): {command}")
+        result.text = "\n".join([*tail, f"{built.brief}; tests FAILED"])
+        result.brief = ""
+    else:
+        result.text = f"{built.text}\ntests: {last}"
+        result.brief = f"{built.brief}; tests: {last}"
     return result
 
 

@@ -166,6 +166,11 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "kind": {"type": "string"},
         "kinds": {"type": "array", "description": "with --list: per kind its kind, summary, models and generator"},
     },
+    "init": {
+        "folder": {"type": "string", "description": "the project folder"},
+        "kind": {"type": "string", "description": "the kind of the starter model"},
+    },
+    "guide": {"guide": {"type": "string", "description": "the rules for a coding agent, as AGENTS.md has them"}},
     "schema": {
         "topic": {"type": "string"},
         "topics": {"type": "array", "description": "without a topic: the topics there are"},
@@ -199,7 +204,9 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
     "info": {
         "model": {"type": "string"},
         "models": {"type": "array", "description": "per model: name, kind, type, model_name, current, counts, "
-                                                   "elements; a domain model's classes, enumerations, associations"},
+                                                   "elements; a domain model's classes (attributes with name, "
+                                                   "type, optional, default), enumerations, associations, "
+                                                   "constraints and backend_endpoints (per class, 'METHOD /path/')"},
         "generators": {**_STRINGS, "description": "the ids of the generators that can run on the file"},
     },
     "generators": {
@@ -223,6 +230,13 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "dry_run": {"type": "boolean"},
         "outputs": {"type": "array", "description": "per output built: its name and the object of the generate "
                                                     "or regenerate run that built it"},
+    },
+    "apply": {
+        "config": {"type": "string", "description": "the configuration file read"},
+        "dry_run": {"type": "boolean"},
+        "outputs": {"type": "array", "description": "as build"},
+        "test": {"type": ["object", "null"], "description": "the tests run after the build: command, exit_code, "
+                                                            "output_tail (the last lines); null when none ran"},
     },
     "convert": {
         "input": {"type": "string"}, "inputs": _STRINGS, "output": {"type": "string"},

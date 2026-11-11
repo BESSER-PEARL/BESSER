@@ -1,6 +1,7 @@
 """Model files and a runner for the ``besser`` command-line tests."""
 
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -92,12 +93,17 @@ class Run:
 def besser(tmp_path):
     """Run ``python -m besser`` in ``tmp_path`` with the interpreter running the tests.
 
-    ``stdin`` is the text the process reads on standard input.
+    ``stdin`` is the text the process reads on standard input. ``output`` is ``BESSER_OUTPUT``: the
+    tests read the full report unless they ask for another; None runs with the default, which is
+    terse since standard output is a pipe.
     """
-    def run(*args, stdin: str = "") -> Run:
+    def run(*args, stdin: str = "", output: str | None = "full") -> Run:
+        env = {key: value for key, value in os.environ.items() if key != "BESSER_OUTPUT"}
+        if output is not None:
+            env["BESSER_OUTPUT"] = output
         process = subprocess.run(
             [sys.executable, "-m", "besser", *map(str, args)],
-            cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False, input=stdin,
+            cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False, input=stdin, env=env,
         )
         return Run(process.returncode, process.stdout, process.stderr)
     return run

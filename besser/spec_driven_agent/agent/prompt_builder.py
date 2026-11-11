@@ -1261,8 +1261,9 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
 
     if domain_model is not None:
         try:
-            class_names = [c.name for c in domain_model.get_classes()]
-            enum_names = [e.name for e in domain_model.get_enumerations()]
+            # Sorted: both are sets of id-hashed elements, so their order changes between runs.
+            class_names = sorted(c.name for c in domain_model.get_classes())
+            enum_names = sorted(e.name for e in domain_model.get_enumerations())
             lines.append(f"\nEntities with full CRUD: {', '.join(class_names)}")
             if enum_names:
                 lines.append(f"Enumerations: {', '.join(enum_names)}")

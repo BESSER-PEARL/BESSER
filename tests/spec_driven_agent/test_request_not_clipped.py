@@ -183,3 +183,36 @@ class TestGapAnalyserInventionList:
             assert noun in bullet, noun
             assert gate < bullet.index(noun), noun
         assert "empty array" in bullet
+
+
+class TestPhase2CarriesTheRequestOnce:
+    """The system prompt holds the request whole; a long one is not sent a
+    second time as the first user message, where it would be re-billed on
+    every turn of the loop."""
+
+    def _first_call(self, spec, tmp_path):
+        """(system prompt, first user message) of a Phase 2 for ``spec``."""
+        from besser.spec_driven_agent.providers.llm_client import UsageTracker
+
+        class Phase2Client:
+            model = "mock"
+            usage = UsageTracker("mock")
+
+        orchestrator = LLMOrchestrator(
+            llm_client=Phase2Client(), domain_model=_simple_model(),
+            output_dir=str(tmp_path), enable_tracing=False, enable_checkpointing=False,
+        )
+        return (orchestrator._build_system_prompt(instructions=spec),
+                orchestrator._kickoff_message(spec)["content"])
+
+    def test_a_long_request_is_in_the_system_prompt_whole_and_not_repeated(self, tmp_path):
+        tail = "Additionally, you must use: Frontend -> React"
+        spec = _long_spec(4_622, tail)
+        system, first = self._first_call(spec, tmp_path)
+        assert spec.strip() in system and system.count(tail) == 1
+        assert tail not in first and "User request" in first
+
+    def test_a_short_request_stays_in_the_user_turn(self, tmp_path):
+        spec = "Build a shop API with orders."
+        system, first = self._first_call(spec, tmp_path)
+        assert first == spec and spec in system

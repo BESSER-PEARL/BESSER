@@ -115,9 +115,10 @@ A deployment's file names only what differs from the default:
   fallback rate, and a warning names it in the log. Add a row whenever a paid
   model joins ``BESSER_FREE_LLM_MODEL`` or ``BESSER_FREE_LLM_ALT_MODELS``: the
   fallback can be many times the real rate and stop a run early.
-- An endpoint that reports no token usage on a stream is estimated from the
-  size of the request and reply, with a warning in the log, so the cost cap
-  still counts the call. The estimate has no cache information and errs high.
+- An endpoint that reports no token usage, on a stream or on a plain call, is
+  estimated from the size of the request and reply, with a warning in the
+  log, so the cost cap still counts the call. The estimate has no cache
+  information and errs high.
 
 ``GET /besser_api/spec-driven/config`` returns the catalog's providers and
 models as ``providers`` (``id``, ``label``, ``hint``, ``key_prefix``,
@@ -223,18 +224,27 @@ a request shaped for them, which the client does automatically:
        tools with reasoning on, so it cannot run the tool loop on
        ``/v1/chat/completions``. A run on it fails with a message asking for a
        tool-capable model.
-   * - ``claude-fable-5-1``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
+   * - ``claude-fable-5-1``, ``claude-fable-5-2``, ``claude-mythos-5-1``,
+       ``claude-mythos-5-2``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
      - A forced tool call (planning, gap analysis, requirements ledger,
        recovery steps) is sent as ``tool_choice: auto`` with an instruction
        naming the tool, plus ``strict: true`` when it is the only tool, and is
        asked again once if the reply skips the tool. ``thinking`` is never
        sent.
-   * - ``claude-fable-5``
+   * - ``claude-fable-5``, ``claude-mythos-5``
      - Forced tool calls keep ``tool_choice``, but without
        ``thinking: disabled``, which the model rejects.
    * - ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-5-5``, ``claude-haiku-4-5``, and the
        4.x models
      - Forced tool calls use ``tool_choice`` with thinking disabled.
+
+Claude models from Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 on bind each
+thinking block to the conversation that produced it, and reject a replayed
+block whose earlier messages or system prompt changed. The agent therefore
+drops every thinking block from the history it sends whenever it rewrites that
+history: at a context compaction, at a history eviction, and when a run is
+resumed (the resumed prompt is rebuilt from the workspace). Text and tool
+calls are kept.
 
 No sampling parameters (``temperature``, ``top_p``, ``top_k``) are sent to any
 Anthropic or OpenAI model. A reply that a provider safety classifier stops (Anthropic's

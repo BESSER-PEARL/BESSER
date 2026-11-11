@@ -130,9 +130,9 @@ _CLAUDE_ALWAYS_THINKING = ModelSettings(
     thinking_can_be_disabled=False,
 )
 _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL = ModelSettings(
-    # Fable 5.1, Opus 5.5 and Sonnet 5.5: thinking cannot be disabled, and
-    # tool_choice {"type": "tool"/"any"} is a 400 ("not supported for this
-    # model").
+    # Fable 5.1 / 5.2, Mythos 5.1 / 5.2, Opus 5.5 and Sonnet 5.5: thinking
+    # cannot be disabled, and tool_choice {"type": "tool"/"any"} is a 400
+    # ("not supported for this model").
     thinking_can_be_disabled=False,
     forced_tool_choice=False,
 )
@@ -162,6 +162,12 @@ _REGISTRY: tuple[tuple[str, ModelSettings], ...] = tuple(
             # resolve to the same row.
             ("claude-fable-5", _CLAUDE_ALWAYS_THINKING),
             ("claude-fable-5-1", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            # Without its own row a point release falls back to the shorter
+            # "claude-fable-5" marker, which still forces tool_choice.
+            ("claude-fable-5-2", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            ("claude-mythos-5", _CLAUDE_ALWAYS_THINKING),
+            ("claude-mythos-5-1", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            ("claude-mythos-5-2", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
             ("claude-opus-5-5", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
             ("claude-sonnet-5-5", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
         ),

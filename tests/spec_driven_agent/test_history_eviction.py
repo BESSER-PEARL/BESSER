@@ -19,6 +19,7 @@ from besser.spec_driven_agent.agent.history_eviction import (
     evict_stale_file_bodies,
     DEFAULT_PRESERVE_RECENT,
     without_rejected_edit_drafts,
+    without_thinking_blocks,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
@@ -266,3 +267,80 @@ def test_pairing_count_is_preserved():
         return sum(len(m["content"]) for m in ms if isinstance(m.get("content"), list))
     assert block_count(out) == block_count(msgs)
     assert n >= 1
+
+
+# ----------------------------------------------------------------------
+# Thinking blocks: bound to the conversation that produced them
+# ----------------------------------------------------------------------
+
+def _thinking(text="plan", *, as_object=False):
+    if as_object:
+        return _Obj(type="thinking", thinking=text, signature="sig")
+    return {"type": "thinking", "thinking": text, "signature": "sig"}
+
+
+def test_thinking_blocks_are_removed_and_everything_else_is_kept():
+    use = _read_use("t1", "a.py")
+    messages = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": [
+            _thinking(), {"type": "text", "text": "reading"}, use]},
+        {"role": "user", "content": [_result("t1", "body")]},
+        {"role": "assistant", "content": [
+            _thinking(as_object=True), {"type": "redacted_thinking", "data": "x"}]},
+    ]
+    before = copy.deepcopy(messages[:3])
+
+    stripped, removed = without_thinking_blocks(messages)
+
+    assert removed == 3
+    assert stripped[1]["content"] == [{"type": "text", "text": "reading"}, use]
+    assert stripped[2] is messages[2]
+    # A turn that held only reasoning still has content: an empty assistant
+    # message is a 400 on both providers.
+    assert stripped[3]["content"] == [{"type": "text", "text": "(reasoning omitted)"}]
+    assert messages[:3] == before  # pure
+
+
+def test_a_history_without_thinking_blocks_is_returned_as_is():
+    messages = [{"role": "user", "content": "hi"},
+                {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}]
+    stripped, removed = without_thinking_blocks(messages)
+    assert removed == 0 and stripped is messages
+
+
+def test_a_compaction_does_not_replay_the_kept_turns_thinking(tmp_path):
+    """Keep-tail compaction: the retained turns' thinking blocks were produced
+    with the full history present. Replayed after the summary they fail the
+    request on Claude models that check a block's conversation (HTTP 400,
+    "bound to a different conversation"), which ended Phase 2 as an API error.
+    """
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=_simple_model(), output_dir=str(tmp_path))
+    filler = "y" * (COMPACT_TOKEN_THRESHOLD * 5)
+    messages = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": [_thinking("early"), _read_use("t1", "a.py")]},
+        {"role": "user", "content": [_result("t1", filler)]},
+        {"role": "assistant", "content": [_thinking("late"), _read_use("t2", "b.py")]},
+        {"role": "user", "content": [_result("t2", "small")]},
+    ]
+
+    result = orch._maybe_compact(messages)
+
+    assert orch._compaction_count == 1
+    kinds = [block["type"] for message in result if isinstance(message["content"], list)
+             for block in message["content"]]
+    assert "tool_use" in kinds and "tool_result" in kinds  # the tail is still there
+    assert "thinking" not in kinds
+
+
+def test_an_uncompacted_history_keeps_its_thinking(tmp_path):
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=_simple_model(), output_dir=str(tmp_path))
+    messages = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": [_thinking(), _read_use("t1", "a.py")]},
+        {"role": "user", "content": [_result("t1", "small")]},
+    ]
+    assert orch._maybe_compact(messages) is messages

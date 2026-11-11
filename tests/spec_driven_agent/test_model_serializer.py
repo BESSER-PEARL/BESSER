@@ -547,3 +547,49 @@ class TestSerializerReadsRealMetamodelAttributes:
         result = serialize_domain_model(DomainModel(name="Shop", types={cls}))
         (method,) = result["classes"][0]["methods"]
         assert method["body"].startswith("def total")
+
+
+# ----------------------------------------------------------------------
+# to_prompt_json: the text a prompt embeds
+# ----------------------------------------------------------------------
+
+def test_prompt_json_keeps_the_content_and_drops_the_indentation():
+    import json
+
+    from besser.spec_driven_agent.model_serializer import to_prompt_json
+
+    model = {
+        "name": "Shop",
+        "classes": [
+            {"name": "Order", "attributes": [{"name": "ref", "type": "str", "is_id": True}]},
+            {"name": "Line", "attributes": []},
+        ],
+        "enumerations": [],
+        "note": "a, b: c",
+    }
+    text = to_prompt_json(model)
+
+    assert json.loads(text) == model
+    # One line per class, nothing spent on indentation or separator spaces.
+    assert text.splitlines() == [
+        '{"name":"Shop",',
+        '"classes":[',
+        '{"name":"Order","attributes":[{"name":"ref","type":"str","is_id":true}]},',
+        '{"name":"Line","attributes":[]}',
+        '],',
+        '"enumerations":[],',
+        '"note":"a, b: c"}',
+    ]
+    assert len(text) < len(json.dumps(model, indent=2)) * 0.6
+
+
+def test_prompt_json_of_a_list_of_models_is_one_line_each():
+    import json
+
+    from besser.spec_driven_agent.model_serializer import to_prompt_json
+
+    machines = [{"name": "OrderFSM", "states": ["draft"]}, {"name": "PayFSM", "states": []}]
+    text = to_prompt_json(machines)
+    assert json.loads(text) == machines
+    assert text.count("\n") == 3
+    assert to_prompt_json({}) == "{}" and to_prompt_json([]) == "[]"

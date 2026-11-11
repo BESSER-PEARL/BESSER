@@ -18,6 +18,7 @@ import os
 import urllib.request
 from typing import Any
 from besser.utilities.workspace_fs import walk_plain
+from besser.spec_driven_agent.pipeline.constants import _RECIPE_EXCLUDED_DIRS
 from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -549,7 +550,10 @@ def _summarize_messages(
         )
     try:
         files = []
-        for root, _, fnames in walk_plain(output_dir):
+        for root, dirs, fnames in walk_plain(output_dir):
+            # The delivered files only: after an install an unpruned walk is
+            # all node_modules, and the cap below then shows nothing else.
+            dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
             for f in fnames:
                 if not f.startswith(".besser_"):
                     files.append(

@@ -662,9 +662,14 @@ class ClaudeLLMClient(LLMProvider):
                        "Do not answer in plain text.")
         extra = {"tool_choice": {"type": "auto"}}
         result: dict[str, Any] = {}
+        # The instruction is for this request only, so the next one never
+        # sends it. Mark the last block of the real history as well: a
+        # breakpoint only on the instruction caches a prefix nothing reads
+        # back, and the whole conversation is then written twice.
+        history = _with_message_cache(messages)
         for text in (instruction,
                      instruction + " Your previous reply did not call it."):
-            request_messages = _with_trailing_instruction(messages, text)
+            request_messages = _with_trailing_instruction(history, text)
             try:
                 result = self._create(system, request_messages, request_tools,
                                       tools, model_override, extra)
@@ -1337,32 +1342,34 @@ class OpenAIProvider(LLMProvider):
         self._fallback_step = 0
         self._on_fallback = False
         self.fallback_reason: str | None = None
-        self._warned_no_stream_usage = False
+        self._warned_no_usage = False
 
     # True on a vendor that only serves paid API models (Mistral, Nebius).
     _PAID_VENDOR = False
 
-    def _record_stream_usage(self, usage: Any, api_messages: list, text: str, tool_calls: dict) -> None:
-        """Record a finished stream's usage, or estimate it when the endpoint sent none.
+    def _record_usage(
+        self, usage: Any, api_messages: list, text: str, arguments: str,
+        model: str | None = None,
+    ) -> None:
+        """Record a finished call's usage, or estimate it when the endpoint sent none.
 
         Unrecorded calls would leave the run's cost cap blind. The estimate has
         no cache information, so it bills the whole history as fresh input and
-        errs high.
+        errs high. ``model`` is the per-call override, billed at its own rate.
         """
         if usage:
-            self._usage.record(_OpenAIUsageAdapter(usage))
+            self._usage.record(_OpenAIUsageAdapter(usage), model=model)
             return
-        if not self._warned_no_stream_usage:
-            self._warned_no_stream_usage = True
+        if not self._warned_no_usage:
+            self._warned_no_usage = True
             logger.warning(
-                "Model %s reported no usage on a stream: estimating its tokens against the cost cap.",
-                self._model,
+                "Model %s reported no usage: estimating its tokens against the cost cap.",
+                model or self._model,
             )
-        arguments = "".join(call["arguments"] for call in tool_calls.values())
         self._usage.record(_EstimatedUsage(
             input_tokens=len(str(api_messages)) // _CHARS_PER_TOKEN,
             output_tokens=(len(text) + len(arguments)) // _CHARS_PER_TOKEN,
-        ))
+        ), model=model)
 
     def _is_billed_route(self, base_url: str | None) -> bool:
         """Paid vendor API rather than a gateway / self-hosted endpoint."""
@@ -1500,10 +1507,12 @@ class OpenAIProvider(LLMProvider):
                 # from served-model tracking — otherwise every run logs a
                 # spurious "served model changed mid-run" warning when the
                 # primary call follows a planning call.
-                if response.usage:
-                    self._usage.record(
-                        _OpenAIUsageAdapter(response.usage), model=model_override
-                    )
+                reply = response.choices[0].message
+                self._record_usage(
+                    response.usage, api_messages, reply.content or "",
+                    "".join(call.function.arguments or "" for call in reply.tool_calls or []),
+                    model=model_override,
+                )
                 if not model_override:
                     self._usage.set_served_model(getattr(response, "model", None))
 
@@ -1651,7 +1660,10 @@ class OpenAIProvider(LLMProvider):
                         except Exception:
                             pass
 
-                self._record_stream_usage(stream_usage, api_messages, collected_text, tool_calls_accum)
+                self._record_usage(
+                    stream_usage, api_messages, collected_text,
+                    "".join(call["arguments"] for call in tool_calls_accum.values()),
+                )
 
                 # Build final content blocks
                 content: list[Any] = []

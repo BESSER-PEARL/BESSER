@@ -224,9 +224,13 @@ reading a trace and wondering why a run did what it did.
        the first.
    * - Context compaction
      - Above ``BESSER_LLM_COMPACT_THRESHOLD`` estimated tokens (default
-       80,000) everything but the last six messages is replaced by a summary:
-       a model recap, a tool-call histogram, and the lists of files written and
-       read. The cut never lands between a tool call and its result. For models
+       80,000) everything but the most recent turns (about 30% of the
+       threshold, in tokens) is replaced by a summary: a model recap, a
+       tool-call histogram, the lists of files written and read, the project's
+       files (dependency and build directories left out) and the open
+       checklist items and blockers. The cut never lands between a tool call
+       and its result, and the kept turns lose their thinking blocks (see
+       :doc:`models`). For models
        with a known small context window the threshold is lowered to that
        window minus a 16,000-token reserve, so a small model compacts instead
        of overflowing.

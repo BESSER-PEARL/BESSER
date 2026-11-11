@@ -199,6 +199,27 @@ class TestCompaction:
         assert "write_file" in summary
         assert "modify_file" in summary
 
+    def test_summary_lists_the_project_not_its_installed_dependencies(self, simple_model, tmp_path):
+        """After ``npm install`` an unpruned walk is all node_modules: the 25
+        paths the summary shows were every one a dependency file, so a model
+        that had just lost its context was told nothing about its own source.
+        """
+        for index in range(40):
+            dependency = tmp_path / "frontend" / "node_modules" / f"pkg{index:02d}"
+            dependency.mkdir(parents=True)
+            (dependency / "index.js").write_text("x", encoding="utf-8")
+        for rel in ("backend/main_api.py", "frontend/src/App.tsx",
+                    "backend/__pycache__/main_api.cpython-312.pyc"):
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+
+        summary = self._make_orchestrator(simple_model, tmp_path)._summarize_messages(
+            [{"role": "user", "content": "test"}])
+
+        assert "backend/main_api.py" in summary and "frontend/src/App.tsx" in summary
+        assert "node_modules" not in summary and "__pycache__" not in summary
+
 
 # ======================================================================
 # Standalone module tests

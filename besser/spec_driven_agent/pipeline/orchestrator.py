@@ -54,7 +54,10 @@ from besser.spec_driven_agent.planning.model_rules import (
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.run_recap import request_text
 from besser.spec_driven_agent.planning.specification import validate_specification
-from besser.spec_driven_agent.agent.history_eviction import evict_stale_file_bodies
+from besser.spec_driven_agent.agent.history_eviction import (
+    evict_stale_file_bodies,
+    without_thinking_blocks,
+)
 from besser.spec_driven_agent.validation.frontend_contract import (
     _method_button_source_issues as _method_button_source_issues,
     collect_frontend_contract_issues,
@@ -910,7 +913,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.debug("Could not seed resumed cost", exc_info=True)
         self._checkpoint_phase = checkpoint.phase
         self._resume_from_turn = checkpoint.turn if checkpoint.phase == "phase2" else 0
-        self._resume_messages = checkpoint.messages if checkpoint.phase == "phase2" else None
+        # The resumed prompt is rebuilt from the workspace as it is now, so the
+        # checkpoint's thinking blocks belong to a conversation that is gone.
+        self._resume_messages = (
+            self._drop_stale_thinking(checkpoint.messages, "the run was resumed")
+            if checkpoint.phase == "phase2" else None
+        )
         self._phase2_stop_reason = checkpoint.phase2_stop_reason
         self._phase2_exited_cleanly = checkpoint.phase2_exited_cleanly
         self._phase3_interrupted = False
@@ -966,7 +974,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._trace.write(
                 EVENT_PHASE_EXIT, phase="phase2_resume", turns=self.total_turns,
                 stop_reason=self._phase2_stop_reason,
-            stop_detail=self._phase2_stop_detail,
+                stop_detail=self._phase2_stop_detail,
             )
         else:
             self._drop_redundant_generator_tools()
@@ -1833,7 +1841,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # The planning call may have switched the client to its
             # outage fallback model — surface that before Phase 2 turns.
             self._notify_model_switch()
-            messages = [{"role": "user", "content": instructions}]
+            messages = [self._kickoff_message(instructions)]
 
             # Short-circuit: the planner explicitly judged the scaffold
             # sufficient (empty list — distinct from None, which means
@@ -2200,6 +2208,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
 
+    # Above this the request is not repeated as the first user message. The
+    # system prompt already carries it whole ("## User request"), and a second
+    # copy is re-sent on every turn: a 64k-char specification is ~16k tokens a
+    # turn, on every provider that does not cache the prefix. A short request
+    # stays in the user turn, where the copy costs next to nothing.
+    _KICKOFF_INLINE_REQUEST_CHARS = 2_000
+    _KICKOFF_POINTER = (
+        "Implement the request in the \"User request\" section of your "
+        "instructions. It is given there in full, word for word: work from "
+        "that text, to its last line."
+    )
+
+    def _kickoff_message(self, instructions: str) -> dict:
+        """The first user turn of Phase 2: the request, or a pointer to it."""
+        if len(instructions) <= self._KICKOFF_INLINE_REQUEST_CHARS:
+            return {"role": "user", "content": instructions}
+        return {"role": "user", "content": self._KICKOFF_POINTER}
+
     def _truncation_retry_prompt(self) -> dict:
         """The user turn asking a truncated model to emit less (Phase 2 and 3)."""
         current_max_tokens = getattr(self.client, "max_tokens", None)
@@ -2330,11 +2356,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return "id:" + str(getattr(block, "id", id(block)))
 
     def _execute_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
-        # Set before any block runs so every tool_call event in this turn can
-        # report it. A model that emits ONE call per turn needs ~4x the turns of
-        # one that batches, which makes MAX_TURNS mean wildly different things
-        # per model — invisible unless this is recorded.
-        self._blocks_in_turn = len(tool_blocks)
         """
         Execute tool call blocks, in parallel where that is SAFE.
 
@@ -2351,6 +2372,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Returns:
             List of tool_result dicts, ordered to match ``tool_blocks``.
         """
+        # Set before any block runs so every tool_call event in this turn can
+        # report it. A model that emits ONE call per turn needs ~4x the turns of
+        # one that batches, which makes MAX_TURNS mean wildly different things
+        # per model — invisible unless this is recorded.
+        self._blocks_in_turn = len(tool_blocks)
+        return self._run_tool_blocks(tool_blocks, turn)
+
+    def _run_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
+        """``_execute_tool_blocks`` without the per-turn bookkeeping, so the
+        validation split below can recurse without resetting the batch count."""
         if not tool_blocks:
             return []
 
@@ -2361,7 +2392,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         validation_names = {"validate_app", "test_api", "task_list"}
         validations = [b for b in tool_blocks if b.name in validation_names]
         if validations:
-            results = self._execute_tool_blocks([b for b in tool_blocks if b.name not in validation_names], turn)
+            results = self._run_tool_blocks([b for b in tool_blocks if b.name not in validation_names], turn)
             results.extend(self._execute_single_tool(b, turn) for b in validations)
             order = {b.id: index for index, b in enumerate(tool_blocks)}
             return sorted(results, key=lambda result: order[result["tool_use_id"]])
@@ -4193,6 +4224,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         reserve = max(
             COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0)
         )
+        evicted = 0
         if _HISTORY_EVICTION_ENABLED and _estimate_tokens(messages) >= effective_threshold(
             model, reserve=reserve
         ):
@@ -4230,7 +4262,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         if did_compact:
             self._compaction_count += 1
+        if did_compact or evicted:
+            result = self._drop_stale_thinking(result, "the history was compacted")
         return result
+
+    def _drop_stale_thinking(self, messages: list[dict], why: str) -> list[dict]:
+        """Remove thinking blocks whose conversation is no longer what is sent.
+
+        See ``without_thinking_blocks``: replayed after the history or the
+        system prompt changed, they fail the request on current Claude models.
+        """
+        messages, removed = without_thinking_blocks(messages)
+        if removed:
+            logger.info("Dropped %d thinking block(s): %s", removed, why)
+        return messages
 
     def _compaction_work_state(self) -> dict:
         """Open work a compaction must not summarize away."""

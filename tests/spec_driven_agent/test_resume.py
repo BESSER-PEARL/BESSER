@@ -489,3 +489,43 @@ class TestAFailedCheckpointWriteIsVisible:
         assert any(e["event"] == "checkpoint" for e in events), "no checkpoint traced"
         assert not [e for e in events
                     if "not resumable" in json.dumps(e.get("payload", {}))]
+
+
+def test_resume_does_not_replay_the_checkpoints_thinking_blocks(simple_model, tmp_path):
+    """A resumed prompt is rebuilt from the workspace as it is now, so the
+    checkpoint's thinking blocks belong to a conversation that no longer
+    exists. Current Claude models answer a replayed one with HTTP 400 ("bound
+    to a different conversation"), which made such a run impossible to resume.
+    """
+    def _thinking_then_tool(tool_id):
+        response = _tool_use(tool_id)
+        response["content"].insert(
+            0, _MockBlock("thinking", thinking="plan", signature="sig"))
+        return response
+
+    class _Crasher(_ScriptedClient):
+        def chat(self, *a, **kw):
+            r = super().chat(*a, **kw)
+            if len(self.calls) >= 3:
+                raise RuntimeError("crash")
+            return r
+
+    leg1 = _Crasher([_thinking_then_tool("c1"), _thinking_then_tool("c2"),
+                     _thinking_then_tool("c3")])
+    LLMOrchestrator(
+        llm_client=leg1, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    ).run("Build a blog")
+    saved = json.dumps(load_checkpoint(str(tmp_path)).messages)
+    assert '"thinking"' in saved  # the checkpoint itself keeps the full record
+
+    leg2 = _ScriptedClient([_end_turn()])
+    LLMOrchestrator(
+        llm_client=leg2, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    ).resume("Build a blog")
+
+    sent = [block for message in leg2.calls[0]["messages"]
+            if isinstance(message["content"], list) for block in message["content"]]
+    assert [b["type"] for b in sent if b["type"] == "tool_use"]  # the calls are replayed
+    assert not [b for b in sent if b["type"] == "thinking"]

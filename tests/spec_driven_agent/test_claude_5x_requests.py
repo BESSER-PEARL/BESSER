@@ -84,6 +84,7 @@ def test_no_sampling_parameter_reaches_an_anthropic_model(model, force):
 @pytest.mark.parametrize("model", [
     "claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5",
     "us.anthropic.claude-fable-5-1", "anthropic.claude-opus-5-5",
+    "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-2",
 ])
 def test_a_forced_call_never_disables_thinking_where_that_is_a_400(model):
     client = _claude(model, _tool_use())
@@ -116,7 +117,12 @@ def test_fable_5_keeps_its_forced_tool_choice():
 # Forced-tool fallback on Fable 5.1 / Opus 5.5
 # ----------------------------------------------------------------------
 
-@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"])
+# claude-fable-5-2 and the Mythos ids contain the shorter "claude-fable-5" /
+# no marker at all; each needs its own row or the forced call is a 400.
+@pytest.mark.parametrize("model", [
+    "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5",
+    "claude-fable-5-2", "claude-mythos-5-1", "claude-mythos-5-2",
+])
 def test_forced_tool_becomes_auto_plus_an_instruction_and_parses_the_call(model):
     client = _claude(model, _tool_use(payload={"items": ["x", "y"]}))
 
@@ -139,6 +145,30 @@ def test_the_caller_messages_are_not_mutated():
     messages = [{"role": "user", "content": "Extract the items."}]
     client.chat(system="s", messages=messages, tools=[TOOL], force_tool="submit")
     assert messages == [{"role": "user", "content": "Extract the items."}]
+
+
+def test_the_history_before_the_one_off_instruction_stays_cacheable():
+    """The instruction is never sent again, so a breakpoint on it alone caches
+    a prefix no later request can read: the escalated turn then wrote the
+    whole conversation to the cache and the next turn wrote it again."""
+    client = _claude("claude-fable-5-1", _tool_use())
+    history = [
+        {"role": "user", "content": "Extract the items."},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "submit", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "refused"}]},
+    ]
+
+    client.chat(system="s", messages=history, tools=[TOOL], force_tool="submit")
+
+    (request,) = _requests(client)
+    result_block, instruction = request["messages"][-1]["content"]
+    assert result_block["type"] == "tool_result"
+    assert result_block["cache_control"] == {"type": "ephemeral"}
+    assert "`submit`" in instruction["text"]
+    marked = [1 for message in request["messages"] if isinstance(message["content"], list)
+              for block in message["content"] if "cache_control" in block]
+    assert len(marked) <= 2  # with the tools and system markers: the API's limit of 4
+    assert "cache_control" not in history[-1]["content"][0]  # caller's history untouched
 
 
 def test_a_reply_without_the_tool_is_asked_again_once():

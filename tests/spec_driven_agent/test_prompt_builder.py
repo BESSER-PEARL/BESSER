@@ -96,8 +96,8 @@ def test_state_machine_and_cross_links_included():
     assert "OrderFSM" in prompt
     # Cross-model link should bind OrderFSM → Order (class name in SM name).
     assert "## Cross-model links" in prompt
-    assert '"governs_class": "Order"' in prompt
-    assert '"state_machine": "OrderFSM"' in prompt
+    assert '"governs_class":"Order"' in prompt
+    assert '"state_machine":"OrderFSM"' in prompt
 
 
 def test_user_instructions_rendered_verbatim():
@@ -264,7 +264,7 @@ def test_bpmn_and_nn_models_are_serialized_into_agent_context():
     assert "start-to-review" in prompt
     assert "## Neural Network Model" in prompt
     assert "Risk classifier" in prompt
-    assert '"out_features": 4' in prompt
+    assert '"out_features":4' in prompt
 
 
 def _make_domain_with_conversion_issue() -> DomainModel:

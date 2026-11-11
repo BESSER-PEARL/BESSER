@@ -113,6 +113,43 @@ def without_rejected_edit_drafts(messages: list[dict]) -> list[dict]:
     return projected
 
 
+# Anthropic reasoning blocks. Each one is signed over the conversation that
+# produced it (system prompt, tools, every earlier message).
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+# What an assistant turn holds once its only blocks were reasoning: both
+# providers reject an assistant message with no content.
+_THINKING_ONLY_TURN_TEXT = "(reasoning omitted)"
+
+
+def without_thinking_blocks(messages: list[dict]) -> tuple[list[dict], int]:
+    """``(messages, removed)`` with every thinking block taken out.
+
+    Call it whenever the history a thinking block was produced in stops being
+    the history that is sent: a compaction that keeps recent turns, an
+    eviction that stubs earlier ones, a resume that rebuilds the system
+    prompt. Claude models from Fable 5.1 / Opus 5.5 / Sonnet 5.5 / Haiku 5.5
+    on answer a replayed block whose prefix changed with HTTP 400 ("The block
+    is bound to a different conversation"); removing ALL of them is the
+    documented recovery, and text and tool calls stay. Pure: returns the
+    input list itself when there is nothing to remove.
+    """
+    removed = 0
+    out: list[dict] = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            out.append(message)
+            continue
+        kept = [block for block in content if _block_type(block) not in _THINKING_BLOCK_TYPES]
+        if len(kept) == len(content):
+            out.append(message)
+            continue
+        removed += len(content) - len(kept)
+        out.append({**message, "content": kept or [
+            {"type": "text", "text": _THINKING_ONLY_TURN_TEXT}]})
+    return (out, removed) if removed else (messages, 0)
+
+
 def _block_get(block: Any, key: str, default: Any = None) -> Any:
     if isinstance(block, dict):
         return block.get(key, default)

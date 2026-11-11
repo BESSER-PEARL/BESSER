@@ -5,7 +5,6 @@ Builds the system prompt that guides the LLM's behavior during Phase 2,
 including domain model context, file inventory, and scoped task lists.
 """
 
-import json
 import logging
 import os
 import re
@@ -23,6 +22,7 @@ from besser.spec_driven_agent.model_serializer import (
     serialize_object_model,
     serialize_quantum_circuit,
     serialize_state_machines,
+    to_prompt_json,
 )
 from besser.spec_driven_agent.agent.runbook import runbook_section
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
@@ -90,25 +90,16 @@ DROPPED_RULES_NOTE = (
 )
 
 # The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
+# Names and purpose only: each tool's own description, sent with every
+# request, already lists its predicates and return value.
 _MODEL_TOOLS_SECTION = """\
 ## Tools for deeper model inspection
 
-When the JSON below is not enough — large model, need a single class in
-detail, or want to filter classes by a predicate — use these tools rather
-than re-reading or guessing:
-
-- **`query_class(name)`** — full definition of one class: attributes,
-  methods, parents, association ends, abstract flag. Use this when you
-  need details that don't fit in the summary.
-- **`list_classes_with(predicate)`** — find classes matching a simple
-  rule. Predicates: `is_abstract`, `is_root`, `has_constraint`,
-  `has_attribute:<name>`, `has_method:<name>`, `extends:<parent_name>`.
-  Use this for "every class with an OCL constraint" or "every leaf in
-  the hierarchy" queries.
-- **`get_constraints_for(class_name)`** — OCL constraint expressions
-  scoped to a class. **Translate these into runtime validators** in the
-  target language (Pydantic field validators, Zod schemas, SQL CHECK
-  constraints, etc.) — the generator does not enforce them for you.
+When the JSON below is not enough, ask the model rather than re-reading or
+guessing: `query_class(name)` for one class in full, `list_classes_with(predicate)`
+to filter classes, `get_constraints_for(class_name)` for a class's OCL
+constraints (Rule 6: each one becomes a runtime validator - the generator
+does not enforce them for you).
 """
 
 def build_system_prompt(
@@ -196,7 +187,7 @@ def build_system_prompt(
             "## Domain Model",
             "",
             "```json",
-            json.dumps(serialize_domain_model(domain_model), indent=2),
+            to_prompt_json(serialize_domain_model(domain_model)),
             "```",
         ])
         issues = getattr(domain_model, "conversion_issues", None) or []
@@ -255,7 +246,7 @@ def build_system_prompt(
             gui_framing,
             "",
             "```json",
-            json.dumps(gui_json, indent=2),
+            to_prompt_json(gui_json),
             "```",
         ])
 
@@ -268,7 +259,7 @@ def build_system_prompt(
             "Conversational agent states and intents. Drives chatbot wiring.",
             "",
             "```json",
-            json.dumps(agent_json, indent=2),
+            to_prompt_json(agent_json),
             "```",
         ])
 
@@ -282,7 +273,7 @@ def build_system_prompt(
             "fixtures, or example payloads — they represent real expected values.",
             "",
             "```json",
-            json.dumps(object_json, indent=2),
+            to_prompt_json(object_json),
             "```",
         ])
 
@@ -297,7 +288,7 @@ def build_system_prompt(
             "handlers that respect these transitions.",
             "",
             "```json",
-            json.dumps(sm_json, indent=2),
+            to_prompt_json(sm_json),
             "```",
         ])
 
@@ -310,7 +301,7 @@ def build_system_prompt(
             "Quantum circuit definition for Qiskit / Cirq code generation.",
             "",
             "```json",
-            json.dumps(q_json, indent=2),
+            to_prompt_json(q_json),
             "```",
         ])
 
@@ -324,7 +315,7 @@ def build_system_prompt(
             "semantics, events, lanes, and message flows in the implementation.",
             "",
             "```json",
-            json.dumps(bpmn_json, indent=2),
+            to_prompt_json(bpmn_json),
             "```",
         ])
 
@@ -338,7 +329,7 @@ def build_system_prompt(
             "configuration. Preserve declared dimensions and module inputs.",
             "",
             "```json",
-            json.dumps(nn_json, indent=2),
+            to_prompt_json(nn_json),
             "```",
         ])
 
@@ -359,7 +350,7 @@ def build_system_prompt(
             "hints about which code should cross-reference which model.",
             "",
             "```json",
-            json.dumps(cross_links, indent=2),
+            to_prompt_json(cross_links),
             "```",
         ])
 
@@ -859,7 +850,7 @@ def _data_contract_section(domain_model) -> str:
    the primary key it references.
 2. **Server-owned fields.** `id`, `createdAt`/`created_at`,
    `updatedAt`/`updated_at`, and **every attribute the model marks
-   `"is_derived": true`** are assigned or computed by the backend. They
+   `is_derived`** are assigned or computed by the backend. They
    NEVER appear in create-request schemas or create forms, and the client
    never sends them. A derived attribute must be COMPUTED — from the
    values the request does carry — not accepted. (A declared domain

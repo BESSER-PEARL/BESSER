@@ -185,6 +185,67 @@ def test_v4_library_ocl_template_round_trip():
 # State machine round-trip
 # ---------------------------------------------------------------------------
 
+def _class_node(node_id, name, x, y, **extra):
+    data = {"name": name, "attributes": [], "methods": [], **extra.pop("data", {})}
+    return {"id": node_id, "type": "class", "position": {"x": x, "y": y},
+            "width": 160, "height": 100, "data": data, **extra}
+
+
+def _class_round_trip(nodes, edges=()):
+    model = {"version": "4.0.0", "type": "ClassDiagram", "nodes": list(nodes), "edges": list(edges)}
+    return class_buml_to_json(process_class_diagram({"title": "Shapes", "model": model}))
+
+
+def test_v4_class_in_package_keeps_its_absolute_position():
+    """A child ``position`` is relative to its package. The package is not
+    re-emitted, so the class and enumeration must come back at absolute positions."""
+    package = {"id": "pkg", "type": "package", "position": {"x": 300, "y": 200},
+               "width": 500, "height": 400, "data": {"name": "shapes"}}
+    out = _class_round_trip([
+        package,
+        _class_node("c-circle", "Circle", 40, 60, parentId="pkg"),
+        _class_node("e-kind", "Kind", 250, 60, parentId="pkg", data={"stereotype": "Enumeration"}),
+        _class_node("c-free", "Free", 10, 20),
+    ])
+
+    positions = {n["data"]["name"]: n["position"] for n in out["nodes"]}
+    assert not [n for n in out["nodes"] if n.get("parentId")]
+    assert positions == {
+        "Circle": {"x": 340, "y": 260},
+        "Kind": {"x": 550, "y": 260},
+        "Free": {"x": 10, "y": 20},
+    }
+
+
+def test_v4_generalization_keeps_its_handles_and_points():
+    points = [{"x": 80, "y": 300}, {"x": 80, "y": 100}]
+    inheritance = {"id": "g1", "source": "c-circle", "target": "c-shape", "type": "ClassInheritance",
+                   "sourceHandle": "top", "targetHandle": "bottom", "data": {"points": points}}
+    out = _class_round_trip(
+        [_class_node("c-shape", "Shape", 0, 0), _class_node("c-circle", "Circle", 0, 300)],
+        [inheritance],
+    )
+
+    [edge] = out["edges"]
+    assert (edge["type"], edge["source"], edge["target"]) == ("ClassInheritance", "c-circle", "c-shape")
+    assert (edge["sourceHandle"], edge["targetHandle"]) == ("top", "bottom")
+    assert edge["data"]["points"] == points
+
+
+def test_v4_class_colours_round_trip():
+    colours = {"fillColor": "#ffeecc", "strokeColor": "#112233", "textColor": "#445566"}
+    out = _class_round_trip([
+        _class_node("c-shape", "Shape", 0, 0, data=dict(colours)),
+        _class_node("e-kind", "Kind", 300, 0, data={"stereotype": "Enumeration", "fillColor": "#00ff00"}),
+        _class_node("c-plain", "Plain", 600, 0),
+    ])
+
+    data = {n["data"]["name"]: n["data"] for n in out["nodes"]}
+    assert {key: data["Shape"].get(key) for key in colours} == colours
+    assert data["Kind"].get("fillColor") == "#00ff00"
+    assert not {"fillColor", "strokeColor", "textColor"} & set(data["Plain"])
+
+
 def test_v4_state_machine_round_trip():
     fixture = _load("state_machine_basic.json")
     sm = process_state_machine(fixture)

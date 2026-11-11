@@ -24,7 +24,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
     legacy_body_only_to_text, process_ocl_constraints,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
-    node_data, node_bounds,
+    absolute_bounds, node_data,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import VALID_PRIMITIVE_TYPES
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
@@ -39,6 +39,17 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 # spellings still produced by older fixtures. Accept both on read.
 COMMENT_NODE_TYPES = ("comment", "Comments")
 COMMENT_LINK_TYPES = ("CommentLink", "Link")
+
+NODE_STYLE_KEYS = ("fillColor", "strokeColor", "textColor", "highlight")
+
+
+def _node_layout(node: dict, nodes_by_id: dict) -> dict:
+    """Layout stash of a class or enumeration node: absolute bounds (the
+    package is not re-emitted) and its colours."""
+    layout = absolute_bounds(node, nodes_by_id)
+    data = node_data(node)
+    layout.update({key: data[key] for key in NODE_STYLE_KEYS if key in data})
+    return layout
 
 
 def parse_method_signature_from_code(
@@ -158,6 +169,7 @@ def _process_enumerations(
     record their layout bounds. Also collects ``Comments`` nodes for later
     processing.
     """
+    nodes_by_id = {node.get("id"): node for node in nodes}
     for node in nodes:
         node_type = node.get("type") or ""
         node_id = node.get("id")
@@ -210,7 +222,7 @@ def _process_enumerations(
         except ValueError as e:
             raise ConversionError(str(e))
 
-        layout_positions[element_name] = node_bounds(node)
+        layout_positions[element_name] = _node_layout(node, nodes_by_id)
 
 
 def _process_classes(
@@ -227,6 +239,7 @@ def _process_classes(
     """
     class_id_to_class: dict[str, Class] = {}
     method_id_to_method: dict[str, Method] = {}
+    nodes_by_id = {node.get("id"): node for node in nodes}
 
     # Pass 1: class shells.
     for node in nodes:
@@ -261,7 +274,7 @@ def _process_classes(
         except ValueError as e:
             raise ConversionError(str(e))
         class_id_to_class[node_id] = cls
-        layout_positions[class_name] = node_bounds(node)
+        layout_positions[class_name] = _node_layout(node, nodes_by_id)
 
     # Rebuild lookup so class-typed cross-references resolve in pass 2.
     type_lookup = _build_type_lookup(domain_model)
@@ -709,6 +722,10 @@ def _process_relationships(
             gen_layout: dict[str, Any] = {}
             if edge_data.get("points"):
                 gen_layout["path"] = edge_data["points"]
+            if edge.get("sourceHandle"):
+                gen_layout["source_direction"] = edge["sourceHandle"]
+            if edge.get("targetHandle"):
+                gen_layout["target_direction"] = edge["targetHandle"]
             if gen_layout:
                 layout_positions[f"gen_{source_class.name}_{target_class.name}"] = gen_layout
 

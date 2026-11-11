@@ -465,6 +465,9 @@ def class_buml_to_json(domain_model):
             position = {"x": saved_bounds["x"], "y": saved_bounds["y"]}
             width = saved_bounds.get("width", width)
             height = saved_bounds.get("height", height)
+            for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
+                if style_key in saved_bounds:
+                    data[style_key] = saved_bounds[style_key]
         else:
             position = {"x": 0, "y": 0}
         node = make_node(
@@ -620,6 +623,8 @@ def class_buml_to_json(domain_model):
             target=class_id_map[generalization.general],
             type_="ClassInheritance",
             data=_set_timestamp({"points": saved_gen.get("path", [])}, generalization),
+            source_handle=saved_gen.get("source_direction", "right"),
+            target_handle=saved_gen.get("target_direction", "left"),
         )
         edges.append(edge)
 

@@ -266,6 +266,13 @@ legacy lowercase data). Map v3 element `type`:
   `node.measured = { width: v3.bounds.width, height: v3.bounds.height }`.
 - `Package` v3 elements stay as nodes with `type: 'package'`; child
   classes that had `owner: <packageId>` get `parentId: <packageId>`.
+- Layout through a backend round trip (JSON → B-UML → JSON): B-UML has no
+  package element here, so `package` nodes are not re-emitted and their
+  classes and enumerations come back as top-level nodes at their absolute
+  position (the ancestors' positions added). Class and enumeration colours
+  (`fillColor`, `strokeColor`, `textColor`, `highlight`) are kept, and a
+  `ClassInheritance` edge keeps its `sourceHandle` / `targetHandle` and
+  `points`, as associations do.
 - `ClassOCLConstraint`: the canonical v4 shape is a free-standing node
   with `type: 'ClassOCLConstraint'` (sticky-note rendering;
   `data.expression` carries the full `context …` OCL text,

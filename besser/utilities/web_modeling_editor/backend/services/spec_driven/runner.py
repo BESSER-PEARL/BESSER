@@ -58,6 +58,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
+from besser.spec_driven_agent.run_recap import migrate_agents_recap
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
@@ -65,7 +66,6 @@ from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
     inline_code,
-    remove_agents_block,
     remove_readme_block,
     write_generation_provenance,
 )
@@ -912,9 +912,10 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     with contextlib.suppress(OSError):
         os.remove(os.path.join(dest_dir, PROVENANCE_FILENAME))
     # Nor are the BESSER blocks of the README and AGENTS.md: the push renders them again.
+    # A recap section an earlier push left in AGENTS.md moves to .besser/ first.
     try:
         remove_readme_block(dest_dir)
-        remove_agents_block(dest_dir)
+        migrate_agents_recap(dest_dir)
     except OSError:
         logger.warning("Could not strip the BESSER blocks from the seed in %s", dest_dir, exc_info=True)
 

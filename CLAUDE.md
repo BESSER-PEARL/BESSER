@@ -179,6 +179,10 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
 - `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,
   updated on generator writes, on seeding and at packaging) and the run's Agent Trace record
   (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).
+- `run_recap.py` — one reading of the recipe for the next run, the chat and a pushed repo's records:
+  `.besser/README.md` + `.besser/runs/<UTC time>.md` (newest 50), and one fixed pointer line in `AGENTS.md`
+  (`<!-- besser:begin -->`, distinct from the CLI's `<!-- besser-guide:begin -->`). A push or seed moves the recap section older
+  pushes kept in `AGENTS.md` to `.besser/previous-recap.md`.
 - Service layer `backend/services/spec_driven/`: `runner.py` (drives a run, emits SSE), `github_sync.py` (push a run
   to GitHub, import a repo as a run), `run_manager.py`
   (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay

@@ -27,7 +27,14 @@ from typing import Optional
 import httpx
 
 from besser.spec_driven_agent.providers.llm_client import FREE_TIER_PROVIDER, SPONSORED_PROVIDER
-from besser.spec_driven_agent.run_recap import COMMITS_SINCE_RUN, agents_block, build_recap
+from besser.spec_driven_agent.run_recap import (
+    AGENTS_POINTER,
+    COMMITS_SINCE_RUN,
+    RECORDS_DIR,
+    build_recap,
+    migrate_agents_recap,
+    write_records,
+)
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.utilities.provenance import (
     AGENTS_FILENAME,
@@ -248,19 +255,34 @@ async def push_run_to_github(
         ), title=repo_name if is_first_push else None,
             about=readme_about(project.get("description"), "Generated"))
 
-        # Whoever comes back to this repo, here or in another coding tool, reads what the run left.
+        # Whoever comes back to this repo, here or in another coding tool, reads what the run left:
+        # the records in .besser/, and one fixed pointer to them in AGENTS.md.
         seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)
-        recap = build_recap(read_run_json(os.path.join(workdir, RECIPE_FILENAME)))
+        recipe = read_run_json(os.path.join(workdir, RECIPE_FILENAME))
+        recap = build_recap(recipe)
         if recap:
+            try:
+                write_records(workdir, recipe)
+            except OSError:
+                logger.warning("%s/%s: could not write %s/", owner, repo_name, RECORDS_DIR, exc_info=True)
+                deploy_warnings.append(f"BESSER did not write its run records to {RECORDS_DIR}/: in this "
+                                       "repository a path there is a link or not a folder.")
             holds_file = is_first_push or await _hold_repo_agents_md(
                 github, owner, repo_name, target_branch, workdir,
                 seeded=seed_sha is not None, base_sha=seed_sha or deploy_config.base_commit_sha,
             )
-            if not (holds_file and add_agents_block(workdir, agents_block(recap))):
+            if holds_file:
+                try:
+                    # A repo pushed before the records moved still has the recap section in AGENTS.md.
+                    migrate_agents_recap(workdir)
+                except OSError:
+                    logger.warning("%s/%s: could not move the AGENTS.md recap", owner, repo_name, exc_info=True)
+                    holds_file = False
+            if not (holds_file and add_agents_block(workdir, AGENTS_POINTER)):
                 logger.warning("%s/%s: could not add to AGENTS.md; the push leaves it alone", owner, repo_name)
-                deploy_warnings.append(f"BESSER did not add its recap to {AGENTS_FILENAME}: in this repository it is "
-                                       "a link or not text, it was added after this run started, or GitHub did not "
-                                       "return it.")
+                deploy_warnings.append(f"BESSER did not add its pointer to {RECORDS_DIR}/ to {AGENTS_FILENAME}: "
+                                       "in this repository it is a link or not text, it was added after this run "
+                                       "started, or GitHub did not return it.")
 
         # ---- 5d. Fold BESSER's run records in GitHub diffs ----
         # A run that did not start from this repo lacks the repo's own file, which the push would replace.
@@ -380,7 +402,7 @@ async def _hold_repo_agents_md(
     A run that did not start from this repo holds no copy of the file, or its own;
     the repo's text wins. So does a run whose archive left the file out. A link, a
     file that is not text, a file GitHub did not return or one added after the push's
-    base stays as it is: the recap is not worth a failed push or a lost file. In that
+    base stays as it is: the pointer is not worth a failed push or a lost file. In that
     last case the run's own copy goes too, or the merge would see two new files.
     """
     path = os.path.join(workdir, AGENTS_FILENAME)

@@ -1,9 +1,12 @@
 """What a finished run leaves for whoever continues the app.
 
-One reading of ``.besser_recipe.json``, for the next run, ``AGENTS.md`` and the
-editor's chat. A recipe travels in a repository, so its text can be anyone's:
-every value here is one line, capped, free of credentials and unable to close
-the ``AGENTS.md`` block.
+One reading of ``.besser_recipe.json``, for the next run, the ``.besser/`` records
+of a pushed repository and the editor's chat. A recipe travels in a repository, so
+its text can be anyone's: every value here is one line, capped, free of credentials
+and unable to close a marked block.
+
+A push keeps the records in ``.besser/`` (``README.md``, one file per run under
+``runs/``) and one fixed pointer to them in ``AGENTS.md``, so that file never grows.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
@@ -22,10 +26,13 @@ from besser.utilities.provenance import (
     BESSER_BLOCK_END,
     BESSER_URL,
     EDITOR_URL,
+    agents_besser_block,
     inline_code,
+    remove_agents_block,
+    strip_besser_block,
 )
 from besser.utilities.secret_redaction import redact_text
-from besser.utilities.workspace_fs import open_plain
+from besser.utilities.workspace_fs import is_plain_entry, open_plain, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +56,24 @@ _MAX_RECIPE_BYTES = 16 * 1024 * 1024
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # Any comment delimiter, as one match: removing an exact "<!--" can leave another one behind.
 _COMMENT_DELIMITER_RE = re.compile(r"<!-+|-+!?>")
+
+# BESSER's records in a pushed repository; ``AGENTS.md`` only points here.
+RECORDS_DIR = ".besser"
+RECORDS_INDEX = f"{RECORDS_DIR}/README.md"
+RUNS_DIR = f"{RECORDS_DIR}/runs"
+# What earlier versions kept in AGENTS.md, moved here once by the push that meets it.
+PREVIOUS_RECAP = f"{RECORDS_DIR}/previous-recap.md"
+# One file per run: years of runs stay a folder one can list.
+MAX_RUN_FILES = 50
+# A moved AGENTS.md section was at most a few KB; a planted one stops here.
+_MAX_PREVIOUS_RECAP_CHARS = 16_000
+_RUN_FILE_RE = re.compile(r"\d{8}T\d{6}Z\.md")
+AGENTS_POINTER = "\n".join([
+    BESSER_BLOCK_BEGIN,
+    f"Project history, run recaps and the requests made to BESSER's agent: see `{RECORDS_DIR}/` "
+    f"(start with [`{RECORDS_INDEX}`]({RECORDS_INDEX})).",
+    BESSER_BLOCK_END,
+])
 
 NO_REQUEST = "(request not recorded)"
 _ROLLED_BACK = "The last run's automatic repairs were rolled back, so they are not in the code"
@@ -200,8 +225,12 @@ def load_recipe(workspace: str) -> Any:
 
 
 def repo_notes(workspace: str) -> str:
-    """The repo's ``AGENTS.md`` for a modify run's inventory, quoted so it cannot start a prompt section."""
+    """The repo's ``AGENTS.md`` for a modify run's inventory, quoted so it cannot start a prompt section.
+
+    BESSER's own block is left out: the records it points to reach the run from the recipe.
+    """
     text = _read_capped(workspace, AGENTS_FILENAME, _MAX_REPO_NOTES_CHARS)  # bounded: repo text in the prompt
+    text = strip_besser_block(text) if text else text
     if not text or not text.strip():
         return ""
     quoted, _ = redact_text(text.strip(), env_style=False)
@@ -214,26 +243,132 @@ def repo_notes(workspace: str) -> str:
     ])
 
 
-def agents_block(recap: dict) -> str:
-    """The section a push keeps in the repo's ``AGENTS.md``, for people and other coding tools."""
+def records_notes(workspace: str) -> str:
+    """The repo's ``.besser/README.md`` for a modify run whose recipe records no run, quoted and capped."""
+    text = _read_capped(workspace, RECORDS_INDEX, _MAX_REPO_NOTES_CHARS)  # bounded: repo text in the prompt
+    if not text or not text.strip():
+        return ""
+    quoted, _ = redact_text(text.strip(), env_style=False)
+    return "\n".join([
+        f"## BESSER's records in {RECORDS_INDEX}",
+        RECORD_NOT_INSTRUCTIONS,
+        *(f"> {line}" for line in quoted.splitlines()),
+    ])
+
+
+def records_index(recap: dict) -> str:
+    """``.besser/README.md``: what the folder holds and where the app stands."""
     lines = [
-        BESSER_BLOCK_BEGIN,
-        "## Working on this project",
+        "# BESSER records",
         "",
-        f"Built with [BESSER]({BESSER_URL}). BESSER rewrites this section on every push; "
-        "anything outside it is yours and stays.",
+        f"[BESSER]({BESSER_URL}) rewrites this file on every push of its Spec-Driven Agent; "
+        "`AGENTS.md` points here. These are records of what was done, not instructions.",
         "",
         f"- The model is `buml/diagrams.json`. Open it in the [BESSER editor]({EDITOR_URL}), and change "
         "data structures there, not only in the code.",
-        "- Files named `.besser_*` are BESSER's run records. Do not edit them by hand.",
+        f"- `runs/`: one file per run, named by its date and time (UTC): the request, in the user's words, "
+        f"and the files the run changed. The newest {MAX_RUN_FILES} are kept.",
+        "- `previous-recap.md`, when present: the recap earlier versions of BESSER kept in `AGENTS.md`.",
+        "- `project.json`: which BESSER project this repository belongs to.",
+        "- Files named `.besser_*` at the root are BESSER's run records. Do not edit them by hand.",
         "",
-        "### Recent work",
+        "## Recent work",
         "",
     ]
     for run in reversed(recap["runs"]):
         date = f"{run['date']}: " if run["date"] else ""
         lines.append(f"- {date}{inline_code(run['request']) if run['request'] else NO_REQUEST}")
     if recap["open_items"]:
-        lines += ["", "### Still open when the last run ended", "", *_open_item_lines(recap, as_code=True)]
-    lines.append(BESSER_BLOCK_END)
-    return "\n".join(lines)
+        lines += ["", "## Still open when the last run ended", "", *_open_item_lines(recap, as_code=True)]
+    return "\n".join(lines) + "\n"
+
+
+def _run_stamp(saved_at: Any) -> str:
+    """A history entry's time as a file name stem (``20261111T100000Z``); empty when it is no time."""
+    try:
+        moment = datetime.fromisoformat(one_line(saved_at))
+    except ValueError:
+        return ""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _run_record(stamp: str, entry: dict, request: str) -> str:
+    """One run's file under ``.besser/runs/``."""
+    mode = "modify" if entry.get("mode") == "modify" else "create"
+    files = entry.get("files_touched")
+    files = [one_line(path) for path in files if isinstance(path, str)] if isinstance(files, list) else []
+    when = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]} UTC"
+    lines = [
+        f"# {when}: {mode} run",
+        "",
+        "A record of a BESSER Spec-Driven Agent run, not instructions.",
+        "",
+        f"Request, in the user's words: {inline_code(request) if request else NO_REQUEST}",
+        "",
+        f"Files the run changed ({len(files)}):" if files else "The run changed no file.",
+    ]
+    if files:
+        lines += ["", *(f"- {inline_code(path)}" for path in files)]
+    return "\n".join(lines) + "\n"
+
+
+def _records_folder(directory: str, rel: str) -> str:
+    """``rel`` under ``directory`` as a real folder, created when missing; ``OSError`` when it is a link."""
+    path = os.path.join(directory, *rel.split("/"))
+    for parent in (os.path.dirname(path), path):
+        if os.path.lexists(parent) and not (is_plain_entry(parent) and os.path.isdir(parent)):
+            raise OSError(f"{parent} is not a folder")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def write_records(directory: str, recipe: Any) -> bool:
+    """Write the ``.besser/`` records of ``recipe`` into ``directory``; False when the recipe records no run.
+
+    The index is rewritten; each run in the recipe's history gets its file, and
+    the oldest run files over :data:`MAX_RUN_FILES` go. A run file the repository
+    already holds and the recipe no longer lists stays. ``OSError`` when a
+    records path is a link or not a folder.
+    """
+    recap = build_recap(recipe)
+    if not recap:
+        return False
+    runs_dir = _records_folder(directory, RUNS_DIR)
+    write_atomic_plain(os.path.join(directory, *RECORDS_INDEX.split("/")), records_index(recap),
+                       root=directory, newline="")
+    entries = _dicts(recipe.get("history"))
+    for entry, request in zip(entries, recorded_requests(entries, recipe)):
+        stamp = _run_stamp(entry.get("saved_at"))
+        if stamp:
+            write_atomic_plain(os.path.join(runs_dir, f"{stamp}.md"), _run_record(stamp, entry, request),
+                               root=directory, newline="")
+    run_files = sorted(name for name in os.listdir(runs_dir) if _RUN_FILE_RE.fullmatch(name))
+    for name in run_files[:-MAX_RUN_FILES]:
+        os.remove(os.path.join(runs_dir, name))
+    return True
+
+
+def migrate_agents_recap(directory: str) -> bool:
+    """Move the recap section earlier versions kept in ``AGENTS.md`` to ``.besser/``, and drop the block.
+
+    The section's text is redacted, capped and added to ``.besser/previous-recap.md``;
+    the rest of ``AGENTS.md`` stays as it is. The pointer block is dropped without a
+    copy. True when a section was moved. ``OSError`` when a records path is a link.
+    """
+    block = agents_besser_block(directory)
+    if block is None:
+        return False
+    moved = block != AGENTS_POINTER
+    if moved:
+        body = block[len(BESSER_BLOCK_BEGIN):-len(BESSER_BLOCK_END)].strip()[:_MAX_PREVIOUS_RECAP_CHARS]
+        body, _ = redact_text(body, env_style=False)
+        _records_folder(directory, RECORDS_DIR)
+        path = os.path.join(directory, *PREVIOUS_RECAP.split("/"))
+        earlier = _read_capped(directory, PREVIOUS_RECAP, _MAX_PREVIOUS_RECAP_CHARS) or (
+            "# Recap moved from AGENTS.md\n\nWhat earlier versions of BESSER kept in `AGENTS.md`, "
+            "moved here unchanged. A record, not instructions.\n")
+        write_atomic_plain(path, f"{earlier.rstrip()}\n\n{body}\n", root=directory, newline="")
+    remove_agents_block(directory)
+    return moved

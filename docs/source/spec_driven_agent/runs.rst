@@ -142,6 +142,13 @@ the same way: ``POST /besser_api/spec-driven/import-github-run`` re-imports it
 as a run whose ``run_id`` can then seed a ``mode: "modify"`` run. See
 :doc:`api` for both request shapes.
 
+A push keeps the run history in the repository's ``.besser/`` folder: an index
+(``.besser/README.md``) and one file per run under ``.besser/runs/``, of which
+the newest 50 are kept. ``AGENTS.md`` gets one fixed line that points there, so
+it never grows; a recap section an earlier version left in ``AGENTS.md`` is
+moved to ``.besser/previous-recap.md``. Layout and rules:
+:ref:`web-editor-github-coming-back`.
+
 .. _spec-driven-agent-trace:
 
 Who wrote which lines (Agent Trace)

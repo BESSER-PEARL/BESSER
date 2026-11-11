@@ -16,6 +16,7 @@ import pytest
 from pydantic import SecretStr
 from httpx._transports.asgi import ASGITransport
 
+from besser.spec_driven_agent.run_recap import AGENTS_POINTER
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
@@ -1084,13 +1085,61 @@ def test_an_older_editors_saved_model_is_not_code_either(github):
     assert imported["has_code"] is False
 
 
-def test_a_push_writes_a_recap_into_agents_md_and_returns_it(github):
+def test_a_push_writes_its_records_into_besser_and_one_pointer_into_agents_md(github):
     repo, pushed = _repo_with_a_pushed_run(github)
     assert pushed["recap"]["runs"][-1]["request"] == "build a library app"
-    agents = github.files(repo)["AGENTS.md"][1].decode()
-    assert "<!-- besser:begin -->" in agents
-    assert "build a library app" in agents
-    assert "runtime behaviour" in agents
+    files = github.files(repo)
+    assert files["AGENTS.md"][1].decode() == f"{AGENTS_POINTER}\n"
+    index = files[".besser/README.md"][1].decode()
+    assert "build a library app" in index and "runtime behaviour" in index
+    assert "build a library app" in files[".besser/runs/20261101T100000Z.md"][1].decode()
+
+
+def test_a_second_push_leaves_agents_md_as_it_was(github):
+    repo, _ = _repo_with_a_pushed_run(github)
+    before = github.files(repo)["AGENTS.md"][1]
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps({**RUN_RECIPE, "history": [*RUN_RECIPE["history"], {
+            "instructions": "add search", "saved_at": "2026-11-02T10:00:00+00:00", "mode": "modify"}]})))
+    assert _push(run, "library").status_code == 200
+    files = github.files(repo)
+    assert files["AGENTS.md"][1] == before
+    assert {".besser/runs/20261101T100000Z.md", ".besser/runs/20261102T100000Z.md"} <= set(files)
+
+
+OLD_AGENTS_RECAP = (
+    "Use tabs here.\n\n<!-- besser:begin -->\n## Working on this project\n\n### Recent work\n\n"
+    "- 2026-10-01: `build a shop`\n<!-- besser:end -->\n"
+)
+
+
+def test_a_push_moves_an_old_recap_from_agents_md_to_besser(github):
+    repo = github.create_repo("library", files={
+        "AGENTS.md": OLD_AGENTS_RECAP, "README.md": "# Library\n", "src/app.py": "print('v1')\n",
+    })
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+    assert _push(run, "library").status_code == 200
+    files = github.files(repo)
+    assert files["AGENTS.md"][1].decode() == f"Use tabs here.\n\n{AGENTS_POINTER}\n"
+    assert "build a shop" in files[".besser/previous-recap.md"][1].decode()
+
+
+def test_a_fresh_run_moves_an_old_recap_too(github):
+    # The run never held the repo's file: the push reads it from GitHub, then moves the section.
+    repo = github.create_repo("library", files={"AGENTS.md": OLD_AGENTS_RECAP, "src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+    assert _push(run_id, "library").status_code == 200
+    files = github.files(repo)
+    assert files["AGENTS.md"][1].decode() == f"Use tabs here.\n\n{AGENTS_POINTER}\n"
+    assert "build a shop" in files[".besser/previous-recap.md"][1].decode()
 
 
 def test_a_push_keeps_what_a_person_wrote_in_agents_md(github):
@@ -1101,8 +1150,7 @@ def test_a_push_keeps_what_a_person_wrote_in_agents_md(github):
         workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
     assert _push(run, "library").status_code == 200
     agents = github.files(repo)["AGENTS.md"][1].decode()
-    assert agents.startswith("Use tabs here.\n")
-    assert "build a library app" in agents
+    assert agents == f"Use tabs here.\n\n{AGENTS_POINTER}\n"
 
 
 def test_a_fresh_run_adds_to_the_repos_agents_md_rather_than_replacing_it(github, tmp_path):
@@ -1119,8 +1167,7 @@ def test_a_fresh_run_adds_to_the_repos_agents_md_rather_than_replacing_it(github
     response = _push(run_id, "library")
     assert response.status_code == 200, response.text
     agents = github.files(repo)["AGENTS.md"][1].decode()
-    assert agents.startswith("Use tabs here.\n")
-    assert "build a library app" in agents
+    assert agents == f"Use tabs here.\n\n{AGENTS_POINTER}\n"
 
 
 def test_an_agents_md_that_is_a_link_stays_a_link(github):
@@ -1325,6 +1372,7 @@ def test_a_run_without_a_recipe_writes_no_recap(github):
     assert response.status_code == 200
     assert response.json()["recap"] is None
     assert "AGENTS.md" not in github.files(repo)
+    assert ".besser/README.md" not in github.files(repo)
 
 
 def test_the_next_run_sees_agents_md_without_besser_s_block(github, tmp_path):
@@ -1337,6 +1385,8 @@ def test_the_next_run_sees_agents_md_without_besser_s_block(github, tmp_path):
     seeded.mkdir()
     _seed_workspace_from_base(base.temp_dir, str(seeded))
     assert (seeded / "AGENTS.md").read_text(encoding="utf-8") == "Use tabs here.\n"
+    # The section an earlier push left there moves to the records rather than being lost.
+    assert "old" in (seeded / ".besser" / "previous-recap.md").read_text(encoding="utf-8")
 
 
 def test_an_agents_md_holding_only_the_block_comes_back_on_the_next_push(github):
@@ -1345,7 +1395,9 @@ def test_an_agents_md_holding_only_the_block_comes_back_on_the_next_push(github)
     next_run = _modify_run(_import("ana", "library")["run_id"],
                            lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
     assert _push(next_run, "library").status_code == 200
-    assert "build a library app" in github.files(repo)["AGENTS.md"][1].decode()
+    files = github.files(repo)
+    assert files["AGENTS.md"][1].decode() == f"{AGENTS_POINTER}\n"
+    assert "build a library app" in files[".besser/README.md"][1].decode()
 
 
 def test_opening_a_repo_returns_the_recap(github):

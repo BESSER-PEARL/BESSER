@@ -253,6 +253,14 @@ wrote in those files is kept: each block sits between markers and is replaced
 in place, and a file already up to date is not rewritten. ``--no-agent-files``
 writes the model alone.
 
+The guide's block sits between ``<!-- besser-guide:begin -->`` and
+``<!-- besser-guide:end -->``. A repository the editor's Spec-Driven Agent
+pushes to also gets one line of its own in ``AGENTS.md``, between
+``<!-- besser:begin -->`` and ``<!-- besser:end -->``: a pointer to the run
+records in ``.besser/`` (see :ref:`web-editor-github-coming-back`). The two
+blocks have different markers, so each writer replaces only its own and neither
+repeats the other.
+
 .. _cli-init:
 
 ``besser init``

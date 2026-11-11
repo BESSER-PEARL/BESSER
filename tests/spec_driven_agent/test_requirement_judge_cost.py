@@ -115,6 +115,39 @@ def test_a_changed_specification_is_judged_again(orch, judge_calls):
     assert len(judge_calls) == 2
 
 
+# ------------------------------------------------------- a judge that fails
+
+
+_JUDGE_FAILED = "requirement unverified: the requirements judge returned no verdicts"
+
+
+def test_a_failed_judgment_is_not_asked_again_for_the_same_source(orch, monkeypatch):
+    monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
+
+    for _ in range(3):
+        issues = orch._collect_requirement_issues()
+        assert len(issues) == 1 and issues[0].startswith(_JUDGE_FAILED)
+
+    # One round: the planning model, then one retry on the primary model.
+    assert orch.client.calls == ["cheap-model", None]
+
+
+def test_failed_judgments_stop_after_the_per_run_cap(orch, tmp_path, monkeypatch, caplog):
+    """The failure finding is a blocker no code edit can fix; the fix loop's
+    edits must not buy a fresh full-price round on every pass."""
+    monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
+    rounds = ledger.JUDGE_FAILED_ROUNDS_PER_RUN
+
+    for n in range(rounds + 2):
+        _write(tmp_path, "routers/room.py", f"def create_room():\n    return {n}\n")
+        with caplog.at_level(logging.WARNING):
+            issues = orch._collect_requirement_issues()
+        assert len(issues) == 1 and issues[0].startswith(_JUDGE_FAILED)
+
+    assert len(orch.client.calls) == rounds * ledger._JUDGE_MAX_ATTEMPTS
+    assert "not asked again this run" in caplog.text
+
+
 # --------------------------------------------------- citation repair digest
 
 

@@ -356,6 +356,10 @@ _SUBMIT_REQUIREMENTS_TOOL = {
 # its cost against an intermittent failure.
 _JUDGE_MAX_ATTEMPTS = 2
 _JUDGE_RETRY_BACKOFF_SECONDS = 2.0
+# Revisions on which the judge may return nothing before a run stops asking:
+# its failure is a blocker no code edit fixes, so the fix loop's edits would
+# otherwise buy a fresh full-price round every pass. Matches extraction's cap.
+JUDGE_FAILED_ROUNDS_PER_RUN = 2
 
 _JUDGE_SYSTEM_PROMPT = (
     "You audit generated application code against a numbered list of "

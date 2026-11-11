@@ -440,6 +440,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_judgments: dict[str, list[dict]] = {}
         self._requirement_evidence_retries: set[str] = set()
         self._requirement_extraction_attempts = 0
+        self._requirement_judge_failures: set[str] = set()  # cache keys whose judgment returned nothing
         self._action_endpoints = None
         self._recent_tool_failures: list[dict] = []
         # Binding Phase-1 generator choice (e.g. from a user-approved
@@ -3785,17 +3786,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         cache_key = self._requirement_cache_key(requirements)
         verdicts = self._requirement_judgments.get(cache_key)
         cached = verdicts is not None
+        judge_failed = ("requirement unverified: the requirements judge returned no verdicts; "
+                        "coverage of the original specification has not been verified.")
         if verdicts is None:
             if not self._verification_call_allowed():
                 return ["requirement unverified: verification stopped or budget exhausted; original-specification coverage is not verified."]
+            if cache_key in self._requirement_judge_failures:
+                return [judge_failed]  # the same prompt already failed; asking again re-rolls a full-price call
+            if len(self._requirement_judge_failures) >= _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN:
+                logger.warning("Requirements ledger: the judge returned nothing on %d revisions; "
+                               "not asked again this run", len(self._requirement_judge_failures))
+                return [f"{judge_failed} It failed on {len(self._requirement_judge_failures)} "
+                        "revisions and is not asked again this run."]
             verdicts = _requirements_ledger.judge_coverage(
                 requirements, digest, self.client, original_spec=self._instructions,
             )
         if verdicts is None:
-            return [
-                "requirement unverified: the requirements judge returned no verdicts; "
-                "coverage of the original specification has not been verified."
-            ]
+            self._requirement_judge_failures.add(cache_key)
+            return [judge_failed]
         # Cache successful judgments only, keyed to the full bytes of the judged
         # source, not the clipped prompt. An unchanged app must not 'improve' by chance.
         self._requirement_judgments[cache_key] = verdicts

@@ -179,7 +179,11 @@ Feature flags
   the generated code. A requirement the code does not implement becomes a
   ``requirement:`` blocker for the auto-fix loop, and every verdict is written
   to the recipe. It costs extra calls to the planning model: one to extract
-  the list, and one for each Phase 3 pass. Set it to ``0`` (or ``false``) to
+  the list, and one for each Phase 3 pass on which the application source
+  the judge reads (or the request) changed; an edit to a README, a
+  dependency pin or a test reuses the last judgment. A judge that returns
+  nothing is not asked again for the same source, and after failing on two
+  revisions not again in that run. Set it to ``0`` (or ``false``) to
   turn it off; coverage of the request is then reported as
   ``validation unverified`` instead of being checked.
 - ``BESSER_LLM_ENABLE_TRACING`` (on) -- Append the run's phases, turns, tool

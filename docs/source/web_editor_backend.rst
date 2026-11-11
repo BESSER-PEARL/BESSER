@@ -133,9 +133,10 @@ A diagram in the **legacy v3** editor format
 with **HTTP 400**, because converting it would silently produce an empty model.
 The response ``detail`` names the diagram and asks the user to open it in the
 current editor, which upgrades v3 diagrams on load, or to re-export it from
-there. A model counts as legacy when it declares a UML ``type`` and a
-``version`` starting with ``3.``, or when it has ``elements`` /
-``relationships`` and no ``nodes``. The check covers:
+there. A model with a non-empty ``nodes`` list is v4. Otherwise it counts as
+legacy when its ``elements`` / ``relationships`` are populated, when it
+declares a UML ``type`` and a ``version`` starting with ``3.``, or when it has
+``elements`` / ``relationships`` and no ``nodes``. The check covers:
 
 - every endpoint taking a ``DiagramInput`` (``/generate-output``,
   ``/export-buml``, ``/validate-diagram``, ``/deploy-app``,
@@ -152,10 +153,12 @@ there. A model counts as legacy when it declares a UML ``type`` and a
   of ``/transform-agent-model-json`` and every ``personalizationMapping`` entry's
   ``user_profile`` and ``agent_model`` (agent generation through
   ``/generate-output``, the Docker Compose project generator and
-  ``/github/deploy-webapp``).
+  ``/github/deploy-webapp``), bare or wrapped as ``{title, model}``;
+- the ``existing_model`` of ``/get-json-model-from-image``.
 
 GUI (GrapesJS), quantum-circuit and Knowledge Graph models keep their own
-formats and are never checked. Saving a project to GitHub (``/github/project/save``,
+formats and are never checked; inside a project the bucket key decides this,
+not the model's own ``type``. Saving a project to GitHub (``/github/project/save``,
 ``/github/project/create-repo``, ``/github/gist/create``) is storage, not
 conversion: it stores the JSON unchanged whatever its format, and the B-UML
 files that ``/github/project/save`` writes next to it skip legacy diagrams.

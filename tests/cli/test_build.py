@@ -73,6 +73,30 @@ def test_a_second_build_keeps_the_edits_made_in_the_output(besser, config, write
     assert generated.read_text().startswith("# mine\n") and "isbn" in generated.read_text()
 
 
+def test_without_pygit2_init_then_build_twice_succeeds(besser, write, tmp_path):
+    # 'python -m' puts the working directory first on sys.path, so this module stands in for pygit2:
+    # a base install, without besser[regen].
+    write("pygit2.py", "raise ImportError('hidden by the test')\n")
+    assert besser("init").returncode == 0
+
+    first, second = besser("build"), besser("build")
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert "up to date" in second.stdout
+
+
+def test_without_pygit2_a_model_change_rebuilds_when_nothing_was_edited(besser, config, write, tmp_path):
+    write("pygit2.py", "raise ImportError('hidden by the test')\n")
+    assert besser("build").returncode == 0
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+
+    run = besser("build", "--json")
+
+    assert run.returncode == 0, run.stdout
+    assert "isbn" in (tmp_path / "generated" / "classes" / "classes.py").read_text()
+
+
 def test_overwrite_discards_the_edits(besser, config, write, tmp_path):
     write("besser.toml", CONFIG.replace('dir = "generated/classes"', 'dir = "generated/classes"\noverwrite = true'))
     besser("build")

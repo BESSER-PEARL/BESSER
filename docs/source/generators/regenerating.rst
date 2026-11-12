@@ -30,7 +30,9 @@ From a terminal, :ref:`besser regenerate <cli-regenerate>` does the same for a m
 
     besser regenerate java library.py -o app
 
-To generate and start the record without pygit2, call ``record_output`` instead of
+``regenerate()`` needs pygit2 only when a file you edited also changes in the new output;
+otherwise it writes the new output without it. To generate and start the record without pygit2,
+call ``record_output`` instead of
 ``generate()``; ``besser generate`` does this for every generator that supports
 ``regenerate()``, so a later ``regenerate()`` merges into the folder without adopting it:
 

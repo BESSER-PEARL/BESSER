@@ -162,12 +162,19 @@ jobs:
           # mcp needs the mcp extra, and says so on the base install
           if wheel-env/bin/besser mcp < /dev/null 2> mcp.err; then exit 1; fi
           grep -F 'pip install "besser[mcp]"' mcp.err
-          # regenerate needs the regen extra, and says so on the base install
+          # a project on the base install: build twice (nothing to merge), then apply
+          mkdir project
+          (cd project && ../wheel-env/bin/besser init && ../wheel-env/bin/besser build \
+            && ../wheel-env/bin/besser build && ../wheel-env/bin/besser apply)
+          # merging a hand edit needs the regen extra, and says so on the base install
+          wheel-env/bin/besser generate python starter.py -o app
+          sed -i '1i # mine' app/classes.py
+          wheel-env/bin/besser model -f starter.py add-attribute Book subtitle:str?
           if wheel-env/bin/besser regenerate python starter.py -o app 2> regenerate.err; then exit 1; fi
           grep -F 'pip install "besser[regen]"' regenerate.err
           wheel-env/bin/pip install "$(ls $GITHUB_WORKSPACE/dist/*.whl)[regen]"
           wheel-env/bin/besser regenerate python starter.py -o app
-          test -f app/classes.py -a -f app/.besser_generated.json
+          grep -F '# mine' app/classes.py && grep -F subtitle app/classes.py
 
   docs:
     runs-on: ubuntu-latest

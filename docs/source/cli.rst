@@ -808,7 +808,7 @@ with the same options; when ``pygit2`` is not installed, it ends with
 
 ``--use`` is given for each kind the file holds several models of, or for
 every kind when you gave ``--use``. Keep the record with the code (commit it).
-Writing it needs no extra package; only the merge needs ``pygit2``.
+Writing it needs no extra package; only merging an edited file needs ``pygit2``.
 ``"recorded"`` in the JSON output says whether it was written. It is not
 written for a generator that does not take part in ``regenerate``, nor, with a
 warning, when the directory rules it out (a Spec-Driven Agent app).
@@ -991,7 +991,10 @@ The command is refused with status 2, and nothing is written, when:
 * the generator does not take part (``besser generators`` lists those that
   do): its output differs from run to run for one model. Supabase, Flutter,
   Terraform, the agent generator and Docker Compose do not;
-* ``pygit2`` is not installed: the error gives the ``pip install`` line above;
+* ``pygit2`` is not installed and a file you edited also changes in the new
+  output: the error names the files and gives the ``pip install`` line above.
+  Without edits to merge (a second ``besser build``, or a model change in files
+  nobody edited) the command needs no ``pygit2``;
 * ``-o`` names a file, or a path under one (``out is a file: -o takes a
   directory``);
 * the directory holds the output of another generator, a Spec-Driven Agent

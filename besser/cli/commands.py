@@ -860,7 +860,7 @@ def _regenerate_command(spec: GeneratorSpec, model_path: str | None, output_dir:
 
 
 def _needs_regen_extra() -> str:
-    """What a suggested ``regenerate`` needs installed first, when it is not."""
+    """What a suggested ``regenerate`` needs installed to merge edits, when it is not."""
     return "" if merge_available() else f" (needs {_REGEN_EXTRA})"
 
 
@@ -1094,6 +1094,10 @@ def _regeneration_refusal(exc: regeneration.RegenerationError, spec: GeneratorSp
         holds = "holds" if len(exc.files) == 1 else "hold"
         return (f"{paths} still {holds} the conflict markers of the last regenerate: resolve them "
                 f"{_CONFLICT_MARKERS}, then run {rerun} again.")
+    if isinstance(exc, regeneration.MergeNeedsPygit2Error):
+        paths = ", ".join(Path(output_dir, rel).as_posix() for rel in exc.files)
+        return (f"{paths}: your edits and the model's new output change the same file, and merging them needs "
+                f"the pygit2 package, which is not installed: {_REGEN_EXTRA}")
     if isinstance(exc, regeneration.AlreadyRecordedError):
         return (f"{output_dir} already has {regeneration.RECORD_FILENAME}: there is nothing to adopt; "
                 "run it without --adopt")
@@ -1118,11 +1122,6 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
                 f"the '{spec.id}' generator does not support regenerate: its output differs from run to run for "
                 f"one model, so a merge could not tell a model change from noise. 'besser generate {spec.id} ... "
                 f"--force' overwrites the folder instead. Generators that support it: {supported}",
-                data=data,
-            ))
-        if not merge_available():
-            raise _Stopped(failure(
-                "regenerate", f"regenerate needs the pygit2 package, which is not installed: {_REGEN_EXTRA}",
                 data=data,
             ))
         _require_output_dir("regenerate", output_dir, data)

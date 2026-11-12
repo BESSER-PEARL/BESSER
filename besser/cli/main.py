@@ -359,8 +359,8 @@ def build_parser() -> argparse.ArgumentParser:
         "'besser generate' starts the record too. A directory generated without one (by an older\n"
         "BESSER, or by other means) needs one run with --adopt and the model it was generated from,\n"
         "before changing the model.\n\n"
-        "Needs pygit2 (pip install \"besser[regen]\"); 'besser generators' says which generators\n"
-        "support it.\n\n" + _EXECUTES_PYTHON,
+        "Merging an edited file with a changed one needs pygit2 (pip install \"besser[regen]\");\n"
+        "'besser generators' says which generators support it.\n\n" + _EXECUTES_PYTHON,
     )
     add_generator_arguments(regenerate, "the directory holding the generated code (created if missing)")
     regenerate.add_argument(

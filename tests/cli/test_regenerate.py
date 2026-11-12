@@ -6,8 +6,6 @@ import shutil
 
 import pytest
 
-from besser.cli import commands
-from besser.cli.main import main
 from tests.cli.conftest import INVALID_MODEL, LIBRARY_MODEL, LIBRARY_MODEL_WITH_ISBN
 
 RECORD = ".besser_generated.json"
@@ -266,18 +264,34 @@ def test_a_generator_that_does_not_support_it_is_a_usage_error(besser, model, tm
     assert not (tmp_path / "out").exists()
 
 
-def test_without_pygit2_it_says_how_to_install_it(monkeypatch, tmp_path, capsys):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "library.py").write_text(LIBRARY_MODEL, encoding="utf-8")
-    monkeypatch.setattr(commands, "merge_available", lambda: False)
+def test_without_pygit2_a_model_change_without_edits_regenerates(besser, model, write, classes):
+    # 'python -m' puts the working directory first on sys.path, so this module stands in for pygit2.
+    write("pygit2.py", "raise ImportError('hidden by the test')\n")
+    assert besser("generate", "python", model, "-o", "out").returncode == 0
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
 
-    status = main(["regenerate", "python", "library.py", "-o", "out"])
+    run = besser("regenerate", "python", model, "-o", "out")
 
-    assert status == 2
-    assert capsys.readouterr().err == (
-        'error: regenerate needs the pygit2 package, which is not installed: pip install "besser[regen]"\n'
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "Regenerated out with the 'python' generator (1 written):\n  written  out/classes.py\n"
+    assert "def isbn(self) -> str:" in classes.read_text()
+
+
+def test_without_pygit2_an_edit_to_merge_says_how_to_install_it(besser, model, write, classes):
+    write("pygit2.py", "raise ImportError('hidden by the test')\n")
+    assert besser("generate", "python", model, "-o", "out").returncode == 0
+    edited = HAND_EDIT + classes.read_text()
+    classes.write_text(edited)
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+
+    run = besser("regenerate", "python", model, "-o", "out")
+
+    assert run.returncode == 2
+    assert run.stderr.startswith(
+        "error: out/classes.py: your edits and the model's new output change the same file, and merging them "
+        'needs the pygit2 package, which is not installed: pip install "besser[regen]"\n'
     )
-    assert not (tmp_path / "out").exists()
+    assert classes.read_text() == edited
 
 
 def test_an_unknown_generator_is_a_usage_error(besser, model):

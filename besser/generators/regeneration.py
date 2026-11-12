@@ -6,7 +6,8 @@ record file in the folder), the folder as it is now, and the new output. An edit
 is either kept or flagged, never overwritten.
 
 ``record_output()`` generates and writes that record without merging, so a folder
-it wrote regenerates from the start; it needs no pygit2. ``preview_output()`` and
+it wrote regenerates from the start; it needs no pygit2, nor does a regeneration
+where no generated file you edited also changed in the model's output. ``preview_output()`` and
 ``preview_regeneration()`` say what the two would change, and change nothing.
 """
 
@@ -24,7 +25,7 @@ from typing import TYPE_CHECKING
 
 from besser.generators.generated_header import mark_generated, without_header
 from besser.utilities.provenance import ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME, get_besser_version
-from besser.utilities.three_way_merge import lf, merge_available, merge_trees, same_text, with_endings_of
+from besser.utilities.three_way_merge import MergeUnavailableError, lf, merge_trees, same_text, with_endings_of
 from besser.utilities.workspace_fs import (
     is_link,
     is_plain_entry,
@@ -125,6 +126,19 @@ class AlreadyRecordedError(RegenerationError):
         return type(self)(self.folder.replace(copy, folder))
 
 
+class MergeNeedsPygit2Error(RegenerationError):
+    """Files you edited also changed in the new output, and merging them needs pygit2; no file was merged."""
+
+    def __init__(self, files: list[str]):
+        super().__init__(f"Merging your edits in {', '.join(files)} with the new output needs pygit2, "
+                         'which is not installed: pip install "besser[regen]"')
+        #: The files that need a merge, relative to the folder with ``/``.
+        self.files = files
+
+    def _naming(self, copy: str, folder: str) -> MergeNeedsPygit2Error:
+        return self  # it names files relative to the folder only
+
+
 class NotRecordableError(RegenerationError):
     """The generator, with its options, or the folder cannot take a record; ``generate()`` still can."""
 
@@ -157,8 +171,6 @@ class RegenerationReport:
 def regenerate_output(generator: GeneratorInterface, adopt: bool = False) -> RegenerationReport:
     """See :meth:`GeneratorInterface.regenerate`."""
     _require_support(generator)
-    if not merge_available():
-        raise RegenerationError('Regenerating needs pygit2: pip install "besser[regen]"')
     folder = generator.output_dir
     _make_folder(folder)
     name = type(generator).__name__
@@ -301,7 +313,7 @@ def _make_folder(folder: str) -> None:
 
 
 def _require_support(generator: GeneratorInterface) -> None:
-    """What a record needs: a stable output and an explicit folder. A merge also needs pygit2."""
+    """What a record needs: a stable output and an explicit folder. Merging an edit also needs pygit2."""
     if not generator.regenerable:
         raise NotRecordableError(f"{type(generator).__name__} cannot regenerate: its output differs from run to run "
                                 "for one model, so a merge could not tell a model change from noise.")
@@ -433,6 +445,8 @@ def _apply(folder: str, base: dict[str, bytes], current: dict[str, bytes], new: 
         merged, conflicts = merge_trees({rel: lf(c) for rel, c in base.items()},
                                         {rel: lf(c) for rel, c in current.items()},
                                         {rel: lf(c) for rel, c in new.items()})
+    except MergeUnavailableError as exc:
+        raise MergeNeedsPygit2Error(exc.files) from exc
     except Exception as exc:  # libgit2's own errors have no shared base class worth naming here
         raise RegenerationError(f"The merge failed ({type(exc).__name__}: {exc}); your edits are untouched.") from exc
     planned = sorted(rel for rel, content in conflicts.items() if content is not None)

@@ -288,11 +288,12 @@ def test_recording_does_not_need_pygit2(besser, model, write, tmp_path):
     write("pygit2.py", "raise ImportError('hidden by the test')\n")
 
     run = besser("generate", "python", model, "-o", "out", "--json")
-    merge = besser("regenerate", "python", model, "-o", "out")
+    again = besser("regenerate", "python", model, "-o", "out")
 
     assert run.returncode == 0 and run.json["recorded"] is True
     assert (tmp_path / "out" / RECORD).is_file()
-    assert merge.returncode == 2 and "regenerate needs the pygit2 package" in merge.stderr
+    # Nothing was edited, so there is nothing to merge.
+    assert again.returncode == 0, again.stderr
 
 
 def test_the_record_is_the_same_bytes_for_the_same_model(besser, model, tmp_path):

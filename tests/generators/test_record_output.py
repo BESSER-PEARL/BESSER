@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from besser.generators import GeneratorInterface, regeneration
+from besser.generators import GeneratorInterface
 from besser.generators.regeneration import (
     CHANGED,
     NEW,
@@ -59,7 +59,6 @@ def _tree(folder: Path) -> dict[str, bytes]:
 @pytest.fixture
 def without_pygit2(monkeypatch):
     monkeypatch.setattr(three_way_merge, "pygit2", None)
-    monkeypatch.setattr(regeneration, "merge_available", lambda: False)
 
 
 def test_it_writes_the_output_and_its_record_without_pygit2(tmp_path, without_pygit2):

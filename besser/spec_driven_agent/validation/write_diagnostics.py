@@ -1091,10 +1091,19 @@ def _python_diagnostics(
     return findings
 
 
+# Config files whose tools read them as JSONC (or JSON5): comments and
+# trailing commas are valid there.
+_JSONC_NAME_PREFIXES = (
+    "tsconfig", "jsconfig", ".eslintrc", ".babelrc", "babel.config", "devcontainer",
+    ".devcontainer", "api-extractor",
+)
+
+
 def _is_jsonc(rel_path: str) -> bool:
-    """TypeScript/JavaScript project configs and VS Code settings are JSONC."""
+    """``*.jsonc``, the JS/TS tool configs above, and VS Code / dev-container folders."""
     parts = rel_path.replace("\\", "/").lower().split("/")
-    return parts[-1].startswith(("tsconfig", "jsconfig")) or ".vscode" in parts[:-1]
+    return (parts[-1].endswith(".jsonc") or parts[-1].startswith(_JSONC_NAME_PREFIXES)
+            or ".vscode" in parts[:-1] or ".devcontainer" in parts[:-1])
 
 
 def _jsonc_to_json(content: str) -> str:
@@ -1132,11 +1141,36 @@ def _json_diagnostics(content: str, rel_path: str = "") -> list[dict[str, Any]]:
     return []
 
 
+def _yaml_structure_loader():
+    """A SafeLoader that builds any tag it does not know as plain data.
+
+    Only the YAML structure is checked: ``!reference`` (GitLab CI) or
+    ``!Ref`` (CloudFormation) belong to the consuming tool, not to YAML.
+    """
+    import yaml
+
+    class StructureLoader(yaml.SafeLoader):
+        pass
+
+    def untagged(loader, _suffix, node):
+        if isinstance(node, yaml.MappingNode):
+            return loader.construct_mapping(node)
+        if isinstance(node, yaml.SequenceNode):
+            return loader.construct_sequence(node)
+        return loader.construct_scalar(node)
+
+    StructureLoader.add_multi_constructor("!", untagged)
+    StructureLoader.add_multi_constructor("tag:", untagged)
+    return StructureLoader
+
+
 def _yaml_diagnostics(content: str) -> list[dict[str, Any]]:
     try:
         import yaml
 
-        yaml.safe_load(content)
+        # Every document: a Kubernetes manifest holds several, split by ``---``.
+        for _ in yaml.load_all(content, Loader=_yaml_structure_loader()):
+            pass
     except Exception as exc:
         mark = getattr(exc, "problem_mark", None)
         message = getattr(exc, "problem", None) or str(exc).splitlines()[0]
@@ -1202,7 +1236,7 @@ def diagnose_written_content(
     try:
         if extension in {".py", ".pyi"}:
             findings = _python_diagnostics(rel_path, content, workspace)
-        elif extension == ".json":
+        elif extension in {".json", ".jsonc"}:
             findings = _json_diagnostics(content, rel_path)
         elif extension in {".yaml", ".yml"}:
             findings = _yaml_diagnostics(content)

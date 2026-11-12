@@ -54,6 +54,24 @@ def test_structured_data_parse_errors_are_reported(tmp_path, path, content, sour
     assert result["diagnostics"][0]["source"] == source
 
 
+@pytest.mark.parametrize(("path", "content"), [
+    # Kubernetes manifests put several documents in one file.
+    ("k8s/app.yaml", "apiVersion: v1\nkind: Service\n---\napiVersion: apps/v1\nkind: Deployment\n"),
+    # GitLab CI and CloudFormation use application-defined tags.
+    (".gitlab-ci.yml", "test:\n  script:\n    - !reference [.setup, script]\n    - pytest\n"),
+    ("infra/stack.yaml", "Resources:\n  Bucket:\n    Properties:\n      Name: !Sub '${AWS::StackName}-b'\n"
+                         "      Arn: !GetAtt [Role, Arn]\n      Tags: !Ref Tags\n"),
+    ("docker-compose.yml", "x-env: &env\n  A: 1\nservices:\n  api:\n    environment:\n      <<: *env\n"),
+])
+def test_valid_yaml_is_not_a_parse_error(path, content):
+    assert diagnose_written_content(path, content) == []
+
+
+def test_broken_yaml_in_a_later_document_is_still_reported():
+    findings = diagnose_written_content("k8s/app.yaml", "a: 1\n---\nb: [1, 2\n")
+    assert findings and findings[0]["code"] == "parse" and findings[0]["line"] >= 3
+
+
 def test_modify_file_diagnoses_the_resulting_whole_file(tmp_path):
     target = tmp_path / "settings.json"
     target.write_text('{"enabled": true}', encoding="utf-8")

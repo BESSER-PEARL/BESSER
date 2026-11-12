@@ -40,11 +40,11 @@ from besser.spec_driven_agent.agent.tools import (
     get_all_tools_including_generators,
 )
 
-# Checked before dispatch, so an omitted field is a clear tool error rather
-# than a raw ``KeyError: 'content'`` from inside the handler.
-_REQUIRED_ARGS = {
-    tool["name"]: tuple(tool["input_schema"].get("required", ()))
-    for tool in get_all_tools_including_generators()
+# Every tool's input schema by name, built once. Arguments are checked against
+# it before dispatch (see _normalize_arguments), so an omitted or wrong-typed
+# field is a clear tool error rather than a raw exception from the handler.
+_INPUT_SCHEMAS = {
+    tool["name"]: tool["input_schema"] for tool in get_all_tools_including_generators()
 }
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
@@ -130,7 +130,8 @@ def _task_label(text: str) -> str:
 def _task_id(value) -> int | None:
     """A checklist id from model input (``1``, ``"1"``, ``1.0``), else None.
 
-    One rule for every place task_list takes an id. A bool is an int subclass
+    One rule for every place task_list takes an id, and for every integer
+    tool argument (``_coerce_argument``). A bool is an int subclass
     but not an id; a non-integral float is not truncated; ``inf`` (JSON
     ``1e400``) is refused rather than raising OverflowError.
     """
@@ -140,6 +141,86 @@ def _task_id(value) -> int | None:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+_JSON_TYPE_NAMES = {
+    "string": "a string", "integer": "an integer", "number": "a number",
+    "boolean": "a boolean", "array": "an array", "object": "an object",
+}
+_NOT_COERCIBLE = object()
+
+
+def _json_type(value) -> str:
+    """The JSON type of a decoded argument, as the model wrote it."""
+    if value is None:
+        return "null"
+    for python_type, name in ((bool, "boolean"), (int, "integer"), (float, "number"),
+                              (str, "string"), (list, "array"), (dict, "object")):
+        if isinstance(value, python_type):
+            return _JSON_TYPE_NAMES[name]
+    return type(value).__name__
+
+
+def _coerce_argument(value, declared: str):
+    """``value`` as the declared JSON type, or ``_NOT_COERCIBLE``.
+
+    Only the unambiguous mistakes are fixed: ``"12"`` / ``12.0`` for an
+    integer (the task-id rule: no bool, no truncation, no inf/nan),
+    ``"true"`` / ``"false"`` for a boolean, and a lone value for an array.
+    Stringified arrays/objects were already decoded by the provider layer
+    (``providers/tool_input.py``). A type the check does not know passes.
+    """
+    if declared == "string":
+        return value if isinstance(value, str) else _NOT_COERCIBLE
+    if declared == "integer":
+        number = _task_id(value)
+        return _NOT_COERCIBLE if number is None else number
+    if declared == "boolean":
+        if isinstance(value, bool):
+            return value
+        word = value.strip().lower() if isinstance(value, str) else None
+        return word == "true" if word in ("true", "false") else _NOT_COERCIBLE
+    if declared == "array":
+        return value if isinstance(value, list) else [value]
+    if declared == "object":
+        return value if isinstance(value, dict) else _NOT_COERCIBLE
+    return value
+
+
+def _normalize_arguments(schema: dict, arguments: dict) -> tuple[dict, list[str]]:
+    """Arguments checked against the top-level properties of ``schema``.
+
+    Returns the coerced arguments and one problem per offending argument.
+    An explicit null for an optional property means the property is absent.
+    Nested items are left to the handlers.
+    """
+    properties = schema.get("properties") or {}
+    required = set(schema.get("required") or ())
+    normalized, problems = {}, []
+    for name, value in arguments.items():
+        spec = properties.get(name)
+        if not isinstance(spec, dict):
+            normalized[name] = value
+            continue
+        if value is None and name not in required:
+            continue
+        declared = spec.get("type")
+        if isinstance(declared, str):
+            coerced = _coerce_argument(value, declared)
+            if coerced is _NOT_COERCIBLE:
+                problems.append(
+                    f"{name} must be {_JSON_TYPE_NAMES.get(declared, declared)}, "
+                    f"got {_json_type(value)}"
+                )
+                continue
+            value = coerced
+        if "enum" in spec and value not in spec["enum"]:
+            problems.append(
+                f"{name} must be one of {', '.join(map(str, spec['enum']))}; got {str(value)[:80]!r}"
+            )
+            continue
+        normalized[name] = value
+    return normalized, problems
 
 
 @dataclass(frozen=True)
@@ -1528,11 +1609,18 @@ class ToolExecutor:
                 f"{tool_name} was not run: its arguments must be a JSON object, "
                 f"not {type(arguments).__name__}. Resend the call."
             )})
-        missing = [name for name in _REQUIRED_ARGS.get(tool_name, ()) if name not in arguments]
+        schema = _INPUT_SCHEMAS.get(tool_name, {})
+        missing = [name for name in schema.get("required", ()) if name not in arguments]
         if missing:
             return ToolExecutionResult("error", {"error": (
                 f"{tool_name} is missing required argument(s): {', '.join(missing)}. "
                 "Nothing was done; resend the call with every required field."
+            )})
+        arguments, problems = _normalize_arguments(schema, arguments)
+        if problems:
+            return ToolExecutionResult("error", {"error": (
+                f"{tool_name} was not run: {'; '.join(problems)}. "
+                "Resend the call with these arguments corrected."
             )})
         try:
             file_tool = tool_name in {"read_file", "modify_file", "replace_file_lines", "write_file", "delete_file"}

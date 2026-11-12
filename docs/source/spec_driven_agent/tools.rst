@@ -48,7 +48,12 @@ rather than guessed at. ``list_files`` and ``search_in_files`` skip links that
 resolve outside the workspace, and the harness never reads or writes a
 workspace file through a symbolic link or special file. A call with a missing required argument, or
 arguments that are not valid JSON, returns a tool error naming the problem
-instead of running.
+instead of running. Each argument is also checked against the type its tool's
+schema declares: a null optional argument counts as omitted, ``"12"`` or ``12.0``
+is accepted for an integer, ``"true"``/``"false"`` for a boolean and a single value
+for an array; any other mismatch (a boolean or ``1.5`` for an integer, ``inf``, an
+object for a string, a value outside an ``enum``) is refused with an error naming
+the argument, the expected type and the type received.
 
 After two rejected text edits on a file, the executor provides an explicit
 recovery sequence: ``read_file`` followed by ``replace_file_lines``. This applies

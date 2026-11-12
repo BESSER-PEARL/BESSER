@@ -781,6 +781,12 @@ name one of each).
        when a constraint uses the attribute as a value of another kind
        (``self.pages > 0`` for a ``str``), an object holds a value of another
        type, or the kept default does not fit the new type.
+   * - ``set-multiplicity END MULTIPLICITY``
+     - Changes the multiplicity of an association end (``association.end`` or
+       ``Class.end``) where it is written: ``[1]``, ``[0..1]``, ``[*]``,
+       ``[1..*]`` or ``[n..m]`` (brackets optional; quote them in a shell).
+       Refused when a constraint would no longer parse or an object model
+       would break the new bounds; the message names it.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``

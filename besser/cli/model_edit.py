@@ -1761,6 +1761,50 @@ def set_attribute(editor: ModelEditor, path: str, spec: str) -> Edited:
     return Edited(editor.finish(), f"changed {cls.name}.{name} from {old_text} to {new_text}", check)
 
 
+def set_multiplicity(editor: ModelEditor, path: str, multiplicity: str) -> Edited:
+    end = editor.resolve(path)
+    association = editor.association_of(end) if isinstance(end, Property) else None
+    if association is None:
+        raise EditError(f"'{path}' is not an association end: name one as Class.end or association.end")
+    low, high = parse_multiplicity(multiplicity)
+    old_low, old_high = end.multiplicity.min, end.multiplicity.max
+    old_text, new_text = multiplicity_text(old_low, old_high), multiplicity_text(low, high)
+    if old_text == new_text:
+        raise EditError(f"{path} is {old_text} already")
+    old_multiplicity = end.multiplicity
+
+    def apply() -> None:
+        end.multiplicity = structural_metamodel.Multiplicity(low, high)
+
+    def undo() -> None:
+        end.multiplicity = old_multiplicity
+
+    _refuse_breaking(editor, f"{path} is {new_text}", *_broken_by(editor, apply, undo))
+    high_code = '"*"' if high >= UNLIMITED_MAX_MULTIPLICITY else str(high)
+    call = editor.call_of(end)
+    node = _argument(call, "multiplicity") if call is not None else None
+    value = node.value if isinstance(node, ast.keyword) else node
+    if _callee(value) == "Multiplicity" and not value.keywords and len(value.args) == 2:
+        # Only the bounds change: Multiplicity(0, "*") -> Multiplicity(1, "*"), quoted as the file quotes.
+        bound_low, bound_high = value.args
+        star = editor.src.segment(bound_high) if isinstance(bound_high, ast.Constant) and bound_high.value == "*" \
+            else high_code
+        editor.src.replace(editor.src.start(bound_low), editor.src.end(bound_high),
+                           f"{low}, {star if high >= UNLIMITED_MAX_MULTIPLICITY else high}")
+    else:
+        _set_field(editor, end, "multiplicity", f"{editor._structural('Multiplicity')}({low}, {high_code})", "")
+    holder = next((other.type for other in association.ends if other is not end), end.type)
+
+    def check(model: DomainModel) -> str | None:
+        found = next((e for a in model.associations if a.name == association.name for e in a.ends
+                      if e.name == end.name), None)
+        held = multiplicity_text(found.multiplicity.min, found.multiplicity.max) if found is not None else "missing"
+        return None if held == new_text else f"{path} is {held}"
+
+    return Edited(editor.finish(), f"changed {holder.name}.{end.name} ({association.name}) from {old_text} to "
+                                   f"{new_text}", check)
+
+
 def _forget_var(editor: ModelEditor, var: str) -> None:
     """Delete the statements that define ``var`` or set something on it."""
     statement = editor.src.assignment(var)
@@ -2299,6 +2343,8 @@ OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
     "remove": ("remove an element (a class with its associations): PATH", remove),
     "set-attribute": ("change an attribute's type, ?, default in place: CLASS.ATTRIBUTE :TYPE[?][=DEFAULT]",
                       set_attribute),
+    "set-multiplicity": ("change an association end's multiplicity in place: ASSOCIATION.END|CLASS.END MULTIPLICITY",
+                         set_multiplicity),
 }
 
 

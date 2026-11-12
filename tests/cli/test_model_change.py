@@ -308,3 +308,76 @@ def test_set_attribute_keeps_windows_line_endings(project, change, tmp_path):
     data = path.read_bytes()
     assert b'    Property(name="pages", type=FloatType, is_optional=True),\r\n' in data
     assert b"\n" not in data.replace(b"\r\n", b"")
+
+
+# ── set-multiplicity ────────────────────────────────────────────────────────
+
+
+def test_set_multiplicity_changes_the_bounds_only(project, change):
+    before = project()
+
+    by_association = change("set-multiplicity", "book_authors.authors", "[*]")
+    by_class = change("set-multiplicity", "Book.library", "0..1")
+
+    assert by_association == "model.py: changed Book.authors (book_authors) from [1..*] to [*]"
+    assert by_class == "model.py: changed Book.library (library_books) from [1] to [0..1]"
+    assert _changed_lines(before, project()) == (
+        ['    Property(name="library", type=library, multiplicity=Multiplicity(1, 1)),',
+         '    Property(name="authors", type=author, multiplicity=Multiplicity(1, "*")),'],
+        ['    Property(name="library", type=library, multiplicity=Multiplicity(0, 1)),',
+         '    Property(name="authors", type=author, multiplicity=Multiplicity(0, "*")),'])
+    # The association keeps its place in the file: the lines around it are as they were.
+    assert project().index("library_books = BinaryAssociation(") == before.index("library_books = BinaryAssociation(")
+
+
+def test_the_backend_follows_a_required_or_optional_end(project, change, post_book):
+    assert post_book({**BOOK, "library": None})[0] == 422  # [1]: a book needs its library
+
+    change("batch", stdin="set-multiplicity Book.library [0..1]\nset-multiplicity book_authors.authors [*]\n")
+
+    status, book = post_book({**BOOK, "library": None, "authors": []})
+    assert status == 200, book
+    assert book["library_id"] is None
+    change("set-multiplicity", "Book.library", "[1]")
+    assert post_book({**BOOK, "library": None})[0] == 422
+
+
+def test_set_multiplicity_in_a_hand_written_file(hand_written, change, besser):
+    before = hand_written()
+
+    assert change("set-multiplicity", "Shelf.books", "[1..*]") == ("model.py: changed Shelf.books (shelf_books) "
+                                                                  "from [*] to [1..*]")
+
+    assert _changed_lines(before, hand_written()) == (
+        ['        Property(name="books", type=book, multiplicity=Multiplicity(0, "*")),  # the books on it'],
+        ['        Property(name="books", type=book, multiplicity=Multiplicity(1, "*")),  # the books on it'])
+    assert besser("validate", "model.py", "--ocl").returncode == 0
+
+
+@pytest.mark.parametrize("args, message", [
+    # The object model links the shelf to one book: it would have too few.
+    (("Shelf.books", "[2..*]"), "the object model would be invalid once Shelf.books is [2..*]: Object 'top' "
+                                "violates multiplicity 2..* for association end 'books'"),
+    (("Shelf.books", "[*]"), "Shelf.books is [*] already"),
+    (("Book.pages", "[1]"), "'Book.pages' is not an association end: name one as Class.end or association.end"),
+    (("Shelf.books", "[2..1]"), "'[2..1]': not a multiplicity"),
+    (("Shelf.books", "many"), "'many' is not a multiplicity: write [1], [0..1], [*], [1..*] or [n..m]"),
+])
+def test_set_multiplicity_refuses_what_it_would_break(hand_written, refused, args, message):
+    assert message in refused("set-multiplicity", *args)
+
+
+def test_an_end_without_a_multiplicity_gets_one(write, change, tmp_path):
+    write("model.py", '''\
+        from besser.BUML.metamodel.structural import BinaryAssociation, Class, DomainModel, Property, StringType
+
+        a = Class(name="A", attributes={Property(name="x", type=StringType)})
+        b = Class(name="B", attributes={Property(name="y", type=StringType)})
+        ab = BinaryAssociation(name="ab", ends={Property(name="a", type=a), Property(name="bs", type=b)})
+        m = DomainModel(name="M", types={a, b}, associations={ab})
+        ''')
+
+    assert change("set-multiplicity", "ab.bs", "[*]") == "model.py: changed A.bs (ab) from [1] to [*]"
+    text = (tmp_path / "model.py").read_text()
+    # The line would grow past the limit: the new argument goes on a line of its own.
+    assert 'Property(name="bs", type=b,\n' in text and ' multiplicity=Multiplicity(0, "*"))})\n' in text

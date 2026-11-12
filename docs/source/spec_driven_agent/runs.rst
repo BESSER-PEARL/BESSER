@@ -69,7 +69,9 @@ runs survive a dropped connection:
      'https://<host>/besser_api/spec-driven/runs/<runId>/events?after=42'
 
 Losing *every* subscriber starts a grace period (default 5 minutes) before the
-producer is cooperatively stopped — which bounds unattended BYOK spend. When
+producer is cooperatively stopped — which bounds unattended BYOK spend. A
+client polling ``events.json`` counts as present: the run is stopped only when
+no stream is open *and* no poll arrived within the grace period. When
 the event store itself fails mid-run (a full disk, a lock held past its
 timeout), or the backend stops, the run's worker is cancelled at its next turn
 boundary, and its concurrency slot is freed only once the worker has stopped;

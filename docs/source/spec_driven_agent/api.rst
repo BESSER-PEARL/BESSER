@@ -45,7 +45,9 @@ Endpoints
        and decoded ``data``; ``cursor`` is the last sequence returned and
        ``hasMore`` says to poll again immediately. Polling and streaming
        share one sequence, so a client can switch between them. Use it where
-       a proxy buffers responses and holds back an SSE stream.
+       a proxy buffers responses and holds back an SSE stream. Each poll
+       counts as presence, like an open stream, so a polled run is not
+       stopped as abandoned.
    * - ``/spec-driven/resume/{run_id}``
      - POST
      - Resume an interrupted run from its checkpoint (streams SSE).

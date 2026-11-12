@@ -103,11 +103,13 @@ class RunRecord:
         }
 
 
-@dataclass(frozen=True)
+@dataclass
 class _AbandonmentPolicy:
     grace_seconds: float
     cancel: Callable[[], None]
     resume_available: Optional[Callable[[], bool]] = None
+    #: ``time.monotonic()`` of the last ``events.json`` poll; a poller is present.
+    last_polled_at: Optional[float] = None
 
 
 def default_store_path(settings: Optional[BackendSettings] = None) -> str:
@@ -600,38 +602,50 @@ class DurableRunManager:
             name=f"spec-driven-abandon-{run_id[:8]}",
         )
 
+    def touch(self, run_id: str) -> None:
+        """Record that a client polled the run: polling counts as presence."""
+        policy = self._abandonment_policies.get(run_id)
+        if policy is not None:
+            policy.last_polled_at = time.monotonic()
+
     async def _cancel_if_still_abandoned(
         self,
         run_id: str,
         generation: int,
         grace_seconds: float,
     ) -> None:
-        try:
-            await asyncio.sleep(grace_seconds)
-        except asyncio.CancelledError:
-            return
-
+        delay = grace_seconds
         callback: Optional[Callable[[], None]] = None
-        async with self._lock:
-            if self._abandonment_tasks.get(run_id) is not asyncio.current_task():
+        while callback is None:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
                 return
-            self._abandonment_tasks.pop(run_id, None)
-            producer = self._tasks.get(run_id)
-            policy = self._abandonment_policies.get(run_id)
-            if (
-                policy is None
-                or self._generations.get(run_id) != generation
-                or producer is None
-                or producer.done()
-                or self._subscriber_counts.get(run_id, 0) > 0
-            ):
-                return
-            self._abandonment_triggered.add(run_id)
-            self.store.mark_abandonment_requested(run_id)
-            callback = policy.cancel
+            async with self._lock:
+                if self._abandonment_tasks.get(run_id) is not asyncio.current_task():
+                    return
+                producer = self._tasks.get(run_id)
+                policy = self._abandonment_policies.get(run_id)
+                if (
+                    policy is None
+                    or self._generations.get(run_id) != generation
+                    or producer is None
+                    or producer.done()
+                    or self._subscriber_counts.get(run_id, 0) > 0
+                ):
+                    self._abandonment_tasks.pop(run_id, None)
+                    return
+                # A poll within the grace period: wait out the rest of it from that poll.
+                if policy.last_polled_at is not None:
+                    since_poll = time.monotonic() - policy.last_polled_at
+                    if since_poll < grace_seconds:
+                        delay = grace_seconds - since_poll
+                        continue
+                self._abandonment_tasks.pop(run_id, None)
+                self._abandonment_triggered.add(run_id)
+                self.store.mark_abandonment_requested(run_id)
+                callback = policy.cancel
 
-        if callback is None:  # pragma: no cover - guarded under the lock
-            return
         try:
             callback()
         except Exception:

@@ -430,6 +430,8 @@ async def poll_smart_run_events(
     record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    # A poller is present: it holds off the abandonment cancel like a stream does.
+    runtime.durable_runs.touch(run_id)
 
     stored = runtime.durable_runs.store.events_after(run_id, after, limit=limit)
     events = [

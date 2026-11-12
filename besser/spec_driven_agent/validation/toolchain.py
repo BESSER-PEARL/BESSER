@@ -189,11 +189,11 @@ def _build_toolchain_reminder(
     """
     # Cap the reminder body so a runaway report (e.g. 100 type
     # errors after a single missing import) doesn't blow out the
-    # context window. The full list is already in the prompt.
+    # context window. The prompt's blocker list carries the rest.
     lines = [i.message for i in toolchain_blockers[:8]]
     bulleted = "\n".join(f"  - {ln}" for ln in lines)
     more = (
-        f"\n  - (+{len(toolchain_blockers) - 8} more — see prompt for full list)"
+        f"\n  - (+{len(toolchain_blockers) - 8} more in the prompt's blocker list)"
         if len(toolchain_blockers) > 8 else ""
     )
     return (

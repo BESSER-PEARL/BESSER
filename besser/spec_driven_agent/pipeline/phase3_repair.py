@@ -22,6 +22,7 @@ import logging
 import os
 import shutil
 import time
+from collections import Counter
 
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
@@ -74,6 +75,45 @@ from besser.spec_driven_agent.validation.toolchain import (
 from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
 
 logger = logging.getLogger(__name__)
+
+
+# Blockers one fix prompt lists. One missing import was reported as 105; a
+# round repairs a few causes and the next validation lists what is left.
+_FIX_PROMPT_MAX_BLOCKERS = 30
+# A longer blocker is cut in the fix prompt. Tracebacks ran to 3,300 chars; a
+# create contract with its fix site and remedy runs to about 1,000, kept whole.
+# The tail survives the cut: a traceback ends with the error itself.
+_FIX_PROMPT_BLOCKER_CHARS = 1_200
+_FIX_PROMPT_BLOCKER_TAIL_CHARS = 300
+
+
+def _blocker_kind(message: str) -> str:
+    """The blocker's prefix, e.g. ``tsc [frontend]`` or ``Syntax error in``."""
+    head = message.split(":", 1)[0]
+    words = head.split()
+    return " ".join(words[:3]) if len(words) > 3 else head
+
+
+def _fix_prompt_blocker_lines(ranked: list[ValidationIssue]) -> list[str]:
+    """The fix prompt's blocker bullets, in priority order, capped in count and length.
+
+    Only the prompt is capped; Phase 3 records and reports every blocker.
+    """
+    lines = []
+    for issue in ranked[:_FIX_PROMPT_MAX_BLOCKERS]:
+        text = issue.message
+        if len(text) > _FIX_PROMPT_BLOCKER_CHARS:
+            head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
+            cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
+            text = f"{text[:head]} [... {cut} chars cut ...] {text[-_FIX_PROMPT_BLOCKER_TAIL_CHARS:]}"
+        lines.append(f"- {text}")
+    rest = ranked[_FIX_PROMPT_MAX_BLOCKERS:]
+    if rest:
+        kinds = Counter(_blocker_kind(issue.message) for issue in rest)
+        summary = ", ".join(f"{kind} x{count}" for kind, count in kinds.most_common())
+        lines.append(f"- (+{len(rest)} more blockers of these kinds: {summary}; "
+                     "the next validation lists them again)")
+    return lines
 
 
 def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
@@ -842,8 +882,8 @@ class Phase3RepairMixin:
         Tool calls run through ``_execute_tool_blocks`` so they are
         recorded like Phase 2's.
 
-        The prompt always reproduces the current blocker list verbatim
-        — including any ``tsc [...]:`` / ``cargo [...]:`` /
+        The prompt lists the current blockers in priority order, capped
+        in count and length (``_fix_prompt_blocker_lines``) — including any ``tsc [...]:`` / ``cargo [...]:`` /
         ``kotlinc [...]:`` lines. When toolchain blockers are present,
         a high-salience reminder is appended instructing the LLM to
         re-run the toolchain via ``run_command`` after each edit, so
@@ -862,7 +902,7 @@ class Phase3RepairMixin:
         )) for issue in blockers)
 
         # Only the toolchain half is needed: it drives the re-run reminder
-        # below. Every blocker, toolchain or not, is listed in the prompt.
+        # below. Every blocker, toolchain or not, is in the prompt's list.
         toolchain_blockers = [
             i for i in blockers
             if i.message.startswith(("tsc [", "cargo [", "kotlinc ["))
@@ -917,7 +957,7 @@ class Phase3RepairMixin:
             "Do not invent authentication, new roles, or destructive data deletion "
             "from a generic usability or release requirement."
         )
-        prompt_parts.extend(f"- {i.message}" for i in sorted(blockers, key=self._repair_priority))
+        prompt_parts.extend(_fix_prompt_blocker_lines(sorted(blockers, key=self._repair_priority)))
 
         # Show the offending lines: with only "file line N" a model spends a
         # turn on read_file; with the excerpt it calls modify_file immediately.

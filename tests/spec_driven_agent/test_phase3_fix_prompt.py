@@ -95,3 +95,40 @@ def test_the_domain_model_is_embedded_as_compact_readable_json(tmp_path):
     prompt = _whole_prompt(client.calls[0])
     assert to_prompt_json(serialize_domain_model(orch.domain_model)) in prompt
     assert "Café" in prompt and "größe" in prompt and "\\u00e9" not in prompt
+
+
+def test_the_blocker_list_is_capped_with_an_honest_remainder(tmp_path):
+    from besser.spec_driven_agent.pipeline.phase3_repair import _FIX_PROMPT_MAX_BLOCKERS
+
+    orch, client = _build(tmp_path)
+    startup = ValidationIssue("blocker", "missing module: app/main.py line 1: imports 'app.db', which does not exist")
+    cascade = [ValidationIssue("blocker", f"tsc [frontend]: src/P{n}.tsx(1,1): error TS2304: Cannot find name 'api'")
+               for n in range(100)]
+    judged = [ValidationIssue("blocker", f"requirement: R{n} — rule {n} is not implemented") for n in range(5)]
+    orch._invoke_phase3_fix_loop(judged + cascade + [startup], is_first_attempt=True)
+
+    message = _first_message(client.calls[0])
+    bullets = [line for line in message.splitlines() if line.startswith("- ")]
+    assert len(bullets) == _FIX_PROMPT_MAX_BLOCKERS + 1
+    assert bullets[0] == f"- {startup.message}", "the cap keeps the repair priority order"
+    rest = 106 - _FIX_PROMPT_MAX_BLOCKERS
+    assert bullets[-1].startswith(f"- (+{rest} more blockers of these kinds: tsc [frontend] x")
+    assert bullets[-1].endswith(", requirement x5; the next validation lists them again)")
+
+
+def test_a_long_blocker_is_cut_with_a_marker_keeping_its_tail(tmp_path):
+    from besser.spec_driven_agent.pipeline.phase3_repair import _FIX_PROMPT_BLOCKER_CHARS
+
+    orch, client = _build(tmp_path)
+    traceback = ("application startup: app: Traceback (most recent call last):\n"
+                 + "  File \"lib.py\", line 1, in f\n" * 120
+                 + "NameError: name 'Base' is not defined. Fix site: app/main.py line 1")
+    orch._invoke_phase3_fix_loop([ValidationIssue("blocker", traceback)], is_first_attempt=True)
+
+    message = _first_message(client.calls[0])
+    start = message.index("- application startup:")
+    bullet = message[start:message.index("NameError", start) + 200].split("\n\n")[0]
+    assert "chars cut ...]" in bullet
+    assert bullet.endswith("NameError: name 'Base' is not defined. Fix site: app/main.py line 1")
+    assert len(bullet) < _FIX_PROMPT_BLOCKER_CHARS + 60
+    assert "The offending lines" in message, "excerpts still come from the full message"

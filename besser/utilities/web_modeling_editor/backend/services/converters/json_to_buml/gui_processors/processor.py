@@ -56,7 +56,7 @@ from .styling import build_style_map, build_stylesheet, resolve_component_stylin
 from .utils import css_class_names, html_attributes, sanitize_name, get_element_by_id, clean_method_name
 
 
-def process_gui_diagram(gui_diagram, class_model, domain_model):
+def process_gui_diagram(gui_diagram, class_model, domain_model, title=None):
     """
     Main entry point: Converts GrapesJS JSON and domain_model into a GUIModel instance.
     Handles style mapping, screens, and recursive component parsing.
@@ -65,6 +65,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         gui_diagram: The GUI diagram data from GrapesJS
         class_model: The class model for object resolution
         domain_model: The domain metamodel for object resolution
+        title: The diagram's title, which names the model; else the ``title`` of
+            ``gui_diagram``, else "GUI"
 
     Returns:
         GUIModel instance with screens and components
@@ -483,7 +485,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         return generic
 
     # Extract GUI model name
-    raw_title = gui_diagram.get("title", "GUI")
+    raw_title = title or gui_diagram.get("title", "GUI")
     gui_name = sanitize_name(raw_title) or "GUI"
 
     # Create GUI model

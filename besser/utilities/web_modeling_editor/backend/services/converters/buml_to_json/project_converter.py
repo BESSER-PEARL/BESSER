@@ -69,6 +69,67 @@ def _parse_user_reference_section(section_code: str) -> Optional[DomainModel]:
     return domain_model if is_user_reference_domain_model(domain_model) else None
 
 
+# The name json_to_buml gives a model whose diagram has no title, by model
+# variable prefix: such a name says nothing about the model, so its diagram
+# gets the default title back rather than this name.
+_UNTITLED_MODEL_NAMES = {
+    'domain_model': 'unnamed',
+    'object_model': 'Generated_Object_Model',
+    'agent': 'Generated_Agent',
+    'gui_model': 'GUI',
+    'quantum_model': 'Quantum_Circuit',
+    'kg_model': 'knowledge_graph',
+    'sm': 'Generated_State_Machine',
+    'nn_model': 'Neural_Network',
+    'bpmn_model': 'Generated_BPMN_Model',
+    'component_model': 'Generated_Component_Model',
+    'deployment_model': 'Generated_Deployment_Model',
+}
+
+
+def _assigned_model_name(section_code: str, variables: List[str]) -> Optional[str]:
+    """The name a section gives the model it binds to one of ``variables``, or ``None``.
+
+    Reads ``var = Kind(name="...")`` or ``var = Kind("...")`` (the code builder
+    writes one of these for every model); a section that does not parse, or
+    builds the model some other way, has no name here.
+    """
+    try:
+        tree = ast.parse(section_code)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if not isinstance(value, ast.Call):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id in variables for target in targets):
+            continue
+        arguments = [kw.value for kw in value.keywords if kw.arg == "name"] or value.args[:1]
+        if arguments and isinstance(arguments[0], ast.Constant) and isinstance(arguments[0].value, str):
+            return arguments[0].value or None
+    return None
+
+
+def _model_title(name: Optional[str], base_name: str, default_title: str) -> Optional[str]:
+    """The diagram title that gives a model back ``name`` on its way into B-UML, or ``None``.
+
+    A diagram's title is what json_to_buml names its model, so a model keeps its
+    name through the editor's JSON. A name that is the default title as json_to_buml
+    writes it ("Class_Diagram"), or the name it gives an untitled diagram, keeps the
+    default title.
+    """
+    if not name:
+        return None
+    if name in (default_title, default_title.replace(" ", "_"), _UNTITLED_MODEL_NAMES.get(base_name)):
+        return default_title
+    return name
+
+
 def _object_model_title(section_code: str) -> str:
     """Return the ``ObjectModel(name=...)`` of an object section, or ''."""
     match = _OBJECT_MODEL_NAME.search(section_code)
@@ -624,12 +685,17 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
             logger.info("No sections found for '%s' (keyword: %s), skipping", base_name, keyword)
             continue
 
+        variables = [name for name in model_names if model_aliases.get(re.sub(r'_\d+$', '', name),
+                                                                          re.sub(r'_\d+$', '', name)) == base_name]
         diagram_list = []
         for idx, (title, section_code) in enumerate(sections):
-            resolved_title = title if title else default_title
-            # Append index suffix for multi-diagram types (only when more than one)
-            if len(sections) > 1 and not title:
-                resolved_title = f"{default_title} {idx + 1}"
+            # A header's title, else the model's own name, else the default title
+            # (numbered when there are several).
+            resolved_title = title or _model_title(
+                _assigned_model_name(section_code, variables), base_name, default_title,
+            )
+            if not resolved_title:
+                resolved_title = f"{default_title} {idx + 1}" if len(sections) > 1 else default_title
 
             logger.debug(
                 "Converting section %d/%d for %s: '%s'",

@@ -1397,9 +1397,13 @@ Both directions reuse the editor's converters, so they share their limits:
   that holds nothing else is not converted (exit status 2, no file written):
   the project would hold no model. RDF, likewise, is written from a knowledge
   graph only, and a file that holds none is refused.
-* A lone model takes the default title of its diagram (a ``DomainModel`` named
-  ``Library`` comes back as ``Class_Diagram``); its classes, attributes and
-  associations keep their names.
+* A model keeps its name: the JSON carries it as its diagram's title (a
+  ``DomainModel`` named ``Library`` is the class diagram ``Library``), and the
+  conversion back names the model after the title. The variable it was bound to
+  does not survive: the ``.py`` output binds each model to a variable named
+  after its kind (``domain_model``, ``object_model``, ``sm``, ``agent``,
+  ``gui_model``, ...). Name the model, not the variable, in ``--use`` and in
+  ``besser.toml``'s ``use``, and both keep working after a round trip.
 * A model written in Python has no layout: the converter computes the
   positions of its elements.
 * What a diagram cannot draw is not in the JSON: a state machine transition's

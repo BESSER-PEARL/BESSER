@@ -54,6 +54,38 @@ def test_a_model_survives_the_round_trip(besser, model, tmp_path):
     assert besser("validate", "back.py", "--strict").returncode == 0
 
 
+def test_the_round_trip_keeps_the_model_name_so_use_still_finds_it(besser, model, tmp_path):
+    assert besser("convert", model, "-o", "project.json").returncode == 0
+    assert besser("convert", "project.json", "-o", "back.py").returncode == 0
+
+    [diagram] = json.loads((tmp_path / "project.json").read_text())["project"]["diagrams"]["ClassDiagram"]
+    assert diagram["title"] == "LibraryModel"
+    [back] = load_models(tmp_path / "back.py").of_kind("domain")
+    assert back.model.name == "LibraryModel"
+    run = besser("generate", "python", "back.py", "--use", "LibraryModel", "-o", "out")
+    assert run.returncode == 0, run.stderr
+
+
+def test_a_project_of_several_kinds_keeps_its_model_names_both_ways(besser, tmp_path):
+    assert besser("new", "project.py", "--kind", "project").returncode == 0
+    assert besser("convert", "project.py", "-o", "project.json").returncode == 0
+    assert besser("convert", "project.json", "-o", "back.py").returncode == 0
+    assert besser("convert", "back.py", "-o", "again.json").returncode == 0
+
+    def names(path):
+        return sorted((model.kind, model.model.name) for model in load_models(tmp_path / path).models)
+
+    def titles(path):
+        diagrams = json.loads((tmp_path / path).read_text())["project"]["diagrams"]
+        return sorted(diagram["title"] for entries in diagrams.values() for diagram in entries
+                      if diagram["model"].get("elements"))
+
+    assert names("back.py") == names("project.py") == [
+        ("domain", "Library"), ("object", "LibraryObjects"), ("state_machine", "BookLoan"),
+    ]
+    assert titles("again.json") == titles("project.json") == ["BookLoan", "Library", "LibraryObjects"]
+
+
 def test_the_converted_project_is_one_the_cli_reads_back(besser, model):
     besser("convert", model, "-o", "project.json")
 

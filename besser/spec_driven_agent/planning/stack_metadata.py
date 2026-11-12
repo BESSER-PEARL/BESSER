@@ -52,6 +52,12 @@ from besser.utilities.workspace_fs import open_plain_write
 logger = logging.getLogger(__name__)
 
 
+# Rust and its web crates. Bare "cargo" and "rocket" are left out: they are
+# far more often the domain ("a cargo tracking company", "a model rocket club")
+# than the build tool or the framework.
+_RUST_KEYWORDS: tuple[str, ...] = ("rust", "axum", "actix", "tokio", "serde", "cargo.toml", "rocket.rs")
+
+
 # Order matters: a request mentioning both "Next.js" and "TypeScript"
 # should resolve to ``nextjs`` (the more specific stack). The first
 # match wins; everything below is checked top-down.
@@ -60,9 +66,9 @@ _STACK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("nextjs", ("next.js", "nextjs", "next js")),
     # Kotlin / Spring Boot bundle together — kotlinc + Gradle.
     ("kotlin_spring", ("kotlin", "spring boot", "springboot", "spring-boot")),
-    # Rust + Cargo. ``axum``/``actix``/``rocket`` imply Rust without
-    # the user spelling out "Rust", so they map to the same template.
-    ("rust", ("rust", "cargo", "axum", "actix", "rocket")),
+    # Rust + Cargo. Its crates imply Rust without the user spelling out
+    # "Rust", so they map to the same template.
+    ("rust", _RUST_KEYWORDS),
 )
 
 
@@ -401,7 +407,7 @@ _IDIOM_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Rust web frameworks bundle together -- axum-specific bullets are a
     # minority of the block; the Result/Option guidance applies just as
     # well to actix/rocket handlers.
-    ("rust_axum", ("rust", "cargo", "axum", "actix", "rocket")),
+    ("rust_axum", _RUST_KEYWORDS),
     ("python_web", ("flask", "fastapi", "fast api")),
 )
 

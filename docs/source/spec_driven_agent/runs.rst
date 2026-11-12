@@ -77,6 +77,11 @@ their checkpoint when the client re-supplies the request body. Resume relies on
 the checkpoint written after every tool-use turn (see :doc:`how_it_works`): it
 refuses to resume against a project whose fingerprint has changed, and seeds
 the already-spent cost so a crash-and-resume cycle cannot double the bill.
+The resumed run continues the interrupted one: the same checklist (shown again
+in its prompt), requirements, generator-file tags, routed stack and record of
+successful writes, a modify run's model change and seed-run findings, and a
+fresh model-contract check. In the recipe's history it replaces the interrupted
+attempt's entry instead of adding one.
 
 .. _spec-driven-modify-mode:
 

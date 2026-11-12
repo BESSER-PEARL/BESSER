@@ -89,6 +89,15 @@ jobs:
           fi
           echo "The host defines:${{ steps.svc.outputs.list }}"
 
+      # Watchtower deploys whatever reaches :latest, so this runs before any push.
+      - name: Check the frontend build settings
+        if: inputs.target == 'all' || inputs.target == 'frontend'
+        run: |
+          if [[ -z "${{ vars.FRONTEND_POSTHOG_KEY }}" ]]; then
+            echo "::error::Set the repository variable FRONTEND_POSTHOG_KEY. Nothing was built, pushed or restarted."
+            exit 1
+          fi
+
       - name: Login to Docker registry
         run: echo "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" | docker login artefacts.list.lu -u "${{ secrets.DOCKER_REGISTRY_USERNAME }}" --password-stdin
 
@@ -110,10 +119,19 @@ jobs:
             --target smartgen-worker --build-arg GIT_SHA=${{ steps.src.outputs.sha }} -f Dockerfile .
 
       # ── Frontend ─────────────────────────────────────────────
+      # The URLs and the PostHog key are baked into the bundle at build time;
+      # the Dockerfile defaults point the assistant at ws://localhost:8765.
       - name: Build and push frontend image
         if: inputs.target == 'all' || inputs.target == 'frontend'
+        env:
+          POSTHOG_KEY: ${{ vars.FRONTEND_POSTHOG_KEY }}
         run: |
           .github/scripts/publish_image.sh ${{ env.REGISTRY }}/frontend:latest \
+            --build-arg DEPLOYMENT_URL=${{ env.EDITOR_URL }} \
+            --build-arg BACKEND_URL=${{ env.EDITOR_URL }}/besser_api \
+            --build-arg UML_BOT_WS_URL=wss://editor.besser-pearl.org/agent \
+            --build-arg POSTHOG_HOST=https://eu.i.posthog.com \
+            --build-arg POSTHOG_KEY="$POSTHOG_KEY" \
             -f besser/utilities/web_modeling_editor/frontend/Dockerfile \
             besser/utilities/web_modeling_editor/frontend/
 

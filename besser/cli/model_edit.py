@@ -73,6 +73,9 @@ _ADDERS = {
 
 _ATTRIBUTE = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*)(?P<optional>\?)?(?:\s*=\s*(?P<default>.*))?$")
 _END = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*)\s*\[(?P<low>\d+|\*)(?:\.\.(?P<high>\d+|\*))?\]$")
+# A line as ``ast`` counts lines: "\r\n", "\r" or "\n" ends it; a form feed or U+2028 does not (they do for
+# str.splitlines).
+_LINE = re.compile(r"[^\r\n]*(?:\r\n?|\n)|[^\r\n]+\Z")
 _SIGNATURE = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^)]*)\)\s*(?:->\s*(?P<type>[A-Za-z_]\w*))?$")
 
 
@@ -154,8 +157,7 @@ class _Text:
     def __init__(self, text: str):
         self.text = text
         self.tree = ast.parse(text)
-        # Lines as ``ast`` counts them: "\n" ends one, a form feed or " " does not (as for splitlines).
-        self._lines = io.StringIO(text, newline="\n").readlines()
+        self._lines = _LINE.findall(text)
         self._line_starts = [0]
         for line in self._lines:
             self._line_starts.append(self._line_starts[-1] + len(line))

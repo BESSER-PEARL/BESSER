@@ -382,6 +382,17 @@ def test_windows_line_endings_are_kept(besser, tmp_path):
     assert b"\n" not in data.replace(b"\r\n", b"")
 
 
+def test_a_file_with_carriage_return_line_ends_is_edited(besser, tmp_path):
+    # Python ends a line at a lone "\r" too (old Mac line ends): the change lands where ast places it.
+    (tmp_path / "model.py").write_bytes(INLINE.replace("\n", "\r").encode())
+
+    run = besser("model", "add-attribute", "Book", "isbn:str")
+
+    assert run.returncode == 0, run.stderr
+    assert 'Property(name="isbn", type=StringType)' in (tmp_path / "model.py").read_text()
+    assert "isbn:str" in besser("info", "model.py", "--class", "Book", output=None).stdout
+
+
 @pytest.mark.parametrize("separator", ["\x0c", " ", "\x1c", "\x85"])
 def test_a_character_python_does_not_end_a_line_with_does_not_shift_the_change(edit, separator):
     # A form feed (a page break) or a line separator pasted into a comment is no line end for Python.

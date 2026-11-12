@@ -147,6 +147,16 @@ def test_python_data_classes_are_read_without_running_them(besser, write, tmp_pa
     assert not (tmp_path / "ran.txt").exists()
 
 
+def test_the_help_and_the_error_of_the_code_import_name_the_same_classes(besser, tmp_path):
+    (tmp_path / "empty").mkdir()
+    help_text = " ".join(besser("convert", "--help").stdout.split())
+    run = besser("convert", "empty", "-o", "empty.py", "--from", "code")
+
+    classes = "SQLAlchemy models, Django models, Pydantic models and dataclasses"
+    assert f"a directory of Python code: its {classes}" in help_text
+    assert run.stderr == f"error: empty: no data classes found: the reader takes {classes} from Python sources\n"
+
+
 def test_inputs_convert_cannot_read_are_usage_errors(besser, write, model):
     write("notes.txt", "class Book")
     write("other.plantuml", PLANTUML)

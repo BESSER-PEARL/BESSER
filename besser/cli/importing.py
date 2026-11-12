@@ -116,6 +116,10 @@ def _read_sdmx(paths: Sequence[Path]) -> _Imported:
     return sdmx_xml_to_buml(paths[0].read_bytes()), []
 
 
+# What ``--from code`` reads of a directory's Python sources: its help and its error say the same.
+_CODE_CLASSES = "SQLAlchemy models, Django models, Pydantic models and dataclasses"
+
+
 def _read_code(paths: Sequence[Path]) -> _Imported:
     try:
         from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.code_reverse import (
@@ -128,10 +132,7 @@ def _read_code(paths: Sequence[Path]) -> _Imported:
 
     analysis, model = analyze_repository(str(paths[0]))
     if model is None:
-        raise ModelLoadError(
-            f"{paths[0]}: no data classes found: the reader takes SQLAlchemy models, Django models, "
-            "Pydantic models and dataclasses from Python sources"
-        )
+        raise ModelLoadError(f"{paths[0]}: no data classes found: the reader takes {_CODE_CLASSES} from Python sources")
     return model, [f"relationship left out: {skipped}" for skipped in analysis.skipped_relationships]
 
 
@@ -148,7 +149,7 @@ IMPORT_FORMATS: tuple[ImportFormat, ...] = (
     ImportFormat("sdmx", (), "domain",
                  "an SDMX-ML 2.1 structure message (a downloaded .xml file)", _read_sdmx),
     ImportFormat("code", (), "domain",
-                 "a directory of Python code: its SQLAlchemy, Django or Pydantic models", _read_code,
+                 f"a directory of Python code: its {_CODE_CLASSES}", _read_code,
                  directory=True),
 )
 

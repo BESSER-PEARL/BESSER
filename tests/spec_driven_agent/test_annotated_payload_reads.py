@@ -173,3 +173,11 @@ def test_an_unannotated_data_parameter_is_still_checked(tmp_path):
 
     assert len(issues) == 1, issues
     assert "BookingCreate does not define `id`" in issues[0]
+
+
+def test_an_injected_data_parameter_is_not_a_payload(tmp_path):
+    """``booking_data = Depends(...)`` is whatever the dependency returns."""
+    assert _app(tmp_path, (
+        "async def create_booking(booking_data=Depends(parse_booking)):\n"
+        "    return booking_data.id\n"
+    )) == []

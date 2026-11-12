@@ -6,7 +6,9 @@ import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.parsed_source import parse_source
-from besser.spec_driven_agent.validation.contract_checks import _INHERITED_MEMBERS
+from besser.spec_driven_agent.validation.contract_checks import (
+    _INHERITED_MEMBERS, _injected_parameters,
+)
 from besser.utilities.workspace_fs import walk_plain
 
 
@@ -185,14 +187,14 @@ def _guessable_parameters(scope) -> set:
     Only unannotated parameters the body never rebinds: an annotation names
     the type outright (``BookingUpdate``, ``dict``, ``Annotated[...]``), and
     a rebound name or a local (``booking_data = {...}``) is not the request
-    payload at all.
+    payload at all; neither is a ``Depends(...)`` parameter.
     """
     if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return set()
     args = scope.args
     unannotated = {arg.arg for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]
                    if arg.annotation is None and arg.arg.endswith(_PAYLOAD_SUFFIX)}
-    return unannotated - _rebound_names(scope)
+    return unannotated - _rebound_names(scope) - _injected_parameters(scope)
 
 
 def _rebound_names(scope) -> set:

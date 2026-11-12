@@ -85,6 +85,20 @@ def test_enumerations_inheritance_methods_and_other_model_kinds(besser, write):
     assert "react" in run.stdout.splitlines()[-1]
 
 
+def test_each_screen_says_the_class_and_the_columns_of_its_tables(besser):
+    assert besser("init", "--kind", "gui").returncode == 0
+    run = besser("info", "model.py")
+
+    assert run.stdout.splitlines()[-4:-1] == [
+        "    modules: library_module",
+        "    screen Authors (main page), /Authors: Author table author_table (name, email); buttons to Books",
+        "    screen Books, /Books: Book table book_table (title, pages)",
+    ]
+    screens = besser("info", "model.py", "--json").json["models"][1]["screens"]
+    assert screens[1] == {"name": "Books", "route": "/Books", "main": False, "opens": [],
+                          "tables": [{"name": "book_table", "class": "Book", "columns": ["title", "pages"]}]}
+
+
 def test_every_model_of_a_file_is_listed_by_the_name_use_takes(besser, write):
     result = besser("info", write("two.py", TWO_DOMAIN_MODELS), "--json").json
 

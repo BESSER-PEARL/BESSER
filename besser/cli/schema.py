@@ -208,7 +208,9 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "models": {"type": "array", "description": "per model: name, kind, type, model_name, current, counts, "
                                                    "elements; a domain model's classes (attributes with name, "
                                                    "type, optional, default), enumerations, associations, "
-                                                   "constraints and backend_endpoints (per class, 'METHOD /path/')"},
+                                                   "constraints and backend_endpoints (per class, 'METHOD /path/'); a GUI "
+                                                   "model's screens (name, route, main, tables with name, class "
+                                                   "and columns, and opens: the screens its buttons open)"},
         "generators": {**_STRINGS, "description": "the ids of the generators that can run on the file"},
         "classes": {"type": "array", "description": "with --class: per domain model holding it, the class's "
                                                     "model, name, is_abstract, parents, attributes, "

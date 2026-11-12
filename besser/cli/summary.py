@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
+from besser.BUML.metamodel.gui import Button, Table
 from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY, DomainModel
 from besser.cli.loading import LoadedModel
 from besser.utilities import sort_by_timestamp
@@ -138,6 +139,41 @@ def _domain_details(model: DomainModel) -> dict[str, Any]:
     }
 
 
+def _view_elements(container: Any) -> list[Any]:
+    """The view elements of a screen or container, at any depth, in name order."""
+    found = []
+    for element in sorted(getattr(container, "view_elements", None) or (), key=lambda e: e.name):
+        found.append(element)
+        found.extend(_view_elements(element))
+    return found
+
+
+def _gui_screens(model: Any) -> list[dict[str, Any]]:
+    """Per screen of a GUI model, in the generators' order: its route, whether it is the main page, the
+    tables it shows (the class each is bound to and the attributes of its columns) and the screens its
+    buttons open."""
+    screens = []
+    for module in sorted(model.modules, key=lambda m: m.name):
+        for screen in sorted(module.screens, key=lambda s: s.name):
+            elements = _view_elements(screen)
+            screens.append({
+                "name": screen.name,
+                "route": screen.route_path,
+                "main": bool(screen.is_main_page),
+                "tables": [
+                    {"name": table.name,
+                     "class": _name(getattr(table.data_binding, "domain_concept", None))
+                     if getattr(table, "data_binding", None) else None,
+                     "columns": [_name(column.field) if getattr(column, "field", None) is not None else column.label
+                                 for column in table.columns]}
+                    for table in elements if isinstance(table, Table)
+                ],
+                "opens": sorted({element.targetScreen.name for element in elements
+                                 if isinstance(element, Button) and element.targetScreen is not None}),
+            })
+    return screens
+
+
 def describe_model(loaded: LoadedModel, current: bool = False) -> dict[str, Any]:
     """One model as ``besser info --json`` shows it: what it is, what it holds, and a domain model's content.
 
@@ -156,6 +192,8 @@ def describe_model(loaded: LoadedModel, current: bool = False) -> dict[str, Any]
         entry.update(_domain_details(loaded.model))
     else:
         entry["elements"] = _elements(loaded.kind, loaded.model)
+    if loaded.kind == "gui":
+        entry["screens"] = _gui_screens(loaded.model)
     return entry
 
 
@@ -206,7 +244,16 @@ def summary_lines(entry: dict[str, Any]) -> list[str]:
         title += " (current in the editor)"
     lines = [f"  {title}{': ' + counts if counts else ''}"]
     for collection, names in entry.get("elements", {}).items():
+        if collection == "screens" and "screens" in entry:
+            continue  # a line per screen, below
         lines.append(f"    {collection.replace('_', ' ')}: {', '.join(names)}")
+    for screen in entry.get("screens", []):
+        shown = [f"{table['class'] or 'unbound'} table {table['name']} ({', '.join(table['columns'])})"
+                 for table in screen["tables"]]
+        if screen["opens"]:
+            shown.append(f"buttons to {', '.join(screen['opens'])}")
+        main = " (main page)" if screen["main"] else ""
+        lines.append(f"    screen {screen['name']}{main}, {screen['route']}: {'; '.join(shown) or 'no table'}")
     for cls in entry.get("classes", []):
         header = f"{'abstract ' if cls['is_abstract'] else ''}class {cls['name']}"
         if cls["parents"]:

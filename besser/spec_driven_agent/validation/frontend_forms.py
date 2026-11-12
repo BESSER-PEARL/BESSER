@@ -198,18 +198,32 @@ def _api_url_issues(files, resources) -> list[str]:
         for rel, (line, key, values) in found.items()]
 
 
+# How far back from the update branch to look for the 'new' test it is the else of.
+_NEW_TEST_LOOKBEHIND = 400
+
+
+def _new_handled_before(text: str, name: str, start: int) -> bool:
+    """The branch at ``start`` is the else of a ``name === 'new'`` test."""
+    prior = text[max(0, start - _NEW_TEST_LOOKBEHIND):start]
+    is_new = rf"""\b{name}\s*===?\s*['"]new['"]\s*"""
+    return bool(
+        re.search(rf"if\s*\(\s*{is_new}\)(?:[^;{{}}]*;?|\s*\{{[^{{}}]*\}})\s*else\s*$", prior)
+        or re.search(rf"{is_new}\?[^:]*:\s*$", prior))
+
+
 def _create_target_issues(files) -> list[str]:
     """T2a: a ``'new'`` placeholder whose truthiness selects the update call."""
     issues = []
     for rel, text in files:
+        names = set()
         for var in set(re.findall(r"""\b(\w+)\s*===?\s*['"]new['"]""", text)) | set(
                 re.findall(r"""\bset(\w+)\(\s*['"]new['"]\s*\)""", text)):
-            names = {var, var[:1].lower() + var[1:]}
-            for name in names:
-                branch = re.search(
+            names |= {var, var[:1].lower() + var[1:]}
+        for name in sorted(names):
+            for branch in re.finditer(
                     rf"""(?:if\s*\(\s*{name}\s*\)\s*(?:await\s+)?[\w.]*update"""
-                    rf"""|\b{name}\s*\?\s*(?:await\s+)?[\w.]*update)""", text)
-                if branch:
+                    rf"""|\b{name}\s*\?\s*(?:await\s+)?[\w.]*update)""", text):
+                if not _new_handled_before(text, name, branch.start()):
                     issues.append(
                         f"form create target: {rel} line {_line(text, branch.start())}: "
                         f"'{name}' holds the placeholder 'new' while creating, and the "

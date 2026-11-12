@@ -1152,7 +1152,8 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
         return "".join(f"; column {old_label} -> {new_label}" for old_label, new_label in changes)
     if not isinstance(element, Class):
         return ""
-    renamed = dict(zip(_derived_titles(old), _derived_titles(new)))
+    # The plural last, so that it wins for a name that is its own plural (News -> Articles).
+    renamed = dict(zip(reversed(_derived_titles(old)), reversed(_derived_titles(new))))
     renamed[f"Go to the {_plural(old).lower()}"] = f"Go to the {_plural(new).lower()}"
     tables = editor.tables_of(element)
     taken = {screen.name.lower(): screen.name for gui in editor.gui_models() for screen in _screens(gui)}
@@ -1183,11 +1184,48 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
     return f"; GUI titles {', '.join(titles)}" if titles else ""
 
 
+# Plurals no rule spells (``_plural``), and words that are their own plural.
+_PLURALS = {
+    "person": "people", "man": "men", "woman": "women", "child": "children", "mouse": "mice", "goose": "geese",
+    "foot": "feet", "tooth": "teeth", "ox": "oxen", "leaf": "leaves", "loaf": "loaves", "thief": "thieves",
+    "criterion": "criteria", "phenomenon": "phenomena", "datum": "data", "medium": "media",
+}
+_UNCOUNTABLE = {
+    "news", "series", "species", "sheep", "fish", "deer", "equipment", "information", "software", "hardware",
+    "feedback", "staff", "metadata", "furniture", "luggage", "baggage", "advice", "music",
+}
+
+
 def _plural(word: str) -> str:
-    """The English plural of a role name, as ends are often named (``books``, ``boxes``, ``categories``)."""
-    if re.search(r"[^aeiou]y$", word):
+    """The English plural of a class or role name (``books``, ``boxes``, ``categories``, ``shelves``,
+    ``People``, ``SalesPeople``); a word already plural or uncountable (``News``, ``Books``) is kept.
+
+    Only the last word of a compound name (``SalesPerson``, ``order_line``) changes.
+    """
+    match = re.search(r"([A-Z]?[a-z]+|[A-Z]+)$", word)
+    if match is None:  # ends in a digit or "_"
+        return word + "s"
+    head, last = word[:match.start()], match.group()
+    lower = last.lower()
+    if lower in _PLURALS:
+        plural = _PLURALS[lower]
+        return head + (plural.upper() if last.isupper() and len(last) > 1 else
+                       plural.capitalize() if last[0].isupper() else plural)
+    if lower in _PLURALS.values() or lower in _UNCOUNTABLE:
+        return word
+    if lower.endswith("is"):
+        return word[:-2] + "es"  # analysis -> analyses
+    if lower.endswith(("ss", "us", "as", "os", "sh", "ch", "x", "z")):
+        return word + "es"
+    if lower.endswith("s"):  # Books, Categories, Series
+        return word
+    if re.search(r"[^aeiou]y$", lower):
         return word[:-1] + "ies"
-    return word + ("es" if re.search(r"(s|x|z|ch|sh)$", word) else "s")
+    if lower.endswith("lf"):  # shelf, wolf, half
+        return word[:-1] + "ves"
+    if lower.endswith("ife"):  # knife, wife, life
+        return word[:-2] + "ves"
+    return word + "s"
 
 
 def _ends_named_after(editor: ModelEditor, cls: Class, old: str, new: str) -> str:

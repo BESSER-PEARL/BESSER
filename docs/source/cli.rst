@@ -702,7 +702,8 @@ name one of each).
        several) that shows a table of the class: a column per attribute,
        labelled after it, with pagination and the buttons that add, edit and
        delete an object. The screen is named after ``TITLE`` (default: the
-       plural of the class, ``Publishers``), which is also its heading, and
+       plural of the class, ``Publishers``, ``Shelves``, ``People``; a name
+       already plural or uncountable, ``News``, is kept), which is also its heading, and
        goes in the first module; a button on the main page opens it (the
        generated app navigates with buttons only). Refused when the file has
        no GUI model, the class has no attribute, a screen shows it already, or

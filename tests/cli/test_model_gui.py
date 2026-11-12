@@ -164,6 +164,23 @@ def test_remove_a_class_removes_its_screen_and_the_buttons_to_it(starter, change
     assert set(pages) == {"Authors"} and "/Books" not in routes + pages["Authors"]
 
 
+@pytest.mark.parametrize("class_name, title", [
+    ("Person", "People"), ("Shelf", "Shelves"), ("News", "News"), ("Categories", "Categories"),
+    ("Child", "Children"), ("SalesPerson", "SalesPeople"), ("Knife", "Knives"), ("Category", "Categories"),
+    ("Box", "Boxes"), ("Status", "Statuses"),
+])
+def test_a_page_is_titled_with_the_plural_of_its_class(starter, change, class_name, title):
+    # Before: Persons, Shelfs, Newses, Categorieses.
+    line = change("add-class", class_name, "code:str", "--screen")
+    assert f"added screen {title} (table of {class_name}: code;" in line
+    assert f'description="Go to the {title.lower()}", label="{title}"' in starter.read_text()
+
+
+def test_a_class_named_as_its_own_plural_keeps_its_page_titled_after_it(starter, change):
+    change("add-class", "News", "headline:str", "--screen")
+    assert "GUI titles News -> Articles" in change("rename", "News", "Article")
+
+
 def test_add_screen_is_refused_when_it_cannot_be_made(besser, write, starter):
     def refused(*args):
         result = besser("model", *args)

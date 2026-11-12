@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import shlex
 import sys
 import traceback
@@ -633,7 +634,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         logging.disable(logging.NOTSET)
     if result is None:  # mcp served: standard output was the protocol's, and the session is over
         return EXIT_OK
-    print_result(result, as_json)
+    try:
+        print_result(result, as_json)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # The reader closed the pipe early ('besser schema domain | head -1'): what it read is the
+        # output, and the status stays the command's. Standard output goes to devnull so that the
+        # interpreter's flush at exit does not raise again.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     return result.exit_code
 
 

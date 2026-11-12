@@ -881,9 +881,11 @@ def _locate_run_temp_dir(run_id: str) -> str | None:
     tempdir = _run_workspace_root()
     prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
     try:
+        # A dot marks a sibling (``.sandbox-home``, ``.download``), never a
+        # workspace: mkdtemp names have none, and the run's shell writes the home.
         candidates = [
             entry for entry in os.listdir(tempdir)
-            if entry.startswith(prefix)
+            if entry.startswith(prefix) and "." not in entry
         ]
     except OSError:
         return None

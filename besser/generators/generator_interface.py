@@ -7,6 +7,26 @@ from besser.BUML.metamodel.structural import DomainModel, Model
 if TYPE_CHECKING:
     from besser.generators.regeneration import RegenerationReport
 
+class UnsafeOutputPathError(ValueError):
+    """A path a generator would write to, built from a model's names, leads out of its output folder."""
+
+
+def path_inside(folder: str, relative: str) -> str:
+    """``relative`` joined to ``folder``, refusing a path that would leave it.
+
+    Generators build file names from model names (an agent's, a class's), which come from
+    the user's model: ``../x`` or an absolute path there must not write outside the output.
+
+    Raises:
+        UnsafeOutputPathError: ``relative`` is absolute or goes up out of ``folder``.
+    """
+    rel = os.path.relpath(os.path.normpath(os.path.join(folder, relative)), os.path.normpath(folder))
+    if os.path.isabs(relative) or rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        raise UnsafeOutputPathError(f"{relative!r} cannot be written: it leads out of the output folder "
+                                    "(a name in the model holds '..' or a path separator)")
+    return os.path.join(folder, relative)
+
+
 class InvalidIdentifierError(ValueError):
     """A model name that a generator would write into code is not a valid identifier."""
 
@@ -96,8 +116,12 @@ class GeneratorInterface(ABC):
         self.__output_dir = output_dir
 
     def build_generation_path(self, file_name:str) -> str:
-        file_path = os.path.join(self.build_generation_dir(), file_name)
-        return file_path
+        """``file_name`` in the output folder.
+
+        Raises:
+            UnsafeOutputPathError: ``file_name`` leads out of the output folder.
+        """
+        return path_inside(self.build_generation_dir(), file_name)
 
     def build_generation_dir(self) -> str:
         if self.output_dir is not None:

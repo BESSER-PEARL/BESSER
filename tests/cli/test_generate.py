@@ -499,3 +499,17 @@ def test_a_project_with_dangling_references_between_diagrams_is_not_generated_fr
         "nothing was generated: the project's diagrams reference elements or diagrams it does not hold",
     ]
     assert not (tmp_path / "out").exists()
+
+
+def test_a_name_in_the_model_cannot_make_a_generator_write_outside_its_folder(besser, write, tmp_path):
+    assert besser("new", "agent.json", "--kind", "agent").returncode == 0
+    project = json.loads((tmp_path / "agent.json").read_text())
+    project["project"]["diagrams"]["AgentDiagram"][0]["title"] = "../outside/pwnagent"
+    write("agent.json", project)
+    (tmp_path / "outside").mkdir()
+
+    run = besser("generate", "agent", "agent.json", "-o", "out", "--json")
+
+    assert run.returncode != 0
+    assert "leads out of the output folder" in run.json["errors"][0]
+    assert list((tmp_path / "outside").iterdir()) == []

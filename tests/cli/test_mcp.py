@@ -136,6 +136,14 @@ def test_it_lists_the_commands_as_tools(serve):
     assert tools["generate"]["annotations"]["destructiveHint"] is True
 
 
+def test_with_exec_py_the_tools_that_load_models_are_not_read_only(serve):
+    tools = {tool["name"]: tool for tool in serve("--exec-py").request("tools/list")["result"]["tools"]}
+
+    assert tools["validate"]["annotations"]["readOnlyHint"] is False
+    assert tools["info"]["annotations"]["readOnlyHint"] is False
+    assert tools["schema"]["annotations"]["readOnlyHint"] is True
+
+
 def test_validate_and_generate_return_the_cli_json(serve, json_model, tmp_path):
     server = serve()
 
@@ -168,6 +176,30 @@ def test_generate_refuses_a_folder_that_is_not_empty_unless_forced(serve, json_m
     assert message.startswith("out is not empty and generating overwrites what is there: pass `force: true`")
     assert "the `regenerate` tool" in message and "--" not in message and "besser" not in message
     assert forced["ok"] is True
+
+
+def _agent_named(besser, root, name):
+    """An editor project under ``root`` whose agent, named by its diagram's title, is ``name``."""
+    root.mkdir()
+    assert besser("new", root / "agent.json", "--kind", "agent").returncode == 0
+    project = json.loads((root / "agent.json").read_text())
+    project["project"]["diagrams"]["AgentDiagram"][0]["title"] = name
+    (root / "agent.json").write_text(json.dumps(project))
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_name_in_the_model_cannot_make_generate_write_outside_the_root(serve, besser, tmp_path, dry_run):
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    outside.mkdir()
+    _agent_named(besser, root, "../../outside/pwnagent")
+
+    result = serve(root=root).call("generate", generator="agent", model="agent.json", output_dir="o",
+                                   dry_run=dry_run)
+
+    assert result["ok"] is False
+    [error] = result["errors"]
+    assert "leads out of the output folder" in error
+    assert list(outside.iterdir()) == []
 
 
 def test_paths_outside_the_root_are_refused(serve, json_model, tmp_path):

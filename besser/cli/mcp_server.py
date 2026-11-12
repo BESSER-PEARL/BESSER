@@ -78,6 +78,10 @@ class _Refused(Exception):
     """A tool argument the server does not accept; carries the message."""
 
 
+# The tools that do not write files but load the model files they are given.
+_LOADS_MODELS = frozenset({"validate", "info"})
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     """One tool: what the client sees, and the command it runs."""
@@ -484,8 +488,11 @@ def serve(root: str, exec_py: bool = False) -> Result | None:
         types.Tool(
             name=spec.name, description=spec.description, input_schema=spec.input_schema,
             output_schema=_OUTPUT_SCHEMA,
-            annotations=types.ToolAnnotations(read_only_hint=not spec.writes, destructive_hint=spec.writes,
-                                              open_world_hint=False),
+            # With --exec-py, a tool that loads a model runs its code: not read-only, so a client
+            # that approves read-only tools on its own does not run it unasked.
+            annotations=types.ToolAnnotations(
+                read_only_hint=not spec.writes and not (exec_py and spec.name in _LOADS_MODELS),
+                destructive_hint=spec.writes, open_world_hint=False),
         )
         for spec in specs.values()
     ]

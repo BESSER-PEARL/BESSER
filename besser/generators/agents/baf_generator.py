@@ -13,6 +13,7 @@ from besser.BUML.metamodel.state_machine.agent import Agent, GUIReplyAction
 from besser.utilities.template_escaping import register_escaping_filters
 from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import path_inside
 
 from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
 from besser.generators.agents.deployment_components import materialize_deployment_components
@@ -690,7 +691,7 @@ class BAFGenerator(GeneratorInterface):
                 skills_dir = os.path.join(self.build_generation_dir(), "skills")
                 os.makedirs(skills_dir, exist_ok=True)
                 for skill in skills:
-                    skill_file = os.path.join(skills_dir, f"{skill.name}.md")
+                    skill_file = path_inside(skills_dir, f"{skill.name}.md")
                     with open(skill_file, mode="w", encoding="utf-8") as f:
                         f.write(skill.content)
                 logger.info("Skills directory generated at %s", skills_dir)
@@ -708,7 +709,7 @@ class BAFGenerator(GeneratorInterface):
             if rag_configs:
                 rag_base_dir = self.build_generation_dir()
                 for idx, rag in enumerate(rag_configs):
-                    target_dir = os.path.join(rag_base_dir, rag_slug(getattr(rag, 'name', ''), idx))
+                    target_dir = path_inside(rag_base_dir, rag_slug(getattr(rag, "name", ""), idx))
                     os.makedirs(target_dir, exist_ok=True)
                     readme_path = os.path.join(target_dir, "README.txt")
                     if not os.path.exists(readme_path):

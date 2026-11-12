@@ -1480,7 +1480,8 @@ The server confines the tools:
    runs inside the server process, with your permissions, and can read, write
    or run anything you can; the confinement above only covers the paths the
    tools are given. Start the server with ``--exec-py`` only on model files you
-   trust.
+   trust. With it, ``validate`` and ``info`` are not marked read-only, so a
+   client that approves read-only tools on its own asks before running them.
 
 Everything a model file or a generator prints goes to the server's standard
 error. Tools run one at a time. To add the server to Claude Code:

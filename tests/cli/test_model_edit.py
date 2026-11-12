@@ -155,7 +155,9 @@ def test_a_literal_used_as_a_default_cannot_be_removed(edit):
 def test_rename_a_class_renames_its_variable_and_the_name_only(edit):
     run, text = edit(INLINE, "rename", "Book", "Volume", output=None)
 
-    assert run.stdout == "model.py: renamed Book to Volume (variable book -> volume)\n"
+    # The end named after the old class is named, with the command that renames it.
+    assert run.stdout == ("model.py: renamed Book to Volume (variable book -> volume); ends still named after "
+                          "Book: Library.books (rename Library.books volumes)\n")
     removed, added = _changed_lines(INLINE, text)
     assert removed == ['book = Class(name="Book", attributes={',
                        '    Property(name="books", type=book, multiplicity=Multiplicity(0, "*")),',
@@ -275,6 +277,22 @@ def test_a_new_class_with_an_attribute_typed_by_a_class_is_refused(edit):
 
     assert run.returncode == 2 and text == INLINE
     assert "besser model add-association loan_book loan:Loan[*] book:Book[1]" in run.stderr
+
+
+def test_an_association_end_is_named_by_its_association_too(edit, besser):
+    # The association's name is how add-association and info name it.
+    run, text = edit(INLINE, "rename", "library_books.books", "volumes", output=None)
+
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "model.py: renamed library_books.books to library_books.volumes\n"
+    assert _changed_lines(INLINE, text)[1] == [
+        '    Property(name="volumes", type=book, multiplicity=Multiplicity(0, "*")),']
+    removed, text = edit(INLINE, "remove", "library_books.library")
+    assert removed.returncode == 0, removed.stderr
+    assert "library_books" not in text
+    missing, _ = edit(INLINE, "rename", "loans.books", "x")
+    assert missing.returncode == 2
+    assert "nor an association (it has: library_books)" in missing.stderr
 
 
 def test_batch_makes_every_change_in_one_write(edit, besser):

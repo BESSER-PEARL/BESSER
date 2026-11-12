@@ -676,12 +676,14 @@ the file holds several.
        is an attribute's default is not removed.
    * - ``rename PATH NEW_NAME``
      - Renames a class, enumeration, association or constraint (``Name``), an
-       attribute, method or association end (``Class.member``) or a literal
-       (``Enumeration.LITERAL``). A variable that spells the old name is
-       renamed with it, and the OCL constraints that name it are updated:
-       only names, never text in quotes, and a member's name only where the
-       constraint navigates to that member (another class's member of the same
-       name stays). A literal's attribute defaults are renamed too.
+       attribute, method or association end (``Class.member``; an end also
+       as ``association.end``) or a literal (``Enumeration.LITERAL``). A
+       variable that spells the old name is renamed with it, and the OCL
+       constraints that name it are updated: only names, never text in quotes,
+       and a member's name only where the constraint navigates to that member
+       (another class's member of the same name stays). A literal's attribute
+       defaults are renamed too. Renaming a class names the association ends
+       still named after it, with the ``rename`` that changes each.
    * - ``remove PATH``
      - Removes the element. A class goes with its associations,
        generalizations and constraints; an association end with its

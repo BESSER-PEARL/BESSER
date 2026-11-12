@@ -716,7 +716,8 @@ def find_type(model: DomainModel, name: str, kind: type | tuple[type, ...] = (Cl
 
 def resolve(model: DomainModel, path: str) -> Any:
     """The element ``path`` names: ``Class``, ``Enumeration``, ``association``, ``constraint``,
-    ``Class.attribute``, ``Class.method``, ``Class.end`` (an association end) or ``Enumeration.LITERAL``."""
+    ``Class.attribute``, ``Class.method``, ``Class.end`` or ``association.end`` (an association end) or
+    ``Enumeration.LITERAL``."""
     parts = path.split(".")
     if len(parts) == 1:
         for collection in (model.types, model.associations, model.constraints):
@@ -726,11 +727,17 @@ def resolve(model: DomainModel, path: str) -> Any:
         raise EditError(f"{model.name} has no class, enumeration, association or constraint named '{path}'")
     if len(parts) != 2:
         raise EditError(f"'{path}': name an element as Name or Owner.member")
-    owner = find_type(model, parts[0])
-    if isinstance(owner, Enumeration):
-        members = list(owner.literals)
+    association = next((a for a in model.associations if a.name == parts[0]), None)
+    if association is not None and model.get_type_by_name(parts[0]) is None:
+        members = list(association.ends)
     else:
-        members = [*owner.attributes, *owner.methods, *owner.association_ends()]
+        try:
+            owner = find_type(model, parts[0])
+        except EditError as exc:
+            associations = ", ".join(sorted(a.name for a in model.associations)) or "none"
+            raise EditError(f"{exc}; nor an association (it has: {associations})") from exc
+        members = list(owner.literals) if isinstance(owner, Enumeration) else [
+            *owner.attributes, *owner.methods, *owner.association_ends()]
     found = next((member for member in members if member.name == parts[1]), None)
     if found is None:
         raise EditError(f"{parts[0]} has no member named '{parts[1]}' "
@@ -1012,6 +1019,8 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
         _rename_defaults(editor, element, new_name)
     new_path = f"{path.rsplit('.', 1)[0]}.{new_name}" if "." in path else new_name
     summary = f"renamed {path} to {new_path}" + (f" (variable {var} -> {new_var})" if new_var else "")
+    if isinstance(element, Class):
+        summary += _ends_named_after(editor, element, old_name, new_name)
 
     def check(model: DomainModel) -> str | None:
         try:
@@ -1021,6 +1030,27 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
         return None
 
     return Edited(editor.finish(), summary, check, editor.warnings)
+
+
+def _ends_named_after(editor: ModelEditor, cls: Class, old: str, new: str) -> str:
+    """A hint naming the ends of the renamed class ``cls`` still named after its old name ``old``
+    (``authors`` after Author -> Writer), with the command that renames each; empty when there are none."""
+    spellings = {_snake(old): _snake(new), old.lower(): new.lower(), old: new}
+    commands = []
+    for association in sorted(editor.model.associations, key=lambda a: a.name):
+        for end in sorted(association.ends, key=lambda e: e.name):
+            if end.type is not cls:
+                continue
+            holder = next((other.type for other in association.ends if other is not end), cls)
+            for old_form, new_form in spellings.items():
+                rest = end.name[len(old_form):]
+                if end.name.startswith(old_form) and rest in ("", "s", "es"):
+                    commands.append((f"{new if holder is cls else holder.name}.{end.name}", new_form + rest))
+                    break
+    if not commands:
+        return ""
+    return (f"; ends still named after {old}: {', '.join(described for described, _ in commands)} ("
+            + "; ".join(f"rename {described} {name}" for described, name in commands) + ")")
 
 
 def _renamed_variable(editor: ModelEditor, var: str, old_name: str, new_name: str) -> str | None:

@@ -160,6 +160,8 @@ def test_answers(client):
     book = {"title": "T", "pages": 3, "release": "2024-01-31", "library": library_id}
     assert client.post("/book/", json=book).status_code == 422  # a required end missing
     assert client.post("/book/", json={**book, "authors": []}).status_code == 400
+    assert client.post("/book/", json={**book, "authors": [999]}).status_code == 404  # an unknown id in a list
+    assert client.post("/book/", json={**book, "library": 999, "authors": [author["id"]]}).status_code == 400
     created = client.post("/book/", json={**book, "authors": [author["id"]]}).json()
     assert set(created) == {"book", "author_ids"}  # many-to-many: "<other class>_ids"
     assert created["book"]["library_id"] == library_id  # a to-one end: "<end>_id"
@@ -186,6 +188,7 @@ def test_the_guides_test_fixture_runs_and_its_answers_hold_on_a_generated_backen
 
     assert run.returncode == 0, run.stdout + run.stderr
     assert "tests: 1 passed" in run.stdout
+    assert "400 when\nempty); an unknown id is 400 (404 in a list)" in GUIDE  # what the test above checks
 
 
 @needs_pygit2

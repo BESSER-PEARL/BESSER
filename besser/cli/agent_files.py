@@ -56,7 +56,7 @@ Then one command, `besser apply`: it validates, builds every output keeping your
 `overwrite = true`: they discard edits.
 
 Hand-written code never goes in a generated file; a build never overwrites it:
-- Backend routes, middleware and startup hooks: `extensions.py` beside the generated `main_api.py`, with
+- Backend routes, middleware and startup hooks: `extensions.py` beside `main_api.py`, with
   `setup(app)` (added after the generated routes) or `before_routers(app)` (routes that win over them). It
   imports `from database import get_db`, `from sql_alchemy import X` (`db.get(X, id)`; an association end
   is a relationship of its name, a to-one end also a column `<end>_id`), `from pydantic_classes import XCreate`.
@@ -76,13 +76,13 @@ Hand-written code never goes in a generated file; a build never overwrites it:
 The `backend` API per class `X` (`x`: its name in lower case): `POST /x/`, `GET /x/`,
 `GET|PUT|DELETE /x/{x_id}/`, a `Method` as `POST /x/{x_id}/methods/<name>/`, and more (`besser info`).
 Bodies take the attributes (a date `"2024-01-31"`, an enumeration a literal's name) and each end by name
-(`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (422 when missing, 400 when empty
-or an unknown id). An object is `{attributes, "id", "<end>_id" per to-one end}`; `GET /x/` answers a list
-of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end: `"<end>_ids"` for
-one-to-many, `"<other class>_ids"` (lower case) for many-to-many. `POST` and `PUT` answer the same if `X`
-has a to-many end, else the bare object: read it as `body.get("x", body)`. OCL constraints are enforced
-(422) only if they compare an attribute with a number or use `matches('regex')`; write other rules in
-`extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
+(`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (422 when missing, 400 when
+empty); an unknown id is 400 (404 in a list). An object is `{attributes, "id", "<end>_id" per to-one end}`;
+`GET /x/` answers a list of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end:
+`"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. `POST` and `PUT` answer
+the same if `X` has a to-many end, else the bare object: read it as `body.get("x", body)`. OCL constraints
+are enforced (422) only if they compare an attribute with a number or use `matches('regex')`; write other
+rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
 """
 
 

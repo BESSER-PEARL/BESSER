@@ -678,9 +678,10 @@ class ToolExecutor:
         # where anchor is old_text, or "lines N-M" for a range edit.
         self._rejected_targets: dict[tuple[str, str], int] = {}
         self._repeat_hits: dict[str, int] = {}
-        # (path, times seen) when the LAST call repeated a rejected edit, for
-        # the orchestrator's escalation; None otherwise.
-        self.last_repeat: tuple[str, int] | None = None
+        # Per path, the count when that path's latest call repeated a rejected
+        # edit, for the orchestrator's escalation (see ``last_repeat``). Kept
+        # per path: one turn's calls on other paths must not clear it.
+        self._repeat_reports: dict[str, int] = {}
         # Paths the orchestrator closed for the rest of the run -> reason.
         self._frozen_paths: dict[str, str] = {}
         # Files the model has actually SEEN this run: read, written, modified,
@@ -2284,7 +2285,6 @@ class ToolExecutor:
                 self._last_missed_old_text.pop(path, None)
                 self._range_edit_failures.pop(path, None)
                 self._clear_rejections(path)
-                self.last_repeat = None
             elif (tool in {"modify_file", "replace_file_lines"}
                     and result.get("status") not in {"already_applied", "possible_replay"}):
                 self._edit_recovery[path] = self._edit_recovery.get(path, 0) + 1
@@ -2687,8 +2687,16 @@ class ToolExecutor:
                        hits if hits >= self._TARGET_REPEAT_AT else 0)
         if reported:
             self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), reported)
-            self.last_repeat = (key[0], reported)
+            self._repeat_reports[key[0]] = reported
         return seen
+
+    @property
+    def last_repeat(self) -> tuple[str, int] | None:
+        """``(path, times seen)`` with the highest count among paths whose
+        latest call repeated a rejected edit; None when there is none."""
+        if not self._repeat_reports:
+            return None
+        return max(self._repeat_reports.items(), key=lambda item: item[1])
 
     def _clear_rejections(self, rel_path: str) -> None:
         key_path = rel_path.strip()
@@ -2697,6 +2705,7 @@ class ToolExecutor:
         for key in [k for k in self._rejected_targets if k[0] == key_path]:
             del self._rejected_targets[key]
         self._repeat_hits.pop(key_path, None)
+        self._repeat_reports.pop(key_path, None)
 
     def _modify_file(self, args: dict) -> dict:
         """Targeted search-and-replace, with a flexible apply ladder.
@@ -2715,7 +2724,8 @@ class ToolExecutor:
         if not os.path.isfile(path):
             return self._missing_file_result(args["path"])
         rel_path = args["path"].replace("\\", "/")
-        self.last_repeat = None
+        # This call is the path's latest; it reports again only if it repeats.
+        self._repeat_reports.pop(rel_path.strip(), None)
         # read() normalizes file newlines; normalize quoted text identically.
         old_text = args["old_text"].replace("\r\n", "\n")
         new_text = args["new_text"].replace("\r\n", "\n")

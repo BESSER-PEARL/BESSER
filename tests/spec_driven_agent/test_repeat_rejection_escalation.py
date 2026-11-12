@@ -258,6 +258,35 @@ def test_a_range_edit_target_counts_across_redrafts(tmp_path):
     assert ex.last_repeat == ("app.py", 4)
 
 
+def test_an_edit_on_another_path_does_not_hide_a_repeat(tmp_path):
+    """One turn's tool calls run as a batch. ``last_repeat`` was one slot that
+    every modify_file and every successful write on ANY path cleared, so a
+    rejected edit resent beside a good edit elsewhere never reached
+    ``_REPEAT_FORCE_AT`` or ``_REPEAT_STOP_AT``."""
+    ex = _executor(tmp_path)
+    (tmp_path / "b.py").write_text("x = 1\n", encoding="utf-8")
+    ex.execute_typed("read_file", {"path": "b.py"})
+    for _ in range(4):
+        _miss(ex, "# A\n")
+    landed = ex.execute_typed("modify_file", {
+        "path": "b.py", "old_text": "x = 1", "new_text": "x = 2"}).payload
+    assert landed["status"] == "modified", landed
+
+    assert ex.last_repeat == ("app.py", 4)
+    ex.execute_typed("modify_file", {"path": "b.py", "old_text": "nowhere", "new_text": "x = 3"})
+    assert ex.last_repeat == ("app.py", 4), "a miss on b.py is not app.py's next call"
+
+
+def test_the_highest_pending_repeat_is_reported(tmp_path):
+    ex = _executor(tmp_path)
+    for _ in range(3):
+        ex._note_rejection("b.py", "old", "new")
+    for _ in range(2):
+        _miss(ex, "# A\n")
+
+    assert ex.last_repeat == ("b.py", 3)
+
+
 # -- two refusals -> rewrite the whole file -------------------------------
 
 

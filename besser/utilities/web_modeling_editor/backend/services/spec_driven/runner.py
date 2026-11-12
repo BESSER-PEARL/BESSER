@@ -2743,12 +2743,19 @@ class SmartGenerationRunner:
             )
 
     def _cleanup_temp_dir(self) -> None:
-        """Delete this run's workspace after a failure, unless it is a resumed one."""
+        """Delete this run's workspace after a failure, unless it can be resumed."""
         if self._resume_run_id:
             # The workspace is the interrupted attempt's: its files, checkpoint
             # and download outlive a failed resume, so the user can retry with
             # the right input. The 24 h temp cleanup removes it.
             logger.warning("Run %s: resume failed; keeping its workspace for another resume", self.run_id)
+            return
+        from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+
+        if self.temp_dir and os.path.isfile(os.path.join(self.temp_dir, CHECKPOINT_FILENAME)):
+            # A checkpoint makes the run resumable, and an abandoned run has
+            # already told its client so (``resumeAvailable``).
+            logger.warning("Run %s failed after a checkpoint; keeping its workspace for resume", self.run_id)
             return
         if self.temp_dir and os.path.isdir(self.temp_dir):
             try:

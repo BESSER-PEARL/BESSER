@@ -89,7 +89,9 @@ attempt's entry instead of adding one.
 A resume that fails (a changed project, a rejected key, a provider error)
 leaves the interrupted run's workspace, checkpoint and download in place, so
 it can be resumed again with the right input until the 24-hour temp cleanup
-removes it.
+removes it. Likewise a run that fails or is cancelled after writing a
+checkpoint keeps its workspace, so an abandoned run that reports
+``resumeAvailable: true`` can be resumed.
 
 .. _spec-driven-modify-mode:
 

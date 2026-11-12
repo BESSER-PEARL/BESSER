@@ -267,6 +267,49 @@ def test_abandonment_only_advertises_a_verified_checkpoint():
     asyncio.run(exercise())
 
 
+class _CheckpointsThenFailsOnCancel(_FakeOrchestrator):
+    """A Phase 2 turn left a checkpoint; the call in flight fails once the run is cancelled."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.should_continue = kwargs["should_continue"]
+
+    def run(self, instructions: str) -> str:
+        with open(os.path.join(self.output_dir, ".besser_checkpoint.json"), "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        for _ in range(1000):  # 10 s safety net
+            if not self.should_continue():
+                break
+            time.sleep(0.01)
+        raise RuntimeError("provider connection dropped")
+
+
+def test_abandonment_advertises_a_checkpoint_the_runner_keeps(monkeypatch, tmp_path):
+    """Review E10: the abandoned run's terminal frame said ``resumeAvailable:
+    true``, then the runner deleted the workspace and ``/resume`` answered 404."""
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _CheckpointsThenFailsOnCancel)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    settings = get_settings().model_copy(
+        update={"llm_cancel_abandoned_runs": True, "llm_disconnected_grace_seconds": 0.05},
+    )
+    runtime = current_runtime()
+
+    async def exercise() -> None:
+        response = await router_module.smart_generate(
+            _build_request(), runtime, settings, idempotency_key=None,
+        )
+        run_id = response.headers["X-BESSER-Run-Id"]
+        await asyncio.wait_for(runtime.durable_runs.wait(run_id), 10)
+        terminal = runtime.durable_runs.store.events_after(run_id, 0)[-1].payload
+        assert (terminal["code"], terminal["reason"]) == ("CANCELLED", "abandoned")
+        assert terminal["resumeAvailable"] is True
+        assert runtime.durable_runs.get_run(run_id).resume_available is True
+        assert runner_module._locate_run_temp_dir(run_id) is not None
+
+    asyncio.run(exercise())
+
+
 def test_abandoned_real_runner_shape_keeps_partial_download():
     """Cooperative runner cancellation emits INCOMPLETE then done, not CANCELLED."""
 

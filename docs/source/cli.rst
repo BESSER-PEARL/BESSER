@@ -288,7 +288,10 @@ writes. When that output is a ``backend`` or a ``web_app``, it generates its
 API tests (the ``tests`` option, see :doc:`generators/backend`),
 ``test = "python -m pytest -q"`` runs them, and a ``conftest.py`` in the folder
 gives every test of the project, such as yours in ``tests/``, the generated
-``client`` fixture (``from backend.tests.conftest import client``). So the
+``client`` fixture (``from backend.tests.conftest import client``; before the
+first build it says to run ``besser apply``). That ``conftest.py`` follows the
+``besser.toml`` in place: a kept one whose outputs do not generate their tests
+gets none, and a note says which option turns them on. So the
 first ``besser apply`` reports the generated tests passing:
 
 .. code-block:: console

@@ -559,8 +559,8 @@ _INIT_OPTIONS = {"backend": "{ tests = true, uniform_responses = true }",
 _INIT_CONFTEST = "conftest.py"
 
 
-# Generators that write API tests (option 'tests'): where their pytest fixtures are, from the project folder.
-_INIT_TEST_FIXTURES = {"backend": "backend.tests.conftest", "web_app": "web_app.backend.tests.conftest"}
+# Generators that write API tests (option 'tests'): the folder of their pytest fixtures in the output's dir.
+_INIT_TEST_FIXTURES = {"backend": ("tests",), "web_app": ("backend", "tests")}
 # What the generated API tests import; 'besser apply' runs them only when all are installed.
 _API_TEST_PACKAGES = ("pytest", "fastapi", "httpx")
 
@@ -590,15 +590,40 @@ def _init_config(kind: str, can_test: bool = True) -> str | None:
             + (f"options = {_INIT_OPTIONS[generator]}\n" if generator in _INIT_OPTIONS else ""))
 
 
-def _init_conftest(kind: str) -> str | None:
-    """The project's ``conftest.py``, which gives every test of the project the generated ``client`` fixture;
-    None when the output of ``kind`` generates no tests."""
-    generator = _init_generator(kind)
-    if generator not in _INIT_TEST_FIXTURES:
+def _fixture_import(config_path: Path) -> tuple[OutputConfig, tuple[str, ...]] | None:
+    """The first output of the ``besser.toml`` at ``config_path`` that generates its API tests, and the
+    module path of their ``conftest.py`` from the project folder; None when no output does (or its dir is
+    no importable path)."""
+    try:
+        outputs = load_config(str(config_path))
+    except ConfigError:
         return None
+    for output in outputs:
+        folder = _INIT_TEST_FIXTURES.get(output.generator)
+        if folder is None or output.options.get("tests") is not True:
+            continue
+        try:
+            parts = (*Path(output.output_dir).relative_to(config_path.parent).parts, *folder)
+        except ValueError:  # outside the project
+            continue
+        if parts and all(part.isidentifier() for part in parts):
+            return output, parts
+    return None
+
+
+def _init_conftest(output: OutputConfig, parts: tuple[str, ...]) -> str:
+    """The project's ``conftest.py``: every test of the project gets the ``client`` fixture of the API tests
+    ``output`` generates in the folder ``parts``; before they exist it says what writes them."""
+    shown = "/".join((*parts, "conftest.py"))
     return ('"""pytest fixtures for the tests of this project. client: a TestClient on the generated API, on an\n'
             'empty temporary database (see the conftest.py it comes from)."""\n'
-            f"from {_INIT_TEST_FIXTURES[generator]} import client  # noqa: F401\n")
+            "import os\n\n"
+            f"if not os.path.isfile(os.path.join(os.path.dirname(__file__), {', '.join(map(repr, parts))}, "
+            "'conftest.py')):\n"
+            f"    raise ImportError(\"{shown} (the client fixture) is written by 'besser apply' from the output \"\n"
+            f"                      \"'{output.name}' of besser.toml (option tests = true): run it first. Changed \"\n"
+            "                      \"that output's dir, or turned the option off? Change this file too.\")\n"
+            f"from {'.'.join(parts)}.conftest import client  # noqa: E402,F401\n")
 
 
 def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
@@ -616,9 +641,6 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
         root.mkdir(parents=True, exist_ok=True)
         missing = _missing_test_packages()
         planned = {_INIT_MODEL: starter_source(kind, _INIT_MODEL), CONFIG_FILENAME: _init_config(kind, not missing)}
-        conftest = _init_conftest(kind)
-        if conftest is not None:
-            planned[_INIT_CONFTEST] = conftest
         for name, text in planned.items():
             target = root / name
             if text is None:
@@ -628,6 +650,23 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
             else:
                 target.write_text(text, encoding="utf-8")
                 files.append(target.as_posix())
+        # Read from the besser.toml in place, written or kept: importing a fixture it does not generate
+        # would break every test of the project.
+        fixture = _fixture_import(root / CONFIG_FILENAME) if (root / CONFIG_FILENAME).is_file() else None
+        conftest = _init_conftest(*fixture) if fixture else None
+        target = root / _INIT_CONFTEST
+        if fixture is None:
+            if (root / CONFIG_FILENAME).is_file() and (root / CONFIG_FILENAME).as_posix() not in files:
+                notes.append(f"no {_INIT_CONFTEST}: no output of {CONFIG_FILENAME} generates the API tests and "
+                             "their client fixture (options = { tests = true } on a backend or web_app output)")
+        elif target.exists():
+            line = f"from {'.'.join(fixture[1])}.conftest import client"
+            held = target.read_text(encoding="utf-8", errors="replace")
+            notes.append(f"kept {target.as_posix()}: it exists" + (
+                "" if line in held else f"; for the generated client fixture add '{line}' to it"))
+        else:
+            target.write_text(conftest, encoding="utf-8")
+            files.append(target.as_posix())
     except OSError as exc:
         return failure("init", f"cannot write in {root}: {exc}", EXIT_FAILED, data, cause=exc)
     files.extend(_write_agent_files(root, warnings, notes))

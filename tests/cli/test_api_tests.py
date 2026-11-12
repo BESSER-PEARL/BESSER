@@ -43,7 +43,7 @@ def test_init_generates_the_api_tests_and_apply_runs_them(besser, tmp_path):
     assert 'test = "python -m pytest -q"' in config.splitlines()[1]
     assert "options = { tests = true, uniform_responses = true }" in config
     assert init.stdout.startswith("Set up .: wrote model.py, besser.toml, conftest.py, AGENTS.md")
-    assert (tmp_path / "conftest.py").read_text().endswith("from backend.tests.conftest import client  # noqa: F401\n")
+    assert (tmp_path / "conftest.py").read_text().endswith("from backend.tests.conftest import client  # noqa: E402,F401\n")
     # The starter's Library, Book and Author: written by nobody but besser.
     assert applied.returncode == 0 and _passed(applied) == 3
     assert {path.name for path in (tmp_path / "backend" / "tests").glob("*.py")} == {
@@ -122,3 +122,51 @@ def test_init_without_the_test_packages_leaves_test_commented_and_says_what_to_i
     # The first apply builds and does not fail on a package the user did not choose.
     assert applied.returncode == 0
     assert applied.stdout.rstrip("\n").endswith("; tests: none (set 'test' in besser.toml)")
+
+
+def test_the_project_conftest_says_what_to_run_before_the_first_build(besser, tmp_path):
+    besser("init")
+    before = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=300, check=False)
+
+    assert before.returncode != 0
+    assert ("backend/tests/conftest.py (the client fixture) is written by 'besser apply' from the output "
+            "'backend' of besser.toml (option tests = true): run it first") in before.stdout + before.stderr
+    assert _passed(besser("apply", output=None)) == 3
+
+
+def test_init_in_a_project_whose_backend_has_no_tests_writes_no_conftest_and_says_how(besser, write, tmp_path):
+    """A conftest.py importing a fixture the besser.toml in place does not generate breaks every test."""
+    write("model.py", starter_source("domain", "model.py"))
+    write("besser.toml", 'model = "model.py"\ntest = "python -m pytest -q"\n\n'
+                         '[output.backend]\ngenerator = "backend"\ndir = "backend"\n')
+    write("tests/test_mine.py", "def test_mine():\n    assert True\n")
+
+    init = besser("init", "--json")
+    applied = besser("apply", output=None)
+
+    assert not (tmp_path / "conftest.py").exists()
+    assert "no conftest.py: no output of besser.toml generates the API tests and their client fixture " \
+           "(options = { tests = true } on a backend or web_app output)" in init.json["notes"]
+    assert applied.returncode == 0 and "tests: 1 passed" in applied.stdout, applied.stdout + applied.stderr
+
+
+def test_init_points_the_conftest_at_the_dir_of_besser_toml(besser, write, tmp_path):
+    write("besser.toml", 'model = "model.py"\ntest = "python -m pytest -q"\n\n[output.api]\ngenerator = "backend"\n'
+                         'dir = "api"\noptions = { tests = true }\n')
+    besser("init")
+
+    assert (tmp_path / "conftest.py").read_text().endswith("from api.tests.conftest import client  # noqa: E402,F401\n")
+    applied = besser("apply", output=None)
+    assert applied.returncode == 0 and "tests: 3 passed" in applied.stdout, applied.stdout + applied.stderr
+
+
+def test_init_keeps_a_conftest_and_says_what_it_lacks(besser, write, tmp_path):
+    besser("init")
+    again = besser("init", "--json")
+    write("conftest.py", "import pytest\n")
+    mine = besser("init", "--json")
+
+    assert "kept conftest.py: it exists" in again.json["notes"]
+    assert ("kept conftest.py: it exists; for the generated client fixture add "
+            "'from backend.tests.conftest import client' to it") in mine.json["notes"]

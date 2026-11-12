@@ -354,3 +354,12 @@ def test_a_shape_the_backend_generator_breaks_is_skipped_naming_the_generator(en
 
     assert counts == expected, output
     assert reason in output and "A limitation of the generator, not of the model" in output
+
+
+def test_deleting_an_object_linked_to_its_own_parent_class_expects_what_the_api_answers(tmp_path):
+    """A many-to-many between a class and its parent: the subclass object is created with the parent end
+    it requires, and no linked object needs it, so its delete succeeds (it was expected to be refused)."""
+    ends = [("members", "Student", _many()), ("mentors", "Person", _many(1))]
+    counts, output = _run_generated_tests(_generator_limit_model(ends, subclass=True), tmp_path)
+
+    assert counts == {"passed": 2}, output

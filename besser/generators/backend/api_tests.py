@@ -75,7 +75,7 @@ class _Object:
     cls: Class
     fields: list[tuple[str, str]]  # (field, python source of its value), in payload order
     values: dict[str, Any]  # attribute -> python value, as the API validates it
-    links: list[tuple[Any, Class]] = field(default_factory=list)  # (association, other class) linked at creation
+    links: list[tuple[Any, Property]] = field(default_factory=list)  # (association, far end) linked at creation
 
 
 @dataclass
@@ -442,21 +442,16 @@ class _ApiShape:
             return None
         return "id"
 
-    def guarded_associations(self, cls: Class) -> set[str]:
-        """Associations through which a linked object needs at least one ``cls``: the generated delete
-        refuses to leave it without (``lower_bound_guards`` in ``router.py.j2``)."""
-        guarded = set()
-        for owner in [cls, *cls.all_parents()]:
-            for association in owner.associations:
-                ends = list(association.ends)
-                if len(ends) != 2 or ends[0].type is ends[1].type:
-                    continue
-                near = ends[0] if ends[0].type is owner else ends[1]
-                far = ends[1] if near is ends[0] else ends[0]
-                whole = near.is_composite and near.multiplicity.max <= 1 and association.name not in self.link_class
-                if far.is_navigable and near.multiplicity.min > 0 and not whole:
-                    guarded.add(association.name)
-        return guarded
+    def guards(self, association, far: Property) -> bool:
+        """Whether the objects at ``far`` of ``association`` need at least one object at its other end: the
+        generated delete of that object refuses to leave them without (``lower_bound_guards`` in
+        ``router.py.j2``; never for a self association, whose ends it does not tell apart)."""
+        ends = list(association.ends)
+        if len(ends) != 2 or ends[0].type is ends[1].type:
+            return False
+        near = ends[0] if ends[1] is far else ends[1]
+        whole = near.is_composite and near.multiplicity.max <= 1 and association.name not in self.link_class
+        return far.is_navigable and near.multiplicity.min > 0 and not whole
 
 
 # ── one test ───────────────────────────────────────────────────────────────
@@ -508,7 +503,7 @@ class _Planner:
         links = []
         for association, far, count, kind in self.shape.required_ends(cls):
             targets = [self._prerequisite(far, chain) for _ in range(count)]
-            links.append((association, far.type))
+            links.append((association, far))
             if kind == "id":
                 fields.append((far.name, targets[0]))
             elif kind == "ids":
@@ -638,8 +633,7 @@ def _test_lines(shape: _ApiShape, planner: _Planner, obj: _Object) -> list[str]:
             lines.append(f"_assert_fields(_read(client, {path!r}, {key!r}, item_id), "
                          f"{_expected(shape, obj, {change[0]})})")
     if "DELETE" in shape.http_methods and not cls.is_read_only:
-        guarded = shape.guarded_associations(cls)
-        needed_by = sorted({other.name for association, other in obj.links if association.name in guarded})
+        needed_by = sorted({far.type.name for association, far in obj.links if shape.guards(association, far)})
         lines.append(f"response = client.delete(_item({path!r}, item_id))")
         if needed_by:
             lines.append(f"# The {', '.join(needed_by)} it was created with needs at least one {cls.name}: "

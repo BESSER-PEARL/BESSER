@@ -556,6 +556,38 @@ def test_a_resumed_phase2_still_warns_on_a_framework_switch(simple_model, tmp_pa
     assert warnings and warnings[0] and "FRAMEWORK SWITCH" in warnings[0]
 
 
+def test_resume_keeps_the_extracted_requirements(simple_model, tmp_path, monkeypatch):
+    """The requirements ledger was not checkpointed: the resumed Phase 2 prompt
+    had no requirements and Phase 3 paid for a second extraction, which may
+    return a different list to judge against."""
+    import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
+
+    extractions = []
+
+    def extract(instructions, client):
+        extractions.append(instructions)
+        return [{"id": 1, "kind": "action", "text": "A user can publish a post"}]
+
+    monkeypatch.setattr(orchestrator_module._requirements_ledger, "extract_requirements", extract)
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert len(extractions) == 1
+
+    class _Recording(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            self.systems = [*getattr(self, "systems", []), system]
+            return super().chat(system, messages, tools)
+
+    client = _Recording([_end_turn()])
+    resumed = LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    )
+    resumed.resume("Build a blog")
+
+    assert "R1. A user can publish a post" in client.systems[0]
+    assert len(extractions) == 1
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

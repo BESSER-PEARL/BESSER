@@ -166,6 +166,18 @@ def test_write_evidence_round_trip_and_default(tmp_path):
     assert load_checkpoint(str(tmp_path)).write_evidence == {}
 
 
+def test_requirements_round_trip_and_default(tmp_path):
+    """``None`` (never extracted) and ``[]`` (nothing stated) stay distinct."""
+    for requirements in ([{"id": 1, "text": "A user can log in"}], [], None):
+        save_checkpoint(str(tmp_path), _make_checkpoint(requirements=requirements))
+        assert load_checkpoint(str(tmp_path)).requirements == requirements
+
+    data = _make_checkpoint().to_dict()
+    data.pop("requirements")
+    (tmp_path / CHECKPOINT_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+    assert load_checkpoint(str(tmp_path)).requirements is None
+
+
 def test_load_missing_returns_none(tmp_path):
     assert load_checkpoint(str(tmp_path)) is None
 

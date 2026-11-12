@@ -951,6 +951,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ValidationIssue(i.get("severity", "warning"), i.get("message", ""))
             for i in checkpoint.validation_issues
         ]
+        self._requirements = checkpoint.requirements
         self._project_fingerprint = checkpoint.project_fingerprint
         from besser.spec_driven_agent.state.checkpoint import restore_api_scenarios
         self._api_scenarios = restore_api_scenarios(checkpoint.api_scenarios)
@@ -2684,6 +2685,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 modify=self._modify_checkpoint_state(),
                 generator_files=sorted(self.executor._generator_files),
                 write_evidence=self.executor.evidence_snapshot(),
+                requirements=self._requirements,
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:

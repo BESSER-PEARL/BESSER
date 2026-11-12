@@ -102,6 +102,9 @@ class Checkpoint:
     generator_files: list[str] = field(default_factory=list)
     # What ``task_list`` evidence is checked against (``ToolExecutor.evidence_snapshot``).
     write_evidence: dict = field(default_factory=dict)
+    # The requirements ledger (``None``: not extracted). Phase 2 and Phase 3
+    # hold the run to one list; a resume must not extract a second one.
+    requirements: list[dict] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +135,7 @@ class Checkpoint:
             "modify": self.modify,
             "generator_files": self.generator_files,
             "write_evidence": self.write_evidence,
+            "requirements": self.requirements,
         }
 
 
@@ -399,6 +403,9 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             modify=modify,
             generator_files=[p for p in generator_files if isinstance(p, str)],
             write_evidence=data.get("write_evidence") if isinstance(data.get("write_evidence"), dict) else {},
+            requirements=(
+                [r for r in data["requirements"] if isinstance(r, dict)]
+                if isinstance(data.get("requirements"), list) else None),
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

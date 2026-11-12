@@ -545,7 +545,7 @@ The check is opt-in, since it needs those optional packages.
        class Book: title:str, pages:int, isbn:str?='none'
        association holds: library:Library[1] books:Book[*]
        constraint pages_positive on Book: self.pages > 0
-       backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/, /x/bulk|count|paginated|search/
+       backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/, POST|DELETE /x/bulk/, GET /x/count/, GET /x/paginated/, GET /x/search/
    Generators that read this model: python, java, pydantic, test_case, django, spring, backend, sqlalchemy, sql, supabase, jsonschema, rdf, rest_api
 
 Each model is listed under the name the other commands call it (the variable
@@ -556,17 +556,23 @@ domain model, its classes with their attributes (``name:type``, ``?`` marks
 an optional one, ``=value`` its default), methods and parents, its
 enumerations, its associations (each end as ``role:Class[multiplicity]``) and
 its constraints (the OCL after ``context X inv name:``), in the order they were
-defined, then the routes the ``backend`` generator writes for each class (and
-for each method). Attributes and ends are written as :ref:`besser model
+defined, then the routes the ``backend`` generator writes for a plain class,
+a ``X routes:`` line for each class whose routes differ (an association class
+is addressed by the ids of its two ends and has no bulk routes, a read-only
+class has no update or delete routes, a class without an own or inherited
+attribute of a primitive type has no ``/search/``), and the routes of each
+method. The relationship routes under ``/x/{x_id}/<end>/`` are not listed.
+Attributes and ends are written as :ref:`besser model
 <cli-model>` takes them. The last line names the generators whose models the
 file holds; :ref:`terse output <cli-terse>` leaves it out. It is the model in
 a few hundred tokens: a coding agent reads it instead of the model file or the
 generated code.
 
 ``--class X`` describes one class in full: its own and inherited attributes,
-its methods with their signatures, the association ends it navigates (with
-the association's name), the constraints on it, the ``backend`` generator's
-routes for it and the generated names custom code imports (the SQLAlchemy
+its methods with their signatures, the association ends it navigates and
+those it inherits (with the association's name), the constraints on it, the
+``backend`` generator's routes for it and the generated names custom code
+imports (the SQLAlchemy
 class and its table, the Pydantic create schema, the session dependency):
 
 .. code-block:: console
@@ -576,7 +582,7 @@ class and its table, the Pydantic create schema, the session dependency):
      attributes: title:str, pages:int, isbn:str?='none'
      ends: library:Library[1] (holds)
      constraints: pages_positive: self.pages > 0
-     backend routes: POST /book/, GET /book/, GET /book/{book_id}/, PUT /book/{book_id}/, DELETE /book/{book_id}/, /book/{bulk|count|paginated|search}/
+     backend routes: POST|GET /book/, GET|PUT|DELETE /book/{book_id}/, POST|DELETE /book/bulk/, GET /book/count/, GET /book/paginated/, GET /book/search/
      backend code: sql_alchemy.Book (table book), pydantic_classes.BookCreate, database.get_db
 
 The model is not validated: a model with errors is summarised too, and the
@@ -590,7 +596,8 @@ models of a kind with none current (see :ref:`cli-several-diagrams`).
 (each attribute with ``name``, ``type``, ``optional`` and ``default``),
 ``enumerations``, ``associations``, ``constraints`` (``name``, ``context``,
 ``expression``) and ``backend_endpoints`` (class name -> ``"METHOD /path/"``
-for create, read, update, delete and each method); for the other kinds ``elements``, the
+for create, read, update, delete, bulk, count, paginated, search and each
+method, as the class has them); for the other kinds ``elements``, the
 names of what the model holds per collection, as in ``states: created, paid``)
 and ``generators``.
 
@@ -1248,7 +1255,8 @@ Each command adds its own:
        ``backend_endpoints``) and ``generators``; with ``--class``,
        ``classes``: per domain model holding it, the class's ``model``,
        ``name``, ``is_abstract``, ``parents``, ``attributes``,
-       ``inherited_attributes``, ``methods``, ``ends``, ``constraints``,
+       ``inherited_attributes``, ``methods``, ``ends``, ``inherited_ends``,
+       ``constraints``,
        ``backend_endpoints`` and ``backend_code``.
    * - ``model``
      - ``model``, the file, and ``changes``: what each operation did (empty

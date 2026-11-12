@@ -95,7 +95,7 @@ def _endpoints(model: DomainModel) -> dict[str, list[str]]:
     # Imported here: the backend generator's templates are only needed for a domain model.
     from besser.generators.backend.endpoints import class_endpoints
 
-    return {cls.name: class_endpoints(cls) for cls in sort_by_timestamp(model.get_classes())}
+    return {cls.name: class_endpoints(cls, model) for cls in sort_by_timestamp(model.get_classes())}
 
 
 def _domain_details(model: DomainModel) -> dict[str, Any]:
@@ -178,6 +178,20 @@ def invariant_body(expression: str) -> str:
     return _OCL_HEADER.sub("", expression, count=1)
 
 
+# The routes of a plain class X, as ``compact_routes`` writes them; a class with other routes gets its own line.
+_PLAIN_ROUTES = ("POST|GET /x/, GET|PUT|DELETE /x/{x_id}/, POST|DELETE /x/bulk/, GET /x/count/, GET /x/paginated/, "
+                 "GET /x/search/")
+
+
+def compact_routes(routes: list[str]) -> list[str]:
+    """``routes`` with the methods of one path joined, in first-seen order: ``POST|GET /book/``."""
+    verbs: dict[str, list[str]] = {}
+    for route in routes:
+        verb, path = route.split(" ", 1)
+        verbs.setdefault(path, []).append(verb)
+    return [f"{'|'.join(methods)} {path}" for path, methods in verbs.items()]
+
+
 def summary_lines(entry: dict[str, Any]) -> list[str]:
     """The lines of the text report for one ``describe_model`` entry."""
     counts = ", ".join(
@@ -208,9 +222,11 @@ def summary_lines(entry: dict[str, Any]) -> list[str]:
         lines.append(f"    constraint {constraint['name']} on {constraint['context']}: "
                      f"{invariant_body(constraint['expression'])}")
     if entry.get("backend_endpoints"):
-        lines.append("    backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/, "
-                     "/x/bulk|count|paginated|search/")
+        lines.append(f"    backend routes per class X: {_PLAIN_ROUTES}")
         for cls, routes in entry["backend_endpoints"].items():
+            crud = ", ".join(compact_routes([route for route in routes if "/methods/" not in route]))
+            if crud != _PLAIN_ROUTES.replace("/x/", f"/{cls.lower()}/").replace("{x_id}", f"{{{cls.lower()}_id}}"):
+                lines.append(f"    {cls} routes: {crud}")
             methods = [route for route in routes if "/methods/" in route]
             if methods:
                 lines.append(f"    {cls} methods: {', '.join(methods)}")
@@ -226,9 +242,11 @@ def _signature(method: Any) -> str:
 def describe_class(model: DomainModel, cls: Any) -> dict[str, Any]:
     """One class as ``besser info --class`` shows it: its members, inherited ones, association ends,
     constraints, and what the backend generator writes for it."""
+    from besser.generators.backend.endpoints import class_endpoints
+
     association_of = {id(end): association.name for association in model.associations for end in association.ends}
-    inherited = [attribute for parent in sort_by_timestamp(cls.all_parents())
-                 for attribute in sort_by_timestamp(parent.attributes)]
+    parents = sort_by_timestamp(cls.all_parents())
+    inherited = [attribute for parent in parents for attribute in sort_by_timestamp(parent.attributes)]
     return {
         "name": cls.name,
         "is_abstract": cls.is_abstract,
@@ -239,9 +257,12 @@ def describe_class(model: DomainModel, cls: Any) -> dict[str, Any]:
         "ends": [f"{end_text({'name': end.name, 'type': _name(end.type), 'multiplicity': _multiplicity(end)})} "
                  f"({association_of.get(id(end), '?')})"
                  for end in sorted(cls.association_ends(), key=lambda end: end.name)],
+        "inherited_ends": [f"{end_text({'name': end.name, 'type': _name(end.type), 'multiplicity': _multiplicity(end)})} "
+                           f"({association_of.get(id(end), '?')}, from {parent.name})"
+                           for parent in parents for end in sorted(parent.association_ends(), key=lambda end: end.name)],
         "constraints": [f"{constraint.name}: {invariant_body(constraint.expression)}"
                         for constraint in sorted(model.constraints, key=lambda c: c.name) if constraint.context is cls],
-        "backend_endpoints": _class_endpoints(cls),
+        "backend_endpoints": class_endpoints(cls, model),
         "backend_code": [f"sql_alchemy.{cls.name} (table {cls.name.lower()})", f"pydantic_classes.{cls.name}Create",
                          "database.get_db"],
     }
@@ -252,13 +273,6 @@ def _attribute(attribute: Any) -> dict[str, Any]:
             "default": _plain(attribute.default_value)}
 
 
-def _class_endpoints(cls: Any) -> list[str]:
-    from besser.generators.backend.endpoints import EXTRA_ROUTES, class_endpoints
-
-    path = f"/{cls.name.lower()}/"
-    return [*class_endpoints(cls), f"{path}{{{'|'.join(EXTRA_ROUTES)}}}/"]
-
-
 def class_lines(entry: dict[str, Any]) -> list[str]:
     """The lines of ``besser info --class`` for one ``describe_class`` entry."""
     header = f"{'abstract ' if entry['is_abstract'] else ''}class {entry['name']}"
@@ -266,8 +280,9 @@ def class_lines(entry: dict[str, Any]) -> list[str]:
         header += f"({', '.join(entry['parents'])})"
     lines = [header]
     for label, key in (("attributes", "attributes"), ("inherited", "inherited_attributes"), ("methods", "methods"),
-                       ("ends", "ends"), ("constraints", "constraints"), ("backend routes", "backend_endpoints"),
-                       ("backend code", "backend_code")):
-        if entry[key]:
-            lines.append(f"  {label}: {', '.join(entry[key])}")
+                       ("ends", "ends"), ("inherited ends", "inherited_ends"), ("constraints", "constraints"),
+                       ("backend routes", "backend_endpoints"), ("backend code", "backend_code")):
+        values = compact_routes(entry[key]) if key == "backend_endpoints" else entry[key]
+        if values:
+            lines.append(f"  {label}: {', '.join(values)}")
     return lines

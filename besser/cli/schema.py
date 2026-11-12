@@ -210,7 +210,7 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "generators": {**_STRINGS, "description": "the ids of the generators that can run on the file"},
         "classes": {"type": "array", "description": "with --class: per domain model holding it, the class's "
                                                     "model, name, is_abstract, parents, attributes, "
-                                                    "inherited_attributes, methods, ends, constraints, "
+                                                    "inherited_attributes, methods, ends, inherited_ends, constraints, "
                                                     "backend_endpoints and backend_code"},
     },
     "model": {

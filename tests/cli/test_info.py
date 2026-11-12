@@ -64,9 +64,11 @@ def test_json_describes_each_model(besser, model):
         "constraints": [],
         "backend_endpoints": {
             "Library": ["POST /library/", "GET /library/", "GET /library/{library_id}/", "PUT /library/{library_id}/",
-                        "DELETE /library/{library_id}/"],
+                        "DELETE /library/{library_id}/", "POST /library/bulk/", "DELETE /library/bulk/",
+                        "GET /library/count/", "GET /library/paginated/", "GET /library/search/"],
             "Book": ["POST /book/", "GET /book/", "GET /book/{book_id}/", "PUT /book/{book_id}/",
-                     "DELETE /book/{book_id}/"],
+                     "DELETE /book/{book_id}/", "POST /book/bulk/", "DELETE /book/bulk/", "GET /book/count/",
+                     "GET /book/paginated/", "GET /book/search/"],
         },
     }]
     assert "python" in result["generators"] and "react" not in result["generators"]
@@ -156,3 +158,42 @@ def test_a_model_that_is_not_a_domain_model_lists_what_it_holds_by_name(besser):
     assert run.json["models"][0]["counts"] == {"states": len(states)}
     assert "created" in states
     assert f"    states: {', '.join(states)}\n" in besser("info", "machine.py").stdout
+
+
+SHAPES_MODEL = '''
+from besser.BUML.metamodel.structural import (
+    AssociationClass, BinaryAssociation, Class, DomainModel, FloatType, Generalization, Multiplicity, Property,
+    StringType,
+)
+
+cat = Class(name="Cat", attributes={Property(name="name", type=StringType)})
+item = Class(name="Item")
+stock = BinaryAssociation(name="stock", ends={
+    Property(name="cats", type=cat, multiplicity=Multiplicity(0, "*")),
+    Property(name="items", type=item, multiplicity=Multiplicity(0, "*")),
+})
+listing = AssociationClass(name="Listing", attributes={Property(name="price", type=FloatType)}, association=stock)
+prod = Class(name="Prod", is_read_only=True, attributes={Property(name="n", type=StringType)})
+kitten = Class(name="Kitten")
+shapes = DomainModel(name="Shapes", types={cat, item, listing, prod, kitten}, associations={stock},
+                     generalizations={Generalization(general=cat, specific=kitten)})
+'''
+
+
+def test_class_routes_follow_association_classes_and_read_only_classes(besser, write):
+    model = write("m.py", SHAPES_MODEL)
+
+    listing = besser("info", model, "--class", "Listing").stdout
+    prod = besser("info", model, "--class", "Prod").stdout
+    item = besser("info", model, "--class", "Item").stdout
+    kitten = besser("info", model, "--class", "Kitten").stdout
+    summary = besser("info", model).stdout
+
+    assert ("  backend routes: POST|GET /listing/, GET|PUT|DELETE /listing/{cats_id:int}/{items_id:int}/, "
+            "GET /listing/count/, GET /listing/paginated/, GET /listing/search/\n") in listing
+    assert ("  backend routes: POST|GET /prod/, GET /prod/{prod_id}/, POST|DELETE /prod/bulk/, GET /prod/count/, "
+            "GET /prod/paginated/, GET /prod/search/\n") in prod
+    assert "/item/search/" not in item and "GET /kitten/search/" in kitten
+    assert "  inherited ends: items:Item[*] (stock, from Cat)\n" in kitten
+    assert "    Listing routes: POST|GET /listing/, GET|PUT|DELETE /listing/{cats_id:int}/{items_id:int}/," in summary
+    assert "    Cat routes:" not in summary

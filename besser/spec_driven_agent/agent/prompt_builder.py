@@ -272,8 +272,7 @@ def build_system_prompt(
             "",
             "## Object Model (instance data)",
             "",
-            "Concrete instances of domain classes. Use these as seed data, test "
-            "fixtures, or example payloads — they represent real expected values.",
+            "Concrete instances of domain classes - real expected values (Rule 5).",
             "",
             "```json",
             to_prompt_json(object_json),
@@ -286,9 +285,7 @@ def build_system_prompt(
             "",
             "## State Machines",
             "",
-            "Behavioural spec for domain entities. When a class is governed by a "
-            "state machine, generate a state field + transition guards + event "
-            "handlers that respect these transitions.",
+            "Behavioural spec for domain entities (Rule 4).",
             "",
             "```json",
             to_prompt_json(sm_json),
@@ -507,12 +504,9 @@ def build_system_prompt(
     if design_system:
         write_back = (
             "   file, then `write_file` it back with your change applied (a designed page:\n"
-            "   `replace_file_lines` on the block instead). Do not keep\n"
+            "   `replace_file_lines` on the block instead). Never\n"
         )
-        rewrite_scope = (
-            "   in full, except a designed page (see Design system): rewrite the whole\n"
-            "   file when you have just read it in full. This is\n"
-        )
+        rewrite_scope = "   in full, except a designed page (see Design system). Do not rewrite a file\n"
         styling_rule = (
             "13. **Styling/theme requests must actually RENDER - through the design\n"
             "    system.** Restyle by overriding `--ds-*` values (and adding rules if\n"
@@ -528,10 +522,8 @@ def build_system_prompt(
             "      no second stylesheet, no unstyled browser-default HTML."
         )
     else:
-        write_back = "   file, then `write_file` it back with your change applied. Do not keep\n"
-        rewrite_scope = (
-            "   in full: rewrite the whole file when you have just read it in full. This is\n"
-        )
+        write_back = "   file, then `write_file` it back with your change applied. Never\n"
+        rewrite_scope = "   in full. Do not rewrite a file\n"
         styling_rule = (
             "13. **Styling/theme requests must actually RENDER.** When the user names\n"
             "    colours or a visual theme, define them as concrete CSS — real hex\n"
@@ -548,8 +540,7 @@ def build_system_prompt(
         )
         stylesheet_bullet = (
             "    - One shared stylesheet applied across the whole app (cards or clean tables,\n"
-            "      consistent spacing, a primary + accent colour, readable contrast) — a\n"
-            "      cohesive modern look, not unstyled browser-default HTML."
+            "      the look Rule 13 aims for), not unstyled browser-default HTML."
         )
     # Rule 15 orders a React CRUD frontend; a backend-only run (no GUI, no
     # frontend in the scaffold, none asked for) must not be told to build one.
@@ -565,13 +556,14 @@ def build_system_prompt(
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
     the UI is already specified by GUI screens. Read-only lists are NOT
     enough. For the React frontend, build:
-    - A home route (`"/"`) AND a persistent navigation bar/header linking every
-      entity's page. The app must NEVER render blank on load — if you use a
-      router, give it a landing page and wire the nav links to the routes.
+    - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
+      present on every screen, linking every entity's list and its "new" page,
+      wired to the routes. The app must NEVER render blank on load: a
+      Router/Routes with no root "/" route does.
     - Per entity: a list/table view PLUS working **Create** (a real form),
-      **Edit** (a pre-filled form), and **Delete** — each wired to the backend's
-      POST / PUT / DELETE endpoints, not just the GET list. A page that can only
-      read is half-built (rule 12).
+      **Edit** (a pre-filled form), and **Delete** — Edit + Delete on each row —
+      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
+      list. A page that can only read is half-built (rule 12).
     - Loading, empty, and error states on every data fetch.
 {stylesheet_bullet}
     - Internal consistency: `package.json` dependencies match the imports, each
@@ -581,7 +573,10 @@ def build_system_prompt(
       writable controls and client validation too, while keeping its read-only
       display. Update shared entity/form metadata, not only a page's payload.
     - Create/Edit forms follow the create-request schema: one control per
-      writable field, typed by the field. int/float -> `<input type="number">`
+      writable field, typed by the field - never every field as an untyped text
+      box, nor a raw-JSON textarea as the form: the backend answers 422 to text
+      in a number, date, email or id field, so no record could ever be created
+      from the UI. int/float -> `<input type="number">`
       sent as a number; bool -> checkbox; date -> `type="date"`; datetime ->
       `type="datetime-local"`; email -> `type="email"`; enum -> a `<select>` of
       its literals; a reference to another entity -> a `<select>` filled from
@@ -591,14 +586,6 @@ def build_system_prompt(
       A form's submit MUST call the backend (create -> POST, edit -> PUT)
       through the API layer, then refresh the list or navigate back. A form
       that collects input but submits nowhere is worse than no form.
-    - A Router/Routes with no root "/" route -> the app renders BLANK on load.
-      Always add a "/" landing page and a nav/header (links or a menu) to
-      every entity's list and its "new" page, present on every screen.
-    - A list with no Delete control. Each row needs Edit + Delete wired to
-      PUT / DELETE.
-    - Every field as an untyped text box, or a raw-JSON textarea as the form.
-      The backend answers 422 to text in a number, date, email or id field,
-      so no record can ever be created from the UI.
     - Create and Edit sharing one handler keyed on a placeholder (`?edit=new`,
       an empty id): Create MUST POST to the collection route; only an existing
       record's id may reach PUT.
@@ -637,10 +624,7 @@ starting point, not proof that the application satisfies the specification.
   `delete_file` on any file shown below, and do NOT overwrite a generated file
   with a from-scratch rewrite in a different design. Edit files in place; add
   new files only for genuinely new functionality.
-- **Only ADD what the user asked for**, on top of what already exists.
-
-Read the generated code before changing it and keep changes tightly scoped to the user's request.
-Make surgical modifications, not from-scratch rewrites."""
+- **Only ADD what the user asked for**, on top of what already exists."""
         plan_first_step = "What does the user request imply on top of the generated scaffold?"
     else:
         role = """\
@@ -657,7 +641,8 @@ exists is not proof that the software satisfies the specification."""
 State your plan ONCE, in your first turn, then execute it. Do not restate it
 before later edits - every preamble is a turn:
 1. {plan_first_step}
-2. Which generated files/components must change, and which new files are needed?
+2. Which generated files/components must change, and which new files and packages
+   are needed?
 3. In what order, to avoid broken imports or circular dependencies?
 4. Which model elements (classes, attributes, relationships, OCL constraints) must
    be reflected in the result?
@@ -669,16 +654,14 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 1. **Keep changes scoped to the user request.** Don't rewrite generated files
    or add features the user didn't ask for.
 2. **Pick the right write tool.** Start with `modify_file` for small changes to an
-   existing file. Several targeted edits to one file in the SAME turn are fine —
-   and are the fastest way to finish — as long as every `old_text` comes from your
-   most recent read of that file. Once an edit is refused, go back to one edit per
-   turn until one lands: a batch built on a stale view fails as a batch.
+   existing file. Several targeted edits to one file in the SAME turn are fine as
+   long as every `old_text` comes from your most recent read of that file. Once an
+   edit is refused, go back to one edit per turn until one lands: a batch built on
+   a stale view fails as a batch.
    After two refused edits on one file, switch strategy: `read_file` the WHOLE
-{write_back}   re-quoting old code; never repeat a rejected edit or treat a refused edit as
-   done.
+{write_back}   repeat a rejected edit or treat a refused edit as done.
    Use `write_file` for new files, and to replace any file you have just read
-{rewrite_scope}   preferred over a chain of refused targeted edits. Do not rewrite a file you
-   have not read this run.
+{rewrite_scope}   you have not read this run.
 3. **The user's original specification is the behavior authority.** The models
    define the existing structure, names and relationships; inspect them instead
    of guessing. Preserve that structure unless completing an explicit requirement
@@ -706,16 +689,13 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    subqueries or refer to another table's columns. Reject invalid changes
    atomically; do not partially persist an aggregate before validation succeeds.
 {hygiene_rule}
-8. **Read before modify.** Read the WHOLE function or class you intend to
-   change in one call. Paginate only above the read cap, and then in large
-   slices - crawling a file in small windows spends a turn per window.
+8. **Read before modify** - the WHOLE function or class you intend to change, in
+   one call (read_file's description says when and how to paginate).
 9. **Be efficient. Batch tool calls in one turn.** Issue every
    independent tool call you can in the SAME turn — read multiple files
-   in one turn, edit multiple files in one turn. When a single file
-   needs several changes, issue the `modify_file` calls together in
-   one turn. Each turn is a separate LLM round-trip, so
-   sequential single edits multiply cost; the runner executes batched
-   tool calls in parallel.
+   in one turn, edit multiple files in one turn. Each turn is a separate
+   LLM round-trip, so sequential single edits multiply cost; the runner
+   executes batched tool calls in parallel.
 10. **Re-read only when it matters.** Don't re-read a file you have not
     changed since you read it. After you edit a file, or after your history
     was compacted, read it again before quoting from it - the copy in your
@@ -766,10 +746,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 {request_intro}
 
 > {instructions.strip()}
-{_render_gap_section(gap_tasks)}
-Plan your own work from the request — pick the right files to edit, the
-right packages to add, the right order. Do NOT exceed the request scope.
-{issues_section}{runbook_block}
+{_render_gap_section(gap_tasks)}{issues_section}{runbook_block}
 When done, briefly summarize what you changed.
 """
 
@@ -785,8 +762,7 @@ When done, briefly summarize what you changed.
             "request; prefer `modify_file` over `write_file`; do NOT "
             "regenerate untouched files. `write_file` on an existing file "
             "is REJECTED in this run until you have tried two targeted "
-            "`modify_file` edits on it — read the file, edit it in place, "
-            "and treat a full rewrite as the last resort.\n\n"
+            "`modify_file` edits on it.\n\n"
         )
 
     return f"{modify_directive}{stable_header}\n{models_block}\n{contract_section}{variable_tail}"
@@ -887,17 +863,11 @@ def _render_gap_section(gap_tasks: list[str] | None) -> str:
     bullets = "\n".join(items)
     return (
         "\n\n### Focused checklist (from gap analysis)\n"
-        "This list is loaded into the `task_list` tool. Work through it "
-        "and mark each item done with task_list(action='done', id=N) as "
-        "you complete it — include evidence=[{id, path, quote}] from successful "
-        "writes when no verifier is attached. Write evidence is not behavioral "
-        "verification. The run does NOT finish while items are open. "
-        "If an item is wrong or out of scope for the user request, close "
-        "it with task_list(action='drop', id=N, reason=...) - never mark "
-        "undone work done. For required work you cannot finish or verify, use "
-        "task_list(action='blocked', id=N, reason=...) so it remains unresolved. "
-        "Track newly discovered work with "
-        "task_list(action='add').\n\n"
+        "This list is loaded into the `task_list` tool (its description covers "
+        "done with evidence, blocked and add). Work through it, marking each item "
+        "done as you complete it. If an item is wrong or out of scope for the user "
+        "request, close it with task_list(action='drop', id=N, reason=...) - never "
+        "mark undone work done.\n\n"
         f"{bullets}\n"
     )
 
@@ -999,8 +969,8 @@ def _norm_path(*parts: str) -> str:
     Whitespace is collapsed and the result capped because these paths come
     from a regex over workspace source, matched with DOTALL: a route literal
     containing real newlines would otherwise render as its own lines inside
-    the endpoint manifest, a system-prompt block framed as "the only routes
-    that exist - copy them verbatim". A URL path has no legitimate newline.
+    the endpoint manifest, a system-prompt block framed as the only routes
+    that exist, to be called verbatim. A URL path has no legitimate newline.
     """
     joined = "/".join(p.strip("/") for p in parts if p and p.strip("/"))
     path = "/" + joined
@@ -1099,11 +1069,10 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:
 
     base_url = f"http://localhost:{port or 8000}"
     header = (
-        "The FastAPI backend is ALREADY generated and serves the routes below "
-        f"(base URL {base_url}). Call these paths from the frontend EXACTLY as "
-        "written - copy them verbatim. Do NOT add an `/api` prefix, do NOT "
-        "pluralize entity names, and keep the trailing slash. These are the only "
-        "routes that exist; a request to any other path will 404."
+        "The FastAPI backend is ALREADY generated and serves only the routes below "
+        f"(base URL {base_url}); a request to any other path will 404. Call them "
+        "from the frontend verbatim: do NOT add an `/api` prefix, do NOT "
+        "pluralize entity names, and keep the trailing slash."
     )
     body = "\n".join(lines)
     if truncated:

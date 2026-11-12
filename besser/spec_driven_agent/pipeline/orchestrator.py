@@ -1930,8 +1930,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "behavior. Schema edits require updating all consumers and forms. "
             "Use test_api to exercise complete workflows with persisted values and negative "
             "cases from the original specification, not just health endpoints. Read routes "
-            "and request schemas first. Its response references let later requests use created "
-            "IDs. Assertions must follow the user specification, not the current implementation. "
+            "and request schemas first. "
             "Never announce the app is functional before verification."
         )
 

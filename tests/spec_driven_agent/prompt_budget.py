@@ -58,7 +58,6 @@ _SECTION_MARKERS = (
     ("requirements", "\n## Requirements the user stated"),
     ("request", "\n## User request"),
     ("checklist", "\n### Focused checklist"),
-    ("request_footer", "\nPlan your own work from the request"),
     ("phase1_issues", "\n## Issues to fix from Phase 1 validation"),
     # The paragraph _run_phase2 appends after build_system_prompt's last line.
     ("phase2_appendix", "briefly summarize what you changed.\n"),

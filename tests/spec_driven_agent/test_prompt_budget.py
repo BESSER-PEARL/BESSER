@@ -18,21 +18,21 @@ HEADROOM = 0.06
 # Characters measured when the budget was pinned. Raise one only on purpose,
 # saying in the commit what the extra prefix buys.
 BASELINES = {
-    "shelf": {"system_chars": 23_986, "tools_chars": 14_689},
-    "conference": {"system_chars": 44_454, "tools_chars": 14_689},
-    "state_machine": {"system_chars": 14_923, "tools_chars": 12_431},
+    "shelf": {"system_chars": 22_485, "tools_chars": 14_689},
+    "conference": {"system_chars": 42_953, "tools_chars": 14_689},
+    "state_machine": {"system_chars": 13_520, "tools_chars": 12_431},
 }
 
 # Per-section and per-tool sizes at the same point, only to name what grew.
 BASELINE_SECTIONS = {
-    "shelf": {"role_plan": 1728, "rules": 10301, "model_tools": 375, "models": 803, "data_contract": 1515,
-              "tail_header": 60, "inventory": 2071, "endpoint_manifest": 4270, "requirements": 351,
-              "request": 333, "checklist": 1327, "request_footer": 194, "phase2_appendix": 658},
-    "conference": {"role_plan": 1728, "rules": 10301, "model_tools": 375, "models": 5205, "data_contract": 1622,
-                   "tail_header": 60, "inventory": 5758, "endpoint_manifest": 16542, "requirements": 351,
-                   "request": 333, "checklist": 1327, "request_footer": 194, "phase2_appendix": 658},
-    "state_machine": {"role_plan": 977, "rules": 10489, "models": 592, "tail_header": 60, "requirements": 351,
-                      "request": 275, "checklist": 1327, "request_footer": 194, "phase2_appendix": 658},
+    "shelf": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "models": 803, "data_contract": 1515,
+              "tail_header": 60, "inventory": 2071, "endpoint_manifest": 4199, "requirements": 351,
+              "request": 333, "checklist": 1035, "phase2_appendix": 519},
+    "conference": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "models": 5205, "data_contract": 1622,
+                   "tail_header": 60, "inventory": 5758, "endpoint_manifest": 16471, "requirements": 351,
+                   "request": 333, "checklist": 1035, "phase2_appendix": 519},
+    "state_machine": {"role_plan": 993, "rules": 9823, "models": 464, "tail_header": 60, "requirements": 351,
+                      "request": 275, "checklist": 1035, "phase2_appendix": 519},
 }
 BASELINE_TOOLS = {
     "generate_python_classes": 195, "generate_java_classes": 170, "generate_rdf": 156, "generate_supabase": 358,

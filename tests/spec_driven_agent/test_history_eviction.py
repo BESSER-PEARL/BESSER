@@ -99,6 +99,50 @@ def test_recovery_omits_only_rejected_drafts_without_changing_history_or_results
 
 @pytest.mark.parametrize("tool,key", [("write_file", "content"), ("modify_file", "new_text"),
                                      ("replace_file_lines", "new_text")])
+def _reused_id_history(first_result: str) -> list[dict]:
+    """Two turns from a gateway that numbers its tool-call ids per reply.
+
+    Chat Completions pairs a tool result with the call in the assistant
+    message right before it, so ``call_0`` in two turns is legal."""
+    return [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [_write_use("call_0", "a.py", "GOOD BODY")]},
+        {"role": "user", "content": [_result("call_0", first_result)]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "call_0", "name": "read_file", "input": {"path": "b.py"}}]},
+        {"role": "user", "content": [_result("call_0", json.dumps({"content": _big()}))]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "call_0", "name": "modify_file",
+             "input": {"path": "c.py", "old_text": "x", "new_text": "BAD DRAFT"}}]},
+        {"role": "user", "content": [_result("call_0", json.dumps({"error": "old_text not found"}))]},
+    ]
+
+
+def test_a_reused_tool_call_id_never_marks_a_landed_edit_rejected():
+    """With ids matched across the whole history, the later refusal of
+    ``call_0`` relabelled the EARLIER successful write as a rejected draft
+    ("NOT applied", is_error) - telling the model to redo landed work - and
+    rewrote an already-sent message, so the prompt cache missed from it."""
+    history = _reused_id_history(json.dumps({"success": True}))
+
+    projected = without_rejected_edit_drafts(history)
+
+    assert projected[1] == history[1] and projected[2] == history[2]
+    assert projected[5]["content"][0]["input"]["new_text"].startswith("[Rejected draft omitted")
+    assert projected[6]["content"][0]["is_error"] is True
+
+
+def test_a_reused_tool_call_id_stubs_only_the_read_result():
+    history = _reused_id_history(json.dumps({"success": True, "note": "w" * 2_000}))
+
+    evicted, count = evict_stale_file_bodies(history, preserve_recent=0)
+
+    assert evicted[2]["content"][0] is history[2]["content"][0]  # the write's result
+    assert "elided" in evicted[4]["content"][0]["content"]       # the read's result
+    assert count == 1
+
+
+@pytest.mark.parametrize("tool,key", [("write_file", "content"), ("modify_file", "new_text")])
 def test_write_file_body_is_stubbed_in_old_messages(tool, key):
     body = _big()
     use = _write_use("t1", "app/main.py", body)

@@ -3,10 +3,13 @@
 ``generate_from_diagram`` serves ``/generate-output`` and
 ``generate_from_project`` serves ``/generate-output-from-project``. Both
 dispatch on the generator's registry entry (``category``,
-``required_diagram_type``, ``output_type``); the generators that read their
-own options from the request config have a builder in
-``_CLASS_DIAGRAM_BUILDERS``. Bad input raises ``ValidationError`` /
-``ConversionError`` (HTTP 400, see ``routers/error_handler.py``).
+``required_diagram_type``, ``output_type``) and run the generator through
+``besser.generators.runner.run_generator``, the calling contract shared with
+the ``besser`` command line. The generators that take options from the request
+config have a builder in ``_CLASS_DIAGRAM_BUILDERS``, which maps the config to
+the generator's options and packages the download. Bad input raises
+``ValidationError`` / ``ConversionError`` / ``GeneratorInputError`` (HTTP 400,
+see ``routers/error_handler.py``).
 """
 
 import asyncio
@@ -17,8 +20,9 @@ import re
 import shutil
 import tempfile
 import uuid
-from typing import Optional
+from typing import Any, Mapping, Optional
 
+from besser.generators.runner import run_generator
 from besser.utilities.secret_redaction import sanitize_config
 from besser.utilities.web_modeling_editor.backend.config import (
     SUPPORTED_GENERATORS,
@@ -197,15 +201,15 @@ async def generate_from_diagram(input_data: DiagramInput) -> GeneratedOutput:
 
         # Handle quantum generators
         if generator_info.category == "quantum":
-            return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
+            return await _generate_qiskit(json_data, input_data.config, temp_dir)
 
         # Handle neural network generators
         if generator_info.category == "neural_network":
-            return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
+            return await _generate_nn(json_data, generator_type, input_data.config, temp_dir)
 
         # Handle BPMN generators (reads BPMNDiagram via process_bpmn_diagram)
         if generator_info.category == "business_process":
-            return await _generate_bpmn(json_data, generator_type, generator_info.generator_class, temp_dir)
+            return await _generate_bpmn(json_data, generator_type, temp_dir)
 
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
@@ -247,9 +251,7 @@ async def _handle_backend_project_generation(input_data: ProjectInput, generator
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         buml_model = process_class_diagram(class_diagram.model_dump())
         link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
-        return await _generate_standard(
-            buml_model, generator_info.generator_class, "backend", generator_info, temp_dir
-        )
+        return await _generate_standard(buml_model, "backend", generator_info, temp_dir)
 
 
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict) -> GeneratedOutput:
@@ -402,14 +404,13 @@ async def _handle_class_diagram_generation(
     """Handle class diagram based generation."""
     # Process the class diagram JSON data
     buml_model = process_class_diagram(json_data)
-    generator_class = generator_info.generator_class
     logger.info("Generator type %s", generator_type)
 
     builder = _CLASS_DIAGRAM_BUILDERS.get(generator_type)
     if builder:
-        return await builder(buml_model, generator_class, config, temp_dir)
+        return await builder(buml_model, config, temp_dir)
 
-    return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
+    return await _generate_standard(buml_model, generator_type, generator_info, temp_dir)
 
 
 async def _handle_object_diagram_generation(
@@ -427,9 +428,7 @@ async def _handle_object_diagram_generation(
     domain_model = process_class_diagram(reference_payload)
     object_model = process_object_diagram(json_data, domain_model)
 
-    generator_class = generator_info.generator_class
-    generator_instance = generator_class(object_model, output_dir=temp_dir)
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator(generator_type, {"object": object_model}, temp_dir)
 
     return file_output(temp_dir, generator_type)
 
@@ -450,9 +449,7 @@ async def _handle_user_diagram_generation(
             "Failed to convert user diagram to BUML. Please check the diagram data."
         ) from conversion_error
 
-    generator_class = generator_info.generator_class
-    generator_instance = generator_class(object_model, output_dir=temp_dir)
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator(generator_type, {"object": object_model}, temp_dir)
 
     _normalize_user_model_output(object_model, temp_dir, _user_criteria_comparators(json_data))
 
@@ -498,7 +495,19 @@ def _get_diagram_type(json_data: dict) -> Optional[str]:
     return None
 
 
-async def _generate_django(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _run_generator(
+    generator_type: str, models: Mapping[str, Any], output_dir: str, options: Optional[dict] = None,
+) -> None:
+    """``run_generator`` on a worker thread, off the event loop.
+
+    A generator anchors its filesystem effects on ``output_dir`` (its
+    subprocesses run with an explicit cwd), so it never touches the
+    process-wide working directory.
+    """
+    await asyncio.to_thread(run_generator, generator_type, models, output_dir, options)
+
+
+async def _generate_django(buml_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate Django project."""
     project_name = config.get("project_name", DEFAULT_DJANGO_PROJECT_NAME) if config else DEFAULT_DJANGO_PROJECT_NAME
     app_name = config.get("app_name", DEFAULT_DJANGO_APP_NAME) if config else DEFAULT_DJANGO_APP_NAME
@@ -517,18 +526,9 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
     os.makedirs(temp_dir, exist_ok=True)
 
-    generator_instance = generator_class(
-        model=buml_model,
-        project_name=project_name,
-        app_name=app_name,
-        containerization=containerization,
-        output_dir=temp_dir,
-    )
-
-    # DjangoGenerator anchors all of its filesystem effects on output_dir
-    # (its subprocesses run with an explicit cwd), so it can run directly on
-    # a worker thread without touching the process-wide working directory.
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator("django", {"domain": buml_model}, temp_dir, {
+        "project_name": project_name, "app_name": app_name, "containerization": containerization,
+    })
 
     # Validate generation
     if not os.path.exists(project_dir) or not os.listdir(project_dir):
@@ -539,7 +539,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
     })
 
 
-async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_spring(buml_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate a Spring Boot project and return it as a ZIP."""
     config = config or {}
     project_name = config.get("project_name") or DEFAULT_SPRING_PROJECT_NAME
@@ -556,20 +556,11 @@ async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: 
     project_dir = _safe_path(temp_dir, project_name)
     os.makedirs(project_dir, exist_ok=True)
 
-    # An invalid package name is a user input error, not a server fault.
-    try:
-        generator_instance = generator_class(
-            buml_model,
-            output_dir=project_dir,
-            app_name=app_name,
-            spring_boot_version=spring_boot_version,
-            java_version=java_version,
-            package_name=package_name,
-        )
-    except ValueError as exc:
-        raise ValidationError(str(exc)) from exc
-
-    await asyncio.to_thread(generator_instance.generate)
+    # An invalid package name is a user input error (GeneratorInputError), not a server fault.
+    await _run_generator("spring", {"domain": buml_model}, project_dir, {
+        "app_name": app_name, "spring_boot_version": spring_boot_version,
+        "java_version": java_version, "package_name": package_name,
+    })
 
     if not os.listdir(project_dir):
         raise ValueError("Spring Boot project generation failed: Output directory is empty")
@@ -580,16 +571,13 @@ async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: 
     })
 
 
-async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_sql(buml_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate SQL files."""
     dialect = DEFAULT_SQL_DIALECT
     if config and "dialect" in config:
         dialect = config["dialect"]
 
-    generator_instance = generator_class(
-        buml_model, output_dir=temp_dir, sql_dialect=dialect
-    )
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator("sql", {"domain": buml_model}, temp_dir, {"sql_dialect": dialect})
 
     return file_output(temp_dir, "sql")
 
@@ -597,7 +585,7 @@ async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str
 _SUPABASE_USER_ROOT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 
 
-async def _generate_supabase(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_supabase(buml_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate Supabase Postgres DDL."""
     user_root = DEFAULT_SUPABASE_USER_ROOT
     if config and "user_root" in config:
@@ -613,34 +601,30 @@ async def _generate_supabase(buml_model, generator_class, config: dict, temp_dir
                 )
             user_root = raw
 
-    generator_instance = generator_class(
-        buml_model, output_dir=temp_dir, user_root=user_root
-    )
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator("supabase", {"domain": buml_model}, temp_dir, {"user_root": user_root})
 
     return file_output(temp_dir, "supabase")
 
 
-async def _generate_sqlalchemy(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_sqlalchemy(buml_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate SQLAlchemy files."""
     dbms = DEFAULT_DBMS
-    if config and "dbms" in config:
+    # A null dbms is the default too, as it was when it went to generate(dbms=None).
+    if config and config.get("dbms") is not None:
         dbms = config["dbms"]
 
-    generator_instance = generator_class(buml_model, output_dir=temp_dir)
-    await asyncio.to_thread(generator_instance.generate, dbms=dbms)
+    await _run_generator("sqlalchemy", {"domain": buml_model}, temp_dir, {"dbms": dbms})
 
     return file_output(temp_dir, "sqlalchemy")
 
 
-async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_jsonschema(buml_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate JSON Schema files."""
     mode = DEFAULT_JSONSCHEMA_MODE
     if config and "mode" in config:
         mode = config["mode"]
 
-    generator_instance = generator_class(buml_model, output_dir=temp_dir, mode=mode)
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator("jsonschema", {"domain": buml_model}, temp_dir, {"mode": mode})
 
     if mode == "smart_data":
         # For smart_data mode, we create a zip file with a specific name
@@ -652,7 +636,7 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
 
 
 # Class-diagram generators that take options from the request config; every
-# other one is built with ``(model, output_dir=...)`` by ``_generate_standard``.
+# other one runs with its defaults in ``_generate_standard``.
 _CLASS_DIAGRAM_BUILDERS = {
     "django": _generate_django,
     "spring": _generate_spring,
@@ -676,22 +660,15 @@ async def _handle_deployment_diagram_generation(
     ``_handle_deployment_project_generation`` to also bake linked agent contexts.
     """
     deployment_model = _process_deployment_payload(json_data)
-    generator_instance = generator_info.generator_class(deployment_model, output_dir=temp_dir)
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator(generator_type, {"uml_deployment": deployment_model}, temp_dir)
 
     if generator_info.output_type == "zip":
         return await zip_output(temp_dir, generator_type)
     return file_output(temp_dir, generator_type)
 
 
-async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict,
-                       temp_dir: str) -> GeneratedOutput:
-    """Generate neural network code (PyTorch or TensorFlow)."""
-    if generator_class is None:
-        raise ConversionError(
-            f"Generator '{generator_type}' is not available. "
-            f"Please install the required dependencies."
-        )
+async def _generate_nn(json_data: dict, generator_type: str, config: dict, temp_dir: str) -> GeneratedOutput:
+    """Generate neural network code (PyTorch, TensorFlow or a forecaster)."""
     try:
         nn_model = process_nn_diagram(json_data)
     except (KeyError, TypeError, AttributeError) as exc:
@@ -704,18 +681,13 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
     # @handle_endpoint_errors — no explicit re-raise needed here.
 
     if generator_type == "forecaster":
-        return await _generate_forecaster(nn_model, generator_class, config, temp_dir)
+        return await _generate_forecaster(nn_model, config, temp_dir)
 
     generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
-    if generator_type == "tensorflow":
-        generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
-    else:
-        channel_last = config.get("channel_last", False) if config else False
-        generator_instance = generator_class(
-            nn_model, output_dir=temp_dir,
-            generation_type=generation_type, channel_last=channel_last,
-        )
-    await asyncio.to_thread(generator_instance.generate)
+    options = {"generation_type": generation_type}
+    if generator_type != "tensorflow":
+        options["channel_last"] = config.get("channel_last", False) if config else False
+    await _run_generator(generator_type, {"nn": nn_model}, temp_dir, options)
 
     download_filename = get_nn_filename(generator_type, generation_type)
 
@@ -735,36 +707,24 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
     return GeneratedOutput(file_content, download_filename, is_zip=False)
 
 
-async def _generate_forecaster(nn_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_forecaster(nn_model, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate a time-series forecaster from an NN model.
 
     ``config`` holds the ForecastConfig fields (window, horizon, season, log,
     difference, calendar, standardize, seed or seeds) plus ``channel_last``.
     Invalid settings, and a network the forecaster cannot take (its first layer
-    must read the window, its last return the horizon), raise ValidationError,
-    which @handle_endpoint_errors maps to a 400 with the generator's message.
+    must read the window, its last return the horizon), raise
+    GeneratorInputError, which @handle_endpoint_errors maps to a 400 with the
+    generator's message.
     """
-    # the generator class is only registered when this module imports
-    from besser.generators.nn.forecaster import ForecastConfig
-
     settings = dict(config or {})
     settings.pop("generation_type", None)  # sent with every NN generation; not a forecaster setting
-    channel_last = settings.pop("channel_last", False)
-    if not isinstance(channel_last, bool):
-        raise ValidationError(f"channel_last must be true or false, got {type(channel_last).__name__}")
-    try:
-        forecast_config = ForecastConfig.from_dict(settings)
-        generator_instance = generator_class(
-            nn_model, forecast_config, output_dir=temp_dir, channel_last=channel_last,
-        )
-    except ValueError as exc:
-        raise ValidationError(str(exc)) from exc
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator("forecaster", {"nn": nn_model}, temp_dir, settings)
     # one file, forecaster_<model name>.py, shipped under that name (keep_generated_filename)
     return file_output(temp_dir, "forecaster")
 
 
-async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str) -> GeneratedOutput:
+async def _generate_bpmn(json_data: dict, generator_type: str, temp_dir: str) -> GeneratedOutput:
     """Generate vendor-neutral BPMN 2.0 XML.
 
     Processes the BPMN diagram JSON via ``process_bpmn_diagram`` (re-wrapping
@@ -776,13 +736,12 @@ async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, 
     except (KeyError, TypeError, AttributeError) as exc:
         raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
 
-    generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator(generator_type, {"bpmn": bpmn_model}, temp_dir)
 
     return file_output(temp_dir, generator_type)
 
 
-async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_qiskit(json_data: dict, config: dict, temp_dir: str) -> GeneratedOutput:
     """Generate Qiskit code."""
     # Validate that this is a quantum diagram (has 'cols' in model)
     model_data = json_data.get('model', {})
@@ -801,13 +760,9 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     backend_type = config.get('backend', DEFAULT_QISKIT_BACKEND) if config else DEFAULT_QISKIT_BACKEND
     shots = config.get('shots', DEFAULT_QISKIT_SHOTS) if config else DEFAULT_QISKIT_SHOTS
 
-    generator_instance = generator_class(
-        quantum_model,
-        output_dir=temp_dir,
-        backend_type=backend_type,
-        shots=shots
-    )
-    await asyncio.to_thread(generator_instance.generate)
+    await _run_generator("qiskit", {"quantum": quantum_model}, temp_dir, {
+        "backend_type": backend_type, "shots": shots,
+    })
 
     return file_output(temp_dir, "qiskit")
 
@@ -828,11 +783,9 @@ async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir
     await asyncio.to_thread(generator_instance.generate)
 
 
-async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info,
-                             temp_dir: str) -> GeneratedOutput:
-    """Generate standard files (non-Django, non-SQL)."""
-    generator_instance = generator_class(buml_model, output_dir=temp_dir)
-    await asyncio.to_thread(generator_instance.generate)
+async def _generate_standard(buml_model, generator_type: str, generator_info, temp_dir: str) -> GeneratedOutput:
+    """Generate from a class diagram with the generator's default options."""
+    await _run_generator(generator_type, {"domain": buml_model}, temp_dir)
 
     # Return ZIP or single file based on generator info
     if generator_info.output_type == "zip":

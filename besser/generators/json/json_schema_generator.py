@@ -9,6 +9,7 @@ from besser.BUML.metamodel.structural import (
     DateTimeType, TimeType,
 )
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import path_inside
 from besser.utilities import sort_by_timestamp
 
 logger = logging.getLogger(__name__)
@@ -278,7 +279,7 @@ class JSONSchemaGenerator(GeneratorInterface):
 
             for class_def in classes:
                 # Create a directory for each class
-                class_dir = os.path.join(self.output_dir, class_def.name)
+                class_dir = path_inside(self.output_dir, class_def.name)
                 os.makedirs(class_dir, exist_ok=True)
 
                 # Create examples directory

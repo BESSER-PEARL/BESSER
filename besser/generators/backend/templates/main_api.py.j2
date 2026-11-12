@@ -1,3 +1,6 @@
+import importlib
+import importlib.util
+import os
 import time as time_module
 import logging
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -144,6 +147,18 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 ############################################
 #
+#   Extension point: hand-written code goes in extensions.py, beside this file
+#   (or anywhere on PYTHONPATH). No generation writes or overwrites it. It may define
+#     before_routers(app)   routes added here win over the generated ones with the same path
+#     setup(app)            routers, middleware and startup hooks, added after the generated ones
+#
+############################################
+extensions = importlib.import_module("extensions") if importlib.util.find_spec("extensions") else None
+if hasattr(extensions, "before_routers"):
+    extensions.before_routers(app)
+
+############################################
+#
 #   Routers
 #
 ############################################
@@ -206,9 +221,12 @@ def get_statistics(database: Session = Depends(get_db)):
     return stats
 
 
+if hasattr(extensions, "setup"):
+    extensions.setup(app)
+
 ############################################
 # Maintaining the server
 ############################################
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port={% if port %}{{ port }}{%else%}8000{%endif%})
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", {% if port %}{{ port }}{%else%}8000{%endif%})))

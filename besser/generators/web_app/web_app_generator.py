@@ -92,6 +92,8 @@ class WebAppGenerator(GeneratorInterface):
     """
 
     regenerable = True
+    # The backend it writes in backend/ loads hand-written code from this file (see BackendGenerator).
+    extension_file = "backend/extensions.py"
 
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,

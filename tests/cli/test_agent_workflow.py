@@ -1,0 +1,323 @@
+"""BESSER's defaults for coding agents: terse output off a terminal, the agent files, init, guide and apply."""
+
+import importlib.util
+import json
+import sys
+
+import pytest
+
+from besser.cli.agent_files import GUIDE
+
+needs_pygit2 = pytest.mark.skipif(importlib.util.find_spec("pygit2") is None,
+                                  reason='regenerate merges with pygit2: pip install "besser[regen]"')
+
+# What 'apply' runs: a test command that passes, or fails after printing a line, without a shell.
+PASSING_TEST = f'test = "{sys.executable} -c \\"print(\'3 passed\')\\""\n'
+FAILING_TEST = f'test = "{sys.executable} -c \\"print(\'1 failed\'); raise SystemExit(3)\\""\n'
+
+
+def _config(write, test: str = "") -> None:
+    write("besser.toml", f'model = "library.py"\n{test}\n[output.api]\ngenerator = "backend"\ndir = "api"\n')
+
+
+# ── terse output ────────────────────────────────────────────────────────────
+
+
+def test_a_command_that_writes_files_prints_one_line_off_a_terminal(besser, model):
+    run = besser("generate", "backend", model, "-o", "api", output=None)
+
+    assert run.returncode == 0
+    assert run.stdout == "Generated 9 files in api with the 'backend' generator.\n"
+    assert run.stderr == ""  # no note about the record, nothing the generator printed
+
+
+def test_a_failure_keeps_its_report_off_a_terminal(besser, write):
+    write("broken.py", "from besser.BUML.metamodel.structural import DomainModel\nm = DomainModel(name='')\n")
+    run = besser("validate", "broken.py", output=None)
+
+    assert run.returncode == 2 and "broken.py" in run.stderr
+
+
+def test_a_command_run_for_its_output_prints_all_of_it(besser, model):
+    run = besser("info", model, output=None)
+
+    assert "class Book: title:str, pages:int" in run.stdout
+
+
+def test_besser_output_full_prints_the_report_and_an_unknown_value_is_a_usage_error(besser, model):
+    full = besser("generate", "backend", model, "-o", "api", output="full")
+    unknown = besser("generators", output="loud")
+
+    assert "  api/main_api.py" in full.stdout and "note: " in full.stderr
+    assert unknown.returncode == 2
+    assert unknown.stderr.startswith("error: BESSER_OUTPUT must be 'full' or 'terse', not 'loud'")
+
+
+def test_json_is_complete_off_a_terminal(besser, model):
+    result = besser("generate", "backend", model, "-o", "api", "--json", output=None).json
+
+    assert "api/main_api.py" in result["files"] and result["notes"]
+
+
+# ── new, init and the agent files ───────────────────────────────────────────
+
+
+def test_new_writes_the_guide_and_the_ignore_rules_beside_the_model_of_a_project(besser, write, tmp_path):
+    _config(write)
+    run = besser("new", "model.py", output=None)
+
+    assert run.stdout == ("Wrote a starter domain model to model.py, and the agent guide: AGENTS.md, CLAUDE.md, "
+                          ".ignore.\n")
+    assert GUIDE in (tmp_path / "AGENTS.md").read_text()
+    assert (tmp_path / "CLAUDE.md").read_text() == "@AGENTS.md\n"
+    assert "**/.besser_generated.json" in (tmp_path / ".ignore").read_text()
+
+
+def test_new_without_agent_files_writes_only_the_model(besser, write, tmp_path):
+    _config(write)
+    run = besser("new", "model.py", "--no-agent-files", "--json")
+
+    assert run.json["files"] == ["model.py"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["besser.toml", "model.py"]
+
+
+def test_new_outside_a_project_writes_no_guide_for_commands_that_would_fail(besser, tmp_path):
+    run = besser("new", "crm.py", "--json")
+    edit = besser("model", "add-class", "Invoice", "number:str")
+
+    assert run.returncode == 0 and run.json["files"] == ["crm.py"]
+    assert run.json["notes"] == ["no agent guide: . has no besser.toml for it to describe ('besser init' sets one up)"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["crm.py"]
+    assert edit.returncode == 2
+    assert edit.stderr == "error: model.py: no such file; name the model file with -f FILE\n"
+
+
+@pytest.mark.parametrize("kind", ["state_machine", "feature"])
+def test_init_of_a_kind_without_a_build_writes_no_guide_about_apply(besser, kind, tmp_path):
+    run = besser("init", "--kind", kind, "--json")
+
+    assert run.returncode == 0 and run.json["files"] == ["model.py"]
+    assert not (tmp_path / "AGENTS.md").exists() and not (tmp_path / "besser.toml").exists()
+    assert "no agent guide: . has no besser.toml for it to describe" in run.json["notes"][-1]
+
+
+def test_what_people_wrote_in_the_agent_files_is_kept(besser, write, tmp_path):
+    _config(write)
+    write("AGENTS.md", "# Shop\n\nRun the shop with make.\n")
+    write("CLAUDE.md", "Be brief.\n")
+    write(".ignore", "dist/\n")
+    besser("new", "model.py")
+    again = besser("new", "other.py", "--json")
+
+    agents = (tmp_path / "AGENTS.md").read_text()
+    assert agents.startswith("# Shop\n\nRun the shop with make.\n\n<!-- besser-guide:begin -->")
+    assert agents.count("besser-guide:begin") == 1
+    assert (tmp_path / "CLAUDE.md").read_text() == "Be brief.\n\n@AGENTS.md\n"
+    assert (tmp_path / ".ignore").read_text().startswith("dist/\n\n# besser:begin\n")
+    assert again.json["files"] == ["other.py"]  # the guide was up to date
+
+
+def test_init_sets_up_a_project_that_apply_builds(besser, tmp_path):
+    run = besser("init", "shop", output=None)
+    applied = besser("apply", "-c", "shop/besser.toml", output=None)
+
+    assert run.returncode == 0
+    assert run.stdout == ("Set up shop: wrote shop/model.py, shop/besser.toml, shop/AGENTS.md, shop/CLAUDE.md, "
+                          "shop/.ignore.\n")
+    assert (tmp_path / "shop" / ".ignore").read_text() == (
+        "# besser:begin\n# Generated by BESSER (besser.toml): a black box, see AGENTS.md.\n"
+        "/backend/*\n!/backend/extensions.py\n**/.besser_generated.json\n# besser:end\n")
+    assert applied.returncode == 0
+    assert applied.stdout == ("OK: 1 output, 0 failed: [backend] Generated 10 files in shop/backend with the "
+                              "'backend' generator; tests: none (set 'test' in besser.toml)\n")
+    assert (tmp_path / "shop" / "backend" / "main_api.py").is_file()
+
+
+def test_init_keeps_a_model_and_a_configuration_that_exist(besser, write, tmp_path):
+    write("model.py", "mine = 1\n")
+    run = besser("init", "--json")
+
+    assert run.json["files"] == ["besser.toml", "AGENTS.md", "CLAUDE.md", ".ignore"]
+    assert run.json["notes"] == ["kept model.py: it exists"]
+    assert (tmp_path / "model.py").read_text() == "mine = 1\n"
+
+
+def test_guide_prints_the_rules_in_little_space(besser):
+    run = besser("guide", output=None)
+
+    assert run.stdout == GUIDE
+    # Re-read on every turn of every session, so it stays small.
+    assert len(GUIDE.encode("utf-8")) < 4000 and len(GUIDE.splitlines()) <= 60
+
+
+@needs_pygit2
+def test_build_keeps_the_ignore_rules_in_step_with_the_outputs(besser, model, write, tmp_path):
+    besser("init")  # its besser.toml builds 'backend'; the rules name that folder
+    _config(write)
+    build = besser("build", "--json")
+
+    assert ".ignore" in build.json["files"]
+    assert "/api/*\n!/api/extensions.py\n" in (tmp_path / ".ignore").read_text()
+    assert ".ignore" not in besser("build", "--json").json["files"]
+
+
+@needs_pygit2
+def test_build_leaves_an_ignore_file_without_a_besser_block_alone(besser, model, write, tmp_path):
+    _config(write)
+    write(".ignore", "dist/\n")
+    besser("build")
+
+    assert (tmp_path / ".ignore").read_text() == "dist/\n"
+
+
+# ── apply ───────────────────────────────────────────────────────────────────
+
+
+@needs_pygit2
+def test_apply_builds_and_runs_the_tests_in_one_line(besser, model, write):
+    _config(write, PASSING_TEST)
+    run = besser("apply", output=None)
+    again = besser("apply", "--json")
+
+    assert run.returncode == 0
+    assert run.stdout == ("OK: 1 output, 0 failed: [api] Generated 9 files in api with the 'backend' generator; "
+                          "tests: 3 passed\n")
+    assert again.json["command"] == "apply" and again.json["test"]["exit_code"] == 0
+    assert again.json["test"]["output_tail"] == ["3 passed"]
+
+
+@needs_pygit2
+def test_apply_prints_the_end_of_the_output_of_tests_that_fail(besser, model, write):
+    _config(write, FAILING_TEST)
+    run = besser("apply", output=None)
+
+    assert run.returncode == 1
+    assert run.stdout.startswith("1 failed\n")
+    assert "error: the tests failed (exit status 3)" in run.stderr
+
+
+@needs_pygit2
+def test_apply_prints_only_the_failing_tests_of_pytest(besser, model, write):
+    write("test_app.py", "def test_ok():\n    pass\n\n\ndef test_broken():\n    assert 1 == 2\n")
+    _config(write, f'test = "{sys.executable} -m pytest -q -p no:cacheprovider test_app.py"\n')
+    run = besser("apply", output=None)
+
+    assert run.returncode == 1
+    assert run.stdout.splitlines()[0] == "FAILED test_app.py::test_broken - assert 1 == 2"
+    assert "def test_broken" not in run.stdout  # not the traceback
+    assert run.stdout.splitlines()[1].startswith("1 failed, 1 passed")
+
+
+def test_apply_runs_no_test_after_a_build_that_fails(besser, write):
+    write("library.py", "raise ValueError('broken')\n")
+    _config(write, FAILING_TEST)
+    run = besser("apply", "--json")
+
+    assert run.returncode == 2 and run.json["test"] is None
+    assert "ValueError: broken" in run.json["errors"][0]
+
+
+def test_apply_without_a_test_command_says_so_in_its_one_line(besser, model, write):
+    _config(write)
+    run = besser("apply", output=None)
+    as_json = besser("apply", "--json")
+
+    assert run.returncode == 0
+    assert run.stdout.rstrip("\n").endswith("; tests: none (set 'test' in besser.toml)")
+    assert as_json.json["notes"][-1] == "no tests run: besser.toml has no 'test' command"
+
+
+@needs_pygit2
+def test_apply_that_fails_never_reports_ok(besser, model, write):
+    _config(write, FAILING_TEST)
+    run = besser("apply", output=None)
+
+    last = run.stdout.splitlines()[-1]
+    assert run.returncode == 1
+    assert last.startswith("FAILED: tests (exit status 3)") and "OK" not in last.split(";")[0]
+
+
+@needs_pygit2
+def test_apply_shows_the_cause_of_a_pytest_collection_error(besser, model, write):
+    _config(write, 'test = "python -m pytest -q -p no:cacheprovider tests"\n')
+    write("helper.py", "def broken(:\n    pass\n")
+    write("tests/test_a.py", """
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        import helper
+
+        def test_a():
+            assert helper
+    """)
+    run = besser("apply", "--json", output=None)
+    text = besser("apply", output=None)
+
+    assert run.returncode == 1 and run.json["test"]["failing"] == ["tests/test_a.py"]
+    assert "helper.py\", line 1" in text.stdout and "SyntaxError" in text.stdout
+    assert text.stdout.splitlines()[-1].startswith("FAILED: tests (exit status 2)")
+
+
+@needs_pygit2
+def test_apply_runs_the_tests_without_besser_s_standard_input(besser, model, write):
+    _config(write, f'test = "python -c \\"import sys; print(repr(sys.stdin.read()) + \' passed\')\\""\n')
+    run = besser("apply", output=None, stdin="secret")
+
+    assert run.returncode == 0 and run.stdout.rstrip("\n").endswith("; tests: '' passed")
+
+
+@needs_pygit2
+def test_apply_reports_no_collected_test_as_none(besser, model, write):
+    write("tests/__init__.py", "")
+    _config(write, 'test = "python -m pytest -q -p no:cacheprovider tests"\n')
+    run = besser("apply", output=None)
+
+    assert run.returncode == 0
+    assert run.stdout.rstrip("\n").endswith("; tests: none collected")
+
+
+# ── what the agent reads instead of the code ────────────────────────────────
+
+
+def test_info_shows_optional_attributes_defaults_constraints_and_routes(besser, write):
+    write("shop.py", """
+        from besser.BUML.metamodel.structural import Class, Constraint, DomainModel, IntegerType, Property, StringType
+        price = Property(name="price", type=IntegerType)
+        product = Class(name="Product", attributes={
+            Property(name="name", type=StringType), price,
+            Property(name="code", type=StringType, is_optional=True, default_value="X")})
+        positive = Constraint(name="positive", context=product, language="OCL",
+                              expression="context Product inv positive: self.price > 0")
+        shop = DomainModel(name="Shop", types={product}, constraints={positive})
+    """)
+    text = besser("info", "shop.py").stdout
+    product = besser("info", "shop.py", "--json").json["models"][0]
+    code = next(attribute for attribute in product["classes"][0]["attributes"] if attribute["name"] == "code")
+
+    assert "price:int" in text and "code:str?='X'" in text
+    assert "constraint positive on Product: self.price > 0" in text
+    assert "backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/" in text
+    assert product["backend_endpoints"]["Product"][2] == "GET /product/{product_id}/"
+    assert code == {"name": "code", "type": "str", "optional": True, "default": "X"}
+
+
+@needs_pygit2
+def test_generated_files_say_they_are_generated_and_are_listed_in_the_record(besser, model, tmp_path):
+    besser("generate", "backend", model, "-o", "api")
+
+    first_line = (tmp_path / "api" / "main_api.py").read_text().splitlines()[0]
+    assert first_line == ("# Generated by BESSER: edit the model, not this file. Custom code goes in "
+                          "extensions.py.")
+    assert (tmp_path / "api" / "requirements.txt").read_text().startswith("fastapi")  # no comment syntax known
+    record = json.loads((tmp_path / "api" / ".besser_generated.json").read_text())
+    assert "main_api.py" in record["files"]
+
+
+@needs_pygit2
+def test_adopting_output_generated_before_the_header_finds_no_edit(besser, model, tmp_path):
+    besser("generate", "python", model, "-o", "out")
+    (tmp_path / "out" / ".besser_generated.json").unlink()
+    classes = tmp_path / "out" / "classes.py"
+    classes.write_text("".join(classes.read_text().splitlines(keepends=True)[1:]))  # as an older BESSER wrote it
+    run = besser("regenerate", "python", model, "-o", "out", "--adopt", "--json")
+
+    assert run.returncode == 0 and run.json["differs_from_model"] == []

@@ -736,12 +736,13 @@ JAZZMIN_SETTINGS = {{
             # out of the generated tree.
             subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
             # `python -m django` is django-admin run by this interpreter, so it
-            # works when the environment's scripts directory is not on PATH.
+            # works when the environment's scripts directory is not on PATH. -P keeps
+            # the output folder off sys.path, so a "django" package in it is not run.
             if importlib.util.find_spec('django') is None:
                 raise RuntimeError(
                     'The Django generator needs Django: pip install "besser[django]"'
                 )
-            subprocess.run([sys.executable, '-m', 'django', 'startproject', self.project_name],
+            subprocess.run([sys.executable, '-P', '-m', 'django', 'startproject', self.project_name],
                            cwd=base_dir, check=True, env=subprocess_env,
                            timeout=subprocess_timeout())
             subprocess.run([sys.executable, 'manage.py', 'startapp',

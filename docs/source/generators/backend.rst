@@ -77,17 +77,22 @@ This example showcases the usage of the Backend Generator with our :doc:`../exam
 
 Extending the Generated Backend
 -------------------------------
-Regenerating the backend overwrites the generated files, so keep your own code in separate files and
-plug it into the generated ``app`` with the standard FastAPI mechanisms. For example, a ``my_extensions.py``
-next to the generated code can add endpoints, middleware or authentication:
+Every generated file starts with a line that says so, and regenerating rewrites it. Hand-written code goes
+in ``extensions.py`` beside ``main_api.py`` (or in a module of that name anywhere on ``PYTHONPATH``). No
+generation writes that file, ``besser build`` and ``besser regenerate`` leave it alone, and ``main_api.py``
+loads it when it is there and calls two optional functions:
+
+- ``before_routers(app)``, before the generated routers are added: a route added here wins over a generated
+  route with the same method and path, so it can replace one.
+- ``setup(app)``, after the generated routes: new routers, middleware, authentication, startup hooks.
 
 .. code-block:: python
 
+    # extensions.py
     from fastapi import APIRouter, Depends
     from sqlalchemy.orm import Session
 
     from database import get_db
-    from main_api import app
     from sql_alchemy import Library
 
     router = APIRouter(prefix="/custom", tags=["Custom"])
@@ -98,26 +103,26 @@ next to the generated code can add endpoints, middleware or authentication:
         return [library.name for library in database.query(Library).all()]
 
 
-    @app.middleware("http")
-    async def add_custom_header(request, call_next):
-        response = await call_next(request)
-        response.headers["X-Custom"] = "yes"
-        return response
+    def setup(app):
+        app.include_router(router)
 
+        @app.middleware("http")
+        async def add_custom_header(request, call_next):
+            response = await call_next(request)
+            response.headers["X-Custom"] = "yes"
+            return response
 
-    app.include_router(router)
+Start the application as before (``python main_api.py``, which reads ``PORT``, or ``uvicorn main_api:app``);
+the generated ``Dockerfile`` copies ``extensions.py`` into the image when it exists.
 
-Start the application from your file, so that your additions are loaded with the generated routes:
-``uvicorn my_extensions:app`` instead of ``python main_api.py``. If you use the generated ``Dockerfile``,
-copy your file into the image and change its start command the same way.
-
-- **Endpoints**: put them in your own ``APIRouter`` and add it with ``app.include_router()``. Use ``get_db``
-  from ``database.py`` for a database session and the models from ``sql_alchemy.py`` to query it.
-- **Middleware and authentication**: register them on ``app`` (``app.middleware()``, ``app.add_middleware()``),
-  or protect your own routes with FastAPI dependencies.
+- **Endpoints**: put them in your own ``APIRouter``, added in ``setup`` (or in ``before_routers`` to replace a
+  generated route). Use ``get_db`` from ``database.py`` for a database session and the models from
+  ``sql_alchemy.py`` to query it.
+- **Middleware and authentication**: register them on ``app`` in ``setup`` (``app.middleware()``,
+  ``app.add_middleware()``), or protect your own routes with FastAPI dependencies.
 - **Configuration and secrets**: read them from environment variables (``os.environ``) instead of writing them
-  into code. The generated code already reads ``DATABASE_URL`` this way. With Docker, pass them at run time,
-  for example ``docker run --env-file .env ...``.
+  into code. The generated code already reads ``DATABASE_URL`` and ``PORT`` this way. With Docker, pass them at
+  run time, for example ``docker run --env-file .env ...``.
 
 Docker Image Generation
 -----------------------

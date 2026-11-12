@@ -2,6 +2,6 @@ Regeneration
 ============
 
 .. automodule:: besser.generators.regeneration
-   :members: RegenerationError, RegenerationReport
+   :members: RegenerationError, UnrecordedOutputError, ConflictsPendingError, AlreadyRecordedError, NotRecordableError, RegenerationReport, record_output
    :undoc-members:
    :show-inheritance:

@@ -76,7 +76,9 @@ class SQLGenerator(GeneratorInterface):
 
             # Generate SQLAlchemy code into the temporary folder
             alchemy_gen = SQLAlchemyGenerator(model=self.model, output_dir=temp_dir)
-            alchemy_gen.generate(dbms=self.sql_dialect, ocl_check_constraints=self.ocl_check_constraints)
+            # Without the methods: this module is run below, and a method's code comes from the model.
+            alchemy_gen.generate(dbms=self.sql_dialect, ocl_check_constraints=self.ocl_check_constraints,
+                                 methods=False)
 
             # Keep only the model definitions: drop the database connection
             # section (engine creation needs a driver, __main__ creates tables).

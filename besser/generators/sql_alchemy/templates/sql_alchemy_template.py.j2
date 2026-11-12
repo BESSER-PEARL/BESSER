@@ -207,7 +207,7 @@ class {{ class.name }}(
     subtract two methods instead of two dates. #}
     {%- set column_names = class.all_attributes() | map(attribute='name') | list
                          + class.association_ends() | map(attribute='name') | list %}
-    {%- for method in class.methods|sort(attribute='name') if method.code and method.name not in column_names %}
+    {%- for method in class.methods|sort(attribute='name') if methods and method.code and method.name not in column_names %}
 
 {{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- endfor %}

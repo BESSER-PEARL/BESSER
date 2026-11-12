@@ -1,7 +1,8 @@
 """Three-way merge of file trees, for regenerating output that someone has edited.
 
-Runs on libgit2 through ``pygit2``, an optional dependency (``besser[regen]``,
-also in ``besser[agents]``). Check :func:`merge_available` before merging.
+A merge where, for every file, a side is unchanged needs nothing more. A real merge
+(both sides changed one file) runs on libgit2 through ``pygit2``, an optional dependency
+(``besser[regen]``, also in ``besser[agents]``); without it, it raises :class:`MergeUnavailableError`.
 """
 
 from __future__ import annotations
@@ -27,6 +28,15 @@ class TreeMerge(NamedTuple):
     conflicts: dict[str, bytes | None]
 
 
+class MergeUnavailableError(RuntimeError):
+    """Some files changed on both sides, and merging them needs ``pygit2``, which is not installed."""
+
+    def __init__(self, files: list[str]):
+        super().__init__(f"merging {', '.join(files)} needs pygit2, which is not installed")
+        #: The files changed on both sides, sorted.
+        self.files = files
+
+
 def merge_available() -> bool:
     """Whether ``pygit2`` is installed."""
     return pygit2 is not None
@@ -39,7 +49,15 @@ def merge_trees(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str
     edited, and a guess could pair a removed class's file with an added one.
     A caller that knows a file moved passes it under its new path in ``base``
     and ``ours``.
+
+    Raises:
+        MergeUnavailableError: A file changed on both sides and ``pygit2`` is not installed.
     """
+    both_changed = _changed_on_both_sides(base, ours, theirs)
+    if not both_changed:
+        return TreeMerge(_one_sided_merge(base, ours, theirs), {})
+    if pygit2 is None:
+        raise MergeUnavailableError(both_changed)
     # TemporaryDirectory, as libgit2's objects are read-only: on Windows rmtree cannot remove them.
     with tempfile.TemporaryDirectory(prefix="besser_merge_", ignore_cleanup_errors=True) as work:
         repo = pygit2.init_repository(work, bare=True)
@@ -58,6 +76,22 @@ def merge_trees(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str
         merged = TreeMerge({e.path: repo[e.id].data for e in index if e.path not in conflicts}, conflicts)
         repo.free()
         return merged
+
+
+def _changed_on_both_sides(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str, bytes]) -> list[str]:
+    """The paths where neither side is the base and the sides differ (a missing file is ``None``)."""
+    return sorted(path for path in set(base) | set(ours) | set(theirs)
+                  if base.get(path) != ours.get(path) != theirs.get(path) != base.get(path))
+
+
+def _one_sided_merge(base: dict[str, bytes], ours: dict[str, bytes], theirs: dict[str, bytes]) -> dict[str, bytes]:
+    """The merge when every path changed on one side at most: the changed side, a deletion included."""
+    merged = {}
+    for path in set(base) | set(ours) | set(theirs):
+        content = theirs.get(path) if ours.get(path) == base.get(path) else ours.get(path)
+        if content is not None:
+            merged[path] = content
+    return merged
 
 
 def _with_markers(repo, ancestor, ours, theirs) -> bytes | None:

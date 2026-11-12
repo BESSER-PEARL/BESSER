@@ -266,6 +266,14 @@ def add_agents_block(directory: str, block: str) -> bool:
     return True
 
 
+def agents_besser_block(directory: str) -> Optional[str]:
+    """The BESSER block of the root ``AGENTS.md`` of ``directory``, markers included; None when it has none."""
+    path = os.path.join(directory, AGENTS_FILENAME)
+    text = _read_text(path, directory) if os.path.lexists(path) else None
+    match = _BESSER_BLOCK.search(text) if text is not None else None
+    return match.group(0) if match else None
+
+
 def remove_agents_block(directory: str) -> None:
     """Drop the BESSER block from ``AGENTS.md``, and the file when nothing else is in it.
 

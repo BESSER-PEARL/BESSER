@@ -76,6 +76,9 @@ Optional dependencies
    # pygit2, for generator.regenerate() (a model change that keeps your edits)
    python -m pip install "besser[regen]"
 
+   # The MCP SDK, for `besser mcp` (the command-line tools served to an AI agent)
+   python -m pip install "besser[mcp]"
+
    # Django, for the Django generator
    python -m pip install "besser[django]"
 

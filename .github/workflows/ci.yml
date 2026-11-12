@@ -26,6 +26,9 @@ jobs:
       # path production actually takes.
       - name: Install bubblewrap (shell sandbox)
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # zsh and fish check the syntax of the 'besser completion' scripts; without them those tests skip.
+      - name: Install zsh and fish (completion scripts)
+        run: sudo apt-get install -y zsh fish
       # The nn extra (torch, numpy) lets the tests that run generated PyTorch
       # code (the forecaster, the backend's NN methods) run instead of skip.
       # Torch comes first from the CPU-only index: the default wheel pulls in
@@ -34,7 +37,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[nn,dev]"
+          pip install -e ".[nn,dev,mcp]"
           pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
       # pytest-xdist (dev extra): one worker per core.
       - name: Run tests
@@ -128,6 +131,50 @@ jobs:
           assert templates, "generator templates missing from the wheel"
           print("wheel OK:", besser.__file__)
           EOF
+      - name: Run the besser command from the wheel
+        working-directory: ${{ runner.temp }}
+        run: |
+          cat > model.py <<'EOF'
+          from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
+          book = Class(name="Book", attributes={Property(name="title", type=StringType)})
+          model = DomainModel(name="Library", types={book})
+          EOF
+          wheel-env/bin/besser --version
+          wheel-env/bin/besser validate model.py --strict
+          wheel-env/bin/besser generate python model.py -o out
+          test -f out/classes.py
+          wheel-env/bin/besser new starter.py
+          wheel-env/bin/besser validate starter.py model.py --strict
+          wheel-env/bin/besser info starter.py
+          # model edits on the starter, then one class in full
+          wheel-env/bin/besser model -f starter.py add-attribute Book isbn:str?
+          wheel-env/bin/besser info starter.py --class Book | grep -F 'isbn:str?'
+          # a folder: .py models are skipped (they would be executed) unless --exec-py
+          mkdir models && cp model.py starter.py models/
+          if wheel-env/bin/besser validate models 2> validate.err; then exit 1; fi
+          grep -F -- '--exec-py' validate.err
+          wheel-env/bin/besser validate models --exec-py --strict
+          wheel-env/bin/besser generate python model.py -o dry --dry-run
+          test ! -e dry
+          # generate records its output for regenerate without the regen extra
+          test -f out/.besser_generated.json
+          wheel-env/bin/besser completion bash > besser.bash && bash -n besser.bash
+          # mcp needs the mcp extra, and says so on the base install
+          if wheel-env/bin/besser mcp < /dev/null 2> mcp.err; then exit 1; fi
+          grep -F 'pip install "besser[mcp]"' mcp.err
+          # a project on the base install: build twice (nothing to merge), then apply
+          mkdir project
+          (cd project && ../wheel-env/bin/besser init && ../wheel-env/bin/besser build \
+            && ../wheel-env/bin/besser build && ../wheel-env/bin/besser apply)
+          # merging a hand edit needs the regen extra, and says so on the base install
+          wheel-env/bin/besser generate python starter.py -o app
+          sed -i '1i # mine' app/classes.py
+          wheel-env/bin/besser model -f starter.py add-attribute Book subtitle:str?
+          if wheel-env/bin/besser regenerate python starter.py -o app 2> regenerate.err; then exit 1; fi
+          grep -F 'pip install "besser[regen]"' regenerate.err
+          wheel-env/bin/pip install "$(ls $GITHUB_WORKSPACE/dist/*.whl)[regen]"
+          wheel-env/bin/besser regenerate python starter.py -o app
+          grep -F '# mine' app/classes.py && grep -F subtitle app/classes.py
 
   docs:
     runs-on: ubuntu-latest

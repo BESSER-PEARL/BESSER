@@ -38,7 +38,7 @@ def test_backend_mode_honors_the_port_argument(library_book_author_model, tmp_pa
         model=library_book_author_model, backend=True, port=9001, output_dir=output_dir
     ).generate()
     with open(os.path.join(output_dir, "main_api.py"), encoding="utf-8") as f:
-        assert "port=9001" in f.read()
+        assert "port=int(os.environ.get(\"PORT\", 9001))" in f.read()
 
 
 def test_backend_generator_honors_the_port_argument(library_book_author_model, tmp_path):
@@ -47,7 +47,7 @@ def test_backend_generator_honors_the_port_argument(library_book_author_model, t
         model=library_book_author_model, port=9002, output_dir=output_dir
     ).generate()
     with open(os.path.join(output_dir, "main_api.py"), encoding="utf-8") as f:
-        assert "port=9002" in f.read()
+        assert "port=int(os.environ.get(\"PORT\", 9002))" in f.read()
 
 
 def test_optional_link_attribute_is_optional_in_the_payload(tmp_path):

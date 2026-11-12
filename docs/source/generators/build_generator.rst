@@ -65,6 +65,26 @@ A generator that needs a second model besides its diagram (the Web App, React an
 need a GUI model next to the class diagram) sets ``needs_beyond_one_diagram`` to what it needs:
 ``/generate-output``, which carries one diagram, then answers 400 with that text instead of running it.
 
+The entry also describes the generator's constructor, which is how
+``besser.generators.runner.run_generator`` (the function behind the editor's generation endpoints and
+the :doc:`besser generate <../cli>` command) builds it:
+
+* ``models`` (default ``("domain",)``) names the models the constructor takes, in argument order,
+  before ``output_dir``: ``("domain", "gui")`` for a generator called as
+  ``MyGenerator(model, gui_model, output_dir=...)``. The kinds are ``domain``, ``gui``, ``object``,
+  ``agent``, ``quantum``, ``nn``, ``bpmn``, ``deployment`` and ``uml_deployment``.
+* The options are keyword arguments of the constructor, each declared as a JSON Schema property
+  (``type`` ``boolean``, ``integer``, ``string`` or ``array``; optionally ``enum``, ``default``,
+  ``description``). ``GeneratorSpec.options`` is the agent tool's ``parameters`` plus
+  ``extra_options``, where the options the agent is not offered go. ``run_generator`` refuses an
+  option that is not declared, so declare every one a caller may set.
+* ``label`` says in a few words what the generator produces, for ``besser generators``; an entry
+  with an agent tool uses the tool's ``label``.
+
+``tests/generators/test_runner.py`` checks each entry against the constructor's signature. A
+constructor that needs more than ``(*models, output_dir=..., **options)`` gets a builder in
+``_BUILDERS`` of ``besser/generators/runner.py``.
+
 Every entry is offered in the editor. ``agent_tool`` (default ``None``) also makes it a
 Spec-Driven Agent tool, with the tool's name, the short ``label`` the run preview shows, its
 description, input parameters and the models it needs (``requires``). An agent tool then needs:

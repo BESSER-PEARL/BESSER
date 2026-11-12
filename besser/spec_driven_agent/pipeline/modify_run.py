@@ -49,6 +49,7 @@ from besser.spec_driven_agent.run_recap import (
     next_run_notes,
     one_line,
     recorded_requests,
+    records_notes,
     repo_notes,
 )
 from besser.spec_driven_agent.state.tracing import (
@@ -161,7 +162,8 @@ class ModifyRunMixin:
         # Session memory: open the run knowing what was asked and changed
         # in every previous run on this app (recipe history), instead of
         # rediscovering it from file contents.
-        session_recap = self._render_seed_history()
+        # A repo whose recipe was lost still has the records a push keeps in .besser/.
+        session_recap = self._render_seed_history() or records_notes(self.output_dir)
         if session_recap:
             self._inventory = f"{self._inventory}\n{session_recap}"
         notes = repo_notes(self.output_dir)

@@ -60,7 +60,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
-from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run
+from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run, unresolved_defects
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
 from besser.utilities.workspace_fs import open_plain
 
@@ -445,17 +445,30 @@ class ModifyRunMixin:
             self._seed_converted_rules = set(converted)
             self._seed_dropped_rules = [
                 i for i in recipe.get("model_conversion_issues") or [] if is_dropped_by_model_change(i)]
-        # Seed-issue forwarding: blockers the seed run could not fix are
+        # Seed-issue forwarding: defects the seed run could not fix are
         # THIS run's opening tasks. Blockers only — warnings/style would
-        # bloat the prompt with ruff noise and dilute the real debt.
+        # bloat the prompt with ruff noise and dilute the real debt. Not
+        # forwarded either: unknowns (``unresolved_defects``), the model
+        # contract (Phase 0 checks the current model) and the runtime gate's
+        # verdict (it quotes findings forwarded on their own).
         try:
-            self._seed_unresolved_issues = [
-                f"Unresolved from the previous run: {i.get('message', '')}"
+            seed_blockers = [
+                ValidationIssue("blocker", i["message"])
                 for i in recipe.get("validation_issues", [])
                 if isinstance(i, dict)
                 and i.get("severity") == "blocker"
-                and i.get("message")
+                and isinstance(i.get("message"), str) and i["message"]
             ]
+            forwarded = [
+                i for i in unresolved_defects(seed_blockers)
+                if not i.message.startswith(("model contract:", self._RUNTIME_GATE_PREFIX))
+            ]
+            if len(forwarded) < len(seed_blockers):
+                logger.info(
+                    "Seed run: %d of %d blocker(s) not forwarded (unknowns, model contract, runtime gate)",
+                    len(seed_blockers) - len(forwarded), len(seed_blockers))
+            self._seed_unresolved_issues = [
+                f"Unresolved from the previous run: {i.message}" for i in forwarded]
         except Exception:
             logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:

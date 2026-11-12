@@ -355,6 +355,24 @@ def test_seed_unresolved_blockers_are_loaded_from_recipe(tmp_path):
     ]
 
 
+def test_seed_blockers_no_code_edit_can_fix_are_not_forwarded(tmp_path):
+    """The model contract is re-checked on the current model, the runtime gate
+    re-runs, and an unknown is not a defect: forwarding them spent prompt
+    tokens on a model cycle the user had already removed."""
+    defect = "create contract: backend: POST /booking/ - observed a server/persistence failure"
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({"validation_issues": [
+        {"severity": "blocker", "message": "model contract: Mandatory creation cycle: Booking -> Room -> Booking"},
+        {"severity": "blocker", "message": "requirement unverified: Phase 3 validation did not run: "
+                                           "cost budget exhausted."},
+        {"severity": "blocker", "message": "runtime gate: the delivered application has no runtime evidence"},
+        {"severity": "blocker", "message": "validation unverified: tsc did not run completely (timeout)"},
+        {"severity": "blocker", "message": defect},
+    ]}), encoding="utf-8")
+    orch = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    orch._seed_generator_files_from_recipe()
+    assert orch._seed_unresolved_issues == [f"Unresolved from the previous run: {defect}"]
+
+
 def test_modify_forwards_seed_blockers_into_phase2(tmp_path, monkeypatch):
     """modify() hands the seed's unresolved blockers to Phase 2 alongside
     the fresh Phase 1.5 findings."""

@@ -284,6 +284,18 @@ def walk_plain(top: str) -> Iterator[tuple[str, list[str], list[str]]]:
         yield root, dirs, [f for f in files if is_plain_entry(os.path.join(root, f))]
 
 
+def copy_plain_file(src, dst, *, root: "str | None" = None, dst_root: "str | None" = None) -> None:
+    """``shutil.copy2`` that reads ``src`` with :func:`open_plain` and writes
+    ``dst`` with :func:`open_plain_write`: a link at either end, even one
+    swapped in after a check, raises ``OSError`` instead of being followed."""
+    with open_plain(src, "rb", root=root) as source:
+        info = os.fstat(source.fileno())
+        with open_plain_write(dst, "wb", root=dst_root) as target:
+            shutil.copyfileobj(source, target)
+    os.chmod(dst, stat.S_IMODE(info.st_mode))
+    os.utime(dst, ns=(info.st_atime_ns, info.st_mtime_ns))
+
+
 def copytree_plain(src: str, dst: str, ignore_patterns: Iterable[str] = (),
                    dirs_exist_ok: bool = False) -> None:
     """``shutil.copytree`` that drops every non-plain entry instead of copying
@@ -295,4 +307,6 @@ def copytree_plain(src: str, dst: str, ignore_patterns: Iterable[str] = (),
         ignored.update(n for n in names if not is_plain_entry(os.path.join(directory, n)))
         return ignored
 
-    shutil.copytree(src, dst, ignore=_ignore, dirs_exist_ok=dirs_exist_ok)
+    # A file swapped for a link after ``_ignore`` saw it fails the copy instead of leaking its target.
+    shutil.copytree(src, dst, ignore=_ignore, dirs_exist_ok=dirs_exist_ok,
+                    copy_function=lambda s, d: copy_plain_file(s, d, root=src, dst_root=dst))

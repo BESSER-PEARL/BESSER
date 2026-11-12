@@ -44,7 +44,9 @@ from besser.spec_driven_agent.errors import (
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
-from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
+from besser.utilities.workspace_fs import (
+    copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, write_atomic_plain,
+)
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
@@ -92,6 +94,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     telemetry,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
@@ -178,6 +181,24 @@ def _remove_run_dir(path: str) -> None:
     shutil.rmtree(path, ignore_errors=True)
     shutil.rmtree(sandbox_home(path), ignore_errors=True)
 
+
+
+def _zip_plain_file(zf: zipfile.ZipFile, path: str, arcname: str, root: str) -> None:
+    """Add ``path`` to ``zf`` through a link-refusing open, so a file the run's
+    shell swaps for a link after the walk is left out, not read through."""
+    try:
+        with open_plain(path, "rb", root=root) as src:
+            info = os.fstat(src.fileno())
+            # ZIP has no timestamp before 1980; a file touched earlier must not fail the packaging.
+            stamp = max(time.localtime(info.st_mtime)[:6], (1980, 1, 1, 0, 0, 0))
+            entry = zipfile.ZipInfo(arcname.replace(os.sep, "/"), stamp)
+            entry.external_attr = (info.st_mode & 0xFFFF) << 16  # keeps the executable bit, as zf.write does
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.file_size = info.st_size
+            with zf.open(entry, "w") as dst:
+                shutil.copyfileobj(src, dst)
+    except OSError:
+        logger.warning("Left %s out of the download: no longer a plain file", arcname)
 
 
 def _is_excluded_output_file(name: str) -> bool:
@@ -623,22 +644,18 @@ class SmartRunRegistry:
             if os.path.commonpath([temp_dir, file_path]) != temp_dir:
                 return
             relative_path = os.path.relpath(file_path, temp_dir)
-            manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
-            pending_path = manifest_path + ".tmp"
-            with open(pending_path, "w", encoding="utf-8") as handle:
-                json.dump(
-                    {
-                        "version": 1,
-                        "runId": run_id,
-                        "relativePath": relative_path,
-                        "fileName": entry.file_name,
-                        "isZip": entry.is_zip,
-                        "createdAt": entry.created_at,
-                    },
-                    handle,
-                    separators=(",", ":"),
-                )
-            os.replace(pending_path, manifest_path)
+            # Replaces a link planted at the manifest path rather than writing through it.
+            write_atomic_plain(os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME), json.dumps(
+                {
+                    "version": 1,
+                    "runId": run_id,
+                    "relativePath": relative_path,
+                    "fileName": entry.file_name,
+                    "isZip": entry.is_zip,
+                    "createdAt": entry.created_at,
+                },
+                separators=(",", ":"),
+            ), root=temp_dir)
         except (OSError, TypeError, ValueError):
             logger.warning(
                 "Could not persist download metadata for run %s",
@@ -2295,10 +2312,9 @@ class SmartGenerationRunner:
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
-        if os.path.isfile(recipe_path):
+        if is_plain_file(recipe_path, root=result_path):
             try:
-                with open(recipe_path, "w", encoding="utf-8") as handle:
-                    json.dump(recipe, handle, indent=2)
+                write_atomic_plain(recipe_path, json.dumps(recipe, indent=2), root=result_path)
             except OSError:
                 logger.debug("Could not persist secret finding count", exc_info=True)
 
@@ -2359,17 +2375,17 @@ class SmartGenerationRunner:
         else:
             zip_name = f"besser_smart_{self.run_id}.zip"
             zip_path = os.path.join(self.temp_dir, zip_name)
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            with open_plain_write(zip_path, "wb", root=self.temp_dir) as handle, \
+                    zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as zf:
                 for path in user_files:
-                    arcname = os.path.relpath(path, result_path)
-                    zf.write(path, arcname)
-                zf.write(provenance_path, PROVENANCE_FILENAME)
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
+                _zip_plain_file(zf, provenance_path, PROVENANCE_FILENAME, result_path)
                 for path in trace_files:
-                    zf.write(path, os.path.relpath(path, result_path))
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
                 for name in CARRIED_RUN_FILES:
                     path = os.path.join(result_path, name)
-                    if os.path.isfile(path) and is_plain_entry(path):
-                        zf.write(path, name)
+                    if is_plain_entry(path) and os.path.isfile(path):
+                        _zip_plain_file(zf, path, name, result_path)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
@@ -2442,7 +2458,8 @@ class SmartGenerationRunner:
 
     def _read_recipe(self, result_path: str) -> dict:
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
-        if not os.path.isfile(recipe_path):
+        # Not a plain file (absent, or a link the model planted): never read through.
+        if not is_plain_file(recipe_path, root=result_path):
             return {}
         try:
             size = os.path.getsize(recipe_path)
@@ -2454,15 +2471,10 @@ class SmartGenerationRunner:
                 self.run_id, size, _MAX_RECIPE_BYTES,
             )
             return {"warning": "recipe file exceeded size limit and was dropped"}
-        try:
-            with open(recipe_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            logger.exception(
-                "Failed to read .besser_recipe.json for run %s", self.run_id
-            )
+        data = read_run_json(recipe_path, _MAX_RECIPE_BYTES)
+        if isinstance(data, dict):
+            return data
+        logger.warning("Ignoring unreadable .besser_recipe.json for run %s", self.run_id)
         return {}
 
     def _reset_temp_dir_after_failed_seed(self) -> None:

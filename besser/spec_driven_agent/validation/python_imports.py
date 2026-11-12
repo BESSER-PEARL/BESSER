@@ -377,6 +377,66 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
     return problems
 
 
+
+def _is_main_guard(test: _ast.expr) -> bool:
+    """``if __name__ == "__main__":`` in either operand order."""
+    if not (isinstance(test, _ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], _ast.Eq)):
+        return False
+    operands = [test.left, test.comparators[0]]
+    return (any(isinstance(o, _ast.Name) and o.id == "__name__" for o in operands)
+            and any(isinstance(o, _ast.Constant) and o.value == "__main__" for o in operands))
+
+
+def _import_time_statements(body: list[_ast.stmt]):
+    """Statements that run when the module is imported: the module body and the
+    blocks nested in it, except function and class bodies and the main guard."""
+    for stmt in body:
+        if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            continue
+        if isinstance(stmt, _ast.If) and _is_main_guard(stmt.test):
+            yield from _import_time_statements(stmt.orelse)
+            continue
+        yield stmt
+        for field in ("body", "orelse", "finalbody"):
+            yield from _import_time_statements(getattr(stmt, field, None) or [])
+        for handler in getattr(stmt, "handlers", None) or []:
+            yield from _import_time_statements(handler.body)
+
+
+def _import_time_server_starts(output_dir: str) -> list[str]:
+    """``application startup:`` blockers for a backend entry module that starts
+    its server while being imported.
+
+    ``uvicorn.run(app)`` outside ``if __name__ == "__main__":`` never returns,
+    so ``uvicorn main_api:app`` and the boot probe both hang on the import. The
+    probe can only report that as a timeout, which is an unknown and is not
+    repaired; this names the line, which an edit does fix. Only ``main_api.py``
+    is read: it is the module a server imports, while a ``run.py`` launcher is
+    executed and may start the server at its top level.
+    """
+    issues: list[str] = []
+    for path in _python_files(output_dir):
+        if os.path.basename(path) != "main_api.py":
+            continue
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
+        try:
+            with open_plain(path, "r", root=output_dir, encoding="utf-8-sig") as fh:
+                tree = parse_source(fh.read(), rel)
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            continue  # unreadable or unparseable files are other checks' findings
+        for stmt in _import_time_statements(tree.body):
+            call = stmt.value if isinstance(stmt, _ast.Expr) else None
+            func = getattr(call, "func", None)
+            if (isinstance(call, _ast.Call) and isinstance(func, _ast.Attribute) and func.attr == "run"
+                    and isinstance(func.value, _ast.Name) and func.value.id == "uvicorn"):
+                issues.append(
+                    f"application startup: {rel} line {stmt.lineno}: uvicorn.run() runs when the module is "
+                    "imported, so the import never returns and the app cannot be served or checked - "
+                    "move it under `if __name__ == \"__main__\":`"
+                )
+    return issues
+
+
 # The generated ORM module is imported and its mappers configured in a
 # subprocess. SQLAlchemy resolves the strings in relationship() lazily, on the
 # first query, so ast.parse and ruff both pass a module where every database

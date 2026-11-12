@@ -141,6 +141,7 @@ from besser.spec_driven_agent.validation.frontend_build import install_markers
 from besser.spec_driven_agent.validation.python_imports import (
     _declared_dependency_roots as _declared_dependency_roots,
     _import_smoke_issues,
+    _import_time_server_starts,
     _unresolvable_local_imports,
 )
 from besser.spec_driven_agent.validation.toolchain import (
@@ -2810,6 +2811,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                        [:self._PYTHON_CONTRACT_MAX_PER_FILE])
         raw.extend(_create_schema_router_mismatches(self.output_dir))
         raw.extend(_unresolvable_local_imports(self.output_dir))
+        raw.extend(_import_time_server_starts(self.output_dir))
         from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_issues
 
         raw.extend(collect_frontend_schema_issues(self.output_dir))

@@ -140,6 +140,13 @@ after which the probe can no longer measure a backend it measured before is
 not accepted as "all blockers fixed": the rollback check ranks that tree
 behind the measured one.
 
+The same applies when these checks are turned off for the run
+(``enable_import_smoke_check=False``): the finding is a warning, not a
+blocker. One cause of a probe timeout is found without running anything: a
+``main_api.py`` that calls ``uvicorn.run()`` outside
+``if __name__ == "__main__":`` never finishes importing, and is reported as an
+``application startup:`` blocker that names the line.
+
 When both toolchain validation and shell tools are explicitly enabled, npm is
 available, and project dependencies are missing, ``verification setup:`` is
 instead actionable. The agent may use its existing authorized dependency tool,

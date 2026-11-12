@@ -164,3 +164,28 @@ def test_validate_app_does_not_call_an_unrun_probe_verified(orch, monkeypatch):
     assert result["verified"] is False
     assert result["blocker_count"] == 0
     assert "did not run" in result["next_step"]
+
+
+def test_checks_disabled_by_configuration_are_an_unverified_warning(simple_library_book_model, tmp_path):
+    """``enable_import_smoke_check=False`` on an app with a backend used to be a
+    ``runtime unverified:`` blocker: every fix round was paid for a finding no
+    edit can settle, because the run's own configuration is what skipped the check."""
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "main_api.py").write_text("app = None\n", encoding="utf-8")
+    orchestrator = LLMOrchestrator(
+        llm_client=_Client(), domain_model=simple_library_book_model,
+        output_dir=str(tmp_path), enable_checkpointing=False,
+        enable_tracing=False, enable_import_smoke_check=False,
+    )
+
+    issues = orchestrator._collect_execution_issues()
+
+    assert len(issues) == 1
+    finding = _classify_issue(issues[0])
+    assert finding.severity == "warning"
+    assert not issues[0].startswith("runtime unverified:")
+    assert "disabled" in issues[0]
+    assert is_completion_issue(finding), "a disabled check still withholds 'verified'"
+    assert unresolved_defects(issues) == []
+    assert orchestrator._runtime_probe_verdict is None

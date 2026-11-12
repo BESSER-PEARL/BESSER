@@ -2838,7 +2838,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._record_runtime_verdict(_runtime_verdict(raw) if probed else None)
         elif any(os.path.basename(p) == "main_api.py" for p in _python_files(self.output_dir)):
             self._record_runtime_verdict(None)
-            raw.append("runtime unverified: backend startup/data-entry checks are disabled; this app has not been runtime verified")
+            # Disabled by configuration: no edit can turn the checks on, so this
+            # is a warning that withholds "verified", not a blocker to repair.
+            raw.append(runtime_check_unverified(
+                "backend startup and data entry", "these checks are disabled for this run"))
         else:
             # Nothing to boot in this workspace: the gate has no claim to make.
             self._record_runtime_verdict(None)

@@ -484,6 +484,17 @@ def maybe_compact(
             {"role": "assistant", "content": [{"type": "text", "text": "Continuing."}]}
         )
     compacted.extend(to_preserve)
+    if _estimate_tokens(compacted) >= est_tokens:
+        # Everything in front of the kept tail costs less than its summary
+        # (the newest turn alone fills the budget). Applying it would grow the
+        # history, rewrite message 0 (a full prompt-cache miss), drop every
+        # thinking block, and fire again next turn.
+        logger.warning(
+            "Compaction frees nothing (~%d tokens over a %d threshold, the kept "
+            "tail alone is ~%d): sending the history as it is",
+            est_tokens, threshold, _estimate_tokens(to_preserve),
+        )
+        return messages, False
     return compacted, True
 
 

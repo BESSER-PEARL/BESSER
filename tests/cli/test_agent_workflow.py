@@ -150,6 +150,44 @@ def test_guide_prints_the_rules_in_little_space(besser):
     assert len(GUIDE.encode("utf-8")) < 4000 and len(GUIDE.splitlines()) <= 60
 
 
+# What the guide says the generated backend answers, as tests that use the guide's own conftest.py.
+GUIDE_ANSWERS_TEST = """\
+def test_answers(client):
+    library = client.post("/library/", json={"name": "City", "address": "Main St"}).json()
+    assert set(library) == {"library", "books_ids"}  # one-to-many: "<end>_ids"
+    author = client.post("/author/", json={"name": "Ada", "email": "ada@x.org"}).json()["author"]
+    library_id = library["library"]["id"]
+    book = {"title": "T", "pages": 3, "release": "2024-01-31", "library": library_id}
+    assert client.post("/book/", json=book).status_code == 422  # a required end missing
+    assert client.post("/book/", json={**book, "authors": []}).status_code == 400
+    created = client.post("/book/", json={**book, "authors": [author["id"]]}).json()
+    assert set(created) == {"book", "author_ids"}  # many-to-many: "<other class>_ids"
+    assert created["book"]["library_id"] == library_id  # a to-one end: "<end>_id"
+    deal = client.post("/deal/", json={"amount": 2}).json()  # no to-many end: the object
+    assert deal == {"id": deal["id"], "amount": 2.0}
+    assert client.put(f"/deal/{deal['id']}/", json={"amount": 3}).json()["amount"] == 3.0
+    assert client.get(f"/deal/{deal['id']}/").json() == {"deal": {"id": deal["id"], "amount": 3.0}}
+    assert client.get("/deal/").json() == [{"id": deal["id"], "amount": 3.0}]
+    for body, name in ((deal, "deal"), (created, "book")):  # the guide's way to read either answer
+        assert body.get(name, body)["id"] > 0
+"""
+
+
+def test_the_guides_test_fixture_runs_and_its_answers_hold_on_a_generated_backend(besser, write, tmp_path):
+    pytest.importorskip("fastapi.testclient")
+    besser("init")
+    assert besser("model", "add-class", "Deal", "amount:float").returncode == 0
+    write("besser.toml", f'model = "model.py"\ntest = "{sys.executable} -m pytest -q -p no:cacheprovider"\n\n'
+                         '[output.backend]\ngenerator = "backend"\ndir = "backend"\n')
+    write("tests/conftest.py", GUIDE.split("```python\n")[1].split("```")[0])
+    write("tests/test_answers.py", GUIDE_ANSWERS_TEST)
+
+    run = besser("apply", output=None)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "tests: 1 passed" in run.stdout
+
+
 @needs_pygit2
 def test_build_keeps_the_ignore_rules_in_step_with_the_outputs(besser, model, write, tmp_path):
     besser("init")  # its besser.toml builds 'backend'; the rules name that folder

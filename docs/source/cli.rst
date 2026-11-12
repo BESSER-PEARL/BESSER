@@ -302,11 +302,11 @@ is left alone.
 ``besser guide``
 ----------------
 
-Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 3 KB (43
+Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 4 KB (55
 lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
-commands, and what the ``backend``
-generator's API does, so that an agent needs neither the generated code nor
-this documentation. ``--json`` puts it in ``guide``.
+commands, the names ``extensions.py`` imports, a ``tests/conftest.py`` with a
+``client`` fixture, and what the ``backend`` generator's API answers, so that
+an agent needs neither the generated code nor this documentation. ``--json`` puts it in ``guide``.
 
 ``besser schema``
 -----------------

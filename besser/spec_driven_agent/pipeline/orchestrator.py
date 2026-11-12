@@ -980,6 +980,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         else:
             self._apply_adaptive_budget()
 
+        # Phase 1 or modify() told the executor; its per-write lint needs it.
+        self.executor.set_scaffold_family(self._scaffold_family(), self._instructions)
         if checkpoint.phase == "phase2":
             # The scoped issues are in the system prompt, which is rebuilt:
             # recompute them against the workspace as it is now.
@@ -997,8 +999,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         else:
             self._drop_redundant_generator_tools()
             self._lock_application_generators()
-            self.executor.set_scaffold_family(
-                self._scaffold_family(), self._instructions)
 
         self._format_python_output()
         self._create_snapshot()

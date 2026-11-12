@@ -535,6 +535,27 @@ def test_the_resumed_prompt_shows_the_checklist_and_the_scaffold_issues(simple_m
     assert "main_api.py imports a module that does not exist" in system
 
 
+def test_a_resumed_phase2_still_warns_on_a_framework_switch(simple_model, tmp_path, monkeypatch):
+    """Phase 1 tells the executor the scaffold's framework; a resumed Phase 2
+    never did, so a Flask rewrite of the FastAPI scaffold went unwarned."""
+    crashed = _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert crashed.executor._framework_switch_warning("app.py", "import flask\n")
+
+    warnings = []
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    monkeypatch.setattr(resumed, "_run_phase2", lambda instructions, extra_issues=None: warnings.append(
+        resumed.executor._framework_switch_warning("app.py", "import flask\n")))
+    for name in ("_create_snapshot", "_run_phase3_validation", "_remove_snapshot"):
+        monkeypatch.setattr(resumed, name, lambda: None)
+    monkeypatch.setattr(resumed, "_save_recipe", lambda instructions, elapsed: None)
+    resumed.resume("Build a blog")
+
+    assert warnings and warnings[0] and "FRAMEWORK SWITCH" in warnings[0]
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

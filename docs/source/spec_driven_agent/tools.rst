@@ -44,7 +44,10 @@ editors, it refuses an edit that would make the ORM or Pydantic module
 (``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
 ``NNN| `` line numbering that ``read_file`` displays is stripped from edit
 text, and only when it is uniform; a single copied numbered line is refused
-rather than guessed at. ``list_files`` and ``search_in_files`` skip links that
+rather than guessed at. ``write_file`` strips it only when the content is
+exactly that display of a whole file (every line numbered from 1), so numbered
+data such as a pipe-delimited id column is written as sent; any stripping is
+reported in the result's ``note``. ``list_files`` and ``search_in_files`` skip links that
 resolve outside the workspace, and the harness never reads or writes a
 workspace file through a symbolic link or special file. A call with a missing required argument, or
 arguments that are not valid JSON, returns a tool error naming the problem

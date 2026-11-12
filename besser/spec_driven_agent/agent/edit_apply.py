@@ -412,8 +412,10 @@ def _replace_with_collapsed_blank_runs(
 
 
 # read_file's own ``NNN| `` form, the only numbering trusted: ``N:`` / ``N\t``
-# is also how numeric dict keys and TSV rows start (``200: "OK",``).
-_PIPE_NUMBERED = re.compile(r"^\s*(\d+)\| ?")
+# is also how numeric dict keys and TSV rows start (``200: "OK",``). read_file
+# always puts a space after the pipe (gone only with a blank line's trailing
+# whitespace), so ``1|Alice`` is pipe-delimited data, not a copied gutter.
+_PIPE_NUMBERED = re.compile(r"^\s*(\d+)\|(?: |$)")
 
 
 def _strip_line_numbers(lines: list[str]) -> list[str] | None:
@@ -451,6 +453,31 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
     numbered = {i for i, _ in marked}
     return [_PIPE_NUMBERED.sub("", ln, count=1) if i in numbered else ln
             for i, ln in enumerate(lines)]
+
+
+def strip_read_display(lines: list[str]) -> list[str] | None:
+    """``lines`` without read_file's gutter when they are exactly its display
+    of a whole file, else ``None``.
+
+    For write_file, whose content is a whole file: unlike a quoted edit there
+    is no file text to confirm a looser match, and a numbered table or
+    pipe-delimited data would lose its first column. So every line must carry
+    the exact ``f"{n:>4}| "`` prefix, numbered 1, 2, 3, ... A final empty
+    string (content ending in a newline) is not a line.
+    """
+    body = lines[:-1] if lines and lines[-1] == "" else lines
+    if not body:
+        return None
+    stripped = []
+    for number, line in enumerate(body, 1):
+        prefix = f"{number:>4}|"
+        if line == prefix:  # a blank line, its trailing space trimmed
+            stripped.append("")
+        elif line.startswith(prefix + " "):
+            stripped.append(line[len(prefix) + 1:])
+        else:
+            return None
+    return stripped + lines[len(body):]
 
 
 # read_file's gutter on a line that _strip_line_numbers leaves alone because

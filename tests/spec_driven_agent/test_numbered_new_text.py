@@ -190,3 +190,50 @@ def test_a_write_of_numeric_keys_is_not_stripped(executor):
     call(executor, "write_file", path="status.txt", content=content)
 
     assert open(os.path.join(executor.workspace, "status.txt"), encoding="utf-8").read() == content
+
+
+# -- write_file: only read_file's exact display is a gutter ----------------
+
+
+def _write(executor, path, content):
+    result = call(executor, "write_file", path=path, content=content)
+    with open(os.path.join(executor.workspace, path), encoding="utf-8") as handle:
+        return result, handle.read()
+
+
+@pytest.mark.parametrize("path, content", [
+    ("seed/users.psv",
+     "id|name|email\n1|Alice|alice@example.com\n2|Bob|bob@example.com\n3|Carol|carol@example.com\n"),
+    ("seed/names.txt", "1|Alice\n2|Bob\n"),
+    ("PLAN.md", "1| setup | done\n2| build | todo\n3| ship | todo\n"),
+    ("ranked.txt", "   2| second\n   3| third\n"),
+])
+def test_write_file_keeps_numbered_data(executor, path, content):
+    """The stripper fired on pipe-delimited data and numbered tables and wrote
+    them without their first column, with no note and the stripped size."""
+    result, on_disk = _write(executor, path, content)
+
+    assert on_disk == content
+    assert result["size"] == len(content)
+    assert "note" not in result
+
+
+def test_write_file_strips_the_display_and_says_so(executor):
+    result, on_disk = _write(executor, "app.py", "   1| import re\n   2| \n   3| x = 1\n")
+
+    assert on_disk == "import re\n\nx = 1\n"
+    assert result["size"] == len(on_disk)
+    assert "line numbers" in result.get("note", "")
+
+
+def test_a_range_edit_keeps_pipe_delimited_rows(executor):
+    """read_file always puts a space after the pipe; ``1|Alice`` is data."""
+    read = call(executor, "read_file", path="Page.tsx")
+
+    result = call(executor, "replace_file_lines", path="Page.tsx",
+                  read_id=read["read_id"], start_line=2, end_line=2,
+                  new_text="1|Alice\n2|Bob")
+
+    on_disk = open(os.path.join(executor.workspace, "Page.tsx"), encoding="utf-8").read()
+    assert "1|Alice\n2|Bob\n" in on_disk, on_disk
+    assert "note" not in result

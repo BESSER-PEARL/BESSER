@@ -73,6 +73,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     replacement_spans,
     stray_gutter_line,
     _strip_line_numbers,
+    strip_read_display,
 )
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
@@ -580,6 +581,12 @@ def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
     if len(rows) > cap:
         rows = rows[:cap] + [f"   ...| ({len(rows) - cap} more changed lines)"]
     return "\n".join(rows)
+
+
+_GUTTER_STRIPPED_NOTE = (
+    "Your text carried read_file's 'NNN| ' line numbers; they were stripped "
+    "before writing. Send the content itself, not the numbered display."
+)
 
 
 def _gutter_refusal(field: str, stray: tuple[int, str]) -> dict:
@@ -2448,11 +2455,7 @@ class ToolExecutor:
         result = {"status": "modified", "path": args["path"], "replacements": 1,
                   "matched_by": "read_bound_range", "snippet": _changed_region(before, after)}
         if stripped_numbering:
-            result["note"] = (
-                "Your new_text carried read_file's 'NNN| ' line numbers on every "
-                "line; they were stripped before writing. Send the code itself, "
-                "not the numbered display."
-            )
+            result["note"] = _GUTTER_STRIPPED_NOTE
         if auto_imports:
             result["auto_imports"] = auto_imports
         self._append_write_feedback(result, args["path"], after)
@@ -2501,16 +2504,14 @@ class ToolExecutor:
             return frozen
 
         # read_file numbers what the model sees and Qwen pastes the gutter
-        # back. Strip it as modify_file and replace_file_lines do, or a rewrite
-        # arriving as "   1| import re" is refused as "unexpected indent at
-        # line 1" and resent unchanged (most of Qwen's write_file refusals).
-        # Safe because the guard is "most content lines carry NNN| ", which
-        # no real source file satisfies.
+        # back. Strip it, or a rewrite arriving as "   1| import re" is refused
+        # as "unexpected indent at line 1" and resent unchanged (most of Qwen's
+        # write_file refusals). Only read_file's exact display of a whole file
+        # counts: numbered data (a .psv id column, "1| setup | done") is kept.
         content = args.get("content")
-        if isinstance(content, str) and content:
-            unnumbered = _strip_line_numbers(content.split("\n"))
-            if unnumbered is not None:
-                args = {**args, "content": "\n".join(unnumbered)}
+        unnumbered = strip_read_display(content.split("\n")) if isinstance(content, str) else None
+        if unnumbered is not None:
+            args = {**args, "content": "\n".join(unnumbered)}
 
         # Rewriting a file the model has not seen in full this run is a
         # rewrite from memory, which loses scaffold code.
@@ -2616,6 +2617,8 @@ class ToolExecutor:
         if before != args["content"]:
             self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
+        if unnumbered is not None:
+            result["note"] = _GUTTER_STRIPPED_NOTE
         if auto_imports:
             result["auto_imports"] = auto_imports
         self._known_paths.add(args["path"].replace("\\", "/").strip())

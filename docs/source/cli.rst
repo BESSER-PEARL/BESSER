@@ -1131,7 +1131,8 @@ command, and exits with status 1: pytest's short test
 summary (one line per failing test with its first error line, then the counts,
 preceded by pytest's first ``E`` lines, about 600 bytes, when a test module
 does not import, so the cause and its file are shown), else the lines that
-name a failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``) and the last line,
+name a failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``; under unittest's
+``FAIL:`` and ``ERROR:``, the exception line of its traceback) and the last line,
 else the last 40 lines of the output. Colour codes are removed first. A
 conflict left by the build says to resolve the markers, then run ``besser apply``
 again. ``-c FILE`` reads another configuration file. ``--json`` is the object of

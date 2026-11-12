@@ -1549,6 +1549,9 @@ _TEST_TAIL_LINES = 40
 _PYTEST_SUMMARY = re.compile(r"^=+ short test summary info =+$")
 # The lines that name a failing test, in the output of a runner that prints no such section.
 _FAILURE_LINE = re.compile(r"^(FAILED|ERROR|FAIL:|ERROR:|not ok\b)")
+# unittest's header of a failing test; its traceback follows, between separator lines.
+_UNITTEST_FAILURE = re.compile(r"^(FAIL|ERROR): ")
+_UNITTEST_SEPARATOR = re.compile(r"^(={20,}|-{20,})$")
 # pytest's error lines ('E   SyntaxError: ...'): the cause, which its one-line summary cuts or leaves out.
 _PYTEST_ERROR_LINE = re.compile(r"^E( |$)")
 # How much of those error lines 'apply' prints: the first error or two, not every traceback.
@@ -1590,10 +1593,29 @@ def _failing_lines(output: list[str]) -> list[str]:
         summary = output[start + 1:]
         errored = any(line.startswith("ERROR ") for line in summary)
         return [*(_error_lines(output[:start]) if errored else []), *summary]
-    failures = [line for line in output if _FAILURE_LINE.match(line.strip())]
+    failures = []
+    for index, line in enumerate(output):
+        if _FAILURE_LINE.match(line.strip()):
+            failures.append(line)
+            if _UNITTEST_FAILURE.match(line):
+                failures.extend(_unittest_cause(output[index + 1:]))
     if failures:
         return [*failures, output[-1]] if output[-1] not in failures else failures
     return output[-_TEST_TAIL_LINES:]
+
+
+def _unittest_cause(block: list[str]) -> list[str]:
+    """The exception line of the traceback under one of unittest's 'FAIL:' or 'ERROR:' headers
+    ('AssertionError: 1 != 2'), indented under it; nothing when the block has none."""
+    in_traceback = False
+    for line in block[1:]:  # past the dashes under the header
+        if _UNITTEST_SEPARATOR.match(line):
+            break
+        if line.startswith("Traceback "):
+            in_traceback = True
+        elif in_traceback and line.strip() and not line[0].isspace():
+            return [f"    {line}"]
+    return []
 
 
 def _failing_tests(output: list[str]) -> list[str]:

@@ -219,6 +219,35 @@ def test_apply_prints_only_the_failing_tests_of_pytest(besser, model, write):
     assert run.stdout.splitlines()[1].startswith("1 failed, 1 passed")
 
 
+@needs_pygit2
+def test_apply_prints_why_a_unittest_test_failed_in_one_call(besser, model, write):
+    write("tests/__init__.py", "")
+    write("tests/test_app.py", """
+        import unittest
+
+        class AppTest(unittest.TestCase):
+            def test_ok(self):
+                pass
+
+            def test_broken(self):
+                self.assertEqual({"a": 1}["a"], 2)
+
+            def test_raises(self):
+                raise KeyError("missing")
+    """)
+    _config(write, 'test = "python -m unittest discover -s tests -t ."\n')
+    run = besser("apply", output=None)
+
+    assert run.returncode == 1
+    assert run.stdout.splitlines()[:5] == [
+        "ERROR: test_raises (tests.test_app.AppTest.test_raises)",
+        "    KeyError: 'missing'",
+        "FAIL: test_broken (tests.test_app.AppTest.test_broken)",
+        "    AssertionError: 1 != 2",
+        "FAILED (failures=1, errors=1)",
+    ]
+
+
 def test_apply_runs_no_test_after_a_build_that_fails(besser, write):
     write("library.py", "raise ValueError('broken')\n")
     _config(write, FAILING_TEST)

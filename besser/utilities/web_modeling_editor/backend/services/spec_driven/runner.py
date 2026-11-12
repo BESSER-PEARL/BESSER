@@ -319,6 +319,14 @@ def run_changes(recipe: dict) -> dict:
 _SUMMARY_ITEMS_PER_STATE = 8
 
 
+def redact_recipe_models(recipe: dict, provider: str) -> None:
+    """Replace the recipe's model ids with the public label: the recipe goes into GitHub pushes."""
+    usage = recipe.get("usage")
+    for holder, key in ((recipe, "llm_model"), (usage if isinstance(usage, dict) else {}, "model")):
+        if key in holder:
+            holder[key] = agent_trace.normalize_model_id(provider, holder[key])
+
+
 def run_summary_markdown(
     recipe: dict, verification: VerificationReport, secrets: Iterable[str] = (),
 ) -> list[str]:
@@ -2266,6 +2274,7 @@ class SmartGenerationRunner:
                 kind="check", what="everything this run did",
                 why="the run's verification report could not be built",
             )], counts=VerificationCounts(notVerified=1))
+        redact_recipe_models(recipe, self.request.provider)
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")

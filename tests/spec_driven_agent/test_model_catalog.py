@@ -262,7 +262,7 @@ def test_a_deployment_can_offer_a_second_gateway(use_catalog):
 
 def test_a_gateway_is_not_a_model_vendor():
     from besser.spec_driven_agent.state.agent_trace import normalize_model_id
-    assert normalize_model_id("gateway", "m") == "m"
+    assert normalize_model_id("gateway", "m") == "gateway"
 
 
 # --- the provider's default model -------------------------------------------

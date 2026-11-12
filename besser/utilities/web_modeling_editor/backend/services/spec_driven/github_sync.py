@@ -34,6 +34,7 @@ from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     add_agents_block,
     add_readme_block,
+    get_besser_version,
     readme_about,
     readme_besser_block,
 )
@@ -278,9 +279,17 @@ async def push_run_to_github(
         # The run records that commit itself: the editor's link may have
         # moved on (a pull after the run started), and pushing over the
         # link's newer base would revert what was pulled.
+        run_recipe = read_run_json(os.path.join(workdir, RECIPE_FILENAME)) or {}
+        history = run_recipe.get("history")
+        modified = bool(history) and isinstance(history[-1], dict) and history[-1].get("mode") == "modify"
         commit_message = repo_model.with_origin(
             deploy_config.commit_message or "Spec-driven app + model — BESSER",
             repo_model.ORIGIN_AGENT,
+            {
+                "AI-Tool": f"besser-spec-driven-agent/{get_besser_version()}",
+                "AI-Model": run_recipe.get("llm_model"),
+                "AI-Role": "feature-modification" if modified else "code-generation",
+            },
         )
         pull_request_url = None
         if deploy_config.push_mode == "pull_request" and not is_first_push:

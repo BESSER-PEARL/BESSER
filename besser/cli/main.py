@@ -202,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "-q", "--quiet", action="store_true", default=argparse.SUPPRESS,
-        help="print only errors and the output of completion, generators, guide, info, schema and --version "
+        help="print only errors and the output of completion, generators, guide, info, new --list, schema and --version "
              "(and, with --strict, the warnings that fail the run)",
     )
     common.add_argument(
@@ -395,7 +395,8 @@ def build_parser() -> argparse.ArgumentParser:
         "The one command to run after a model change: 'besser build' (each model is validated first),\n"
         "then, when the build succeeds, the 'test' command line of besser.toml, run from its folder\n"
         "without a shell. Prints one line when everything passes, the errors or the end of the\n"
-        "test output otherwise. Exit status 1 when the build or the tests fail.\n\n" + _EXECUTES_PYTHON,
+        "test output otherwise. Exit status 1 when the build or the tests fail, 2 when besser.toml, a model\n"
+        "or an output cannot be used (as for 'besser build').\n\n" + _EXECUTES_PYTHON,
     )
     apply.add_argument("-c", "--config", default=CONFIG_FILENAME, metavar="FILE",
                        help=f"the configuration file (default: {CONFIG_FILENAME} in the current directory)")

@@ -257,6 +257,14 @@ def test_a_run_does_not_import_the_mcp_server():
     assert run.stdout.splitlines()[-1] == "False False"
 
 
+def test_the_help_says_what_quiet_keeps_and_what_apply_exits_with(besser):
+    quiet_listing = besser("new", "--list", "-q")
+    missing_config = besser("apply")
+
+    assert quiet_listing.stdout and "new --list" in besser("--help").stdout
+    assert missing_config.returncode == 2 and "2 when besser.toml" in besser("apply", "--help").stdout
+
+
 @pytest.mark.parametrize("args", [("schema", "domain"), ("generators", "--json")])
 def test_a_reader_that_closes_the_pipe_early_gets_the_command_s_exit_status_and_no_traceback(tmp_path, args):
     # As 'besser schema domain | head -1': the reader is gone before besser writes.

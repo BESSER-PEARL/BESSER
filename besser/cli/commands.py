@@ -1871,8 +1871,10 @@ def _stop_process_tree(process: subprocess.Popen) -> None:
     """Kill ``process`` and every process it started: its process group on POSIX (it leads a session of
     its own), its tree with ``taskkill`` on Windows."""
     if os.name == "nt":
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False,
-                       timeout=_STOPPED_OUTPUT_SECONDS)
+        # A taskkill that is missing or hangs must not keep the test process itself alive (below).
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False,
+                           timeout=_STOPPED_OUTPUT_SECONDS)
     else:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)

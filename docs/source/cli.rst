@@ -84,7 +84,7 @@ Every command takes these options, before or after the command name:
        ``convert``, ``new``). Errors are still printed, and so is the output of
        a command whose output is the result: ``completion`` (so
        ``eval "$(besser completion bash -q)"`` works), ``generators``,
-       ``info``, ``schema``, ``new --list`` and ``--version``. A ``validate --strict`` run that fails on
+       ``guide``, ``info``, ``schema``, ``new --list`` and ``--version``. A ``validate --strict`` run that fails on
        warnings alone prints ``error: N warnings (--strict)`` and the warnings.
        With ``--json`` the JSON object is still printed, whole.
    * - ``-v``, ``--verbose``
@@ -302,7 +302,7 @@ is left alone.
 ``besser guide``
 ----------------
 
-Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 3 KB (41
+Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 3 KB (43
 lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
 commands, and what the ``backend``
 generator's API does, so that an agent needs neither the generated code nor
@@ -349,16 +349,16 @@ argument name. Without a topic it lists the topics:
 
    Classes (from besser.BUML.metamodel.state_machine import ...), with their constructor arguments:
      ...
-     Event(name: str)
-         The representation of an event (i.e., external or internal stimuli or input) that may cause the transition of state in a state machine.
      State(sm: StateMachine, name: str, initial: bool = False, final: bool = False)
          A state of a state machine.
      StateMachine(name: str)
          A state machine model.
+     Session()
+         A user session in a state machine execution.
 
 With ``--json``, a kind's ``description`` gives each class's ``name``,
 ``signature``, ``doc``, ``bases``, ``abstract`` and ``parameters`` (``name``,
-``type``, ``default``, ``required``).
+``required``, ``type`` and, for an optional one, ``default``).
 
 ``besser validate``
 -------------------
@@ -518,7 +518,7 @@ and the constraint:
    $ besser validate books.py --ocl
    books.py: 2 models
      book_model (DomainModel): 1 error, 0 warnings
-       error: OCL constraint 'broken' on Book does not parse: line 1, column 37: Expression ends unexpectedly — the operand on the right is missing.
+       error: OCL constraint 'broken' on Book does not parse: line 1, column 37: Expression ends unexpectedly — the operand on the right is missing. (books.py, line 12)
      shelf (ObjectModel): 1 error, 0 warnings
        error: OCL constraint [Book inv positive_pages]: 'context Book inv positive_pages: self.pages > 0' - Constraint violation: Evaluates to False
    FAILED: 2 errors, 0 warnings
@@ -613,7 +613,7 @@ are warnings here, so ``info`` exits with status 0 on them. ``besser validate``
 is the command that fails on them. The model an editor project marks current is
 shown ``(current in the editor)``, and a note says when the file holds several
 models of a kind with none current (see :ref:`cli-several-diagrams`).
-``besser info --json`` gives ``models`` (``name``, ``kind``, ``type``,
+``besser info --json`` gives ``model`` (the file), ``models`` (``name``, ``kind``, ``type``,
 ``model_name``, ``current``, ``counts`` and, for a domain model, ``classes``
 (each attribute with ``name``, ``type``, ``optional`` and ``default``),
 ``enumerations``, ``associations``, ``constraints`` (``name``, ``context``,
@@ -621,7 +621,7 @@ models of a kind with none current (see :ref:`cli-several-diagrams`).
 for create, read, update, delete, bulk, count, paginated, search and each
 method, as the class has them); for the other kinds ``elements``, the
 names of what the model holds per collection, as in ``states: created, paid``)
-and ``generators``.
+and ``generators``; with ``--class``, ``classes`` (see :ref:`cli-json`).
 
 .. _cli-model:
 
@@ -641,7 +641,7 @@ and ``generators``.
 
 Changes the domain model of a B-UML ``.py`` file with one command per change,
 so that a coding agent does not read the file or write a script that patches
-it. The file is the one named by ``-f FILE``, else the ``model`` of
+it. The file is the one named by ``-f FILE`` (``--file``), else the ``model`` of
 ``besser.toml``, else ``model.py``; ``--use NAME`` picks the domain model when
 the file holds several.
 
@@ -666,7 +666,8 @@ the file holds several.
      - A method; ``--code`` is its Python code, which the ``backend`` runs.
    * - ``add-constraint CLASS EXPRESSION [--name NAME]``
      - An OCL invariant on the class (``context ... inv`` is added when the
-       expression does not start with it). It must parse against the model
+       expression does not start with it), named ``<class>_rule_<n>`` without
+       ``--name``. It must parse against the model
        (see :ref:`OCL constraints <cli-ocl>`).
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
@@ -781,7 +782,7 @@ The command:
 
 ``-o`` names a directory: a file there, or at one of its parents, is refused
 with exit status 2 before anything runs (``out is a file: -o takes a
-directory``).
+directory``, or ``out/api cannot be created: out is a file``).
 
 ``generate`` overwrites what it generates, so it refuses (exit status 2) a
 directory that is not empty, and nothing is written. ``--force`` writes into it
@@ -802,9 +803,9 @@ with the same options; when ``pygit2`` is not installed, it ends with
 .. code-block:: console
 
    $ besser generate sqlalchemy library.py -o out --option dbms=postgresql
-   note: recorded the output in out/.besser_generated.json: 'besser regenerate sqlalchemy library.py -o out --option dbms=postgresql' brings it up to a changed model and keeps your edits
    Generated 1 file in out with the 'sqlalchemy' generator:
      out/sql_alchemy.py
+   note: recorded the output in out/.besser_generated.json: 'besser regenerate sqlalchemy library.py -o out --option dbms=postgresql' brings it up to a changed model and keeps your edits
 
 ``--use`` is given for each kind the file holds several models of, or for
 every kind when you gave ``--use``. Keep the record with the code (commit it).
@@ -827,10 +828,10 @@ listed, and a note says the run would write it:
 .. code-block:: console
 
    $ besser generate python library.py -o out --dry-run
-   note: would record the output in out/.besser_generated.json: 'besser regenerate python library.py -o out' would then bring it up to a changed model and keep your edits
    Dry run: nothing was written.
    The 'python' generator would write 1 file in out (1 new):
      new  out/classes.py
+   note: would record the output in out/.besser_generated.json: 'besser regenerate python library.py -o out' would then bring it up to a changed model and keep your edits
 
 A dry run is refused where the run would be: ``-o`` naming a file, a
 directory that is not empty without ``--force``, a model with validation
@@ -996,7 +997,7 @@ The command is refused with status 2, and nothing is written, when:
   Without edits to merge (a second ``besser build``, or a model change in files
   nobody edited) the command needs no ``pygit2``;
 * ``-o`` names a file, or a path under one (``out is a file: -o takes a
-  directory``);
+  directory``, ``out/api cannot be created: out is a file``);
 * the directory holds the output of another generator, a Spec-Driven Agent
   app, or conflict markers of the last run.
 
@@ -1038,12 +1039,14 @@ all (``besser schema config`` prints this example):
 
    $ besser build
    [api] backend: model.py -> generated/api: ok
-     Generated 11 files in generated/api with the 'backend' generator:
+     Generated 10 files in generated/api with the 'backend' generator:
        ...
    [db] sqlalchemy: model.py -> generated/db: ok
      Generated 1 file in generated/db with the 'sqlalchemy' generator:
        generated/db/sql_alchemy.py
    OK: 2 outputs, 0 failed
+   note: api: recorded the output in generated/api/.besser_generated.json: ...
+   note: db: recorded the output in generated/db/.besser_generated.json: ...
 
 Each output is built as the two commands above build it:
 
@@ -1076,6 +1079,10 @@ JavaScript, Java, SQL, CSS, YAML, ...; not JSON or plain text):
 
    # Generated by BESSER: edit the model, not this file. Custom code goes in extensions.py.
 
+That is the ``backend`` generator's line (``web_app`` names
+``backend/extensions.py``); the others end it with
+``Custom code goes outside this folder.``
+
 ``.besser_generated.json`` in the output directory lists every generated file.
 The ``backend`` generator (and the backend of ``web_app``) loads
 ``extensions.py`` from beside ``main_api.py``: see
@@ -1102,6 +1109,7 @@ adopts (``regenerate --adopt``) without reading the header as an edit.
    !!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
    1 error in 0.47s
    FAILED: tests (exit status 2); build OK: 1 output, 0 failed: [backend] backend is up to date with model.py: no file changed
+   error: the tests failed (exit status 2): python -m pytest -q
 
 The one command to run after a model change: ``besser build`` for every output
 (each model is validated first, and nothing is generated from a model with
@@ -1112,7 +1120,8 @@ one line when everything passes, and that line always ends with what the tests
 did: their last output line, ``tests: none collected`` (pytest found no test),
 or ``tests: none (set 'test' in besser.toml)`` when there is no ``test`` key.
 When the tests fail it prints only the failing tests, then a line starting with
-``FAILED: tests (exit status N)``, and exits with status 1: pytest's short test
+``FAILED: tests (exit status N)`` and an ``error:`` line naming the test
+command, and exits with status 1: pytest's short test
 summary (one line per failing test with its first error line, then the counts,
 preceded by pytest's first ``E`` lines, about 600 bytes, when a test module
 does not import, so the cause and its file are shown), else the lines that
@@ -1388,7 +1397,8 @@ and ``output`` on ``convert``.
        {"file": "library.py", "ok": true, "exit_code": 0, "errors": [], "warnings": [],
         "models": [{"file": "library.py", "name": "library_model", "...": "as in models"}]}
      ],
-     "skipped": []
+     "skipped": [],
+     "diagnostics": []
    }
 
 (Shortened: the command prints one key per line.)
@@ -1403,12 +1413,14 @@ and ``output`` on ``convert``.
      - Success.
    * - 1
      - The command ran and failed: validation errors (or warnings with
-       ``--strict``), a generator that raised, a conversion that failed,
-       conflicts left by ``regenerate``.
+       ``--strict``), a generator that raised or wrote nothing, a conversion
+       that failed, conflicts left by ``regenerate``, a ``besser model`` change
+       that would make the model invalid, tests that fail in ``apply``.
    * - 2
      - The command could not run: bad arguments, an unknown generator or
-       option, a model file that does not load, an output directory that
-       ``generate`` or ``regenerate`` refuses. Nothing was generated. A usage
+       option, a model file or ``besser.toml`` that does not load, an output
+       directory that ``generate`` or ``regenerate`` refuses, a ``besser model``
+       change that does not apply. Nothing was generated. A usage
        error is also a JSON object when ``--json`` is given.
 
 Standard output carries the result only. Whatever a model file or a generator

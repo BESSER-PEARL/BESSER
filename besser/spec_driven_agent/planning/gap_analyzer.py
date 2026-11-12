@@ -946,6 +946,11 @@ def _nearest_existing(path: str, workspace_files: list[str]) -> list[str]:
     return [real for _, real in scored[:_MAX_NEAREST]]
 
 
+def _normalize_task_path(path: str) -> str:
+    """``/``-separated, without a leading ``./`` (a dot-directory keeps its dot)."""
+    return re.sub(r"^(?:\./)+", "", path.replace("\\", "/"))
+
+
 def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     """Repair the file paths a task list names, against the real tree.
 
@@ -967,7 +972,7 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     if not workspace_files:
         return tasks
 
-    real = {f.replace("\\", "/").lstrip("./") for f in workspace_files}
+    real = {_normalize_task_path(f) for f in workspace_files}
     by_suffix: dict[str, set] = {}
     for full in real:
         parts = full.split("/")
@@ -979,13 +984,15 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
         text = task
         missing: list[str] = []
         for token in dict.fromkeys(_TASK_PATH_RE.findall(task)):
-            norm = token.replace("\\", "/").lstrip("./")
+            norm = _normalize_task_path(token)
             if norm in real:
                 continue
             matches = by_suffix.get(norm, set())
             if len(matches) == 1:
                 target = next(iter(matches))
-                text = text.replace(token, target)
+                # Whole tokens only: a plain replace would also rewrite the
+                # tail of a right path that ends in this token.
+                text = re.sub(rf"(?<![\w/\\.]){re.escape(token)}(?![\w/\\])", lambda _: target, text)
                 logger.info(
                     "Gap sanitizer repaired task path %r -> %r", token, target
                 )

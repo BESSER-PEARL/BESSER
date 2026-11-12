@@ -588,6 +588,34 @@ def test_resume_keeps_the_extracted_requirements(simple_model, tmp_path, monkeyp
     assert len(extractions) == 1
 
 
+def test_resume_keeps_the_routed_stack(simple_model, tmp_path, monkeypatch):
+    """The routing answer decides which stack's idioms the prompt teaches; a
+    resumed prompt fell back to keywords and taught Rust for "rust-proof paint"."""
+    request = "Build an online shop for rust-proof paint"
+    crashed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    crashed._project_fingerprint = crashed._compute_project_fingerprint(request)
+    crashed._routed, crashed._unsupported_stack = True, ""  # a stack BESSER generates
+    assert "Idiomatic conventions" not in crashed._build_system_prompt(request)
+    crashed._save_checkpoint_for_turn(1, [{"role": "user", "content": request}], request)
+
+    prompts = []
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    monkeypatch.setattr(resumed, "_run_phase2", lambda instructions, extra_issues=None: prompts.append(
+        resumed._build_system_prompt(instructions)))
+    for name in ("_create_snapshot", "_run_phase3_validation", "_remove_snapshot"):
+        monkeypatch.setattr(resumed, name, lambda: None)
+    monkeypatch.setattr(resumed, "_save_recipe", lambda instructions, elapsed: None)
+    resumed.resume(request)
+
+    assert "Idiomatic conventions" not in prompts[0]
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

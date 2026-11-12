@@ -178,6 +178,13 @@ def test_requirements_round_trip_and_default(tmp_path):
     assert load_checkpoint(str(tmp_path)).requirements is None
 
 
+def test_routed_stack_round_trip_and_default(tmp_path):
+    """``""`` (a stack BESSER generates) and ``None`` (no routing answer) stay distinct."""
+    for routed_stack in ("next.js", "", None):
+        save_checkpoint(str(tmp_path), _make_checkpoint(routed_stack=routed_stack))
+        assert load_checkpoint(str(tmp_path)).routed_stack == routed_stack
+
+
 def test_load_missing_returns_none(tmp_path):
     assert load_checkpoint(str(tmp_path)) is None
 

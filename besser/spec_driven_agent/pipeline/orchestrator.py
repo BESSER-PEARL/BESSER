@@ -952,6 +952,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for i in checkpoint.validation_issues
         ]
         self._requirements = checkpoint.requirements
+        if checkpoint.routed_stack is not None:
+            self._routed, self._unsupported_stack = True, checkpoint.routed_stack
         self._project_fingerprint = checkpoint.project_fingerprint
         from besser.spec_driven_agent.state.checkpoint import restore_api_scenarios
         self._api_scenarios = restore_api_scenarios(checkpoint.api_scenarios)
@@ -2686,6 +2688,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 generator_files=sorted(self.executor._generator_files),
                 write_evidence=self.executor.evidence_snapshot(),
                 requirements=self._requirements,
+                routed_stack=self._unsupported_stack if self._routed else None,
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:

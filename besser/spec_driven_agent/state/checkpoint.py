@@ -105,6 +105,9 @@ class Checkpoint:
     # The requirements ledger (``None``: not extracted). Phase 2 and Phase 3
     # hold the run to one list; a resume must not extract a second one.
     requirements: list[dict] | None = None
+    # The routing answer's ``unsupported_stack`` (``None``: no routing answer);
+    # it picks the prompt's stack idioms.
+    routed_stack: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -136,6 +139,7 @@ class Checkpoint:
             "generator_files": self.generator_files,
             "write_evidence": self.write_evidence,
             "requirements": self.requirements,
+            "routed_stack": self.routed_stack,
         }
 
 
@@ -406,6 +410,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             requirements=(
                 [r for r in data["requirements"] if isinstance(r, dict)]
                 if isinstance(data.get("requirements"), list) else None),
+            routed_stack=data.get("routed_stack") if isinstance(data.get("routed_stack"), str) else None,
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

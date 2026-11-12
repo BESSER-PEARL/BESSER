@@ -2233,16 +2233,31 @@ class ToolExecutor:
         # Only complete, actually displayed lines are eligible for a range
         # edit. Never authorize the unseen tail of a truncated read.
         truncated = len(selected) > MAX_FILE_READ
-        if len(selected) > MAX_FILE_READ:
+        clipped = False
+        if truncated:
             boundary = selected.rfind("\n", 0, MAX_FILE_READ)
-            selected = selected[:boundary] if boundary >= 0 else ""
-            end = start + (selected.count("\n") + 1 if selected else 0)
+            if boundary >= 0:
+                selected = selected[:boundary]
+                end = start + selected.count("\n") + 1
+            else:
+                # The first line alone exceeds the cap. Show it clipped and move
+                # past it, or every read names this same offset again.
+                clipped = True
+                selected = (selected[:MAX_FILE_READ]
+                            + f" ... [line {start + 1} clipped: {len(lines[start])} chars]")
+                end = start + 1
 
         result = {"content": selected}
-        result["read_id"] = self._mint_read_view(path, content, start + 1, end)
+        # A clipped line was not seen whole, so no read_id may authorize it.
+        if not clipped:
+            result["read_id"] = self._mint_read_view(path, content, start + 1, end)
         result["start_line"] = start + 1
         result["end_line"] = end
-        if truncated:
+        if clipped:
+            result["truncated"] = True
+            result["hint"] = (f"Read continues at offset={end}. Line {end} is too long to show "
+                              "whole; change it with modify_file, not a range edit or a rewrite.")
+        elif truncated:
             result["truncated"] = True
             result["content"] += "\n... [truncated; read the next range to continue]"
             result["hint"] = f"Read continues at offset={end}; unseen lines cannot be edited with this read_id."
@@ -2252,7 +2267,8 @@ class ToolExecutor:
         seen_digest, seen = self._read_coverage.get(known, (digest, set()))
         if seen_digest != digest:
             seen = set()
-        seen.update(range(start, end))
+        if not clipped:
+            seen.update(range(start, end))
         self._read_coverage[known] = (digest, seen)
         if len(seen) >= total_lines:
             self._fully_seen.add(known)
@@ -2285,6 +2301,19 @@ class ToolExecutor:
             )
 
         return result
+
+    def _unreadable_line(self, rel_path: str) -> tuple[int, int] | None:
+        """(line, length) of a line read_file can only show clipped, in an
+        existing file not yet seen whole. write_file cannot reproduce it."""
+        path = self._safe_path(rel_path)
+        if rel_path.strip() in self._fully_seen or not os.path.isfile(path):
+            return None
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if len(content) <= MAX_FILE_READ:
+            return None
+        return next(((n, len(line)) for n, line in enumerate(content.split("\n"), 1)
+                     if len(f"{n:>4}| {line}") > MAX_FILE_READ), None)
 
     def _add_edit_recovery(self, tool: str, args: dict, result: dict) -> None:
         """Attach the edit-recovery ladder's next step to a refused edit.
@@ -2324,7 +2353,8 @@ class ToolExecutor:
         if located and self._edit_recovery.get(path, 0) < 2:
             result["edit_recovery"] = {"next_tool": "replace_file_lines"}
             return
-        if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
+        if (self._edit_recovery.get(path, 0) < 2 or self._frozen(path)
+                or self._unreadable_line(path)):
             return
         # Two refused edits on this path -> rewrite the whole file.
         # NOT because write_file is more reliable (it is not): successful range
@@ -2526,6 +2556,13 @@ class ToolExecutor:
                 f"{args['path']} exists and you have not read it this run. Call "
                 "read_file first, then modify_file for targeted changes (write_file "
                 "only if a full rewrite is really needed)."
+            )}
+        long_line = self._unreadable_line(rel_path)
+        if long_line:
+            return {"error": (
+                f"{args['path']} exists and its line {long_line[0]} ({long_line[1]} chars) is "
+                "longer than read_file can show, so a full rewrite would drop it. Edit the "
+                "file with modify_file instead."
             )}
         if os.path.isfile(path) and rel_path.strip() not in self._fully_seen:
             return {"error": (

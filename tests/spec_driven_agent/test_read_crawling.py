@@ -74,3 +74,67 @@ def test_a_small_file_read_repeatedly_is_not_nagged(tmp_path):
             "read_file", {"path": "small.py", "offset": 0, "limit": 2}).payload
 
     assert "hint" not in result
+
+
+# One line longer than MAX_FILE_READ (a minified bundle). It used to come back
+# as empty content naming the SAME offset again, on every retry.
+BUNDLE = "var a=1;\n" + "x" * 70000 + "\nvar b=2;\n"
+
+
+@pytest.fixture
+def bundle(tmp_path):
+    (tmp_path / "bundle.js").write_text(BUNDLE, encoding="utf-8")
+    return ToolExecutor(workspace=str(tmp_path))
+
+
+def _read(executor, **args):
+    return executor.execute_typed("read_file", {"path": "bundle.js", **args}).payload
+
+
+def test_a_line_over_the_read_cap_is_clipped_and_paging_moves_past_it(bundle):
+    first = _read(bundle)
+    assert first["end_line"] == 1 and "offset=1" in first["hint"]
+
+    clipped = _read(bundle, offset=1)
+    assert (clipped["start_line"], clipped["end_line"]) == (2, 2)
+    assert clipped["content"].startswith("   2| xxxx")
+    assert "[line 2 clipped: 70000 chars]" in clipped["content"]
+    assert "offset=2" in clipped["hint"]
+
+    rest = _read(bundle, offset=2)
+    assert rest["content"].startswith("   3| var b=2;")
+    assert "truncated" not in rest
+
+
+def test_a_clipped_line_is_never_editable_by_range(bundle):
+    clipped = _read(bundle, offset=1)
+    whole = _read(bundle)
+    for view in (clipped, whole):
+        if "read_id" not in view:
+            continue
+        refused = bundle.execute_typed("replace_file_lines", {
+            "path": "bundle.js", "read_id": view["read_id"], "start_line": 2,
+            "end_line": 2, "new_text": "x\n"}).payload
+        assert refused["rejection_kind"] == "unread_range", refused
+    assert open(os.path.join(bundle.workspace, "bundle.js"), encoding="utf-8").read() == BUNDLE
+
+
+def test_a_rewrite_that_would_drop_a_clipped_line_names_it(bundle):
+    """write_file must refuse (a rewrite cannot reproduce 70,000 unseen chars),
+    but not by sending the model back to a read that cannot show more."""
+    for offset in (0, 1, 2):
+        _read(bundle, offset=offset)
+
+    refused = bundle.execute_typed("write_file", {
+        "path": "bundle.js", "content": "var a=1;\nvar b=2;\n"}).payload
+
+    assert "line 2" in refused["error"] and "modify_file" in refused["error"], refused
+    assert "Read the rest" not in refused["error"]
+
+
+def test_the_ladder_does_not_send_a_clipped_file_to_a_rewrite(bundle):
+    for _ in range(2):
+        refused = bundle.execute_typed("modify_file", {
+            "path": "bundle.js", "old_text": "var c=3;", "new_text": "var c=4;"}).payload
+        assert "error" in refused
+    assert refused.get("edit_recovery", {}).get("next_tool") != "write_file", refused

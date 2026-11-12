@@ -125,6 +125,32 @@ def test_an_interruption_that_wrote_nothing_keeps_the_tree(orchestrator):
     assert orchestrator._phase3_rolled_back is False
 
 
+def test_the_discard_keeps_the_rewrites_entry_validation_made(orchestrator, tmp_path):
+    """Entry validation rewrites files itself (npm ci -> npm install, dependency
+    pins). Discarding attempt 1 must restore that validated tree, not the one
+    snapshotted before validation: the reported findings describe the former."""
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("RUN npm ci\n", encoding="utf-8")
+    orchestrator._create_snapshot()  # where run(), modify() and resume() take it
+
+    def collect():
+        dockerfile.write_text("RUN npm install\n", encoding="utf-8")
+        return _blockers(3)
+
+    def fix(blockers, is_first_attempt):
+        (tmp_path / "unvalidated.py").write_text("x = 1\n", encoding="utf-8")
+        _provider_error(orchestrator)
+        return 1
+
+    with patch.object(orchestrator, "_collect_validation_issues", side_effect=collect), \
+            patch.object(orchestrator, "_invoke_phase3_fix_loop", side_effect=fix):
+        orchestrator._run_phase3_validation()
+
+    assert orchestrator._phase3_rolled_back is True
+    assert not (tmp_path / "unvalidated.py").exists()
+    assert dockerfile.read_text(encoding="utf-8") == "RUN npm install\n"
+
+
 def test_an_attempt_that_raises_is_discarded_and_the_error_still_propagates(orchestrator):
     """An auth failure must still reach the runner as INVALID_KEY."""
     from besser.spec_driven_agent.errors import InvalidApiKeyError

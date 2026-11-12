@@ -255,6 +255,12 @@ class Phase3RepairMixin:
             )
             return
 
+        # Validation itself rewrites files (npm ci -> npm install, dependency
+        # pins, the vite config). Re-snapshot so the rollback target is the
+        # tree ``issues`` describe, not the one before those rewrites.
+        self._create_snapshot()
+        self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_fix_loop")
+
         # Repair within the remaining budgets. Fixing an upstream failure can
         # expose downstream failures, so blocker counts are not a progress
         # metric. One unchanged/repeated source state stops an unproductive loop.
@@ -1224,9 +1230,10 @@ class Phase3RepairMixin:
     def _create_snapshot(self) -> None:
         """Snapshot the output directory as the rollback target.
 
-        Taken once before Phase 3 and again after any repair attempt that
-        reaches a strictly better tree, so the snapshot always holds the BEST
-        state the run has reached rather than its first one.
+        Taken before Phase 3, again once entry validation has applied its own
+        rewrites, and after any repair attempt that reaches a strictly better
+        tree, so the snapshot always holds the BEST validated state the run
+        has reached rather than its first one.
 
         Built in a staging directory and swapped in by rename: deleting the
         existing snapshot first and copying after leaves the run with no

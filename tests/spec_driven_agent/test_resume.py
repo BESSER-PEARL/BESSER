@@ -348,6 +348,10 @@ def test_repair_resume_retains_corrected_state_but_rechecks_results(simple_model
     monkeypatch.setattr(first, "_collect_validation_issues", lambda: [blocker])
     monkeypatch.setattr("besser.spec_driven_agent.validation.api_probe.probe_api_scenario",
                         lambda *args, **kwargs: {"status": "passed", "boot": "passed"})
+    # No rollback target: this test covers what the checkpoint carries. With
+    # one, the stop would discard the unvalidated edit (see
+    # test_phase3_interrupted_repair.py).
+    monkeypatch.setattr(first, "_create_snapshot", lambda: None)
     first._run_phase3_validation()
     first._finish_checkpoint()
 

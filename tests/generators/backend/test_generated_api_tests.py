@@ -363,3 +363,22 @@ def test_deleting_an_object_linked_to_its_own_parent_class_expects_what_the_api_
     counts, output = _run_generated_tests(_generator_limit_model(ends, subclass=True), tmp_path)
 
     assert counts == {"passed": 2}, output
+
+
+@pytest.mark.parametrize("abstract, expected", [
+    ((False, False), {"skipped": 3}),  # two parent tables: 'multiple mapped bases'
+    ((True, True), {"skipped": 3}),  # two abstract bases: their mappings stay pending
+    ((True, False), {"passed": 2, "skipped": 1}),  # one of each: the generated app runs
+], ids=["two_tables", "two_abstract_bases", "one_of_each"])
+def test_a_class_with_two_parents_the_generator_cannot_map_is_skipped(abstract, expected, tmp_path):
+    first = Class(name="Person", is_abstract=abstract[0], attributes={Property(name="name", type=StringType)})
+    second = Class(name="Worker", is_abstract=abstract[1], attributes={Property(name="wage", type=FloatType)})
+    student = Class(name="Student", attributes={Property(name="school", type=StringType)})
+    model = DomainModel(name="People", types={first, second, student}, generalizations={
+        Generalization(general=first, specific=student), Generalization(general=second, specific=student)})
+
+    counts, output = _run_generated_tests(model, tmp_path)
+
+    assert counts == expected, output
+    if "passed" not in expected:
+        assert "Student specializes Person, Worker: the backend generator maps a class onto one parent" in output

@@ -357,6 +357,15 @@ class _ApiShape:
         ``POST`` of that class fails. Their tests are skipped with that reason, not left to fail."""
         unmapped = None
         uncreatable: dict[str, str] = {}
+        for cls in sorted(self.model.get_classes(), key=lambda cls: cls.name):
+            # An abstract root without association ends is a concrete-table base (SQLAlchemy generator's
+            # get_concrete_table_inheritance); any other parent is a table the class joins.
+            concrete = [p for p in cls.parents() if p.is_abstract and not p.parents() and not p.association_ends()]
+            if len(concrete) > 1 or len(cls.parents()) - len(concrete) > 1:
+                unmapped = unmapped or (
+                    f"{cls.name} specializes {', '.join(sorted(p.name for p in cls.parents()))}: the backend "
+                    "generator maps a class onto one parent table or one abstract base only, so no route of the "
+                    "generated app works. A limitation of the generator, not of the model")
         for association in sorted(self.model.associations, key=lambda assoc: assoc.name):
             ends = list(association.ends)
             if len(ends) != 2 or association.name in self.link_class:

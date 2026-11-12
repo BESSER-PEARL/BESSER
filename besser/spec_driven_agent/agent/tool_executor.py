@@ -1646,8 +1646,32 @@ class ToolExecutor:
         except Exception as e:
             logger.warning("Tool %s failed: %s", tool_name, e, exc_info=True)
             return ToolExecutionResult(
-                "error", {"error": f"{tool_name} failed: {e}"}
+                "error", {"error": f"{tool_name} failed: {self._model_error_text(e)}"}
             )
+
+    def _model_error_text(self, error: Exception) -> str:
+        """``error`` as the model may see it: no absolute server path.
+
+        An OSError names its file(s) relative to the workspace, or by base
+        name when outside it; any other message loses the workspace prefix.
+        """
+        if isinstance(error, OSError) and error.strerror:
+            names = [self._model_path(name) for name in (error.filename, error.filename2) if name]
+            return ": ".join([error.strerror, ", ".join(names)]) if names else error.strerror
+        return str(error).replace(self.workspace + os.sep, "").replace(self.workspace, ".")
+
+    def _model_path(self, path) -> str:
+        """``path`` relative to the workspace, or its base name when outside it."""
+        # An OSError filename may also be bytes or an fd number.
+        path = os.fsdecode(path) if isinstance(path, (str, bytes, os.PathLike)) else str(path)
+        if os.path.isabs(path):
+            try:
+                rel = os.path.relpath(path, self.workspace)
+            except ValueError:  # different drives on Windows
+                rel = os.pardir
+            outside = rel == os.pardir or rel.startswith(os.pardir + os.sep)
+            path = os.path.basename(path) if outside else rel
+        return path.replace("\\", "/")
 
     def execute(self, tool_name: str, arguments: dict) -> str:
         """

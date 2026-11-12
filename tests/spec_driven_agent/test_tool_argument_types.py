@@ -2,6 +2,7 @@
 dispatch: unambiguous mistakes are coerced, the rest are refused with a message
 naming the argument, the expected type and the type received."""
 import json
+import os
 
 import pytest
 
@@ -78,3 +79,25 @@ def test_invalid_json_arguments_still_report_the_parse_error(executor):
     from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
     result = _run(executor, "write_file", {INVALID_ARGUMENTS_KEY: "JSONDecodeError: x"})
     assert "not valid JSON" in result["error"]
+
+
+def test_a_failed_tool_never_shows_the_server_path(executor):
+    os.makedirs(os.path.join(executor.workspace, "dir1"))
+    error = _run(executor, "write_file", {"path": "dir1", "content": "x"})["error"]
+    assert executor.workspace not in error
+    assert error == "write_file failed: Is a directory: dir1"
+
+
+def test_an_os_error_outside_the_workspace_names_only_the_file(executor, monkeypatch):
+    def failing(self, args):
+        raise PermissionError(13, "Permission denied", "/usr/lib/secret/tool.cfg")
+    monkeypatch.setitem(ToolExecutor._handlers, "list_files", failing)
+    error = _run(executor, "list_files", {})["error"]
+    assert error == "list_files failed: Permission denied: tool.cfg"
+
+
+def test_other_errors_drop_the_workspace_prefix(executor, monkeypatch):
+    def failing(self, args):
+        raise RuntimeError(f"cannot build {self.workspace}{os.sep}src{os.sep}app.ts")
+    monkeypatch.setitem(ToolExecutor._handlers, "list_files", failing)
+    assert _run(executor, "list_files", {})["error"] == "list_files failed: cannot build src/app.ts"

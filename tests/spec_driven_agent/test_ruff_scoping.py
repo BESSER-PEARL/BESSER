@@ -90,6 +90,18 @@ def test_the_truncation_note_is_not_counted_as_a_defect(simple_library_book_mode
                for i in issues)
 
 
+@pytest.mark.parametrize("note", [
+    "tsc [frontend]: (+12 more errors truncated)",
+    "cargo [.]: (+3 more errors truncated)",
+    "kotlinc [app/src/main/kotlin]: (+3 more errors truncated)",
+])
+def test_every_toolchain_truncation_note_is_a_count_not_a_defect(note):
+    """The compilers' notes (toolchain.py) are the same count as ruff's."""
+    assert _classify_issue(note).severity == "style"
+    # A compiler error line keeps its blocker severity.
+    assert _classify_issue(note.split(": ")[0] + ": src/a.ts(1,1): error TS2304").severity == "blocker"
+
+
 def test_the_reported_path_is_resolved_against_the_workspace(simple_library_book_model, tmp_path):
     """A relative tool-call path must match ruff's absolute output path."""
     _write(tmp_path, "backend/routers/booking.py", NOISE)

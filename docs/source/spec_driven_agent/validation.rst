@@ -256,7 +256,9 @@ Findings are classified into three severities:
        ``cargo`` / ``kotlinc``. These drive the auto-fix loop.
    * - ``style``
      - Cosmetic ``ruff`` rules: ``F401`` / ``F841`` (unused import or
-       variable), ``E501``, whitespace, blank lines, import order.
+       variable), ``E501``, whitespace, blank lines, import order; the
+       ``(+N more ... truncated)`` notes of ``ruff``, ``tsc``, ``cargo`` and
+       ``kotlinc``, which are counts, not defects.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
        now), ``form field type:``, the model-derived acceptance matrix,
@@ -274,6 +276,12 @@ Findings are classified into three severities:
        not run``) or a requirements judge that returned no verdicts. No edit
        to the generated code can settle these, so they spend no repair turns,
        but they still prevent verified completion.
+
+One Python defect is one finding: a file that does not parse is reported as
+``Syntax error in``, without the python contract's and ``ruff``'s copies of the
+same parse failure, and an undefined name the python contract reports (it also
+judges names behind ``from x import *``, where ``ruff`` cannot) drops ``ruff``'s
+``F821`` for the same name and line.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps

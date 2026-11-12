@@ -181,7 +181,7 @@ _RUFF_STYLE_CODES = frozenset({
     # answers F403 ("cannot detect undefined names" — a notice that ruff is
     # blind, never a finding) and F405 ("may be undefined") in place of F821.
     # Real undefined names behind a star import are reported separately, as
-    # `undefined name:` blockers with a proven verdict. E402 is the one import
+    # `python contract:` blockers with a proven verdict. E402 is the one import
     # bal_stdlib places below its header.
     "F403", "F405", "E402",
 })
@@ -190,6 +190,9 @@ _RUFF_STYLE_CODES = frozenset({
 # queried through the wrong one. In practice these hits are real defects.
 _RUFF_BLOCKER_CODES = frozenset({"F811", "F821", "F822", "F823"})
 _RUFF_LINE_RE = _re.compile(r"\b([EWFCNI]\d{2,4})\b")
+# ``ruff: (+N more issues truncated)``, ``tsc [<project>]: (+N more errors truncated)``,
+# and the same for cargo / kotlinc (see toolchain.py).
+_TRUNCATION_NOTE_RE = _re.compile(r"^(?:ruff|(?:tsc|cargo|kotlinc) \[[^\]]*\]): \(\+\d+ more ")
 
 
 def _classify_issue(message: str) -> ValidationIssue:
@@ -264,11 +267,6 @@ def _classify_issue(message: str) -> ValidationIssue:
     )):
         return ValidationIssue("blocker", text)
 
-    # The F821 ruff cannot emit under a star import; a NameError on the first
-    # request that reaches the line. See _star_import_undefined_names.
-    if lower.startswith("undefined name:"):
-        return ValidationIssue("blocker", text)
-
     # The domain model describes an aggregate no client can create. Legal UML
     # (DomainModel.validate only warns), fatal here: generating a CRUD API is
     # exactly the intent this breaks (e.g. Booking requires a ReservedRoom id
@@ -286,14 +284,15 @@ def _classify_issue(message: str) -> ValidationIssue:
     if lower.startswith(("create contract:", "action call:")):
         return ValidationIssue("blocker", text)
 
+    # A collector's "+N more ... truncated" note is a count, not a defect; it
+    # must never inflate the blocker/warning totals the fix loop gates on.
+    if _TRUNCATION_NOTE_RE.match(text):
+        return ValidationIssue("style", text)
+
     # Ruff: classify by rule code. F821 (undefined name) is a BLOCKER:
     # it means the backend imports crash on `uvicorn` even though
     # ast.parse was clean — the classic "ships green, boots dead" bug.
     if text.startswith("ruff:"):
-        # The "+N more issues truncated" note is a count, not a defect; it
-        # must never inflate the blocker/warning totals the fix loop gates on.
-        if text.startswith("ruff: (+"):
-            return ValidationIssue("style", text)
         match = _RUFF_LINE_RE.search(text)
         if match and match.group(1) in _RUFF_STYLE_CODES:
             return ValidationIssue("style", text)

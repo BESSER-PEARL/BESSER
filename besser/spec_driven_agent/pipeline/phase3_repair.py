@@ -1316,7 +1316,7 @@ class Phase3RepairMixin:
             "missing module:", "create contract:", "action call:",
         )):
             return 0, message
-        if message.startswith(("data contract:", "undefined name:", "runtime unverified:")):
+        if message.startswith(("data contract:", "runtime unverified:")):
             return 1, message
         if message.startswith(("requirement", "task unverified:")):
             return 3, message

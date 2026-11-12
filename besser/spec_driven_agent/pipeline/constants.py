@@ -270,7 +270,7 @@ _RUNTIME_OBSERVED_FAILURE_PREFIXES = (
 # does not parse, imports a module that is not there, or uses a name nothing
 # defines. Deterministic, not a guess about untried input.
 _RUNTIME_FATAL_SOURCE_PREFIXES = (
-    "syntax error in", "python contract:", "missing module:", "undefined name:",
+    "syntax error in", "python contract:", "missing module:",
 )
 _RUNTIME_FAILURE_PREFIXES = (
     _RUNTIME_OBSERVED_FAILURE_PREFIXES + _RUNTIME_FATAL_SOURCE_PREFIXES

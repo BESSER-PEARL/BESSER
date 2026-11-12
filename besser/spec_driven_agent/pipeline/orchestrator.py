@@ -141,7 +141,6 @@ from besser.spec_driven_agent.validation.frontend_build import install_markers
 from besser.spec_driven_agent.validation.python_imports import (
     _declared_dependency_roots as _declared_dependency_roots,
     _import_smoke_issues,
-    _star_import_undefined_names as _star_import_undefined_names,
     _unresolvable_local_imports,
 )
 from besser.spec_driven_agent.validation.toolchain import (
@@ -150,6 +149,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _collect_kotlinc_issues,
     _collect_ruff_issues,
     _collect_uncompiled_source_issues,
+    drop_duplicate_python_findings,
     format_python_files,
     _collect_tsc_issues,
     _demote_tsc_without_deps,
@@ -2761,7 +2761,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # a missing feature these are never a reasonable price for a repair.
     _STARTUP_BLOCKER_PREFIXES = (
         "mapper config:", "application startup:", "python contract:",
-        "missing module:", "undefined name:",
+        "missing module:",
     )
 
 
@@ -3300,7 +3300,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             timeout=remaining,
         ))
 
-        issues = [_classify_issue(s) for s in raw_issues]
+        issues = [_classify_issue(s) for s in drop_duplicate_python_findings(raw_issues)]
         # For the duration of a fix/modify run, promote findings that match
         # the user-reported target from warning to blocker so the Phase 3
         # fix loop is driven to resolve them and the success gate keys on

@@ -1,10 +1,9 @@
 """Whether the generated Python can actually resolve its own imports.
 
-Three checks that need no model and no LLM: an import of a local module that
-does not exist (``missing module:``), a name used behind ``import *`` that
-nothing provides (``undefined name:``), and an ORM module that fails to
+Two checks that need no model and no LLM: an import of a local module that
+does not exist (``missing module:``), and an ORM module that fails to
 import or to configure its mappers when actually run (``mapper config:``).
-The last one is the only check here that executes anything, in a sandboxed
+The second is the only check here that executes anything, in a sandboxed
 subprocess with no network and an allowlisted environment.
 
 The allowlist tables decide which import roots count as satisfied: the stdlib
@@ -372,47 +371,6 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
                 f"does not provide where it is used - this app cannot start"
             )
     return problems
-
-
-_STAR_IMPORT_RE = _re.compile(r"^\s*from\s+\S+\s+import\s+\*", _re.MULTILINE)
-
-
-def _star_import_undefined_names(output_dir: str) -> list[str]:
-    """``undefined name:`` blockers for a name a star-importing module uses but
-    neither defines nor receives from the modules it star-imports.
-
-    ruff cannot report these: with ``from x import *`` in scope every
-    unresolved name is F405 ("may be undefined"), never F821, so NameError
-    routes would otherwise pass as "0 blockers". Files
-    without a star import are left to ruff, which reports them as F821
-    already. Same resolver as the write-time check the model was shown.
-    """
-    import importlib
-
-    try:
-        importlib.import_module("pyflakes.checker")
-    except ImportError:
-        return [_check_did_not_run(
-            "the star-import name check", "pyflakes is not installed",
-        )]
-    from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
-
-    issues: list[str] = []
-    for path in _python_files(output_dir):
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                content = handle.read()
-        except (OSError, UnicodeDecodeError):
-            continue
-        if not _STAR_IMPORT_RE.search(content):
-            continue
-        rel = os.path.relpath(path, output_dir).replace("\\", "/")
-        for finding in diagnose_written_content(rel, content, workspace=output_dir):
-            if finding.get("code") != "UndefinedName":
-                continue
-            detail = finding["message"].removeprefix("undefined name ")
-            issues.append(f"undefined name: {rel} line {finding.get('line')}: {detail}")
-    return issues
 
 
 # The generated ORM module is imported and its mappers configured in a

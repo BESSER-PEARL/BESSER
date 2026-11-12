@@ -327,6 +327,40 @@ def _collect_ruff_issues(
     return issues, warned_missing
 
 
+_SYNTAX_ERROR_RE = _re.compile(r"^Syntax error in (?P<file>.+?) line \d+:")
+_CONTRACT_UNDEFINED_RE = _re.compile(
+    r"^python contract: (?P<file>.+?) line (?P<line>\d+): undefined name '(?P<name>[^']+)'")
+_CONTRACT_FILE_RE = _re.compile(r"^python contract: (?P<file>.+?) line \d+:")
+_RUFF_UNDEFINED_RE = _re.compile(
+    r"^ruff: (?P<file>.+?):(?P<line>\d+):\d+: F821 Undefined name `(?P<name>[^`]+)`")
+_RUFF_FILE_RE = _re.compile(r"^ruff: (?P<file>.+?):\d+:\d+: ")
+
+
+def drop_duplicate_python_findings(raw_issues: list[str]) -> list[str]:
+    """One finding per Python defect, not one per collector that saw it.
+
+    A file that does not parse is ``Syntax error in``; the python contract and
+    ruff report the same parse failure again. An undefined name is reported by
+    both ruff (F821) and the python contract (which also judges names behind a
+    star import); the contract's line is kept, since ``validate_app`` shows the
+    model only the contract.
+    """
+    unparseable = {m.group("file") for m in map(_SYNTAX_ERROR_RE.match, raw_issues) if m}
+    contract_names = {(m.group("file"), m.group("line"), m.group("name"))
+                      for m in map(_CONTRACT_UNDEFINED_RE.match, raw_issues) if m}
+    kept = []
+    for issue in raw_issues:
+        located = _CONTRACT_FILE_RE.match(issue) or _RUFF_FILE_RE.match(issue)
+        if located and located.group("file") in unparseable:
+            continue
+        undefined = _RUFF_UNDEFINED_RE.match(issue)
+        if undefined and (undefined.group("file"), undefined.group("line"),
+                          undefined.group("name")) in contract_names:
+            continue
+        kept.append(issue)
+    return kept
+
+
 def _llm_edited_paths(
     output_dir: str, tool_calls_log: list[dict], write_tools: frozenset[str]
 ) -> set[str]:

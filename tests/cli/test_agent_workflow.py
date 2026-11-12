@@ -275,17 +275,25 @@ def test_apply_prints_why_a_unittest_test_failed_in_one_call(besser, model, writ
 
             def test_raises(self):
                 raise KeyError("missing")
+
+            def test_raises_while_handling(self):
+                try:
+                    {}["k"]
+                except KeyError:
+                    raise ValueError("bad value")
     """)
     _config(write, 'test = "python -m unittest discover -s tests -t ."\n')
     run = besser("apply", output=None)
 
     assert run.returncode == 1
-    assert run.stdout.splitlines()[:5] == [
+    assert run.stdout.splitlines()[:7] == [
         "ERROR: test_raises (tests.test_app.AppTest.test_raises)",
         "    KeyError: 'missing'",
+        "ERROR: test_raises_while_handling (tests.test_app.AppTest.test_raises_while_handling)",
+        "    ValueError: bad value",  # what the test raised, not the exception it was handling
         "FAIL: test_broken (tests.test_app.AppTest.test_broken)",
         "    AssertionError: 1 != 2",
-        "FAILED (failures=1, errors=1)",
+        "FAILED (failures=1, errors=2)",
     ]
 
 

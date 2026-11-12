@@ -1606,16 +1606,17 @@ def _failing_lines(output: list[str]) -> list[str]:
 
 def _unittest_cause(block: list[str]) -> list[str]:
     """The exception line of the traceback under one of unittest's 'FAIL:' or 'ERROR:' headers
-    ('AssertionError: 1 != 2'), indented under it; nothing when the block has none."""
-    in_traceback = False
+    ('AssertionError: 1 != 2'), indented under it; nothing when the block has none. Of chained exceptions
+    ('During handling of the above exception, ...'), the last traceback's: the one the test raised."""
+    in_traceback, cause = False, None
     for line in block[1:]:  # past the dashes under the header
         if _UNITTEST_SEPARATOR.match(line):
             break
         if line.startswith("Traceback "):
-            in_traceback = True
-        elif in_traceback and line.strip() and not line[0].isspace():
-            return [f"    {line}"]
-    return []
+            in_traceback, cause = True, None
+        elif in_traceback and cause is None and line.strip() and not line[0].isspace():
+            cause = line
+    return [f"    {cause}"] if cause else []
 
 
 def _failing_tests(output: list[str]) -> list[str]:

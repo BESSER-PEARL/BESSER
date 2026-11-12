@@ -165,6 +165,38 @@ def test_a_field_missing_from_an_inherited_create_chain_is_still_a_blocker(tmp_p
     assert "does not define `lastName`" in issues[0]
 
 
+def test_a_router_using_pydantic_api_update_payloads_and_dict_locals_is_clean(tmp_path):
+    """A working CRUD router was reported as three "500 on every request" blockers.
+
+    ``booking_data.model_dump()`` is Pydantic's API, ``booking_data`` in the
+    PATCH handler is annotated ``BookingUpdate``, and the GET handler's
+    ``booking_data`` is a local dict - none of them is a ``BookingCreate``.
+    """
+    _write(tmp_path, "backend/pydantic_classes.py", _BOOKING_CREATE + (
+        "\n"
+        "class BookingUpdate(BaseModel):\n"
+        "    status: Optional[str] = None\n"
+    ))
+    _write(tmp_path, "backend/routers/booking.py", (
+        "@router.post('/booking/')\n"
+        "def create_booking(booking_data: BookingCreate):\n"
+        "    return booking_data.model_dump()\n"
+        "\n"
+        "@router.patch('/booking/{booking_id}/')\n"
+        "def update_booking(booking_id: int, booking_data: BookingUpdate):\n"
+        "    changes = booking_data.model_dump(exclude_unset=True)\n"
+        "    if booking_data.status == 'cancelled':\n"
+        "        changes['nights'] = 0\n"
+        "    return changes\n"
+        "\n"
+        "@router.get('/booking/{booking_id}/')\n"
+        "def read_booking(booking_id: int):\n"
+        "    booking_data = {'id': booking_id}\n"
+        "    return booking_data.get('id')\n"
+    ))
+    assert _create_schema_router_mismatches(str(tmp_path)) == []
+
+
 # ---------------------------------------------------------------------------
 # frontend_bindings.py / validation/frontend_schema.py - the non-code scan
 # ---------------------------------------------------------------------------

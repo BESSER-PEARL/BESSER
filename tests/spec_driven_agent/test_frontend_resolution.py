@@ -192,6 +192,27 @@ def test_a_missing_file_with_a_query_suffix_is_still_reported(tmp_path):
     assert "'./gone.svg?react'" in issue
 
 
+@pytest.mark.parametrize("target", ["src/types.d.ts", "src/types/index.d.ts", "src/types.mts",
+                                    "src/types.cts"])
+def test_a_type_declaration_or_mts_module_resolves(tmp_path, target):
+    workspace = _frontend(tmp_path, manifest=_MANIFEST, files={
+        target: "export interface Book { id: number }\n",
+        "src/api.ts": "import type { Book } from './types';\nexport const b: Book[] = [];\n",
+    })
+
+    assert collect_frontend_resolution_issues(workspace) == []
+
+
+@pytest.mark.parametrize("spec,target", [("./util.mjs", "src/util.mts"), ("./util.cjs", "src/util.cts")])
+def test_a_js_specifier_resolves_to_its_typescript_source(tmp_path, spec, target):
+    workspace = _frontend(tmp_path, manifest=_MANIFEST, files={
+        target: "export const x = 1;\n",
+        "src/api.ts": f"import {{ x }} from '{spec}';\nexport const y = x;\n",
+    })
+
+    assert collect_frontend_resolution_issues(workspace) == []
+
+
 def test_an_undeclared_package_is_reported_but_does_not_drive_the_loop(tmp_path):
     """Run mz30st3s imported ``axios`` with no entry in ``package.json`` and
     rendered nothing. It is reported - but as a warning, because a bundler

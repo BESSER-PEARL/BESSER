@@ -38,8 +38,11 @@ from pygments.util import ClassNotFound
 _EXCLUDED_DIRS = {"node_modules", ".git", ".venv", "venv", "__pycache__",
                   "dist", "build", ".next", "out", "coverage", "target"}
 _SOURCE_EXT = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
-_RESOLVE_EXT = ("", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json",
-                ".css", ".scss", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+# ".d.ts": `import type { Book } from './types'` is erased before anything loads it.
+_RESOLVE_EXT = ("", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".d.ts",
+                ".json", ".css", ".scss", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+# A JS specifier that a TS project writes for its TS source (NodeNext style).
+_TS_SOURCE_FOR = {".js": (".ts", ".tsx"), ".jsx": (".ts", ".tsx"), ".mjs": (".mts",), ".cjs": (".cts",)}
 
 # from/import/require/dynamic-import specifiers
 _SPEC_RE = re.compile(
@@ -166,13 +169,8 @@ def _resolves(base_dir: str, spec: str) -> bool:
         for ext in _RESOLVE_EXT[1:]:
             if os.path.isfile(os.path.join(target, "index" + ext)):
                 return True
-    # A ".js" specifier that a TS project writes for a ".ts" source.
     stem, ext = os.path.splitext(target)
-    if ext in (".js", ".jsx"):
-        for alt in (".ts", ".tsx"):
-            if os.path.isfile(stem + alt):
-                return True
-    return False
+    return any(os.path.isfile(stem + alt) for alt in _TS_SOURCE_FOR.get(ext, ()))
 
 
 def _has_path_aliases(project_dir: str) -> bool:

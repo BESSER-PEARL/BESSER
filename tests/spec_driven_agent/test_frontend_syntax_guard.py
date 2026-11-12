@@ -178,6 +178,9 @@ def test_an_already_broken_file_can_still_be_repaired():
     # strings after ")" and "}", still count as strings.
     "const m = {\n  // keys below\n  'a{': 1,\n};\n",
     'for(a=0;a<4;a+=2)"margin"===b&&c();function f(){}"use strict";\n',
+    # A regex after a comment line: the comment's last word is not the
+    # previous token (node_modules/ignore).
+    "const rules = [\n  // a leading slash anchors the path\n  /^\\//, function () {\n    return 1;\n  }];\n",
     # A regex after `=>`, holding a backtick and a quote (axios).
     "const ok = (s) => /^[-_a-zA-Z0-9^`|~,!#$%&'*+.]+$/.test(s);\n",
     # A regex inside a template substitution.

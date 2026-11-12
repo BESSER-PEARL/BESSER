@@ -78,7 +78,7 @@ def structure_error(source: str) -> tuple[str, int] | None:
                 line += source.count("\n", index, stop)
                 index = stop + 2
                 continue
-            if _regex_may_start(source, index):
+            if _regex_may_follow(source, last):  # ``last`` skips comments
                 stop = _regex_end(source, index)
                 if stop is not None:
                     index, last = stop, stop - 1
@@ -181,13 +181,6 @@ def _string_end(source: str, index: int, quote: str) -> int | None:
     return None
 
 
-def _previous_significant(source: str, index: int) -> str:
-    cursor = index - 1
-    while cursor >= 0 and source[cursor] in " \t\r\n":
-        cursor -= 1
-    return source[cursor] if cursor >= 0 else ""
-
-
 def _previous_word(source: str, index: int) -> str:
     cursor = index - 1
     while cursor >= 0 and source[cursor] in " \t\r\n":
@@ -199,14 +192,19 @@ def _previous_word(source: str, index: int) -> str:
 
 
 def _regex_may_start(source: str, index: int) -> bool:
-    if _previous_significant(source, index) in _REGEX_PRECEDERS:
-        return True
     cursor = index - 1
     while cursor >= 0 and source[cursor] in " \t\r\n":
         cursor -= 1
-    if source[max(0, cursor - 1):cursor + 1] == "=>":
+    return _regex_may_follow(source, cursor)
+
+
+def _regex_may_follow(source: str, last: int) -> bool:
+    """A ``/`` after the code character at ``last`` may open a regex literal."""
+    if last < 0:
+        return False
+    if source[last] in _REGEX_PRECEDERS or source[max(0, last - 1):last + 1] == "=>":
         return True
-    return _previous_word(source, index) in _REGEX_KEYWORDS
+    return _previous_word(source, last + 1) in _REGEX_KEYWORDS
 
 
 def _quoted_end(source: str, index: int, last: int) -> int | None:

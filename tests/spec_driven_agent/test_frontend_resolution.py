@@ -213,6 +213,18 @@ def test_a_js_specifier_resolves_to_its_typescript_source(tmp_path, spec, target
     assert collect_frontend_resolution_issues(workspace) == []
 
 
+def test_a_computed_dynamic_import_is_not_a_missing_file(tmp_path):
+    """``'./pages/' + name`` is a prefix of a path built at runtime."""
+    workspace = _frontend(tmp_path, manifest=_MANIFEST, files={
+        "src/pages/A.jsx": "import React from 'react';\nexport default () => <p />;\n",
+        "src/App.jsx": "import React from 'react';\n"
+                       "export const load = (n) => import('./pages/' + n + '.jsx');\n"
+                       "export const req = (n) => require('./pages/' +n);\n",
+    })
+
+    assert collect_frontend_resolution_issues(workspace) == []
+
+
 def test_an_undeclared_package_is_reported_but_does_not_drive_the_loop(tmp_path):
     """Run mz30st3s imported ``axios`` with no entry in ``package.json`` and
     rendered nothing. It is reported - but as a warning, because a bundler

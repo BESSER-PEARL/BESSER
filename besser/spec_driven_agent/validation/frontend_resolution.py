@@ -44,10 +44,11 @@ _RESOLVE_EXT = ("", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"
 # A JS specifier that a TS project writes for its TS source (NodeNext style).
 _TS_SOURCE_FOR = {".js": (".ts", ".tsx"), ".jsx": (".ts", ".tsx"), ".mjs": (".mts",), ".cjs": (".cts",)}
 
-# from/import/require/dynamic-import specifiers
+# from/import/require/dynamic-import specifiers; one followed by "+" is only
+# the prefix of a path built at runtime (``import('./pages/' + name)``).
 _SPEC_RE = re.compile(
     r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)"""
-    r"""(['"])([^'"\n]+)\1""")
+    r"""(['"])([^'"\n]+)\1(?!\s*\+)""")
 
 _NODE_BUILTINS = {
     "assert", "buffer", "child_process", "cluster", "console", "constants",

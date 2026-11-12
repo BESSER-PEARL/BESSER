@@ -1078,6 +1078,8 @@ class Phase3RepairMixin:
                 self._phase3_interrupted = True
                 self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
                 return edits
+            # Repair calls can trigger the outage fallback too, as in Phase 2.
+            self._notify_model_switch()
             # A stop can arrive while a provider request is in flight. Do not
             # apply its returned mutations after cancellation. The final allowed
             # turn may still execute its tools; it is not a new provider call.

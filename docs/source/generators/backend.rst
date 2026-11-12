@@ -62,6 +62,33 @@ This method will generate a modular project (rather than one large file) so each
 
 Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
 
+Generated API tests
+-------------------
+With ``tests=True`` (``--option tests=true`` on the command line; off by default) the generator also writes
+the tests of the API it generates, regenerated with the model like every other file:
+
+   + ``tests/conftest.py``: a pytest fixture ``client``, a FastAPI ``TestClient`` on ``main_api.app``. It imports
+     ``main_api`` once, with ``DATABASE_URL`` set to a temporary SQLite file (never the application's database),
+     and drops and creates every table before each test, so each test starts from an empty database.
+   + ``tests/test_generated_api.py``: one test per class that creates an object, reads it back, finds it in the
+     list, updates one attribute and deletes it. The payload is derived from the model: a value of each
+     attribute's type (an enumeration by literal name), the association ends the create schema requires
+     (the objects they name are created first, a concrete subclass standing for an abstract class), and values
+     that satisfy the OCL constraints the API enforces (comparisons, ``matches``, expressions over several
+     attributes). When a related object needs at least one object of the class, the test expects the API to
+     refuse the delete (409). Responses are read in both shapes, the object or ``{"<class>": object, ...}``.
+
+A class no valid payload can be derived for gets a skipped test whose reason says why, never a failing one:
+an abstract class (its subclasses' tests create it), an association class, a cycle of required association
+ends (``Node -> Node`` when every node needs a parent), a constraint no generated value satisfies. The
+tests need ``pytest``, ``fastapi`` and ``httpx``; run them with ``python -m pytest`` from the backend folder or
+any folder above it. ``web_app`` takes the same option for the backend it writes in ``backend/``.
+
+.. code-block:: python
+
+    BackendGenerator(model=library_model, output_dir="backend", tests=True).generate()
+    # then: cd backend && python -m pytest -q
+
 
 .. image:: ../img/backend_generator_schema.png
   :width: 1000

@@ -203,3 +203,16 @@ def test_a_screen_goes_in_the_first_module_and_the_main_page_inline_gets_its_but
     assert "admin = Module(name=\"admin\", screens={Screen(" in text and "order_screen})" in text
     pages, routes, _ = app()
     assert _columns(pages["Orders"]) == ["Number"] and 'navigate("/Orders")' in pages["Home"]
+
+
+def test_a_table_whose_columns_are_not_one_list_gets_its_column_appended(write, change, app, tmp_path):
+    # Before: refused, "the change would break model.py (... keyword argument repeated: columns)".
+    write("model.py", HAND_WRITTEN.replace(
+        'columns=[FieldColumn(label="Who", field=customer_name)])',
+        'columns=[FieldColumn(label="Who", field=customer_name)] + [])'))
+    line = change("add-attribute", "Customer", "email:str?")
+    assert line == "model.py: added Customer.email:str?; column added to table everyone, recent"
+    assert 'recent.columns.append(FieldColumn(label="Email", field=customer_email))' in (
+        tmp_path / "model.py").read_text()
+    pages, _, _ = app()
+    assert _columns(pages["Home"]) == ["Who", "Email"]

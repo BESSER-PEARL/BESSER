@@ -598,7 +598,8 @@ class ModelEditor:
             self.add_to_literal(literal, item)
             return item
         call = self.call_of(owner)
-        if call is not None:
+        # A call that passes the collection as an expression (``columns=a + b``) cannot take it again.
+        if call is not None and not any(keyword_.arg == attribute for keyword_ in call.keywords):
             anchor = before or self.src.top_statement(call)
             item = self._define(var(), code, anchor, separate) if need_var else code
             arguments = sorted([*call.args, *call.keywords], key=self.src.start)

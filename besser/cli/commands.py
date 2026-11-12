@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
 from besser.cli import loading
 from besser.cli import schema as schema_module
-from besser.cli.agent_files import GeneratedDir, guide_text, sync_ignore, write_agent_files
+from besser.cli.agent_files import GeneratedDir, guide_for, sync_ignore, write_agent_files
 from besser.cli.config import (
     CONFIG_EXAMPLE,
     CONFIG_FILENAME,
@@ -469,9 +469,12 @@ def _generated_dirs(config_path: Path) -> list[GeneratedDir]:
         try:
             spec = get_generator(output.generator)
             extension_file, reads_gui = spec.load_class().extension_file, "gui" in spec.models
+            offered = spec.options
         except (KeyError, ImportError):  # an unknown generator: build reports it
-            extension_file, reads_gui = None, False
-        dirs.append(GeneratedDir(path, extension_file, reads_gui))
+            extension_file, reads_gui, offered = None, False, {}
+        on = {name: output.options.get(name) is True if name in offered else None
+              for name in ("tests", "uniform_responses")}
+        dirs.append(GeneratedDir(path, extension_file, reads_gui, on["tests"], on["uniform_responses"]))
     return dirs
 
 
@@ -648,7 +651,7 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
 def guide() -> Result:
     """The guide a coding agent needs to work in a BESSER project: what 'new' and 'init' write to AGENTS.md
     in the current folder (the lines on the GUI model when an output of its besser.toml reads one)."""
-    text = guide_text(any(output.reads_gui for output in _generated_dirs(Path(CONFIG_FILENAME))))
+    text = guide_for(_generated_dirs(Path(CONFIG_FILENAME)))
     return Result(command="guide", data={"guide": text}, text=text.rstrip("\n"), text_is_result=True)
 
 

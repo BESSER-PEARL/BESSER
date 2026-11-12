@@ -70,7 +70,8 @@ def test_new_writes_the_guide_and_the_ignore_rules_beside_the_model_of_a_project
 
     assert run.stdout == ("Wrote a starter domain model to model.py, and the agent guide: AGENTS.md, CLAUDE.md, "
                           ".ignore.\n")
-    assert GUIDE in (tmp_path / "AGENTS.md").read_text()
+    # The guide of this project: what 'besser guide' prints in it.
+    assert besser("guide", output=None).stdout in (tmp_path / "AGENTS.md").read_text()
     assert (tmp_path / "CLAUDE.md").read_text() == "@AGENTS.md\n"
     assert "**/.besser_generated.json" in (tmp_path / ".ignore").read_text()
 
@@ -198,7 +199,7 @@ def test_the_guide_has_the_lines_on_pages_only_in_a_project_that_builds_a_gui(be
     assert run.stdout == guide_text(gui=True) and GUI_GUIDE in run.stdout and "add-screen" not in GUIDE
     assert guide_text(gui=True) in (tmp_path / "AGENTS.md").read_text()
     # What a project with a web_app output pays for them, besides the guide's budget above.
-    assert len(GUI_GUIDE.encode("utf-8")) < 520 and len(GUI_GUIDE.splitlines()) <= 6
+    assert len(GUI_GUIDE.encode("utf-8")) < 600 and len(GUI_GUIDE.splitlines()) <= 7
 
 
 # What the guide says the generated backend answers, as tests that use the guide's own conftest.py.
@@ -233,7 +234,11 @@ def test_the_guides_test_fixture_runs_and_its_answers_hold_on_a_generated_backen
     assert besser("model", "add-class", "Deal", "amount:float").returncode == 0
     write("besser.toml", f'model = "model.py"\ntest = "{sys.executable} -m pytest -q -p no:cacheprovider"\n\n'
                          '[output.backend]\ngenerator = "backend"\ndir = "backend"\n')
-    write("tests/conftest.py", GUIDE.split("```python\n")[1].split("```")[0])
+    # With both options off the project reads the guide's other lines: a fixture to write, two answer shapes.
+    guide = besser("guide", output=None).stdout
+    assert guide == guide_text(tests=False, uniform_responses=False) != GUIDE
+    assert 'read it as `body.get("x", body)`' in guide and "generated tests" not in guide
+    write("tests/conftest.py", guide.split("```python\n")[1].split("```")[0])
     write("tests/test_answers.py", GUIDE_ANSWERS_TEST)
 
     run = besser("apply", output=None)
@@ -241,6 +246,18 @@ def test_the_guides_test_fixture_runs_and_its_answers_hold_on_a_generated_backen
     assert run.returncode == 0, run.stdout + run.stderr
     assert "tests: 1 passed" in run.stdout
     assert "400 when\nempty); an unknown id is 400 (404 in a list)" in GUIDE  # what the test above checks
+
+
+def test_the_guide_of_a_new_project_is_the_short_one(besser, tmp_path):
+    """'besser init' turns the generated tests and the uniform answers on, so its guide needs neither the
+    fixture recipe nor the two answer shapes."""
+    assert besser("init").returncode == 0
+
+    guide = besser("guide", output=None).stdout
+
+    assert guide == GUIDE and guide in (tmp_path / "AGENTS.md").read_text()
+    assert "`GET /x/{x_id}/`, `POST` and `PUT` answer" in guide and "```python" not in guide
+    assert "generated tests of every" in guide and "body.get" not in guide
 
 
 @needs_pygit2

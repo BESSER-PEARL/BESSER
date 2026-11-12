@@ -337,14 +337,23 @@ is left alone.
 ----------------
 
 Prints the guide ``new`` and ``init`` write to ``AGENTS.md`` in the current
-folder, in about 4 KB (57 lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
-commands, the names ``extensions.py`` imports, a ``tests/conftest.py`` with a
-``client`` fixture, and what the ``backend`` generator's API answers, so that
-an agent needs neither the generated code nor this documentation. In a project
-whose ``besser.toml`` has an output that reads a GUI model (``web_app``,
-``react``, ``flutter``), it has 5 more lines (about 500 bytes) on pages:
-``add-screen``, the tables that follow their class, and that the generated
-frontend has no file for hand-written code. ``--json`` puts it in ``guide``.
+folder, in under 4 KB (50 lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
+commands, the names ``extensions.py`` imports, that ``besser apply`` runs the
+generated tests and gives the project's own tests a ``client`` fixture, and
+what the ``backend`` generator's API answers, so that an agent needs neither
+the generated code nor this documentation. The guide follows ``besser.toml``:
+
+* an output that reads a GUI model (``web_app``, ``react``, ``flutter``) adds
+  6 lines (about 600 bytes) on pages: ``add-screen``, the tables that follow
+  their class, and that the generated frontend has no file for hand-written code;
+* a ``backend`` or ``web_app`` output without ``tests = true`` gets, in place
+  of the line on the generated tests, a ``tests/conftest.py`` to write with a
+  ``client`` fixture;
+* one without ``uniform_responses = true`` gets the two shapes ``POST`` and
+  ``PUT`` then answer, and how to read either.
+
+``besser init`` turns both options on, so a new project reads the short guide.
+``--json`` puts it in ``guide``.
 
 ``besser schema``
 -----------------

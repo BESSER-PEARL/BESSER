@@ -47,8 +47,9 @@ Types: `str int float bool date datetime time`, or an enumeration's name.
   association end as `Book.authors` or `book_authors.authors`
 - `besser model remove Contact.phone` (a class goes with its associations)
 - `besser model add-method Deal "discount(rate:float) -> float"`, `add-constraint Deal "self.amount >= 0"`
-- Several changes in one call: `besser model batch - <<'EOF'` with one change per line. To change a type,
-  `?`, default or multiplicity: `remove` it, then add it again, in one batch.
+- In place: `set-attribute Book.pages :int?=0` (`=` drops the default; none on a date or time),
+  `set-multiplicity Book.authors "[*]"`, `set-abstract Party true`, `remove-parent Customer Party`
+- Several changes in one call: `besser model batch - <<'EOF'` with one change per line.
 Never patch `model.py` with a script; edit it by hand only where a command says so.
 
 Then one command, `besser apply`: it validates, builds every output keeping your edits, runs `test` of
@@ -62,27 +63,19 @@ Hand-written code never goes in a generated file; a build never overwrites it:
   is a relationship of its name, a to-one end also a column `<end>_id`), `from pydantic_classes import XCreate`.
 - Other code lives outside the generated folders. A model `.py` file only builds the model; a GUI model
   goes in the same file as its domain model.
-- Check behaviour with tests, not by reading the output: set `test = "python -m pytest -q"` in `besser.toml`
-  and give the tests a `client` fixture in `tests/conftest.py` (`backend`: the output's `dir`):
-  ```python
-  import os, sys, tempfile, pytest
-  os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
-  sys.path.insert(0, f"{os.path.dirname(__file__)}/../backend")
-  from fastapi.testclient import TestClient
-  from main_api import app
-  client = pytest.fixture(lambda: TestClient(app))
-  ```
+- Check behaviour with tests, not by reading the output: `besser apply` runs the generated tests of every
+  class's routes; write tests only for your own code, in `tests/`, with the `client` fixture (a TestClient,
+  an empty database per test).
 
 The `backend` API per class `X` (`x`: its name in lower case): `POST /x/`, `GET /x/`,
 `GET|PUT|DELETE /x/{x_id}/`, a `Method` as `POST /x/{x_id}/methods/<name>/`, and more (`besser info`).
 Bodies take the attributes (a date `"2024-01-31"`, an enumeration a literal's name) and each end by name
 (`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (422 when missing, 400 when
 empty); an unknown id is 400 (404 in a list). An object is `{attributes, "id", "<end>_id" per to-one end}`;
-`GET /x/` answers a list of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end:
-`"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. `POST` and `PUT` answer
-the same if `X` has a to-many end, else the bare object: read it as `body.get("x", body)`. OCL constraints
-are enforced (422) only if they compare an attribute with a number or use `matches('regex')`; write other
-rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
+`GET /x/` answers a list of them. `GET /x/{x_id}/`, `POST` and `PUT` answer `{"x": object}` plus the ids
+per to-many end: `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. OCL
+constraints are enforced (422) only if they compare an attribute with a number or use `matches('regex')`;
+write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
 """
 
 # The GUI lines go after the model commands, before the line that starts with this.
@@ -93,18 +86,67 @@ GUI_GUIDE = """\
 Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend/`, no hand-written file):
 - `besser model add-screen Invoice [--title Bills]`: a page with a table of the class (add, edit, delete),
   opened by a button on the main page; `add-class ... --screen` adds a class with its page.
-- Tables follow their class: attributes added, renamed or removed are columns too; a renamed class renames
-  the page titled after it, a removed one takes it along. `besser info` lists each page's table.
+- Tables follow their class and its parents: attributes added, renamed or removed are columns too; a renamed
+  class renames the page titled after it, a removed one takes it along (if it was the main page, the first
+  page left becomes it). `besser info` lists each page's table.
 
 """
 
 
-def guide_text(gui: bool = False) -> str:
-    """The guide, with the lines on the GUI model when ``gui`` (an output of the project reads one)."""
-    if not gui:
-        return GUIDE
-    before, after = GUIDE.split(_GUI_GUIDE_BEFORE, 1)
-    return f"{before}{GUI_GUIDE}{_GUI_GUIDE_BEFORE}{after}"
+# GUIDE describes a project as 'besser init' sets it up: the API's tests are generated (option ``tests``)
+# and POST and PUT answer what GET does (option ``uniform_responses``). A project whose backend output has
+# one of them off reads these lines in place of GUIDE's.
+_TESTS_GUIDE = '''- Check behaviour with tests, not by reading the output: `besser apply` runs the generated tests of every
+  class's routes; write tests only for your own code, in `tests/`, with the `client` fixture (a TestClient,
+  an empty database per test).
+'''
+_NO_TESTS_GUIDE = '''- Check behaviour with tests, not by reading the output: set `test = "python -m pytest -q"` in `besser.toml`
+  and give the tests a `client` fixture in `tests/conftest.py` (`backend`: the output's `dir`):
+  ```python
+  import os, sys, tempfile, pytest
+  os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
+  sys.path.insert(0, f"{os.path.dirname(__file__)}/../backend")
+  from fastapi.testclient import TestClient
+  from main_api import app
+  client = pytest.fixture(lambda: TestClient(app))
+  ```
+'''
+_UNIFORM_GUIDE = '''`GET /x/` answers a list of them. `GET /x/{x_id}/`, `POST` and `PUT` answer `{"x": object}` plus the ids
+per to-many end: `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. OCL
+constraints are enforced (422) only if they compare an attribute with a number or use `matches('regex')`;
+write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
+'''
+_NOT_UNIFORM_GUIDE = '''`GET /x/` answers a list of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end:
+`"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. `POST` and `PUT` answer
+the same if `X` has a to-many end, else the bare object: read it as `body.get("x", body)`. OCL constraints
+are enforced (422) only if they compare an attribute with a number or use `matches('regex')`; write other
+rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
+'''
+
+
+def guide_text(gui: bool = False, tests: bool = True, uniform_responses: bool = True) -> str:
+    """The guide: with the lines on the GUI model when ``gui`` (an output of the project reads one), and the
+    lines on tests and answer shapes of a project whose backend does not generate its ``tests`` or does not
+    answer with ``uniform_responses``."""
+    text = GUIDE
+    if not tests:
+        text = text.replace(_TESTS_GUIDE, _NO_TESTS_GUIDE)
+    if not uniform_responses:
+        text = text.replace(_UNIFORM_GUIDE, _NOT_UNIFORM_GUIDE)
+    if gui:
+        before, after = text.split(_GUI_GUIDE_BEFORE, 1)
+        text = f"{before}{GUI_GUIDE}{_GUI_GUIDE_BEFORE}{after}"
+    return text
+
+
+def guide_for(generated: "Sequence[GeneratedDir]") -> str:
+    """The guide of a project with the outputs ``generated``: an option counts as on unless an output that
+    has it leaves it off."""
+    return guide_text(
+        gui=any(output.reads_gui for output in generated),
+        tests=all(output.generates_tests is not False for output in generated),
+        uniform_responses=all(output.uniform_responses is not False for output in generated),
+    )
 
 
 @dataclass(frozen=True)
@@ -114,6 +156,9 @@ class GeneratedDir:
     path: str
     extension_file: str | None = None
     reads_gui: bool = False
+    # The options of the output's generator that change what the guide says; None: it has no such option.
+    generates_tests: bool | None = None
+    uniform_responses: bool | None = None
 
 
 def _with_block(text: str, begin: str, end: str, block: str) -> str:
@@ -172,7 +217,7 @@ def write_agent_files(folder: Path, generated: Sequence[GeneratedDir]) -> list[s
     """
     changed: list[str] = []
     agents = folder / AGENTS_FILENAME
-    guide = guide_text(any(output.reads_gui for output in generated))
+    guide = guide_for(generated)
     _update(agents, _with_block(_read(agents), _GUIDE_BEGIN, _GUIDE_END, f"{_GUIDE_BEGIN}\n{guide}{_GUIDE_END}"),
             changed)
     claude = folder / CLAUDE_FILENAME

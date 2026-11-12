@@ -225,6 +225,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _REVISION_IGNORED_DIRS,
     _REVISION_IGNORED_SUFFIXES,
     _REVISION_PATH_ONLY_SUFFIXES,
+    _REVISION_PROJECT_OUTPUT_DIRS,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -3937,20 +3938,44 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             or (self._should_continue is not None and not self._should_continue())
         )
 
+    @staticmethod
+    def _is_project_tool_output(rel: str, names_by_dir: dict[str, set[str]]) -> bool:
+        """Whether ``rel`` lies in a ``_REVISION_PROJECT_OUTPUT_DIRS`` folder
+        that sits at the workspace root or next to its tool's manifest."""
+        parts = rel.split("/")[:-1]
+        for depth, part in enumerate(parts):
+            manifests = _REVISION_PROJECT_OUTPUT_DIRS.get(part)
+            if manifests is None:
+                continue
+            if depth == 0:
+                return True
+            siblings = names_by_dir.get("/".join(parts[:depth]), ())
+            if any(name == manifest or (manifest.startswith(".") and name.endswith(manifest))
+                   for name in siblings for manifest in manifests):
+                return True
+        return False
+
     def _workspace_revision(self) -> str:
         """Hash every authored file's path and content.
 
-        Runtime outputs (``_REVISION_IGNORED_SUFFIXES`` / ``_DIRS``) are
-        skipped entirely, and data the app writes counts by path only; ``_workspace_file_list`` has already dropped
+        Runtime outputs (``_REVISION_IGNORED_SUFFIXES`` / ``_DIRS`` /
+        ``_PROJECT_OUTPUT_DIRS``) are skipped entirely, and data the app writes
+        counts by path only; ``_workspace_file_list`` has already dropped
         dependency dirs and ``.besser_*``. A file is hashed up to
         ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
         stall the check.
         """
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
-        for rel in sorted(self._workspace_file_list()):
+        rels = sorted(self._workspace_file_list())
+        names_by_dir: dict[str, set[str]] = {}
+        for rel in rels:
+            folder, _, name = rel.rpartition("/")
+            names_by_dir.setdefault(folder, set()).add(name)
+        for rel in rels:
             if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
-                    or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])):
+                    or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])
+                    or self._is_project_tool_output(rel, names_by_dir)):
                 continue
             path = os.path.realpath(os.path.join(workspace, rel))
             try:

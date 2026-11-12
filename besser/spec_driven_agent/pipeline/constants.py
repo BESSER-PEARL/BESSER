@@ -75,12 +75,22 @@ _REVISION_IGNORED_SUFFIXES = (
     # SQLite's sidecar files next to a database (app.db-journal, -wal, -shm).
     "-journal", "-wal", "-shm",
 )
-# Caches and build or coverage output a test, lint or build run writes inside
-# the workspace (``obj`` is .NET's, ``.dart_tool`` Flutter's).
+# Caches a test, lint or build run writes wherever it runs. Nobody authors
+# source under these dot-names, so they count at any depth (``.dart_tool`` is
+# Flutter's).
 _REVISION_IGNORED_DIRS = frozenset({
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
-    "htmlcov", "coverage", "obj", ".dart_tool",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", ".dart_tool",
 })
+# Report and build output under an ordinary folder name, ignored only in the
+# project the tool ran in: next to one of these manifests (a leading dot means
+# any file with that suffix) or at the workspace root. Anywhere else, e.g.
+# ``src/features/coverage/``, the folder is authored source.
+_REVISION_PROJECT_OUTPUT_DIRS = {
+    "coverage": ("package.json",),  # jest / vitest / c8
+    "htmlcov": ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
+                "pytest.ini", "tox.ini"),  # coverage.py / pytest-cov
+    "obj": (".csproj", ".fsproj", ".vbproj"),  # MSBuild intermediate output
+}
 # Data and media a running app writes (a CSV store, an uploaded photo): their
 # path counts, their content does not, so the app's own writes are no edit.
 _REVISION_PATH_ONLY_SUFFIXES = (

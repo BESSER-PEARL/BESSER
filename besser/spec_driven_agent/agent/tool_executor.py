@@ -125,6 +125,21 @@ def _task_label(text: str) -> str:
     return cut.rstrip(" ,;:.") + "..."
 
 
+def _task_id(value) -> int | None:
+    """A checklist id from model input (``1``, ``"1"``, ``1.0``), else None.
+
+    One rule for every place task_list takes an id. A bool is an int subclass
+    but not an id; a non-integral float is not truncated; ``inf`` (JSON
+    ``1e400``) is refused rather than raising OverflowError.
+    """
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 @dataclass(frozen=True)
 class ToolExecutionResult:
     """Typed result used by the harness around the model-facing JSON payload.
@@ -848,7 +863,7 @@ class ToolExecutor:
             return [], "no verifier is attached; provide evidence=[{id, path, quote}] from actual successful writes, or mark blocked with a reason"
         accepted = []
         for item in evidence:
-            if not isinstance(item, dict) or item.get("id") != task_id:
+            if not isinstance(item, dict) or _task_id(item.get("id")) != task_id:
                 continue
             rel, quote = item.get("path"), item.get("quote")
             if not isinstance(rel, str) or not isinstance(quote, str) or not quote.strip() or len(quote) > 4000:
@@ -920,13 +935,11 @@ class ToolExecutor:
         ids: list[int] = []
         bad: list = []
         for value in raw:
-            if isinstance(value, bool):      # bool is an int subclass; not an id
+            task_id = _task_id(value)
+            if task_id is None:
                 bad.append(value)
-                continue
-            try:
-                ids.append(int(value))
-            except (TypeError, ValueError):
-                bad.append(value)
+            else:
+                ids.append(task_id)
         seen, unique = set(), []
         for i in ids:                        # keep order, drop repeats
             if i not in seen:
@@ -1126,9 +1139,9 @@ class ToolExecutor:
         The honest exit for an item the user never asked for. Without
         it the end-turn gate leaves only a false 'done'.
         """
-        task_id = args.get("id")
+        task_id = _task_id(args.get("id"))
         reason = str(args.get("reason") or "").strip()
-        if not isinstance(task_id, int) or not reason:
+        if task_id is None or not reason:
             return {"error": (
                 "action='drop' requires `id` (an integer) and a non-empty `reason` "
                 "saying why the user did not ask for it."

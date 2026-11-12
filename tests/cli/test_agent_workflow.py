@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from besser.cli.agent_files import GUIDE
+from besser.cli.agent_files import GUI_GUIDE, GUIDE, guide_text
 
 needs_pygit2 = pytest.mark.skipif(importlib.util.find_spec("pygit2") is None,
                                   reason='regenerate merges with pygit2: pip install "besser[regen]"')
@@ -148,6 +148,16 @@ def test_guide_prints_the_rules_in_little_space(besser):
     assert run.stdout == GUIDE
     # Re-read on every turn of every session, so it stays small.
     assert len(GUIDE.encode("utf-8")) < 4000 and len(GUIDE.splitlines()) <= 60
+
+
+def test_the_guide_has_the_lines_on_pages_only_in_a_project_that_builds_a_gui(besser, tmp_path):
+    assert besser("init", "--kind", "gui").returncode == 0
+    run = besser("guide", output=None)
+
+    assert run.stdout == guide_text(gui=True) and GUI_GUIDE in run.stdout and "add-screen" not in GUIDE
+    assert guide_text(gui=True) in (tmp_path / "AGENTS.md").read_text()
+    # What a project with a web_app output pays for them, besides the guide's budget above.
+    assert len(GUI_GUIDE.encode("utf-8")) < 520 and len(GUI_GUIDE.splitlines()) <= 6
 
 
 # What the guide says the generated backend answers, as tests that use the guide's own conftest.py.

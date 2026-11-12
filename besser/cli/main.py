@@ -287,8 +287,8 @@ def build_parser() -> argparse.ArgumentParser:
         "guide", "print the rules for a coding agent",
         "Print what a coding agent needs to work in a BESSER project, in about 3 KB: what not to read,\n"
         "the commands that change the model, the one command after a change, and where hand-written\n"
-        "code goes. 'besser new' and\n"
-        "'besser init' write it to AGENTS.md.",
+        "code goes; with the lines on screens when an output of besser.toml in the current folder reads\n"
+        "a GUI model (web_app). 'besser new' and 'besser init' write it to AGENTS.md.",
     )
 
     schema = add_command(

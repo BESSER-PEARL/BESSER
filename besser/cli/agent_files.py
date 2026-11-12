@@ -85,6 +85,27 @@ are enforced (422) only if they compare an attribute with a number or use `match
 rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
 """
 
+# The GUI lines go after the model commands, before the line that starts with this.
+_GUI_GUIDE_BEFORE = "Then one command, `besser apply`"
+# The guide's lines on the GUI model, only in a project with an output that reads one (``web_app``):
+# every other project would pay for them in each session's context.
+GUI_GUIDE = """\
+Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend/`, no hand-written file):
+- `besser model add-screen Invoice [--title Bills]`: a page with a table of the class (add, edit, delete),
+  opened by a button on the main page; `add-class ... --screen` adds a class with its page.
+- Tables follow their class: attributes added, renamed or removed are columns too; a renamed class renames
+  the page titled after it, a removed one takes it along. `besser info` lists each page's table.
+
+"""
+
+
+def guide_text(gui: bool = False) -> str:
+    """The guide, with the lines on the GUI model when ``gui`` (an output of the project reads one)."""
+    if not gui:
+        return GUIDE
+    before, after = GUIDE.split(_GUI_GUIDE_BEFORE, 1)
+    return f"{before}{GUI_GUIDE}{_GUI_GUIDE_BEFORE}{after}"
+
 
 @dataclass(frozen=True)
 class GeneratedDir:
@@ -92,6 +113,7 @@ class GeneratedDir:
 
     path: str
     extension_file: str | None = None
+    reads_gui: bool = False
 
 
 def _with_block(text: str, begin: str, end: str, block: str) -> str:
@@ -150,8 +172,9 @@ def write_agent_files(folder: Path, generated: Sequence[GeneratedDir]) -> list[s
     """
     changed: list[str] = []
     agents = folder / AGENTS_FILENAME
-    _update(agents, _with_block(_read(agents), _GUIDE_BEGIN, _GUIDE_END,
-                                f"{_GUIDE_BEGIN}\n{GUIDE}{_GUIDE_END}"), changed)
+    guide = guide_text(any(output.reads_gui for output in generated))
+    _update(agents, _with_block(_read(agents), _GUIDE_BEGIN, _GUIDE_END, f"{_GUIDE_BEGIN}\n{guide}{_GUIDE_END}"),
+            changed)
     claude = folder / CLAUDE_FILENAME
     claude_text = _read(claude)
     if CLAUDE_IMPORT not in claude_text.split():

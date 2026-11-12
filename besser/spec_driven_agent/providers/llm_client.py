@@ -44,7 +44,7 @@ from besser.spec_driven_agent.providers.model_settings import (
     sampling_kwargs,
     thinking_can_be_disabled,
 )
-from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
+from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY, dumps_for_model
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 from besser.spec_driven_agent.settings import AgentSettings
 from besser.utilities.secret_redaction import redact_text
@@ -1123,26 +1123,24 @@ def _openai_messages_to_api(system: str, messages: list[dict]) -> list[dict]:
                     if block.type == "text":
                         text_parts.append(block.text)
                     elif block.type == "tool_use":
-                        import json as _json
                         tool_calls.append({
                             "id": block.id,
                             "type": "function",
                             "function": {
                                 "name": block.name,
-                                "arguments": _json.dumps(block.input),
+                                "arguments": dumps_for_model(block.input),
                             },
                         })
                 elif isinstance(block, dict):
                     if block.get("type") == "text":
                         text_parts.append(block.get("text", ""))
                     elif block.get("type") == "tool_use":
-                        import json as _json
                         tool_calls.append({
                             "id": block.get("id", ""),
                             "type": "function",
                             "function": {
                                 "name": block.get("name", ""),
-                                "arguments": _json.dumps(block.get("input", {})),
+                                "arguments": dumps_for_model(block.get("input", {})),
                             },
                         })
             if not text_parts and not tool_calls:

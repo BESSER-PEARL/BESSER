@@ -130,6 +130,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     stack_label,
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
+from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.docker_context import (
@@ -2455,7 +2456,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps({"error": f"Execution failed: {exc}"}),
+                        "content": dumps_for_model({"error": f"Execution failed: {exc}"}),
                     })
             return results
 
@@ -2474,7 +2475,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
-                            "content": json.dumps({"error": f"Execution failed: {e}"}),
+                            "content": dumps_for_model({"error": f"Execution failed: {e}"}),
                         })
 
         # Restore the model's block order so tool_result pairing is stable.
@@ -2585,7 +2586,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "Stop closing items: open the file named by the next unresolved "
                 "task and make the change, then cite it."
             )
-            result = json.dumps(result_obj)
+            result = dumps_for_model(result_obj)
 
         if not success:
             try:

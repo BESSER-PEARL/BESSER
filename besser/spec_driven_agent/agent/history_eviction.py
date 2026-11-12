@@ -40,6 +40,8 @@ import json
 import logging
 from typing import Any
 
+from besser.spec_driven_agent.agent.tools import dumps_for_model
+
 logger = logging.getLogger(__name__)
 
 # File-writing tools whose tool_use ``input`` carries a large body we can elide.
@@ -108,7 +110,7 @@ def without_rejected_edit_drafts(messages: list[dict]) -> list[dict]:
                 result = json.loads(_block_get(block, "content"))
                 result.pop("would_write", None)
                 blocks.append({"type": "tool_result", "tool_use_id": _block_get(block, "tool_use_id"),
-                               "content": json.dumps(result), "is_error": True})
+                               "content": dumps_for_model(result), "is_error": True})
             else:
                 blocks.append(block)
         projected.append({**message, "content": blocks})

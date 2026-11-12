@@ -16,7 +16,6 @@ import ast
 import fnmatch
 import functools
 import hashlib
-import json
 import logging
 import os
 import re
@@ -35,6 +34,7 @@ from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
+from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.agent.tools import (
     INVALID_ARGUMENTS_KEY,
     get_all_tools_including_generators,
@@ -244,7 +244,7 @@ class ToolExecutionResult:
         return self.status == "ok"
 
     def to_json(self) -> str:
-        return json.dumps(self.payload, default=str)
+        return dumps_for_model(self.payload)
 
 # Default time a shell command can run (seconds); the model may ask for up to
 # MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.

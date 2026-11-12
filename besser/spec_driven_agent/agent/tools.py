@@ -8,6 +8,7 @@ Four categories:
 4. **Validation tools** — check model validity and code syntax
 """
 
+import json
 from typing import Any
 
 from besser.generators.registry import agent_tools
@@ -592,6 +593,18 @@ _SHELL_TOOLS = frozenset({"run_command", "install_dependencies"})
 # ``{INVALID_ARGUMENTS_KEY: "<parse error>"}`` instead of ``{}``, so the
 # executor refuses the call rather than running it with no arguments.
 INVALID_ARGUMENTS_KEY = "__invalid_arguments__"
+
+
+def dumps_for_model(value: Any) -> str:
+    """JSON text of a tool result or tool call as the model reads it.
+
+    Non-ASCII stays literal: ``é`` is one token, ``\\u00e9`` several (a TS file
+    with accented strings: 4,459 chars escaped, 2,459 literal). A lone
+    surrogate, which a request body cannot carry as UTF-8, stays a ``\\uXXXX``
+    escape, so ``json.loads`` still returns the same value.
+    """
+    text = json.dumps(value, default=str, ensure_ascii=False)
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def get_tools_for(

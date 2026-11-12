@@ -272,8 +272,12 @@ reading a trace and wondering why a run did what it did.
        any finding comes back in the same tool result, while the file is still
        in context. An edit that would turn a file the harness can parse into
        one it cannot is refused outright and never reaches disk, in those same
-       languages. Data-contract violations ride along the same way. Toggle with
-       ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (default on).
+       languages. Data-contract violations ride along the same way. A
+       cross-file finding (a router reading a field its create schema lacks, a
+       form field the request schema refuses) comes back on a write to a file
+       it names, and otherwise once per content of those files, with the other
+       files under ``in_other_files``; it is not repeated on unrelated writes.
+       Toggle with ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (default on).
    * - Checkpointing
      - A checkpoint is written to ``.besser_checkpoint.json`` in the workspace
        after every tool-use turn and again when Phase 3 starts and as its

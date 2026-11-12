@@ -324,6 +324,14 @@ _UNSEARCHED_DIRS = frozenset({
     "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
 })
 
+# Workspace-wide findings attached to one write, per check.
+_CROSS_FILE_FINDINGS_MAX = 10
+# Workspace paths a cross-file finding names ("backend/routers/book.py line 3",
+# "src/App.tsx:12:", "(BookCreate in backend/pydantic_classes.py)").
+_NAMED_SOURCE_PATH_RE = re.compile(r"[\w./-]+\.(?:pyi?|[cm]?[jt]sx?)\b")
+# The schema a schema-consumer mismatch names ("... but BookCreate does not define").
+_UNDEFINED_FIELD_SCHEMA_RE = re.compile(r"\bbut (\w+) does not define\b")
+
 # list_files shows at most this many files. A scaffold has ~150; an uncapped
 # listing of a stray dependency tree was 232k chars in one result.
 _LIST_FILES_MAX = 300
@@ -758,6 +766,9 @@ class ToolExecutor:
         self._modify_guard = False
         # Whole-application generators refused once the scaffold exists (#666).
         self._locked_generators: frozenset[str] = frozenset()
+        # Per cross-file check: (finding, digests of the files it names) already
+        # attached to a write. See _cross_file_findings.
+        self._reported_findings: dict[str, set[tuple]] = {}
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -1508,19 +1519,18 @@ class ToolExecutor:
                 # consumers immediately, not only at final validation.
                 from besser.spec_driven_agent.validation.python_source import _create_schema_router_mismatches
 
-                diagnostics.extend({
+                diagnostics.extend(self._cross_file_findings("project-contract", rel_path, content, [{
                     "source": "project-contract", "severity": "error",
                     "code": "schema-consumer-mismatch", "message": message,
-                } for message in _create_schema_router_mismatches(self.workspace)[:10])
+                } for message in _create_schema_router_mismatches(self.workspace)]))
         except Exception:
             diagnostics = []
         if rel_path.endswith((".py", ".js", ".jsx", ".ts", ".tsx")):
             try:
                 from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_diagnostics
 
-                diagnostics.extend(collect_frontend_schema_diagnostics(
-                    self.workspace, changed_path=rel_path, content=content,
-                )[:10])
+                diagnostics.extend(self._cross_file_findings("frontend-schema", rel_path, content,
+                    collect_frontend_schema_diagnostics(self.workspace, changed_path=rel_path, content=content)))
             except Exception:
                 # An optional cross-file check must not erase parser findings
                 # already collected for the successful write.
@@ -1531,6 +1541,46 @@ class ToolExecutor:
                 "The content was written, but diagnostics found errors. Fix them "
                 "now while this file is still in context."
             )
+            if any("in_other_files" in item for item in diagnostics):
+                result["diagnostic_message"] += (
+                    " A finding with in_other_files is fixed in the files it names; "
+                    "it is reported once, not after every write."
+                )
+
+    def _cross_file_findings(self, source: str, rel_path: str, content: str,
+                             findings: list[dict]) -> list[dict]:
+        """The workspace-wide findings worth attaching to this write.
+
+        One about the written file (it names the file, or the file declares
+        the schema it names) is always kept. Any other is kept only the first
+        time it is seen at the current content of the files it names, so an
+        unrelated write does not carry it again; a finding that goes away and
+        comes back is new again.
+        """
+        reported = self._reported_findings.setdefault(source, set())
+        present: set[tuple] = set()
+        kept: list[dict] = []
+        for finding in findings:
+            message = finding.get("message", "")
+            named = sorted(set(_NAMED_SOURCE_PATH_RE.findall(message)))
+            schema = _UNDEFINED_FIELD_SCHEMA_RE.search(message)
+            about_this_file = rel_path in named or bool(
+                schema and re.search(rf"^class {schema.group(1)}\b", content, re.MULTILINE))
+            key = (message, tuple(self._named_file_digest(path) for path in named))
+            present.add(key)
+            if about_this_file or key not in reported:
+                others = [path for path in named if path != rel_path]
+                kept.append({**finding, "in_other_files": others} if others else finding)
+        self._reported_findings[source] = present
+        return kept[:_CROSS_FILE_FINDINGS_MAX]
+
+    def _named_file_digest(self, rel_path: str) -> str:
+        """Content digest of a workspace file a finding names; "" when unreadable."""
+        try:
+            with open_plain(self._safe_path(rel_path), "r", root=self.workspace, encoding="utf-8") as handle:
+                return self._content_digest(handle.read())
+        except (OSError, ValueError, UnicodeDecodeError):
+            return ""
 
     def _require_domain_model(self, tool_name: str) -> dict | None:
         """Return an error dict if no domain model is loaded, else None.

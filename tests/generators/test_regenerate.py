@@ -621,7 +621,8 @@ def test_output_paths_differing_only_in_case_are_refused(tmp_path, case_sensitiv
     b"'a' + get_key()",
     b"'x'  # note",
     b"'x\\'",
-    b'"x"',
+    b'"x\\"',
+    b'"x\'',
 ])
 def test_django_does_not_carry_over_anything_but_a_plain_key(line):
     from besser.generators.django import DjangoGenerator
@@ -630,6 +631,19 @@ def test_django_does_not_carry_over_anything_but_a_plain_key(line):
     generated = {settings: b"A = 1\nSECRET_KEY = 'fresh'\nB = 2\n"}
     previous = {settings: b"SECRET_KEY = " + line + b"\n"}
     assert DjangoGenerator(_shelf(), "s", "a")._keep_generated_values(previous, generated) == generated
+
+
+@pytest.mark.parametrize("quoted", [b"'django-insecure-!@#$%^&*(-_=+)'", b'"django-insecure-!@#$%^&*(-_=+)"'])
+def test_django_keeps_a_key_black_requoted_out_of_the_record(quoted):
+    """startproject runs black when it is on PATH, which writes the key in double quotes."""
+    from besser.generators.django import DjangoGenerator
+
+    settings = "s/s/settings.py"
+    generator = DjangoGenerator(_shelf(), "s", "a")
+    generated = {settings: b"SECRET_KEY = " + quoted + b"\nB = 2\n"}
+    recorded = generator._without_secrets(generated)
+    assert b"django-insecure" not in recorded[settings]
+    assert generator._keep_generated_values(recorded, {settings: b'SECRET_KEY = "fresh"\nB = 2\n'}) == recorded
 
 
 @pytest.mark.parametrize("ending", [b"\n", b"\r\n"])

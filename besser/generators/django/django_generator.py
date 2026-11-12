@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 ##############################
 #    Django Generator
 ##############################
-# One plain literal, as startproject writes it: the record is a file, so it must not supply code.
-_SECRET_KEY_LINE = re.compile(rb"^SECRET_KEY = '[^'\\\r\n]*'(?=\r?$)", re.MULTILINE)
+# One plain literal, as startproject writes it (in double quotes when black is on PATH, as startproject
+# then formats its files): the record is a file, so it must not supply code.
+_SECRET_KEY_LINE = re.compile(rb"""^SECRET_KEY = (?:'[^'\\\r\n]*'|"[^"\\\r\n]*")(?=\r?$)""", re.MULTILINE)
 _RECORDED_SECRET_KEY = b"SECRET_KEY = 'not-in-the-record'"
 
 

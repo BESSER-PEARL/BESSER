@@ -42,6 +42,10 @@ _REGEX_PRECEDERS = frozenset("(,=:[!&|?;")
 _REGEX_KEYWORDS = frozenset(
     ("return", "typeof", "case", "in", "of", "do", "else", "yield", "await", "throw")
 )
+# Words a quoted string may follow (``from 'x'``, ``T extends 'a'``, ``x as 'b'``).
+_STRING_KEYWORDS = _REGEX_KEYWORDS | frozenset(
+    ("from", "import", "extends", "as", "satisfies", "default", "void", "delete", "keyof")
+)
 
 
 def supports(rel_path: str) -> bool:
@@ -52,10 +56,14 @@ def structure_error(source: str) -> tuple[str, int] | None:
     """``(message, line)`` for the first outright delimiter fault, else ``None``."""
     stack: list[tuple[str, int]] = []
     index, size, line = 0, len(source), 1
+    last = -1  # index of the last code character, comments and whitespace skipped
     while index < size:
         char = source[index]
         if char == "\n":
             line += 1
+            index += 1
+            continue
+        if char in " \t\r":
             index += 1
             continue
         if char == "/" and index + 1 < size:
@@ -73,37 +81,34 @@ def structure_error(source: str) -> tuple[str, int] | None:
             if _regex_may_start(source, index):
                 stop = _regex_end(source, index)
                 if stop is not None:
-                    index = stop
+                    index, last = stop, stop - 1
                     continue
-            index += 1
+            index, last = index + 1, index
             continue
         if char == "`":
             stop, newlines, error = _template_end(source, index)
             if error:
                 return (error, line)
             line += newlines
-            index = stop
+            index, last = stop, stop - 1
             continue
         if char in "'\"":
             # A quoted string never spans a line in JS. A quote that does not
-            # close on its own line is an apostrophe in JSX text, not a string.
-            stop = _string_end(source, index, char)
-            index = stop if stop is not None else index + 1
+            # close on its own line, or that follows a word or a closer, is an
+            # apostrophe in JSX text, not a string.
+            stop = _quoted_end(source, index, last)
+            index, last = (stop, stop - 1) if stop is not None else (index + 1, index)
             continue
         if char in "{[":
             stack.append((char, line))
-            index += 1
-            continue
-        if char in "}]":
+        elif char in "}]":
             expected = "{" if char == "}" else "["
             if not stack:
                 return (f'unbalanced "{char}" - nothing is open here', line)
             opened, opened_line = stack.pop()
             if opened != expected:
                 return (f'"{char}" closes a "{opened}" opened on line {opened_line}', line)
-            index += 1
-            continue
-        index += 1
+        index, last = index + 1, index
     if stack:
         opened, opened_line = stack[-1]
         return (f'"{opened}" opened on line {opened_line} is never closed', opened_line)
@@ -202,6 +207,28 @@ def _regex_may_start(source: str, index: int) -> bool:
     if source[max(0, cursor - 1):cursor + 1] == "=>":
         return True
     return _previous_word(source, index) in _REGEX_KEYWORDS
+
+
+def _quoted_end(source: str, index: int, last: int) -> int | None:
+    """Index after the string opening at ``index``, or ``None`` when it is prose.
+
+    ``last`` is the index of the previous code character. After a non-keyword
+    word or a closer the quote is usually an apostrophe in JSX text
+    (``don't``, ``{name}'s``), so it is not paired with a later quote across
+    a bracket - that hid the brace in ``don't {x === 'a'}``. Minified code
+    does put strings there (``for(...)"margin"``), so a bracket-free one still
+    counts.
+    """
+    stop = _string_end(source, index, source[index])
+    if stop is None or last < 0:
+        return stop
+    previous = source[last]
+    prose_position = previous in ")]}" or (
+        (previous.isalnum() or previous == "_")
+        and _previous_word(source, last + 1) not in _STRING_KEYWORDS)
+    if prose_position and any(c in "{}[]" for c in source[index + 1:stop - 1]):
+        return None
+    return stop
 
 
 def _regex_end(source: str, index: int) -> int | None:

@@ -131,6 +131,19 @@ def test_a_sound_frontend_edit_still_applies(executor):
         assert '"rowsPerPage": 25' in handle.read()
 
 
+def test_an_edit_adding_an_apostrophe_before_a_quoted_string_applies(executor):
+    """The apostrophe in ``don't`` used to pair with the first ``'`` of
+    ``'all'`` and hide the ``{`` between them, so this valid edit was refused."""
+    tools, path = executor
+    result = call(
+        tools, "modify_file", path="Booking.tsx",
+        old_text='    <div id="page">\n',
+        new_text='    <div id="page">\n'
+                 "      <p>You don't have any {filter === 'all' ? 'items' : filter} yet</p>\n",
+    )
+    assert result.get("rejection_kind") is None, result
+
+
 def test_an_already_broken_file_can_still_be_repaired():
     """``before`` unparseable means the guard abstains - repair is not blocked."""
     workspace = tempfile.mkdtemp()
@@ -154,6 +167,17 @@ def test_an_already_broken_file_can_still_be_repaired():
 @pytest.mark.parametrize("source", [
     # An apostrophe in JSX text is not a string delimiter.
     "const A = () => <p>Don't {value} change this</p>;\n",
+    # ...even when a quoted string follows on the same line: the apostrophe
+    # paired with its first quote and swallowed the "{" (edit refused).
+    "const A = () => <p>You don't have any {filter === 'all' ? 'items' : filter} yet</p>;\n",
+    "const A = () => <p>{user.name}'s list: {kind === \"open\" ? 'Open' : 'Closed'}</p>;\n",
+    "const A = () => <p>It's {n} item{n === 1 ? '' : 's'}</p>;\n",
+    "const A = () => <label>Author's name<input value={form['author']} /></label>;\n",
+    'const A = () => <p>5" screen {size === "s" ? "small" : "big"}</p>;\n',
+    # A real string after a comment that ends in a word, and minified
+    # strings after ")" and "}", still count as strings.
+    "const m = {\n  // keys below\n  'a{': 1,\n};\n",
+    'for(a=0;a<4;a+=2)"margin"===b&&c();function f(){}"use strict";\n',
     # A regex after `=>`, holding a backtick and a quote (axios).
     "const ok = (s) => /^[-_a-zA-Z0-9^`|~,!#$%&'*+.]+$/.test(s);\n",
     # A regex inside a template substitution.

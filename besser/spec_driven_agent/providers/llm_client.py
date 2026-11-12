@@ -350,7 +350,7 @@ class LLMProvider(ABC):
     def _request_max_tokens(self, model_override: str | None) -> int:
         """Output ceiling for one call. A planning call on a cheaper sibling
         keeps to that model's own ceiling: the agent loop's raised ceiling
-        (32768) is a 400 on gpt-4o-mini, which allows 16384."""
+        (32768) is a 400 on a model that allows less (gpt-4o-mini: 16384)."""
         if not model_override:
             return self._max_tokens
         return min(self._max_tokens, max_output_tokens(model_override))
@@ -1948,7 +1948,7 @@ class NebiusProvider(OpenAIProvider):
         if env:
             return None if env.lower() == "primary" else env
         # None => use the primary model. Inheriting OpenAIProvider's
-        # ``gpt-4o-mini`` would send an id Nebius does not serve.
+        # ``gpt-6-luna`` would send an id Nebius does not serve.
         return self.PLANNING_MODEL
 
 

@@ -100,6 +100,8 @@ class Checkpoint:
     # Files a generator wrote (``ToolExecutor._generator_files``): the scaffold
     # guardrail and the recipe's ``source`` tags.
     generator_files: list[str] = field(default_factory=list)
+    # What ``task_list`` evidence is checked against (``ToolExecutor.evidence_snapshot``).
+    write_evidence: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +131,7 @@ class Checkpoint:
             "target": self.target,
             "modify": self.modify,
             "generator_files": self.generator_files,
+            "write_evidence": self.write_evidence,
         }
 
 
@@ -395,6 +398,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             target=data.get("target"),
             modify=modify,
             generator_files=[p for p in generator_files if isinstance(p, str)],
+            write_evidence=data.get("write_evidence") if isinstance(data.get("write_evidence"), dict) else {},
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

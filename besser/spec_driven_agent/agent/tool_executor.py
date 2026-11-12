@@ -858,6 +858,28 @@ class ToolExecutor:
             })
         self._tasks = restored
 
+    def evidence_snapshot(self) -> dict:
+        """The writes and reads ``task_list`` evidence is checked against, for a checkpoint."""
+        return {
+            "successful_writes": {
+                os.path.relpath(path, self.workspace).replace("\\", "/"): digest
+                for path, digest in self._successful_writes.items()},
+            "known_paths": sorted(self._known_paths),
+        }
+
+    def restore_evidence(self, snapshot: dict) -> None:
+        """Restore :meth:`evidence_snapshot`: an edit made before a resume still counts.
+
+        A write is matched by the digest of the file it left, so a file changed
+        since then is still refused.
+        """
+        writes = snapshot.get("successful_writes")
+        if isinstance(writes, dict):
+            self._successful_writes.update({
+                os.path.normcase(os.path.join(self.workspace, rel)): digest
+                for rel, digest in writes.items() if isinstance(rel, str) and isinstance(digest, str)})
+        self._known_paths.update(p for p in snapshot.get("known_paths") or [] if isinstance(p, str))
+
     def open_tasks(self) -> list[dict]:
         """Checklist items still to do.
 

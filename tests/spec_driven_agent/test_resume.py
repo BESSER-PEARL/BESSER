@@ -431,6 +431,57 @@ def test_resume_keeps_the_generator_file_tags(simple_model, tmp_path):
     assert recipe["output_summary"]["from_generator"] == len(crashed.executor._generator_files)
 
 
+def _resume_without_llm(model, tmp_path, monkeypatch, instructions="Build a blog") -> LLMOrchestrator:
+    """``resume()`` with Phase 2 and Phase 3 stubbed out."""
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    for name, stub in {
+        "_run_phase2": lambda instructions, extra_issues=None: None,
+        "_create_snapshot": lambda: None,
+        "_run_phase3_validation": lambda: None,
+        "_remove_snapshot": lambda: None,
+        "_save_recipe": lambda instructions, elapsed: None,
+    }.items():
+        monkeypatch.setattr(resumed, name, stub)
+    resumed.resume(instructions)
+    return resumed
+
+
+def test_resume_accepts_evidence_for_an_edit_made_before_the_crash(simple_model, tmp_path, monkeypatch):
+    """The executor's record of successful writes was not checkpointed, so a
+    resumed run's task_list refused evidence for work done before the crash."""
+    crashed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    crashed._project_fingerprint = crashed._compute_project_fingerprint("Build a blog")
+    crashed.executor.execute_typed("task_list", {"action": "add", "text": "Add a slug to posts"})
+    written = crashed.executor.execute_typed(
+        "write_file", {"path": "slug.py", "content": "def slugify(title):\n    return title.lower()\n"})
+    assert "error" not in written.payload, written.payload
+    crashed._save_checkpoint_for_turn(1, [{"role": "user", "content": "Build a blog"}], "Build a blog")
+
+    resumed = _resume_without_llm(simple_model, tmp_path, monkeypatch)
+    result = resumed.executor.execute_typed("task_list", {
+        "action": "done", "id": 1,
+        "evidence": [{"id": 1, "path": "slug.py", "quote": "return title.lower()"}],
+    }).payload
+
+    assert "error" not in result, result
+    assert resumed.executor.task_snapshot()[0]["done"] is True
+
+    # The record names the file's contents, not just its path.
+    (tmp_path / "slug.py").write_text("def slugify(title):\n    return title.upper()\n", encoding="utf-8")
+    resumed.executor.execute_typed("task_list", {"action": "add", "text": "Upper-case slugs"})
+    refused = resumed.executor.execute_typed("task_list", {
+        "action": "done", "id": 2,
+        "evidence": [{"id": 2, "path": "slug.py", "quote": "return title.upper()"}],
+    }).payload
+    assert "no successful write matches" in refused["error"]
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

@@ -961,6 +961,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             checkpoint.tasks,
             verification_tasks=self._deterministic_gap_tasks(),
         )
+        self.executor.restore_evidence(checkpoint.write_evidence)
         self._trace.write(
             EVENT_RUN_START,
             resumed=True,
@@ -2675,6 +2676,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 locked_generators=sorted(self.executor.locked_generators),
                 modify=self._modify_checkpoint_state(),
                 generator_files=sorted(self.executor._generator_files),
+                write_evidence=self.executor.evidence_snapshot(),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:

@@ -57,7 +57,9 @@ from besser.spec_driven_agent.execution.sandbox import (
     run_confined,
 )
 from besser.spec_driven_agent.execution.shell_session import ShellSession
-from besser.utilities.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import (
+    makedirs_plain, open_plain, open_plain_write, remove_plain, walk_plain,
+)
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
@@ -433,9 +435,9 @@ def _breaks_module_import(path: str, before: str, after: str,
     def imports(source: str) -> tuple[bool, str]:
         original = None
         try:
-            with open(path, "r", encoding="utf-8") as handle:
+            with open_plain(path, "r", root=workspace, encoding="utf-8") as handle:
                 original = handle.read()
-            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            with open_plain_write(path, "w", root=workspace, encoding="utf-8", newline="\n") as handle:
                 handle.write(source)
             result = run_confined(
                 [sys.executable, "-c", probe], workspace=workspace or folder,
@@ -451,7 +453,7 @@ def _breaks_module_import(path: str, before: str, after: str,
             return True, ""
         finally:
             if original is not None:
-                with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                with open_plain_write(path, "w", root=workspace, encoding="utf-8", newline="\n") as handle:
                     handle.write(original)
 
     was_ok, _ = imports(before)
@@ -877,7 +879,7 @@ class ToolExecutor:
                 return [], "each evidence item requires a path and a non-empty exact quote of at most 4000 characters"
             try:
                 path = self._safe_path(rel)
-                with open(path, "r", encoding="utf-8") as source:
+                with open_plain(path, "r", root=self.workspace, encoding="utf-8") as source:
                     content = source.read()
             except (ValueError, OSError, UnicodeError):
                 return [], f"evidence path is not a readable workspace file: {rel}"
@@ -1347,7 +1349,7 @@ class ToolExecutor:
             if not notes or repaired == content:
                 return content
             path = self._safe_path(rel_path)
-            with open(path, "w", encoding="utf-8", newline="\n") as target:
+            with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
                 target.write(repaired)
             self._successful_writes[os.path.normcase(path)] = self._content_digest(repaired)
             result["auto_imports"] = notes
@@ -1536,9 +1538,12 @@ class ToolExecutor:
         The one containment check for every tool path and working directory.
         ``realpath`` resolves every ``..`` and symlink before the check, so a
         ``../`` path, an absolute path elsewhere or a link pointing out of the
-        workspace is rejected. Callers open the returned resolved path, never
-        ``rel_path`` again, so a link planted after the check is not followed
-        through a re-resolution of the original name.
+        workspace is rejected. The check alone cannot stop a link swapped in
+        after it (``run_command`` can start a process that does so in a loop),
+        so callers open, write and delete the returned path only through
+        ``workspace_fs`` with ``root=self.workspace``: those never follow a
+        link at the file or at any directory below the workspace, and refuse
+        FIFOs and other special files without blocking.
         """
         full = os.path.realpath(os.path.join(self.workspace, rel_path))
         # Strip the Windows extended-path prefix (``\\?\C:\...``): realpath
@@ -1590,7 +1595,7 @@ class ToolExecutor:
                     continue
                 rel = os.path.relpath(abs_path, self.workspace)
                 try:
-                    size = os.path.getsize(abs_path)
+                    size = os.lstat(abs_path).st_size  # never a swapped-in link's target
                 except OSError:  # dangling link
                     continue
                 files.append({"path": rel.replace("\\", "/"), "size": size})
@@ -2020,7 +2025,7 @@ class ToolExecutor:
         if not os.path.isfile(path):
             return self._missing_file_result(args["path"])
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
                 content = f.read()
         except UnicodeDecodeError:
             size = os.path.getsize(path)
@@ -2216,7 +2221,7 @@ class ToolExecutor:
                     "rejection_kind": "unread_range"}
         if not os.path.isfile(path):
             return self._missing_file_result(args["path"])
-        with open(path, encoding="utf-8") as source:
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as source:
             before = source.read()
         if self._content_digest(before) != view[1]:
             return {"error": "Stale read_id: the file changed after this read. No edit applied. "
@@ -2291,7 +2296,7 @@ class ToolExecutor:
                              + _IMPORT_BREAK_ADVICE,
                     "rejection_kind": "breaks_import",
                     "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after)}
-        with open(path, "w", encoding="utf-8", newline="\n") as target:
+        with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
             target.write(after)
         self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
         result = {"status": "modified", "path": args["path"], "replacements": 1,
@@ -2385,7 +2390,7 @@ class ToolExecutor:
             and os.path.isfile(path)
             and self._modify_counts.get(rel_path, 0) < 2
         ):
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 existing_lines = f.read().count("\n") + 1
             if existing_lines > 15:
                 return {
@@ -2406,7 +2411,7 @@ class ToolExecutor:
         # large ones keep the targeted-edit requirement until two modify_file
         # attempts have been made.
         if rel_path in self._generator_files and os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
                 existing_lines = f.read().count("\n") + 1
             if existing_lines > 200 and self._modify_counts.get(rel_path, 0) < 2:
                 return {
@@ -2425,7 +2430,7 @@ class ToolExecutor:
 
         before = None
         if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 before = f.read()
             broke = _new_syntax_error(rel_path, before, args["content"])
             if broke:
@@ -2455,8 +2460,8 @@ class ToolExecutor:
         stray = stray_gutter_line(args["content"], before or "", before or "")
         if stray:
             return _gutter_refusal("content", stray)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        makedirs_plain(os.path.dirname(path), root=self.workspace)
+        with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
         if before != args["content"]:
             self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
@@ -2566,7 +2571,7 @@ class ToolExecutor:
             self._note_rejection(rel_path, old_text, new_text)
             return frozen
         self._modify_counts[rel_path] = self._modify_counts.get(rel_path, 0) + 1
-        with open(path, "r", encoding="utf-8") as f:
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             content = f.read()
         replace_all = args.get("replace_all") is True
         receipt_key = (os.path.normcase(path), old_text, new_text, replace_all)
@@ -2916,7 +2921,7 @@ class ToolExecutor:
         # newline="\n": a text-mode write translates "\n" to os.linesep, which
         # on a Windows host re-encodes the whole file as CRLF - and the React
         # generator copies some templates verbatim out of a CRLF checkout.
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
+        with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as f:
             f.write(new_content)
         digest = self._content_digest(new_content)
         self._edit_receipts[receipt_key] = digest
@@ -2951,7 +2956,7 @@ class ToolExecutor:
         advice in another refusal walks the model into a second refusal.
         """
         try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as fh:
                 existing_lines = fh.read().count("\n") + 1
         except OSError:
             existing_lines = 0
@@ -2999,7 +3004,7 @@ class ToolExecutor:
                 ),
             }
         try:
-            os.remove(path)
+            remove_plain(path, root=self.workspace)
         except OSError as exc:
             return {"error": f"Failed to delete {args['path']}: {exc}"}
         return {"status": "deleted", "path": args["path"]}
@@ -3041,7 +3046,7 @@ class ToolExecutor:
                 if not self._resolves_inside(abs_path):
                     continue
                 try:
-                    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                    with open_plain(abs_path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                         for i, line in enumerate(f, 1):
                             if regex.search(line):
                                 matches.append({
@@ -3087,8 +3092,9 @@ class ToolExecutor:
         rel = f"{COMMAND_OUTPUT_DIR}/{self._command_log_count:03d}-{slug}.log"
         try:
             full = self._safe_path(rel)
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-            with open(full, "w", encoding="utf-8", errors="replace", newline="") as fh:
+            makedirs_plain(os.path.dirname(full), root=self.workspace)
+            with open_plain_write(full, "w", root=self.workspace, encoding="utf-8", errors="replace",
+                                  newline="") as fh:
                 fh.write(
                     f"$ {command}\n\n===== stdout =====\n{self._cap_spill(stdout)}\n"
                     f"===== stderr =====\n{self._cap_spill(stderr)}\n"
@@ -3315,7 +3321,7 @@ class ToolExecutor:
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
             return {"error": f"File not found: {args['path']}"}
-        with open(path, "r", encoding="utf-8") as f:
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             source = f.read()
         try:
             ast.parse(source, filename=args["path"])

@@ -265,6 +265,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         id="web_app",
         class_path="besser.generators.web_app:WebAppGenerator",
         models=("domain", "gui"),
+        extra_options={"uniform_responses": _UNIFORM_RESPONSES},
         category="web_framework",
         output_type="zip",
         file_extension=".zip",

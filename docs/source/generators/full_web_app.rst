@@ -47,6 +47,10 @@ The Full Web App Generator internally uses these specialized generators:
 - **Backend:** :doc:`backend` (which uses :doc:`pydantic`, :doc:`alchemy`, :doc:`rest_api`)
 - **Frontend:** :doc:`react` (React application with TableComponent, MethodButton, charts)
 
+``WebAppGenerator(..., uniform_responses=True)`` (the ``uniform_responses`` option of the
+``web_app`` generator) passes the backend generator's option of that name to the backend:
+see :ref:`backend-response-shapes`. The frontend is the same either way.
+
 
 Multi-Diagram Projects
 ----------------------

@@ -89,6 +89,9 @@ class WebAppGenerator(GeneratorInterface):
             A user-authored ``db1`` that holds no ``YOUR-...`` placeholder is kept.
             Pass ``False`` when the services do not share a volume (e.g. separate
             hosting services); the agent config then keeps its placeholders.
+        uniform_responses (bool, optional): Passed to the :class:`BackendGenerator` of
+            ``backend/``: its ``POST`` and ``PUT`` answer what ``GET /x/{x_id}/`` answers
+            for every class. Defaults to False. The React app does not read those answers.
     """
 
     regenerable = True
@@ -98,9 +101,11 @@ class WebAppGenerator(GeneratorInterface):
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,
-                 agent_config_yamls=None, link_agent_database: bool = True):
+                 agent_config_yamls=None, link_agent_database: bool = True,
+                 uniform_responses: bool = False):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
+        self.uniform_responses = uniform_responses
         self.link_agent_database = link_agent_database
         if agent_model is not None and not agent_models:
             agent_models = [agent_model]
@@ -159,7 +164,7 @@ class WebAppGenerator(GeneratorInterface):
     def _generate_backend(self, env):
         # Generate backend code in 'backend' subfolder
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
-        backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
+        backend_gen = BackendGenerator(self.model, output_dir=backend_dir, uniform_responses=self.uniform_responses)
         backend_gen.generate()
 
     def _generate_agent(self, env):

@@ -213,7 +213,27 @@ def test_association_class_routes_are_unchanged(tmp_path):
         assert (tmp_path / "on" / "routers" / path.name).read_bytes() == path.read_bytes(), path.name
 
 
-@pytest.mark.parametrize("generator_id", ["backend"])
+@pytest.mark.parametrize("uniform_responses", [False, True])
+def test_web_app_passes_the_option_to_its_backend(monkeypatch, tmp_path, uniform_responses):
+    from besser.generators.web_app import web_app_generator
+
+    built = {}
+
+    class Recorder:
+        def __init__(self, model, **kwargs):
+            built.update(kwargs)
+
+        def generate(self):
+            pass
+
+    monkeypatch.setattr(web_app_generator, "BackendGenerator", Recorder)
+    generator = web_app_generator.WebAppGenerator(_plain_model(False), None, output_dir=str(tmp_path),
+                                                  uniform_responses=uniform_responses)
+    generator._generate_backend(generator.env)
+    assert built["uniform_responses"] is uniform_responses
+
+
+@pytest.mark.parametrize("generator_id", ["backend", "web_app"])
 def test_the_option_is_declared_off_by_default(generator_id):
     option = get_generator(generator_id).options["uniform_responses"]
     assert option["type"] == "boolean" and option["default"] is False

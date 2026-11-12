@@ -57,6 +57,9 @@ _NODE_BUILTINS = {
 # Packages a bundler or framework provides without a package.json entry.
 _IMPLICIT_PACKAGES = {"react/jsx-runtime", "react/jsx-dev-runtime", "vite/client"}
 
+# The JSX-without-React finding names this many files; the fix is one config line.
+_JSX_FILES_LISTED = 8
+
 @lru_cache(maxsize=16)
 def _lexer_for(suffix: str) -> Lexer:
     try:
@@ -193,10 +196,17 @@ def _registers_vite_react_plugin(config: str) -> bool:
     Declaring ``@vitejs/plugin-react`` in package.json, or naming it in a
     comment, leaves Vite on esbuild's classic transform.
     """
-    for binding in re.findall(
-            r"""import\s+(\w+)\s+from\s+['"](?:@vitejs/plugin-react(?:-swc)?|@preact/preset-vite)['"]""",
-            config):
-        if re.search(rf"\bplugins\s*:\s*\[[^\]]*\b{binding}\s*\(", config):
+    # Imported here so the module stays runnable as a stdlib-only script.
+    from besser.spec_driven_agent.validation.frontend_source import match_bracket
+
+    bindings = re.findall(
+        r"""import\s+(\w+)\s+from\s+['"](?:@vitejs/plugin-react(?:-swc)?|@preact/preset-vite)['"]""",
+        config)
+    for match in re.finditer(r"\bplugins\s*:\s*\[", config):
+        # Bracket-balanced: an earlier plugin's options may hold a "]".
+        end = match_bracket(config, match.end() - 1)
+        plugins = config[match.end():end]  # end None: the rest of the file
+        if any(re.search(rf"\b{binding}\s*\(", plugins) for binding in bindings):
             return True
     return False
 
@@ -315,15 +325,20 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 f"frontend dependency: {prefix}{rel_file} imports the package '{package}', "
                 f"which is not declared in {prefix}package.json. Nothing installs it, so "
                 f"the import fails at load. Add it to dependencies or stop importing it.")
-        for rel_file in sorted(set(jsx_without_react)):
+        if jsx_without_react:
+            # One finding per project: the cause is the project's config.
+            shown = sorted(set(jsx_without_react))
+            listed = ", ".join(prefix + rel for rel in shown[:_JSX_FILES_LISTED])
+            if len(shown) > _JSX_FILES_LISTED:
+                listed += f" and {len(shown) - _JSX_FILES_LISTED} more"
             issues.append(
-                f"frontend contract: {prefix}{rel_file} contains JSX but does not import "
+                f"frontend contract: {listed} contain JSX but do not import "
                 f"React, and this project configures no automatic JSX runtime (react() is not "
                 f"registered in vite.config's plugins: [...] - declaring @vitejs/plugin-react "
                 f"or mentioning it in a comment does not enable it - and no \"jsx\": "
                 f"\"react-jsx\"). The classic transform emits React.createElement and every "
                 f"page dies with 'React is not defined'. Import the plugin and add react() "
-                f"to plugins, or add 'import React from \"react\"' to the file.")
+                f"to plugins, or add 'import React from \"react\"' to each file.")
 
     return issues
 

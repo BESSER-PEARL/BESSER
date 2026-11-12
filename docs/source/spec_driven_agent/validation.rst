@@ -71,6 +71,8 @@ actually ships, with no install, no bundler and no shell, so this runs in every
 configuration. A relative import that resolves to no file, and a ``.jsx`` /
 ``.tsx`` file containing JSX in a project that imports no React and configures
 no automatic JSX runtime, are blockers: both leave a blank page in the browser.
+The JSX rule reports one finding per project, naming the files, since one
+config line fixes them all.
 An undeclared package is reported as a warning, because a bundler can still
 satisfy it. The JSX rule matters even where build verification is enabled:
 ``React is not defined`` is a runtime error in a bundle that builds cleanly, so

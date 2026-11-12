@@ -126,7 +126,7 @@ def json_container_faults(source: str) -> list[tuple[int, str, str]]:
     faults: list[tuple[int, str, str]] = []
     for match in _ATTRIBUTE_OBJECT.finditer(source):
         opened = match.end() - 2
-        closed = _match_brace(source, opened)
+        closed = match_bracket(source, opened)
         if closed is None:
             continue
         inner = source[opened + 1:closed].strip()
@@ -317,8 +317,13 @@ def _template_end(source: str, index: int) -> tuple[int, int, str | None]:
     return cursor, newlines, "unterminated template literal"
 
 
-def _match_brace(source: str, index: int) -> int | None:
-    """Index of the ``}`` matching ``source[index] == "{"``, or ``None``."""
+def match_bracket(source: str, index: int) -> int | None:
+    """Index of the ``}`` / ``]`` matching the ``{`` / ``[`` at ``index``, or ``None``.
+
+    Only the opener's own kind is counted; strings, templates and comments are skipped.
+    """
+    opener = source[index]
+    closer = "}" if opener == "{" else "]"
     depth = 0
     size = len(source)
     while index < size:
@@ -344,9 +349,9 @@ def _match_brace(source: str, index: int) -> int | None:
             stop = _string_end(source, index, char)
             index = stop if stop is not None else index + 1
             continue
-        if char == "{":
+        if char == opener:
             depth += 1
-        elif char == "}":
+        elif char == closer:
             depth -= 1
             if depth == 0:
                 return index

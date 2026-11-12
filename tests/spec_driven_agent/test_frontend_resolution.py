@@ -131,6 +131,39 @@ def test_a_react_plugin_that_is_declared_but_not_registered_is_still_a_blocker(t
     assert "AgentList.jsx" in issue and "plugins" in issue
 
 
+_SVGR_MANIFEST = {"dependencies": _MANIFEST["dependencies"],
+                  "devDependencies": {"@vitejs/plugin-react": "^4.3.0", "vite-plugin-svgr": "^4.2.0"}}
+_SVGR_IMPORTS = "import react from '@vitejs/plugin-react';\nimport svgr from 'vite-plugin-svgr';\n"
+
+
+def test_a_bracket_in_an_earlier_plugins_options_does_not_hide_react(tmp_path):
+    """The ``]`` of ``include: [...]`` ended the old ``plugins: [...]`` match,
+    so a registered react() counted as missing and every JSX file was a
+    blocker."""
+    workspace = _frontend(
+        tmp_path, manifest=_SVGR_MANIFEST,
+        vite_config=_SVGR_IMPORTS + "export default { plugins: [svgr({ include: ['**/*.svg?react'] }), react()] };\n",
+        files={"src/App.jsx": "export default function App() { return <div>hi</div>; }\n"},
+    )
+
+    assert collect_frontend_resolution_issues(workspace) == []
+
+
+def test_react_imported_but_not_in_plugins_is_one_finding_naming_every_file(tmp_path):
+    workspace = _frontend(
+        tmp_path, manifest=_SVGR_MANIFEST,
+        vite_config=_SVGR_IMPORTS + "export default { plugins: [svgr({ include: ['**/*.svg?react'] })] };\n"
+                                    "export const unused = [react()];\n",
+        files={"src/App.jsx": "export default function App() { return <div>hi</div>; }\n",
+               "src/main.jsx": "import App from './App';\nexport const root = <App />;\n"},
+    )
+
+    [issue] = collect_frontend_resolution_issues(workspace)
+
+    assert issue.startswith("frontend contract:") and "React is not defined" in issue
+    assert "src/App.jsx" in issue and "src/main.jsx" in issue
+
+
 def test_an_undeclared_package_is_reported_but_does_not_drive_the_loop(tmp_path):
     """Run mz30st3s imported ``axios`` with no entry in ``package.json`` and
     rendered nothing. It is reported - but as a warning, because a bundler

@@ -321,6 +321,24 @@ def test_windows_line_endings_are_kept(besser, tmp_path):
     assert b"\n" not in data.replace(b"\r\n", b"")
 
 
+@pytest.mark.parametrize("separator", ["\x0c", " ", "\x1c", "\x85"])
+def test_a_character_python_does_not_end_a_line_with_does_not_shift_the_change(edit, separator):
+    # A form feed (a page break) or a line separator pasted into a comment is no line end for Python.
+    text = INLINE.replace("# Classes and their attributes", f"# Classes{separator} and their attributes")
+
+    run, after = edit(text, "add-attribute", "Book", "isbn:str")
+    renamed, renamed_text = edit(text, "rename", "Book", "Volume")
+
+    assert run.returncode == 0, run.stderr
+    assert after == text.replace('    Property(name="pages", type=IntegerType),\n',
+                                 '    Property(name="pages", type=IntegerType),\n'
+                                 '    Property(name="isbn", type=StringType),\n')
+    assert renamed.returncode == 0, renamed.stderr
+    assert _changed_lines(text, renamed_text)[1] == [
+        'volume = Class(name="Volume", attributes={', '    Property(name="books", type=volume, '
+        'multiplicity=Multiplicity(0, "*")),', '    types={library, volume},']
+
+
 def test_an_editor_json_file_is_refused(besser, write):
     write("project.json", {"project": {}})
 

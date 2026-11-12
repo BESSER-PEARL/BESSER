@@ -154,7 +154,8 @@ class _Text:
     def __init__(self, text: str):
         self.text = text
         self.tree = ast.parse(text)
-        self._lines = text.splitlines(keepends=True)
+        # Lines as ``ast`` counts them: "\n" ends one, a form feed or " " does not (as for splitlines).
+        self._lines = io.StringIO(text, newline="\n").readlines()
         self._line_starts = [0]
         for line in self._lines:
             self._line_starts.append(self._line_starts[-1] + len(line))

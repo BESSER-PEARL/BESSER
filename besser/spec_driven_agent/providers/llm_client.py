@@ -47,6 +47,7 @@ from besser.spec_driven_agent.providers.model_settings import (
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 from besser.spec_driven_agent.settings import AgentSettings
+from besser.utilities.secret_redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,15 @@ class LLMProvider(ABC):
     streaming chat.  They must also expose a ``model`` property and a
     ``usage`` tracker so that the orchestrator can monitor cost.
     """
+
+    # The credentials this provider sends; its constructor sets them.
+    _secrets: tuple[str, ...] = ()
+
+    def _redacted(self, error: BaseException) -> str:
+        """``error``'s text for a log line or an error message, without this
+        provider's keys or any credential-shaped value: a gateway may echo the
+        request, headers included, in the error body the SDK quotes."""
+        return redact_text(str(error), env_style=False, secrets=self._secrets)[0]
 
     @property
     @abstractmethod
@@ -588,6 +598,7 @@ class ClaudeLLMClient(LLMProvider):
             client_kwargs["base_url"] = resolved_base
 
         self._client = anthropic_client(**client_kwargs)
+        self._secrets = (api_key,)
         self._max_retries = _resolve_max_retries(max_retries)
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
@@ -749,19 +760,19 @@ class ClaudeLLMClient(LLMProvider):
                     "content": normalize_tool_blocks(response.content, tools),
                 }, response)
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
                         and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "API call failed (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, self._max_retries + 1, backoff, e,
+                        attempt + 1, self._max_retries + 1, backoff, last_error,
                     )
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
-                    raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
-                raise UpstreamLLMError(f"Claude API call failed: {e}") from None
+                    raise InvalidApiKeyError(f"Claude API rejected the key: {last_error}") from None
+                raise UpstreamLLMError(f"Claude API call failed: {last_error}") from None
 
         raise UpstreamLLMError(f"Claude API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -796,16 +807,16 @@ class ClaudeLLMClient(LLMProvider):
                 return  # Success — exit retry loop
 
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
                         and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
-                    logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, e)
+                    logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
-                    raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
-                raise UpstreamLLMError(f"Claude API streaming failed: {e}") from None
+                    raise InvalidApiKeyError(f"Claude API rejected the key: {last_error}") from None
+                raise UpstreamLLMError(f"Claude API streaming failed: {last_error}") from None
 
         raise UpstreamLLMError(f"Streaming failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -1381,6 +1392,8 @@ class OpenAIProvider(LLMProvider):
             self._fallback_chain = [fallback]
         else:
             self._fallback_chain = list(fallback)
+        # Each fallback step sends its own token.
+        self._secrets = (api_key, *(step[1] for step in self._fallback_chain if step[1]))
         self._fallback_step = 0
         self._on_fallback = False
         self.fallback_reason: str | None = None
@@ -1451,7 +1464,7 @@ class OpenAIProvider(LLMProvider):
         logger.warning(
             "Model %s unavailable after all retries (%s) — switching to "
             "fallback %d/%d: %s",
-            self._model, error, self._fallback_step,
+            self._model, self._redacted(error), self._fallback_step,
             len(self._fallback_chain), fb_model,
         )
         self._client = openai_client(**client_kwargs)
@@ -1564,7 +1577,7 @@ class OpenAIProvider(LLMProvider):
                 return _openai_response_to_common(response, tools)
 
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 # A daily-quota exhaustion (Command Code: "used all 100 free
                 # requests for today") cannot recover inside the retry window;
                 # 5 retries just burn ~15-40s of backoff per call. Skip straight
@@ -1572,14 +1585,14 @@ class OpenAIProvider(LLMProvider):
                 if _is_quota_exhausted(e):
                     logger.warning(
                         "OpenAI API call hit a daily quota limit — not retrying: %s",
-                        str(e)[:200],
+                        last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
                       and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, self._max_retries + 1, backoff, e,
+                        attempt + 1, self._max_retries + 1, backoff, last_error,
                     )
                     time.sleep(backoff)
                     continue
@@ -1593,7 +1606,7 @@ class OpenAIProvider(LLMProvider):
                             system, messages, tools,
                             force_tool=force_tool, model_override=model_override,
                         )
-                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
                 if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
@@ -1602,7 +1615,7 @@ class OpenAIProvider(LLMProvider):
                         system, messages, tools,
                         force_tool=force_tool, model_override=model_override,
                     )
-                raise UpstreamLLMError(f"OpenAI API call failed: {e}") from None
+                raise UpstreamLLMError(f"OpenAI API call failed: {last_error}") from None
 
         raise UpstreamLLMError(f"OpenAI API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -1745,18 +1758,18 @@ class OpenAIProvider(LLMProvider):
                 return  # Success — exit retry loop
 
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 # Daily-quota exhaustion won't recover within the retry window —
                 # skip the backoff and go straight to the fallback check below.
                 if _is_quota_exhausted(e):
                     logger.warning(
                         "OpenAI stream hit a daily quota limit — not retrying: %s",
-                        str(e)[:200],
+                        last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
                       and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
-                    logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, e)
+                    logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
@@ -1764,7 +1777,7 @@ class OpenAIProvider(LLMProvider):
                     if self._activate_fallback(e, past_endpoint=self._base_url):
                         yield from self.chat_stream(system, messages, tools)
                         return
-                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
                 if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
@@ -1774,7 +1787,7 @@ class OpenAIProvider(LLMProvider):
                     # semantics as the in-loop stream retry above.
                     yield from self.chat_stream(system, messages, tools)
                     return
-                raise UpstreamLLMError(f"OpenAI API streaming failed: {e}") from None
+                raise UpstreamLLMError(f"OpenAI API streaming failed: {last_error}") from None
 
         raise UpstreamLLMError(f"OpenAI streaming failed after {self._max_retries + 1} attempts: {last_error}") from None
 

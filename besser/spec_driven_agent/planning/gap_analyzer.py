@@ -48,7 +48,7 @@ from typing import Any, Callable
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
-from besser.llm import extract_json
+from besser.llm import clean_json_response, extract_json, parse_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -1257,6 +1257,10 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
         tasks = None
     if tasks is not None:
         return tasks
+    if not structured:
+        # The repair retry already was a plain call; a third would be identical.
+        logger.warning("Gap analyzer unparseable after repair retry; no checklist")
+        return None
 
     # Final fallback, NO tools: some OpenAI-compatible gateways (ollama
     # for certain models, e.g. devstral) reject a FORCED tool_choice with
@@ -1603,5 +1607,18 @@ def _extract_text(response: dict[str, Any]) -> str:
 
 
 def _parse_task_array(text: str) -> list | None:
-    """The first JSON array in a model response (fenced, bare or in prose)."""
-    return extract_json(text, list)
+    """The task list in a model response (fenced, bare or in prose): a JSON
+    array, or the ``submit_tasks`` schema's own ``{"tasks": [...]}``, which a
+    gateway that ignores tool_choice may send as text."""
+    tasks = extract_json(text, list)
+    if tasks is not None:
+        return tasks
+    wrapped = extract_json(text, dict)
+    tasks = wrapped.get("tasks") if wrapped else None
+    if not isinstance(tasks, list):
+        return None
+    # Like a bare [], an empty list means "scaffold sufficient" only when it
+    # is the whole reply, never an example quoted in prose.
+    if not tasks and parse_json_safely(clean_json_response(text)) != wrapped:
+        return None
+    return tasks

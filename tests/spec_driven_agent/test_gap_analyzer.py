@@ -155,6 +155,74 @@ def test_parse_task_array_fenced_json():
     assert _parse_task_array(text) == ["task one", "task two"]
 
 
+_TASK = {"task": "Add a lend endpoint to routers/book.py", "kind": "change"}
+
+
+@pytest.mark.parametrize("text, expected", [
+    # The submit_tasks schema's own shape, from a gateway that ignores tool_choice.
+    (json.dumps({"tasks": [_TASK]}), [_TASK]),
+    ("```json\n" + json.dumps({"tasks": [_TASK]}) + "\n```", [_TASK]),
+    ("Here is the list:\n" + json.dumps({"tasks": [_TASK]}), [_TASK]),
+    # An empty list is "scaffold sufficient" only as the whole reply, as for a bare [].
+    ('{"tasks": []}', []),
+    ('```json\n{"tasks": []}\n```', []),
+    ('I found nothing obvious, e.g. {"tasks": []} - but see above.', None),
+    ('{"tasks": "add an endpoint"}', None),
+    ('{"steps": ["add an endpoint"]}', None),
+])
+def test_parse_task_array_accepts_the_tool_schema_object(text, expected):
+    assert _parse_task_array(text) == expected
+
+
+class _TextPlanner:
+    """A real-looking provider whose every reply is ``text``."""
+
+    model = "mock-model"
+    _client = object()
+    planning_model = None
+
+    def __init__(self, text):
+        self.usage = UsageTracker("mock-model")
+        self.text = text
+        self.calls = []
+
+    def chat(self, system, messages, tools, force_tool=None, model_override=None):
+        self.calls.append((system, messages, tools))
+        return {"content": [_MockBlock("text", text=self.text)]}
+
+
+class _PlainTextPlanner(_TextPlanner):
+    """No ``force_tool`` / ``model_override``: the legacy free-text protocol."""
+
+    def chat(self, system, messages, tools):
+        return super().chat(system, messages, tools)
+
+
+def _analyze(client):
+    return analyze_gaps_via_llm("Books can be lent.", "generate_fastapi_backend", None, "inv", client)
+
+
+def test_a_tool_schema_object_in_text_is_read_on_the_first_call():
+    client = _TextPlanner(json.dumps({"tasks": [_TASK]}))
+    assert _analyze(client) == [_TASK["task"]]
+    assert len(client.calls) == 1
+
+
+def test_an_unparseable_reply_without_forced_tools_is_not_resent_identically():
+    """Without forced tools the repair retry already is the plain call, so a
+    third, byte-identical request cannot change the answer."""
+    client = _PlainTextPlanner("I could not decide.")
+    assert _analyze(client) is None
+    assert len(client.calls) == 2
+
+
+def test_an_unparseable_reply_with_forced_tools_still_tries_the_plain_call():
+    client = _TextPlanner("I could not decide.")
+    assert _analyze(client) is None
+    assert [tools for _, _, tools in client.calls][-1] == []
+    assert len(client.calls) == 3
+
+
 def test_safe_serialize_model_truncation_is_always_valid_json(monkeypatch):
     """A model far over budget must still serialize to parseable JSON."""
     huge = {

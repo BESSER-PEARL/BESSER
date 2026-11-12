@@ -129,7 +129,8 @@ def load_config(path: str) -> list[OutputConfig]:
             missing.append("model (or a top-level model)")
         if missing:
             raise ConfigError(f"{where}: missing {', '.join(missing)}")
-        owner = dir_owners.setdefault(os.path.normpath(table["dir"]), name)
+        # As the file system names it: "out", "./out/" and the absolute path of out are one directory.
+        owner = dir_owners.setdefault(os.path.normcase(os.path.abspath(file.parent / table["dir"])), name)
         if owner != name:
             raise ConfigError(f"{where}: dir {table['dir']!r} is also the dir of [output.{owner}]: "
                               "give each output its own directory")

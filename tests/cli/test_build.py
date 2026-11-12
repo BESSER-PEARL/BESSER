@@ -140,6 +140,17 @@ def test_a_generator_without_regenerate_needs_overwrite_for_a_second_build(besse
     assert second.json["errors"][-1] == "bot: to overwrite it on every build, set 'overwrite = true' in [output.bot]"
 
 
+def test_outputs_whose_dirs_are_one_directory_spelled_two_ways_are_refused(besser, write, model, tmp_path):
+    write("conf/besser.toml", f'model = "../library.py"\n[output.a]\ngenerator = "python"\ndir = "out"\n'
+                              f'[output.b]\ngenerator = "sqlalchemy"\ndir = {(tmp_path / "conf" / "out").as_posix()!r}\n')
+
+    run = besser("build", "-c", "conf/besser.toml", "--json")
+
+    assert run.returncode == 2 and run.json["outputs"] == []
+    assert "is also the dir of [output.a]: give each output its own directory" in run.json["errors"][0]
+    assert not (tmp_path / "conf" / "out").exists()  # refused before anything is built
+
+
 def test_paths_are_relative_to_the_configuration_file(besser, write, model, tmp_path):
     write("conf/besser.toml", '[output.classes]\ngenerator = "python"\nmodel = "../library.py"\ndir = "out"\n')
 

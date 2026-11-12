@@ -51,6 +51,7 @@ from besser.spec_driven_agent.pipeline.constants import (
     _SNAPSHOT_IGNORED_DIRS,
     _SNAPSHOT_STAGING_DIR,
     _WRITE_TOOLS_ON_RECORD,
+    _tool_use_blocks,
 )
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.state.tracing import (
@@ -1129,11 +1130,7 @@ class Phase3RepairMixin:
                     f"unexpected stop_reason {response['stop_reason']!r}")
                 return edits
             messages.append({"role": "assistant", "content": response["content"]})
-            tool_blocks = [
-                block for block in response["content"]
-                if hasattr(block, "type") and block.type == "tool_use"
-                and getattr(block, "name", None)
-            ]
+            tool_blocks = _tool_use_blocks(response["content"])
             # Through the Phase 2 path, so the trace, recipe and sidecar see
             # these calls; the raw executor would leave no record of them.
             logged_before = len(self.tool_calls_log)

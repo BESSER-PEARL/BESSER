@@ -241,6 +241,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _TOOL_DETAIL_MAX_CHARS,
     _runtime_verdict,
     _tool_call_detail,
+    _tool_use_blocks,
 )
 
 
@@ -2081,12 +2082,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if response["stop_reason"] == "tool_use":
                 messages.append({"role": "assistant", "content": response["content"]})
 
-                # Collect tool_use blocks
-                tool_blocks = [
-                    block for block in response["content"]
-                    if hasattr(block, "type") and block.type == "tool_use" and getattr(block, "name", None)
-                ]
-
+                tool_blocks = _tool_use_blocks(response["content"])
                 tool_results = self._execute_tool_blocks(tool_blocks, turn)
                 messages.append({"role": "user", "content": tool_results})
                 revision = self._workspace_revision()
@@ -2402,9 +2398,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         # Validation must see the completed batch, not race an in-flight edit.
         validation_names = {"validate_app", "test_api", "task_list"}
-        validations = [b for b in tool_blocks if b.name in validation_names]
+        validations = [b for b in tool_blocks if getattr(b, "name", None) in validation_names]
         if validations:
-            results = self._run_tool_blocks([b for b in tool_blocks if b.name not in validation_names], turn)
+            results = self._run_tool_blocks([b for b in tool_blocks if b not in validations], turn)
             results.extend(self._execute_single_tool(b, turn) for b in validations)
             order = {b.id: index for index, b in enumerate(tool_blocks)}
             return sorted(results, key=lambda result: order[result["tool_use_id"]])
@@ -2467,7 +2463,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _execute_single_tool(self, block, turn: int) -> dict:
         """Execute a single tool call and return the tool_result dict."""
-        tool_name = block.name
+        # "" for a call that names no tool: the executor refuses it by name.
+        tool_name = getattr(block, "name", None) or ""
         logger.info("Executing tool: %s", tool_name)
 
         if tool_name not in _READONLY_TOOLS:
@@ -4134,10 +4131,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 return stopped(f"unexpected stop_reason: {stop_reason}", turn)
 
             messages.append({"role": "assistant", "content": response["content"]})
-            tool_blocks = [
-                block for block in response["content"]
-                if hasattr(block, "type") and block.type == "tool_use" and getattr(block, "name", None)
-            ]
+            tool_blocks = _tool_use_blocks(response["content"])
             tool_results = self._execute_tool_blocks(tool_blocks, self.total_turns - 1)
             messages.append({"role": "user", "content": tool_results})
 

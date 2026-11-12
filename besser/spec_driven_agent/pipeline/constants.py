@@ -121,6 +121,16 @@ def _runtime_verdict(messages) -> int:
     return verdict
 
 
+def _tool_use_blocks(content) -> list:
+    """Every tool call in an assistant reply, a nameless one included.
+
+    Each call needs its result in the next message, or both providers reject
+    the request that follows; a call with no name gets the executor's
+    "unknown tool" error like any other name it does not know.
+    """
+    return [block for block in content or [] if getattr(block, "type", None) == "tool_use"]
+
+
 def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -> str:
     """One short line saying what this tool call was about.
 

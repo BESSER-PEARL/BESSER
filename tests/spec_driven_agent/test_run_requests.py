@@ -38,8 +38,9 @@ from tests.spec_driven_agent.run_transport import (
 from tests.spec_driven_agent.shelf_app import shelf_model
 
 # Low enough that the scripted history is compacted once, mid-run; high
-# enough that the forced turn's reply is replayed before that happens.
-COMPACT_AT_TOKENS = 12_000
+# enough that the forced turn's reply is replayed before that happens. The
+# forced re-read of the unchanged router is an "unchanged" stub, not the file.
+COMPACT_AT_TOKENS = 9_500
 
 TASKS = [
     "Add a GET /book/stats/ endpoint returning the total page count of all books",

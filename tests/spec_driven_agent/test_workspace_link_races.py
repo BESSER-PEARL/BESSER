@@ -212,8 +212,9 @@ SWAP_POINTS = {
 
 @needs_mkfifo
 @pytest.mark.parametrize("tool,args,point", [
-    ("read_file", {}, "isfile"),
-    ("read_file", {}, "read_check"),
+    # A range other than the setup read's, or it is an "unchanged" stub.
+    ("read_file", {"limit": 1}, "isfile"),
+    ("read_file", {"limit": 1}, "read_check"),
     ("check_syntax", {}, "read_check"),
     ("modify_file", {"old_text": "alpha = 1", "new_text": "alpha = 2"}, "read_check"),
     ("modify_file", {"old_text": "alpha = 1", "new_text": "alpha = 2"}, "write_check"),

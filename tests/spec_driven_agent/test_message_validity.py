@@ -238,6 +238,7 @@ class _CompactionHost:
         self.state_machines = self.object_model = self.quantum_circuit = None
         self.bpmn_model = self.nn_model = self.primary_kind = None
         self._compaction_count = 0
+        self.executor = SimpleNamespace(forget_shown_results=lambda: None)
 
     def _compaction_work_state(self) -> dict:
         return {"tasks": [{"id": 1, "text": "Add login"}]}

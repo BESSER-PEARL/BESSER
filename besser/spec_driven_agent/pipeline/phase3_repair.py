@@ -1074,6 +1074,8 @@ class Phase3RepairMixin:
 
         fix_prompt = "\n".join(prompt_parts)
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
+        # A fresh conversation: nothing read in an earlier round is in it.
+        self.executor.forget_shown_results()
 
         # Inject a high-salience reminder as a separate user message
         # right after the prompt. Matches the pattern used by the

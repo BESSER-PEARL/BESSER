@@ -324,6 +324,10 @@ _UNSEARCHED_DIRS = frozenset({
     "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
 })
 
+# Reads remembered for the unchanged-re-read stub; read_ids beyond the 128
+# kept in _read_views are invalid anyway.
+_SHOWN_READS_MAX = 128
+
 # Workspace-wide findings attached to one write, per check.
 _CROSS_FILE_FINDINGS_MAX = 10
 # Workspace paths a cross-file finding names ("backend/routers/book.py line 3",
@@ -769,6 +773,18 @@ class ToolExecutor:
         # Per cross-file check: (finding, digests of the files it names) already
         # attached to a write. See _cross_file_findings.
         self._reported_findings: dict[str, set[tuple]] = {}
+        # (path, offset, limit) -> (content digest, read_id, start, end) of a read
+        # whose result is still in the conversation, and the requests last
+        # answered with a stub. See _read_file_once; forget_shown_results.
+        self._shown_reads: dict[tuple, tuple[str, str, int, int]] = {}
+        self._stubbed_reads: set[tuple] = set()
+
+    def forget_shown_results(self) -> None:
+        """The conversation no longer holds earlier tool results (compaction,
+        eviction, a fresh repair conversation, a resume): show them in full."""
+        self._shown_reads.clear()
+        self._stubbed_reads.clear()
+        self._reported_findings.clear()
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -2289,6 +2305,42 @@ class ToolExecutor:
                 del self._read_views[next(iter(self._read_views))]
         return read_id
 
+    def _read_file_once(self, args: dict) -> dict:
+        """read_file, except for an identical re-read of unchanged content.
+
+        Same path, offset and limit, same content, and the earlier result
+        still in the conversation (until forget_shown_results): a short stub
+        instead of the text again. A recorded edit loop re-read one unchanged
+        3,167-token file 16 times. The same request right after a stub gets
+        the full text: the model insisted.
+        """
+        key = (self._rel_key(args["path"]), args.get("offset") or 0, args.get("limit"))
+        shown = self._shown_reads.get(key)
+        # A frozen path is not editable, so the stub's read_id would be no use.
+        if (shown and key not in self._stubbed_reads and shown[1] in self._read_views
+                and not self._frozen(key[0])
+                and shown[0] == self._named_file_digest(args["path"])):
+            self._stubbed_reads.add(key)
+            _, read_id, start, end = shown
+            return {
+                "unchanged": True, "read_id": read_id, "start_line": start, "end_line": end,
+                "note": (
+                    f"{key[0]} lines {start}-{end} are unchanged since read_id {read_id}, whose "
+                    "result is still in this conversation; that read_id is still valid for "
+                    "replace_file_lines. Re-reading is not needed. To get the text again "
+                    "anyway, repeat this exact call."
+                ),
+            }
+        self._stubbed_reads.discard(key)
+        result = self._read_file(args)
+        view = self._read_views.get(result.get("read_id"))
+        if view is not None:
+            self._shown_reads.pop(key, None)
+            self._shown_reads[key] = (view[1], result["read_id"], result["start_line"], result["end_line"])
+            if len(self._shown_reads) > _SHOWN_READS_MAX:
+                del self._shown_reads[next(iter(self._shown_reads))]
+        return result
+
     def _read_file(self, args: dict) -> dict:
         """
         Read a file with optional line-based pagination, numbered ``7| code``.
@@ -3799,7 +3851,7 @@ class ToolExecutor:
         "generate_tensorflow": _gen_tensorflow,
         # Files
         "list_files": _list_files,
-        "read_file": _read_file,
+        "read_file": _read_file_once,
         "write_file": _write_file,
         "replace_file_lines": _replace_file_lines,
         "modify_file": _modify_file,

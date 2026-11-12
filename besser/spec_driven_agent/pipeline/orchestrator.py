@@ -1840,6 +1840,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         scoped_issues.extend(self._validate_app()["issues"])
 
         resumed = self._resume_messages is not None
+        # A new conversation (or one rebuilt from a checkpoint) holds none of
+        # this executor's earlier results.
+        self.executor.forget_shown_results()
         if resumed:
             # No new gap analysis: resume() restored the executor's checklist.
             # It lives in the system prompt, which is rebuilt here, so show it
@@ -4233,6 +4236,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "If it's a code bug, fix it."
         )
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
+        self.executor.forget_shown_results()
 
         max_fix_turns = 10
         llm_explanation = ""
@@ -4459,6 +4463,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._compaction_count += 1
         if did_compact or evicted:
             result = self._drop_stale_thinking(result, "the history was compacted")
+            # Earlier read results may be gone: no "unchanged since" stubs.
+            self.executor.forget_shown_results()
         return result
 
     def _drop_stale_thinking(self, messages: list[dict], why: str) -> list[dict]:

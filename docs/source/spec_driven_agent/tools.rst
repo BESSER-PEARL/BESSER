@@ -81,6 +81,13 @@ same-file range edit. IDs are session-local and expire on resume. The tool share
 path containment, per-file locking, diagnostics, and successful-write evidence
 with the other editors. An accepted edit is not proof of business correctness.
 
+A ``read_file`` repeating an earlier call (same path, ``offset`` and
+``limit``) on unchanged content, while that earlier result is still in the
+conversation, returns a short ``unchanged`` stub naming the still-valid
+``read_id`` and line range instead of the text. Repeating the call right after
+a stub returns the text. Compaction, history eviction, a resume and each
+Phase 3 fix round (a fresh conversation) reset this, so the next read is full.
+
 Every tool result reaches the model as JSON with non-ASCII text kept literal
 (``é``, not ``\u00e9``). ``list_files`` returns one ``<path> <size>`` line per
 file, skipping installed dependencies, build output and any directory holding

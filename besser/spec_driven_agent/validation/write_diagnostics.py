@@ -88,6 +88,31 @@ def _bound_names(statement: ast.stmt) -> list[str]:
     return [target.id for target in targets if isinstance(target, ast.Name)]
 
 
+def _decorator_root(decorator: ast.expr) -> tuple[str, str]:
+    """``@a.b.c(...)`` -> ``("a", "c")``; ``@name`` -> ``(name, name)``."""
+    node = decorator.func if isinstance(decorator, ast.Call) else decorator
+    last = getattr(node, "attr", getattr(node, "id", ""))
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return getattr(node, "id", ""), last
+
+
+def _reuses_name_on_purpose(name: str, first: ast.stmt, second: ast.stmt) -> bool:
+    """A re-declaration Python idioms make on purpose (ruff F811 is silent too).
+
+    ``@name.<attr>`` builds on the first binding (property ``setter``/
+    ``deleter``, SQLAlchemy ``expression``/``comparator``/``inplace``,
+    ``singledispatchmethod.register``); ``@overload`` stubs precede the
+    implementation; ``_`` is the conventional throwaway name.
+    """
+    if name == "_":
+        return True
+    if any(_decorator_root(d)[0] == name for d in getattr(second, "decorator_list", [])):
+        return True
+    return any(_decorator_root(d)[1] == "overload"
+               for d in getattr(first, "decorator_list", []) + getattr(second, "decorator_list", []))
+
+
 def python_structural_diagnostics(
     tree: ast.Module, *, sqlite: bool = False,
     rel_path: str | None = None, workspace: str | None = None,
@@ -121,20 +146,14 @@ def python_structural_diagnostics(
         columns = []
         for stmt in cls.body:
             for name in _bound_names(stmt):
-                if name in seen:
-                    # Property setters and overload signatures intentionally reuse names.
-                    decorators = getattr(stmt, "decorator_list", [])
-                    intentional = any(
-                        (isinstance(d, ast.Attribute) and d.attr in {"setter", "deleter"})
-                        or getattr(d, "id", getattr(d, "attr", "")) == "overload"
-                        for d in decorators + getattr(seen[name], "decorator_list", [])
-                    )
-                    if not intentional and (
-                        name in {"__table_args__", "__mapper_args__"}
-                        or isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    ):
-                        add(seen[name], "shadowed-declaration", f"{cls.name}.{name} is overwritten by its second declaration at line {stmt.lineno}; merge the declarations instead of silently discarding behavior.")
-                        add(stmt, "duplicate-declaration", f"{cls.name}.{name} duplicates line {seen[name].lineno}; only this last declaration takes effect.")
+                if name in seen and not _reuses_name_on_purpose(name, seen[name], stmt) and (
+                    name in {"__table_args__", "__mapper_args__"}
+                    or isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ):
+                    # One finding, on the discarded declaration: the requirements
+                    # ledger treats a citation inside its lines as invalid evidence.
+                    first = seen[name].lineno
+                    add(seen[name], "duplicate-declaration", f"{cls.name}.{name} is declared at line {first} and again at line {stmt.lineno}; only the line {stmt.lineno} declaration takes effect, so line {first}'s behavior is silently discarded. Merge them into one declaration.")
                 seen[name] = stmt
             value = getattr(stmt, "value", None)
             if isinstance(value, ast.Call) and getattr(value.func, "id", getattr(value.func, "attr", "")).rstrip("_") in {"mapped_column", "Column"}:

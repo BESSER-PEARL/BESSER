@@ -109,8 +109,10 @@ def test_generated_backend_contract_failures_are_reported_same_turn(tmp_path):
     result = _call(executor, "write_file", {"path": "backend/sql_alchemy.py", "content": broken})
     assert result["status"] == "written"
     findings = result["diagnostics"]
-    assert {"invalid-enum-member", "duplicate-declaration", "shadowed-declaration",
+    assert {"invalid-enum-member", "duplicate-declaration",
             "invalid-sqlite-check"} <= {item["code"] for item in findings}
+    # One finding per duplicated name (__table_args__, validate_capacity).
+    assert [item["line"] for item in findings if item["code"] == "duplicate-declaration"] == [9, 11]
     assert any("agreedPrice" in item["message"] for item in findings)
     assert any("subqueries prohibited" in item["message"] for item in findings)
     assert any("validate_capacity" in item["message"] for item in findings)
@@ -160,3 +162,49 @@ def test_generated_backend_contract_failures_are_reported_same_turn(tmp_path):
     report = {"blocker_count": 2, "issues": [item["message"] for item in mismatches]}
     executor.app_validator = lambda: report
     assert _call(executor, "validate_app", {}) == report
+
+
+# ------------------------------------------------- duplicate declarations
+
+def _declaration_findings(source: str) -> list[dict]:
+    return [f for f in diagnose_written_content("backend/models.py", source)
+            if f["code"] in {"duplicate-declaration", "shadowed-declaration"}]
+
+
+def test_redecorating_through_the_first_declaration_is_not_a_duplicate():
+    """``@<name>.<attr>`` re-binds the name on purpose (ruff F811 agrees)."""
+    hybrid = (
+        "from sqlalchemy import func\n"
+        "from sqlalchemy.ext.hybrid import hybrid_property\n"
+        "class Person:\n"
+        "    @hybrid_property\n"
+        "    def full_name(self):\n        return self.first + self.last\n"
+        "    @full_name.expression\n"
+        "    def full_name(cls):\n        return func.concat(cls.first, cls.last)\n"
+        "    @full_name.inplace.setter\n"
+        "    def full_name(self, value):\n        self.first = value\n"
+    )
+    dispatch = (
+        "from functools import singledispatchmethod\n"
+        "class Fmt:\n"
+        "    @singledispatchmethod\n"
+        "    def show(self, value):\n        return str(value)\n"
+        "    @show.register\n"
+        "    def _(self, value: int):\n        return 'int'\n"
+        "    @show.register(float)\n"
+        "    def _(self, value):\n        return 'float'\n"
+    )
+    assert _declaration_findings(hybrid) == []
+    assert _declaration_findings(dispatch) == []
+
+
+def test_a_real_duplicate_method_is_one_finding_naming_both_lines():
+    findings = _declaration_findings(
+        "class BookingService:\n"
+        "    def total(self, booking):\n        return booking.nights\n"
+        "    def total(self, booking):\n        return booking.nights * 2\n"
+    )
+    assert len(findings) == 1, findings
+    assert findings[0]["line"] == 2 and findings[0]["end_line"] == 3
+    assert "BookingService.total" in findings[0]["message"]
+    assert "line 2" in findings[0]["message"] and "line 4" in findings[0]["message"]

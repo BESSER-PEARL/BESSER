@@ -4388,8 +4388,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for cls, (attr, type_name) in sorted(contract.pk_types.items())
         ]
         rules.append(
-            "id, created_at/updated_at and every is_derived attribute are "
-            "server-owned: never in a create schema or create form, always computed"
+            "a surrogate id (class with no declared id attribute), created_at/updated_at "
+            "and every is_derived attribute are server-owned: never in a create schema "
+            "or create form, always computed; a declared id attribute is client-supplied"
         )
         rules.append(
             "an unimplemented method must fail visibly, never return a fake success"

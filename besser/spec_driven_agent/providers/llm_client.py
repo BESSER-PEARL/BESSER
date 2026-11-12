@@ -625,9 +625,13 @@ class ClaudeLLMClient(LLMProvider):
     ) -> dict[str, Any]:
         """Send a message with tools. Retries on transient errors."""
         effective_model = model_override or self._model
+        # A forced call on a single message is a one-shot planning call
+        # (routing, gap analysis, the requirements judge): its prompt is
+        # unique, so a cache write is a 25% surcharge nothing reads back.
+        cache_prefix = not (force_tool and len(messages) == 1)
         if force_tool and not forced_tool_choice_supported(effective_model):
             return self._chat_forced_via_auto(
-                system, messages, tools, force_tool, model_override)
+                system, messages, tools, force_tool, model_override, cache_prefix)
         extra: dict[str, Any] = {}
         if force_tool:
             extra["tool_choice"] = {"type": "tool", "name": force_tool}
@@ -635,7 +639,11 @@ class ClaudeLLMClient(LLMProvider):
             # where the model allows turning it off at all.
             if thinking_can_be_disabled(effective_model):
                 extra["thinking"] = {"type": "disabled"}
-        return self._create(system, messages, tools, tools, model_override, extra)
+        # A forced tool_choice does not read the conversation cache, and what
+        # it would write only an identical forced call could read: the tools
+        # and system entries are the ones that survive it.
+        return self._create(system, messages, tools, tools, model_override, extra,
+                            cache_prefix=cache_prefix, cache_messages=not force_tool)
 
     def _chat_forced_via_auto(
         self,
@@ -644,6 +652,7 @@ class ClaudeLLMClient(LLMProvider):
         tools: list[dict],
         force_tool: str,
         model_override: str | None,
+        cache_prefix: bool = True,
     ) -> dict[str, Any]:
         """A forced call on a model that 400s on tool_choice tool/any.
 
@@ -666,13 +675,14 @@ class ClaudeLLMClient(LLMProvider):
         # sends it. Mark the last block of the real history as well: a
         # breakpoint only on the instruction caches a prefix nothing reads
         # back, and the whole conversation is then written twice.
-        history = _with_message_cache(messages)
+        history = _with_message_cache(messages) if cache_prefix else messages
         for text in (instruction,
                      instruction + " Your previous reply did not call it."):
             request_messages = _with_trailing_instruction(history, text)
             try:
                 result = self._create(system, request_messages, request_tools,
-                                      tools, model_override, extra)
+                                      tools, model_override, extra,
+                                      cache_prefix=cache_prefix, cache_messages=False)
             except UpstreamLLMError as exc:
                 # strict:true is unverified live for these models; a schema
                 # it rejects must not cost the call.
@@ -684,7 +694,8 @@ class ClaudeLLMClient(LLMProvider):
                                "strict: %s", force_tool, exc)
                 request_tools = tools
                 result = self._create(system, request_messages, tools, tools,
-                                      model_override, extra)
+                                      model_override, extra,
+                                      cache_prefix=cache_prefix, cache_messages=False)
             if result["stop_reason"] == "refusal" or any(
                 getattr(b, "type", None) == "tool_use"
                 and getattr(b, "name", None) == force_tool
@@ -703,9 +714,16 @@ class ClaudeLLMClient(LLMProvider):
         tools: list[dict],
         model_override: str | None,
         extra: dict[str, Any],
+        *,
+        cache_prefix: bool = True,
+        cache_messages: bool = True,
     ) -> dict[str, Any]:
         """One ``messages.create`` with retries. ``tools`` (the caller's
-        definitions) drive input coercion; ``request_tools`` is what is sent."""
+        definitions) drive input coercion; ``request_tools`` is what is sent.
+
+        ``cache_prefix`` marks the tools and the system prompt for the prompt
+        cache; ``cache_messages`` marks the end of the conversation as well.
+        """
         last_error = None
         effective_model = model_override or self._model
 
@@ -714,13 +732,15 @@ class ClaudeLLMClient(LLMProvider):
                 request_kwargs: dict[str, Any] = {
                     "model": effective_model,
                     "max_tokens": self._request_max_tokens(model_override),
-                    "system": _with_cache_control(system),
-                    "messages": _with_message_cache(messages),
+                    "system": _with_cache_control(system) if cache_prefix else system,
+                    "messages": (_with_message_cache(messages)
+                                 if cache_prefix and cache_messages else messages),
                     **extra,
                 }
                 # A text-only call (no tools) must not send an empty list.
                 if request_tools:
-                    request_kwargs["tools"] = _with_tool_cache(request_tools)
+                    request_kwargs["tools"] = (
+                        _with_tool_cache(request_tools) if cache_prefix else request_tools)
                 response = self._client.messages.create(**request_kwargs)
                 # Track usage (billed at the effective model's pricing)
                 self.usage.record(response.usage, model=model_override)

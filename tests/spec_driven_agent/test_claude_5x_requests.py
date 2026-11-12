@@ -171,6 +171,53 @@ def test_the_history_before_the_one_off_instruction_stays_cacheable():
     assert "cache_control" not in history[-1]["content"][0]  # caller's history untouched
 
 
+def _cache_markers(request) -> dict:
+    """Where a request carries ``cache_control``: tools / system / messages."""
+    system = request["system"]
+    return {
+        "tools": any("cache_control" in tool for tool in request.get("tools", [])),
+        "system": isinstance(system, list) and any("cache_control" in block for block in system),
+        "messages": any(
+            "cache_control" in block
+            for message in request["messages"] if isinstance(message["content"], list)
+            for block in message["content"] if isinstance(block, dict)),
+    }
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5", "claude-sonnet-5-5"])
+def test_a_one_shot_planning_call_writes_nothing_to_the_prompt_cache(model):
+    """Routing, gap analysis and the requirements judge are one forced call on
+    one message. Their prompt is unique, so a cache marker only buys the 25%
+    cache-write surcharge (measured: a 47k-token judge prompt written to a
+    cache nothing reads)."""
+    client = _claude(model, _tool_use())
+    client.chat(system="s", messages=USER, tools=[TOOL], force_tool="submit")
+    (request,) = _requests(client)
+    assert _cache_markers(request) == {"tools": False, "system": False, "messages": False}
+    assert request["system"] == "s"
+
+
+def test_a_forced_tool_choice_in_a_conversation_keeps_only_the_prefix_markers():
+    """tool_choice does not read the conversation cache, and what it writes
+    only an identical forced call could read; tools and system survive it."""
+    history = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "submit", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "refused"}]},
+    ]
+    client = _claude("claude-sonnet-5", _tool_use())
+    client.chat(system="s", messages=history, tools=[TOOL], force_tool="submit")
+    (request,) = _requests(client)
+    assert _cache_markers(request) == {"tools": True, "system": True, "messages": False}
+
+
+def test_an_ordinary_turn_marks_tools_system_and_the_conversation():
+    client = _claude("claude-sonnet-5", _tool_use())
+    client.chat(system="s", messages=USER, tools=[TOOL])
+    (request,) = _requests(client)
+    assert _cache_markers(request) == {"tools": True, "system": True, "messages": True}
+
+
 def test_a_reply_without_the_tool_is_asked_again_once():
     client = _claude("claude-fable-5-1", _text(), _tool_use())
 

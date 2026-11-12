@@ -233,6 +233,10 @@ _IMPORT_FAILURES = frozenset({"ImportError", "ModuleNotFoundError", "Exception",
 
 
 def _catches_import_failure(handler: _ast.ExceptHandler) -> bool:
+    """Whether ``handler`` absorbs an import failure; one that ends by raising
+    again (``raise``, ``raise RuntimeError(...) from exc``) lets the app die."""
+    if handler.body and isinstance(handler.body[-1], _ast.Raise):
+        return False
     if handler.type is None:
         return True
     types = handler.type.elts if isinstance(handler.type, _ast.Tuple) else [handler.type]

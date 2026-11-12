@@ -264,6 +264,19 @@ def test_an_import_under_another_handler_is_still_reported(tmp_path):
     assert len(problems) == 2, problems
 
 
+@pytest.mark.parametrize("handler", [
+    "except ImportError:\n    raise\n",
+    "except ImportError as exc:\n    raise RuntimeError('config is missing') from exc\n",
+    "except Exception:\n    logging.exception('startup failed')\n    raise\n",
+])
+def test_an_import_whose_handler_re_raises_is_still_reported(tmp_path, handler):
+    """A handler that raises again does not make the import optional: the app still dies."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", "import logging\ntry:\n    from config import settings\n" + handler)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and "'config'" in problems[0], problems
+
+
 @pytest.mark.parametrize("dist,module", [
     ("djangorestframework-simplejwt", "rest_framework_simplejwt.tokens"),
     ("python-socketio", "socketio"),

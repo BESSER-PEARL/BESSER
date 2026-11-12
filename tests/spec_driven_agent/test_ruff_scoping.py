@@ -148,3 +148,13 @@ def test_a_ruff_line_it_cannot_parse_is_not_treated_as_edited(
 
     assert _ruff_line_path("not a ruff line", str(tmp_path)) == ""
     assert _ruff_line_path("", str(tmp_path)) == ""
+
+
+@pytest.mark.parametrize("vendored", ["frontend/node_modules/flatted/python", ".venv/lib", "venv/lib"])
+def test_installed_dependencies_are_not_linted(simple_library_book_model, tmp_path, vendored):
+    """An explicit --exclude replaces ruff's defaults, which skip these."""
+    _write(tmp_path, f"{vendored}/x.py", BLOCKER)
+
+    issues = _orchestrator(simple_library_book_model, tmp_path)._collect_ruff_issues()
+
+    assert issues == []

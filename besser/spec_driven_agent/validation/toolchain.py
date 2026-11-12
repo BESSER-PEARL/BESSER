@@ -262,10 +262,12 @@ def _collect_ruff_issues(
                 "--output-format=concise",
                 "--no-cache",
                 "--exit-zero",
-                # The snapshot and the harness's own files (e.g. the runbook's
-                # .besser_probe.py) are not the app. One list: with an absolute
-                # target, a separate --extend-exclude replaces --exclude.
-                "--exclude", f"{_SNAPSHOT_DIR},.besser_*",
+                # The snapshot, the harness's own files (e.g. the runbook's
+                # .besser_probe.py) and installed dependencies are not the app.
+                # --exclude REPLACES ruff's defaults (node_modules, .venv, ...),
+                # so they are listed here. One list: with an absolute target, a
+                # separate --extend-exclude replaces --exclude.
+                "--exclude", ",".join([_SNAPSHOT_DIR, ".besser_*", *sorted(WORKSPACE_SKIP_DIRS)]),
                 output_dir,
             ],
             capture_output=True, text=True, timeout=30,

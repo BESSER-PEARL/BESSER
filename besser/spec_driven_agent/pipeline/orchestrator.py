@@ -18,7 +18,6 @@ Phase 3 (validation & fix):
   - Preserve unresolved findings as incomplete, never verified completion
 """
 
-import ast as _ast
 import hashlib
 import json
 import logging
@@ -181,6 +180,8 @@ from besser.spec_driven_agent.validation.issues import (
 from besser.spec_driven_agent.validation.python_source import (
     _create_schema_router_mismatches,
     _python_files,
+    python_syntax_error,
+    walk_app_tree,
     _CREATE_MODEL_RE as _CREATE_MODEL_RE,
     _CREATE_FIELD_RE as _CREATE_FIELD_RE,
     _ROUTER_READ_RE as _ROUTER_READ_RE,
@@ -207,7 +208,7 @@ logger = logging.getLogger(__name__)
 
 
 from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
-    FRONTEND_WALK_SKIP_DIRS,
+    WORKSPACE_SKIP_DIRS,
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
     _WRITE_TOOLS_ON_RECORD,
@@ -1707,20 +1708,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         issues = []
         build_contexts = compose_build_contexts(self.output_dir)
 
-        for root, _, files in walk_plain(self.output_dir):
+        for fpath in _python_files(self.output_dir):
+            syntax_error = python_syntax_error(
+                fpath, os.path.relpath(fpath, self.output_dir).replace("\\", "/"))
+            if syntax_error:
+                issues.append(f"Fix {syntax_error[0].lower()}{syntax_error[1:]}")
+
+        for root, files in walk_app_tree(self.output_dir):
             for fname in files:
                 fpath = os.path.join(root, fname)
                 rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
-
-                # Check Python syntax
-                if fname.endswith(".py"):
-                    try:
-                        with open(fpath, "r", encoding="utf-8") as f:
-                            _ast.parse(f.read(), filename=rel)
-                    except SyntaxError as e:
-                        issues.append(
-                            f"Fix syntax error in {rel} line {e.lineno}: {e.msg}"
-                        )
 
                 # Check Dockerfiles reference files that exist
                 if fname == "Dockerfile":
@@ -3099,22 +3096,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ) for issue in self._assembly_issues
         ]
 
-        for root, _, files in walk_plain(self.output_dir):
+        for fpath in _python_files(self.output_dir):
+            syntax_error = python_syntax_error(
+                fpath, os.path.relpath(fpath, self.output_dir).replace("\\", "/"))
+            if syntax_error:
+                raw_issues.append(syntax_error)
+
+        for root, files in walk_app_tree(self.output_dir):
             for fname in files:
                 fpath = os.path.join(root, fname)
                 rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
-
-                # Skip snapshot directory
-                if rel.startswith(_SNAPSHOT_DIR):
-                    continue
-
-                # Check Python syntax
-                if fname.endswith(".py"):
-                    try:
-                        with open(fpath, "r", encoding="utf-8") as f:
-                            _ast.parse(f.read(), filename=rel)
-                    except SyntaxError as e:
-                        raw_issues.append(f"Syntax error in {rel} line {e.lineno}: {e.msg}")
 
                 # Check Dockerfiles, including multi-service layouts
                 # (Dockerfile.frontend / Dockerfile.backend), not only the
@@ -3163,13 +3154,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         # Known runtime-incompatible pairs (dependency_pins.py). pip resolves
         # them without complaint, so the dry-run below cannot catch them.
-        for root, _, files in walk_plain(self.output_dir):
+        for root, files in walk_app_tree(self.output_dir):
             for fname in files:
                 if fname == "requirements.txt":
                     fpath = os.path.join(root, fname)
                     rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
-                    if _SNAPSHOT_DIR in rel:
-                        continue
                     try:
                         for note in pin_requirements_file(fpath, self.output_dir):
                             logger.info("Auto-fixed: %s: %s", rel, note)
@@ -3182,13 +3171,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # sandbox: network on (pip must reach the index), everything else
         # confined like run_command.
         if self.allow_shell_tools:
-            for root, _, files in walk_plain(self.output_dir):
+            for root, files in walk_app_tree(self.output_dir):
                 for fname in files:
                     if fname == "requirements.txt":
                         req_path = os.path.join(root, fname)
                         rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
-                        if rel.startswith(_SNAPSHOT_DIR):
-                            continue
                         raw_issues.extend(self._revision_cached(
                             f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel)))
 
@@ -3418,7 +3405,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         offenders: list[str] = []
         for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
+            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
             for fname in files:
                 if not fname.endswith(".py"):
                     continue
@@ -3461,7 +3448,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _has_frontend_files(self) -> bool:
         for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
+            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
             rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
             if rel_root.startswith(_SNAPSHOT_DIR):
                 continue
@@ -3625,7 +3612,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not self._asks_for_frontend():
             return []
         for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
+            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
             rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
             if rel_root.startswith(_SNAPSHOT_DIR):
                 continue
@@ -3672,7 +3659,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         issues: list[str] = []
         exts = (".py", ".js", ".jsx", ".ts", ".tsx")
         for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
+            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
             for fname in files:
                 if not fname.endswith(exts):
                     continue

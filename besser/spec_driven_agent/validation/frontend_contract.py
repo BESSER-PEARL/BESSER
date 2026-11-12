@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import re as _re
 
-from besser.spec_driven_agent.pipeline.constants import FRONTEND_WALK_SKIP_DIRS
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
@@ -32,7 +32,7 @@ def _method_button_source_issues(output_dir: str) -> list[str]:
     """
     issues: list[str] = []
     for root, dirs, files in walk_plain(output_dir):
-        dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
+        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
         for fname in files:
             if not fname.endswith((".tsx", ".jsx")):
                 continue
@@ -150,7 +150,7 @@ def collect_frontend_contract_issues(output_dir: str) -> list[str]:
 
     for root, dirs, files in walk_plain(output_dir):
         # Prune noisy / irrelevant trees in place.
-        dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
+        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
         for fname in files:
             if not fname.endswith((".js", ".jsx", ".ts", ".tsx")):
                 continue

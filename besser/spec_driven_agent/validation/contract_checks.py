@@ -32,6 +32,7 @@ import re
 import tokenize
 from dataclasses import dataclass, field
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 from besser.utilities.workspace_fs import walk_plain
 
 # Model type names that serialize to a string on the wire.
@@ -1108,8 +1109,7 @@ def _walk_python(app_dir: str) -> tuple:
     parsed: list = []
     declared: dict = {}
     for root, dirs, names in walk_plain(app_dir):
-        dirs[:] = [d for d in dirs
-                   if d not in ("node_modules", "dist", "build", "__pycache__")]
+        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
         for name in sorted(names):
             if not name.endswith(".py"):
                 continue

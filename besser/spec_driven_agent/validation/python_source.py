@@ -5,6 +5,7 @@ import os
 import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 from besser.spec_driven_agent.parsed_source import parse_source
 from besser.spec_driven_agent.validation.contract_checks import (
     _INHERITED_MEMBERS, _injected_parameters,
@@ -325,18 +326,41 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
     return problems
 
 
+def python_syntax_error(path: str, rel: str) -> str | None:
+    """``Syntax error in <rel> line N: ...`` when Python cannot load the file, else None.
+
+    Parsed from bytes so Python's own decoding applies: a UTF-8 BOM or a PEP 263
+    coding line is valid, an undecodable file is a SyntaxError, not a crash.
+    """
+    with open(path, "rb") as handle:
+        source = handle.read()
+    try:
+        ast.parse(source, filename=rel)
+    except SyntaxError as exc:
+        return f"Syntax error in {rel} line {exc.lineno or 1}: {exc.msg}"
+    except ValueError as exc:  # Python 3.11 raises this for a null byte
+        return f"Syntax error in {rel} line 1: {exc}"
+    return None
+
+
 def _python_files(output_dir: str) -> list[str]:
     """The app's .py files, skipping snapshots, vendored trees and BESSER's model sources."""
-    model_dir = os.path.join(output_dir, _MODEL_SOURCE_DIR)
+    model_dir = os.path.normpath(os.path.join(output_dir, _MODEL_SOURCE_DIR))
     try:
-        return [
-            os.path.join(root, name)
-            for root, dirs, files in walk_plain(output_dir)
-            for name in files
-            if name.endswith(".py")
-            if not any(part in ("node_modules", _SNAPSHOT_DIR, "__pycache__")
-                       for part in root.split(os.sep))
-            if os.path.normpath(root) != os.path.normpath(model_dir)
-        ]
+        return [os.path.join(root, name)
+                for root, files in walk_app_tree(output_dir)
+                if os.path.normpath(root) != model_dir
+                for name in files if name.endswith(".py")]
     except OSError:
         return []
+
+
+def walk_app_tree(output_dir: str):
+    """``(folder, files)`` for the workspace, minus snapshots, dependency caches and build output.
+
+    An installed node_modules or .venv is someone else's code: its files are
+    not the app's, so a defect there is nothing the model can or should fix.
+    """
+    for root, dirs, files in walk_plain(output_dir):
+        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS and not d.startswith(_SNAPSHOT_DIR)]
+        yield root, files

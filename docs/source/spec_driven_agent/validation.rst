@@ -4,7 +4,11 @@ Validation and auto-fix
 Phase 3 attempts validation within the run's budget. Core checks need no network
 and no Docker. Missing runtime prerequisites do not count as verified execution:
 
-- Python syntax on every ``.py`` file.
+- Python syntax on every ``.py`` file, decoded as Python decodes it (a UTF-8
+  BOM or a ``coding:`` line is valid; an undecodable file is a syntax error).
+  Installed dependencies and build output (``node_modules``, ``.venv``,
+  ``venv``, ``dist``, ``build``) are not the app: no check, ``ruff``
+  included, reads or rewrites files there.
 - Python declaration contracts: invalid enum members, overwritten declarations,
   and SQLite-incompatible constant CHECK constraints.
 - Isolated backend startup and create-request probes. An import or DDL failure

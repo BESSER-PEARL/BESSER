@@ -40,9 +40,6 @@ WORKSPACE_SKIP_DIRS = frozenset(
     {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build"}
 )
 
-# The narrower set the frontend-source walks skip (build output only).
-FRONTEND_WALK_SKIP_DIRS = frozenset({"node_modules", "dist", "build"})
-
 # Append-only sidecar of untruncated write-tool inputs (see _LOG_VALUE_BUDGET).
 TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"
 

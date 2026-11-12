@@ -339,7 +339,7 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 tree = parse_source(handle.read())
-        except (OSError, SyntaxError, UnicodeDecodeError):
+        except (OSError, SyntaxError, ValueError):
             continue  # syntax errors are reported by their own check
 
         # Everything importable from this file: its own folder plus every

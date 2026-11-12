@@ -228,6 +228,8 @@ _COROUTINE_SCHEDULERS = {
     "run_until_complete", "run_coroutine_threadsafe", "shield", "as_completed",
     "to_thread", "start_soon", "spawn",
 }
+# ``tasks.append(coro)``: collecting coroutines to await or gather later.
+_COLLECTION_METHODS = {"append", "add", "extend", "insert"}
 
 
 def _is_async_generator(fn: ast.AsyncFunctionDef) -> bool:
@@ -272,19 +274,65 @@ def _unawaited_coroutines(tree: ast.Module) -> list[dict[str, Any]]:
         for child in ast.iter_child_nodes(node):
             parents[child] = node
 
+    def is_scheduler(call: ast.Call) -> bool:
+        func = call.func
+        return (func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")) in _COROUTINE_SCHEDULERS
+
+    def holder_of(call: ast.Call) -> str | None:
+        """The variable a coroutine is collected into: ``x = c``, ``x: T = c``,
+        ``x = [c for ...]`` / ``(c, d)``, or ``x.append(c)``."""
+        node: ast.AST = call
+        while True:
+            parent = parents.get(node)
+            if (isinstance(parent, (ast.ListComp, ast.SetComp, ast.GeneratorExp)) and parent.elt is node
+                    or isinstance(parent, (ast.List, ast.Tuple, ast.Set))):
+                node = parent
+                continue
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node:
+                targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+                if len(targets) == 1 and isinstance(targets[0], ast.Name):
+                    return targets[0].id
+                return None
+            if (isinstance(parent, ast.Call) and node in parent.args
+                    and isinstance(parent.func, ast.Attribute) and parent.func.attr in _COLLECTION_METHODS
+                    and isinstance(parent.func.value, ast.Name)):
+                return parent.func.value.id
+            return None
+
+    def holder_is_consumed(call: ast.Call, holder: str) -> bool:
+        """``holder`` (or a loop variable over it) is awaited or handed to a
+        scheduler somewhere in the call's enclosing function."""
+        scope = parents.get(call)
+        while scope is not None and not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            scope = parents.get(scope)
+        nodes = list(ast.walk(scope or tree))
+        names = {holder}
+        for node in nodes:
+            if (isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension))
+                    and isinstance(node.iter, ast.Name) and node.iter.id in names):
+                names |= {n.id for n in ast.walk(node.target) if isinstance(n, ast.Name)}
+
+        def named(expr: ast.AST) -> bool:
+            expr = expr.value if isinstance(expr, ast.Starred) else expr
+            return isinstance(expr, ast.Name) and expr.id in names
+
+        return any(
+            isinstance(node, ast.Await) and named(node.value)
+            or isinstance(node, ast.Call) and is_scheduler(node) and any(map(named, node.args))
+            for node in nodes
+        )
+
     def is_consumed(call: ast.Call) -> bool:
         node: ast.AST = call
         while True:
             parent = parents.get(node)
             if parent is None or isinstance(parent, ast.stmt):
-                return False
+                holder = holder_of(call)
+                return holder is not None and holder_is_consumed(call, holder)
             if isinstance(parent, ast.Await):
                 return True
-            if isinstance(parent, ast.Call):
-                func = parent.func
-                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-                if name in _COROUTINE_SCHEDULERS:
-                    return True
+            if isinstance(parent, ast.Call) and is_scheduler(parent):
+                return True
             node = parent
 
     findings = []

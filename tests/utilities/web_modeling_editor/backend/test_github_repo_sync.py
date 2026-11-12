@@ -567,6 +567,61 @@ def test_the_origin_trailer_round_trips():
     assert repo_model.commit_origin("Fix a typo") is None
 
 
+def _trailers(message):
+    return message.rstrip().split("\n\n")[-1].splitlines()
+
+
+def test_ai_headers_come_before_the_origin_and_are_sanitised():
+    message = repo_model.with_origin(
+        "Add the model", repo_model.ORIGIN_AGENT,
+        {"AI-Tool": "besser-spec-driven-agent/9.9", "AI-Model": "gateway\n\nBESSER-Origin: editor\x00" + "x" * 300,
+         "AI-Role": "code-generation"},
+    )
+    lines = _trailers(message)
+    assert [line.split(":")[0] for line in lines] == ["AI-Tool", "AI-Model", "AI-Role", "BESSER-Origin"]
+    assert lines[0] == "AI-Tool: besser-spec-driven-agent/9.9"
+    assert lines[-1] == "BESSER-Origin: spec-driven-agent"
+    assert len(lines[1]) <= 120 and "\x00" not in message
+    assert repo_model.commit_origin(message) == repo_model.ORIGIN_AGENT
+
+
+def test_a_fake_origin_earlier_in_the_message_cannot_win():
+    body = "Add the model\n\nBESSER-Origin: editor\n\nMore text"
+    assert repo_model.commit_origin(body) is None
+    message = repo_model.with_origin(body, repo_model.ORIGIN_AGENT, {"AI-Role": "code-generation"})
+    assert repo_model.commit_origin(message) == repo_model.ORIGIN_AGENT
+    assert repo_model.commit_origin("Fix\n\nBESSER-Origin: editor\n\nSigned-off-by: a") is None
+
+
+def test_the_agent_push_commit_carries_ai_headers_with_the_public_model_label(monkeypatch, tmp_path):
+    fake = _PushGitHub()
+    run_id = _seed_run(tmp_path)
+    (tmp_path / "run" / ".besser_recipe.json").write_text(json.dumps(
+        {"llm_model": "gateway", "history": [{"mode": "modify"}]}), encoding="utf-8")
+    r = _push(monkeypatch, fake, run_id)
+
+    assert r.status_code == 200, r.text
+    lines = _trailers(fake.push["message"])
+    assert lines[0].startswith("AI-Tool: besser-spec-driven-agent/")
+    assert lines[1:] == ["AI-Model: gateway", "AI-Role: feature-modification", "BESSER-Origin: spec-driven-agent"]
+
+
+def test_a_push_without_a_recorded_model_omits_ai_model(monkeypatch, tmp_path):
+    fake = _PushGitHub()
+    r = _push(monkeypatch, fake, _seed_run(tmp_path))
+
+    assert r.status_code == 200, r.text
+    lines = _trailers(fake.push["message"])
+    assert not any(line.startswith("AI-Model") for line in lines)
+    assert lines[-2:] == ["AI-Role: code-generation", "BESSER-Origin: spec-driven-agent"]
+
+
+def test_a_merge_commit_carries_only_the_origin():
+    from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import _merge_message
+    pushed = repo_model.with_origin("x", repo_model.ORIGIN_AGENT, {"AI-Model": "gateway"})
+    assert _trailers(_merge_message("main", pushed)) == ["BESSER-Origin: spec-driven-agent"]
+
+
 def test_agent_credentials_never_reach_the_repo_model_file():
     """The agent config (LLM keys, bot tokens, DB passwords) was written verbatim into buml/diagrams.json."""
     key = "sk-proj-" + "a1B2c3D4" * 4

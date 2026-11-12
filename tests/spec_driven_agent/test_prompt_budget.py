@@ -18,9 +18,9 @@ HEADROOM = 0.06
 # Characters measured when the budget was pinned. Raise one only on purpose,
 # saying in the commit what the extra prefix buys.
 BASELINES = {
-    "shelf": {"system_chars": 23_986, "tools_chars": 16_683},
-    "conference": {"system_chars": 44_454, "tools_chars": 16_683},
-    "state_machine": {"system_chars": 14_923, "tools_chars": 14_297},
+    "shelf": {"system_chars": 23_986, "tools_chars": 14_689},
+    "conference": {"system_chars": 44_454, "tools_chars": 14_689},
+    "state_machine": {"system_chars": 14_923, "tools_chars": 12_431},
 }
 
 # Per-section and per-tool sizes at the same point, only to name what grew.
@@ -36,10 +36,10 @@ BASELINE_SECTIONS = {
 }
 BASELINE_TOOLS = {
     "generate_python_classes": 195, "generate_java_classes": 170, "generate_rdf": 156, "generate_supabase": 358,
-    "list_files": 146, "read_file": 1338, "write_file": 720, "modify_file": 1490, "replace_file_lines": 1300,
-    "search_in_files": 746, "delete_file": 610, "query_class": 416, "list_classes_with": 550,
-    "get_constraints_for": 375, "test_api": 2988, "validate_app": 468, "validate_model": 166, "check_syntax": 384,
-    "task_list": 4107,
+    "list_files": 146, "read_file": 1238, "write_file": 673, "modify_file": 1418, "replace_file_lines": 1164,
+    "search_in_files": 694, "delete_file": 558, "query_class": 416, "list_classes_with": 414,
+    "get_constraints_for": 375, "test_api": 2745, "validate_app": 468, "validate_model": 166, "check_syntax": 384,
+    "task_list": 2931,
 }
 
 

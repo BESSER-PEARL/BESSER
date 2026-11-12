@@ -55,14 +55,12 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 "path": {"type": "string", "description": "Relative path within the workspace"},
                 "offset": {
                     "type": "integer",
-                    "description": "Lines to SKIP before the first displayed line (0-based). "
-                                   "offset=50 makes line 51 the first one shown. Default: 0",
+                    "description": "Lines to SKIP before the first displayed line (0-based). Default: 0",
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Max lines to read. Default: all remaining lines, which is "
-                                   "usually what you want. Prefer the whole enclosing block over "
-                                   "a narrow window",
+                                   "usually what you want",
                 },
             },
             "required": ["path"],
@@ -72,11 +70,10 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "name": "write_file",
         "description": (
             "Create a new file, or replace an existing file's full contents. "
-            "Use it for NEW files (configs, new modules, pages), and for any "
-            "existing file you have just read in full: rewrite the whole file "
-            "when you have just read it in full. That is a first-class way to "
-            "change a file here, not a last resort - it is the most reliable "
-            "write tool. Use modify_file for a small edit to a file you would "
+            "Use it for NEW files (configs, new modules, pages), and to rewrite "
+            "the whole of any existing file you have just read in full - a "
+            "first-class way to change a file here, not a last resort: it is "
+            "the most reliable write tool. Use modify_file for a small edit to a file you would "
             "rather not reproduce in full. Do not rewrite a file you have not "
             "read this run."
         ),
@@ -113,14 +110,14 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "path": {"type": "string"},
-                "old_text": {"type": "string", "description": "Exact text to find"},
-                "new_text": {"type": "string", "description": "Replacement text"},
+                "old_text": {"type": "string"},
+                "new_text": {"type": "string"},
                 "replace_all": {
                     "type": "boolean",
                     "default": False,
                     "description": (
                         "Replace every exact occurrence. Leave false for normal edits; "
-                        "use true only when all matches intentionally need the same change."
+                        "true only when all matches intentionally need the same change."
                     ),
                 },
             },
@@ -144,10 +141,10 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Relative path within the workspace"},
-                "read_id": {"type": "string", "description": "Exact read_id returned by read_file for this file"},
+                "read_id": {"type": "string"},
                 "start_line": {"type": "integer", "minimum": 1},
                 "end_line": {"type": "integer", "minimum": 1},
-                "new_text": {"type": "string", "description": "Complete replacement for the selected inclusive lines"},
+                "new_text": {"type": "string"},
             },
             "required": ["path", "read_id", "start_line", "end_line", "new_text"],
             "additionalProperties": False,
@@ -165,7 +162,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "pattern": {"type": "string", "description": "Text or regex pattern to search for"},
+                "pattern": {"type": "string"},
                 "file_glob": {
                     "type": "string",
                     "description": "Optional filename glob, matched against the file NAME only (e.g. '*.py', '*.tsx'); a pattern containing '/' matches nothing.",
@@ -190,10 +187,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative path to the file to delete",
-                },
+                "path": {"type": "string"},
             },
             "required": ["path"],
         },
@@ -216,8 +210,7 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "after its command returns, so a server started in one command can be tested "
             "with curl in the next. What a background process prints after its command "
             "returned is discarded: redirect it to a file. Each command has a 120-second "
-            "timeout unless it sets `timeout` (up to 600 s, for a long build or first "
-            "install); a command still running then is killed with everything it started, "
+            "timeout unless it sets `timeout`; a command still running then is killed with everything it started, "
             "while the session and earlier background processes keep running, so a server "
             "started in the foreground blocks for the full timeout: start servers in the "
             "background instead. When a result's notes "
@@ -226,17 +219,14 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "when it is not the workspace root. Destructive or exfiltrating commands "
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
-            "whose runtime is not installed returns success=true, skipped=true: treat it "
-            "as not checked, not as passing. Several run_command calls in one turn run "
+            "whose runtime is not installed returns success=false, missing_command=true: "
+            "treat its check as failed, not as passing. Several run_command calls in one turn run "
             "one after another in the order given."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command to execute",
-                },
+                "command": {"type": "string"},
                 "working_dir": {
                     "type": "string",
                     "description": (
@@ -248,9 +238,9 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                 "timeout": {
                     "type": "integer",
                     "description": (
-                        "Seconds before this command is killed. Default 120, max 600, and "
-                        "never past the run's remaining time. Raise it only for a command "
-                        "known to be slow (cargo build, gradle, a first npm install)."
+                        "Seconds before this command is killed: max 600, and never past "
+                        "the run's remaining time. Raise it only for a command known to be "
+                        "slow (a long build: cargo build, gradle; a first npm install)."
                     ),
                 },
             },
@@ -264,8 +254,8 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "if requirements.txt exists, runs pip install -r requirements.txt; "
             "if package.json exists, runs npm install (both, when both exist). "
             "Returns an error when neither file is found. A custom command runs through "
-            "run_command instead of auto-detection. Every install shares run_command's "
-            "120-second timeout and shell session, and leaves the shell's directory and "
+            "run_command instead of auto-detection. Every install has a 300-second timeout, "
+            "shares run_command's shell session, and leaves the shell's directory and "
             "environment as they were."
         ),
         "input_schema": {
@@ -278,7 +268,7 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                 },
                 "command": {
                     "type": "string",
-                    "description": "Custom install command (overrides auto-detection)",
+                    "description": "Custom install command",
                 },
             },
         },
@@ -295,7 +285,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
         "description": (
             "Exercise a real generated FastAPI workflow in an isolated copy with a fresh SQLite "
             "database. Submit up to 20 requests; state is shared within this call only. "
-            "Use prior response JSON via {{0.room.id}} in later JSON values, paths or header values. "
+            "Use prior response JSON via {{n.path}}, e.g. {{0.room.id}}, in later JSON values, paths "
+            "or header values. "
             "To test a protected API, register and log in within the same scenario and pass the "
             "token as a header on each later request, e.g. headers={\"Authorization\": "
             "\"Bearer {{1.access_token}}\"} when request 1 was the login (use the token field the "
@@ -319,8 +310,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["run", "list", "get"], "description": "Default run; list/get inspect saved workflow definitions without execution"},
-                "scenario_id": {"type": "string", "description": "Stable workflow name (max 80 characters); reuse to correct the same test"},
+                "action": {"type": "string", "enum": ["run", "list", "get"]},
+                "scenario_id": {"type": "string", "description": "Stable workflow name (max 80 characters)"},
                 "correction_reason": {"type": "string", "description": "Required when changing a saved scenario; explain why the previous test was wrong"},
                 "backend": {"type": "string", "description": "Optional relative generated backend directory"},
                 "requests": {
@@ -331,10 +322,7 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                             "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
                             "path": {"type": "string", "description": "Local API path beginning with /"},
                             "json": {},
-                            "headers": {
-                                "type": "object", "additionalProperties": {"type": "string"},
-                                "description": "Optional request headers; values may embed {{n.path}} references, e.g. {\"Authorization\": \"Bearer {{1.access_token}}\"}",
-                            },
+                            "headers": {"type": "object", "additionalProperties": {"type": "string"}},
                             "expected_status": {"anyOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}}]},
                             "expected_fields": {"type": "object", "additionalProperties": True},
                         },
@@ -385,22 +373,25 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "action='add' appends items you discovered — pass `texts=[...]` "
             "for SEVERAL AT ONCE, or `text` for one. "
             "action='drop' closes an item the user did NOT ask for (pass `id` and "
-            "`reason`) — never mark such an item done. "
+            "`reason`: why it was not requested) — never mark such an item done. "
             "action='blocked' records required but unresolved work (pass `id` or "
-            "`ids` and `reason`); use this when you cannot implement or verify it. "
+            "`ids` and `reason`: what remains unresolved and why); use this when you "
+            "cannot implement or verify it. "
             "action='mixed' does SEVERAL OF THE ABOVE IN ONE CALL — the turn "
             "you finish two items AND discover a new one AND drop one you didn't "
             "need should be ONE task_list call, not four. Pass any combination of "
-            "`done_ids` (+ `evidence`/`existing`, same as action='done'), "
+            "`done_ids` (+ top-level `evidence`/`existing`, same as action='done'), "
             "`add_texts` (same as action='add' `texts`), `drop` (a list of "
             "{id, reason} objects), and `blocked` (a list of {id, reason} objects). "
             "The reply nests each verb's own result under `results` — check every "
             "key you used; a mixed call can succeed on one verb and be refused on "
             "another in the same response. "
-            "For done without an attached verifier, supply evidence=[{id, path, quote}] "
-            "from your successful writes. For an already-existing implementation, read the "
-            "source first and set existing=true with exact executable evidence; do not make "
-            "unnecessary edits just to close a task. This records implementation only, not verified acceptance. "
+            "For done without an attached verifier, supply evidence=[{id, path, quote}]: "
+            "current exact quotes from your successful writes. For an already-existing "
+            "implementation, read the source first and set existing=true with exact "
+            "executable evidence (citing code you read, without claiming you wrote it); "
+            "do not make unnecessary edits just to close a task. This records "
+            "implementation only, not verified acceptance. "
             "Mark items done as you complete them — the run does not finish "
             "while items are open. Batch them: one task per call wastes a turn "
             "each, and you have a limited number of turns. Some items are "
@@ -414,24 +405,13 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                 "action": {
                     "type": "string",
                     "enum": ["list", "done", "add", "drop", "blocked", "mixed"],
-                    "description": "list | done | add | drop | blocked | mixed",
                 },
-                "existing": {"type": "boolean", "description": "For done: cite an already-existing implementation that you have read, without claiming you wrote it. Acceptance remains unverified."},
-                "id": {
-                    "type": "integer",
-                    "description": (
-                        "A single item id to mark done. Prefer `ids` when you "
-                        "have finished more than one."
-                    ),
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "For drop: why not requested. For blocked: what remains unresolved and why.",
-                },
+                "existing": {"type": "boolean"},
+                "id": {"type": "integer"},
+                "reason": {"type": "string"},
                 "evidence": {
                     "type": "array",
                     "maxItems": 20,
-                    "description": "For done without a verifier: current exact quotes from files you successfully changed; not acceptance proof.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -442,64 +422,24 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                         "required": ["id", "path", "quote"],
                     },
                 },
-                "ids": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": (
-                        "Item ids to mark done in ONE call, e.g. [1,2,3]. "
-                        "Use this instead of one call per item."
-                    ),
-                },
-                "text": {
-                    "type": "string",
-                    "description": (
-                        "New item text for action='add'. Prefer `texts` when "
-                        "you have more than one."
-                    ),
-                },
-                "texts": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Several new items to append in ONE call. Use this "
-                        "instead of one call per item."
-                    ),
-                },
-                "done_ids": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": (
-                        "For action='mixed': item ids to mark done, together "
-                        "with top-level `evidence` (and optional `existing`) "
-                        "exactly as action='done' uses them."
-                    ),
-                },
-                "add_texts": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "For action='mixed': new items to append, same as action='add' `texts`.",
-                },
+                "ids": {"type": "array", "items": {"type": "integer"}},
+                "text": {"type": "string"},
+                "texts": {"type": "array", "items": {"type": "string"}},
+                "done_ids": {"type": "array", "items": {"type": "integer"}},
+                "add_texts": {"type": "array", "items": {"type": "string"}},
                 "drop": {
                     "type": "array",
-                    "description": "For action='mixed': items to drop, each with its own reason.",
                     "items": {
                         "type": "object",
-                        "properties": {
-                            "id": {"type": "integer"},
-                            "reason": {"type": "string", "description": "Why the user did not ask for it."},
-                        },
+                        "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}},
                         "required": ["id", "reason"],
                     },
                 },
                 "blocked": {
                     "type": "array",
-                    "description": "For action='mixed': items to record as blocked, each with its own reason.",
                     "items": {
                         "type": "object",
-                        "properties": {
-                            "id": {"type": "integer"},
-                            "reason": {"type": "string", "description": "What remains unresolved and why."},
-                        },
+                        "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}},
                         "required": ["id", "reason"],
                     },
                 },
@@ -540,9 +480,7 @@ MODEL_QUERY_TOOLS: list[dict[str, Any]] = [
         "description": (
             "List every class in the domain model matching a simple "
             "predicate. Keeps context small when the model has dozens of "
-            "classes. Supported predicates: 'is_abstract', 'is_root' "
-            "(no parents), 'has_constraint', 'has_attribute:<name>', "
-            "'has_method:<name>', 'extends:<parent_name>'."
+            "classes."
         ),
         "input_schema": {
             "type": "object",
@@ -550,7 +488,7 @@ MODEL_QUERY_TOOLS: list[dict[str, Any]] = [
                 "predicate": {
                     "type": "string",
                     "description": (
-                        "One of: is_abstract | is_root | has_constraint | "
+                        "One of: is_abstract | is_root (no parents) | has_constraint | "
                         "has_attribute:<name> | has_method:<name> | "
                         "extends:<parent_name>"
                     ),

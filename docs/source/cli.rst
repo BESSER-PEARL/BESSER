@@ -1318,8 +1318,11 @@ imports it as a project. The ``.py`` output is the B-UML code the editor's own
 export writes. Both outputs depend on the model alone: converting the same model
 again writes the same bytes, so a model under version control shows no change
 until the model does. The ids of a ``.json`` output (project, diagrams,
-elements) are derived from a hash of the model, and its times (``createdAt``,
-``lastUpdate``, ``exportedAt``) are fixed at ``1970-01-01T00:00:00+00:00``;
+elements) are derived from a hash of what the project holds, not of how its
+``.py`` file is written, so ``.json`` -> ``.py`` -> ``.json`` gives the same file
+back when the round trip keeps everything (see the limits below); its times
+(``createdAt``, ``lastUpdate``, ``exportedAt``) are fixed at
+``1970-01-01T00:00:00+00:00``;
 the editor's own import still gives each import fresh ids and the current time.
 The project takes the input file's name, so ``besser new`` of the same kind
 under the same file name also writes the same file. An existing output file is overwritten. With ``-`` as the

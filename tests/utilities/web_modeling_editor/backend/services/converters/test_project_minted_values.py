@@ -15,6 +15,7 @@ from besser.utilities.web_modeling_editor.backend.models import ProjectInput
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     json_to_buml_project,
     project_to_json,
+    reproducible_project_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 
@@ -105,6 +106,32 @@ def test_the_fixed_json_is_one_the_editor_backend_reads():
     loaded = json_to_buml_project(ProjectInput.model_validate(project))
 
     assert sorted(type(model).__name__ for model in loaded.models) == ["DomainModel", "StateMachine"]
+
+
+    # The same models written another way: a comment, an annotation left out.
+    # The same models in another form: other variable names, a comment, other spacing.
+    reworded = PROJECT.replace("holds: BinaryAssociation", "# shelves\nholds").replace(
+        "Book_title: Property = Property", "Book_title = Property")
+    assert reworded != PROJECT
+
+    first = reproducible_project_to_json(PROJECT, timestamp=FIXED_TIME)
+
+    assert reproducible_project_to_json(reworded, timestamp=FIXED_TIME) == first
+    other = reproducible_project_to_json(PROJECT.replace('name="Book"', 'name="Novel"'), timestamp=FIXED_TIME)
+    assert set(_ids(other)).isdisjoint(_ids(first))
+
+
+def test_an_id_a_model_carries_shifts_no_derived_id_outside_its_diagram():
+    # A class with its own id takes no derived id: the other diagrams and the project keep theirs.
+    with_id = PROJECT.replace('Library = Class(name="Library")', 'Library = Class(name="Library", id="lib-1")')
+
+    plain = project_to_json(PROJECT, id_seed="abc", timestamp=FIXED_TIME)
+    carried = project_to_json(with_id, id_seed="abc", timestamp=FIXED_TIME)
+
+    assert carried["id"] == plain["id"]
+    assert [d["id"] for d in carried["diagrams"]["StateMachineDiagram"]] == \
+        [d["id"] for d in plain["diagrams"]["StateMachineDiagram"]]
+    assert "lib-1" in carried["diagrams"]["ClassDiagram"][0]["model"]["elements"]
 
 
 @pytest.mark.parametrize("arguments", [{"id_seed": "abc"}, {"timestamp": FIXED_TIME}])

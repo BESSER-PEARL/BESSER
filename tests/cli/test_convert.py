@@ -97,6 +97,17 @@ def test_the_same_model_converts_to_the_same_json(besser, model, tmp_path):
     assert json.loads(first)["exportedAt"] == json.loads(first)["project"]["createdAt"] == "1970-01-01T00:00:00+00:00"
 
 
+@pytest.mark.parametrize("kind", ["domain", "component", "bpmn"])
+def test_json_to_buml_to_json_gives_the_same_file(besser, kind, tmp_path):
+    besser("new", "model.py", "--kind", kind)
+    assert besser("convert", "model.py", "-o", "model.json").returncode == 0
+    assert besser("convert", "model.json", "-o", "back.py").returncode == 0
+    (tmp_path / "back.py").rename(tmp_path / "model.py")  # the file name is the project's name
+
+    assert besser("convert", "model.py", "-o", "again.json").returncode == 0
+    assert (tmp_path / "again.json").read_bytes() == (tmp_path / "model.json").read_bytes()
+
+
 def test_the_converted_project_is_one_the_cli_reads_back(besser, model):
     besser("convert", model, "-o", "project.json")
 

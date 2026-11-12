@@ -5,7 +5,6 @@ from __future__ import annotations
 import collections
 import contextlib
 import dataclasses
-import hashlib
 import importlib.util
 import json
 import logging
@@ -1389,7 +1388,9 @@ def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
 
     try:
         from besser.utilities.web_modeling_editor.backend.constants.constants import API_VERSION, TEMP_DIR_PREFIX
-        from besser.utilities.web_modeling_editor.backend.services.converters import project_to_json
+        from besser.utilities.web_modeling_editor.backend.services.converters import (
+            reproducible_project_to_json,
+        )
     except ModuleNotFoundError as exc:
         if (exc.name or "").split(".")[0] in ("", "besser"):
             raise
@@ -1407,11 +1408,10 @@ def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
         code_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=loaded.as_project(), file_path=code_path)
-        code = Path(code_path).read_text(encoding="utf-8")
         repairs: list[str] = []
-        # Ids derived from the model and a fixed time, so the same model writes the same file.
-        project = project_to_json(code, repairs, id_seed=hashlib.sha256(code.encode("utf-8")).hexdigest(),
-                                  timestamp=_EDITOR_JSON_TIMESTAMP)
+        # Ids derived from the models and a fixed time, so the same models write the same file.
+        project = reproducible_project_to_json(Path(code_path).read_text(encoding="utf-8"), repairs,
+                                               timestamp=_EDITOR_JSON_TIMESTAMP)
     warnings.extend(repairs)
 
     export = {"project": project, "exportedAt": _EDITOR_JSON_TIMESTAMP, "version": API_VERSION}

@@ -5,6 +5,8 @@ Supports both single-diagram and multi-diagram per type formats.
 """
 
 import ast
+import hashlib
+import json
 import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple
@@ -12,6 +14,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import (
     fixed_minted_values,
     new_id,
+    next_id_scope,
     now_iso,
 )
 from besser.BUML.metamodel.structural import DomainModel
@@ -308,6 +311,7 @@ def _convert_section(
     Returns:
         Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
     """
+    next_id_scope()
     diagram_id = new_id()
     last_update = now_iso()
 
@@ -462,7 +466,11 @@ def _fill_diagram_defaults(
     """
     filled: Dict[str, List[Dict[str, Any]]] = {}
     for diagram_type, title in DIAGRAM_DEFAULT_TITLES.items():
-        filled[diagram_type] = diagram_jsons.get(diagram_type) or [{
+        if diagram_jsons.get(diagram_type):
+            filled[diagram_type] = diagram_jsons[diagram_type]
+            continue
+        next_id_scope()
+        filled[diagram_type] = [{
             "id": new_id(),
             "title": title,
             "model": empty_model(diagram_type),
@@ -507,6 +515,7 @@ def _build_project_from_single_diagram(
         )
 
     title = DIAGRAM_DEFAULT_TITLES[diagram_type]
+    next_id_scope()
     try:
         if diagram_type == 'ClassDiagram':
             parsed = parse_buml_content(content, warnings)
@@ -544,6 +553,7 @@ def _build_project_from_single_diagram(
     )
     current_diagram_type = "BPMN" if diagram_type == "BPMNDiagram" else diagram_type
 
+    next_id_scope()
     return {
         "id": new_id(),
         "type": "Project",
@@ -601,6 +611,27 @@ def project_to_json(
         raise ValueError("project_to_json fixes the ids and the timestamps together: pass both or neither")
     with fixed_minted_values(id_seed, timestamp):
         return _project_to_json(content, warnings)
+
+
+# An editor id: a uuid, or what the GUI converter mints ("page-0123456789").
+_EDITOR_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[a-z-]+-[0-9a-f]{10}\b")
+
+
+def reproducible_project_to_json(
+    content: str, warnings: Optional[List[str]] = None, *, timestamp: str,
+) -> Dict[str, Any]:
+    """``project_to_json`` whose output depends on what it holds alone: the same models give the same JSON.
+
+    The ids are derived from a hash of the project without its ids (a first
+    conversion with a constant seed), so two B-UML files that differ only in
+    form (variable names, comments, a JSON -> B-UML round trip) give the same
+    ids, and different projects get different ones. Every time is ``timestamp``.
+    """
+    draft = project_to_json(content, [], id_seed="", timestamp=timestamp)
+    # In the converters' own order: sorting the keys would order elements by their ids.
+    held = _EDITOR_ID.sub("", json.dumps(draft))
+    seed = hashlib.sha256(held.encode("utf-8")).hexdigest()
+    return project_to_json(content, warnings, id_seed=seed, timestamp=timestamp)
 
 
 def _project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -761,6 +792,7 @@ def _project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict
         result["owner"] = project_owner
         return result
 
+    next_id_scope()
     project_id = new_id()
     created_at = now_iso()
 

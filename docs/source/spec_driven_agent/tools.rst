@@ -81,7 +81,9 @@ Application checks during editing
 ---------------------------------
 
 ``validate_app`` reports source contracts, startup and create-request failures
-after a coherent edit. Validation runs after writes in the same tool batch.
+after a coherent edit. It lists at most 40 findings, most urgent first, and
+counts the rest (``remaining_issue_count``); a finding longer than 1,200
+characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
 
 ``test_api`` executes up to 20 declarative requests against a disposable copy of
 one generated FastAPI backend and a fresh SQLite database. Requests share state

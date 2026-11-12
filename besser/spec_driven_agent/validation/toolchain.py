@@ -212,6 +212,12 @@ def _build_toolchain_reminder(
 # How many ruff lines Phase 3 reports. Blocker-code lines are always kept
 # even past this, then files the LLM edited, then the rest.
 _RUFF_MAX_REPORTED = 20
+# An undefined name (F821) or a redefinition (F811), keyed per file and name.
+_RUFF_REPEATED_NAME_RE = _re.compile(
+    r"^(?P<file>.+?):\d+:\d+: (?P<code>F821|F811) [^`]*`(?P<name>[^`]+)`")
+# The python contract's undefined name, keyed the same way.
+PYTHON_CONTRACT_REPEATED_NAME_RE = _re.compile(
+    r"^python contract: (?P<file>.+?) line \d+: undefined name '(?P<name>[^']+)'")
 # A real concise-format line always carries a file, a position and a rule.
 _CONCISE_FINDING_RE = _re.compile(r"^.+?:\d+:\d+: \S+ ")
 
@@ -319,6 +325,7 @@ def _collect_ruff_issues(
             (edited if was_edited else rest).append(line)
     # Severity first, then whether the agent touched the file - the
     # edited-before-scaffold preference still holds inside each tier.
+    blockers = _collapse_repeated_names(blockers, _RUFF_REPEATED_NAME_RE)
     ordered = blockers + edited + rest + edited_cosmetic + rest_cosmetic
     kept = ordered[:max(_RUFF_MAX_REPORTED, len(blockers))]
     issues = [f"ruff: {line}" for line in kept]
@@ -526,20 +533,30 @@ def _collect_tsc_issues(
     return issues
 
 
-def _collapse_repeated_names(err_lines: list[str]) -> list[str]:
-    """Keep the first occurrence of each undefined name per file."""
-    seen: set[tuple[str, str]] = set()
+def _collapse_repeated_names(err_lines: list[str], pattern: _re.Pattern | None = None) -> list[str]:
+    """Keep the first occurrence of each name per file, with ``(+N more uses)``.
+
+    ``pattern`` (default: tsc's TS2304) captures ``file`` and ``name``; any
+    other named group (a rule code) is part of the key too. One missing import
+    used in every endpoint is one cause, not one blocker per use.
+    """
+    pattern = pattern or _TSC_UNDEFINED_NAME_RE
+    first: dict[tuple, int] = {}
+    repeats: dict[tuple, int] = {}
     kept: list[str] = []
     for line in err_lines:
-        match = _TSC_UNDEFINED_NAME_RE.match(line.strip())
+        match = pattern.match(line.strip())
         if not match:
             kept.append(line)
             continue
-        key = (match.group("file"), match.group("name"))
-        if key in seen:
+        key = tuple(match.groupdict().values())
+        if key in first:
+            repeats[key] = repeats.get(key, 0) + 1
             continue
-        seen.add(key)
+        first[key] = len(kept)
         kept.append(line)
+    for key, count in repeats.items():
+        kept[first[key]] += f" (+{count} more uses)"
     return kept
 
 

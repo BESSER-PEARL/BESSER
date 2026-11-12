@@ -66,12 +66,14 @@ def workspace(tmp_path):
     return str(tmp_path)
 
 
-def test_the_live_run_is_six_blockers_not_a_clean_bill(workspace):
+def test_the_live_run_is_blocked_not_a_clean_bill(workspace):
+    """Six NameErrors from two names: one blocker per name, the repeats counted."""
     issues = _undefined_names(workspace)
-    assert len(issues) == 6, issues
+    assert len(issues) == 2, issues
     assert all(_classify_issue(i).severity == "blocker" for i in issues)
     assert all("web_app/backend/routers/booking_methods.py" in i for i in issues)
-    assert sum("'booking_id'" in i for i in issues) == 5
+    booking_id = next(i for i in issues if "'booking_id'" in i)
+    assert booking_id.endswith("(+4 more uses)")
     helper = next(i for i in issues if "'computeAmountOwed'" in i)
     assert "line 193" in helper
     for module in ("sql_alchemy", "pydantic_classes", "bal_stdlib"):
@@ -151,3 +153,17 @@ def test_one_syntax_error_is_one_finding(tmp_path):
                 if "util.py" in i.message]
 
     assert findings == ["Syntax error in util.py line 1: invalid syntax"]
+
+
+def test_one_forgotten_import_is_one_blocker_per_name(tmp_path):
+    """40 endpoints using get_db and Thing were 105 blockers (80 ruff + 25 contract)."""
+    (tmp_path / "router.py").write_text("".join(
+        f"def r{i}(db=get_db()):\n    return db.query(Thing)\n" for i in range(40)), encoding="utf-8")
+
+    blockers = [i.message for i in _orchestrator(tmp_path)._collect_validation_issues()
+                if i.severity == "blocker"]
+
+    assert blockers == [
+        "python contract: router.py line 1: undefined name 'get_db' (+39 more uses)",
+        "python contract: router.py line 2: undefined name 'Thing' (+39 more uses)",
+    ]

@@ -185,3 +185,19 @@ def test_a_long_blocker_is_cut_with_a_marker_keeping_its_tail(tmp_path):
     assert bullet.endswith("NameError: name 'Base' is not defined. Fix site: app/main.py line 1")
     assert len(bullet) < _FIX_PROMPT_BLOCKER_CHARS + 60
     assert "The offending lines" in message, "excerpts still come from the full message"
+
+
+def test_validate_app_cuts_each_finding_as_the_fix_prompt_does(tmp_path, monkeypatch):
+    """One api scenario report ran to 2,500 chars, forty of them to the model."""
+    from besser.spec_driven_agent.pipeline.phase3_repair import _FIX_PROMPT_BLOCKER_CHARS
+
+    orch, _ = _build(tmp_path)
+    report = "api scenario: s failed: " + "x" * 2_500 + " resubmit with correction_reason."
+    monkeypatch.setattr(orch, "_collect_execution_issues", lambda: [report] * 45)
+
+    result = orch._validate_app()
+
+    assert len(result["issues"]) == 40 and result["remaining_issue_count"] == 5
+    assert all(len(m) < _FIX_PROMPT_BLOCKER_CHARS + 40 for m in result["issues"])
+    assert "chars cut ...]" in result["issues"][0]
+    assert result["issues"][0].endswith("resubmit with correction_reason.")

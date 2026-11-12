@@ -281,7 +281,10 @@ One Python defect is one finding: a file that does not parse is reported as
 ``Syntax error in``, without the python contract's and ``ruff``'s copies of the
 same parse failure, and an undefined name the python contract reports (it also
 judges names behind ``from x import *``, where ``ruff`` cannot) drops ``ruff``'s
-``F821`` for the same name and line.
+``F821`` for the same name and line. A name used many times in one file is one
+finding, at its first use, ending ``(+N more uses)``: ``ruff`` ``F821`` /
+``F811``, the python contract's undefined names and ``tsc``'s ``TS2304``. One
+forgotten import in a 40-endpoint router is two blockers, not 105.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps

@@ -88,6 +88,15 @@ _FIX_PROMPT_BLOCKER_CHARS = 1_200
 _FIX_PROMPT_BLOCKER_TAIL_CHARS = 300
 
 
+def clip_finding(text: str) -> str:
+    """*text* cut to ``_FIX_PROMPT_BLOCKER_CHARS``, keeping its head and its tail."""
+    if len(text) <= _FIX_PROMPT_BLOCKER_CHARS:
+        return text
+    head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
+    cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
+    return f"{text[:head]} [... {cut} chars cut ...] {text[-_FIX_PROMPT_BLOCKER_TAIL_CHARS:]}"
+
+
 def _blocker_kind(message: str) -> str:
     """The blocker's prefix, e.g. ``tsc [frontend]`` or ``Syntax error in``."""
     head = message.split(":", 1)[0]
@@ -129,12 +138,7 @@ def _fix_prompt_blocker_lines(ranked: list[ValidationIssue], requirements: list[
     """
     lines = []
     for issue in ranked[:_FIX_PROMPT_MAX_BLOCKERS]:
-        text = _cite_ledger_requirements(issue.message, requirements)
-        if len(text) > _FIX_PROMPT_BLOCKER_CHARS:
-            head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
-            cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
-            text = f"{text[:head]} [... {cut} chars cut ...] {text[-_FIX_PROMPT_BLOCKER_TAIL_CHARS:]}"
-        lines.append(f"- {text}")
+        lines.append(f"- {clip_finding(_cite_ledger_requirements(issue.message, requirements))}")
     rest = ranked[_FIX_PROMPT_MAX_BLOCKERS:]
     if rest:
         kinds = Counter(_blocker_kind(issue.message) for issue in rest)

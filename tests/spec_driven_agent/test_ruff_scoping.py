@@ -170,3 +170,17 @@ def test_installed_dependencies_are_not_linted(simple_library_book_model, tmp_pa
     issues = _orchestrator(simple_library_book_model, tmp_path)._collect_ruff_issues()
 
     assert issues == []
+
+
+def test_one_missing_import_is_one_ruff_blocker_per_name(simple_library_book_model, tmp_path):
+    """A router with 40 endpoints that forgot one import was 80 ruff blockers."""
+    _write(tmp_path, "router.py", "".join(
+        f"def r{i}(db=get_db()):\n    return db.query(Thing)\n" for i in range(40)))
+
+    issues = _orchestrator(simple_library_book_model, tmp_path)._collect_ruff_issues()
+
+    blockers = [i for i in issues if _classify_issue(i).severity == "blocker"]
+    assert blockers == [
+        "ruff: router.py:1:11: F821 Undefined name `get_db` (+39 more uses)",
+        "ruff: router.py:2:21: F821 Undefined name `Thing` (+39 more uses)",
+    ]

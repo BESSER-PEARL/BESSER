@@ -145,6 +145,7 @@ from besser.spec_driven_agent.validation.python_imports import (
 )
 from besser.spec_driven_agent.validation.toolchain import (
     _collapse_repeated_names,
+    PYTHON_CONTRACT_REPEATED_NAME_RE,
     _collect_cargo_issues,
     _collect_kotlinc_issues,
     _collect_ruff_issues,
@@ -252,7 +253,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
-from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin
+from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding
 from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 from besser.spec_driven_agent.settings import AgentSettings
 
@@ -2782,6 +2783,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
 
 
+    # Python contract findings reported per file. Applied after repeated names
+    # collapse, so a "(+N more uses)" count is exact.
+    _PYTHON_CONTRACT_MAX_PER_FILE = 25
+
     def _collect_execution_issues(self) -> list[str]:
         """Cheap source checks first, then isolated startup/data-entry probes.
 
@@ -2798,8 +2803,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     source = fh.read()
             except (OSError, UnicodeError):
                 continue
-            for finding in diagnose_written_content(rel, source, workspace=self.output_dir, limit=25):
-                raw.append(f"python contract: {rel} line {finding.get('line', 1)}: {finding['message']}")
+            findings = [f"python contract: {rel} line {finding.get('line', 1)}: {finding['message']}"
+                        for finding in diagnose_written_content(
+                            rel, source, workspace=self.output_dir, limit=sys.maxsize)]
+            raw.extend(_collapse_repeated_names(findings, PYTHON_CONTRACT_REPEATED_NAME_RE)
+                       [:self._PYTHON_CONTRACT_MAX_PER_FILE])
         raw.extend(_create_schema_router_mismatches(self.output_dir))
         raw.extend(_unresolvable_local_imports(self.output_dir))
         from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_issues
@@ -2934,6 +2942,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         return _fastapi_backends(self.output_dir)
 
+    # Findings one validate_app result lists, most urgent first; the rest are counted.
+    _VALIDATE_APP_MAX_ISSUES = 40
+
     def _validate_app(self) -> dict:
         """Model-facing, revision-bound diagnostics with no additional LLM cost."""
         revision = self._workspace_revision()
@@ -2946,8 +2957,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         result = {
             "verified": not blockers and not unverified,
             "blocker_count": len(blockers),
-            "issues": [issue.message for issue in issues[:40]],
-            "remaining_issue_count": max(0, len(issues) - 40),
+            # Each finding is cut as the fix prompt cuts it: one api scenario
+            # report alone ran to 2,500 chars.
+            "issues": [clip_finding(issue.message) for issue in issues[:self._VALIDATE_APP_MAX_ISSUES]],
+            "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
             "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
             "next_step": ("Repair concrete failures and call validate_app again. For create unverified (guessed fixtures), "
                           "use test_api with valid unique fixtures and a GET of the persisted record; do not remove "

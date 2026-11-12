@@ -407,8 +407,37 @@ _INJECTED_ANNOTATIONS = frozenset({
     "Request", "Response", "BackgroundTasks", "WebSocket", "SecurityScopes",
     "Session", "AsyncSession", "HTTPAuthorizationCredentials",
 })
+_INJECTING_CALLS = frozenset({"Depends", "Security"})
 _HTTP_VERBS = frozenset({"get", "post", "put", "patch", "delete"})
 _PATH_PARAM_RE = re.compile(r"\{([^}:]+)")
+
+
+def _is_injecting_annotation(annotation) -> bool:
+    """``Annotated[T, Depends(...)]``: FastAPI fills the parameter itself."""
+    if not (isinstance(annotation, ast.Subscript)
+            and (getattr(annotation.value, "id", None)
+                 or getattr(annotation.value, "attr", "")) == "Annotated"
+            and isinstance(annotation.slice, ast.Tuple)):
+        return False
+    return any(isinstance(meta, ast.Call)
+               and (getattr(meta.func, "id", None)
+                    or getattr(meta.func, "attr", "")) in _INJECTING_CALLS
+               for meta in annotation.slice.elts[1:])
+
+
+def _injecting_aliases(tree) -> frozenset:
+    """Module-level ``SessionDep = Annotated[Session, Depends(get_db)]`` names."""
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and _is_injecting_annotation(node.value):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                and _is_injecting_annotation(node.value):
+            names.add(node.target.id)
+        elif getattr(ast, "TypeAlias", None) and isinstance(node, ast.TypeAlias) \
+                and _is_injecting_annotation(node.value):
+            names.add(node.name.id)
+    return frozenset(names)
 
 
 def _routes_of(function) -> list:
@@ -555,8 +584,11 @@ def _absence_keys(test, bound: dict) -> list:
     return []
 
 
-def _demanded_values(function, route: str) -> list:
-    """Values this handler makes the caller supply, in source order."""
+def _demanded_values(function, route: str, injecting: frozenset = frozenset()) -> list:
+    """Values this handler makes the caller supply, in source order.
+
+    ``injecting`` holds the module's ``Annotated[..., Depends(...)]`` aliases.
+    """
     path_params = set(_PATH_PARAM_RE.findall(route))
     demanded: list = []
 
@@ -571,7 +603,8 @@ def _demanded_values(function, route: str) -> list:
             argument.annotation, "attr", "")
         if argument.arg in path_params or argument.arg in ("self", "database", "db"):
             continue
-        if annotation in _INJECTED_ANNOTATIONS:
+        if annotation in _INJECTED_ANNOTATIONS or annotation in injecting \
+                or _is_injecting_annotation(argument.annotation):
             continue
         demanded.append(argument.arg)
 
@@ -611,6 +644,7 @@ def _zero_arg_action_issues(rel: str, content: str, contract: DataContract) -> l
     except (SyntaxError, ValueError):
         return []  # a half-written file is python_source's problem, not ours
     findings: list = []
+    injecting = _injecting_aliases(tree)
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -618,7 +652,7 @@ def _zero_arg_action_issues(rel: str, content: str, contract: DataContract) -> l
             action = _modelled_action(contract, route)
             if action is None or action[2] != 0:
                 continue
-            demanded = _demanded_values(function, route)
+            demanded = _demanded_values(function, route, injecting)
             if not demanded:
                 continue
             findings.append(Finding(
@@ -1170,8 +1204,6 @@ _INHERITED_MEMBERS = frozenset({
     "model_fields", "model_fields_set", "model_config", "model_extra",
     "model_rebuild", "model_json_schema",
 })
-
-_INJECTING_CALLS = frozenset({"Depends", "Security"})
 
 
 def _injected_parameters(function) -> set:

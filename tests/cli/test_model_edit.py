@@ -222,6 +222,27 @@ def test_removing_what_other_code_uses_is_refused_with_the_lines(edit):
                           "change those lines first (model.py not changed)\n")
 
 
+# A class whose variable is spelled as keyword arguments and attributes of the file are: none of those is a use.
+SPELLED_AS_KEYWORDS = '''\
+from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
+
+label = Class(name="Label", attributes={Property(name="text", type=StringType)})
+book = Class(name="Book", attributes={Property(name="title", type=StringType)})
+shop = DomainModel(name="Shop", types={label, book})
+book.label = dict(label="spine")
+'''
+
+
+def test_a_name_spelled_like_the_variable_is_no_use_of_it(edit):
+    # Before: refused, "'Label' is still used on line 7"; and a rename turned label= into tag=.
+    run, text = edit(SPELLED_AS_KEYWORDS, "rename", "Label", "Tag")
+    assert run.returncode == 0, run.stderr
+    assert text.endswith('shop = DomainModel(name="Shop", types={tag, book})\nbook.label = dict(label="spine")\n')
+    run, text = edit(SPELLED_AS_KEYWORDS, "remove", "Label")
+    assert run.returncode == 0, run.stderr
+    assert "types={book}" in text and 'book.label = dict(label="spine")' in text
+
+
 def test_remove_a_class_takes_its_associations_along(edit, besser):
     run, text = edit(INLINE, "remove", "Library", output=None)
 

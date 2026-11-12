@@ -755,7 +755,10 @@ associations, and a metamodel name the file does not import is added to its
 with its own code (a helper function), the change is one statement after the
 line that defines its variable (``Stage.literals = {...}``); when the element
 has no variable either, or a removed element is still used elsewhere, the
-command refuses and names the lines to change by hand.
+command refuses and names the lines to change by hand. A use is a reference
+to the variable in code: a keyword argument (``title=``) or an attribute
+(``x.title``) spelled the same is none, and a renamed variable leaves them as
+they are.
 
 In a file that also holds a GUI model (``besser init --kind gui`` writes one),
 the tables bound to a class (``DataBinding``) follow it, and each line says

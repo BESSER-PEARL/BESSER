@@ -1272,13 +1272,17 @@ def _siblings(editor: ModelEditor, element: Any, owner: Any, attribute: str) -> 
 
 
 def _rename_variable(editor: ModelEditor, old: str, new: str) -> None:
-    """Rename the Python variable ``old`` wherever the file uses it (not after a dot, not in strings)."""
-    tokens = [token for token in _tokens(editor.src.text)
-              if token.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT)]
-    for index, token in enumerate(tokens):
-        if token.type == tokenize.NAME and token.string == old and (index == 0 or tokens[index - 1].string != "."):
-            start = editor.src.line_offset(token.start[0]) + token.start[1]
-            editor.src.replace(start, start + len(old), new)
+    """Rename the Python variable ``old`` wherever the file uses it (see ``_references``)."""
+    for node in _references(editor, {old}):
+        start = editor.src.start(node)
+        editor.src.replace(start, start + len(old), new)
+
+
+def _references(editor: ModelEditor, names: Iterable[str]) -> list[ast.Name]:
+    """Where the file refers to the variables ``names``: not a keyword argument's name (``title=``),
+    an attribute after a dot (``x.title``) or text in a string, which only spell the same word."""
+    names = set(names)
+    return [node for node in ast.walk(editor.src.tree) if isinstance(node, ast.Name) and node.id in names]
 
 
 def _ocl_tokens(expression: str) -> list[Any]:
@@ -1529,11 +1533,8 @@ def remove(editor: ModelEditor, path: str) -> Edited:
         if not editor.src.is_deleted(literal):
             editor.src.remove_items(literal, _items(literal), indices)
     deleted = editor.src.replaced()
-    still_used = sorted({
-        token.start[0] for token in _tokens(editor.src.text)
-        if token.type == tokenize.NAME and token.string in removed_vars and not any(
-            low <= editor.src.line_offset(token.start[0]) + token.start[1] < high for low, high in deleted)
-    })
+    still_used = sorted({node.lineno for node in _references(editor, removed_vars)
+                         if not any(low <= editor.src.start(node) < high for low, high in deleted)})
     if still_used:
         lines = ", ".join(map(str, still_used))
         raise EditError(f"{editor.describe(element)} is still used on line{'s' if len(still_used) > 1 else ''} "

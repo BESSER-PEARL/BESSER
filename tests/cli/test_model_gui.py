@@ -181,6 +181,16 @@ def test_a_class_named_as_its_own_plural_keeps_its_page_titled_after_it(starter,
     assert "GUI titles News -> Articles" in change("rename", "News", "Article")
 
 
+def test_a_class_whose_variable_is_title_can_be_renamed_and_removed(starter, change, tmp_path):
+    # Before: the rename turned every title= of the tables into label=, and remove was refused: "'Title' is
+    # still used on lines 54, 55, ..." (each title= counted as a use of the variable title).
+    change("add-class", "Tag", "code:str")
+    assert change("rename", "Tag", "Title").endswith("(variable tag -> title)")
+    assert change("rename", "Title", "Label").endswith("(variable title -> label)")
+    assert 'title="Authors"' in starter.read_text()
+    assert change("remove", "Label") == "model.py: removed Label"
+
+
 def test_add_screen_is_refused_when_it_cannot_be_made(besser, write, starter):
     def refused(*args):
         result = besser("model", *args)

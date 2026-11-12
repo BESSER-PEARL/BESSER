@@ -745,7 +745,9 @@ name one of each).
        constraint or the attribute. An attribute's columns go with it (in
        its subclasses' tables too); a
        class's tables go with it, with the screens that show nothing else and
-       the buttons that open them.
+       the buttons that open them. When the main screen goes, the first screen
+       left (by module, then name, the generator's order) becomes the main
+       page, with a button to each other screen left (the line names it).
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``

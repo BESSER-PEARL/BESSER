@@ -1577,6 +1577,7 @@ def remove(editor: ModelEditor, path: str) -> Edited:
     gui_removed = _gui_removals(editor, element) if isinstance(element, Class) else []
     for gui_element in gui_removed:
         _remove_gui_element(editor, gui_element, drops, removed_vars)
+    main_pages = _new_main_pages(editor, gui_removed, removed_vars)
     removed_properties = [item for item in [*outer, *members] if isinstance(item, Property)]
     column_tables = []
     for table in sorted({id(t): t for item in removed_properties if isinstance(item.owner, Class)
@@ -1612,10 +1613,7 @@ def remove(editor: ModelEditor, path: str) -> Edited:
         summary += f"; and {', '.join(named_gui)}"
     if column_tables:
         summary += f"; its column from table {', '.join(column_tables)}"
-    left = [screen for gui in editor.gui_models() for screen in _screens(gui) if screen not in gui_removed]
-    warnings = [f"screen {item.name} was the main page: the app opens on {left[0].name if left else 'no screen'} "
-                "now, and the buttons it held are gone" for item in gui_removed
-                if isinstance(item, Screen) and item.is_main_page]
+    summary += main_pages
 
     def check(model: DomainModel) -> str | None:
         try:
@@ -1624,7 +1622,7 @@ def remove(editor: ModelEditor, path: str) -> Edited:
             return None
         return f"{named} is still there"
 
-    return Edited(editor.finish(), summary, check, warnings)
+    return Edited(editor.finish(), summary, check, editor.warnings)
 
 
 # ── the GUI model: screens and the tables that show a class ─────────────────
@@ -1839,28 +1837,9 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
         f"    view_elements={{\n        {editor._gui('Text')}(name={_q(heading)}, component_id={_q(heading)}, "
         f"content={_q(title)}),\n        {table},\n    }},\n)\n"
     )
-    button = None
     if main is not None:
-        button = editor.free_name(f"to_{_snake(screen_name)}")
-        code += (
-            f"{button} = {editor._gui('Button')}(\n"
-            f"    name={_q(button)}, component_id={_q(button)}, description={_q('Go to the ' + title.lower())}, "
-            f"label={_q(title)},\n"
-            f"    buttonType={editor._gui('ButtonType')}.CustomizableButton, "
-            f"actionType={editor._gui('ButtonActionType')}.Navigate, targetScreen={screen_var},\n)\n"
-            f"{button}.events = {{{editor._gui('Event')}(name={_q(button + '_click')}, actions={{\n"
-            f"    {editor._gui('Transition')}(name={_q('go_to_' + _snake(screen_name))}, "
-            f"target_screen={screen_var}),\n}})}}\n"
-        )
-        main_var = editor.var_of(main)
-        if main_var is not None:
-            code += f"{main_var}.view_elements.add({button})\n"
-        else:
-            elements = editor.collection(main, "view_elements")
-            if elements is None or editor.src.start(elements) < editor.src.start(anchor):
-                raise EditError(f"cannot add the button that opens {screen_name} to the main screen {main.name}: "
-                                "give that screen a variable")
-            editor.add_to_literal(elements, button)
+        code += _navigation_button(editor, main, anchor, editor.free_name(f"to_{_snake(screen_name)}"),
+                                   screen_var, screen_name, title)
     editor.src.insert_before(anchor, code, separate=True)
     editor.add_to_literal(literal, screen_var)
     summary = f"added screen {screen_name} (table of {class_name}: {', '.join(a.name for a in attributes)}"
@@ -1873,6 +1852,89 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
         return None if shown else f"no screen {screen_name} showing {class_name}"
 
     return Edited(editor.finish(), summary, lambda model: None, gui_check=gui_check)
+
+
+def _navigation_button(editor: ModelEditor, main: Screen, anchor: ast.stmt, button: str, screen_var: str,
+                       screen_name: str, title: str) -> str:
+    """The code that defines the button ``button`` opening the screen ``screen_var`` (named ``screen_name``,
+    titled ``title``) and puts it on the screen ``main``; the code goes before the statement ``anchor``."""
+    code = (
+        f"{button} = {editor._gui('Button')}(\n"
+        f"    name={_q(button)}, component_id={_q(button)}, description={_q('Go to the ' + title.lower())}, "
+        f"label={_q(title)},\n"
+        f"    buttonType={editor._gui('ButtonType')}.CustomizableButton, "
+        f"actionType={editor._gui('ButtonActionType')}.Navigate, targetScreen={screen_var},\n)\n"
+        f"{button}.events = {{{editor._gui('Event')}(name={_q(button + '_click')}, actions={{\n"
+        f"    {editor._gui('Transition')}(name={_q('go_to_' + _snake(screen_name))}, "
+        f"target_screen={screen_var}),\n}})}}\n"
+    )
+    main_var = editor.var_of(main)
+    if main_var is not None:
+        return code + f"{main_var}.view_elements.add({button})\n"
+    elements = editor.collection(main, "view_elements")
+    if elements is None or editor.src.start(elements) < editor.src.start(anchor):
+        raise EditError(f"cannot add the button that opens {screen_name} to the main screen {main.name}: "
+                        "give that screen a variable")
+    editor.add_to_literal(elements, button)
+    return code
+
+
+def _new_main_pages(editor: ModelEditor, removed: Sequence[Any], removed_vars: Sequence[str]) -> str:
+    """When ``removed`` takes the main screen of a GUI model, make the first screen left (in the
+    generator's order: module, then screen name) the main page, with a button to each other screen left
+    (the generated app navigates with buttons only); returns what changed, for the summary."""
+    said = ""
+    for gui in editor.gui_models():
+        screens = _screens(gui)
+        left = [screen for screen in screens if screen not in removed]
+        if not left or not any(screen.is_main_page and screen in removed for screen in screens) \
+                or any(screen.is_main_page for screen in left):
+            continue
+        main = left[0]
+        _make_main_page(editor, main)
+        module = next(module for module in gui.modules if main in module.screens)
+        literal = editor.collection(module, "screens")
+        if literal is None:
+            raise EditError(f"cannot find where the screens of {gui.name} are written in {editor.path.name}; "
+                            "edit it by hand")
+        anchor = editor.src.top_statement(literal)
+        opened = {item.targetScreen for item in _contents(main) if isinstance(item, Button)}
+        code, buttons = "", []
+        for target in left[1:]:
+            target_var = editor.var_of(target)
+            if target in opened:
+                continue
+            if target_var is None:
+                editor.warnings.append(f"no button on {main.name} opens screen {target.name}: it has no variable "
+                                       "to refer to it by; give it one and add the button")
+                continue
+            name = f"to_{_snake(target.name)}"
+            button = name if name in removed_vars else editor.free_name(name)
+            code += _navigation_button(editor, main, anchor, button, target_var, target.name,
+                                       target.description or target.name)
+            buttons.append(target.name)
+        if code:
+            editor.src.insert_before(anchor, code, separate=True)
+        said += f"; {main.name} is the main page now" + (f", with a button to {', '.join(buttons)}" if buttons else "")
+    return said
+
+
+def _make_main_page(editor: ModelEditor, screen: Screen) -> None:
+    """Plan ``is_main_page=True`` on ``screen``: in its constructor call, or after its variable."""
+    call = editor.call_of(screen)
+    if call is not None:
+        flag = next((keyword_ for keyword_ in call.keywords if keyword_.arg == "is_main_page"), None)
+        if flag is not None:
+            editor.src.replace(editor.src.start(flag.value), editor.src.end(flag.value), "True")
+        else:
+            editor.src.add_item(sorted([*call.args, *call.keywords], key=editor.src.start), editor.src.end(call) - 1,
+                                "is_main_page=True")
+        return
+    var = editor.var_of(screen)
+    if var is None or editor.src.assignment(var) is None:
+        raise EditError(f"cannot find where screen {screen.name} is written to make it the main page; "
+                        "edit it by hand")
+    editor.src.insert_after(editor.src.assignment(var), f"{var}.is_main_page = True\n")
 
 
 def _add_columns(editor: ModelEditor, tables: Sequence[Table], added: Sequence[tuple[str, str]]) -> list[str]:

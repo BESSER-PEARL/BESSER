@@ -223,6 +223,44 @@ def test_a_subclass_page_shows_and_follows_its_inherited_attributes(starter, cha
     assert _columns(pages["Students"]) == ["Name", "School"] and _form_fields(pages["Teachers"]) == ["name"]
 
 
+def test_removing_the_main_page_makes_another_the_main_page_with_its_buttons(starter, change, app):
+    change("add-class", "Publisher", "name:str", "--screen")
+    # Before: "warning: screen Authors was the main page: the app opens on Books now, and the buttons it held
+    # are gone"; the Publishers page could not be reached.
+    assert change("remove", "Author") == (
+        "model.py: removed Author and association book_authors; and table author_table, screen Authors, "
+        "button to_publishers, button to_books; Books is the main page now, with a button to Publishers")
+    pages, routes, _ = app()
+    assert sorted(pages) == ["Books", "Publishers"]
+    assert '<Route path="/" element={<Navigate to="/Books" replace />} />' in routes
+    assert 'navigate("/Publishers")' in pages["Books"]
+
+
+# The main page shows a class's table; the other screens are written inside their modules.
+INLINE_SCREENS = HAND_WRITTEN.replace(
+    '        Screen(name="Home", description="Home", is_main_page=True, view_elements={recent}),\n',
+    '        Screen(name="Home", description="Home", is_main_page=True, view_elements={recent}),\n'
+    '        Screen(name="About", description="About", view_elements=set()),\n',
+).replace('admin = Module(name="admin", screens={Screen(name="Customers", description="Customers", '
+          'view_elements={everyone})})',
+          'admin = Module(name="admin", screens={Screen(name="Archive", description="Archive", view_elements=set())})')
+
+
+def test_the_new_main_page_written_inline_gets_its_flag_and_buttons(write, besser, change, app, tmp_path):
+    write("model.py", INLINE_SCREENS)
+    change("add-class", "Order", "number:str", "--screen")  # in the first module, admin, with a variable
+    removed = besser("model", "remove", "Customer")
+    assert removed.returncode == 0, removed.stderr
+    assert removed.stdout == ("model.py: removed Customer; and table everyone, table recent, screen Home, "
+                              "button to_orders; Archive is the main page now, with a button to Orders\n")
+    assert removed.stderr == ("warning: no button on Archive opens screen About: it has no variable to refer to "
+                              "it by; give it one and add the button\n")
+    assert re.search(r'Screen\(name="Archive", description="Archive", view_elements=\{to_orders\},\s+is_main_page=True\)',
+                     (tmp_path / "model.py").read_text())
+    pages, routes, _ = app()
+    assert '<Navigate to="/Archive" replace />' in routes and 'navigate("/Orders")' in pages["Archive"]
+
+
 def test_add_screen_is_refused_when_it_cannot_be_made(besser, write, starter):
     def refused(*args):
         result = besser("model", *args)

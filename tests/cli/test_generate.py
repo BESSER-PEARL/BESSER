@@ -2,8 +2,12 @@
 
 import copy
 import json
+import logging
+import os
 import shlex
 
+from besser.cli import commands
+from besser.cli.main import main
 from tests.cli.conftest import (
     CLASS_DIAGRAM,
     INVALID_MODEL,
@@ -513,3 +517,41 @@ def test_a_name_in_the_model_cannot_make_a_generator_write_outside_its_folder(be
     assert run.returncode != 0
     assert "leads out of the output folder" in run.json["errors"][0]
     assert list((tmp_path / "outside").iterdir()) == []
+
+
+def test_a_generator_that_writes_nothing_says_why_in_the_result_and_leaves_no_folder(monkeypatch, tmp_path, capsys):
+    def silent_generator(generator_id, models, output_dir, options, record=False):
+        os.makedirs(os.path.join(output_dir, "sub"), exist_ok=True)
+        for number in range(15):
+            print(f"line {number}")
+        logging.getLogger("besser.generators.stub").warning("nothing to generate: the model has no table")
+        return []
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "library.py").write_text(LIBRARY_MODEL, encoding="utf-8")
+    (tmp_path / "kept").mkdir()
+    monkeypatch.setattr(commands, "run_generator", silent_generator)
+
+    status = main(["generate", "python", "library.py", "-o", "new/out", "--json"])
+    captured = capsys.readouterr()
+    kept_status = main(["generate", "python", "library.py", "-o", "kept", "--json"])
+
+    assert status == 1 and kept_status == 1
+    # The last lines it printed and logged, up to the cap: the reason is at the end.
+    said = " | ".join([*(f"line {number}" for number in range(6, 15)), "nothing to generate: the model has no table"])
+    assert json.loads(captured.out)["errors"] == [f"the 'python' generator wrote no file; the last it printed and "
+                                                  f"logged: {said}"]
+    assert not (tmp_path / "new").exists()  # the folders the run created, with nothing in them
+    assert (tmp_path / "kept").is_dir() and not (tmp_path / "kept" / RECORD).exists()  # a folder given is kept
+
+
+def test_a_generator_that_writes_nothing_and_says_nothing_says_so(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "library.py").write_text(LIBRARY_MODEL, encoding="utf-8")
+    monkeypatch.setattr(commands, "run_generator", lambda *args, **kwargs: [])
+
+    status = main(["generate", "python", "library.py", "-o", "out", "--json"])
+
+    assert status == 1
+    assert json.loads(capsys.readouterr().out)["errors"] == [
+        "the 'python' generator wrote no file, and printed and logged nothing that says why"]

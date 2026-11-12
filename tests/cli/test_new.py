@@ -152,16 +152,24 @@ def test_a_kind_the_editor_has_no_diagram_for_is_a_py_file_only(besser, kind, tm
     assert not (tmp_path / "model.json").exists()
 
 
-def test_the_deployment_starter_generates_once_its_cluster_file_exists(besser, write):
+def test_the_deployment_starter_generates_once_its_cluster_file_exists(besser, write, tmp_path):
     besser("new", "model.py", "--kind", "deployment")
     without = besser("generate", "terraform", "model.py", "-o", "out", "--json")
+    left_out = (tmp_path / "out").exists()
+    dry_run = besser("generate", "terraform", "model.py", "-o", "out", "--json", "--dry-run")
     write("cluster.conf", 'project = "my-gcp-project"\n')
-    with_file = besser("generate", "terraform", "model.py", "-o", "out", "--force", "--json")
+    with_file = besser("generate", "terraform", "model.py", "-o", "out", "--json")
 
+    # The reason is in the result, which a --json caller or an MCP client reads, not only on standard error.
+    reason = "Error reading configuration file cluster.conf: [Errno 2] No such file or directory: 'cluster.conf'"
     assert without.returncode == 1
-    assert without.json["errors"] == ["the 'terraform' generator wrote no file; what it logged, on standard error, "
-                                      "says why"]
-    assert "cluster.conf" in without.stderr
+    assert without.json["errors"] == [f"the 'terraform' generator wrote no file; the last it printed and logged: "
+                                      f"{reason}"]
+    assert reason in without.stderr  # still logged on standard error, as it was
+    assert dry_run.returncode == 1 and dry_run.json["would_write"] == {}
+    assert dry_run.json["errors"] == [f"the 'terraform' generator would write no file; the last it printed and "
+                                      f"logged: {reason}"]
+    assert not left_out  # the folder the run created and wrote nothing in is removed
     assert with_file.returncode == 0 and with_file.json["files"]
 
 

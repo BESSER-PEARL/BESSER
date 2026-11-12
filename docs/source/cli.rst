@@ -877,8 +877,13 @@ The command:
    the generator works with ``besser regenerate`` (``besser generators`` says
    which do), and says so in a note;
 #. prints the files the run created or rewrote. A generator that writes no
-   file has failed (exit status 1): it logged what it could not generate,
-   on standard error.
+   file has failed (exit status 1), and so has a dry run that would write
+   none. Such a generator usually logged what it could not generate: the
+   error gives the last 10 lines it printed and logged (``the 'terraform'
+   generator wrote no file; the last it printed and logged: Error reading
+   configuration file cluster.conf: ...``), so ``--json`` and MCP callers read
+   the reason in ``errors``. The directories the run created for its output
+   are removed when they hold no file.
 
 ``-o`` names a directory: a file there, or at one of its parents, is refused
 with exit status 2 before anything runs (``out is a file: -o takes a
@@ -1530,7 +1535,8 @@ and ``output`` on ``convert``.
      - The command ran and failed: validation errors (or warnings with
        ``--strict``), a generator that raised or wrote nothing, a conversion
        that failed, conflicts left by ``regenerate``, a ``besser model`` change
-       that would make the model invalid, tests that fail in ``apply``.
+       that would make the model invalid, tests that fail or time out in
+       ``apply``.
    * - 2
      - The command could not run: bad arguments, an unknown generator or
        option, a model file or ``besser.toml`` that does not load, an output

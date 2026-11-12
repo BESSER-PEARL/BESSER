@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import dataclasses
 import importlib.util
@@ -10,6 +11,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -1009,6 +1011,103 @@ def _record_note(spec: GeneratorSpec, model_path: str, output_dir: str, option_a
             f"{_needs_regen_extra()}")
 
 
+# How many of the last lines a generator logged or printed a run that writes nothing reports: the reason
+# is at the end, and an agent reads every line it is given.
+_GENERATOR_SAID_LINES = 10
+
+
+class _Tee:
+    """``target``, a text stream, that also keeps the lines written to it in ``lines``."""
+
+    def __init__(self, target: Any, lines: collections.deque[str]):
+        self._target, self._lines, self._partial = target, lines, ""
+
+    def __getattr__(self, name: str) -> Any:  # flush, fileno, isatty, encoding, ...: the target's
+        return getattr(self._target, name)
+
+    def write(self, text: str) -> int:
+        self._target.write(text)
+        *complete, self._partial = (self._partial + text).split("\n")
+        self._lines.extend(line for line in complete if line.strip())
+        return len(text)
+
+    def close_line(self) -> None:
+        """Keep the last line, written without a newline."""
+        if self._partial.strip():
+            self._lines.append(self._partial)
+        self._partial = ""
+
+
+class _LogLines(logging.Handler):
+    """Keeps the messages logged at warning level or above; each still reaches standard error as it would
+    without this handler (Python's last-resort handler, when no other handler takes it)."""
+
+    def __init__(self, lines: collections.deque[str]):
+        super().__init__(logging.WARNING)
+        self._lines = lines
+
+    def _handled_elsewhere(self, name: str) -> bool:
+        logger: logging.Logger | None = logging.getLogger(name)
+        while logger is not None:
+            if any(handler is not self for handler in logger.handlers):
+                return True
+            logger = logger.parent if logger.propagate else None
+        return False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._lines.extend(line for line in record.getMessage().splitlines() if line.strip())
+        if logging.lastResort is not None and not self._handled_elsewhere(record.name):
+            logging.lastResort.handle(record)
+
+
+@contextlib.contextmanager
+def _generator_said() -> Iterator[collections.deque[str]]:
+    """Send what is printed to standard error (``stdout_to_stderr``) and keep the last lines a generator
+    prints or logs (warnings and errors) while it runs, for a run that writes nothing to say why."""
+    lines: collections.deque[str] = collections.deque(maxlen=_GENERATOR_SAID_LINES)
+    handler = _LogLines(lines)
+    root = logging.getLogger()
+    with stdout_to_stderr():
+        tee = _Tee(sys.stdout, lines)
+        root.addHandler(handler)
+        try:
+            with contextlib.redirect_stdout(tee):
+                yield lines
+        finally:
+            root.removeHandler(handler)
+            tee.close_line()
+
+
+def _wrote_nothing(spec: GeneratorSpec, said: Sequence[str], dry_run: bool) -> str:
+    """The error of a run that writes no file, with the reason the generator gave."""
+    head = f"the '{spec.id}' generator {'would write' if dry_run else 'wrote'} no file"
+    if not said:
+        return f"{head}, and printed and logged nothing that says why"
+    return f"{head}; the last it printed and logged: {' | '.join(line.strip() for line in said)}"
+
+
+def _created_by_run(output_dir: str) -> Path | None:
+    """The outermost folder of ``output_dir`` that does not exist yet, which a run would create."""
+    folder = Path(output_dir)
+    missing = None
+    for path in (folder, *folder.parents):
+        if os.path.lexists(path):
+            break
+        missing = path
+    return missing
+
+
+def _remove_empty_output(created: Path | None, output_dir: str, recorded: bool, had_record: bool) -> None:
+    """Undo what a run that wrote no file left: the record of nothing it wrote, and the folders it created
+    when they hold no file."""
+    record = Path(output_dir, regeneration.RECORD_FILENAME)
+    if recorded and not had_record:
+        with contextlib.suppress(FileNotFoundError):
+            record.unlink()
+    if created is not None and created.is_dir() and not _holds_a_file(created):
+        shutil.rmtree(created, ignore_errors=True)
+
+
 def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, option_assignments: list[str],
                       given: _GeneratorInput, data: dict[str, Any]) -> Result:
     """What ``generate`` would write, by file: new, changed or unchanged. Nothing is written.
@@ -1017,7 +1116,7 @@ def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, opt
     """
     warnings, notes = given.warnings, given.notes
     try:
-        with stdout_to_stderr():
+        with _generator_said() as said:
             plan, data["recorded"] = _with_record(spec, output_dir, warnings, lambda record: preview_generator(
                 spec.id, given.models, output_dir, given.options, record=record))
     except regeneration.RegenerationError as exc:
@@ -1028,6 +1127,11 @@ def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, opt
 
     if data["recorded"]:
         plan.pop(regeneration.RECORD_FILENAME, None)
+    if not plan:
+        data.update(recorded=False, would_write={})
+        return Result(command="generate", exit_code=EXIT_FAILED, warnings=warnings, notes=notes, data=data,
+                      errors=[_wrote_nothing(spec, said, dry_run=True)])
+    if data["recorded"]:
         notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=True))
     data["would_write"] = {Path(output_dir, rel).as_posix(): status for rel, status in plan.items()}
     if not spec.supports_regenerate and regeneration.CHANGED in plan.values():
@@ -1061,8 +1165,10 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
         return _generate_dry_run(spec, model_path, output_dir, option_assignments, given, data)
 
     warnings, notes = given.warnings, given.notes
+    created = _created_by_run(output_dir)
+    had_record = Path(output_dir, regeneration.RECORD_FILENAME).exists()
     try:
-        with stdout_to_stderr():
+        with _generator_said() as said:
             written, data["recorded"] = _with_record(spec, output_dir, warnings, lambda record: run_generator(
                 spec.id, given.models, output_dir, given.options, record=record))
     except regeneration.RegenerationError as exc:
@@ -1072,10 +1178,12 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
         return _generator_failure("generate", spec, exc, warnings, data, notes)
 
     if not written:
-        # A generator that skips what it cannot generate logs why and returns: that is not a success.
+        # A generator that skips what it cannot generate logs why and returns: that is not a success, and
+        # the reason goes in the result, which a --json caller or an MCP client reads instead of standard error.
+        _remove_empty_output(created, output_dir, data["recorded"], had_record)
+        data["recorded"] = False
         return Result(command="generate", exit_code=EXIT_FAILED, warnings=warnings, notes=notes, data=data,
-                      errors=[f"the '{spec.id}' generator wrote no file; what it logged, on standard error, "
-                              "says why"])
+                      errors=[_wrote_nothing(spec, said, dry_run=False)])
     if data["recorded"]:
         notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=False))
     files = [Path(output_dir, path).as_posix() for path in written]

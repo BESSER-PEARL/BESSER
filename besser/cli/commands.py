@@ -1387,10 +1387,15 @@ def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
             raise
         raise MissingDependencyError(missing_backend_dependency_message(exc)) from exc
 
-    warnings = [
-        f"{model.label} was left out: the editor has no diagram for a {model.kind} model"
-        for model in loaded.models if model.kind in _KINDS_WITHOUT_DIAGRAM
-    ]
+    left_out = [model for model in loaded.models if model.kind in _KINDS_WITHOUT_DIAGRAM]
+    if len(left_out) == len(loaded.models):
+        kinds = ", ".join(kind for kind, _ in loading.MODEL_KINDS if kind not in _KINDS_WITHOUT_DIAGRAM)
+        raise _Stopped(failure(
+            "convert", f"{output_path.name} is an editor project, which holds the models the editor has a diagram "
+                       f"for ({kinds}), and {loaded.path} holds none of them (it holds: "
+                       f"{', '.join(model.label for model in left_out)}): nothing was written; keep it as a .py file",
+        ))
+    warnings = [f"{model.label} was left out: the editor has no diagram for a {model.kind} model" for model in left_out]
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
         code_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=loaded.as_project(), file_path=code_path)
@@ -1518,6 +1523,7 @@ def convert(inputs: str | Sequence[str], output_path: str, dry_run: bool = False
     if problem:
         return failure("convert", problem, data=data)
 
+    created = None if dry_run else _created_by_run(str(target.parent))
     try:
         fmt = _source_format(inputs, source_format)
         # Refused before the file is loaded (a .py model is executed): there is nothing to convert.
@@ -1544,7 +1550,8 @@ def convert(inputs: str | Sequence[str], output_path: str, dry_run: bool = False
             with stdout_to_stderr():
                 written_warnings = write(loaded, target)
         warnings.extend(written_warnings)
-    except _Stopped as stopped:
+    except _Stopped as stopped:  # a model the target format cannot hold: nothing was written
+        _remove_empty_output(created, str(target.parent), recorded=False, had_record=True)
         return dataclasses.replace(stopped.result, data=data)
     except ModelLoadError as exc:
         return failure("convert", str(exc), data=data, cause=exc)

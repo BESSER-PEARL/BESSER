@@ -1338,7 +1338,10 @@ is written (``would_write`` in the JSON output):
 Both directions reuse the editor's converters, so they share their limits:
 
 * The editor has no diagram for a Terraform ``deployment`` model or a feature
-  model; converting to JSON leaves them out and says so in a warning.
+  model; converting to JSON leaves them out and says so in a warning. A file
+  that holds nothing else is not converted (exit status 2, no file written):
+  the project would hold no model. RDF, likewise, is written from a knowledge
+  graph only, and a file that holds none is refused.
 * A lone model takes the default title of its diagram (a ``DomainModel`` named
   ``Library`` comes back as ``Class_Diagram``); its classes, attributes and
   associations keep their names.

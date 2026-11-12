@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from besser.cli.loading import load_models
 from tests.cli.conftest import CLASS_DIAGRAM, LIBRARY_MODEL, PROJECT_EXPORT
 
@@ -191,3 +193,30 @@ def test_verbose_adds_the_traceback_of_a_failure(besser, write):
 
     assert run.returncode == 2 and run.stdout == ""
     assert "Traceback (most recent call last):" in run.stderr and "ZeroDivisionError" in run.stderr
+
+
+@pytest.mark.parametrize("kind, held", [("deployment", "library_deployment_model (DeploymentModel)"),
+                                        ("feature", "e_reader_features (FeatureModel)")])
+def test_a_file_whose_models_the_editor_has_no_diagram_for_is_not_written_as_an_empty_project(besser, kind, held,
+                                                                                              tmp_path):
+    besser("new", f"{kind}.py", "--kind", kind, "--no-agent-files")
+    run = besser("convert", f"{kind}.py", "-o", "out/project.json", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == [
+        "project.json is an editor project, which holds the models the editor has a diagram for (domain, object, "
+        "gui, agent, state_machine, quantum, nn, bpmn, uml_deployment, component, kg), and "
+        f"{kind}.py holds none of them (it holds: {held}): nothing was written; keep it as a .py file"]
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_model_the_editor_has_no_diagram_for_is_left_out_of_a_project_that_holds_others(besser, tmp_path):
+    besser("new", "both.py", "--kind", "deployment", "--no-agent-files")
+    with (tmp_path / "both.py").open("a", encoding="utf-8") as both:
+        both.write(LIBRARY_MODEL)
+    run = besser("convert", "both.py", "-o", "project.json", "--json")
+
+    assert run.returncode == 0
+    assert run.json["warnings"] == ["library_deployment_model (DeploymentModel) was left out: the editor has no "
+                                    "diagram for a deployment model"]
+    assert [model.kind for model in load_models(tmp_path / "project.json").models] == ["domain"]

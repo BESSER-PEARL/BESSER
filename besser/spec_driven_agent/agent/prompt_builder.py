@@ -935,7 +935,19 @@ _SNAPSHOT_SKIP_EXTENSIONS = {
     ".woff", ".woff2", ".ttf", ".eot", ".pyc", ".db", ".sqlite",
     ".lock",
 }
-_SNAPSHOT_SKIP_NAMES = {"package-lock.json", "yarn.lock", "poetry.lock", "Cargo.lock"}
+_SNAPSHOT_SKIP_NAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "Cargo.lock"}
+# Minified bundles and source maps: one line can hold 100k chars of build output.
+_SNAPSHOT_SKIP_SUFFIXES = (".min.js", ".min.css", ".map")
+
+
+def is_bulk_file(fname: str) -> bool:
+    """Lock files, minified bundles, source maps and binaries: written by
+    tools, never by the model, and not worth inlining or searching."""
+    lower = fname.lower()
+    return (fname in _SNAPSHOT_SKIP_NAMES or lower.endswith(_SNAPSHOT_SKIP_SUFFIXES)
+            or os.path.splitext(lower)[1] in _SNAPSHOT_SKIP_EXTENSIONS)
+
+
 _SNAPSHOT_SKIP_DIRS = {
     ".besser_snapshot", "node_modules", "target", "__pycache__", ".git",
     "dist", "build", ".next", ".gradle", "venv", ".venv",
@@ -1103,9 +1115,7 @@ def build_scaffold_snapshot(
     for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
         for fname in files:
-            if fname.startswith(".besser_") or fname in _SNAPSHOT_SKIP_NAMES:
-                continue
-            if os.path.splitext(fname)[1].lower() in _SNAPSHOT_SKIP_EXTENSIONS:
+            if fname.startswith(".besser_") or is_bulk_file(fname):
                 continue
             fpath = os.path.join(root, fname)
             rel = os.path.relpath(fpath, output_dir).replace("\\", "/")

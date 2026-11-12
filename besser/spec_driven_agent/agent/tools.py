@@ -30,9 +30,8 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "list_files",
         "description": (
-            "List the files in the output workspace, one '<path> <size in bytes>' line each. "
-            "Installed dependencies, virtualenvs and build output are not listed; past 300 "
-            "files, source files are listed first and the rest counted per directory."
+            "List the workspace's files as '<path> <size in bytes>' lines; dependencies, "
+            "virtualenvs and build output are skipped, and past 300 files the rest are counted."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -161,7 +160,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "Search workspace files for a case-insensitive regex (an invalid regex is "
             "searched as literal text). Returns up to 50 matches as {file, line, text}, "
             "each line clipped to 200 chars, with truncated=true when the cap is hit. "
-            "node_modules, .git, venv/.venv, __pycache__, dist and build are skipped. "
+            "node_modules, .git, venv/.venv, __pycache__, dist, build and lock files are skipped. "
             "Use it to locate code before read_file; it does not return file contents."
         ),
         "input_schema": {
@@ -170,7 +169,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 "pattern": {"type": "string"},
                 "file_glob": {
                     "type": "string",
-                    "description": "Optional filename glob, matched against the file NAME only (e.g. '*.py', '*.tsx'); a pattern containing '/' matches nothing.",
+                    "description": "Optional filename glob, matched against the file NAME only (e.g. '*.py', '*.tsx'); a pattern containing '/' is refused.",
                     "default": "*",
                 },
             },

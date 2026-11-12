@@ -3256,8 +3256,18 @@ class ToolExecutor:
 
     def _search_in_files(self, args: dict) -> dict:
         """Search for a pattern across workspace files."""
+        from besser.spec_driven_agent.agent.prompt_builder import is_bulk_file
+
         pattern = args["pattern"]
         file_glob = args.get("file_glob", "*")
+        if "/" in file_glob or "\\" in file_glob:
+            # An empty result would read as "pattern absent".
+            return {"error": (
+                f"file_glob {file_glob!r} contains a path separator, but it is matched "
+                "against file NAMES only, so it would match nothing. Use a name pattern "
+                "such as '*.tsx', or search everything and read the 'file' of each match."
+            )}
+        skipped_bulk = False
         try:
             regex = re.compile(pattern, re.IGNORECASE)
         except re.error:
@@ -3278,6 +3288,11 @@ class ToolExecutor:
             dirs.sort(key=lambda name: name == COMMAND_OUTPUT_DIR)
             for fname in filenames:
                 if not fnmatch.fnmatch(fname, file_glob):
+                    continue
+                # A lock file alone filled the 50-match budget for "react".
+                # Searched only when file_glob names it exactly.
+                if fname != file_glob and is_bulk_file(fname):
+                    skipped_bulk = True
                     continue
                 abs_path = os.path.join(root, fname)
                 rel_path = os.path.relpath(abs_path, self.workspace).replace("\\", "/")
@@ -3304,7 +3319,13 @@ class ToolExecutor:
                 except (OSError, UnicodeDecodeError):
                     continue
 
-        return {"matches": matches, "total": len(matches)}
+        result = {"matches": matches, "total": len(matches)}
+        if skipped_bulk:
+            result["not_searched"] = (
+                "lock files, minified bundles, source maps and binaries; "
+                "name one exactly in file_glob to search it"
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Execution tools — the generate-test-fix loop enabler

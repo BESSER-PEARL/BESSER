@@ -87,6 +87,12 @@ file, skipping installed dependencies, build output and any directory holding
 a ``pyvenv.cfg`` (a virtualenv, whatever its name; it is named under
 ``not_listed``). Past 300 files it lists source files first and ends with a
 ``... N more files not listed`` line counting the rest per directory.
+``search_in_files`` returns up to 50 matches; it skips lock files
+(``package-lock.json``, ``yarn.lock``, ``pnpm-lock.yaml``, ``poetry.lock``,
+``Cargo.lock``), minified bundles, source maps and binaries unless
+``file_glob`` names the file exactly, and says so under ``not_searched``.
+``file_glob`` matches file names only; one containing a path separator is
+refused with an error rather than returning no matches.
 
 ``task_list(action='done')`` runs an attached verifier. A verifier exception is a
 failed check, not success. Without a verifier, supply

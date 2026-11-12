@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import sqlite3
+import threading
 import time
 
+from besser.utilities.web_modeling_editor.backend.routers import (
+    spec_driven_router as router_module,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    runner as runner_module,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_manager import (
     DurableRunManager,
     SqliteRunEventStore,
@@ -23,6 +32,12 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     format_sse,
 )
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
+    _build_request,
+    _FakeClient,
+    _FakeOrchestrator,
+)
 
 
 def _payload(frame: bytes) -> dict:
@@ -641,6 +656,164 @@ def test_stale_cursor_within_new_attempt_range_replays_from_start():
 
         assert len(got) == 60
         assert got[0]["event"] == "start" and got[-1]["event"] == "done"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+# ---------------------------------------------------------------------
+# A failing event store must stop the worker before freeing its slot
+# ---------------------------------------------------------------------
+
+# Ends a worker the code under test failed to stop, so a test leaves no thread behind.
+_TEST_OVER = threading.Event()
+
+
+class _SpendsUntilCancelled(_FakeOrchestrator):
+    """Takes one 'LLM turn' every 10 ms until the run's cancel signal is set."""
+
+    running = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.should_continue = kwargs["should_continue"]
+
+    def run(self, instructions: str) -> str:
+        type(self).running = True
+        try:
+            while self.should_continue() and not _TEST_OVER.wait(0.01):
+                self.on_progress(1, "write_file", "executing")
+            return self.output_dir
+        finally:
+            type(self).running = False
+
+
+def _use_spending_orchestrator(monkeypatch) -> None:
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _SpendsUntilCancelled)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    _TEST_OVER.clear()
+    _SpendsUntilCancelled.running = False
+
+
+def test_a_failing_store_stops_the_worker_before_its_slot_is_freed(monkeypatch):
+    """Review E3: the store failed mid-run (disk full, a lock held past the busy
+    timeout); the run was marked failed and its slot freed while the worker
+    thread kept calling the provider, out of reach of ``/cancel``."""
+    _use_spending_orchestrator(monkeypatch)
+    runtime = current_runtime()
+    store = runtime.durable_runs.store
+    real_append = store.append
+    appended = {"count": 0}
+
+    def append_until_the_disk_is_full(run_id, frame):
+        appended["count"] += 1
+        if appended["count"] >= 4:
+            raise sqlite3.OperationalError("database or disk is full")
+        return real_append(run_id, frame)
+
+    monkeypatch.setattr(store, "append", append_until_the_disk_is_full)
+
+    async def exercise() -> None:
+        response = await router_module.smart_generate(
+            _build_request(), runtime, get_settings().model_copy(), idempotency_key=None,
+        )
+        run_id = response.headers["X-BESSER-Run-Id"]
+        try:
+            await asyncio.wait_for(runtime.durable_runs.wait(run_id), 10)
+            assert _SpendsUntilCancelled.running is False, "the worker outlived its run"
+            assert runtime.slots._held == 0
+            assert runtime.active_runs._events == {}
+            assert runtime.durable_runs.get_run(run_id).status == "failed"
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
+def test_a_cancelled_run_task_stops_the_worker_before_its_slot_is_freed(monkeypatch):
+    """Server shutdown cancels the run's task: the worker used to go on until
+    its own caps (the interpreter then waits for the thread at exit)."""
+    _use_spending_orchestrator(monkeypatch)
+    runtime = current_runtime()
+
+    async def exercise() -> None:
+        response = await router_module.smart_generate(
+            _build_request(), runtime, get_settings().model_copy(), idempotency_key=None,
+        )
+        run_id = response.headers["X-BESSER-Run-Id"]
+        try:
+            for _ in range(500):
+                if _SpendsUntilCancelled.running:
+                    break
+                await asyncio.sleep(0.01)
+            task = runtime.durable_runs._tasks[run_id]
+            task.cancel()
+            await asyncio.wait({task}, timeout=10)
+            assert _SpendsUntilCancelled.running is False, "the worker outlived its run"
+            assert runtime.slots._held == 0
+            assert runtime.active_runs._events == {}
+            assert runtime.durable_runs.get_run(run_id).status == "interrupted"
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
+def test_a_store_failure_marking_the_run_running_returns_its_slot(monkeypatch):
+    """The first status write ran inside the background task, before the run
+    stream started: a failure there kept the slot and the run id reserved for
+    good, since the stream's ``finally`` never ran."""
+    _use_spending_orchestrator(monkeypatch)
+    runtime = current_runtime()
+    store = runtime.durable_runs.store
+    real_set_status = store.set_status
+
+    def set_status(run_id, status, **kwargs):
+        if status == "running":
+            raise sqlite3.OperationalError("database is locked")
+        return real_set_status(run_id, status, **kwargs)
+
+    monkeypatch.setattr(store, "set_status", set_status)
+
+    async def exercise() -> None:
+        try:
+            with contextlib.suppress(sqlite3.OperationalError):
+                await router_module.smart_generate(
+                    _build_request(), runtime, get_settings().model_copy(), idempotency_key=None,
+                )
+            for task in list(runtime.durable_runs._tasks.values()):
+                await asyncio.wait({task}, timeout=10)
+            assert runtime.slots._held == 0
+            assert runtime.active_runs._events == {}
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
+def test_a_store_failure_recording_the_terminal_status_does_not_escape():
+    """A second store error in ``_drive``'s cleanup must neither escape nor skip
+    the in-memory bookkeeping."""
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "c" * 32
+        real_set_status = store.set_status
+
+        def set_status(rid, status, **kwargs):
+            if status != "running":
+                raise sqlite3.OperationalError("database or disk is full")
+            return real_set_status(rid, status, **kwargs)
+
+        store.set_status = set_status
+
+        async def source():
+            yield _start(run_id)
+            yield _done(run_id)
+
+        await manager.start(run_id, source())
+        await manager.wait(run_id)
+        assert run_id not in manager._tasks
         store.close()
 
     asyncio.run(exercise())

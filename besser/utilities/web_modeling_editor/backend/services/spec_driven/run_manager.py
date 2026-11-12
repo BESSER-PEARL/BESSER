@@ -539,22 +539,31 @@ class DurableRunManager:
         source: AsyncIterator[bytes],
         *,
         resume: bool = False,
+        cancel: Optional[Callable[[], None]] = None,
         on_abandoned: Optional[Callable[[], None]] = None,
         resume_available: Optional[Callable[[], bool]] = None,
         disconnect_grace_seconds: float = 300.0,
     ) -> RunRecord:
-        """Register the run and start draining ``source`` into the store in the background."""
+        """Register the run and start draining ``source`` into the store in the background.
+
+        ``cancel`` stops the run's worker; it is called when the drain stops
+        before ``source`` ends (a store failure, shutdown), so no worker keeps
+        spending once nothing records its events.
+        """
         async with self._lock:
             existing_task = self._tasks.get(run_id)
             if existing_task is not None and not existing_task.done():
                 raise ValueError(f"Run {run_id} is already active")
             record = self.store.begin_run(run_id, resume=resume)
+            # Before the task exists: a failure here reaches the caller, which
+            # still owns the run's slot and reservation and releases them.
+            self.store.set_status(run_id, "running")
             generation = self._generations.get(run_id, 0) + 1
             self._generations[run_id] = generation
             condition = asyncio.Condition()
             self._conditions[run_id] = condition
             task = asyncio.create_task(
-                self._drive(run_id, source, condition, generation),
+                self._drive(run_id, source, condition, generation, cancel),
                 name=f"spec-driven-run-{run_id[:8]}",
             )
             self._tasks[run_id] = task
@@ -675,13 +684,13 @@ class DurableRunManager:
         source: AsyncIterator[bytes],
         condition: asyncio.Condition,
         generation: int,
+        cancel: Optional[Callable[[], None]],
     ) -> None:
         terminal_status: Optional[RunStatus] = None
         terminal_event: Optional[str] = None
         terminal_error: Optional[str] = None
-        self.store.set_status(run_id, "running")
-        await self._notify(condition)
         try:
+            await self._notify(condition)
             async for frame in source:
                 source_event_type, source_payload = _parse_frame(frame)
                 abandoned = run_id in self._abandonment_triggered
@@ -770,9 +779,11 @@ class DurableRunManager:
             terminal_status = "interrupted"
             terminal_event = "interrupted"
             terminal_error = "Backend process stopped before the run completed."
+            await self._stop_source(run_id, source, cancel)
             raise
-        except Exception:  # belt-and-braces around producer adapters
+        except Exception:  # a store failure, or belt-and-braces around producer adapters
             logger.exception("Durable producer failed for run %s", run_id)
+            await self._stop_source(run_id, source, cancel)
             message = "Internal server error"
             try:
                 self.store.append(
@@ -785,12 +796,16 @@ class DurableRunManager:
             terminal_event = "INTERNAL"
             terminal_error = message
         finally:
-            self.store.set_status(
-                run_id,
-                terminal_status or "failed",
-                terminal_event=terminal_event,
-                error=terminal_error,
-            )
+            try:
+                self.store.set_status(
+                    run_id,
+                    terminal_status or "failed",
+                    terminal_event=terminal_event,
+                    error=terminal_error,
+                )
+            except Exception:
+                # The record stays "running" until a restart marks it interrupted.
+                logger.exception("Could not record the final status of run %s", run_id)
             await self._notify(condition)
             async with self._lock:
                 if (
@@ -806,6 +821,27 @@ class DurableRunManager:
                     self._abandonment_triggered.discard(run_id)
                     if self._subscriber_counts.get(run_id, 0) == 0:
                         self._subscriber_counts.pop(run_id, None)
+
+    @staticmethod
+    async def _stop_source(
+        run_id: str,
+        source: AsyncIterator[bytes],
+        cancel: Optional[Callable[[], None]],
+    ) -> None:
+        """Stop a run whose drain ended before ``source`` did: signal its worker,
+        then close ``source``, which returns once the worker has stopped."""
+        logger.warning("Run %s ended abnormally; cancelling its worker", run_id)
+        if cancel is not None:
+            try:
+                cancel()
+            except Exception:
+                logger.exception("Could not cancel run %s", run_id)
+        aclose = getattr(source, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                logger.exception("Could not close the event source of run %s", run_id)
 
     def get_run(self, run_id: str) -> Optional[RunRecord]:
         """Return the stored run record, or None when unknown."""

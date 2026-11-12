@@ -29,7 +29,7 @@ import os
 import re
 import time
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncGenerator, AsyncIterator, Optional
 
 import httpx
 from fastapi import APIRouter, File, Header, HTTPException, Path, Query, UploadFile
@@ -130,7 +130,7 @@ def _safe_attachment_filename(filename: str, fallback: str) -> str:
 
 
 async def _stream_with_slot_release(
-    inner: AsyncIterator[bytes],
+    inner: AsyncGenerator[bytes, None],
     runtime: SpecDrivenRuntime,
     run_reservation: Optional[tuple[str, asyncio.Event]] = None,
 ) -> AsyncIterator[bytes]:
@@ -206,6 +206,9 @@ async def _stream_with_slot_release(
         except Exception:
             logger.exception("Could not deliver the terminal error frame")
     finally:
+        # Closing the runner waits for its worker to stop, so the slot and the
+        # run id are free only once nothing spends on them any more.
+        await inner.aclose()
         if run_reservation is not None:
             await runtime.active_runs.release(*run_reservation)
         runtime.slots.release()
@@ -366,6 +369,7 @@ async def smart_generate(
         await runtime.durable_runs.start(
             run_id,
             source,
+            cancel=cancel_event.set,
             on_abandoned=(
                 cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
@@ -728,6 +732,7 @@ async def resume_smart_gen(
             run_id,
             source,
             resume=True,
+            cancel=cancel_event.set,
             on_abandoned=(
                 cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),

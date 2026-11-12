@@ -997,15 +997,18 @@ class SmartGenerationRunner:
         for successful AND failed runs (failures are the friction data).
         Recording is best-effort and can never affect the stream itself.
         """
-        inner = self._generate_and_stream_impl(http_request=http_request)
+        # aclosing: closing this stream closes the run, which stops its worker.
+        inner = contextlib.aclosing(self._generate_and_stream_impl(http_request=http_request))
         if not self._is_study_run():
-            async for frame in inner:
-                yield frame
+            async with inner as frames:
+                async for frame in frames:
+                    yield frame
             return
         try:
-            async for frame in inner:
-                self._telemetry_observe_frame(frame)
-                yield frame
+            async with inner as frames:
+                async for frame in frames:
+                    self._telemetry_observe_frame(frame)
+                    yield frame
         except GeneratorExit:
             # The consumer closed the stream (client disconnect) before a
             # terminal frame was delivered.
@@ -1767,6 +1770,7 @@ class SmartGenerationRunner:
         # ---- 7. Drain the queue, yielding events ----------------------
         worker_exception: Optional[BaseException] = None
         result_path: Optional[str] = None
+        aborted = False
 
         try:
             while True:
@@ -1843,6 +1847,11 @@ class SmartGenerationRunner:
                         code="INTERNAL",
                         message="Internal server error",
                     ))
+        except BaseException:
+            # The stream was closed (GeneratorExit), cancelled or crashed:
+            # yielding now would swallow that or raise "ignored GeneratorExit".
+            aborted = True
+            raise
         finally:
             emitter_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1854,18 +1863,15 @@ class SmartGenerationRunner:
             with contextlib.suppress(asyncio.CancelledError):
                 await watchdog_task
 
-            # Drain any events the emitter enqueued between the sentinel
-            # being put and the task being cancelled. These are cost
-            # ticks — not critical — but missing them can make the
-            # final `cost` event stale by up to the emitter interval.
-            while True:
-                try:
-                    leftover = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if leftover is None:
-                    continue
-                yield self._sse(leftover)
+            if not worker_task.done():
+                # The stream ended before the worker did: stop it and wait, so
+                # the run id and the slot are freed only once it has stopped.
+                logger.warning("Run %s: stream ended before its worker; cancelling the worker", self.run_id)
+                cancel_event.set()
+                await asyncio.wait({worker_task})
+            if aborted and not worker_task.cancelled() and worker_task.exception() is not None:
+                logger.warning("Run %s: worker failed after its stream ended: %r",
+                               self.run_id, worker_task.exception())
 
             # A caller-supplied reservation is owned by the durable stream
             # adapter, which releases it only after packaging and the terminal
@@ -1874,6 +1880,19 @@ class SmartGenerationRunner:
             if self._reserved_cancel_event is None:
                 await self._runtime.active_runs.release(self.run_id, cancel_event)
 
+            # Drain any events the emitter enqueued between the sentinel
+            # being put and the task being cancelled. These are cost
+            # ticks — not critical — but missing them can make the
+            # final `cost` event stale by up to the emitter interval.
+            while not aborted:
+                try:
+                    leftover = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if leftover is None:
+                    continue
+                yield self._sse(leftover)
+
             # Terminal events are mutually exclusive: CANCELLED (or
             # TIMEOUT when the watchdog fired) is emitted ONLY when the
             # cancellation actually interrupted the run. A run cancelled
@@ -1881,7 +1900,7 @@ class SmartGenerationRunner:
             # to the normal `done` path below — emitting both signals
             # contradicted the documented contract (CANCELLED is
             # terminal) and confused clients.
-            if cancel_event.is_set() and (worker_exception is not None or not result_path):
+            if not aborted and cancel_event.is_set() and (worker_exception is not None or not result_path):
                 if watchdog_fired["value"]:
                     yield self._sse(ErrorEvent(
                         code="TIMEOUT",

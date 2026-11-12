@@ -229,3 +229,13 @@ def test_a_fifo_swapped_in_after_a_check_does_not_block(monkeypatch, setup, tool
     result = call(executor, tool, path="x.txt", **args)
 
     assert "error" in result, result
+
+
+def test_a_working_dir_is_not_created_through_a_swapped_parent(monkeypatch, setup):
+    executor, _, _ = arm(monkeypatch, setup, PARENT, CONTENT)
+    outside = setup[2]
+
+    with pytest.raises(OSError):
+        executor._safe_cwd("sub/build")
+
+    assert not (outside / "build").exists()

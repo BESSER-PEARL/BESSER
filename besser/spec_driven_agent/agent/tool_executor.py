@@ -1585,7 +1585,7 @@ class ToolExecutor:
     def _safe_cwd(self, rel_dir: str = ".") -> str:
         """A working directory confined by ``_safe_path``, created if missing."""
         cwd = self._safe_path(rel_dir)
-        os.makedirs(cwd, exist_ok=True)
+        makedirs_plain(cwd, root=self.workspace)
         return cwd
 
     def _resolves_inside(self, abs_path: str) -> bool:

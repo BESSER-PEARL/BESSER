@@ -2228,9 +2228,10 @@ def remove(editor: ModelEditor, path: str) -> Edited:
 
 
 def _contents(container: Any) -> list[Any]:
-    """The view elements of a screen or container, at any depth."""
+    """The view elements of a screen or container, at any depth, by name: ``view_elements`` is a set,
+    and what a command says and writes must not change from one run to the next."""
     found = []
-    for element in getattr(container, "view_elements", None) or ():
+    for element in sorted(getattr(container, "view_elements", None) or (), key=lambda e: str(getattr(e, "name", ""))):
         found.append(element)
         found.extend(_contents(element))
     return found

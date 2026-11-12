@@ -229,7 +229,7 @@ def test_removing_the_main_page_makes_another_the_main_page_with_its_buttons(sta
     # are gone"; the Publishers page could not be reached.
     assert change("remove", "Author") == (
         "model.py: removed Author and association book_authors; and table author_table, screen Authors, "
-        "button to_publishers, button to_books; Books is the main page now, with a button to Publishers")
+        "button to_books, button to_publishers; Books is the main page now, with a button to Publishers")
     pages, routes, _ = app()
     assert sorted(pages) == ["Books", "Publishers"]
     assert '<Route path="/" element={<Navigate to="/Books" replace />} />' in routes

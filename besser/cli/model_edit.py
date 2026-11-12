@@ -1060,6 +1060,13 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
     return Edited(editor.finish(), summary, check, editor.warnings)
 
 
+def _plural(word: str) -> str:
+    """The English plural of a role name, as ends are often named (``books``, ``boxes``, ``categories``)."""
+    if re.search(r"[^aeiou]y$", word):
+        return word[:-1] + "ies"
+    return word + ("es" if re.search(r"(s|x|z|ch|sh)$", word) else "s")
+
+
 def _ends_named_after(editor: ModelEditor, cls: Class, old: str, new: str) -> str:
     """A hint naming the ends of the renamed class ``cls`` still named after its old name ``old``
     (``authors`` after Author -> Writer), with the command that renames each; empty when there are none."""
@@ -1070,11 +1077,11 @@ def _ends_named_after(editor: ModelEditor, cls: Class, old: str, new: str) -> st
             if end.type is not cls:
                 continue
             holder = next((other.type for other in association.ends if other is not end), cls)
-            for old_form, new_form in spellings.items():
-                rest = end.name[len(old_form):]
-                if end.name.startswith(old_form) and rest in ("", "s", "es"):
-                    commands.append((f"{new if holder is cls else holder.name}.{end.name}", new_form + rest))
-                    break
+            renamed = next((named for old_form, new_form in spellings.items()
+                            for named in ((old_form, new_form), (_plural(old_form), _plural(new_form)))
+                            if end.name == named[0]), None)
+            if renamed is not None:
+                commands.append((f"{new if holder is cls else holder.name}.{end.name}", renamed[1]))
     if not commands:
         return ""
     return (f"; ends still named after {old}: {', '.join(described for described, _ in commands)} ("

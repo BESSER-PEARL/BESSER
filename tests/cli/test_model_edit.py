@@ -167,6 +167,25 @@ def test_rename_a_class_renames_its_variable_and_the_name_only(edit):
                      '    types={library, volume},']
 
 
+@pytest.mark.parametrize("new_name, hint", [
+    ("Category", "rename Library.books categories"),  # not 'categorys'
+    ("Box", "rename Library.books boxes"),  # not 'boxs'
+])
+def test_the_hint_to_rename_an_end_spells_the_new_plural(edit, new_name, hint):
+    run, _ = edit(INLINE, "rename", "Book", new_name, output=None)
+
+    assert run.stdout.endswith(f"Library.books ({hint})\n")
+
+
+def test_an_end_named_with_a_plural_in_ies_is_named_in_the_hint(edit):
+    _, text = edit(INLINE, "rename", "Book", "Category")
+    _, text = edit(text, "rename", "Library.books", "categories")
+    run, _ = edit(text, "rename", "Category", "Topic", output=None)
+
+    assert run.stdout.endswith("ends still named after Category: Library.categories "
+                               "(rename Library.categories topics)\n")
+
+
 def test_rename_an_attribute_updates_the_constraints_that_name_it(edit):
     run, text = edit(VARIABLES, "rename", "Book.title", "heading")
 

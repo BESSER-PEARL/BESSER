@@ -25,7 +25,7 @@ FILE = "file"
 TEXT = "text"  # free text: nothing is offered
 
 # The metavars whose value is a path, and what completes it.
-_METAVAR_KINDS = {"DIR": DIRECTORY, "FILE": FILE}
+_METAVAR_KINDS = {"DIR": DIRECTORY, "FILE": FILE, "MODEL": MODEL}
 
 
 @dataclass(frozen=True)

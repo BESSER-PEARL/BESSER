@@ -109,6 +109,8 @@ BASH_CASES = [
     (["besser", "generate", "sqlalchemy", "-o", ""], ["models"]),
     (["besser", "regenerate", "--option", "dbms=sqlite", "back"], ["backend"]),
     (["besser", "convert", "library.py", "-o", "n"], ["notes.txt"]),
+    (["besser", "model", "-f", ""], ["models", "library.py", "project.json"]),
+    (["besser", "model", "add-class", "Shelf", "--file", "l"], ["library.py"]),
 ]
 
 

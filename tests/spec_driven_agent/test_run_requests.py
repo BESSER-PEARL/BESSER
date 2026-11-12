@@ -435,7 +435,11 @@ def test_a_crashed_claude_run_resumes_with_a_valid_first_request(tmp_path):
     assert count_cache_markers(plain(first)) <= 4
     assert leg2._phase2_stop_reason == "completed"
     replayed = [call["tool"] for call in leg2.tool_calls_log[executed:]]
-    assert replayed == ["modify_file", "write_file", "modify_file", "task_list", "validate_app", "task_list"]
+    # The write and the mount are one turn's two calls on different files: they
+    # run in parallel and are logged as each finishes, in either order.
+    assert replayed[0] == "modify_file"
+    assert sorted(replayed[1:3]) == ["modify_file", "write_file"]
+    assert replayed[3:] == ["task_list", "validate_app", "task_list"]
     phase2 = fake2.of("phase2")
     assert all(reason == "compaction" for _, reason, _ in _rewrites(phase2)), _rewrites(phase2)
     assert _thinking_violations(fake2) == []

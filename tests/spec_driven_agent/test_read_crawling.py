@@ -97,12 +97,12 @@ def test_a_line_over_the_read_cap_is_clipped_and_paging_moves_past_it(bundle):
 
     clipped = _read(bundle, offset=1)
     assert (clipped["start_line"], clipped["end_line"]) == (2, 2)
-    assert clipped["content"].startswith("   2| xxxx")
+    assert clipped["content"].startswith("2| xxxx")
     assert "[line 2 clipped: 70000 chars]" in clipped["content"]
     assert "offset=2" in clipped["hint"]
 
     rest = _read(bundle, offset=2)
-    assert rest["content"].startswith("   3| var b=2;")
+    assert rest["content"].startswith("3| var b=2;")
     assert "truncated" not in rest
 
 

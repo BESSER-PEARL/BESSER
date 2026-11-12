@@ -156,7 +156,7 @@ def test_a_stale_read_returns_the_current_span_and_a_fresh_read_id(tmp_path):
     assert stale["rejection_kind"] == "stale_read"
     located = stale["located_range"]
     assert (located["start_line"], located["end_line"]) == (2, 3)
-    assert located["lines"] == "   2| async def action(x=1):\n   3|     return False"
+    assert located["lines"] == "2| async def action(x=1):\n3|     return False"
     assert stale["edit_recovery"] == {"next_tool": "replace_file_lines"}
 
     landed = call(ex, "replace_file_lines", path="app.py", read_id=located["read_id"],

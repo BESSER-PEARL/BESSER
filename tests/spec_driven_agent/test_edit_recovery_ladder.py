@@ -155,7 +155,7 @@ def stuck(simple_library_book_model, tmp_path):
 
 def test_the_repeat_escalation_names_the_rewrite_step(stuck):
     messages: list[dict] = []
-    stuck.executor.last_repeat = ("app.py", stuck._REPEAT_FORCE_AT)
+    stuck.executor._repeat_reports["app.py"] = stuck._REPEAT_FORCE_AT
 
     assert stuck._escalate_repeat_rejection(messages) is False
 

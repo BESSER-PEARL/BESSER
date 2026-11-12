@@ -2278,7 +2278,7 @@ class ToolExecutor:
         span would not fit in one read.
         """
         numbered = "\n".join(
-            f"{n:>4}| {line}"
+            gutter_line(n, line)
             for n, line in enumerate(content.split("\n")[start - 1:end], start)
         )
         if len(numbered) > MAX_FILE_READ:
@@ -2464,7 +2464,7 @@ class ToolExecutor:
         if len(content) <= MAX_FILE_READ:
             return None
         return next(((n, len(line)) for n, line in enumerate(content.split("\n"), 1)
-                     if len(f"{n:>4}| {line}") > MAX_FILE_READ), None)
+                     if len(gutter_line(n, line)) > MAX_FILE_READ), None)
 
     def _add_edit_recovery(self, tool: str, args: dict, result: dict) -> None:
         """Attach the edit-recovery ladder's next step to a refused edit.

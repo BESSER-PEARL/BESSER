@@ -90,7 +90,7 @@ def test_the_first_miss_returns_a_pre_filled_range(executor):
     assert (located["start_line"], located["end_line"]) == (5, 10), located
     assert located["read_id"]
     # 1-based numbers, in read_file's own format, straight from the file.
-    assert located["lines"].startswith('   5| @router.post(')
+    assert located["lines"].startswith('5| @router.post(')
     assert located["lines"].endswith('registerPayment method on a Bill instance."""')
     # One miss, not two: this is what removes the wasted turns.
     assert executor.consecutive_modify_misses("bill_methods.py") == 1

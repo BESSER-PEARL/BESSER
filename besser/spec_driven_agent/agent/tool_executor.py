@@ -2308,13 +2308,10 @@ class ToolExecutor:
         # The located-range assist is a FIRST-miss aid only. Once two edits on
         # this path have been refused the ladder escalates to a whole-file
         # rewrite rather than to replace_file_lines.
+        # located_range carries the read_id, lines and instruction; the
+        # orchestrator reads only next_tool.
         if located and self._edit_recovery.get(path, 0) < 2:
-            result["edit_recovery"] = {
-                "next_tool": "replace_file_lines", "path": path,
-                "read_id": located["read_id"],
-                "start_line": located["start_line"], "end_line": located["end_line"],
-                "instruction": located["instruction"],
-            }
+            result["edit_recovery"] = {"next_tool": "replace_file_lines"}
             return
         if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
             return
@@ -2323,6 +2320,10 @@ class ToolExecutor:
         # edits on a drifted view overwrite neighbouring classes, so ending the
         # ladder at replace_file_lines measurably loses scaffold code.
         if tool in {"modify_file", "replace_file_lines", "read_file"}:
+            # One instruction per result: drop the first-miss aids that point
+            # back at piecemeal edits.
+            for competing in ("located_range", "did_you_mean", "advice"):
+                result.pop(competing, None)
             result["edit_recovery"] = {
                 "next_tool": "write_file", "path": path,
                 "instruction": "Two edits on this file have been refused. Stop editing it "
@@ -2776,9 +2777,7 @@ class ToolExecutor:
                 "error": (
                     f"modify_file has missed {self._MAX_MODIFY_MISSES} times in a row on "
                     f"{args['path']} and this exact call was already rejected, so it is "
-                    "refused. Do not send it again. A DIFFERENT edit on this file is "
-                    "still accepted: call read_file on the region and copy old_text "
-                    "verbatim from that output."
+                    "refused. Do not send it again."
                 ),
             }
         if old_text == new_text:
@@ -3021,17 +3020,9 @@ class ToolExecutor:
                     "Closest lines actually in the file - copy old_text verbatim "
                     "from here:" + chr(10) + hint
                 )
-            if misses >= 2:
-                err["advice"] = (
-                    f"This is failed attempt #{misses} on {args['path']}. Call "
-                    "read_file on that region and copy old_text out of the output "
-                    "instead of retyping it."
-                )
             if misses > self._MAX_MODIFY_MISSES:
                 err["error"] = (
-                    f"modify_file has missed {misses} times in a row on {args['path']}; "
-                    "this attempt is refused as well. Call read_file on the region and "
-                    "copy old_text verbatim from that output, or move on. "
+                    f"modify_file has missed {misses} times in a row on {args['path']}. "
                     + err["error"]
                 )
             return err

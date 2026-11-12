@@ -78,3 +78,46 @@ def test_the_modify_run_rule_still_refuses_a_cold_rewrite(tmp_path):
     _refused_range_edit(ex, "app.py")
     refused = _follow_rewrite(ex, "app.py")
     assert "MODIFY run" in refused.get("error", ""), refused
+
+
+# -- one instruction per result ---------------------------------------------
+
+# Twelve near-identical functions: a quote with one mistyped line brackets one
+# of them, so modify_file returns a located_range.
+SERVICE = "\n".join(
+    f"def f{i}(a, b):\n    total = a + b + {i}\n    if total > {i}:\n        return total\n    return None\n"
+    for i in range(12)
+)
+
+
+def _bracketed_miss(executor, i):
+    quote = f"def f{i}(a, b):\n    total = a+b+{i}\n    if total > {i}:\n        return total\n    return None"
+    return call(executor, "modify_file", path="svc.py", old_text=quote,
+                new_text=quote.replace("None", "0"))
+
+
+@pytest.fixture
+def service(tmp_path):
+    (tmp_path / "svc.py").write_text(SERVICE, encoding="utf-8")
+    ex = ToolExecutor(workspace=str(tmp_path))
+    call(ex, "read_file", path="svc.py")
+    return ex
+
+
+def test_a_first_miss_names_the_located_range_once(service):
+    first = _bracketed_miss(service, 3)
+
+    assert first["located_range"]["read_id"]
+    # The orchestrator reads only next_tool; the range carries the rest.
+    assert first["edit_recovery"] == {"next_tool": "replace_file_lines"}
+    assert "advice" not in first
+
+
+def test_a_second_refusal_carries_only_the_rewrite_step(service):
+    _bracketed_miss(service, 3)
+    second = _bracketed_miss(service, 4)
+
+    assert second["edit_recovery"]["next_tool"] == "write_file"
+    for competing in ("located_range", "advice", "did_you_mean"):
+        assert competing not in second, (competing, second[competing])
+    assert "copy old_text" not in second["error"]

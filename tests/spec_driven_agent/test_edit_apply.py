@@ -183,8 +183,11 @@ def test_modify_file_miss_carries_did_you_mean_and_escalates(tmp_path):
     assert "did_you_mean" in first and "return 42" in first["did_you_mean"]
     assert "advice" not in first
 
+    # The escalation is the ladder's one step, not a competing `advice`.
     second = _call(ex, "modify_file", args)
-    assert "advice" in second and "read_file" in second["advice"]
+    assert "advice" not in second and "did_you_mean" not in second
+    assert second["edit_recovery"]["next_tool"] == "write_file"
+    assert "read_file" in second["edit_recovery"]["instruction"]
 
 
 def test_modify_file_needs_a_success_receipt_not_incidental_multiline_text(tmp_path):

@@ -94,10 +94,8 @@ def test_the_first_miss_returns_a_pre_filled_range(executor):
     assert located["lines"].endswith('registerPayment method on a Bill instance."""')
     # One miss, not two: this is what removes the wasted turns.
     assert executor.consecutive_modify_misses("bill_methods.py") == 1
-    recovery = result["edit_recovery"]
-    assert recovery["next_tool"] == "replace_file_lines"
-    assert (recovery["start_line"], recovery["end_line"]) == (5, 10)
-    assert recovery["read_id"] == located["read_id"]
+    # edit_recovery names the step; located_range alone carries its arguments.
+    assert result["edit_recovery"] == {"next_tool": "replace_file_lines"}
     # Two competing windows would just reintroduce the guess.
     assert "did_you_mean" not in result
 

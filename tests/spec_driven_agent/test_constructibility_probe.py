@@ -541,3 +541,32 @@ def test_an_abstract_entity_is_not_probed_for_construction(tmp_path):
     assert informed["backends"][0].get("skipped_abstract") == ["Person"]
     # The concrete subclass is still probed.
     assert "Patron" in (informed["backends"][0].get("entities") or {})
+
+
+# --------------------------------------------------- non-entity create bodies
+
+def test_a_create_named_body_that_is_no_orm_entity_is_not_probed(tmp_path):
+    """A ``*Create`` request model with no ORM table behind it (a newsletter
+    signup, a login form) is not an entity create. The probe used to list it,
+    never attempt it, and report ``create unverified: ... unresolved related
+    IDs: []`` - promoted to a ``runtime unverified:`` blocker that only a
+    test_api create+GET reading back a record with an id can retire, which no
+    such endpoint can satisfy."""
+    workspace = _scaffold(tmp_path)
+    main = tmp_path / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8") + (
+        "\n\nfrom pydantic import BaseModel as _SignupBase\n\n"
+        "class NewsletterSignupCreate(_SignupBase):\n    email: str\n\n"
+        "@app.post('/newsletter/signup/')\n"
+        "def newsletter_signup(payload: NewsletterSignupCreate):\n"
+        "    return {'ok': True}\n"
+    ), encoding="utf-8")
+
+    report = collect_constructibility_report(workspace)
+
+    assert report["issues"] == [], report["issues"]
+    backend = report["backends"][0]
+    assert "NewsletterSignup" not in backend["entities"]
+    assert backend.get("skipped_non_entity") == ["NewsletterSignup"]
+    # The real entities are still probed.
+    assert {"Room", "Booking"} <= set(backend["entities"])

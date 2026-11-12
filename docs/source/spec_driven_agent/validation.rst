@@ -157,6 +157,11 @@ a passing current-revision ``test_api`` scenario that creates through the exact
 endpoint and reads back the identifiable record. Health responses, an isolated
 200, stale results, and evidence from a different route/backend do not qualify.
 Observed server crashes remain failures even if another scenario passes.
+The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
+where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
+``*Create`` body with no table behind it (a signup or login form) persists no
+record to read back, so it is listed in the probe report as
+``skipped_non_entity`` and produces no finding.
 
 .. _spec-driven-model-contract:
 

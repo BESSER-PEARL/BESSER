@@ -1300,6 +1300,7 @@ def _probe_cwd() -> dict:
     abstract = {name.strip() for name in
                 (os.environ.get(_ABSTRACT_ENV) or "").split(",") if name.strip()}
     skipped_abstract: list = []
+    skipped_non_entity: list = []
     for path, ops in spec.get("paths", {}).items():
         body = (ops.get("post") or {}).get("requestBody", {})
         ref = body.get("content", {}).get("application/json", {}).get("schema", {}).get("$ref", "")
@@ -1310,6 +1311,12 @@ def _probe_cwd() -> dict:
                 # Refusing to instantiate it is the correct behaviour; a
                 # concrete subclass carries the same rows.
                 skipped_abstract.append(entity)
+                continue
+            if entity not in orm:
+                # A ``*Create`` body with no table behind it (a signup, a
+                # login form) persists no record a test_api read-back could
+                # confirm, so reporting it unverified is a blocker no edit clears.
+                skipped_non_entity.append(entity)
                 continue
             creates[entity] = (path, schema_name)
 
@@ -1369,8 +1376,6 @@ def _probe_cwd() -> dict:
             while pending and progress:
                 progress = False
                 for entity, (path, schema_name) in list(pending.items()):
-                    if entity not in orm:
-                        continue  # cannot tell attributes from foreign keys: unprovable
                     schema = schemas[schema_name]
                     _, unresolved = _build_payload(
                         schema, schemas, orm[entity], ids, subclasses, ("base",))
@@ -1450,7 +1455,8 @@ def _probe_cwd() -> dict:
             "action_calls": result["action_calls"],
             # Named so a reader can tell "not probed because the model says
             # it is abstract" from "probed and passed".
-            "skipped_abstract": sorted(set(skipped_abstract))}
+            "skipped_abstract": sorted(set(skipped_abstract)),
+            "skipped_non_entity": sorted(set(skipped_non_entity))}
 
 
 if __name__ == "__main__":

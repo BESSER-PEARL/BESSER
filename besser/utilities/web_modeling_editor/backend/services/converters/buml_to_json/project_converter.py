@@ -6,11 +6,14 @@ Supports both single-diagram and multi-diagram per type formats.
 
 import ast
 import logging
-import uuid
 import re
-from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import (
+    fixed_minted_values,
+    new_id,
+    now_iso,
+)
 from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.buml_code_builder.project_builder import is_user_reference_domain_model
 
@@ -305,8 +308,8 @@ def _convert_section(
     Returns:
         Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
     """
-    diagram_id = str(uuid.uuid4())
-    last_update = datetime.now(timezone.utc).isoformat()
+    diagram_id = new_id()
+    last_update = now_iso()
 
     try:
         if model_name == "domain_model":
@@ -460,10 +463,10 @@ def _fill_diagram_defaults(
     filled: Dict[str, List[Dict[str, Any]]] = {}
     for diagram_type, title in DIAGRAM_DEFAULT_TITLES.items():
         filled[diagram_type] = diagram_jsons.get(diagram_type) or [{
-            "id": str(uuid.uuid4()),
+            "id": new_id(),
             "title": title,
             "model": empty_model(diagram_type),
-            "lastUpdate": datetime.now(timezone.utc).isoformat(),
+            "lastUpdate": now_iso(),
         }]
     # Keep any bucket of a type not listed above (canonical types first).
     for diagram_type, entries in diagram_jsons.items():
@@ -530,10 +533,10 @@ def _build_project_from_single_diagram(
         ) from e
 
     filled_entry = {
-        "id": str(uuid.uuid4()),
+        "id": new_id(),
         "title": title,
         "model": model,
-        "lastUpdate": datetime.now(timezone.utc).isoformat(),
+        "lastUpdate": now_iso(),
     }
 
     diagram_jsons, current_diagram_indices = _fill_diagram_defaults(
@@ -542,13 +545,13 @@ def _build_project_from_single_diagram(
     current_diagram_type = "BPMN" if diagram_type == "BPMNDiagram" else diagram_type
 
     return {
-        "id": str(uuid.uuid4()),
+        "id": new_id(),
         "type": "Project",
         "schemaVersion": 3,
         "name": "Imported Project",
         "description": "Imported from single-diagram BUML file",
         "owner": "Unknown",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "createdAt": now_iso(),
         "currentDiagramType": current_diagram_type,
         "currentDiagramIndices": current_diagram_indices,
         "diagrams": diagram_jsons,
@@ -560,7 +563,13 @@ def _build_project_from_single_diagram(
     }
 
 
-def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+def project_to_json(
+    content: str,
+    warnings: Optional[List[str]] = None,
+    *,
+    id_seed: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Convert a BUML project content to JSON format matching the frontend structure.
 
@@ -570,14 +579,32 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
     wrapper — they are wrapped into a one-diagram project so that the
     Project Import flow works with any well-formed BUML file.
 
+    The ids (project, diagrams, elements) and timestamps (``createdAt``,
+    ``lastUpdate``) the conversion makes up are fresh by default, as the editor
+    wants on import. With ``id_seed`` every such id is derived from it, and with
+    ``timestamp`` every such time is that value (ISO 8601), so the same content
+    and the same arguments give the same JSON; pass both for that.
+
     Args:
         content: Project Python code as string
         warnings: Receives a message for every repair made to load a model
+        id_seed: Derive the minted ids from this string instead of minting fresh uuids
+        timestamp: Record this time instead of the current one
 
     Returns:
         Dictionary representing the complete project with all diagrams.
         Each diagram type maps to a list of diagram entries.
     """
+    if id_seed is None and timestamp is None:
+        return _project_to_json(content, warnings)
+    if id_seed is None or timestamp is None:
+        raise ValueError("project_to_json fixes the ids and the timestamps together: pass both or neither")
+    with fixed_minted_values(id_seed, timestamp):
+        return _project_to_json(content, warnings)
+
+
+def _project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+    """``project_to_json`` with the ids and timestamps ``minted_values`` gives."""
     # Detect models included in the project
     model_match = re.search(r"models\s*=\s*\[(.*?)\]", content, re.DOTALL)
     if not model_match:
@@ -734,8 +761,8 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
         result["owner"] = project_owner
         return result
 
-    project_id = str(uuid.uuid4())
-    created_at = datetime.now(timezone.utc).isoformat()
+    project_id = new_id()
+    created_at = now_iso()
 
     # Ensure every diagram type has at least one entry (empty default)
     diagram_jsons, current_diagram_indices = _fill_diagram_defaults(diagram_jsons)

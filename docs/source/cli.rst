@@ -245,7 +245,8 @@ a generator that runs on it when one reads its kind.
 
 A ``.py`` file is a B-UML script, the format to write and edit. A ``.json``
 file is the same starter as an editor project (``besser new model.json --kind
-bpmn``), which needs the :ref:`backend packages <cli-model-files>`; the editor
+bpmn``), written as ``besser convert`` writes one, so the same kind and file
+name always give the same bytes. It needs the :ref:`backend packages <cli-model-files>`; the editor
 has no diagram for the ``deployment`` and ``feature`` kinds, which are ``.py``
 only. An existing file is kept unless you pass ``--force``.
 
@@ -1314,7 +1315,14 @@ extensions:
 
 ``library.json`` has the format of an editor project export, so the editor
 imports it as a project. The ``.py`` output is the B-UML code the editor's own
-export writes. An existing output file is overwritten. With ``-`` as the
+export writes. Both outputs depend on the model alone: converting the same model
+again writes the same bytes, so a model under version control shows no change
+until the model does. The ids of a ``.json`` output (project, diagrams,
+elements) are derived from a hash of the model, and its times (``createdAt``,
+``lastUpdate``, ``exportedAt``) are fixed at ``1970-01-01T00:00:00+00:00``;
+the editor's own import still gives each import fresh ids and the current time.
+The project takes the input file's name, so ``besser new`` of the same kind
+under the same file name also writes the same file. An existing output file is overwritten. With ``-`` as the
 input, the direction follows the output's extension and what standard input
 holds. ``-o`` names a file: a directory there, or a file at one of its parents,
 is exit status 2 (``out/library.json cannot be created: out is a file``).
@@ -1380,9 +1388,8 @@ status 1; nothing is written then.
 
 ``--dry-run`` converts into a scratch file, so it fails and warns as the real
 conversion would, and says whether the output would be created, overwritten,
-or (for a ``.py`` output) left as it is because it holds the same; a ``.json``
-output gets new ids on every conversion, so it is always ``changed``. Nothing
-is written (``would_write`` in the JSON output):
+or left as it is because it holds the same. Nothing is written (``would_write``
+in the JSON output):
 
 .. code-block:: console
 

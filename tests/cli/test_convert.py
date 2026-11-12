@@ -86,6 +86,17 @@ def test_a_project_of_several_kinds_keeps_its_model_names_both_ways(besser, tmp_
     assert titles("again.json") == titles("project.json") == ["BookLoan", "Library", "LibraryObjects"]
 
 
+def test_the_same_model_converts_to_the_same_json(besser, model, tmp_path):
+    assert besser("convert", model, "-o", "project.json").returncode == 0
+    first = (tmp_path / "project.json").read_bytes()
+
+    assert besser("convert", model, "-o", "project.json").returncode == 0
+    assert (tmp_path / "project.json").read_bytes() == first
+    dry = besser("convert", model, "-o", "project.json", "--dry-run", "--json")
+    assert dry.json["would_write"] == {"project.json": "unchanged"}
+    assert json.loads(first)["exportedAt"] == json.loads(first)["project"]["createdAt"] == "1970-01-01T00:00:00+00:00"
+
+
 def test_the_converted_project_is_one_the_cli_reads_back(besser, model):
     besser("convert", model, "-o", "project.json")
 

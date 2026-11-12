@@ -6,8 +6,8 @@ Provides two entry points:
 - ``state_machine_to_json(content)`` - legacy: AST-parses a Python code string (for file import)
 """
 
-import uuid
 import ast
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, CustomCodeAction,
 )
@@ -42,7 +42,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
     code_blocks_y = 80
 
     # Create initial node
-    initial_node_id = str(uuid.uuid4())
+    initial_node_id = new_id()
     elements[initial_node_id] = {
         "id": initial_node_id,
         "name": "",
@@ -86,7 +86,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             source_code = body.code
 
         if source_code:
-            code_block_id = str(uuid.uuid4())
+            code_block_id = new_id()
             cleaned_source = "\n".join(
                 line.rstrip() for line in source_code.splitlines() if line.strip()
             )
@@ -113,7 +113,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             continue
         source_code = getattr(event, '_source_code', "")
         if source_code:
-            code_block_id = str(uuid.uuid4())
+            code_block_id = new_id()
             cleaned_source = "\n".join(
                 line.rstrip() for line in source_code.splitlines() if line.strip()
             )
@@ -143,7 +143,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             continue
         source_code = getattr(condition, 'code', "") or ""
         if source_code and source_code.lstrip().startswith("def "):
-            code_block_id = str(uuid.uuid4())
+            code_block_id = new_id()
             cleaned_source = "\n".join(
                 line.rstrip() for line in source_code.splitlines() if line.strip()
             )
@@ -166,7 +166,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
 
     # Create state elements
     for state in sm.states:
-        state_id = str(uuid.uuid4())
+        state_id = new_id()
         state_id_map[state] = state_id
         state_var_map[state] = _sanitize_identifier(state.name)
 
@@ -195,7 +195,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
     for state in sm.states:
         if state.initial:
             state_id = state_id_map[state]
-            initial_rel_id = str(uuid.uuid4())
+            initial_rel_id = new_id()
             relationships[initial_rel_id] = {
                 "id": initial_rel_id,
                 "name": "",
@@ -247,7 +247,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
         state_id = state_id_map[state]
 
         if state.body and state.body.name in created_code_blocks:
-            body_id = str(uuid.uuid4())
+            body_id = new_id()
             elements[body_id] = {
                 "id": body_id,
                 "name": state.body.name,
@@ -263,7 +263,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             elements[state_id]["bodies"].append(body_id)
 
         if state.fallback_body and state.fallback_body.name in created_code_blocks:
-            fallback_id = str(uuid.uuid4())
+            fallback_id = new_id()
             elements[fallback_id] = {
                 "id": fallback_id,
                 "name": state.fallback_body.name,
@@ -291,7 +291,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             if not dest_id:
                 continue
 
-            rel_id = str(uuid.uuid4())
+            rel_id = new_id()
             source_element = elements[source_id]
             target_element = elements[dest_id]
 
@@ -360,7 +360,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
 
     # Create comment elements from metadata
     if sm.metadata and sm.metadata.description:
-        comment_id = str(uuid.uuid4())
+        comment_id = new_id()
         elements[comment_id] = {
             "id": comment_id,
             "name": sm.metadata.description,
@@ -378,7 +378,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
     # State comments (linked to states)
     for state in sm.states:
         if state.metadata and state.metadata.description:
-            comment_id = str(uuid.uuid4())
+            comment_id = new_id()
             state_id = state_id_map[state]
 
             elements[comment_id] = {
@@ -394,7 +394,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
                 },
             }
 
-            link_id = str(uuid.uuid4())
+            link_id = new_id()
             source_element = elements[comment_id]
             target_element = elements[state_id]
 
@@ -501,7 +501,7 @@ def state_machine_to_json(content: str):
                                         sm_comment = ast.literal_eval(meta_kw.value)
 
     # Create initial node
-    initial_node_id = str(uuid.uuid4())
+    initial_node_id = new_id()
     elements[initial_node_id] = {
         "id": initial_node_id,
         "name": "",
@@ -518,7 +518,7 @@ def state_machine_to_json(content: str):
                     isinstance(node.value.func, ast.Attribute)
                     and node.value.func.attr == "new_state"
                 ):
-                    state_id = str(uuid.uuid4())
+                    state_id = new_id()
                     state_name = None
                     is_initial = False
                     is_final = False
@@ -566,7 +566,7 @@ def state_machine_to_json(content: str):
     # After creating all states, add initial node transition
     for state_info in states.values():
         if state_info["is_initial"]:
-            initial_rel_id = str(uuid.uuid4())
+            initial_rel_id = new_id()
             relationships[initial_rel_id] = {
                 "id": initial_rel_id,
                 "name": "",
@@ -616,7 +616,7 @@ def state_machine_to_json(content: str):
     # Create final nodes and transitions for final states
     for state_info in states.values():
         if state_info["is_final"]:
-            final_node_id = str(uuid.uuid4())
+            final_node_id = new_id()
             state_id = state_info["id"]
             state_bounds = elements[state_id]["bounds"]
 
@@ -647,7 +647,7 @@ def state_machine_to_json(content: str):
                 "y": final_node_y + 22.5,
             }
 
-            final_rel_id = str(uuid.uuid4())
+            final_rel_id = new_id()
             relationships[final_rel_id] = {
                 "id": final_rel_id,
                 "name": "",
@@ -691,7 +691,7 @@ def state_machine_to_json(content: str):
         if isinstance(node, ast.FunctionDef):
             function_name = node.name
             if function_name not in created_code_blocks:
-                code_block_id = str(uuid.uuid4())
+                code_block_id = new_id()
                 function_source = ast.get_source_segment(content, node)
 
                 # Clean up the source code
@@ -732,7 +732,7 @@ def state_machine_to_json(content: str):
                         body_func = node.value.keywords[0].value.id
                         if state_var in states and body_func in created_code_blocks:
                             state = states[state_var]
-                            body_id = str(uuid.uuid4())
+                            body_id = new_id()
                             elements[body_id] = {
                                 "id": body_id,
                                 "name": body_func,
@@ -755,7 +755,7 @@ def state_machine_to_json(content: str):
                         and node.value.func.value.func.attr == "when_event"
                     ):
                         source_state = node.value.func.value.func.value.id
-                        rel_id = str(uuid.uuid4())
+                        rel_id = new_id()
 
                         event_name = None
                         target_state = node.value.args[0].id if node.value.args and isinstance(node.value.args[0], ast.Name) else None
@@ -827,7 +827,7 @@ def state_machine_to_json(content: str):
                         fallback_func = node.value.args[0].id
                         if state_var in states and fallback_func in functions:
                             state = states[state_var]
-                            fallback_id = str(uuid.uuid4())
+                            fallback_id = new_id()
                             elements[fallback_id] = {
                                 "id": fallback_id,
                                 "name": fallback_func,
@@ -865,7 +865,7 @@ def state_machine_to_json(content: str):
     # Create comment elements from metadata
     # 1. State machine comment (unlinked)
     if sm_comment:
-        comment_id = str(uuid.uuid4())
+        comment_id = new_id()
         elements[comment_id] = {
             "id": comment_id,
             "name": sm_comment,
@@ -883,7 +883,7 @@ def state_machine_to_json(content: str):
     # 2. State comments (linked to states)
     for state_var, comment_text in state_comments.items():
         if state_var in states:
-            comment_id = str(uuid.uuid4())
+            comment_id = new_id()
             state_id = states[state_var]["id"]
 
             elements[comment_id] = {
@@ -900,7 +900,7 @@ def state_machine_to_json(content: str):
             }
 
             # Create Link relationship
-            link_id = str(uuid.uuid4())
+            link_id = new_id()
             source_element = elements[comment_id]
             target_element = elements[state_id]
 

@@ -133,14 +133,18 @@ def test_the_generator_a_starter_suggests_runs_on_it(besser, kind):
 
 @pytest.mark.skipif(importlib.util.find_spec("fastapi") is None, reason="editor JSON needs the backend's packages")
 @pytest.mark.parametrize("kind", [kind for kind in STARTERS if kind == "project" or editor_diagram_type(kind)])
-def test_every_starter_is_also_an_editor_project(besser, kind):
+def test_every_starter_is_also_an_editor_project(besser, kind, tmp_path):
     assert besser("new", "model.json", "--kind", kind).returncode == 0
     validated = besser("validate", "model.json", "--strict", "--json")
     info = besser("info", "model.json", "--json").json
+    first = (tmp_path / "model.json").read_bytes()
 
     assert validated.returncode == 0, validated.stdout
     if kind != "project":
         assert kind in [model["kind"] for model in info["models"]]
+    # The same starter writes the same file: ids derived from the model, a fixed time.
+    assert besser("new", "model.json", "--kind", kind, "--force").returncode == 0
+    assert (tmp_path / "model.json").read_bytes() == first
 
 
 @pytest.mark.parametrize("kind", ["deployment", "feature"])

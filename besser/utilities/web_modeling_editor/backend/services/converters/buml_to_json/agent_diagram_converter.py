@@ -6,9 +6,9 @@ Handles agent diagram processing and function analysis.
 import ast
 import logging
 import textwrap
-import uuid
 from typing import Any, Dict, List
 
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 from besser.utilities.buml_code_builder.agent_model_builder import GUI_BUILDER_FUNCTION_PREFIX
 from .gui_diagram_converter import gui_buml_to_json
 from ...utils.layout_calculator import (
@@ -195,7 +195,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             action_type = action.get("type")
             if action_type == "text":
                 message = action.get("message") or ""
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id,
                     "name": message,
@@ -212,7 +212,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "llm":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id,
                     "name": "LLM Reply",
@@ -237,7 +237,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "llm_chat":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id,
                     "name": "LLM Chat",
@@ -266,7 +266,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     if rag_db_name
                     else "RAG reply"
                 )
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id,
                     "name": display_name,
@@ -298,7 +298,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 database_label = db_custom_name if db_selection_type == "custom" and db_custom_name else "Default database"
                 mode_label = "SQL" if db_query_mode == "sql" else "LLM query"
                 operation_label = "Any" if db_operation == "any" else db_operation.upper()
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id,
                     "name": f"DB action using {database_label} ({mode_label}, {operation_label})",
@@ -327,7 +327,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             elif action_type == "web_crawl_llm":
                 initial_url = action.get("initial_url") or ""
                 display_name = f"Web Crawl + LLM: {initial_url}" if initial_url else "Web Crawl + LLM Reply"
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id,
                     "name": display_name,
@@ -356,7 +356,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_markdown":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply Markdown", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -366,7 +366,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_html":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply HTML", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -376,7 +376,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_speech":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply Speech", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -387,7 +387,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_options":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 opts = action.get("ws_options") or action.get("options") or ""
                 if isinstance(opts, list):
                     opts = "\n".join(opts)
@@ -399,7 +399,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_location":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply Location", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -409,7 +409,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_file":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply File", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -417,7 +417,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_image":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply Image", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -425,7 +425,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_dataframe":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply Dataframe", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -433,7 +433,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_plotly":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": "Reply Plotly", "type": element_type, "owner": state_id,
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
@@ -441,7 +441,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "gui_reply":
-                body_id = str(uuid.uuid4())
+                body_id = new_id()
                 elements[body_id] = {
                     "id": body_id, "name": f"GUI Reply: {action['guiId']}", "type": element_type,
                     "owner": state_id,
@@ -491,7 +491,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         isinstance(node.value.func, ast.Attribute)
                         and node.value.func.attr == "new_intent"
                     ):
-                        intent_id = str(uuid.uuid4())
+                        intent_id = new_id()
                         intent_name = None
                         sentences = []
                         intent_description = ""
@@ -508,7 +508,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 if isinstance(elt, ast.Constant) and isinstance(
                                     elt.value, str
                                 ):
-                                    sentence_id = str(uuid.uuid4())
+                                    sentence_id = new_id()
                                     elements[sentence_id] = {
                                         "id": sentence_id,
                                         "name": elt.value,
@@ -615,7 +615,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         rag_embedding_model = rag_embedding_params.get("model", "")
 
                         if isinstance(rag_name, str) and rag_name.strip():
-                            rag_id = str(uuid.uuid4())
+                            rag_id = new_id()
                             elements[rag_id] = {
                                 "id": rag_id,
                                 "name": rag_name,
@@ -680,7 +680,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             if not isinstance(primitive_name, str) or not primitive_name.strip():
                 continue
 
-            primitive_id = str(uuid.uuid4())
+            primitive_id = new_id()
             base_bounds = {
                 "x": states_x,
                 "y": states_y,
@@ -1076,7 +1076,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         actions[body_var] = function_name  # Store the resolved function name
 
         # Create initial node
-        initial_node_id = str(uuid.uuid4())
+        initial_node_id = new_id()
         elements[initial_node_id] = {
             "id": initial_node_id,
             "name": "",
@@ -1195,7 +1195,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         # Emit AgentLLM elements (one per registered LLM) so the WME
         # round-trips the LLM list defined in the agent customization tab.
         for llm_name, llm_def in llm_definitions.items():
-            llm_id = str(uuid.uuid4())
+            llm_id = new_id()
             elements[llm_id] = {
                 "id": llm_id,
                 "name": llm_name,
@@ -1227,7 +1227,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     and isinstance(node.value.func, ast.Attribute)
                     and node.value.func.attr == "new_reasoning_state"
                 ):
-                    state_id = str(uuid.uuid4())
+                    state_id = new_id()
                     state_name = var_name
                     is_initial = False
                     rs_kwargs: Dict[str, Any] = {}
@@ -1309,7 +1309,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     continue
 
                 if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "new_state":
-                    state_id = str(uuid.uuid4())
+                    state_id = new_id()
                     state_name = var_name  # Default to variable name
                     is_initial = False
 
@@ -1421,7 +1421,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             initial_state = states[first_state_key]
 
         if initial_state:
-            initial_rel_id = str(uuid.uuid4())
+            initial_rel_id = new_id()
             relationships[initial_rel_id] = {
                 "id": initial_rel_id,
                 "name": "",
@@ -1478,7 +1478,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 ):
                     if node.value.func.attr == "go_to":
                         source_state = node.value.func.value.id if isinstance(node.value.func.value, ast.Name) else None
-                        rel_id = str(uuid.uuid4())
+                        rel_id = new_id()
                         condition_name = "auto"
                         transition_payload = ""
                         event_name = None
@@ -1716,7 +1716,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                                 if result["replyType"] == "text":
                                     for reply in result["replies"]:
-                                        body_id = str(uuid.uuid4())
+                                        body_id = new_id()
                                         elements[body_id] = {
                                             "id": body_id,
                                             "name": reply,
@@ -1732,7 +1732,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         }
                                         elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "llm":
-                                    body_id = str(uuid.uuid4())
+                                    body_id = new_id()
                                     elements[body_id] = {
                                         "id": body_id,
                                         "name": "LLM Reply",
@@ -1750,7 +1750,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     }
                                     elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "code":
-                                    body_id = str(uuid.uuid4())
+                                    body_id = new_id()
                                     elements[body_id] = {
                                         "id": body_id,
                                         "name": result["code"],
@@ -1767,7 +1767,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     elements[state["id"]]["actions"].append(body_id)
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
-                                    body_id = str(uuid.uuid4())
+                                    body_id = new_id()
                                     elements[body_id] = {
                                         "id": body_id,
                                         "name": "LLM Reply",
@@ -1788,7 +1788,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     _add_action_elements_to_state(state["id"], actions[function_name], fallback=False)
                                 else:
                                     for message in actions[function_name]:
-                                        body_id = str(uuid.uuid4())
+                                        body_id = new_id()
                                         elements[body_id] = {
                                             "id": body_id,
                                             "name": message,
@@ -1807,7 +1807,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                             else:
                                 # Fallback if function not found
-                                body_id = str(uuid.uuid4())
+                                body_id = new_id()
                                 elements[body_id] = {
                                     "id": body_id,
                                     "name": function_name,
@@ -1860,7 +1860,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
                                 if result["replyType"] == "text":
                                     for reply in result["replies"]:
-                                        body_id = str(uuid.uuid4())
+                                        body_id = new_id()
                                         elements[body_id] = {
                                             "id": body_id,
                                             "name": reply,
@@ -1876,7 +1876,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         }
                                         elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "llm":
-                                    body_id = str(uuid.uuid4())
+                                    body_id = new_id()
                                     elements[body_id] = {
                                         "id": body_id,
                                         "name": "LLM Reply",
@@ -1894,7 +1894,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     }
                                     elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "code":
-                                    body_id = str(uuid.uuid4())
+                                    body_id = new_id()
                                     elements[body_id] = {
                                         "id": body_id,
                                         "name": result["code"],
@@ -1912,7 +1912,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
-                                    body_id = str(uuid.uuid4())
+                                    body_id = new_id()
                                     elements[body_id] = {
                                         "id": body_id,
                                         "name": "LLM Reply",
@@ -1932,7 +1932,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 elif isinstance(actions[function_name], list):
                                     _add_action_elements_to_state(state["id"], actions[function_name], fallback=True)
                                 else:
-                                    body_id = str(uuid.uuid4())
+                                    body_id = new_id()
                                     elements[body_id] = {
                                         "id": body_id,
                                         "name": actions[function_name],
@@ -1950,7 +1950,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                             else:
                                 # Fallback if function not found
-                                body_id = str(uuid.uuid4())
+                                body_id = new_id()
                                 elements[body_id] = {
                                     "id": body_id,
                                     "name": function_name,
@@ -1984,7 +1984,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             initial_state = states[first_state_key]
 
         if initial_state:
-            initial_rel_id = str(uuid.uuid4())
+            initial_rel_id = new_id()
             relationships[initial_rel_id] = {
                 "id": initial_rel_id,
                 "name": "",
@@ -2037,7 +2037,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         # Create comment elements from metadata
         # 1. Agent comment (unlinked)
         if agent_comment:
-            comment_id = str(uuid.uuid4())
+            comment_id = new_id()
             elements[comment_id] = {
                 "id": comment_id,
                 "name": agent_comment,
@@ -2055,7 +2055,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         # 2. State comments (linked to states)
         for state_var, comment_text in state_comments.items():
             if state_var in states:
-                comment_id = str(uuid.uuid4())
+                comment_id = new_id()
                 state_id = states[state_var]["id"]
 
                 elements[comment_id] = {
@@ -2072,7 +2072,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 }
 
                 # Create Link relationship
-                link_id = str(uuid.uuid4())
+                link_id = new_id()
                 source_element = elements[comment_id]
                 target_element = elements[state_id]
 
@@ -2126,7 +2126,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
         # AgentGUI components: the GUI design plus the settings carried by its replies.
         for gui_id, gui_json in gui_jsons.items():
-            gui_element_id = str(uuid.uuid4())
+            gui_element_id = new_id()
             settings = gui_settings.get(gui_id, {"persist": True, "width": "", "is_form": False})
             elements[gui_element_id] = {
                 "id": gui_element_id,

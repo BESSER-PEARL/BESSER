@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import dataclasses
+import hashlib
 import importlib.util
 import json
 import logging
@@ -16,7 +17,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
@@ -1374,6 +1374,11 @@ def _write_buml(loaded: LoadedModels, output_path: Path) -> list[str]:
     return []
 
 
+# The creation, save and export time of every editor JSON file convert and new write: a fixed time
+# (the Unix epoch), so that a file's bytes depend on the model alone.
+_EDITOR_JSON_TIMESTAMP = "1970-01-01T00:00:00+00:00"
+
+
 def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
     """Write the models as an editor project export; returns the warnings.
 
@@ -1402,11 +1407,14 @@ def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
         code_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=loaded.as_project(), file_path=code_path)
+        code = Path(code_path).read_text(encoding="utf-8")
         repairs: list[str] = []
-        project = project_to_json(Path(code_path).read_text(encoding="utf-8"), repairs)
+        # Ids derived from the model and a fixed time, so the same model writes the same file.
+        project = project_to_json(code, repairs, id_seed=hashlib.sha256(code.encode("utf-8")).hexdigest(),
+                                  timestamp=_EDITOR_JSON_TIMESTAMP)
     warnings.extend(repairs)
 
-    export = {"project": project, "exportedAt": datetime.now(timezone.utc).isoformat(), "version": API_VERSION}
+    export = {"project": project, "exportedAt": _EDITOR_JSON_TIMESTAMP, "version": API_VERSION}
     output_path.write_text(json.dumps(export, indent=2) + "\n", encoding="utf-8")
     return warnings
 

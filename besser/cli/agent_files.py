@@ -31,29 +31,31 @@ GUIDE = """\
 Each output `dir` of `besser.toml` is generated from the B-UML model by `besser`.
 
 Read:
-- `besser info model.py`: the whole model in a few hundred tokens (`name:type`, `?` optional, `=default`,
+- `besser info model.py`: the whole model (`name:type`, `?` optional, `=default`,
   associations as `role:Class[multiplicity]`, constraints); `--class X`: one class. Not `model.py`.
 - Never open, grep or edit generated code or `.besser_generated.json` (`.ignore` hides them), BESSER's docs,
   sources or `--help`.
 
-Change the model with `besser model` (one line back; the file is written only if the result is valid).
+Change the model with `besser model` (one line back; it writes only a valid model).
 Types: `str int float bool date datetime time`, or an enumeration's name.
-- `besser model add-class Invoice number:str total:float paid:bool=false [--parent Document]`
+- `besser model add-class Invoice number:str total:float paid:bool=false [--parent Document]`,
+  `add-parent Invoice Document`
 - `besser model add-attribute Contact source:str? score:int=0 stage:Stage=LEAD`
 - `besser model add-association invoice_contact invoices:Invoice[*] contact:Contact[1]`
-- `besser model set-enum Stage LEAD WON LOST` (creates or replaces the literals)
-- `besser model rename Customer Account`, `rename Contact.mail email` (an association end too:
-  `rename Book.authors writers`), `rename Stage.WON CLOSED`
+- `besser model set-enum Stage LEAD WON LOST` (sets all its literals)
+- `besser model rename Customer Account`, `rename Contact.mail email`, `rename Stage.WON CLOSED`, an
+  association end as `Book.authors` or `book_authors.authors`
 - `besser model remove Contact.phone` (a class goes with its associations)
 - `besser model add-method Deal "discount(rate:float) -> float"`, `add-constraint Deal "self.amount >= 0"`
-- Several changes in one call: `besser model batch - <<'EOF'` with one change per line.
+- Several changes in one call: `besser model batch - <<'EOF'` with one change per line. To change a type,
+  `?`, default or multiplicity: `remove` it, then add it again, in one batch.
 Never patch `model.py` with a script; edit it by hand only where a command says so.
 
-Then one command: `besser apply` (validates, builds every output keeping your edits, runs the `test` command
-of `besser.toml`). One line on success; on failure only the errors or the failing tests. Never `--force`
-or `overwrite = true`: they discard edits.
+Then one command, `besser apply`: it validates, builds every output keeping your edits, runs `test` of
+`besser.toml`; one line on success, else only the errors or failing tests. Never `--force` or
+`overwrite = true`: they discard edits.
 
-Hand-written code never goes in a generated file, and a build never overwrites it:
+Hand-written code never goes in a generated file; a build never overwrites it:
 - Backend routes, middleware and startup hooks: `extensions.py` beside the generated `main_api.py`, with
   `setup(app)` (added after the generated routes) or `before_routers(app)` (routes that win over them). It
   imports `from database import get_db`, `from sql_alchemy import X` (`db.get(X, id)`; an association end
@@ -65,22 +67,22 @@ Hand-written code never goes in a generated file, and a build never overwrites i
   ```python
   import os, sys, tempfile, pytest
   os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
-  sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+  sys.path.insert(0, f"{os.path.dirname(__file__)}/../backend")
   from fastapi.testclient import TestClient
   from main_api import app
   client = pytest.fixture(lambda: TestClient(app))
   ```
 
 The `backend` API per class `X` (`x`: its name in lower case): `POST /x/`, `GET /x/`,
-`GET|PUT|DELETE /x/{x_id}/`, a `Method` as `POST /x/{x_id}/methods/<name>/`, and more (`besser info` lists
-them). Bodies take the attributes (a date `"2024-01-31"`, an enumeration a literal's name) and each end
-by name (`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (422 when missing, 400 when
-empty or an unknown id). An object is `{attributes, "id", "<end>_id" per to-one end}`; `GET /x/` answers a
-list of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end: `"<end>_ids"` for
+`GET|PUT|DELETE /x/{x_id}/`, a `Method` as `POST /x/{x_id}/methods/<name>/`, and more (`besser info`).
+Bodies take the attributes (a date `"2024-01-31"`, an enumeration a literal's name) and each end by name
+(`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (422 when missing, 400 when empty
+or an unknown id). An object is `{attributes, "id", "<end>_id" per to-one end}`; `GET /x/` answers a list
+of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end: `"<end>_ids"` for
 one-to-many, `"<other class>_ids"` (lower case) for many-to-many. `POST` and `PUT` answer the same if `X`
-has a to-many end, else the bare object: in tests read it as `body.get("x", body)`. OCL constraints are
-enforced (422) only when they compare one attribute with a number or use `matches('regex')`; write other
-rules in `extensions.py`. Run it from its folder: `python main_api.py` (`PORT`, `DATABASE_URL`).
+has a to-many end, else the bare object: read it as `body.get("x", body)`. OCL constraints are enforced
+(422) only if they compare an attribute with a number or use `matches('regex')`; write other rules in
+`extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
 """
 
 

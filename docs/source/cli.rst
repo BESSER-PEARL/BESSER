@@ -302,7 +302,7 @@ is left alone.
 ``besser guide``
 ----------------
 
-Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 4 KB (55
+Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 4 KB (57
 lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
 commands, the names ``extensions.py`` imports, a ``tests/conftest.py`` with a
 ``client`` fixture, and what the ``backend`` generator's API answers, so that

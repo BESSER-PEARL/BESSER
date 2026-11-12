@@ -223,6 +223,37 @@ def test_seed_and_push_copy_never_follow_a_link_swapped_in_after_the_check(tmp_p
     assert not (dst / "main.py").exists() or SECRET not in (dst / "main.py").read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="POSIX link races")
+def test_a_copy_never_sets_mode_or_times_through_a_link_swapped_in_after_the_write(tmp_path, monkeypatch):
+    from besser.utilities import workspace_fs
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("server file\n", encoding="utf-8")
+    victim.chmod(0o600)
+    victim_mtime = victim.stat().st_mtime_ns
+    src = tmp_path / "src.txt"
+    src.write_text("payload\n", encoding="utf-8")
+    src.chmod(0o777)
+    os.utime(src, ns=(0, 0))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    dst = workspace / "copy.txt"
+    real_copy = workspace_fs.shutil.copyfileobj
+
+    def copy_then_swap(source, target):
+        real_copy(source, target)
+        # The run's background process swaps the fresh copy for a link.
+        os.remove(dst)
+        _symlink(victim, dst)
+
+    monkeypatch.setattr(workspace_fs.shutil, "copyfileobj", copy_then_swap)
+    with contextlib.suppress(OSError):
+        workspace_fs.copy_plain_file(str(src), str(dst), dst_root=str(workspace))
+
+    assert victim.stat().st_mode & 0o777 == 0o600
+    assert victim.stat().st_mtime_ns == victim_mtime
+
+
 def test_a_linked_attribution_state_is_replaced_not_written_through(tmp_path):
     from besser.spec_driven_agent.state import agent_trace as at
 

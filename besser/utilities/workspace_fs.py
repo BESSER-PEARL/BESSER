@@ -292,8 +292,13 @@ def copy_plain_file(src, dst, *, root: "str | None" = None, dst_root: "str | Non
         info = os.fstat(source.fileno())
         with open_plain_write(dst, "wb", root=dst_root) as target:
             shutil.copyfileobj(source, target)
-    os.chmod(dst, stat.S_IMODE(info.st_mode))
-    os.utime(dst, ns=(info.st_atime_ns, info.st_mtime_ns))
+            target.flush()
+            # Through the open descriptor: by path, a link swapped in after the
+            # write would carry the mode and times to its target. By path only
+            # where the platform has no descriptor form (Windows).
+            fd = target.fileno()
+            os.chmod(fd if os.chmod in os.supports_fd else dst, stat.S_IMODE(info.st_mode))
+            os.utime(fd if os.utime in os.supports_fd else dst, ns=(info.st_atime_ns, info.st_mtime_ns))
 
 
 def copytree_plain(src: str, dst: str, ignore_patterns: Iterable[str] = (),

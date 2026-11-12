@@ -1,6 +1,9 @@
 """``besser new``: a starter model file, of every kind, that the other commands accept as it is."""
 
+import ast
 import importlib.util
+import shlex
+import sys
 
 import pytest
 
@@ -50,6 +53,17 @@ def test_force_overwrites_an_existing_file(besser, write, tmp_path):
 
     assert besser("new", "model.py", "--force").returncode == 0
     assert "DomainModel(" in (tmp_path / "model.py").read_text()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows file names hold no quote nor backslash")
+@pytest.mark.parametrize("name", ['say """hi""".py', "back\\slash.py", "my model.py"])
+def test_any_file_name_gives_a_starter_that_loads_and_a_command_to_copy(besser, name, tmp_path):
+    assert besser("new", name).returncode == 0
+    run = besser("validate", name, "--strict")
+
+    assert run.returncode == 0 and run.stderr == ""  # no SyntaxError, no SyntaxWarning on an escape
+    shown = ast.get_docstring(ast.parse((tmp_path / name).read_text()))
+    assert f"besser validate {shlex.quote(name)} " in shown
 
 
 def test_a_name_that_is_not_a_model_file_is_a_usage_error(besser, tmp_path):

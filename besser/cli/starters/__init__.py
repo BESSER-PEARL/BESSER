@@ -7,6 +7,7 @@ imported from here. ``MODEL_FILE`` in a starter stands for the name of the file 
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,4 +47,6 @@ _MODEL_FILE = "MODEL_FILE"
 def starter_source(kind: str, file_name: str) -> str:
     """The starter of ``kind`` as the text of a model file called ``file_name``."""
     source = Path(__file__).with_name(f"{kind}.py").read_text(encoding="utf-8")
-    return source.replace(_MODEL_FILE, file_name)
+    # The name goes in the docstring's command lines: quoted for the shell, escaped for the string.
+    shown = shlex.quote(file_name).replace("\\", "\\\\").replace('"', '\\"')
+    return source.replace(_MODEL_FILE, shown)

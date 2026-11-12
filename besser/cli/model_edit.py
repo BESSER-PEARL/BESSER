@@ -80,7 +80,15 @@ _ADDERS = {
 }
 
 _ATTRIBUTE = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*)(?P<optional>\?)?(?:\s*=\s*(?P<default>.*))?$")
+# What set-attribute changes: the attribute notation without its name, ``:type``, ``:type?``, ``=default``
+# (``=`` alone drops it), in any combination.
+_ATTRIBUTE_CHANGE = re.compile(
+    r"^(?:(?P<name>[A-Za-z_]\w*)\s*)?(?::\s*(?P<type>[A-Za-z_]\w*)(?P<optional>\?)?)?\s*(?:=(?P<default>.*))?$")
 _END = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*)\s*\[(?P<low>\d+|\*)(?:\.\.(?P<high>\d+|\*))?\]$")
+_MULTIPLICITY = re.compile(r"^\[?\s*(?P<low>\d+|\*)\s*(?:\.\.\s*(?P<high>\d+|\*)\s*)?\]?$")
+# The types the generated backend cannot give a default: it writes the default into its code as text, and
+# the column of the type takes only a date or time object (SQLAlchemy refuses text for it on insert).
+_NO_DEFAULT_TYPES = ("date", "datetime", "time", "timedelta")
 # A line as ``ast`` counts lines: "\r\n", "\r" or "\n" ends it; a form feed or U+2028 does not (they do for
 # str.splitlines).
 _LINE = re.compile(r"[^\r\n]*(?:\r\n?|\n)|[^\r\n]+\Z")
@@ -410,7 +418,18 @@ def parse_end(spec: str) -> tuple[str, str, int, int]:
     if not match:
         raise EditError(f"'{spec}' is not an association end: write role:Class[multiplicity], "
                         "e.g. books:Book[*] or owner:User[0..1]")
-    low_text, high_text = match["low"], match["high"]
+    return (match["name"], match["type"], *_bounds(spec, match["low"], match["high"]))
+
+
+def parse_multiplicity(spec: str) -> tuple[int, int]:
+    """``[1]``, ``[0..1]``, ``[*]``, ``[1..*]`` (brackets optional) -> the bounds."""
+    match = _MULTIPLICITY.match(spec.strip())
+    if not match:
+        raise EditError(f"'{spec}' is not a multiplicity: write [1], [0..1], [*], [1..*] or [n..m]")
+    return _bounds(spec, match["low"], match["high"])
+
+
+def _bounds(spec: str, low_text: str, high_text: str | None) -> tuple[int, int]:
     if high_text is None:
         low, high = (0, UNLIMITED_MAX_MULTIPLICITY) if low_text == "*" else (int(low_text), int(low_text))
     else:
@@ -420,7 +439,15 @@ def parse_end(spec: str) -> tuple[str, str, int, int]:
         high = UNLIMITED_MAX_MULTIPLICITY if high_text == "*" else int(high_text)
     if high < low or high == 0:
         raise EditError(f"'{spec}': not a multiplicity")
-    return match["name"], match["type"], low, high
+    return low, high
+
+
+def multiplicity_text(low: int, high: int) -> str:
+    """Bounds as ``besser info`` prints them: ``[1]``, ``[0..1]``, ``[*]``, ``[1..*]``."""
+    high_text = "*" if high >= UNLIMITED_MAX_MULTIPLICITY else str(high)
+    if low == 0 and high_text == "*":
+        return "[*]"
+    return f"[{low}]" if str(low) == high_text else f"[{low}..{high_text}]"
 
 
 class ModelEditor:
@@ -709,11 +736,20 @@ class ModelEditor:
             value = {"true": True, "false": False}.get(text.lower(), text)
         if type_name not in PRIMITIVE_TYPES:
             enumeration = self.find_type(type_name)
-            if not isinstance(enumeration, Enumeration) or str(value) not in {lit.name for lit in enumeration.literals}:
-                raise EditError(f"default '{text}' is not a literal of {type_name}")
+            names = sorted(lit.name for lit in getattr(enumeration, "literals", ()))
+            if not isinstance(enumeration, Enumeration) or str(value) not in names:
+                raise EditError(f"default '{text}' is not a literal of {type_name} ({', '.join(names)})")
             return _q(str(value))
-        if type_name in ("int", "float") and (isinstance(value, bool) or not isinstance(value, (int, float))):
-            raise EditError(f"default '{text}' is not a number")
+        if type_name in _NO_DEFAULT_TYPES:
+            stamped = " or name it created_at or updated_at (no default): the backend stamps those itself" \
+                if type_name in ("date", "datetime") else ""
+            raise EditError(f"default '{text}': a {type_name} attribute takes no default. The generated backend "
+                            f"writes a default as text, which its {type_name} column refuses on insert, and has "
+                            f"no 'now'. Leave it without one, make it optional ({type_name}?){stamped}")
+        if type_name == "int" and (isinstance(value, bool) or not isinstance(value, int)):
+            raise EditError(f"default '{text}' is not an int (a whole number, e.g. 0)")
+        if type_name == "float" and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise EditError(f"default '{text}' is not a number (e.g. 0.5)")
         if type_name == "bool" and not isinstance(value, bool):
             raise EditError(f"default '{text}' is not true or false")
         return repr(value) if type_name in ("int", "float", "bool") else _q(str(value))

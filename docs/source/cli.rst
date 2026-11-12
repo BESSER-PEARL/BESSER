@@ -705,6 +705,11 @@ name one of each).
        that links the two classes. A table of the class gets a column for each,
        as does a subclass's table that shows inherited columns (or whose class
        inherited none yet).
+       A default is a literal of the type (``0``, ``0.5``, ``true``, text, a
+       literal's name); a ``date``, ``datetime``, ``time`` or ``timedelta``
+       takes none, since the generated backend cannot apply one and has no
+       ``now``: it stamps an attribute named ``created_at`` or ``updated_at``
+       itself.
    * - ``add-parent CLASS PARENT``
      - Makes an existing class specialize another (a generalization). Its
        tables that would get a new attribute's column get one per attribute it

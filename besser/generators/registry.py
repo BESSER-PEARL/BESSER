@@ -244,7 +244,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
                     "type": "array",
                     "items": {"type": "string", "enum": _HTTP_METHODS},
                     "description": "HTTP methods to generate endpoints for",
-                    "default": ["GET", "POST", "PUT", "DELETE"],
+                    # No default here: check_options would fill it in, and the constructor's (all five) applies.
                 },
             },
         ),
@@ -472,7 +472,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
                 "http_methods": {
                     "type": "array",
                     "items": {"type": "string", "enum": _HTTP_METHODS},
-                    "default": ["GET", "POST", "PUT", "DELETE"],
+                    # No default here: check_options would fill it in, and the constructor's (all five) applies.
                 },
             },
         ),

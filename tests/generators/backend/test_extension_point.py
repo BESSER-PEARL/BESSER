@@ -58,6 +58,16 @@ def _run(out) -> dict:
     return json.loads(run.stdout.strip().splitlines()[-1])
 
 
+def test_the_dockerfile_copies_the_extensions(tmp_path):
+    book = Class(name="Book", attributes={Property(name="title", type=StringType)})
+    BackendGenerator(model=DomainModel(name="Shelf", types={book}), output_dir=str(tmp_path),
+                     docker_image=True).generate()
+
+    lines = (tmp_path / "Dockerfile").read_text().splitlines()
+    [copy] = [line for line in lines if line.startswith("COPY main_api.py")]
+    assert "extensions.py*" in copy.split()
+
+
 @pytest.fixture
 def backend(tmp_path):
     book = Class(name="Book", attributes={Property(name="title", type=StringType)})

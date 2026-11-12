@@ -73,6 +73,32 @@ def test_the_schema_default_of_an_option_is_filled_in():
     }
 
 
+@pytest.mark.parametrize("spec", GENERATORS, ids=lambda spec: spec.id)
+def test_a_schema_default_is_the_constructor_default(spec):
+    # check_options fills schema defaults in, so a run without options must build what the bare constructor does.
+    parameters = inspect.signature(spec.load_class().__init__).parameters
+    for name, option in spec.options.items():
+        if "default" in option and name in parameters:
+            constructor_default = parameters[name].default
+            if constructor_default is not inspect.Parameter.empty:
+                assert option["default"] == constructor_default, f"{spec.id}: {name}"
+
+
+@pytest.mark.parametrize("generator, routes_file", [("rest_api", "rest_api.py"), ("backend", "routers/book.py")])
+def test_without_options_the_routes_are_those_of_the_bare_constructor(simple_library_book_model, tmp_path,
+                                                                      generator, routes_file):
+    run_generator(generator, {"domain": simple_library_book_model}, tmp_path / "run")
+    get_generator(generator).load_class()(simple_library_book_model, output_dir=str(tmp_path / "bare")).generate()
+
+    assert (tmp_path / "run" / routes_file).read_text() == (tmp_path / "bare" / routes_file).read_text()
+
+
+def test_without_options_rest_api_generates_its_patch_routes(simple_library_book_model, tmp_path):
+    run_generator("rest_api", {"domain": simple_library_book_model}, tmp_path)
+
+    assert "@app.patch(" in (tmp_path / "rest_api.py").read_text()
+
+
 def test_an_option_without_a_schema_default_is_left_to_the_generator():
     assert check_options(get_generator("qiskit"), {}) == {}
 

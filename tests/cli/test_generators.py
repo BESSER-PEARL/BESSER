@@ -16,7 +16,7 @@ def test_options_are_shown_the_way_they_are_typed(besser):
 
     assert "    --option dbms=sqlite|postgresql|mysql|mssql|mariadb|oracle  (default: sqlite)\n" in stdout
     assert "    --option containerization=true|false  (default: false)\n" in stdout
-    assert "    --option http_methods=GET,POST,PUT,PATCH,DELETE  (default: GET,POST,PUT,DELETE)\n" in stdout
+    assert "    --option http_methods=GET,POST,PUT,PATCH,DELETE\n" in stdout
     assert "    --option shots=<integer>\n" in stdout
 
 

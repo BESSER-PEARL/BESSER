@@ -139,3 +139,26 @@ def test_repeated_qwen_shaped_quotation_failures_switch_strategy_and_recover(tmp
     assert len(writes) == 1 and writes[0]["success"]
     trace = (tmp_path / ".besser_tool_inputs.jsonl").read_text(encoding="utf-8")
     assert '"tool": "replace_file_lines"' in trace
+
+
+def test_a_stale_read_returns_the_current_span_and_a_fresh_read_id(tmp_path):
+    """A bare "Stale read_id" cost a re-read turn (~30k prompt tokens on a
+    recorded run); hand back the requested lines as they are now instead."""
+    (tmp_path / "app.py").write_text(SOURCE, encoding="utf-8")
+    ex = ToolExecutor(workspace=str(tmp_path))
+    read = call(ex, "read_file", path="app.py", offset=1, limit=2)
+    call(ex, "modify_file", path="app.py", old_text="async def action():",
+         new_text="async def action(x=1):")
+
+    stale = call(ex, "replace_file_lines", path="app.py", read_id=read["read_id"],
+                 start_line=2, end_line=3, new_text="async def action():\n    return True\n")
+
+    assert stale["rejection_kind"] == "stale_read"
+    located = stale["located_range"]
+    assert (located["start_line"], located["end_line"]) == (2, 3)
+    assert located["lines"] == "   2| async def action(x=1):\n   3|     return False"
+    assert stale["edit_recovery"] == {"next_tool": "replace_file_lines"}
+
+    landed = call(ex, "replace_file_lines", path="app.py", read_id=located["read_id"],
+                  start_line=2, end_line=3, new_text="async def action(x=1):\n    return True\n")
+    assert landed["status"] == "modified", landed

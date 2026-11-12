@@ -2155,6 +2155,31 @@ class ToolExecutor:
         files = [f for f in files if not f["path"].startswith(".besser_")]
         return {"files": files, "total": len(files)}
 
+    def _located_range(self, rel: str, path: str, content: str, start: int, end: int,
+                       why: str) -> dict | None:
+        """Lines ``start``-``end`` of ``content``, numbered, with a fresh read_id.
+
+        Saves the model a read_file turn before its range edit. ``None`` when the
+        span would not fit in one read.
+        """
+        numbered = "\n".join(
+            f"{n:>4}| {line}"
+            for n, line in enumerate(content.split("\n")[start - 1:end], start)
+        )
+        if len(numbered) > MAX_FILE_READ:
+            return None
+        return {
+            "path": rel,
+            "read_id": self._mint_read_view(path, content, start, end),
+            "start_line": start, "end_line": end,
+            "lines": numbered,
+            "instruction": (
+                f"{why} Call replace_file_lines with this read_id and these start_line/"
+                "end_line, and new_text = their complete replacement. Do not "
+                "re-quote old_text and do not paste the 'NNN| ' prefixes."
+            ),
+        }
+
     def _mint_read_view(self, path: str, content: str, start_line: int, end_line: int) -> str:
         """Authorize a 1-based inclusive line span of ``content`` for a range edit."""
         read_id = f"{self._read_epoch}:{next(self._read_sequence)}"
@@ -2291,11 +2316,11 @@ class ToolExecutor:
                         path, f"lines {args.get('start_line')}-{args.get('end_line')}",
                         args.get("new_text") or "",
                     )
-        # _modify_file already bracketed the target and issued a read_id for it,
-        # so steer on the FIRST miss: the span saves a re-read and a guess at
-        # line numbers. located_range carries the read_id, lines and
+        # A modify_file miss that brackets one region, or a stale range edit,
+        # already issued a read_id for the span, so steer on the FIRST refusal:
+        # it saves a re-read and a guess at line numbers. located_range carries the read_id, lines and
         # instruction; the orchestrator reads only next_tool.
-        located = result.get("located_range") if tool == "modify_file" else None
+        located = result.get("located_range")
         if located and self._edit_recovery.get(path, 0) < 2:
             result["edit_recovery"] = {"next_tool": "replace_file_lines"}
             return
@@ -2342,11 +2367,25 @@ class ToolExecutor:
             return self._missing_file_result(args["path"])
         with open_plain(path, "r", root=self.workspace, encoding="utf-8") as source:
             before = source.read()
-        if self._content_digest(before) != view[1]:
-            return {"error": "Stale read_id: the file changed after this read. No edit applied. "
-                             "Read the region again; do not reuse old line numbers or mark the task done.",
-                    "rejection_kind": "stale_read"}
         start, end = args.get("start_line"), args.get("end_line")
+        if self._content_digest(before) != view[1]:
+            refusal = {"error": "Stale read_id: the file changed after this read. No edit applied. "
+                                "Do not reuse old line numbers or mark the task done.",
+                       "rejection_kind": "stale_read"}
+            # The requested span as it reads NOW, so no re-read turn is needed.
+            if type(start) is not int or type(end) is not int or not 1 <= start <= end:
+                start, end = view[2], view[3]
+            end = min(end, before.count("\n") + 1)
+            located = self._located_range(
+                args["path"], path, before, start, end,
+                "These are the CURRENT lines of the span you selected; the code may "
+                "have moved, so check them first.",
+            ) if start <= end else None
+            if located:
+                refusal["located_range"] = located
+            else:
+                refusal["error"] += " Read the region again."
+            return refusal
         if (type(start) is not int or type(end) is not int
                 or not view[2] <= start <= end <= view[3]):
             # read_file's ``offset`` is a 0-based skip; the numbers printed
@@ -2960,23 +2999,12 @@ class ToolExecutor:
             # Both documented range-edit failure modes are line-number selection
             # errors, so the numbers come from here, not from the model.
             if span and err.get("status") != "possible_replay":
-                numbered = chr(10).join(
-                    f"{n:>4}| {line}"
-                    for n, line in enumerate(content.split(chr(10))[span[0] - 1:span[1]], span[0])
+                located = self._located_range(
+                    args["path"], path, content, span[0], span[1],
+                    "Your old_text brackets exactly these lines.",
                 )
-                if len(numbered) <= MAX_FILE_READ:
-                    err["located_range"] = {
-                        "path": args["path"],
-                        "read_id": self._mint_read_view(path, content, span[0], span[1]),
-                        "start_line": span[0], "end_line": span[1],
-                        "lines": numbered,
-                        "instruction": (
-                            "Your old_text brackets exactly these lines. Call "
-                            "replace_file_lines with this read_id and these start_line/"
-                            "end_line, and new_text = their complete replacement. Do not "
-                            "re-quote old_text and do not paste the 'NNN| ' prefixes."
-                        ),
-                    }
+                if located:
+                    err["located_range"] = located
             if hint and "located_range" not in err:
                 err["did_you_mean"] = (
                     "Closest lines actually in the file - copy old_text verbatim "

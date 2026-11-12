@@ -298,7 +298,12 @@ def test_a_screen_whose_route_differs_only_in_case_is_refused(besser, starter, c
     # Nor does a renamed class take such a name for its screen.
     assert change("add-class", "Box", "code:str", "--screen").endswith("button on Authors)")
     renamed = besser("model", "rename", "Box", "BOOK")
-    assert renamed.returncode == 0 and "screen Boxes keeps its name: a screen is named Books already" in renamed.stderr
-    _, routes, _ = app()
+    assert renamed.returncode == 0 and renamed.stdout == "model.py: renamed Box to BOOK\n"
+    # Before: the table was titled BOOKs and the rest kept Boxes: one page, two names.
+    assert renamed.stderr == ("warning: screen Boxes keeps its titles, as do its heading, tables and the buttons "
+                              "that open it: BOOKs would be the route of screen Books (routes ignore case)\n")
+    pages, routes, _ = app()
     assert '<Route path="/Boxes"' in routes and "/BOOKS" not in routes
+    assert 'title="Boxes"' in pages["Boxes"] and '{"Boxes"}' in pages["Boxes"] and "BOOKs" not in pages["Boxes"]
+    assert '"Boxes"' in pages["Authors"] and "BOOKs" not in pages["Authors"]  # the button that opens it
     assert "GUI titles Authors -> AUTHORs" in change("rename", "Author", "AUTHOR")  # its own route, but for case

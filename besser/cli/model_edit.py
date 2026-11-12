@@ -1150,29 +1150,38 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
     renamed = dict(zip(reversed(_derived_titles(old)), reversed(_derived_titles(new))))
     renamed[f"Go to the {_plural(old).lower()}"] = f"Go to the {_plural(new).lower()}"
     tables = editor.tables_of(element)
-    taken = {screen.name.lower(): screen.name for gui in editor.gui_models() for screen in _screens(gui)}
     changes = []
-    for table in tables:
-        changes += _replace_strings(editor, editor.call_of(table), ("title",), renamed)
+    # A screen's derived titles change together or not at all: its name (the page's route), heading,
+    # tables and the buttons that open it, so that one page never shows two names.
+    kept: list[Any] = []
     for gui in editor.gui_models():
-        for screen in _screens(gui):
+        screens = _screens(gui)
+        for screen in screens:
             contents = _contents(screen)
             if not any(table in contents for table in tables):
                 continue
-            # Routes ignore case: a screen named the same but for case is another's (or this one's) route.
-            if screen.name in renamed and taken.get(renamed[screen.name].lower(), screen.name) != screen.name:
-                editor.warnings.append(f"screen {screen.name} keeps its name: a screen is named "
-                                       f"{taken[renamed[screen.name].lower()]} already")
+            # Routes ignore case: a screen named the same but for case is another's route.
+            new_name = renamed.get(screen.name, screen.name)
+            clash = next((other for other in screens if other is not screen
+                          and other.name.lower() == new_name.lower()), None)
+            if clash is not None:
+                kept += [table for table in tables if table in contents]
+                editor.warnings.append(f"screen {screen.name} keeps its titles, as do its heading, tables and the "
+                                       f"buttons that open it: {new_name} would be the route of screen {clash.name} "
+                                       "(routes ignore case)")
                 continue
             changes += _replace_strings(editor, editor.call_of(screen), ("name", "component_id", "description"),
                                         renamed)
             for heading in contents:
                 if isinstance(heading, Text):
                     changes += _replace_strings(editor, editor.call_of(heading), ("content",), renamed)
-            buttons = [item for other in _screens(gui) for item in _contents(other)
+            buttons = [item for other in screens for item in _contents(other)
                        if isinstance(item, Button) and item.targetScreen is screen]
             for button in buttons:
                 changes += _replace_strings(editor, editor.call_of(button), ("label", "description"), renamed)
+    for table in tables:
+        if table not in kept:
+            changes += _replace_strings(editor, editor.call_of(table), ("title",), renamed)
     titles = sorted({f"{old_title} -> {new_title}" for old_title, new_title in changes
                      if old_title in _derived_titles(old)})
     return f"; GUI titles {', '.join(titles)}" if titles else ""

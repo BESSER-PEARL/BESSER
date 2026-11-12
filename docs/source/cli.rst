@@ -727,6 +727,9 @@ name one of each).
        warning names its table. So do the titles of
        a class's screen, table, heading and the button that opens it, when they
        are derived from its name (``Authors``, ``Author``): another title is kept.
+       A screen whose new name would be another screen's route but for case
+       keeps all of its titles (heading, tables, buttons too), and a warning
+       says so.
    * - ``remove PATH``
      - Removes the element. A class goes with its associations,
        generalizations and constraints; an association end with its

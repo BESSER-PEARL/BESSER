@@ -565,7 +565,9 @@ class ModelEditor:
         owner, attribute = self.container_of(element)
         literal = self.collection(owner, attribute)
         for item in _items(literal) if literal is not None else ():
-            if _builds(item, element):
+            # A generalization has no name: it is the one between its two classes.
+            if _builds(item, element) if not isinstance(element, Generalization) \
+                    else _generalizes(self, item, element.specific, element.general):
                 return item
         return None
 

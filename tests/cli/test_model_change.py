@@ -638,3 +638,16 @@ def test_an_import_used_elsewhere_stays(write, change, tmp_path):
         ['book = Class(name="Book", attributes={Property(name="pages", type=IntegerType),',
          '                                      Property(name="due", type=DateType)})'],
         ['book = Class(name="Book", attributes=set())'])
+
+
+def test_a_parent_class_the_cli_wrote_is_removed_with_its_generalizations(project, change, besser):
+    # The generalizations are written as add-class --parent and add-parent write them: inline, unnamed.
+    change("batch", stdin="add-class Person nickname:str\nadd-class Student --parent Person\nadd-parent Book Person\n")
+    assert "generalizations={Generalization(general=person, specific=student)" in project()
+
+    # Before: refused, "cannot find where 'Generalization(...)' is written ...; edit it by hand".
+    assert change("remove", "Person") == "model.py: removed Person"
+
+    text = project()
+    assert "person" not in text and "Generalization" not in text and "    generalizations=set(),\n" in text
+    assert besser("info", "model.py", "--class", "Book", "--json").json["classes"][0]["parents"] == []

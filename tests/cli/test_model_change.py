@@ -381,3 +381,48 @@ def test_an_end_without_a_multiplicity_gets_one(write, change, tmp_path):
     text = (tmp_path / "model.py").read_text()
     # The line would grow past the limit: the new argument goes on a line of its own.
     assert 'Property(name="bs", type=b,\n' in text and ' multiplicity=Multiplicity(0, "*"))})\n' in text
+
+
+# ── set-abstract ───────────────────────────────────────────────────────────
+
+
+def test_set_abstract_and_back(project, change, besser, post_book):
+    before = project()
+
+    run = besser("model", "batch", "-", stdin="add-class Work\nset-abstract Work true\n", output=None)
+
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "model.py: added class Work; made Work abstract\n"
+    # No class specializes it: what validate warns of is said.
+    assert ("warning: no concrete class specializes Work, so no Work object can exist: add one "
+            "(besser model add-class NAME --parent Work)") in run.stderr
+    assert 'work = Class(name="Work", is_abstract=True)' in project()
+    change("add-parent", "Book", "Work")
+    post_book(BOOK)
+    assert change("set-abstract", "Work", "false") == "model.py: made Work concrete"
+    assert 'work = Class(name="Work")' in project()
+
+
+@pytest.mark.parametrize("args, message", [
+    (("Book", "true"), "object dune (shop_objects) is a Book: an abstract class has no objects; make each an object "
+                       "of a subclass first"),
+    (("Book", "false"), "Book is concrete already"),
+])
+def test_set_abstract_refusals(hand_written, refused, args, message):
+    assert message in refused("set-abstract", *args)
+
+
+def test_a_batch_mixes_in_place_changes_and_renames(project, change, besser):
+    line = change("batch", stdin=(
+        "set-attribute Book.pages :int?=1\n"
+        "rename Book.pages length\n"
+        "set-multiplicity Library.books [1..*]\n"
+        "rename library_books.books volumes\n"
+        "set-attribute Book.length =\n"))
+
+    assert line == ("model.py: changed Book.pages from int to int?=1; renamed Book.pages to Book.length; "
+                    "changed Library.books (library_books) from [*] to [1..*]; renamed library_books.books to "
+                    "library_books.volumes; changed Book.length from int?=1 to int?")
+    info = besser("info", "model.py").stdout
+    assert "length:int?" in info and "volumes:Book[1..*]" in info
+    assert besser("validate", "model.py", "--ocl").returncode == 0

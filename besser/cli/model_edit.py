@@ -1805,6 +1805,30 @@ def set_multiplicity(editor: ModelEditor, path: str, multiplicity: str) -> Edite
                                    f"{new_text}", check)
 
 
+def set_abstract(editor: ModelEditor, class_name: str, abstract: str) -> Edited:
+    cls = editor.find_type(class_name, Class)
+    wanted = abstract == "true"
+    word = "abstract" if wanted else "concrete"
+    if cls.is_abstract == wanted:
+        raise EditError(f"{class_name} is {word} already")
+    if wanted:
+        objects = sorted(f"{_object_name(obj)} ({model_name})" for model_name, obj in _objects(editor)
+                         if obj.classifier is cls)
+        if objects:
+            raise EditError(f"object {', '.join(objects)} is a {class_name}: an abstract class has no objects; "
+                            "make each an object of a subclass first")
+    _set_field(editor, cls, "is_abstract", "True" if wanted else None, "False")
+
+    def check(model: DomainModel) -> str | None:
+        found = model.get_class_by_name(class_name)
+        return None if found is not None and found.is_abstract == wanted else f"{class_name} is not {word}"
+
+    warnings = [f"no concrete class specializes {class_name}, so no {class_name} object can exist: add one "
+                f"(besser model add-class NAME --parent {class_name})"] \
+        if wanted and not any(not c.is_abstract for c in cls.all_specializations()) else []
+    return Edited(editor.finish(), f"made {class_name} {word}", check, warnings)
+
+
 def _forget_var(editor: ModelEditor, var: str) -> None:
     """Delete the statements that define ``var`` or set something on it."""
     statement = editor.src.assignment(var)
@@ -2345,6 +2369,8 @@ OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
                       set_attribute),
     "set-multiplicity": ("change an association end's multiplicity in place: ASSOCIATION.END|CLASS.END MULTIPLICITY",
                          set_multiplicity),
+    "set-abstract": ("make a class abstract (true) or concrete (false): CLASS true|false", set_abstract),
+
 }
 
 

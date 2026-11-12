@@ -787,6 +787,10 @@ name one of each).
        ``[1..*]`` or ``[n..m]`` (brackets optional; quote them in a shell).
        Refused when a constraint would no longer parse or an object model
        would break the new bounds; the message names it.
+   * - ``set-abstract CLASS true|false``
+     - Makes a class abstract or concrete. Refused while an object model has
+       an object of the class; a warning says when no concrete class
+       specializes it.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``

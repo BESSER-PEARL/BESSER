@@ -124,6 +124,7 @@ examples:
   besser model batch - <<'EOF'                  (several changes, one write)
   besser model set-attribute Book.pages :int?=0 (type, ? and default in place; = drops the default)
   besser model set-multiplicity book_authors.authors "[*]"   (also Class.end)
+  besser model set-abstract Party true
 """
 
 # What rename and remove take.
@@ -186,6 +187,11 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("path",), {"metavar": "END", "help": "the association end: association.end or Class.end"}),
         (("multiplicity",), {"metavar": "MULTIPLICITY", "help": "[1], [0..1], [*], [1..*] or [n..m]"}),
     ],
+    "set-abstract": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("abstract",), {"choices": ["true", "false"], "help": "true: abstract; false: concrete"}),
+    ],
+
 }
 
 

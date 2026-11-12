@@ -852,9 +852,9 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
     cls = editor.find_type(class_name, Class)
     existing = [attribute.name for attribute in cls.all_attributes()] + [end.name for end in cls.association_ends()]
     shown = []
-    # A table bound to the class gets a column per new attribute, which refers to its variable: the
-    # variable is defined before the class and before those tables.
-    tables = editor.tables_of(cls)
+    # A table bound to the class (or to a subclass, see _tables_following) gets a column per new attribute,
+    # which refers to its variable: the variable is defined before the class and before those tables.
+    tables = _tables_following(editor, cls)
     literal = editor.collection(cls, "attributes")
     anchors = [editor.src.top_statement(node) for node in (
         literal, *(editor.collection(table, "columns") for table in tables)) if node is not None]
@@ -867,7 +867,7 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
         added.append((name, editor.add(
             cls, "attributes", code, lambda name=name: editor.free_name(_attribute_var_base(editor, cls, name)),
             need_var=bool(tables), separate=False, before=before)))
-    columns = _add_columns(editor, cls, added) if tables else []
+    columns = _add_columns(editor, tables, added) if tables else []
 
     def check(model: DomainModel) -> str | None:
         found = model.get_class_by_name(class_name)
@@ -924,12 +924,13 @@ def add_parent(editor: ModelEditor, class_name: str, parent: str) -> Edited:
     generalization = f"{editor._structural('Generalization')}(general={parent_var}, specific={var})"
     editor.add(editor.model, "generalizations", generalization,
                lambda: editor.free_name(f"{var}_is_{parent_var}"), need_var=False, separate=True)
+    columns = _inherited_columns(editor, cls, parent_class)
 
     def check(model: DomainModel) -> str | None:
         found = model.get_class_by_name(class_name)
         return None if found and parent in {p.name for p in found.parents()} else f"{class_name} is not a {parent}"
 
-    return Edited(editor.finish(), f"made {class_name} a {parent}", check)
+    return Edited(editor.finish(), f"made {class_name} a {parent}{columns}", check)
 
 
 def set_enum(editor: ModelEditor, name: str, literals: Sequence[str]) -> Edited:
@@ -1192,7 +1193,7 @@ def _relabel_columns(editor: ModelEditor, attribute: Property, old: str, new: st
     variable keeps its label, and a warning names its table."""
     old_label, new_label = _label(old), _label(new)
     relabelled, left = [], []
-    for table in editor.tables_of(attribute.owner):
+    for table in _tables_inheriting(editor, attribute.owner):
         shown = sum(_columns_of(column, attribute) and column.label == old_label for column in table.columns)
         if not shown:
             continue
@@ -1579,7 +1580,7 @@ def remove(editor: ModelEditor, path: str) -> Edited:
     removed_properties = [item for item in [*outer, *members] if isinstance(item, Property)]
     column_tables = []
     for table in sorted({id(t): t for item in removed_properties if isinstance(item.owner, Class)
-                         for t in editor.tables_of(item.owner)}.values(), key=lambda t: t.name):
+                         for t in _tables_inheriting(editor, item.owner)}.values(), key=lambda t: t.name):
         if table in gui_removed:
             continue
         located = _column_items(editor, table)
@@ -1645,6 +1646,38 @@ def _screens(gui: Any) -> list[Screen]:
     """The screens of a GUI model, in the generator's order (modules, then screens, by name)."""
     return [screen for module in sorted(gui.modules, key=lambda m: m.name)
             for screen in sorted(module.screens, key=lambda s: s.name)]
+
+
+def _lineage(cls: Class) -> list[Class]:
+    """``cls`` and the classes it inherits from, each after its own parents (by name among equals):
+    the order of a table's columns, parents first."""
+    ordered: list[Class] = []
+
+    def visit(current: Class) -> None:
+        for parent in sorted(current.parents(), key=lambda c: c.name):
+            visit(parent)
+        if current not in ordered:
+            ordered.append(current)
+
+    visit(cls)
+    return ordered
+
+
+def _tables_inheriting(editor: ModelEditor, cls: Class) -> list[Table]:
+    """The tables of ``cls`` and of its subclasses: those that may show an attribute of ``cls``."""
+    found = {id(table): table for owner in (cls, *cls.all_specializations()) for table in editor.tables_of(owner)}
+    return sorted(found.values(), key=lambda table: table.name)
+
+
+def _tables_following(editor: ModelEditor, cls: Class) -> list[Table]:
+    """The tables that get a column for a new attribute of ``cls``: its own, and those of its subclasses
+    that show inherited columns (as ``add-screen`` makes them), or whose class inherited no attribute yet."""
+    found = list(editor.tables_of(cls))
+    for sub in cls.all_specializations():
+        inherited = sub.inherited_attributes()
+        found += [table for table in editor.tables_of(sub) if not inherited or any(
+            getattr(column, "field", None) in inherited for column in table.columns)]
+    return sorted({id(table): table for table in found}.values(), key=lambda table: table.name)
 
 
 def _bound_class(table: Table) -> Any:
@@ -1768,9 +1801,10 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
     for screen in screens:
         if any(isinstance(element, Table) and _bound_class(element) is cls for element in _contents(screen)):
             raise EditError(f"screen {screen.name} shows {class_name} already")
-    attributes = sort_by_timestamp(cls.attributes)
+    lineage = _lineage(cls)
+    attributes = [attribute for owner in lineage for attribute in sort_by_timestamp(owner.attributes)]
     if not attributes:
-        raise EditError(f"{class_name} has no attribute for its table to show: add one first "
+        raise EditError(f"{class_name} has no attribute, own or inherited, for its table to show: add one first "
                         f"(besser model add-attribute {class_name} name:str)")
     title = title or _plural(class_name)
     # The name is the page's route: the title's words joined (Book reviews -> BookReviews).
@@ -1786,7 +1820,7 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
         raise EditError(f"cannot find where the screens of {gui.name} are written in {editor.path.name}; "
                         "edit it by hand")
     anchor = editor.src.top_statement(literal)
-    fields = _attribute_variables(editor, cls)
+    fields = {key: var for owner in lineage for key, var in _attribute_variables(editor, owner).items()}
     base = _snake(class_name)
     table, screen_var = editor.free_name(f"{base}_table"), editor.free_name(f"{base}_screen")
     heading = editor.free_name(f"{base}_heading")
@@ -1841,15 +1875,28 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
     return Edited(editor.finish(), summary, lambda model: None, gui_check=gui_check)
 
 
-def _add_columns(editor: ModelEditor, cls: Class, added: Sequence[tuple[str, str]]) -> list[str]:
-    """Add a column per new attribute (name, variable) to each table bound to ``cls``; returns those tables."""
-    tables = editor.tables_of(cls)
+def _add_columns(editor: ModelEditor, tables: Sequence[Table], added: Sequence[tuple[str, str]]) -> list[str]:
+    """Add a column per new attribute (name, variable) to each of ``tables``; returns their names."""
     for table in tables:
         for name, var in added:
             editor.add(table, "columns", f"{editor._gui('FieldColumn')}(label={_q(_label(name))}, field={var})",
                        lambda name=name: editor.free_name(f"{editor.var_of(table) or table.name}_{name}"),
                        need_var=False, separate=False)
     return [table.name for table in tables]
+
+
+def _inherited_columns(editor: ModelEditor, cls: Class, parent: Class) -> str:
+    """Give the tables that follow ``cls`` (see ``_tables_following``) a column per attribute it now
+    inherits from ``parent``, after their columns; returns what changed, for the summary."""
+    owners = [owner for owner in _lineage(parent) if owner not in cls.all_parents()]
+    attributes = [attribute for owner in owners for attribute in sort_by_timestamp(owner.attributes)]
+    tables = _tables_following(editor, cls)
+    if not attributes or not tables:
+        return ""
+    fields = {key: var for owner in owners for key, var in _attribute_variables(editor, owner).items()}
+    names = _add_columns(editor, tables, [(attribute.name, fields[id(attribute)]) for attribute in attributes])
+    return (f"; column{'s' if len(attributes) > 1 else ''} {', '.join(a.name for a in attributes)} "
+            f"added to table {', '.join(names)}")
 
 
 def _gui_removals(editor: ModelEditor, cls: Class) -> list[Any]:

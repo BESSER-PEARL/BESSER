@@ -191,6 +191,38 @@ def test_a_class_whose_variable_is_title_can_be_renamed_and_removed(starter, cha
     assert change("remove", "Label") == "model.py: removed Label"
 
 
+def _form_fields(page: str) -> list[str]:
+    """The fields of a page's create/edit form."""
+    return re.findall(r'"column_type": "field",\s*"field": "([^"]*)",\s*"label"', page)
+
+
+def test_a_subclass_page_shows_and_follows_its_inherited_attributes(starter, change, app):
+    change("add-class", "Person", "name:str")
+    # Before: the table of Student: school, without the name it inherits.
+    assert change("add-class", "Student", "school:str", "--parent", "Person", "--screen").endswith(
+        "added screen Students (table of Student: name, school; button on Authors)")
+    # Before: refused, "Teacher has no attribute for its table to show".
+    assert change("add-class", "Teacher", "--parent", "Person", "--screen").endswith(
+        "added screen Teachers (table of Teacher: name; button on Authors)")
+    assert change("add-attribute", "Person", "email:str?") == (
+        "model.py: added Person.email:str?; column added to table student_table, teacher_table")
+    assert change("rename", "Person.email", "mail").endswith("; column Email -> Mail in table student_table, "
+                                                             "teacher_table")
+    change("add-class", "Worker", "salary:int", "--screen")
+    assert change("add-parent", "Worker", "Person") == (
+        "model.py: made Worker a Person; columns name, mail added to table worker_table")
+    pages, _, _ = app()
+    assert _columns(pages["Students"]) == ["Name", "School", "Mail"]
+    assert _columns(pages["Teachers"]) == ["Name", "Mail"]
+    assert _columns(pages["Workers"]) == ["Salary", "Name", "Mail"]
+    assert sorted(_form_fields(pages["Teachers"])) == ["mail", "name"]  # the form submits the inherited fields
+    assert sorted(_form_fields(pages["Workers"])) == ["mail", "name", "salary"]
+    assert change("remove", "Person.mail") == (
+        "model.py: removed Person.mail; its column from table student_table, teacher_table, worker_table")
+    pages, _, _ = app()
+    assert _columns(pages["Students"]) == ["Name", "School"] and _form_fields(pages["Teachers"]) == ["name"]
+
+
 def test_add_screen_is_refused_when_it_cannot_be_made(besser, write, starter):
     def refused(*args):
         result = besser("model", *args)
@@ -199,7 +231,8 @@ def test_add_screen_is_refused_when_it_cannot_be_made(besser, write, starter):
 
     assert "screen Authors shows Author already" in refused("add-screen", "Author")
     assert besser("model", "add-class", "Tag").returncode == 0
-    assert "Tag has no attribute for its table to show: add one first" in refused("add-screen", "Tag")
+    assert "Tag has no attribute, own or inherited, for its table to show: add one first" in refused(
+        "add-screen", "Tag")
     write("model.py", DOMAIN_ONLY)
     assert "model.py has no GUI model to add a screen to" in refused("add-screen", "Book")
     assert "has no GUI model" in refused("add-class", "Shelf", "name:str", "--screen")

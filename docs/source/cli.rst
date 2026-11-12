@@ -683,9 +683,13 @@ name one of each).
        (``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``,
        ``time``, ``timedelta``, ``any``) or name an enumeration. A class is
        no attribute type: the refusal gives the ``add-association`` command
-       that links the two classes. A table of the class gets a column for each.
+       that links the two classes. A table of the class gets a column for each,
+       as does a subclass's table that shows inherited columns (or whose class
+       inherited none yet).
    * - ``add-parent CLASS PARENT``
-     - Makes an existing class specialize another (a generalization).
+     - Makes an existing class specialize another (a generalization). Its
+       tables that would get a new attribute's column get one per attribute it
+       now inherits, after their columns.
    * - ``add-association NAME END END [--composite]``
      - A binary association; each end is ``role:Class[multiplicity]`` with
        ``[1]``, ``[0..1]``, ``[*]``, ``[1..*]`` or ``[n..m]``. ``--composite``
@@ -700,13 +704,13 @@ name one of each).
    * - ``add-screen CLASS [--title TITLE]``
      - A screen of the file's GUI model (``--use`` names one when there are
        several) that shows a table of the class: a column per attribute,
-       labelled after it, with pagination and the buttons that add, edit and
+       inherited ones first, labelled after it, with pagination and the buttons that add, edit and
        delete an object. The screen is named after ``TITLE`` (default: the
        plural of the class, ``Publishers``, ``Shelves``, ``People``; a name
        already plural or uncountable, ``News``, is kept), which is also its heading, and
        goes in the first module; a button on the main page opens it (the
        generated app navigates with buttons only). Refused when the file has
-       no GUI model, the class has no attribute, a screen shows it already, or
+       no GUI model, the class has no attribute (own or inherited), a screen shows it already, or
        a screen has its name but for case (the app's routes ignore case) or
        would have the same page file but for case (the React generator names
        it after the title, ``OrderLines`` -> ``Orderlines.tsx``, ``Order_lines``
@@ -738,7 +742,8 @@ name one of each).
        generalizations and constraints; an association end with its
        association. An attribute or end a constraint navigates, or a literal
        an attribute's default is, is not removed: the message names the
-       constraint or the attribute. An attribute's columns go with it; a
+       constraint or the attribute. An attribute's columns go with it (in
+       its subclasses' tables too); a
        class's tables go with it, with the screens that show nothing else and
        the buttons that open them.
    * - ``batch [FILE]``

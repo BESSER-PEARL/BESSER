@@ -94,6 +94,13 @@ def _blocker_kind(message: str) -> str:
     return " ".join(words[:3]) if len(words) > 3 else head
 
 
+# Blockers about source that does not parse, compile or import. Any other
+# blocker - an observed failure, a contract, a requirement, or a kind added
+# later - keeps the behaviour sections in the fix prompt.
+_SOURCE_DEFECT_PREFIXES = _RUNTIME_FATAL_SOURCE_PREFIXES + (
+    "ruff:", "tsc [", "cargo [", "kotlinc [", "frontend build [", "dependency conflict in",
+)
+
 # A requirement text at least this long is cited by id wherever a blocker
 # quotes it; a shorter one could match unrelated text and saves little.
 _CITED_REQUIREMENT_MIN_CHARS = 60
@@ -935,15 +942,22 @@ class Phase3RepairMixin:
         prompt_parts: list[str] = [
             "## Current files and symbols (use these paths; do not invent models/ or schemas/ folders)",
             build_inventory(self.output_dir, self.domain_model, self._generator_used or "existing workspace"),
-            "", "## Actual action handlers",
-            format_action_inventory(collect_action_endpoints(self.output_dir)), "",
+            "",
         ]
-        mutation_manifest = build_mutation_manifest(
-            self.output_dir, scenario_records=self._api_scenarios.values(),
-            current_revision=self._workspace_revision(),
-        )
-        if mutation_manifest:
-            prompt_parts.extend([mutation_manifest, ""])
+        # The action handlers and the model-wide mutation manifest describe
+        # behaviour (a third of a measured prompt); a round that only has to
+        # make the source compile or import does not need them.
+        if not all(i.message.lower().startswith(_SOURCE_DEFECT_PREFIXES) for i in blockers):
+            prompt_parts.extend([
+                "## Actual action handlers",
+                format_action_inventory(collect_action_endpoints(self.output_dir)), "",
+            ])
+            mutation_manifest = build_mutation_manifest(
+                self.output_dir, scenario_records=self._api_scenarios.values(),
+                current_revision=self._workspace_revision(),
+            )
+            if mutation_manifest:
+                prompt_parts.extend([mutation_manifest, ""])
         if self._recent_tool_failures:
             prompt_parts.extend([
                 "## Recent rejected operations (do not repeat unchanged requests)",

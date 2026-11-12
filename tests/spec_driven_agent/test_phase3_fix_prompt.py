@@ -7,6 +7,9 @@ a single syntax error, and every blocker pasted verbatim.
 from __future__ import annotations
 
 import os
+from unittest.mock import patch
+
+import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
 from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
@@ -114,6 +117,27 @@ def test_the_blocker_list_is_capped_with_an_honest_remainder(tmp_path):
     rest = 106 - _FIX_PROMPT_MAX_BLOCKERS
     assert bullets[-1].startswith(f"- (+{rest} more blockers of these kinds: tsc [frontend] x")
     assert bullets[-1].endswith(", requirement x5; the next validation lists them again)")
+
+
+@pytest.mark.parametrize("blockers, behavioural", [
+    ([SYNTAX], False),
+    ([SYNTAX, ValidationIssue("blocker", "tsc [frontend]: src/App.tsx(3,5): error TS2304: Cannot find name 'x'"),
+      ValidationIssue("blocker", "ruff: app/main.py:1:1: F821 Undefined name `db`")], False),
+    ([SYNTAX, ValidationIssue("blocker", "create contract: app: POST /x/ failed (500)")], True),
+    ([ValidationIssue("blocker", "requirement: R1 — A rule is not implemented")], True),
+    ([ValidationIssue("blocker", "some future check: a new kind of finding")], True),
+])
+def test_behaviour_sections_are_sent_only_for_behavioural_blockers(tmp_path, blockers, behavioural):
+    orch, client = _build(tmp_path)
+    manifest = "Relationship mutation coverage: reverse create, update and unlink paths"
+    with patch("besser.spec_driven_agent.pipeline.phase3_repair.build_mutation_manifest",
+               return_value=manifest):
+        orch._invoke_phase3_fix_loop(blockers, is_first_attempt=True)
+
+    message = _first_message(client.calls[0])
+    assert "Current files and symbols" in message
+    assert ("## Actual action handlers" in message) is behavioural
+    assert (manifest in message) is behavioural
 
 
 def test_a_requirement_text_is_quoted_once_and_blockers_cite_its_id(tmp_path):

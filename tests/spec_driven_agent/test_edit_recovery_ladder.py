@@ -121,3 +121,13 @@ def test_a_second_refusal_carries_only_the_rewrite_step(service):
     for competing in ("located_range", "advice", "did_you_mean"):
         assert competing not in second, (competing, second[competing])
     assert "copy old_text" not in second["error"]
+
+
+def test_the_rewrite_step_rides_on_the_refusal_not_on_every_read(service):
+    """A replayed 13-miss loop carried the ~430-char block on 25 reads."""
+    _bracketed_miss(service, 3)
+    assert _bracketed_miss(service, 4)["edit_recovery"]["next_tool"] == "write_file"
+
+    for args in ({}, {"offset": 3, "limit": 5}):
+        read = call(service, "read_file", path="svc.py", **args)
+        assert "edit_recovery" not in read, read["edit_recovery"]

@@ -217,8 +217,9 @@ def test_the_range_editor_is_a_first_miss_aid_only(executor):
                       new_text="# replaced\n")
     assert first_miss["edit_recovery"]["next_tool"] == "replace_file_lines"
 
-    for _ in range(2):
-        _failing_range_edit(executor)
+    _failing_range_edit(executor)
+    refused = _failing_range_edit(executor)
+    assert refused["edit_recovery"]["next_tool"] == "write_file"
+    # The step rides on the refusal; a later read repeats nothing.
     read = call(executor, "read_file", path="app.py", offset=1, limit=2)
-
-    assert read["edit_recovery"]["next_tool"] == "write_file"
+    assert "edit_recovery" not in read

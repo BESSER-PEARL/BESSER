@@ -2305,7 +2305,9 @@ class ToolExecutor:
         # NOT because write_file is more reliable (it is not): successful range
         # edits on a drifted view overwrite neighbouring classes, so ending the
         # ladder at replace_file_lines measurably loses scaffold code.
-        if tool in {"modify_file", "replace_file_lines", "read_file"}:
+        # Only on the refusal itself: repeating it on every later read of the
+        # path cost 11k chars in one recorded loop.
+        if tool in {"modify_file", "replace_file_lines"}:
             # One instruction per result: drop the first-miss aids that point
             # back at piecemeal edits.
             for competing in ("located_range", "did_you_mean", "advice"):

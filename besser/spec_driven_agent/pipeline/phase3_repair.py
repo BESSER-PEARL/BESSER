@@ -1090,6 +1090,8 @@ class Phase3RepairMixin:
                 # edit where tool_choice is honoured, and let the reminder
                 # carry it where the gateway ignores tool_choice.
                 nudged, force_next = True, "modify_file"
+                # Prose on the cap's own turn still gets the forced turn.
+                turn_cap = max(turn_cap, turn + 1)
                 if response["content"]:
                     messages.append({"role": "assistant", "content": response["content"]})
                 messages.append({

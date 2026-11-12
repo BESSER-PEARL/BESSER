@@ -171,6 +171,38 @@ def test_reading_until_the_turn_cap_gets_one_forced_edit_turn(tmp_path):
     assert len(edits) == 1 and edits[0]["success"]
 
 
+@pytest.mark.parametrize("prose_turn", [_PHASE3_FIX_TURNS - 1, _PHASE3_FIX_TURNS])
+def test_a_prose_reply_on_the_last_turn_still_gets_the_forced_edit_turn(tmp_path, prose_turn):
+    """Prose on the cap's own turn set ``nudged`` before the cap check ran,
+    so the cap check returned and the forced edit turn never happened - one
+    turn earlier, the same reply got it."""
+    client = _StructuredClient(lambda n: _read(n) if n < prose_turn else _prose(n))
+    orch = _build(tmp_path, client)
+
+    orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
+
+    assert _main_py(tmp_path) == "x = 2\n"
+    assert [force for force, _ in client.calls][prose_turn:] == ["modify_file"]
+
+
+def test_the_stop_gate_runs_before_the_forced_edit_turn(tmp_path):
+    client = _StructuredClient(lambda n: _read(n) if n < _PHASE3_FIX_TURNS else _prose(n))
+    orch = _build(tmp_path, client)
+    real_chat = client.chat
+
+    def chat(*args, **kwargs):
+        response = real_chat(*args, **kwargs)
+        if len(client.calls) == _PHASE3_FIX_TURNS:
+            orch._should_continue = lambda: False  # cancelled during the prose turn
+        return response
+
+    client.chat = chat
+    orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
+
+    assert len(client.calls) == _PHASE3_FIX_TURNS
+    assert _main_py(tmp_path) == "x = 1\n"
+
+
 def test_a_client_that_ignores_the_re_prompt_ends_the_attempt(tmp_path):
     """Without tool_choice the reminder is all we have; it is sent once."""
     client = _PlainClient()

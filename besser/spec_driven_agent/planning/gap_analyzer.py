@@ -330,13 +330,15 @@ def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) ->
     every action endpoint returning 501. Annotate explicit action references
     without discarding requirements or guessing that an ORM method is
     connected. Harness-owned action tasks enforce omissions independently of
-    this hint.
+    this hint. A task that only mentions the action (a Cancel button) is
+    annotated too, since it needs the route; ``merge_action_tasks`` folds a
+    task into the handler's own item only when it names the handler.
     """
     noted = []
     for task in tasks:
         matches = [item for item in endpoints if re.search(
             rf"\b{_class_name_pattern(item.action)}\b", task, re.IGNORECASE,
-        )]
+        ) or re.search(rf"\b{re.escape(item.function)}\b", task)]
         if matches:
             locations = "; ".join(
                 f"{item.http_method} {item.route} is served by {item.path} "

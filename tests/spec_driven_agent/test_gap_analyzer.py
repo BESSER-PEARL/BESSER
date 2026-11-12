@@ -1010,6 +1010,46 @@ async def execute_order_approve(order_id):
     assert multi[0] in merged and other in merged
 
 
+def test_a_task_that_only_mentions_an_action_stays_on_the_checklist(tmp_path):
+    """A Cancel button, a 'cancelled' badge or an email after check-out name an
+    action without being its handler. Folded into the handler task's notes they
+    left the checklist, and that task closes as soon as the handler is no
+    longer a 501 stub, so the requested work was gated by nothing."""
+    from besser.spec_driven_agent.planning.action_inventory import (
+        action_gap_tasks, collect_action_endpoints, merge_action_tasks,
+    )
+
+    (tmp_path / "order_methods.py").write_text('''\
+@router.post("/order/{order_id}/methods/approve/")
+async def execute_order_approve(order_id):
+    raise HTTPException(status_code=501)
+''', encoding="utf-8")
+    endpoints = collect_action_endpoints(tmp_path)
+    canonical = action_gap_tasks(tmp_path, endpoints)
+
+    other_work = gap_analyzer._note_action_placement([
+        "Add an Approve button to every row of the orders table in the React frontend.",
+        "Show a green badge on orders the admin may approve; never let the user approve twice.",
+        "Send a confirmation email to the customer when an admin clicks Approve.",
+    ], endpoints)
+    assert all("ACTION HANDOFF" in task for task in other_work)  # still told where the route lives
+    merged = merge_action_tasks(canonical + other_work, endpoints)
+    assert merged[1:] == other_work
+    assert "planning_notes" not in merged[0] or merged[0]["planning_notes"] == []
+
+    handler_work = gap_analyzer._note_action_placement([
+        "Implement approve in sql_alchemy.py",
+        "Implement the approve endpoint so an order is approved once.",
+        "Make the approve action set approvedAt.",
+        "Implement the 'approve' method in the Order class (Requirement R36).",  # live run wording
+        "Fill in execute_order_approve with the approval logic.",
+        "POST /order/{order_id}/methods/approve/ must refuse an already approved order.",
+    ], endpoints)
+    merged = merge_action_tasks(canonical + handler_work, endpoints)
+    assert len(merged) == 1
+    assert merged[0]["planning_notes"] == handler_work
+
+
 def test_action_task_names_the_instrument_rather_than_only_saying_verify(tmp_path):
     """Measured over 211 completed runs: 1,189 of 2,985 checklist
     items say "verif*" and NOT ONE names a tool (``write_file`` is the only

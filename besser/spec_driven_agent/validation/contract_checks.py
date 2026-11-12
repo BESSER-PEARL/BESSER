@@ -910,14 +910,16 @@ def _class_scopes(tree) -> dict:
     return scopes
 
 
-def _declared_members(tree, known: frozenset, declared: dict) -> None:
+def _declared_members(tree, declared: dict) -> None:
     """Accumulate every name this module attaches to a model class.
 
     Generous on purpose: anything that plausibly puts the name on the class
     counts, because a name that resolves is not the inversion we are after.
+    Every class is recorded, not only model classes, so a model class's
+    mixin or declarative base can be resolved in :func:`_resolve_bases`.
     """
     def note(cls, name) -> None:
-        if cls in known and name:
+        if cls and name:
             declared.setdefault(cls, set()).add(str(name))
 
     def relationship_target(call):
@@ -960,6 +962,12 @@ def _declared_members(tree, known: frozenset, declared: dict) -> None:
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
+        entry = declared.setdefault(node.name, set())
+        for base in node.bases:
+            # `orm.DeclarativeBase` is DeclarativeBase; `Generic[T]` resolves
+            # to nothing, which _resolve_bases reads as unknown members.
+            name = getattr(base, "id", None) or getattr(base, "attr", None) or "?"
+            entry.add(f"<base>{name}")
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 note(node.name, child.name)
@@ -980,12 +988,16 @@ def _declared_members(tree, known: frozenset, declared: dict) -> None:
             elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
                 note(node.name, child.target.id)
                 note_reverse(node.name, child.value)
-        if node.name in known:
-            # A subclass gets whatever its in-app bases declare.
-            entry = declared.setdefault(node.name, set())
-            for base in node.bases:
-                if isinstance(base, ast.Name):
-                    entry.add(f"<base>{base.id}")
+
+
+# Bases defined outside the app whose public members are known: SQLAlchemy's
+# declarative base and Pydantic's BaseModel contribute only _INHERITED_MEMBERS.
+_KNOWN_EXTERNAL_BASES = frozenset({
+    "object", "Base", "DeclarativeBase", "AsyncAttrs", "BaseModel", "ABC",
+})
+# Member marker for a class with a base nothing in the app defines: that base
+# may declare any name, so no read off the class can be called undeclared.
+_UNRESOLVED_BASE = "<unresolved base>"
 
 
 def _resolve_bases(declared: dict) -> dict:
@@ -1000,8 +1012,11 @@ def _resolve_bases(declared: dict) -> dict:
         for entry in own:
             if entry.startswith("<base>"):
                 base = entry[6:]
-                if base in declared and base not in seen:
-                    out |= members(base, seen | {name})
+                if base in declared:
+                    if base not in seen:
+                        out |= members(base, seen | {name})
+                elif base not in _KNOWN_EXTERNAL_BASES:
+                    out.add(_UNRESOLVED_BASE)
         if not seen:
             resolved[name] = out
         return out
@@ -1009,7 +1024,7 @@ def _resolve_bases(declared: dict) -> dict:
     return {name: members(name, frozenset()) for name in declared}
 
 
-def _walk_python(app_dir: str, known: frozenset) -> tuple:
+def _walk_python(app_dir: str) -> tuple:
     """Every parsed .py in the delivered tree, plus what it declares.
 
     ``(rel, tree, source)`` per file and ``class -> member names`` across
@@ -1039,7 +1054,7 @@ def _walk_python(app_dir: str, known: frozenset) -> tuple:
                 tree = parse_source(content)
             except (SyntaxError, ValueError):
                 continue  # a half-written file is python_source's problem
-            _declared_members(tree, known, declared)
+            _declared_members(tree, declared)
             parsed.append((rel, tree, content))
     return parsed, _resolve_bases(declared)
 
@@ -1057,7 +1072,7 @@ def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> 
     known = frozenset(ends.members)
     roles = tuple(ends.owner)
 
-    files, app_members = _walk_python(app_dir, known)
+    files, app_members = _walk_python(app_dir)
     parsed = [(rel, tree) for rel, tree, content in files
               if any(role in content for role in roles)]
     if not parsed:
@@ -1274,17 +1289,19 @@ def collect_undeclared_attribute_issues(app_dir: str,
         return []
     ends = contract.ends
     known = frozenset(ends.members)
-    files, app_members = _walk_python(app_dir, known)
+    files, app_members = _walk_python(app_dir)
     if not files:
         return []
 
     app_modules = frozenset(
         rel.rsplit("/", 1)[-1][:-3] for rel, _tree, _content in files)
+    # A class with a base defined outside the app may have any member.
+    opaque = {cls for cls, names in app_members.items() if _UNRESOLVED_BASE in names}
 
     issues: list = []
     for rel, tree, _content in files:
         scopes = _class_scopes(tree)
-        shadowed = _shadowing_imports(tree, app_modules) & known
+        shadowed = (_shadowing_imports(tree, app_modules) & known) | opaque
         seen: set = set()
         for function in ast.walk(tree):
             if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):

@@ -79,7 +79,7 @@ from besser.spec_driven_agent.pipeline.constants import (
     REGENERABLE_GENERATORS,
     WORKSPACE_SKIP_DIRS,
 )
-from besser.spec_driven_agent.state.agent_trace import record_generated_files
+from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_generated_files
 from besser.spec_driven_agent.state.generator_output import store_written_files
 from besser.spec_driven_agent.validation import frontend_source
 
@@ -244,6 +244,18 @@ _UNSEARCHED_DIRS = frozenset({
 # generated file with headroom and costs ~15k tokens against an 80k
 # compaction threshold.
 MAX_FILE_READ = 60_000
+
+
+# Run records live at the workspace root: every ``.besser_*`` file or
+# directory (trace, checkpoint, attribution, recipe, command logs, probe) and
+# the Agent Trace directory. The harness writes them; the model only reads.
+_RUN_RECORD_PREFIX = ".besser_"
+
+
+def _is_run_record(rel_path: str) -> bool:
+    """True for a workspace-relative path at or under a run record."""
+    top = rel_path.replace("\\", "/").split("/", 1)[0]
+    return top.startswith(_RUN_RECORD_PREFIX) or top == TRACE_DIRNAME
 
 
 def _normalize_path_for_comparison(path: str) -> str:
@@ -1509,6 +1521,13 @@ class ToolExecutor:
                     arguments = {**arguments, "path": os.path.relpath(
                         self._safe_path(arguments["path"]), self.workspace,
                     ).replace("\\", "/")}
+                    if tool_name != "read_file" and _is_run_record(arguments["path"]):
+                        logger.warning("Refused %s on run record %s", tool_name, arguments["path"])
+                        return ToolExecutionResult("error", {"error": (
+                            f"{tool_name} refused: {arguments['path']} is a run record kept by "
+                            "BESSER (trace, checkpoint, attribution, logs). It can be read but "
+                            "not written, edited or deleted. Change the project's own files instead."
+                        )})
                 raw_result = handler(self, arguments)
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)

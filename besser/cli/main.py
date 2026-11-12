@@ -183,7 +183,8 @@ def _add_model_file_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-f", "--file", default=argparse.SUPPRESS, metavar="MODEL",
                         help="the .py model file (default: the model of besser.toml, else model.py)")
     parser.add_argument("--use", action="append", default=argparse.SUPPRESS, metavar="NAME",
-                        help="the domain model to change, when the file holds several")
+                        help="the domain model to change, or the GUI model add-screen adds to, when the file "
+                             "holds several; repeat to name one of each")
 
 
 class _UsageError(Exception):

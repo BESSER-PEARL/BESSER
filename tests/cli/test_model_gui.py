@@ -216,3 +216,16 @@ def test_a_table_whose_columns_are_not_one_list_gets_its_column_appended(write, 
         tmp_path / "model.py").read_text()
     pages, _, _ = app()
     assert _columns(pages["Home"]) == ["Who", "Email"]
+
+
+def test_use_names_the_gui_model_a_screen_goes_in(starter, besser, change, app):
+    with starter.open("a", encoding="utf-8") as file:
+        file.write('admin_gui = GUIModel(name="AdminApp", package="admin", versionCode="1", versionName="1.0", '
+                   'description="Admin", modules={Module(name="admin_module", screens={Screen(\n'
+                   '    name="Start", description="Start", is_main_page=True, view_elements=set())})})\n')
+    refused = besser("model", "add-screen", "Book", "--title", "Catalog")
+    assert refused.returncode == 2 and "name one with --use (library_gui, admin_gui)" in refused.stderr
+    # What the message says to do: before, "model.py has no domain model named admin_gui".
+    line = change("--use", "admin_gui", "add-screen", "Book", "--title", "Catalog")
+    assert line == "model.py: added screen Catalog (table of Book: title, pages; button on Start)"
+    assert besser("validate", "model.py").returncode == 0

@@ -815,10 +815,13 @@ def _tokens(text: str) -> list[tokenize.TokenInfo]:
 
 
 def pick_domain_model(loaded: LoadedModels, use: Sequence[str]) -> Any:
-    """The domain model to edit: the one ``use`` names, or the file's only one."""
+    """The domain model to edit: the one ``use`` names, or the file's only one (``use`` may name only a
+    model of another kind, such as the GUI model ``add-screen`` adds to)."""
     domains = loaded.of_kind("domain")
-    if use:
-        domains = [model for model in domains if model.names & set(use)]
+    named = [model for model in domains if model.names & set(use)]
+    names_other = any(model.names & set(use) for model in loaded.models if model.kind != "domain")
+    if use and (named or not names_other):
+        domains = named
     if len(domains) == 1:
         return domains[0]
     if not domains:

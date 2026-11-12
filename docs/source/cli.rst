@@ -650,7 +650,8 @@ Changes the domain model of a B-UML ``.py`` file with one command per change,
 so that a coding agent does not read the file or write a script that patches
 it. The file is the one named by ``-f FILE`` (``--file``), else the ``model`` of
 ``besser.toml``, else ``model.py``; ``--use NAME`` picks the domain model when
-the file holds several.
+the file holds several, and the GUI model ``add-screen`` adds to (repeat it to
+name one of each).
 
 .. list-table::
    :header-rows: 1

@@ -49,7 +49,7 @@ python tests/BUML/metamodel/structural/library/library.py           # standalone
 ruff check besser/
 lint-imports            # pip install import-linter==2.15
 ```
-`lint-imports` enforces the layers: CLI -> editor backend -> Spec-Driven Agent -> generators -> notations ->
+`lint-imports` enforces the layers: CLI (`besser.cli`) -> editor backend -> Spec-Driven Agent -> generators -> notations ->
 metamodel, each importing only the layers below it, and `besser.utilities` (outside the backend) never
 importing the generators, the agent or the backend. `besser.llm` imports none of its callers (of the
 utilities it uses `secret_redaction`, which brings `workspace_fs`), so every layer can use it. Inside the backend, `services/` never imports
@@ -90,6 +90,7 @@ besser regenerate sqlalchemy model.py -o out          # merge a model change int
 besser build                                          # every output of besser.toml: generate, then regenerate
 besser apply                                          # build, then besser.toml's `test` command: one line on success
 besser convert model.py -o project.json               # B-UML .py <-> editor JSON; imports .plantuml, .drawio, .csv, .ttl
+python -m besser --help                               # from a checkout: the same command; its tests: python -m pytest tests/cli
 ```
 `besser` (`besser/cli/`, also `python -m besser`) takes a B-UML `.py` file, which it **executes**, an editor
 JSON export, which needs the backend requirements, or `-` for either on standard input. `--use NAME` picks a
@@ -124,7 +125,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools + CLI); `runner.py` has `run_generator(id, models, output_dir, options)`, the one way the editor backend and the CLI build and run a generator, and `regenerate_generator`, which builds it the same way and calls `regenerate()` (`regeneration.py`: three-way merge into edited output, record in `.besser_generated.json`) (the agent's `tool_executor.py` still constructs them itself) |
-| `besser/cli/` | The `besser` command: `main.py` (argparse, exit status), `commands.py` (new, schema, validate, info, model, generators, generate, regenerate, build, convert), `model_edit.py` (the `besser model` operations: `ast`-located splices into the model file), `loading.py` (model file or standard input -> B-UML models), `importing.py` (the other notations `convert` reads), `schema.py` (what `schema` prints, read from the metamodel; `COMMAND_KEYS` is the documented `--json` shape), `config.py` (`besser.toml`), `summary.py` (what `info` shows of a model), `starters/` (the model `new` writes, one per kind; a new model kind needs one), `output.py` (`Result`, the `--json` shape, `--quiet`/`--verbose`) |
+| `besser/cli/` | The `besser` command: `main.py` (argparse, exit status), `commands.py` (new, init, guide, schema, validate, info, model, generators, generate, regenerate, build, apply, convert), `agent_files.py` (the guide `init`/`new` write to `AGENTS.md`, `CLAUDE.md`, `.ignore`), `discovery.py` (the files `validate` finds in a directory), `ocl_check.py` (`validate --ocl`), `completion.py` (`besser completion`), `mcp_server.py` (`besser mcp`, `besser[mcp]`), `model_edit.py` (the `besser model` operations: `ast`-located splices into the model file), `loading.py` (model file or standard input -> B-UML models), `importing.py` (the other notations `convert` reads), `schema.py` (what `schema` prints, read from the metamodel; `COMMAND_KEYS` is the documented `--json` shape), `config.py` (`besser.toml`), `summary.py` (what `info` shows of a model), `starters/` (the model `new` writes, one per kind; a new model kind needs one), `output.py` (`Result`, the `--json` shape, `--quiet`/`--verbose`) |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app state on `app.state` — spec-driven runs, GitHub sign-in stores, agent-simulator limits, KG/SDMX slots — handed to routes by `dependencies.py`) |
 | `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |

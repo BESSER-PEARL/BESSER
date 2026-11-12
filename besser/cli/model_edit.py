@@ -1143,13 +1143,14 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
     heading of the screen and the label of a button that opens it.
     """
     if isinstance(element, Property) and isinstance(element.owner, Class):
-        changes = []
+        relabelled = []
         for table in editor.tables_of(element.owner):
             for column, item, _ in _column_items(editor, table) or ():
-                if _columns_of(column, element):
-                    changes += _replace_strings(editor, _item_call(editor, item), ("label",),
-                                                {_label(old): _label(new)})
-        return "".join(f"; column {old_label} -> {new_label}" for old_label, new_label in changes)
+                if _columns_of(column, element) and _replace_strings(
+                        editor, _item_call(editor, item), ("label",), {_label(old): _label(new)}):
+                    relabelled.append(table.name)
+        tables = ", ".join(sorted(set(relabelled)))
+        return f"; column {_label(old)} -> {_label(new)} in table {tables}" if relabelled else ""
     if not isinstance(element, Class):
         return ""
     # The plural last, so that it wins for a name that is its own plural (News -> Articles).

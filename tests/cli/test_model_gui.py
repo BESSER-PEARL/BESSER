@@ -128,7 +128,7 @@ def test_remove_an_attribute_removes_its_column(starter, change, app):
 
 
 def test_rename_an_attribute_relabels_a_column_labelled_after_it(starter, change, app):
-    assert change("rename", "Author.email", "mail").endswith("; column Email -> Mail")
+    assert change("rename", "Author.email", "mail").endswith("; column Email -> Mail in table author_table")
     pages, _, _ = app()
     assert _columns(pages["Authors"]) == ["Name", "Mail"]
 
@@ -220,6 +220,13 @@ def test_a_hand_written_gui_model_follows_its_class(write, change, app, tmp_path
     assert 'title="Recent customers"' in text and 'Screen(name="Clients", description="Clients"' in text
     pages, _, _ = app()
     assert _columns(pages["Clients"]) == ["Name", "Email"] and "Customers" not in pages
+
+
+def test_a_column_relabelled_in_several_tables_is_named_once(write, change):
+    # Before: "...; column Name -> Full name; column Name -> Full name", once per table.
+    write("model.py", HAND_WRITTEN.replace('label="Who"', 'label="Name"'))
+    assert change("rename", "Customer.name", "full_name") == (
+        "model.py: renamed Customer.name to Customer.full_name; column Name -> Full name in table everyone, recent")
 
 
 def test_a_screen_goes_in_the_first_module_and_the_main_page_inline_gets_its_button(write, change, app, tmp_path):

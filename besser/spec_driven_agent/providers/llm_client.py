@@ -1549,10 +1549,13 @@ class OpenAIProvider(LLMProvider):
                 # from served-model tracking — otherwise every run logs a
                 # spurious "served model changed mid-run" warning when the
                 # primary call follows a planning call.
-                reply = response.choices[0].message
+                # Before anything reads ``choices``: a reply without one still
+                # spent the tokens its usage reports.
+                reply = response.choices[0].message if response.choices else None
                 self._record_usage(
-                    response.usage, api_messages, reply.content or "",
-                    "".join(call.function.arguments or "" for call in reply.tool_calls or []),
+                    response.usage, api_messages, getattr(reply, "content", None) or "",
+                    "".join(call.function.arguments or ""
+                            for call in getattr(reply, "tool_calls", None) or []),
                     model=model_override,
                 )
                 if not model_override:

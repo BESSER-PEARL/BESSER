@@ -852,6 +852,20 @@ class TestOpenAIProviderStream:
         assert provider.usage.estimated_cost > 0
         assert any("reported no usage" in r.getMessage() for r in caplog.records)
 
+    def test_a_reply_with_no_choices_still_bills_its_usage(self):
+        """A gateway answering 200 with ``choices: []`` fails the call, but
+        the tokens it reports were spent and the cost cap must count them."""
+        provider = _make_openai_provider()
+        provider._max_retries = 0
+        provider._client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[], usage=self._usage(1000, 0))
+
+        with pytest.raises(Exception):
+            provider.chat(system="sys", messages=[{"role": "user", "content": "hi"}], tools=[])
+
+        assert provider.usage.api_calls == 1
+        assert provider.usage.input_tokens == 1000
+
     def test_streaming_cost_grows_across_turns(self):
         """End-to-end regression for the frozen-cost bug: simulate a
         multi-turn customise loop where each turn streams a response

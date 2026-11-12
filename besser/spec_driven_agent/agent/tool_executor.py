@@ -638,6 +638,7 @@ class ToolExecutor:
         # tool; the orchestrator's end_turn gate refuses to finish while
         # items are open.
         self._tasks: list[dict] = []
+        self._autoclose_lock = threading.Lock()
         # Edit-first guardrail for MODIFY runs (set via
         # ``enable_modify_guard``). In a modify run every existing file
         # is a user's working app, so whole-file rewrites are rejected
@@ -755,10 +756,16 @@ class ToolExecutor:
                 passed = bool(verify())
             except Exception:
                 continue
-            if passed:
+            if not passed:
+                continue
+            # Writes finish in parallel threads and each calls this: claim
+            # the item under the lock so only one of them reports closing it.
+            with self._autoclose_lock:
+                if task.get("done") or task.get("dropped"):
+                    continue
                 task.update(done=True, verification="verified", blocked=False)
                 task.pop("blocked_reason", None)
-                closed.append({"id": task["id"], "label": _task_label(task["text"])})
+            closed.append({"id": task["id"], "label": _task_label(task["text"])})
         return closed
 
     def reopen_unverifiable_tasks(self) -> list[int]:

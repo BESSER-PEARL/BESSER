@@ -17,6 +17,7 @@ from besser.spec_driven_agent.pipeline.constants import FRONTEND_WALK_SKIP_DIRS
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
+from besser.spec_driven_agent.validation.frontend_source import match_bracket
 from besser.utilities.workspace_fs import walk_plain
 
 
@@ -100,6 +101,33 @@ def _route_may_serve_home(files: list[tuple[str, str]], blob: str) -> bool:
     return bool(_DATA_ROUTER.search(blob) and _re.search(r"\bpath\s*:\s*[A-Za-z_$`]", blob))
 
 
+_HTTP_WRITE_CALL = _re.compile(
+    r"""method\s*:\s*['"](?:post|put|patch)['"]"""  # fetch(url, { method: 'POST' })
+    r"""|\.(?:post|put|patch)\s*\("""                # axios.post(...), client.put(...)
+    r"""|\b\w+\.(?:create|update)\w*\s*\(""",       # api.createBook(...)
+    _re.IGNORECASE)
+_ONCLICK_HANDLER = _re.compile(
+    r"onClick\s*=\s*\{\s*(?:(\w+)\s*\}|(?:async\s*)?\(\s*\w*\s*\)\s*=>\s*(?:await\s+)?(\w+)\s*\()")
+
+
+def _saved_by_a_button(content: str, onsubmit_at: int) -> bool:
+    """The ``<form>`` whose onSubmit is at ``onsubmit_at`` holds a button whose
+    onClick handler, defined in this file, makes an HTTP write call."""
+    end = content.find("</form>", onsubmit_at)
+    form = content[onsubmit_at:len(content) if end < 0 else end]
+    for match in _ONCLICK_HANDLER.finditer(form):
+        name = match.group(1) or match.group(2)
+        definition = _re.search(
+            rf"(?:\b(?:const|let|var)\s+{name}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*"
+            rf"|\bfunction\s+{name}\s*\([^)]*\)\s*)\{{", content)
+        if not definition:
+            continue
+        close = match_bracket(content, definition.end() - 1)
+        if close is not None and _HTTP_WRITE_CALL.search(content, definition.end(), close):
+            return True
+    return False
+
+
 def collect_frontend_contract_issues(output_dir: str) -> list[str]:
     """High-precision correctness checks on the (LLM-authored) frontend.
 
@@ -107,8 +135,9 @@ def collect_frontend_contract_issues(output_dir: str) -> list[str]:
     they leave the UI visibly broken regardless of scope:
 
       1. Blank-on-load: a React Router config with no home ("/") route.
-      2. Dead form: a <form> whose onSubmit is a no-op, or a UI with
-         forms but no HTTP write calls at all -- it cannot save.
+      2. Dead form: a <form> whose onSubmit is a no-op (and no button in
+         it saves through its onClick handler), or a UI with forms but no
+         HTTP write calls at all -- it cannot save.
 
     Deliberately conservative: named submit handlers and single-page
     (router-less) apps are NOT flagged, to avoid false blockers that
@@ -197,7 +226,9 @@ def collect_frontend_contract_issues(output_dir: str) -> list[str]:
         r"onSubmit\s*=\s*\{\s*\(?\s*\w+\s*\)?\s*=>\s*[\w.]*\.preventDefault\(\)\s*\}"
     )
     for rel, content in frontend_files:
-        if noop_onsubmit.search(content) or onsubmit_prevent_only.search(content):
+        dead = [m for pattern in (noop_onsubmit, onsubmit_prevent_only)
+                for m in pattern.finditer(content)]
+        if any(not _saved_by_a_button(content, m.start()) for m in dead):
             issues.append(
                 f"frontend contract: {rel} has a form whose onSubmit does "
                 f"nothing (an empty or preventDefault-only handler), so the form "

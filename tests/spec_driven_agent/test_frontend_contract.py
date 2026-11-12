@@ -191,6 +191,42 @@ def test_dead_form_prevent_default_only(tmp_path):
     assert any("onSubmit does" in i for i in issues)
 
 
+_BUTTON_FORM = (
+    "export default function BookForm({ onSaved }) {\n"
+    "  const [title, setTitle] = useState('')\n"
+    "  const save = async () => {\n"
+    "    SAVE_BODY\n"
+    "    onSaved()\n"
+    "  }\n"
+    "  return (\n"
+    "    <form onSubmit={(e) => e.preventDefault()}>\n"
+    "      <input value={title} onChange={e => setTitle(e.target.value)} />\n"
+    '      <button type="button" ONCLICK>Save</button>\n'
+    "    </form>)\n"
+    "}\n"
+)
+
+
+@pytest.mark.parametrize("onclick", ["onClick={save}", "onClick={() => save()}"])
+@pytest.mark.parametrize("body", [
+    "await fetch('/book/', { method: 'POST', body: JSON.stringify({ title }) })",
+    "await axios.put(`/book/${id}/`, { title })",
+    "await api.createBook({ title })",
+])
+def test_prevent_default_form_saved_by_a_button_in_it_is_ok(tmp_path, onclick, body):
+    form = _BUTTON_FORM.replace("SAVE_BODY", body).replace("ONCLICK", onclick)
+    api = "export const createBook = (x) => fetch('/book/', {method: 'POST', body: x});\n"
+    assert _run(tmp_path, {"frontend/src/BookForm.jsx": form, "frontend/src/api.js": api}) == []
+
+
+def test_prevent_default_form_whose_button_does_not_save_is_still_flagged(tmp_path):
+    form = _BUTTON_FORM.replace("SAVE_BODY", "setTitle('')").replace("ONCLICK", "onClick={save}")
+    files = {"frontend/src/BookForm.jsx": form,
+             "frontend/src/api.js": "export const create = (x) => fetch('/b', {method: 'POST', body: x});\n"}
+    [issue] = _run(tmp_path, files)
+    assert "onSubmit does" in issue
+
+
 def test_forms_present_but_no_http_write(tmp_path):
     files = {
         "frontend/src/App.js": (

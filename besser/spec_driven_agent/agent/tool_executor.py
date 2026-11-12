@@ -109,6 +109,20 @@ ToolExecutionStatus = Literal["ok", "error", "skipped"]
 # A task whose verifier keeps refusing is retried at most this many times;
 # unbounded retries can livelock a run until the turn cap.
 _MAX_TASK_VERIFY_ATTEMPTS = 3
+# Characters of a task's text shown when a result only needs to name the item:
+# enough to recognise it; the full text is one task_list 'list' away.
+_TASK_LABEL_CHARS = 80
+
+
+def _task_label(text: str) -> str:
+    """A task's text cut to ``_TASK_LABEL_CHARS`` at a word boundary."""
+    if len(text) <= _TASK_LABEL_CHARS:
+        return text
+    cut = text[:_TASK_LABEL_CHARS]
+    space = cut.rfind(" ")
+    if space > _TASK_LABEL_CHARS // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.") + "..."
 
 
 @dataclass(frozen=True)
@@ -729,7 +743,7 @@ class ToolExecutor:
             if passed:
                 task.update(done=True, verification="verified", blocked=False)
                 task.pop("blocked_reason", None)
-                closed.append({"id": task["id"], "text": task["text"][:120]})
+                closed.append({"id": task["id"], "label": _task_label(task["text"])})
         return closed
 
     def reopen_unverifiable_tasks(self) -> list[int]:
@@ -920,21 +934,35 @@ class ToolExecutor:
                 unique.append(i)
         return unique, bad
 
+    @staticmethod
+    def _listed_task(task: dict) -> dict:
+        """One row of action='list': full text only where the work is still owed."""
+        status = ("dropped" if task.get("dropped") else "blocked" if task.get("blocked")
+                  else "done" if task["done"] and task.get("verification") == "verified"
+                  else "implemented" if task["done"] else "open")
+        verification = task.get("verification", "unverified")
+        row: dict = {"id": task["id"]}
+        if status in ("open", "blocked"):
+            row["text"] = task["text"]
+        else:
+            row["label"] = _task_label(task["text"])
+        row["status"] = status
+        # Implied by status except for an implemented item's evidence check.
+        if verification != ("verified" if status == "done" else "unverified"):
+            row["verification"] = verification
+        if status == "open" and task.get("planning_notes"):
+            row["planning_notes"] = task["planning_notes"]
+        if task.get("dropped"):
+            row["reason"] = task["dropped"]
+        elif task.get("blocked_reason"):
+            row["reason"] = task["blocked_reason"]
+        return row
+
     def _task_list(self, args: dict) -> dict:
         action = args.get("action")
         if action == "list":
             return {
-                "tasks": [
-                    {"id": t["id"], "text": t["text"],
-                     "status": ("dropped" if t.get("dropped") else "blocked" if t.get("blocked")
-                                else "done" if t["done"] and t.get("verification") == "verified"
-                                else "implemented" if t["done"] else "open"),
-                     "verification": t.get("verification", "unverified"),
-                     **({"planning_notes": t["planning_notes"]} if t.get("planning_notes") else {}),
-                     **({"reason": t["dropped"]} if t.get("dropped") else
-                        {"reason": t["blocked_reason"]} if t.get("blocked_reason") else {})}
-                    for t in self._tasks
-                ],
+                "tasks": [self._listed_task(t) for t in self._tasks],
                 "open": len(self.open_tasks()),
                 "unverified": len(self.unverified_tasks()),
             }
@@ -987,7 +1015,7 @@ class ToolExecutor:
                 if verified:
                     t["verification"] = "verified"
                 elif reason is None:
-                    reason = f"its check still fails: {t['text']}"
+                    reason = "its check still fails"
             else:
                 evidence, reason = self._task_implementation_evidence(task_id, args)
                 if reason is None:
@@ -997,8 +1025,7 @@ class ToolExecutor:
                 if was_blocked:
                     # A later repair may make the check pass. Re-evaluate
                     # it, but do not reopen another retry budget on failure.
-                    already_blocked.append({"id": task_id, "text": t["text"],
-                                            "reason": t.get("blocked_reason", reason)})
+                    already_blocked.append({"id": task_id, "reason": t.get("blocked_reason", reason)})
                     continue
                 # Bound retries, including broken/missing verifiers.
                 t["attempts"] = int(t.get("attempts") or 0) + 1
@@ -1006,7 +1033,7 @@ class ToolExecutor:
                     # Preserve the unresolved requirement without livelock.
                     t["blocked"] = True
                     t["blocked_reason"] = reason
-                    blocked.append({"id": task_id, "text": t["text"], "reason": reason})
+                    blocked.append({"id": task_id, "reason": reason})
                 else:
                     refused.append({
                         "id": task_id,
@@ -1027,7 +1054,8 @@ class ToolExecutor:
             "verified_ids": [task_id for task_id in done if by_id[task_id].get("verification") == "verified"],
             "unverified_ids": [task_id for task_id in done if by_id[task_id].get("verification") != "verified"],
             "open_remaining": len(remaining),
-            "open_items": [{"id": r["id"], "text": r["text"]} for r in remaining],
+            # Labels, not full text: the conversation re-sends every result.
+            "open_items": [{"id": r["id"], "label": _task_label(r["text"])} for r in remaining],
         }
         if len(ids) == 1:
             result["id"] = ids[0]
@@ -1057,20 +1085,17 @@ class ToolExecutor:
             # ``_result_status`` treats an outcome as an error ONLY when the
             # payload carries an "error" key, and the loop guards, tracing
             # and "don't re-attempt" memory all depend on seeing a call that
-            # accepted nothing as one.
+            # accepted nothing as one. `advice` already says what to do next.
             parts = []
             for item in refused:
                 parts.append(
                     f"Task {item['id']} is NOT done - {item['reason']} "
-                    f"(attempt {item['attempts']} of "
-                    f"{_MAX_TASK_VERIFY_ATTEMPTS}). Do the work first, "
-                    "then mark it done."
+                    f"(attempt {item['attempts']} of {_MAX_TASK_VERIFY_ATTEMPTS})."
                 )
             for item in blocked:
                 parts.append(
                     f"Task {item['id']} is NOT done and is now BLOCKED "
-                    f"after {_MAX_TASK_VERIFY_ATTEMPTS} failed checks: "
-                    f"{item['text']}"
+                    f"after {_MAX_TASK_VERIFY_ATTEMPTS} failed checks."
                 )
             for task_id in unknown:
                 parts.append(

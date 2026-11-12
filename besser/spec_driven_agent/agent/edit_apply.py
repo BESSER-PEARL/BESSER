@@ -132,6 +132,11 @@ def _match_but_for_leading_whitespace(
         return None
     if not all(whole_lines[i].lstrip() == part_lines[i].lstrip() for i in range(n)):
         return None
+    # A quoted line indented MORE than the file's has no missing prefix. The
+    # slice below would go negative and return the file's own text as the
+    # "indent", which the caller then prepends to the replacement.
+    if any(len(whole_lines[i]) < len(part_lines[i]) for i in range(n) if whole_lines[i].strip()):
+        return None
     prefixes = {
         whole_lines[i][: len(whole_lines[i]) - len(part_lines[i])]
         for i in range(n)

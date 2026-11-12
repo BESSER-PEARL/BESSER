@@ -30,6 +30,33 @@ def test_exact_match_replaces_first_occurrence_only():
     )
 
 
+@pytest.mark.parametrize("whole, old, new, corrupted", [
+    ("debug: false\nport: 8000\nhost: 0.0.0.0\n", " port: 8000", "port: 9000", "port: 8000port: 9000"),
+    ("fastapi==0.110.0\nuvicorn==0.29.0\n", " uvicorn==0.29.0", "uvicorn==0.30.0", "uvicorn==0.29.0uvicorn"),
+    ("FROM python:3.12\nEXPOSE 8000\n", "  EXPOSE 8000", "EXPOSE 9000", "EXPOSE 800EXPOSE 9000"),
+])
+def test_an_over_indented_quote_never_splices_file_text_into_the_replacement(whole, old, new, corrupted):
+    """old_text carried a stray leading space (copied from read_file's gutter)
+    and new_text did not. The whitespace tier took a negative slice of the
+    file's line as the "missing indent" and prepended it to the replacement:
+    ``uvicorn==0.29.0uvicorn==0.30.0`` was written and reported as modified.
+    """
+    result = replace_most_similar_chunk(whole, old, new)
+    assert result is None or corrupted not in result
+    if result is not None:  # a later tier may still place it; then it must be clean
+        assert new in result.splitlines()
+
+
+def test_the_over_indented_quote_is_refused_end_to_end(tmp_path):
+    (tmp_path / "requirements.txt").write_text("fastapi==0.110.0\nuvicorn==0.29.0\n", encoding="utf-8")
+    executor = ToolExecutor(str(tmp_path), per_write_diagnostics=False)
+    executor.execute("read_file", {"path": "requirements.txt"})
+    executor.execute("modify_file", {
+        "path": "requirements.txt", "old_text": " uvicorn==0.29.0", "new_text": "uvicorn==0.30.0"})
+    on_disk = (tmp_path / "requirements.txt").read_text(encoding="utf-8")
+    assert on_disk in ("fastapi==0.110.0\nuvicorn==0.29.0\n", "fastapi==0.110.0\nuvicorn==0.30.0\n")
+
+
 def test_uniform_missing_leading_whitespace():
     """The model reproduced the block unindented - the commonest real miss."""
     whole = "    line1\n    line2\n    line3\n"

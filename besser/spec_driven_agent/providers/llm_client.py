@@ -701,9 +701,14 @@ class ClaudeLLMClient(LLMProvider):
                 and getattr(b, "name", None) == force_tool
                 for b in result["content"]
             ):
-                return result
+                break
             logger.info("Model answered without calling %s under "
                         "tool_choice=auto", force_tool)
+        # The reply's thinking was signed over a conversation ending in the
+        # one-off instruction, which the next request does not send: replayed,
+        # it is "bound to a different conversation" (HTTP 400).
+        result["content"] = [b for b in result["content"]
+                             if getattr(b, "type", None) not in ("thinking", "redacted_thinking")]
         return result
 
     def _create(

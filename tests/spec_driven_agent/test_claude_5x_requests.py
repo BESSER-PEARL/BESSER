@@ -218,6 +218,26 @@ def test_an_ordinary_turn_marks_tools_system_and_the_conversation():
     assert _cache_markers(request) == {"tools": True, "system": True, "messages": True}
 
 
+def test_a_forced_reply_carries_no_thinking_block():
+    """The reply was produced after a one-off instruction the next request
+    does not send, so its thinking block would be replayed after a different
+    conversation than the one it was signed over: a 400 on these models."""
+    reply = SimpleNamespace(
+        stop_reason="tool_use", usage=at.Usage(input_tokens=1, output_tokens=1),
+        content=[at.ThinkingBlock(type="thinking", thinking="plan", signature="sig"),
+                 at.ToolUseBlock(type="tool_use", id="toolu_1", name="read_file", input={"path": "a"})])
+    client = _claude("claude-sonnet-5-5", reply)
+    history = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "text", "text": "reading"}]},
+        {"role": "user", "content": "now read a"},
+    ]
+
+    result = client.chat(system="s", messages=history, tools=[TOOL, OTHER_TOOL], force_tool="read_file")
+
+    assert [block.type for block in result["content"]] == ["tool_use"]
+
+
 def test_a_reply_without_the_tool_is_asked_again_once():
     client = _claude("claude-fable-5-1", _text(), _tool_use())
 

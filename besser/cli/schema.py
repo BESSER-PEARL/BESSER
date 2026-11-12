@@ -164,7 +164,9 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
     "new": {
         "model": {"type": "string", "description": "the file written"},
         "kind": {"type": "string"},
-        "kinds": {"type": "array", "description": "with --list: per kind its kind, summary, models and generator"},
+        "kinds": {"type": "array", "description": "with --list: per kind its kind, summary, generators (the ids "
+                                                "that read it) and editor_diagram (its editor diagram type, "
+                                                "null when the editor has none)"},
     },
     "init": {
         "folder": {"type": "string", "description": "the project folder"},
@@ -173,7 +175,7 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
     "guide": {"guide": {"type": "string", "description": "the rules for a coding agent, as AGENTS.md has them"}},
     "schema": {
         "topic": {"type": "string"},
-        "topics": {"type": "array", "description": "without a topic: the topics there are"},
+        "topics": {"type": "array", "description": "without a topic: per topic its topic and summary"},
         "schema": {"type": "object", "description": "topics project and result: a JSON Schema"},
         "description": {"type": "object", "description": "a model kind: its classes, values and generators"},
         "example": {"type": "string", "description": "topic config: an example file"},

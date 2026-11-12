@@ -471,9 +471,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = add_command(
         "mcp", "serve the commands to an AI agent over MCP (stdio)",
-        "Run a Model Context Protocol server on standard input and output, exposing validate,\n"
-        "info, generators, generate, regenerate and convert as tools to an MCP client (an AI\n"
-        "coding agent).\n\n"
+        "Run a Model Context Protocol server on standard input and output, exposing new,\n"
+        "schema, validate, info, generators, generate, regenerate and convert as tools to an\n"
+        "MCP client (an AI coding agent).\n\n"
         "Tools only read and write files under --root. A .py model is Python code: the tools\n"
         "load .json models only, unless --exec-py is given.\n\n"
         'Needs the MCP SDK (pip install "besser[mcp]").',

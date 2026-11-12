@@ -136,6 +136,15 @@ def test_it_lists_the_commands_as_tools(serve):
     assert tools["generate"]["annotations"]["destructiveHint"] is True
 
 
+def test_the_help_names_every_tool_the_server_serves(besser):
+    """The help listed six tools while the server served eight (new and schema were missing)."""
+    from besser.cli.mcp_server import tool_specs
+
+    listed = besser("mcp", "--help").stdout.split("exposing", 1)[1].split("as tools", 1)[0]
+
+    assert set(listed.replace(",", " ").replace(" and ", " ").split()) == set(tool_specs())
+
+
 def test_the_tool_list_and_the_results_are_read_by_a_model_so_they_stay_small(serve):
     server = serve()
     tools = server.request("tools/list")["result"]["tools"]

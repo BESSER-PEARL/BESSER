@@ -14,6 +14,9 @@ Here each change finds where the element is written and splices the change into 
   is one statement after the line that defines its variable (``Deal.add_attribute(...)``), or, when
   it has none, it is refused with a message that says so. Nothing is ever written from a partial edit.
 
+When the file holds a GUI model too, its tables bound to a class (one ``FieldColumn`` per attribute)
+follow the class: see "the GUI model" below; ``add-screen`` adds a screen showing one.
+
 ``besser.cli.commands.model`` runs the operations, checks that the new text loads, holds the change
 and has no validation error the old one did not have, and only then writes the file.
 """
@@ -34,6 +37,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from antlr4 import InputStream
 
+from besser.BUML.metamodel.gui import Button, LookupColumn, Screen, Table, Text
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
     Association,
@@ -45,13 +49,16 @@ from besser.BUML.metamodel.structural import (
     Generalization,
     Method,
     Property,
+    Type,
 )
 from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
 from besser.cli.loading import LoadedModels, ModelLoadError, load_python_text
 from besser.cli.ocl_check import invariant_text
+from besser.utilities import sort_by_timestamp
 
 STRUCTURAL_MODULE = "besser.BUML.metamodel.structural"
+GUI_MODULE = "besser.BUML.metamodel.gui"
 # The type names ``besser info`` prints -> the constants of the structural metamodel.
 PRIMITIVE_TYPES = {
     "str": "StringType", "int": "IntegerType", "float": "FloatType", "bool": "BooleanType", "date": "DateType",
@@ -69,6 +76,7 @@ _OCL_PROBE = "besser_renamed_member_"
 _ADDERS = {
     "attributes": "add_attribute", "methods": "add_method", "literals": "add_literal", "types": "add_type",
     "associations": "add_association", "generalizations": "add_generalization", "constraints": "add_constraint",
+    "columns": "columns.append",
 }
 
 _ATTRIBUTE = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*)(?P<optional>\?)?(?:\s*=\s*(?P<default>.*))?$")
@@ -110,6 +118,8 @@ class Edited:
     summary: str
     check: Callable[[DomainModel], str | None]
     warnings: list[str] = field(default_factory=list)
+    # How to check that the reloaded GUI models (all of the file's) hold the change, when it touches them.
+    gui_check: Callable[[list[Any]], str | None] | None = None
 
 
 def _q(text: str) -> str:
@@ -418,6 +428,7 @@ class ModelEditor:
 
     def __init__(self, path: Path, text: str, use: Sequence[str] = ()):
         self.path = path
+        self.use = use
         self.src = _Text(text)
         try:
             loaded, namespace = load_python_text(path, text)
@@ -433,7 +444,8 @@ class ModelEditor:
             if not name.startswith("__") and id(value) not in self.vars and self.src.assignment(name) is not None:
                 self.vars[id(value)] = name
         self.reserved: set[str] = set()
-        self.needed: set[str] = set()
+        # Metamodel module -> the names of it the new text uses and the file does not import.
+        self.needed: dict[str, set[str]] = {}
         self.warnings: list[str] = []
 
     # names
@@ -455,8 +467,15 @@ class ModelEditor:
 
     def _structural(self, name: str) -> str:
         """``name`` of the structural metamodel, imported if the file does not have it."""
+        return self._metamodel(STRUCTURAL_MODULE, name)
+
+    def _gui(self, name: str) -> str:
+        """``name`` of the GUI metamodel, imported if the file does not have it."""
+        return self._metamodel(GUI_MODULE, name)
+
+    def _metamodel(self, module: str, name: str) -> str:
         if name not in self.namespace:
-            self.needed.add(name)
+            self.needed.setdefault(module, set()).add(name)
         return name
 
     def _type_var_style(self, name: str) -> str:
@@ -505,6 +524,11 @@ class ModelEditor:
             return value if _builds(value, element) else None
         if isinstance(element, DomainModel):
             return None
+        if not isinstance(element, (Type, Association, Generalization, Constraint, Method, EnumerationLiteral,
+                                    Property)):
+            # A GUI element without a variable is written inside another one: its call is the one building it.
+            calls = [node for node in ast.walk(self.src.tree) if _builds(node, element)]
+            return calls[0] if len(calls) == 1 else None
         owner, attribute = self.container_of(element)
         literal = self.collection(owner, attribute)
         for item in _items(literal) if literal is not None else ():
@@ -571,18 +595,16 @@ class ModelEditor:
             use_var = need_var or (bool(items) and all(isinstance(item, ast.Name) for item in items))
             anchor = before or self.src.top_statement(literal)
             item = self._define(var(), code, anchor, separate) if use_var else code
-            if not items:  # set() or [] or ()
-                brackets = "[]" if isinstance(literal, ast.List) or _callee(literal) == "list" else "{}"
-                self.src.replace(self.src.start(literal), self.src.end(literal), f"{brackets[0]}{item}{brackets[1]}")
-            else:
-                self.src.add_item(items, self.src.end(literal) - 1, item)
+            self.add_to_literal(literal, item)
             return item
         call = self.call_of(owner)
         if call is not None:
             anchor = before or self.src.top_statement(call)
             item = self._define(var(), code, anchor, separate) if need_var else code
             arguments = sorted([*call.args, *call.keywords], key=self.src.start)
-            self.src.add_item(arguments, self.src.end(call) - 1, f"{attribute}={{{item}}}")
+            # A table's columns are a list: their order is the page's.
+            brackets = "[]" if isinstance(getattr(owner, attribute, None), list) else "{}"
+            self.src.add_item(arguments, self.src.end(call) - 1, f"{attribute}={brackets[0]}{item}{brackets[1]}")
             return item
         owner_var = self.var_of(owner)
         statement = self.src.assignment(owner_var) if owner_var else None
@@ -595,6 +617,15 @@ class ModelEditor:
         self.src.insert_after(statement, f"{owner_var}.{_ADDERS[attribute]}({code})\n")
         return code
 
+    def add_to_literal(self, literal: ast.AST, item: str) -> None:
+        """Add the item ``item`` (code or a variable) to the set or list literal (or empty ``set()``) ``literal``."""
+        items = _items(literal)
+        if items:
+            self.src.add_item(items, self.src.end(literal) - 1, item)
+            return
+        brackets = "[]" if isinstance(literal, ast.List) or _callee(literal) == "list" else "{}"
+        self.src.replace(self.src.start(literal), self.src.end(literal), f"{brackets[0]}{item}{brackets[1]}")
+
     def model_parts(self) -> ast.stmt | None:
         """The first statement that writes the model or its associations, generalizations or constraints:
         a new class goes before it, so that they can refer to it."""
@@ -604,7 +635,27 @@ class ModelEditor:
         model = self.src.assignment(self.model_var)
         if model is not None:
             statements.append(model)
+        # And before the screens of a GUI model, so that a screen added for it can refer to it.
+        for gui in self.gui_models():
+            for module in gui.modules:
+                literal = self.collection(module, "screens")
+                if literal is not None:
+                    statements.append(self.src.top_statement(literal))
         return min(statements, key=lambda statement: statement.lineno, default=None)
+
+    # the GUI models
+
+    def gui_models(self) -> list[Any]:
+        return [loaded.model for loaded in self.loaded.of_kind("gui")]
+
+    def tables_of(self, cls: Class) -> list[Table]:
+        """The tables of the file bound to ``cls``: on the screens of its GUI models, or held by a variable."""
+        found: dict[int, Table] = {}
+        candidates = [element for gui in self.gui_models() for screen in _screens(gui) for element in _contents(screen)]
+        for element in [*candidates, *self.namespace.values()]:
+            if isinstance(element, Table) and _bound_class(element) is cls:
+                found.setdefault(id(element), element)
+        return sorted(found.values(), key=lambda table: table.name)
 
     def type_code(self, name: str, kinds: tuple[type, ...] = (Class, Enumeration)) -> str:
         """How the file refers to the type ``name``: a primitive's constant or the variable of a class or
@@ -682,13 +733,13 @@ class ModelEditor:
 
     def finish(self) -> str:
         """The new text: the planned edits, and an import of the metamodel names it uses."""
-        if self.needed:
-            self._import(sorted(self.needed))
+        for module in sorted(self.needed):
+            self._import(module, sorted(self.needed[module]))
         return self.src.result()
 
-    def _import(self, names: list[str]) -> None:
+    def _import(self, module: str, names: list[str]) -> None:
         for statement in self.src.tree.body:
-            if isinstance(statement, ast.ImportFrom) and statement.module == STRUCTURAL_MODULE \
+            if isinstance(statement, ast.ImportFrom) and statement.module == module \
                     and not any(alias.name == "*" for alias in statement.names):
                 aliases = list(statement.names)
                 text = self.src.segment(statement)
@@ -701,7 +752,7 @@ class ModelEditor:
                         self.src.add_item(aliases, close, name)
                 return
         imports = [statement for statement in self.src.tree.body if isinstance(statement, (ast.Import, ast.ImportFrom))]
-        line = f"from {STRUCTURAL_MODULE} import {', '.join(names)}\n"
+        line = f"from {module} import {', '.join(names)}\n"
         if imports:
             self.src.insert_after(imports[-1], line)
         elif self.src.tree.body:
@@ -797,12 +848,22 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
     cls = editor.find_type(class_name, Class)
     existing = [attribute.name for attribute in cls.all_attributes()] + [end.name for end in cls.association_ends()]
     shown = []
+    # A table bound to the class gets a column per new attribute, which refers to its variable: the
+    # variable is defined before the class and before those tables.
+    tables = editor.tables_of(cls)
+    literal = editor.collection(cls, "attributes")
+    anchors = [editor.src.top_statement(node) for node in (
+        literal, *(editor.collection(table, "columns") for table in tables)) if node is not None]
+    before = min(anchors, key=lambda statement: statement.lineno) if tables and anchors else None
+    added = []
     for spec in attributes:
         code, name, text = editor.property_code(class_name, spec, existing)
         existing.append(name)
         shown.append(text)
-        editor.add(cls, "attributes", code, lambda name=name: editor.free_name(_attribute_var_base(editor, cls, name)),
-                   need_var=False, separate=False)
+        added.append((name, editor.add(
+            cls, "attributes", code, lambda name=name: editor.free_name(_attribute_var_base(editor, cls, name)),
+            need_var=bool(tables), separate=False, before=before)))
+    columns = _add_columns(editor, cls, added) if tables else []
 
     def check(model: DomainModel) -> str | None:
         found = model.get_class_by_name(class_name)
@@ -810,11 +871,14 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
                    parse_attribute(spec)[0] not in {attribute.name for attribute in found.attributes}]
         return f"{class_name} has no {', '.join(missing)}" if missing else None
 
-    return Edited(editor.finish(), f"added {class_name}.{', '.join(shown)}", check)
+    summary = f"added {class_name}.{', '.join(shown)}"
+    if columns:
+        summary += f"; column{'s' if len(added) > 1 else ''} added to table {', '.join(columns)}"
+    return Edited(editor.finish(), summary, check)
 
 
 def add_class(editor: ModelEditor, name: str, attributes: Sequence[str], parent: str | None,
-              abstract: bool) -> Edited:
+              abstract: bool, screen: bool) -> Edited:
     if editor.model.get_type_by_name(name) is not None:
         raise EditError(f"{editor.model.name} has a type named '{name}' already")
     parent_class = editor.find_type(parent, Class) if parent else None
@@ -837,7 +901,12 @@ def add_class(editor: ModelEditor, name: str, attributes: Sequence[str], parent:
 
     extra = f"({parent})" if parent else ""
     with_attributes = f" with {len(attributes)} attribute{'s' if len(attributes) > 1 else ''}" if attributes else ""
-    return Edited(editor.finish(), f"added class {name}{extra}{with_attributes}", check)
+    edited = Edited(editor.finish(), f"added class {name}{extra}{with_attributes}", check)
+    if not screen:
+        return edited
+    # The screen is added to the text with the class, as 'add-screen' would add it next.
+    with_screen = add_screen(ModelEditor(editor.path, edited.text, editor.use), name, None)
+    return Edited(with_screen.text, f"{edited.summary}; {with_screen.summary}", check, gui_check=with_screen.gui_check)
 
 
 def add_parent(editor: ModelEditor, class_name: str, parent: str) -> Edited:
@@ -1048,6 +1117,7 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
         _rename_defaults(editor, element, new_name)
     new_path = f"{path.rsplit('.', 1)[0]}.{new_name}" if "." in path else new_name
     summary = f"renamed {path} to {new_path}" + (f" (variable {var} -> {new_var})" if new_var else "")
+    summary += _rename_in_gui(editor, element, old_name, new_name)
     if isinstance(element, Class):
         summary += _ends_named_after(editor, element, old_name, new_name)
 
@@ -1059,6 +1129,53 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
         return None
 
     return Edited(editor.finish(), summary, check, editor.warnings)
+
+
+def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str:
+    """Rename what the GUI derives from a renamed class or attribute; returns what changed, for the summary.
+
+    An attribute's column label derived from its name follows it. A class's screens and tables keep
+    their titles unless derived from its name (``Authors``, ``Author``): those follow it, as do the
+    heading of the screen and the label of a button that opens it.
+    """
+    if isinstance(element, Property) and isinstance(element.owner, Class):
+        changes = []
+        for table in editor.tables_of(element.owner):
+            for column, item, _ in _column_items(editor, table) or ():
+                if _columns_of(column, element):
+                    changes += _replace_strings(editor, _item_call(editor, item), ("label",),
+                                                {_label(old): _label(new)})
+        return "".join(f"; column {old_label} -> {new_label}" for old_label, new_label in changes)
+    if not isinstance(element, Class):
+        return ""
+    renamed = dict(zip(_derived_titles(old), _derived_titles(new)))
+    renamed[f"Go to the {_plural(old).lower()}"] = f"Go to the {_plural(new).lower()}"
+    tables = editor.tables_of(element)
+    taken = {screen.name for gui in editor.gui_models() for screen in _screens(gui)}
+    changes = []
+    for table in tables:
+        changes += _replace_strings(editor, editor.call_of(table), ("title",), renamed)
+    for gui in editor.gui_models():
+        for screen in _screens(gui):
+            contents = _contents(screen)
+            if not any(table in contents for table in tables):
+                continue
+            if screen.name in renamed and renamed[screen.name] in taken:
+                editor.warnings.append(f"screen {screen.name} keeps its name: a screen is named "
+                                       f"{renamed[screen.name]} already")
+                continue
+            changes += _replace_strings(editor, editor.call_of(screen), ("name", "component_id", "description"),
+                                        renamed)
+            for heading in contents:
+                if isinstance(heading, Text):
+                    changes += _replace_strings(editor, editor.call_of(heading), ("content",), renamed)
+            buttons = [item for other in _screens(gui) for item in _contents(other)
+                       if isinstance(item, Button) and item.targetScreen is screen]
+            for button in buttons:
+                changes += _replace_strings(editor, editor.call_of(button), ("label", "description"), renamed)
+    titles = sorted({f"{old_title} -> {new_title}" for old_title, new_title in changes
+                     if old_title in _derived_titles(old)})
+    return f"; GUI titles {', '.join(titles)}" if titles else ""
 
 
 def _plural(word: str) -> str:
@@ -1346,6 +1463,25 @@ def remove(editor: ModelEditor, path: str) -> Edited:
         for index, node in enumerate(_items(literal) if literal is not None else ()):
             if isinstance(node, ast.Name) and node.id == var:
                 drops.setdefault(id(literal), (literal, set()))[1].add(index)
+    # The GUI follows: a removed class's tables and screens go, and a removed attribute's columns.
+    gui_removed = _gui_removals(editor, element) if isinstance(element, Class) else []
+    for gui_element in gui_removed:
+        _remove_gui_element(editor, gui_element, drops, removed_vars)
+    removed_properties = [item for item in [*outer, *members] if isinstance(item, Property)]
+    column_tables = []
+    for table in sorted({id(t): t for item in removed_properties if isinstance(item.owner, Class)
+                         for t in editor.tables_of(item.owner)}.values(), key=lambda t: t.name):
+        if table in gui_removed:
+            continue
+        located = _column_items(editor, table)
+        users = [column for column in table.columns if any(_columns_of(column, item) for item in removed_properties)]
+        if users and located is None:
+            raise EditError(f"table {table.name} has a column of {editor.describe(element)}: remove it by hand first")
+        for index, (column, _, literal) in enumerate(located or ()):
+            if column in users:
+                drops.setdefault(id(literal), (literal, set()))[1].add(index)
+        if users:
+            column_tables.append(table.name)
     for literal, indices in drops.values():
         if not editor.src.is_deleted(literal):
             editor.src.remove_items(literal, _items(literal), indices)
@@ -1363,6 +1499,16 @@ def remove(editor: ModelEditor, path: str) -> Edited:
     also = [f"{type(item).__name__.lower().replace('binary', '')} {item.name}" for item in outer[1:]
             if isinstance(item, (Association, Constraint))]
     summary = f"removed {named}" + (f" and {', '.join(also)}" if also else "")
+    named_gui = [f"{type(item).__name__.lower()} {item.name}" for item in gui_removed
+                 if isinstance(item, (Screen, Table, Button))]
+    if named_gui:
+        summary += f"; and {', '.join(named_gui)}"
+    if column_tables:
+        summary += f"; its column from table {', '.join(column_tables)}"
+    left = [screen for gui in editor.gui_models() for screen in _screens(gui) if screen not in gui_removed]
+    warnings = [f"screen {item.name} was the main page: the app opens on {left[0].name if left else 'no screen'} "
+                "now, and the buttons it held are gone" for item in gui_removed
+                if isinstance(item, Screen) and item.is_main_page]
 
     def check(model: DomainModel) -> str | None:
         try:
@@ -1371,17 +1517,287 @@ def remove(editor: ModelEditor, path: str) -> Edited:
             return None
         return f"{named} is still there"
 
-    return Edited(editor.finish(), summary, check)
+    return Edited(editor.finish(), summary, check, warnings)
+
+
+# ── the GUI model: screens and the tables that show a class ─────────────────
+#
+# A table bound to a class (``DataBinding``) shows one ``FieldColumn`` per attribute; the operations on
+# the domain model keep those columns, and the titles derived from the class's name, in step.
+
+
+def _contents(container: Any) -> list[Any]:
+    """The view elements of a screen or container, at any depth."""
+    found = []
+    for element in getattr(container, "view_elements", None) or ():
+        found.append(element)
+        found.extend(_contents(element))
+    return found
+
+
+def _screens(gui: Any) -> list[Screen]:
+    """The screens of a GUI model, in the generator's order (modules, then screens, by name)."""
+    return [screen for module in sorted(gui.modules, key=lambda m: m.name)
+            for screen in sorted(module.screens, key=lambda s: s.name)]
+
+
+def _bound_class(table: Table) -> Any:
+    return getattr(getattr(table, "data_binding", None), "domain_concept", None)
+
+
+def _label(name: str) -> str:
+    """A column's label derived from its attribute's name: ``due_date`` -> ``Due date``."""
+    return (name[:1].upper() + name[1:]).replace("_", " ")
+
+
+def _derived_titles(class_name: str) -> list[str]:
+    """The titles ``add-screen`` and the starter derive from a class's name: ``Authors``, then ``Author``."""
+    return [_plural(class_name), class_name]
+
+
+def _column_items(editor: ModelEditor, table: Table) -> list[tuple[Any, ast.AST, ast.AST]] | None:
+    """Each column of ``table`` with the item of the list literal that writes it, and that literal;
+    ``None`` when the file does not write the columns as one list."""
+    literal = editor.collection(table, "columns")
+    items = _items(literal) if literal is not None else []
+    if len(items) != len(table.columns):
+        return None
+    return [(column, item, literal) for column, item in zip(table.columns, items)]
+
+
+def _item_call(editor: ModelEditor, item: ast.AST) -> ast.Call | None:
+    """The call an item of a literal is: itself, or the value of the variable it names."""
+    if isinstance(item, ast.Name):
+        statement = editor.src.assignment(item.id)
+        item = getattr(statement, "value", None)
+    return item if isinstance(item, ast.Call) else None
+
+
+def _columns_of(column: Any, member: Property) -> bool:
+    return getattr(column, "field", None) is member or (isinstance(column, LookupColumn) and column.path is member)
+
+
+def _replace_strings(editor: ModelEditor, call: ast.Call | None, keywords: Sequence[str],
+                     renamed: dict[str, str]) -> list[tuple[str, str]]:
+    """Replace the string arguments ``keywords`` of ``call`` that are a key of ``renamed``; returns the changes."""
+    changes = []
+    for keyword_ in call.keywords if call is not None else ():
+        value = keyword_.value
+        if keyword_.arg in keywords and isinstance(value, ast.Constant) and value.value in renamed:
+            new = renamed[value.value]
+            editor.src.replace(editor.src.start(value), editor.src.end(value),
+                               _string_code(editor.src.segment(value), value.value, new))
+            changes.append((value.value, new))
+    return changes
+
+
+def _attribute_variables(editor: ModelEditor, cls: Class) -> dict[int, str]:
+    """The variable of each attribute of ``cls``; an attribute written inside its class's set gets one,
+    defined before the class (as the starter writes them), so that a column can refer to it."""
+    found = {id(attribute): editor.var_of(attribute) for attribute in cls.attributes if editor.var_of(attribute)}
+    literal = editor.collection(cls, "attributes")
+    items = _items(literal) if literal is not None else []
+    by_name = {attribute.name: attribute for attribute in cls.attributes}
+    texts, hoisted = [], False
+    for item in items:
+        name = _name_argument(item) if _callee(item) == "Property" else None
+        attribute = by_name.get(name.value) if name is not None else None
+        if attribute is None or id(attribute) in found:
+            texts.append(editor.src.segment(item))
+            continue
+        var = editor.free_name(_attribute_var_base(editor, cls, attribute.name))
+        editor.src.insert_before(editor.src.top_statement(literal), f"{var} = {editor.src.segment(item)}\n", False)
+        found[id(attribute)] = var
+        texts.append(var)
+        hoisted = True
+    if hoisted:
+        # On one line when it fits, as the starter writes a class's attributes.
+        start, end = editor.src.start(literal), editor.src.end(literal)
+        line = (editor.src.text[editor.src.line_start(start):start] + "{" + ", ".join(texts) + "}"
+                + editor.src.text[end:editor.src.line_end(end)].rstrip("\n"))
+        if len(line) <= _MAX_LINE and isinstance(literal, ast.Set):
+            editor.src.replace(start, end, "{" + ", ".join(texts) + "}")
+        else:
+            editor.src.rewrite_items(literal, items, texts)
+    missing = sorted(attribute.name for attribute in cls.attributes if id(attribute) not in found)
+    if missing:
+        raise EditError(f"cannot find where {cls.name}.{', '.join(missing)} is written to refer to it from a "
+                        f"table; give it a variable")
+    return found
+
+
+def _gui_model(editor: ModelEditor) -> Any:
+    """The GUI model a new screen goes in: the file's only one, or the one ``--use`` names."""
+    guis = editor.loaded.of_kind("gui")
+    named = [gui for gui in guis if gui.names & set(editor.use)]
+    guis = named or guis
+    if not guis:
+        raise EditError(f"{editor.path.name} has no GUI model to add a screen to (a project made with "
+                        "'besser init --kind gui' has one)")
+    if len(guis) > 1:
+        raise EditError(f"{editor.path.name} holds {len(guis)} GUI models; name one with --use "
+                        f"({', '.join(gui.name for gui in guis)})")
+    return guis[0].model
+
+
+def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edited:
+    cls = editor.find_type(class_name, Class)
+    gui = _gui_model(editor)
+    screens = _screens(gui)
+    for screen in screens:
+        if any(isinstance(element, Table) and _bound_class(element) is cls for element in _contents(screen)):
+            raise EditError(f"screen {screen.name} shows {class_name} already")
+    attributes = sort_by_timestamp(cls.attributes)
+    if not attributes:
+        raise EditError(f"{class_name} has no attribute for its table to show: add one first "
+                        f"(besser model add-attribute {class_name} name:str)")
+    title = title or _plural(class_name)
+    # The name is the page's route: the title's words joined (Book reviews -> BookReviews).
+    screen_name = "".join(word[:1].upper() + word[1:] for word in re.split(r"\W+", title))
+    if not screen_name:
+        raise EditError(f"'{title}' is no title: give it letters or digits")
+    if screen_name in {screen.name for screen in screens}:
+        raise EditError(f"{gui.name} has a screen named '{screen_name}' already: give another --title")
+    module = min(gui.modules, key=lambda m: m.name, default=None)
+    literal = editor.collection(module, "screens") if module is not None else None
+    if literal is None:
+        raise EditError(f"cannot find where the screens of {gui.name} are written in {editor.path.name}; "
+                        "edit it by hand")
+    anchor = editor.src.top_statement(literal)
+    fields = _attribute_variables(editor, cls)
+    base = _snake(class_name)
+    table, screen_var = editor.free_name(f"{base}_table"), editor.free_name(f"{base}_screen")
+    heading = editor.free_name(f"{base}_heading")
+    columns = "".join(f"        {editor._gui('FieldColumn')}(label={_q(_label(attribute.name))}, "
+                      f"field={fields[id(attribute)]}),\n" for attribute in attributes)
+    # The main page links to the new screen: the generated app navigates with buttons only.
+    main = next((screen for screen in screens if screen.is_main_page), screens[0] if screens else None)
+    code = (
+        f"{table} = {editor._gui('Table')}(\n"
+        f"    name={_q(table)}, component_id={_q(table)}, title={_q(title)},\n"
+        f"    action_buttons=True, show_pagination=True, columns=[\n{columns}    ],\n)\n"
+        f"{table}.data_binding = {editor._gui('DataBinding')}(domain_concept={editor.type_code(class_name)})\n"
+        f"{screen_var} = {editor._gui('Screen')}(\n"
+        f"    name={_q(screen_name)}, component_id={_q(screen_name)}, description={_q(title)},"
+        f"{' is_main_page=True,' if main is None else ''}\n"
+        f"    view_elements={{\n        {editor._gui('Text')}(name={_q(heading)}, component_id={_q(heading)}, "
+        f"content={_q(title)}),\n        {table},\n    }},\n)\n"
+    )
+    button = None
+    if main is not None:
+        button = editor.free_name(f"to_{_snake(screen_name)}")
+        code += (
+            f"{button} = {editor._gui('Button')}(\n"
+            f"    name={_q(button)}, component_id={_q(button)}, description={_q('Go to the ' + title.lower())}, "
+            f"label={_q(title)},\n"
+            f"    buttonType={editor._gui('ButtonType')}.CustomizableButton, "
+            f"actionType={editor._gui('ButtonActionType')}.Navigate, targetScreen={screen_var},\n)\n"
+            f"{button}.events = {{{editor._gui('Event')}(name={_q(button + '_click')}, actions={{\n"
+            f"    {editor._gui('Transition')}(name={_q('go_to_' + _snake(screen_name))}, "
+            f"target_screen={screen_var}),\n}})}}\n"
+        )
+        main_var = editor.var_of(main)
+        if main_var is not None:
+            code += f"{main_var}.view_elements.add({button})\n"
+        else:
+            elements = editor.collection(main, "view_elements")
+            if elements is None or editor.src.start(elements) < editor.src.start(anchor):
+                raise EditError(f"cannot add the button that opens {screen_name} to the main screen {main.name}: "
+                                "give that screen a variable")
+            editor.add_to_literal(elements, button)
+    editor.src.insert_before(anchor, code, separate=True)
+    editor.add_to_literal(literal, screen_var)
+    summary = f"added screen {screen_name} (table of {class_name}: {', '.join(a.name for a in attributes)}"
+    summary += f"; button on {main.name})" if main is not None else "; the main page)"
+
+    def gui_check(guis: list[Any]) -> str | None:
+        shown = [screen for gui in guis for screen in _screens(gui) if screen.name == screen_name and any(
+            isinstance(element, Table) and getattr(_bound_class(element), "name", None) == class_name
+            for element in _contents(screen))]
+        return None if shown else f"no screen {screen_name} showing {class_name}"
+
+    return Edited(editor.finish(), summary, lambda model: None, gui_check=gui_check)
+
+
+def _add_columns(editor: ModelEditor, cls: Class, added: Sequence[tuple[str, str]]) -> list[str]:
+    """Add a column per new attribute (name, variable) to each table bound to ``cls``; returns those tables."""
+    tables = editor.tables_of(cls)
+    for table in tables:
+        for name, var in added:
+            editor.add(table, "columns", f"{editor._gui('FieldColumn')}(label={_q(_label(name))}, field={var})",
+                       lambda name=name: editor.free_name(f"{editor.var_of(table) or table.name}_{name}"),
+                       need_var=False, separate=False)
+    return [table.name for table in tables]
+
+
+def _gui_removals(editor: ModelEditor, cls: Class) -> list[Any]:
+    """The GUI elements that go with the class ``cls``: its tables, the screens that show nothing else,
+    and the buttons that open those screens."""
+    tables = editor.tables_of(cls)
+    removed: list[Any] = list(tables)
+    screens = [screen for gui in editor.gui_models() for screen in _screens(gui)]
+    for screen in screens:
+        shown = [element for element in _contents(screen) if isinstance(element, Table)]
+        if shown and all(table in tables for table in shown):
+            removed.append(screen)
+    gone = [element for element in removed if isinstance(element, Screen)]
+    # What the removed screens hold goes with them, as do the buttons elsewhere that open them.
+    held = [element for screen in gone for element in _contents(screen)]
+    candidates = [element for screen in screens for element in _contents(screen)] + list(editor.namespace.values())
+    for element in [*held, *candidates]:
+        if element not in removed and (element in held or isinstance(element, Button) and element.targetScreen in gone):
+            removed.append(element)
+    return removed
+
+
+def _remove_gui_element(editor: ModelEditor, element: Any, drops: dict[int, tuple[ast.AST, set[int]]],
+                        removed_vars: list[str]) -> None:
+    """Plan the removal of a GUI element: its variable and every statement on it, and its place in any set."""
+    var = editor.var_of(element)
+    if var is None:
+        call = editor.call_of(element)
+        if call is None:
+            raise EditError(f"cannot find where {type(element).__name__.lower()} {element.name} is written; "
+                            "edit it by hand")
+        if editor.src.is_deleted(call):
+            return
+        for literal in (node for node in ast.walk(editor.src.tree) if isinstance(node, (ast.Set, ast.List))):
+            if any(item is call for item in literal.elts):
+                drops.setdefault(id(literal), (literal, set()))[1].add(
+                    next(index for index, item in enumerate(literal.elts) if item is call))
+                return
+        raise EditError(f"cannot find where {type(element).__name__.lower()} {element.name} is written; "
+                        "edit it by hand")
+    removed_vars.append(var)
+    _forget_var(editor, var)
+    for statement in editor.src.tree.body:  # screen.view_elements.add(button): a statement on what it holds
+        target = statement.targets[0] if isinstance(statement, ast.Assign) and len(statement.targets) == 1 \
+            else getattr(statement.value, "func", None) if isinstance(statement, ast.Expr) else None
+        while isinstance(target, ast.Attribute):
+            target = target.value
+        if isinstance(target, ast.Name) and target.id == var and not editor.src.is_deleted(statement):
+            editor.src.delete_statement(statement)
+    for literal in (node for node in ast.walk(editor.src.tree) if isinstance(node, (ast.Set, ast.List))):
+        for index, item in enumerate(literal.elts):
+            if isinstance(item, ast.Name) and item.id == var:
+                drops.setdefault(id(literal), (literal, set()))[1].add(index)
+    # screen.view_elements.add(button), module.screens.add(screen)
+    for statement in editor.src.tree.body:
+        value = getattr(statement, "value", None)
+        if isinstance(statement, ast.Expr) and isinstance(value, ast.Call) and len(value.args) == 1 \
+                and isinstance(value.args[0], ast.Name) and value.args[0].id == var:
+            editor.src.delete_statement(statement)
 
 
 # Operation name -> what it does, the arguments it takes (for help and batch lines) and its function.
 OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
-    "add-class": ("add a class: NAME [ATTRIBUTE...] [--parent CLASS] [--abstract]", add_class),
+    "add-class": ("add a class: NAME [ATTRIBUTE...] [--parent CLASS] [--abstract] [--screen]", add_class),
     "add-attribute": ("add attributes to a class: CLASS ATTRIBUTE...", add_attribute),
     "add-parent": ("make a class specialize another (a generalization): CLASS PARENT", add_parent),
     "add-association": ("add an association: NAME END END [--composite]", add_association),
     "add-method": ("add a method: CLASS 'name(param:type, ...) -> type' [--code CODE]", add_method),
     "add-constraint": ("add an OCL invariant: CLASS EXPRESSION [--name NAME]", add_constraint),
+    "add-screen": ("add a screen with a table of a class to the GUI model: CLASS [--title TITLE]", add_screen),
     "set-enum": ("create an enumeration or set its literals: NAME LITERAL...", set_enum),
     "rename": ("rename a class, enumeration, member, literal, association or constraint: PATH NEW_NAME", rename),
     "remove": ("remove an element (a class with its associations): PATH", remove),

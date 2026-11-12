@@ -119,6 +119,8 @@ examples:
   besser model rename Customer Account          (also Class.attribute, Enum.LITERAL, association,
                                                  association.end)
   besser model remove Contact.phone
+  besser model add-screen Invoice --title Bills (a page with a table of the class, in the GUI model)
+  besser model add-class Tag label:str --screen (a class and its page)
   besser model batch - <<'EOF'                  (several changes, one write)
 """
 
@@ -132,6 +134,7 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("attributes",), {"nargs": "*", "metavar": "ATTRIBUTE", "help": "name:type, name:type? or name:type=default"}),
         (("--parent",), {"metavar": "CLASS", "help": "the class it specializes"}),
         (("--abstract",), {"action": "store_true", "help": "an abstract class"}),
+        (("--screen",), {"action": "store_true", "help": "and a screen with a table of it (see add-screen)"}),
     ],
     "add-attribute": [
         (("class_name",), {"metavar": "CLASS", "help": "the class"}),
@@ -156,6 +159,10 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("class_name",), {"metavar": "CLASS", "help": "the context class"}),
         (("expression",), {"help": "the OCL invariant, e.g. 'self.amount >= 0'"}),
         (("--name",), {"help": "the constraint name (default: <class>_rule_<n>)"}),
+    ],
+    "add-screen": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class the screen's table shows"}),
+        (("--title",), {"help": "the screen's title (default: the plural of the class name)"}),
     ],
     "set-enum": [
         (("name",), {"help": "the enumeration (created if missing)"}),
@@ -408,11 +415,12 @@ def build_parser() -> argparse.ArgumentParser:
                        help=f"the configuration file (default: {CONFIG_FILENAME} in the current directory)")
 
     model = add_command(
-        "model", "change the domain model of a .py file: add, rename, remove",
+        "model", "change the domain model of a .py file: add, rename, remove; add screens",
         "Change the domain model of a B-UML .py file with one command per change, instead of\n"
         "reading the file and editing it. Only the characters of the change are written: the\n"
         "rest of the file, comments and layout, stays as it is. The file is written only when\n"
-        "the result loads, holds the change and is as valid as before; one line says what changed.\n\n"
+        "the result loads, holds the change and is as valid as before; one line says what changed.\n"
+        "With a GUI model in the file, a class's tables follow its attributes; the line says so.\n\n"
         "operations:\n" + "".join(f"  {name:<16} {summary}\n" for name, (summary, _) in OPERATIONS.items())
         + "  batch            several operations, one per line of a file (- reads standard input), "
         "written together\n\n" + _MODEL_EDIT_EXAMPLES + "\n" + _EXECUTES_PYTHON,

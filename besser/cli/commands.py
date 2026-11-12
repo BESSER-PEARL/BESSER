@@ -1749,12 +1749,15 @@ def model(operations: Sequence[Operation], model_path: str | None = None, use: S
         except (ModelLoadError, EditError) as exc:
             return failure("model", f"{operation.line}: {exc} ({path} not changed)", data=data, cause=exc)
         try:
-            loaded_after = pick_domain_model(load_python_text(path, edited.text)[0], use)
+            all_after = load_python_text(path, edited.text)[0]
+            loaded_after = pick_domain_model(all_after, use)
         except (ModelLoadError, EditError) as exc:
             return failure("model", f"{operation.line}: the change would break {path} ({exc}); not changed: "
                                     "make it by hand", EXIT_FAILED, data, exc)
         # Checked on the model of this step: a later operation of a batch may rename or remove what it added.
         missed = edited.check(loaded_after.model)
+        if not missed and edited.gui_check is not None:
+            missed = edited.gui_check([gui.model for gui in all_after.of_kind("gui")])
         if missed:
             return failure("model", f"{operation.line}: the change did not land as expected ({missed}); {path} "
                                     "not changed: make it by hand", EXIT_FAILED, data)

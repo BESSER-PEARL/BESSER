@@ -18,6 +18,7 @@ from besser.spec_driven_agent.state.checkpoint import (
     _SNAPSHOT_DIR,
 )
 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
+from besser.spec_driven_agent.validation.issues import RUNTIME_CHECK_UNVERIFIED
 
 
 # Where a rollback parks the current tree while it restores. Living inside
@@ -117,7 +118,8 @@ def _runtime_verdict(messages) -> int:
     """Worst runtime state the findings in ``messages`` establish.
 
     ``_RUNTIME_FAILED`` only on an OBSERVED failure, ``_RUNTIME_UNVERIFIED``
-    when the probe ran but could not settle a create/action, ``_RUNTIME_OK``
+    when the probe ran but could not settle a create/action or a runtime check
+    did not run, ``_RUNTIME_OK``
     otherwise. Callers must not read OK as "the app works" unless a backend
     was actually booted - see ``_probeable_backends``.
     """
@@ -280,10 +282,11 @@ _RUNTIME_FAILURE_PREFIXES = (
 # business rule legitimately refused, an action whose reachable state it could
 # not construct, or a probe that did not run at all. Not evidence of a defect,
 # and not evidence of a working app either. Only a spec-derived ``test_api``
-# scenario (see ``confirmed_create_paths``) turns one of these green.
+# scenario (see ``confirmed_create_paths``) turns one of these green. A runtime
+# check that did not run is a warning, not a blocker, but still unverified.
 _RUNTIME_UNVERIFIED_PREFIXES = (
     "runtime unverified:", "create unverified:", "action unverified:",
-    "api scenario:",
+    "api scenario:", RUNTIME_CHECK_UNVERIFIED,
 )
 
 # Generators that produce a WHOLE application, and the workspace folder each

@@ -21,6 +21,7 @@ from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataTy
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.validation.issues import _classify_issue, is_completion_issue
 
 SPEC = "Room numbers are unique."
 REQUIREMENT = {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"}
@@ -118,7 +119,15 @@ def test_a_changed_specification_is_judged_again(orch, judge_calls):
 # ------------------------------------------------------- a judge that fails
 
 
-_JUDGE_FAILED = "requirement unverified: the requirements judge returned no verdicts"
+# A judge outage is an unknown, not a defect: no code edit brings the judge
+# back, so it must not drive the blocker-only fix loop - but it still refuses
+# verified completion.
+_JUDGE_FAILED = "validation unverified: the requirements judge did not run completely (it returned no verdicts"
+
+
+def _is_unverified_warning(message):
+    issue = _classify_issue(message)
+    return issue.severity == "warning" and is_completion_issue(issue)
 
 
 def test_a_failed_judgment_is_not_asked_again_for_the_same_source(orch, monkeypatch):
@@ -127,14 +136,15 @@ def test_a_failed_judgment_is_not_asked_again_for_the_same_source(orch, monkeypa
     for _ in range(3):
         issues = orch._collect_requirement_issues()
         assert len(issues) == 1 and issues[0].startswith(_JUDGE_FAILED)
+        assert _is_unverified_warning(issues[0])
 
     # One round: the planning model, then one retry on the primary model.
     assert orch.client.calls == ["cheap-model", None]
 
 
 def test_failed_judgments_stop_after_the_per_run_cap(orch, tmp_path, monkeypatch, caplog):
-    """The failure finding is a blocker no code edit can fix; the fix loop's
-    edits must not buy a fresh full-price round on every pass."""
+    """No code edit can fix the failure finding; the fix loop's edits must not
+    buy a fresh full-price round on every pass."""
     monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
     rounds = ledger.JUDGE_FAILED_ROUNDS_PER_RUN
 
@@ -143,6 +153,7 @@ def test_failed_judgments_stop_after_the_per_run_cap(orch, tmp_path, monkeypatch
         with caplog.at_level(logging.WARNING):
             issues = orch._collect_requirement_issues()
         assert len(issues) == 1 and issues[0].startswith(_JUDGE_FAILED)
+        assert _is_unverified_warning(issues[0])
 
     assert len(orch.client.calls) == rounds * ledger._JUDGE_MAX_ATTEMPTS
     assert "not asked again this run" in caplog.text

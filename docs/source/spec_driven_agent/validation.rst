@@ -124,6 +124,18 @@ fetched* means ``cargo check`` needed a crate the run had not already
 downloaded through ``run_command``. Both are reported as checks that did not
 run, not as defects in the generated code.
 
+The runtime checks (the import smoke check, the boot-and-create probe and the
+replay of a retained ``test_api`` workflow) report a run that did not happen
+(no sandbox, a timeout, a dependency missing from the validation harness, such
+as ``httpx``) as ``validation unverified: runtime check (<check>) did not run
+(<reason>)``. The auto-fix loop does not spend rounds on them, and the run
+ends *unverified*: neither verified complete nor incomplete. A retained
+workflow that did not run is kept and replayed on the next source revision;
+only a workflow that ran and failed is an ``api scenario:`` blocker. A repair
+after which the probe can no longer measure a backend it measured before is
+not accepted as "all blockers fixed": the rollback check ranks that tree
+behind the measured one.
+
 When both toolchain validation and shell tools are explicitly enabled, npm is
 available, and project dependencies are missing, ``verification setup:`` is
 instead actionable. The agent may use its existing authorized dependency tool,
@@ -250,9 +262,14 @@ Findings are classified into three severities:
        like the matrix it is reported, never a blocker. Abstract classes are
        left out, at most 20 entities are listed, and the check is skipped
        when a BESSER generator built the base, such as a BAF chatbot or
-       Python classes), and ``requirement out of
+       Python classes), ``requirement out of
        scope:`` — a UI requirement on a run that neither has nor asked for a
-       frontend, which a backend-only output has no files to satisfy.
+       frontend, which a backend-only output has no files to satisfy — and
+       ``validation unverified:`` — a required check that did not run, such
+       as a runtime check (``validation unverified: runtime check (...) did
+       not run``) or a requirements judge that returned no verdicts. No edit
+       to the generated code can settle these, so they spend no repair turns,
+       but they still prevent verified completion.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps

@@ -172,6 +172,8 @@ from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
     required_check_unverified,
     required_dependency_setup as required_dependency_setup,
+    runtime_check_unverified,
+    runtime_note_unverified,
     _RUFF_STYLE_CODES as _RUFF_STYLE_CODES,
     _RUFF_BLOCKER_CODES as _RUFF_BLOCKER_CODES,
     _RUFF_LINE_RE as _RUFF_LINE_RE,
@@ -2849,8 +2851,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # _phase3_tree_score.
                 self._runtime_probe_facts = (revision, probe["backends"])
             except Exception as exc:
-                issues.append(f"runtime unverified: isolated app verification failed: {type(exc).__name__}: {exc}")
-        issues = ["runtime unverified: " + item if item.startswith("validation:") else item
+                logger.warning("Constructibility probe crashed; runtime unverified", exc_info=True)
+                issues.append(runtime_check_unverified(
+                    "the constructibility probe", f"it crashed: {type(exc).__name__}: {exc}"))
+        # A probe that did not run (no sandbox, a timeout, a harness dependency
+        # missing) is an unknown no edit can settle: a warning that still
+        # refuses verified completion, never a blocker that buys repair rounds.
+        issues = [runtime_note_unverified(item) if item.startswith("validation:") else item
                   for item in issues]
         self._runtime_probe_cache = (revision, list(issues))
         return issues
@@ -2917,15 +2924,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return self._app_validation_cache[1]
         issues = sorted((_classify_issue(s) for s in self._collect_execution_issues()), key=self._repair_priority)
         blockers = [issue for issue in issues if issue.severity == "blocker"]
+        # A required check that did not run is a warning, not a pass.
+        unverified = not blockers and any(is_completion_issue(issue) for issue in issues)
         result = {
-            "verified": not blockers,
+            "verified": not blockers and not unverified,
             "blocker_count": len(blockers),
             "issues": [issue.message for issue in issues[:40]],
             "remaining_issue_count": max(0, len(issues) - 40),
             "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
             "next_step": ("Repair concrete failures and call validate_app again. For create unverified (guessed fixtures), "
                           "use test_api with valid unique fixtures and a GET of the persisted record; do not remove "
-                          "business validation to satisfy guessed samples.") if blockers else "These checks pass. Verify the remaining user requirements and business workflows before completion.",
+                          "business validation to satisfy guessed samples.") if blockers else
+                         ("Some required checks did not run on this server (the validation unverified findings); "
+                          "no source edit can settle them, so do not edit code for them. Verify the remaining "
+                          "user requirements and business workflows before completion.") if unverified else
+                         "These checks pass. Verify the remaining user requirements and business workflows before completion.",
         }
         self._app_validation_cache = (revision, result)
         return result
@@ -3005,6 +3018,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _collect_api_scenario_issues(self) -> list[str]:
         """Replay retained scenarios against changed source so old green results cannot hide regressions."""
+        from besser.spec_driven_agent.validation.api_probe import DID_NOT_RUN_BOOTS
+
         revision = self._workspace_revision()
         issues = []
         for index, record in enumerate(list(self._api_scenarios.values()), 1):
@@ -3019,6 +3034,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                        for response in report.get("responses", []) if response.get("error")],
                 })
                 scenario_id = record.get("scenario_id") or f"workflow {index}"
+                if report.get("boot") in DID_NOT_RUN_BOOTS:
+                    # Kept and replayed on the next revision, but a scenario
+                    # that never ran is no evidence the app is wrong.
+                    issues.append(runtime_check_unverified(f"api scenario {scenario_id}", detail[:500]))
+                    continue
                 issues.append(
                     f"api scenario: {scenario_id} failed: {detail[:2500]}. "
                     "Inspect its exact requests and expected values with test_api(action='get', "
@@ -3778,8 +3798,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         cache_key = self._requirement_cache_key(requirements)
         verdicts = self._requirement_judgments.get(cache_key)
         cached = verdicts is not None
-        judge_failed = ("requirement unverified: the requirements judge returned no verdicts; "
-                        "coverage of the original specification has not been verified.")
+        # A judge outage is an unknown no code edit settles: a warning that
+        # still refuses verified completion, not a blocker that buys repair rounds.
+        judge_failed = required_check_unverified(
+            "the requirements judge",
+            "it returned no verdicts; coverage of the original specification has not been verified",
+        )
         judge_stopped = ("requirement unverified: verification stopped or budget exhausted; "
                          "original-specification coverage is not verified.")
         if verdicts is None:

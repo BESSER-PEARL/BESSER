@@ -63,6 +63,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_VALIDATION_ISSUE,
 )
 from besser.spec_driven_agent.validation.issues import (
+    RUNTIME_CHECK_UNVERIFIED,
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
@@ -460,6 +461,18 @@ class Phase3RepairMixin:
                 successful_writes=edits or 0,
             )
 
+            # A probe that did not run is a warning, so a repair that made
+            # startup hang leaves no blocker. Not "all fixed": fall through to
+            # the rollback check, which ranks an unmeasured tree behind a
+            # measured one (see _phase3_tree_score).
+            lost_measurement = (not blockers_after
+                                and self._phase3_tree_score(blockers_after)[1] > best_score[1])
+            if lost_measurement:
+                logger.warning(
+                    "Phase 3: attempt %d left no blocker, but the runtime probe could not "
+                    "measure a backend it measured before; checking for rollback.", attempts_run)
+                exit_reason = "runtime probe lost its measurement"
+                break
             if not blockers_after:
                 logger.info(
                     "Phase 3: All blockers fixed after %d attempt(s) "
@@ -703,7 +716,7 @@ class Phase3RepairMixin:
                 + "; ".join(sorted(observed or fatal_source)[:3])[:1200]
             )
         if verdict is None and not any(
-            i.message.lower().startswith("runtime unverified:")
+            i.message.lower().startswith(("runtime unverified:", RUNTIME_CHECK_UNVERIFIED))
             for i in self._validation_issues
         ):
             return (

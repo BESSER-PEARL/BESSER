@@ -128,6 +128,31 @@ def required_check_unverified(check: str, reason: str) -> str:
     )
 
 
+# A runtime check (import smoke check, boot-and-create probe, test_api replay)
+# that did not run: no sandbox, a timeout, a harness dependency missing. Its
+# ``validation unverified:`` prefix keeps it out of the blocker-only fix loop;
+# the runtime gate keys on this prefix to keep its verdict "unverified".
+RUNTIME_CHECK_UNVERIFIED = "validation unverified: runtime check"
+_DID_NOT_RUN_NOTE_RE = _re.compile(
+    r"^validation: (?P<check>.+?) did not run \((?P<reason>.*)\) - its checks were SKIPPED", _re.S)
+
+
+def runtime_check_unverified(check: str, reason: str) -> str:
+    """A runtime check that did not run: an unknown no source edit can settle."""
+    return (
+        f"{RUNTIME_CHECK_UNVERIFIED} ({check}) did not run ({reason}) - no source edit "
+        "can settle this, so it is not sent to repair; the application is not runtime verified"
+    )
+
+
+def runtime_note_unverified(note: str) -> str:
+    """``runtime_check_unverified`` for a ``_check_did_not_run`` note."""
+    match = _DID_NOT_RUN_NOTE_RE.match(note)
+    if match is None:
+        return runtime_check_unverified("runtime probe", note.removeprefix("validation: "))
+    return runtime_check_unverified(match["check"], match["reason"])
+
+
 def required_dependency_setup(check: str, project: str) -> str:
     """An authorized, recoverable verification prerequisite, not a code defect."""
     return (

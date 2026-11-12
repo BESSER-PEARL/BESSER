@@ -19,6 +19,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.validation.issues import (
     _check_did_not_run,
     required_check_unverified,
+    runtime_check_unverified,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
@@ -318,6 +319,20 @@ def test_required_check_unverified_lands_in_could_not_check():
     check = next(i for i in report.notVerified if i.kind == "check")
     assert check.what == "frontend build [.]"
     assert "node is unavailable" in check.why
+
+
+def test_a_runtime_check_that_did_not_run_lands_in_could_not_check():
+    """Pins the coupling with ``runtime_check_unverified``: these replaced the
+    ``runtime unverified:`` findings ``_UNCHECKED_PREFIXES`` used to catch."""
+    recipe = _hotel_recipe(validation_issues=[{
+        "severity": "warning",
+        "message": runtime_check_unverified("the constructibility probe", "backend: no sandbox"),
+    }])
+    report = build_verification_report(recipe)
+
+    check = next(i for i in report.notVerified if i.kind == "check")
+    assert check.what == "runtime check (the constructibility probe)"
+    assert "no sandbox" in check.why
 
 
 def test_the_synthetic_recovery_requirement_the_orchestrator_writes_is_matchable():

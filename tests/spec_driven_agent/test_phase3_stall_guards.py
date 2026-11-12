@@ -543,10 +543,11 @@ def test_an_obligation_that_discharges_no_blocker_is_not_progress(orch):
 def _probe_blockers(orch, report):
     """The blockers validation derives from one probe report."""
     from besser.spec_driven_agent.validation.constructibility import _issues_from_report
-    from besser.spec_driven_agent.validation.issues import _classify_issue
+    from besser.spec_driven_agent.validation.issues import _classify_issue, runtime_note_unverified
 
     raw = _issues_from_report(report, "backend")
-    raw = ["runtime unverified: " + i if i.startswith("validation:") else i for i in raw]
+    # As ``_runtime_probe_issues`` renders a probe that did not run.
+    raw = [runtime_note_unverified(i) if i.startswith("validation:") else i for i in raw]
     raw = orch._apply_scenario_evidence(raw)
     return [i for i in map(_classify_issue, raw) if i.severity == "blocker"]
 
@@ -564,7 +565,10 @@ def test_a_tree_the_probe_could_not_measure_is_not_kept_over_a_measured_one(orch
     only a ``runtime unverified: ... did not run`` blocker and scored
     (0,0,0,0) - better than the entry tree that boots with 4 of 5 creates
     confirmed. It was re-snapshotted as the best tree and the final rollback
-    check kept it, so an app that may not start shipped over one that does."""
+    check kept it, so an app that may not start shipped over one that does.
+
+    That finding is now a ``validation unverified:`` warning, so the hung
+    tree has no blocker at all; it must not be taken as "all blockers fixed"."""
     state = {"attempt": 0, "rev": 0}
     reports = {0: _BOOTS_ONE_CREATE_REFUSED, 1: _PROBE_TIMED_OUT}
 

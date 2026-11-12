@@ -48,6 +48,10 @@ _DENIED_X_HEADERS = frozenset({"x-real-ip", "x-http-method-override", "x-method-
 _SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "password", "credential")
 _REDACTED = "[REDACTED]"
 _SCOPE = "Only the submitted scenario was checked; this is not complete specification verification."
+# ``boot`` values meaning the scenario never ran: the sandbox was unavailable,
+# the worker timed out, or the harness lacks a dependency (httpx). Unknowns,
+# not application failures - see ``runtime_check_unverified``.
+DID_NOT_RUN_BOOTS = frozenset({"probe_error", "timeout", "missing_dependency"})
 
 
 def _error(message, boot="not_started", **extra):

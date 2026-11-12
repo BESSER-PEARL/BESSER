@@ -253,10 +253,25 @@ Findings are classified into three severities:
        (undefined name — the classic "ships green, boots dead" bug) and
        **F811** (redefinition, e.g. an ORM model shadowed by a Pydantic model
        of the same name); per-project toolchain errors from ``tsc`` /
-       ``cargo`` / ``kotlinc``. These drive the auto-fix loop.
+       ``cargo`` / ``kotlinc`` and a failing frontend production build
+       (``frontend build [...]``). By prefix, the blockers are ``Syntax error
+       in``, ``Dependency conflict in``, ``... but it doesn't exist``,
+       ``frontend contract:``, ``api url:``, ``form create target:``,
+       ``form route:``, ``form json textarea:``, ``data contract:``,
+       ``model conformance:``, ``model contract:``, ``missing module:``,
+       ``mapper config:``, ``application startup:``, ``python contract:``
+       (which also reports undefined names, those behind ``from x import *``
+       included), ``runtime unverified:``, ``api scenario:``,
+       ``create contract:``, ``action call:``, ``requirement:``,
+       ``requirement partial:``, ``requirement unverified:``,
+       ``action contract:``, ``task unverified:``, ``verification setup:``
+       (dependencies a permitted install would provide), ``tsc [``,
+       ``cargo [``, ``kotlinc [`` and ``frontend build [``. These drive the
+       auto-fix loop.
    * - ``style``
      - Cosmetic ``ruff`` rules: ``F401`` / ``F841`` (unused import or
-       variable), ``E501``, whitespace, blank lines, import order; the
+       variable), ``E501``, whitespace, blank lines, import order,
+       ``F403`` / ``F405`` / ``E402`` (the scaffold's star imports); the
        ``(+N more ... truncated)`` notes of ``ruff``, ``tsc``, ``cargo`` and
        ``kotlinc``, which are counts, not defects.
    * - ``warning``

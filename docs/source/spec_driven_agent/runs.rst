@@ -1,5 +1,6 @@
 Runs, budgets and modify mode
-======================
+=============================
+
 Budgets and caps
 ----------------
 
@@ -35,8 +36,9 @@ then spend — and the cost check runs *before* the next request is sent, so a
 run cannot overshoot its cap by one more billable call. A single warning is
 logged at 80% of the cost cap.
 
-Only the paid LLM calls count against the budget: the planning pass, the
-customize loop, and any Phase 3 fix turns. The deterministic scaffold, the
+Only the paid LLM calls count against the budget: generator selection, the
+planning pass, a modify run's model sync, the customize loop, requirement
+extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
 validators, and the download are free.
 
 .. _spec-driven-durable-runs:
@@ -91,7 +93,7 @@ in its prompt), requirements, generator-file tags, routed stack and record of
 successful writes, a modify run's model change and seed-run findings, and a
 fresh model-contract check. In the recipe's history it replaces the interrupted
 attempt's entry instead of adding one.
-=======
+
 A resume that fails (a changed project, a rejected key, a provider error)
 leaves the interrupted run's workspace, checkpoint and download in place, so
 it can be resumed again with the right input until the 24-hour temp cleanup

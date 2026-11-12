@@ -20,7 +20,10 @@ Endpoints
      - Purpose
    * - ``/spec-driven/generate``
      - POST
-     - Start a run; streams SSE, returns a download URL on completion.
+     - Start a run; streams SSE, returns a download URL on completion. A
+       request carrying an ``Idempotency-Key`` header that matches a recent
+       start attaches to that run's stream (replayed from the beginning)
+       instead of starting a second run.
    * - ``/spec-driven/preview``
      - POST
      - Pre-flight plan (primary model + target generator). No API key, no
@@ -28,8 +31,9 @@ Endpoints
        (see :ref:`spec-driven-preview-model-change`).
    * - ``/spec-driven/config``
      - GET
-     - Caps, feature flags, provider default models, and free-tier
-       availability.
+     - Caps, download TTL, cost-tick interval, concurrency, feature flags,
+       the model catalog's providers and models (``providers``), provider
+       default models, and free-tier availability.
    * - ``/spec-driven/runs/{run_id}``
      - GET
      - Durable lifecycle metadata for a run (never the request or the key).
@@ -143,15 +147,34 @@ Request body
        inventories and model summaries have separate context budgets.
    * - ``api_key``
      - string (secret)
-     - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``;
-       omitted for the keyless tiers. Sent only in the body, never logged or
-       persisted.
+     - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``
+       and the catalog gateways (``pia`` / ``gateway``); omitted for the
+       keyless tiers, which discard one if sent. Sent only in the body, never
+       logged or persisted.
    * - ``provider``
      - ``anthropic`` | ``openai`` | ``mistral`` | ``nebius`` | ``free`` |
-       ``sponsored``
+       ``sponsored`` | ``pia`` | ``gateway``
      - Which provider serves the run. Default ``anthropic``; the editor
-       selects ``free`` when the deployment configures a free tier. See
+       selects ``free`` when the deployment configures a free tier. ``pia``
+       and ``gateway`` are gateways the server's model catalog must define. See
        :doc:`models`.
+   * - ``base_url``
+     - string (optional)
+     - An ``http(s)://`` OpenAI-compatible endpoint: the editor's Local
+       (self-hosted) provider sends ``provider: "openai"`` with it. Rejected
+       with a ``BAD_REQUEST`` error event unless the server sets
+       ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``; dropped for ``pia`` /
+       ``gateway`` and ignored by the keyless tiers.
+   * - ``demo_token``
+     - string (secret, optional)
+     - The demo-link secret; required for ``sponsored`` and checked against
+       ``BESSER_DEMO_TOKEN`` (``403`` when it does not match or the server sets
+       none).
+   * - ``telemetry_session`` / ``telemetry_participant``
+     - string (optional)
+     - Study telemetry labels. A value that does not match the collection
+       pattern is dropped rather than rejected; a run summary is recorded only
+       when both survive and the server enables telemetry.
    * - ``llm_model``
      - string (optional)
      - Model override; falls back to the provider default. For ``free`` only
@@ -166,8 +189,8 @@ Request body
      - Soft runtime cap, clamped to the server hard cap (default 2400, max 2400).
    * - ``max_turns``
      - int
-     - Soft cap on LLM turns, clamped to the server hard cap (default 80,
-       max 120).
+     - Soft cap on LLM turns, clamped to the server hard cap (default 120,
+       max 150).
    * - ``mode``
      - ``generate`` | ``modify``
      - ``modify`` seeds the workspace from ``base_run_id`` and edits it in
@@ -280,19 +303,26 @@ SSE event types
    * - ``tool_call``
      - The LLM invoked a :doc:`tool <tools>` (read/write/modify a file, query
        the model, update its checklist, run a generator). Carries the turn
-       number, the tool name, a status, and a short non-content ``detail``.
+       number, the tool name, a ``status`` (``executing``, ``done`` or
+       ``error``), an optional ``summary`` and a short non-content
+       ``detail``.
    * - ``model_update``
      - The model serving this run changed mid-run — the fallback chain took
-       over after the primary failed or hit its quota. Only the
+       over after the primary failed or hit its quota. Carries ``model``,
+       ``previousModel`` and ``reason`` (``primary_unavailable``). Only the
        server-configured tiers (``free``, ``sponsored``) have one; a BYOK run
        never switches models behind your back. The switch is sticky for the
        rest of the run.
    * - ``cost``
-     - Periodic cost / runtime / turn-count tick.
+     - Periodic cost / runtime / turn-count tick (``usd``, ``turns``,
+       ``elapsedSeconds``, and ``servedModel`` when the provider reports
+       which model answered).
    * - ``done``
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
        count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
-       blocker-severity findings), ``incomplete`` / ``incompleteReason``,
+       blocker-severity findings), ``verification`` (what the run verified,
+       could not verify, and shipped unenforced, with true totals in
+       ``counts``), ``incomplete`` / ``incompleteReason``,
        a three-way authorship split of the output tree, and ``aiShare``, the
        AI-written share of the lines from the run's Agent Trace record (see
        :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
@@ -302,8 +332,11 @@ SSE event types
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``
-       are non-terminal warnings emitted just before ``done``. A run a server
-       restart interrupted ends with ``INTERNAL`` and ``resumeAvailable``.
+       are non-terminal warnings emitted just before ``done``. Carries
+       ``code`` and ``message``. A run a server restart interrupted ends with
+       ``INTERNAL`` and ``resumeAvailable``; the ``CANCELLED`` event of a run
+       stopped because no subscriber came back adds ``reason: "abandoned"``
+       and ``resumeAvailable``.
 
 Example
 -------

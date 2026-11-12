@@ -80,7 +80,7 @@ PIA, and the key dialog's model lists, come from the model catalog (`BESSER_MODE
 
 ### Docker images
 The root `Dockerfile` has two targets. `backend` is Python + requirements + `besser`, no compilers.
-`smartgen-worker` adds Node 20/`tsc`, JDK 21, Rust, `kotlinc`, build-essential and bubblewrap, for the
+`smartgen-worker` adds Node 22/`tsc`, JDK 21, Rust, `kotlinc`, build-essential and bubblewrap, for the
 Spec-Driven Agent's Phase 3 and `run_command`. Production runs `backend:latest` for the backend service
 and `smartgen_worker:latest` for `besser-wme-smartgen`; the local `docker-compose.yml` builds the worker
 target, since one container serves both. Behind a TLS-inspecting proxy, put its certs in `ca-certs-extra/`
@@ -104,7 +104,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app state on `app.state` — spec-driven runs, GitHub sign-in stores, agent-simulator limits, KG/SDMX slots — handed to routes by `dependencies.py`) |
 | `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` (`GeneratorInfo`, derived from `besser/generators/registry.py`) + `get_filename_for_generator` |
-| `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
+| `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins. Deploy-time configuration (the `BESSER_LLM_*` caps and flags, SDMX, agent simulation) is `BackendSettings` in `…/backend/settings.py` |
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
@@ -141,7 +141,7 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
 - `pipeline/orchestrator.py` (`LLMOrchestrator`) — Phase 1 deterministic scaffold (+ Phase 0.5 stack metadata
   when no generator fits, Phase 1.5 scaffold validation), Phase 2 LLM loop and its guards.
   `pipeline/phase3_repair.py` — Phase 3 validation + bounded auto-fix with best-tree snapshot/restore.
-  `pipeline/constants.py` — loop caps.
+  `pipeline/constants.py` — loop caps (the rest are `LLMOrchestrator` class constants).
 - `agent/tools.py` — the LLM's tool surface; `agent/tool_executor.py` — tool implementations and the
   `task_list` checklist; `agent/edit_apply.py` — the lenient match ladder behind `modify_file`;
   `agent/compaction.py` / `agent/history_eviction.py` — context management.
@@ -159,7 +159,7 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay
   via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema).
 - Secret redaction: one module, `besser/utilities/secret_redaction.py` (every SSE frame, the workspace before
-  packaging, repo writes, the agent's trace, LLM error logs, generator-config logs). Imported eagerly; never
+  packaging, repo writes, the agent's trace, `besser.llm.openai_chat`'s error logs, generator-config logs). Imported eagerly; never
   add a fallback that turns it off. The one exception is `api_probe._scrub`: that probe's child process
   imports no BESSER package.
 
@@ -177,9 +177,10 @@ Invariants and rules:
 - **Client-visible contract**: request = `backend/models/spec_driven.py` (API key is a `SecretStr`, caps clamped
   by validators); stream = `services/spec_driven/sse_events.py`. Both are consumed by the frontend's
   spec-driven trigger — adding a field to a client-visible event means editing `sse_events.py`.
-- Configuration is via `BESSER_LLM_*` / `BESSER_FREE_LLM_*` env vars: backend caps and flags in
-  `backend/constants/constants.py`, engine knobs (compaction, history eviction, planning model, …) read
-  directly in `besser/spec_driven_agent/`. All documented in `configuration.rst`.
+- Configuration is via `BESSER_LLM_*` / `BESSER_FREE_LLM_*` / `BESSER_SPONSORED_LLM_*` env vars, each declared
+  once: backend caps and flags on `BackendSettings` (`backend/settings.py`), engine knobs (compaction, history
+  eviction, planning model, keyless tiers, shell sessions, …) on `AgentSettings` (`spec_driven_agent/settings.py`).
+  All documented in `configuration.rst`.
 
 ### Security defaults — do not flip
 - `BESSER_LLM_ENABLE_SHELL_TOOLS` — code default **off** (arbitrary shell on a shared BYOK host is RCE).
@@ -191,10 +192,12 @@ Invariants and rules:
   in `docker-compose.prod.yml`; only the local `docker-compose.yml` turns it on.
 
 ### Debugging a run
-Each run workspace holds `.besser_trace.jsonl` (phases, turns, tool calls, costs, compaction, rollbacks,
-findings), `.besser_checkpoint.json` (present only if Phase 2 did not exit cleanly — that is what makes a run
-resumable) and `.besser_recipe.json` (final summary, validation issues, authorship split). The durable event
-store is SQLite at `BESSER_LLM_RUN_STORE_PATH` or the system temp directory.
+Each run workspace holds `.besser_trace.jsonl` (phases, turns, tool calls, costs, checkpoints, snapshots,
+rollbacks, regeneration, findings; compactions are counted in the recipe), `.besser_tool_inputs.jsonl` (untruncated
+write-tool inputs), `.besser_checkpoint.json` (kept unless Phase 2 exited cleanly and Phase 3 finished with no
+blocker or `validation unverified:` finding — that is what makes a run resumable) and `.besser_recipe.json`
+(final summary, validation issues, authorship split). The download sits beside it in `<run dir>.download/`. The
+durable event store is SQLite at `BESSER_LLM_RUN_STORE_PATH` or the system temp directory.
 
 ## Conventions
 

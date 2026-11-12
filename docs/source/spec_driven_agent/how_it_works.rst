@@ -2,7 +2,7 @@ How it works
 ============
 
 A run is a three-phase pipeline (``LLMOrchestrator.run`` in
-``besser/spec_driven_agent/orchestrator.py``).
+``besser/spec_driven_agent/pipeline/orchestrator.py``).
 
 .. container:: besser-diagram
 
@@ -141,7 +141,7 @@ The three phases
    The workspace is snapshotted, then swept by a set of static validators.
    Findings are classified by severity, and **blocker**-level issues drive a
    bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
-   and as many as the turns Phase 2 left over. The loop stops when blockers
+   and as many as the turns Phase 2 left over, each round up to ten LLM turns. The loop stops when blockers
    reach zero, after two consecutive rounds without progress, or after three
    rounds that change the tree without improving it. Every strictly better
    tree is re-snapshotted, ranked by whether the app boots, then backends the
@@ -232,10 +232,13 @@ reading a trace and wondering why a run did what it did.
        files (dependency and build directories left out) and the open
        checklist items and blockers. The cut never lands between a tool call
        and its result, and the kept turns lose their thinking blocks (see
-       :doc:`models`). For models
+       :doc:`models`). A compaction that would not shrink the history (the
+       kept turns alone fill the budget) is skipped with a warning. For models
        with a known small context window the threshold is lowered to that
-       window minus a 16,000-token reserve, so a small model compacts instead
-       of overflowing.
+       window minus a reserve for the reply (the run's output-token ceiling,
+       at least 16,000 tokens), so a small model compacts instead of
+       overflowing; a model with a known large window gets 80% of that
+       difference, capped at ``BESSER_LLM_MAX_COMPACT_THRESHOLD``.
    * - Truncation recovery
      - When a response is cut off at the output-token limit, the partial turn
        is discarded rather than executed — nothing lands half-written on disk —
@@ -245,11 +248,13 @@ reading a trace and wondering why a run did what it did.
        per-run total that does NOT reset after a clean turn, so it is sized
        against the whole turn budget, not against a single bad patch.
    * - Per-file modify loop
-     - Three consecutive ``modify_file`` calls on the same path that all
-       fail to match inject a reminder to read the file and copy
-       ``old_text`` verbatim, never to rewrite it from memory. Successful
-       edits do not count; it fires once per path, and any other tool in
-       between breaks the streak.
+     - Three consecutive ``modify_file`` or ``replace_file_lines`` calls on
+       the same path that were all refused inject a reminder naming the
+       refusal (a text that did not match, or an edit the syntax guard
+       rejected) and how to recover, never to rewrite the file from memory.
+       Successful edits do not count; it fires once per path. A
+       ``read_file`` of that same file does not break the streak; any other
+       tool, or a read of another file, does.
    * - Checklist gate
      - The run does not finish while ``task_list`` items are open: an
        ``end_turn`` with open items is sent back with the list, twice — four
@@ -271,9 +276,12 @@ reading a trace and wondering why a run did what it did.
        ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (default on).
    * - Checkpointing
      - A checkpoint is written to ``.besser_checkpoint.json`` in the workspace
-       after every tool-use turn, and deleted only when Phase 2 ends cleanly. A
-       run cut short by an error, a cap, or a cancellation therefore leaves one
-       behind for :ref:`resume <spec-driven-durable-runs>`, which refuses to
+       after every tool-use turn and again when Phase 3 starts and as its
+       repair progresses. It is deleted only when Phase 2 ended cleanly,
+       Phase 3 was not interrupted and no blocker or ``validation
+       unverified:`` finding remains. A run cut short by an error, a cap, or
+       a cancellation, or one that ends with open findings, therefore leaves
+       one behind for :ref:`resume <spec-driven-durable-runs>`, which refuses to
        resume against a project whose fingerprint has changed and seeds the
        already-spent cost so a crash-and-resume cycle cannot double the bill.
        Because the file's *absence* is what marks a clean finish, a write that
@@ -282,11 +290,19 @@ reading a trace and wondering why a run did what it did.
        trace so a post-mortem can tell the two apart.
        Toggle with ``BESSER_LLM_ENABLE_CHECKPOINTING`` (default on).
    * - Tracing
-     - Every phase transition, turn, tool call, cost update, compaction,
-       snapshot, rollback, regeneration and validation finding is appended to
-       ``.besser_trace.jsonl`` in the workspace. A ``tool_call`` record holds
+     - Every run start and end, phase transition, turn, tool call, cost
+       update, checkpoint write (or the ``error`` of a failed one), target
+       decision, snapshot, rollback, regeneration and validation finding is
+       appended to ``.besser_trace.jsonl`` in the workspace (events
+       ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
+       ``tool_call``, ``cost_update``, ``checkpoint``, ``error``, ``target``,
+       ``snapshot``, ``rollback``, ``regeneration``, ``validation_issue``,
+       ``run_end``). Compactions are counted in the checkpoint and the
+       recipe (``compactions``), not traced. A ``tool_call`` record holds
        the input and a ``result`` excerpt (its length and the first 500
-       characters), with credential-shaped values redacted before the cut. It
+       characters), with credential-shaped values redacted before the cut;
+       each input value is cut at 500 characters, and the untruncated input
+       of every write tool goes to ``.besser_tool_inputs.jsonl``. It
        is best-effort — a failed
        trace write never fails a run. Toggle with
        ``BESSER_LLM_ENABLE_TRACING`` (default on).
@@ -318,14 +334,17 @@ reading a trace and wondering why a run did what it did.
        skipped, never opened.
 
        The rules live in one module, ``besser.utilities.secret_redaction``,
-       which the trace (above), the LLM clients' error logs and the editor
+       which the trace (above), the shared OpenAI chat client's error logs
+       (``besser.llm.openai_chat``) and the editor
        backend's generator-config logs use as well. A log line masks a local
        host's database password too: only the generated app needs it.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
-       GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,
-       ``*.zip`` and ``*.pyc`` files, plus dependency and build directories
-       such as ``node_modules`` and ``target``.
+       GitHub push: ``*.log``, ``*.db``, ``*.db-journal``, ``*.sqlite`` /
+       ``*.sqlite3``, ``*.zip`` and ``*.pyc`` files, plus dependency and build
+       directories such as ``node_modules`` and ``target``, and the run's own
+       ``.besser_*`` bookkeeping except the files a later run carries forward
+       (the recipe, the attribution and generator-output records).
    * - Link-free workspace access
      - The workspace is written by model-authored code, so a symbolic link in
        it could point at a file outside the run. The download ZIP, the seed

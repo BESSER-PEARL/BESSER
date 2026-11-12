@@ -19,7 +19,10 @@ the agent keeps in module constants (the context budgets, history eviction, the 
 ceilings, the SDK timeout, the rolling cache) are read when the module is
 imported; a malformed number there fails the import with an error naming the
 variable. The others are read at each use; a shell-session number that is not
-an integer logs a warning and uses its default.
+an integer logs a warning and uses its default. A backend number that does not
+parse, or is not positive, falls back to its default, and a backend flag is on
+only for ``1``, ``true``, ``yes`` or ``on`` (any other value, empty included,
+turns it off). The agent's own switches each name the values they accept below.
 
 Models
 ------
@@ -30,6 +33,16 @@ Models
   backend, the Spec-Driven worker and the modeling agent, with the same file
   mounted in each. Read once at startup; a missing or malformed file stops the
   service. See :doc:`models`.
+- ``ANTHROPIC_BASE_URL``, ``OPENAI_BASE_URL``, ``MISTRAL_BASE_URL``,
+  ``NEBIUS_BASE_URL`` -- Endpoint of that provider's client when the request
+  carries no ``base_url``, read when the client is built. On the backend they
+  redirect every bring-your-own-key run of that provider, so leave them unset
+  unless that is the intent; the keyless tiers and the catalog's gateways set
+  their own endpoint and ignore them.
+- ``ANTHROPIC_API_KEY`` (or ``ANTHROPIC_AUTH_TOKEN``), ``OPENAI_API_KEY``,
+  ``MISTRAL_API_KEY``, ``NEBIUS_API_KEY`` -- The key a :doc:`Python library run
+  <usage>` uses when it passes none. The web backend never reads them for a
+  run: it requires the key in the request.
 
 Keyless tiers
 -------------
@@ -59,7 +72,10 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   served through an OpenAI-compatible endpoint. The URL and token are
   required; the model is the default, and a request may name another model
   from that endpoint's catalog in ``llm_model``. With neither a default nor a
-  request model the run is refused.
+  request model the run is refused. Its only fallback is the free tier's
+  ``BESSER_FREE_LLM_FALLBACK_*`` endpoint. The repository import's AI reading
+  (``/spec-driven/import-github-run``) uses this tier only when all three are
+  set.
 - ``BESSER_DEMO_TOKEN`` -- Shared secret authorising the ``sponsored`` tier.
   A request for that tier must carry the same value in ``demo_token`` or the
   server answers 403; the web editor sends it for tabs opened through a
@@ -74,9 +90,11 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   default. The study-mode variables (``BESSER_TELEMETRY_ENABLED``,
   ``BESSER_TELEMETRY_DIR``, ``BESSER_TELEMETRY_ADMIN_TOKEN``) are listed in
   :doc:`../web_editor_backend`.
-- ``BESSER_LLM_PLANNING_MODEL`` -- Override the small model used for the gap
-  analysis call. Set it to ``primary`` to plan on the main model instead —
-  necessary behind a gateway that does not serve the cheap sibling.
+- ``BESSER_LLM_PLANNING_MODEL`` -- Override the small model used for the
+  planning calls (a new run's generator selection, gap analysis, requirement
+  extraction and judging, a modify run's model sync), on every provider, the free tier included. Set it to ``primary`` (any
+  case) to plan on the main model instead — necessary behind a gateway that
+  does not serve the cheap sibling. Read at each call.
 - ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` (**off**) -- Permit a request to carry
   its own OpenAI-compatible ``base_url``. Having the server open a
   user-supplied URL is an SSRF surface, so this is meant for local or
@@ -131,10 +149,11 @@ Feature flags
   bubblewrap; when the sandbox cannot start, commands are refused and checks are
   reported as unverified. ``off`` runs them
   unconfined; use it only on a single-tenant Linux host whose kernel forbids
-  unprivileged user namespaces.
+  unprivileged user namespaces. Any other value logs a warning and means
+  ``auto``.
 - ``BESSER_LLM_SHELL_RUNBOOK`` (**on**) -- With shell tools enabled, add the
   boot-and-verify procedure and its ``.besser_probe.py`` helper to the prompt.
-  ``0`` keeps the shell without the procedure.
+  ``0``, ``false`` or ``no`` keeps the shell without the procedure.
 - ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (**900**) -- Close a run's shell
   session after this many seconds without a command; its processes stop and
   the next command starts a new session. ``0`` never closes it early; it
@@ -149,7 +168,8 @@ Feature flags
   the worker's ports and other runs are unreachable; when ``pasta`` or
   ``/dev/net/tun`` is missing, every command is refused. ``shared``: the
   worker's own network namespace. ``auto``: ``private`` when a start-up
-  selftest passes, otherwise ``shared`` with one logged warning.
+  selftest passes, otherwise ``shared`` with one logged warning. Any other
+  value logs a warning and means ``auto``.
   ``docker-compose.prod.yml`` sets ``private`` (see :doc:`production_deployment`).
 - ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` (**off**) -- Run ``tsc`` /
   ``cargo`` / ``kotlinc`` in Phase 3. Costly on non-Python stacks. The cheap
@@ -192,13 +212,14 @@ Feature flags
   ``.besser_checkpoint.json`` after every tool-use turn.
 - ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (on) -- Parse every file the LLM writes
   immediately and feed findings back in the same tool result.
-- ``BESSER_LLM_INLINE_SCAFFOLD`` (**off**; set to ``1`` to enable) -- Inline
+- ``BESSER_LLM_INLINE_SCAFFOLD`` (**off**; ``1`` or ``true`` enables it) -- Inline
   the small Phase-1 scaffold files into the Phase-2 prompt to save the first
   ``read_file`` turns. Off by default: the inlined copy never changes during
   the run, so once the model has edited a file the copy is stale and quoting
   from it makes ``modify_file`` miss. With it off, file text reaches the model
   only through ``read_file`` (always current; several reads batch in one turn).
-- ``BESSER_LLM_ROLLING_CACHE`` (**on**; ``0`` disables it) -- Add a
+- ``BESSER_LLM_ROLLING_CACHE`` (**on** while unset; set, it is on only for
+  exactly ``1``, so ``0`` or any other value disables it) -- Add a
   rolling prompt-cache breakpoint on the growing conversation, so the prior
   prefix is served from cache instead of re-billed each turn. Anthropic path
   only — the OpenAI-compatible path caches by prefix automatically.
@@ -211,14 +232,17 @@ Context and token budgets
   window is unknown. Models with a known window (from the model catalogs of
   the free and sponsored tiers, or the built-in table of hosted frontier
   models) get an
-  adaptive threshold derived from that window instead. Setting this variable
+  adaptive threshold derived from that window instead: 80% of the window
+  minus a reserve for the reply (the run's output-token ceiling, at least
+  16,000). Setting this variable
   also caps the adaptive value, so lowering it to cut cost applies to every
   model, not only unknown ones. Floored at 8,000.
 - ``BESSER_LLM_MAX_COMPACT_THRESHOLD`` (``200000``) -- Ceiling on the adaptive
   threshold for models with a known window, so a million-token model does
-  not send prompts of that size every turn. Models measured to serve a
-  smaller window than they advertise are clamped below both values
-  regardless.
+  not send prompts of that size every turn. A blank value is 200000. Models
+  measured to serve a smaller window than they advertise (self-hosted
+  ``qwen3``, ``devstral``, ``mistral-small``, ``mistral-7b`` tags) are
+  clamped to that window minus the reserve, below both values regardless.
 - ``TIKTOKEN_CACHE_DIR`` -- Where ``tiktoken`` keeps the ``cl100k_base`` file
   the compaction threshold counts tokens with. The Docker images fetch it at
   build time into ``/opt/tiktoken-cache``. Elsewhere it is downloaded on first
@@ -226,7 +250,7 @@ Context and token budgets
   (``python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"`` with
   the variable set); without it tokens are estimated as characters/4, which
   compacts earlier than needed, and a warning is logged.
-- ``BESSER_LLM_HISTORY_EVICTION`` (**off**) -- Opt into the lossless
+- ``BESSER_LLM_HISTORY_EVICTION`` (**off**; exactly ``1`` enables it) -- Opt into the lossless
   alternative to compaction: large file bodies in older messages are replaced
   by stubs pointing back to disk, instead of whole messages being summarised.
 - ``BESSER_LLM_FROM_SCRATCH_MAX_TOKENS`` (``32768``) -- Output-token ceiling

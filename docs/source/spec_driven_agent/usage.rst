@@ -140,7 +140,8 @@ Troubleshooting a run
        ``GET /besser_api/spec-driven/runs/{id}/events?after=N`` to replay what you missed
        and follow the rest live.
    * - The model changed mid-run
-     - A ``model_update`` event means the free tier's fallback chain took over
+     - A ``model_update`` event means the keyless tier's fallback chain (``free``
+       or ``sponsored``) took over
        after the primary endpoint failed or ran out of quota. The switch is
        sticky for the rest of the run.
    * - "It finished, but the app is broken"
@@ -150,6 +151,8 @@ Troubleshooting a run
        ``incomplete: false`` is shown as complete even when some checks could
        not be verified, so read the recipe's findings for those.
    * - "What counts against my budget?"
-     - Only the paid LLM calls (the planning pass, the customize loop, and any
-       Phase 3 fix turns). The deterministic scaffold, the validators, and the
+     - Only the paid LLM calls (generator selection, the planning pass, a
+       modify run's model sync, the customize loop, requirement extraction and
+       judging, and any Phase 3 fix turns). The deterministic scaffold, the
+       validators, and the
        download are free.

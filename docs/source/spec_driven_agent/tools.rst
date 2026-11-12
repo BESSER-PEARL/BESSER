@@ -20,7 +20,7 @@ would immediately fail.
    * - Validation / bookkeeping
      - ``validate_app``, ``test_api``, ``validate_model``, ``check_syntax``, ``task_list``
    * - Generators
-     - The 20 generator tools listed below.
+     - The 19 generator tools listed below.
    * - Shell
      - ``run_command``, ``install_dependencies``
 
@@ -293,7 +293,8 @@ What it does:
   credentials are not visible to a command or to a build backend it triggers.
 - **A denylist** for the obvious catastrophes: ``sudo``, ``rm -rf /``,
   curl-pipe-shell, fork bombs, reads of ``~/.ssh`` and ``~/.aws``.
-- **A bounded amount of output** in the model's context, with the full log
+- **A bounded amount of output** in the model's context: 15,000 characters
+  per command, half for each stream, with the full log
   still reachable (below). Each stream is also capped at 8 MB while it is
   captured: past that the command's process tree is killed, and the head and
   tail are kept with a marker for the dropped middle.
@@ -396,7 +397,7 @@ So when either stream is cut, the complete output is written to
 that path for the errors and ``read_file`` the surrounding lines. The directory
 is run-internal: it is excluded from the download archive, from a GitHub push,
 from the scaffold inventory and from the recipe's file manifest. Each spilled
-stream is itself capped at 2 MB — far above anything a build log needs, and
+stream is itself capped at 2,000,000 characters — far above anything a build log needs, and
 only there so a runaway command cannot fill the disk.
 
 .. note::

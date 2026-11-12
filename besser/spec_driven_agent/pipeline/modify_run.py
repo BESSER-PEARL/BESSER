@@ -562,9 +562,14 @@ class ModifyRunMixin:
         if not self._modify_mode:
             return None
         change = getattr(self, "_model_change", None)
+        converted = getattr(self, "_seed_converted_rules", None)
         return {
             "seed_generator_used": self._seed_generator_used,
             "seed_llm_modified": sorted(self._seed_llm_modified),
+            # The seed recipe's findings. The run's own recipe may replace it before a resume.
+            "seed_unresolved_issues": self._seed_unresolved_issues,
+            "seed_converted_rules": sorted(converted) if converted is not None else None,
+            "seed_dropped_rules": getattr(self, "_seed_dropped_rules", []),
             "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
             "previous_target": self._previous_target.to_dict() if self._previous_target else None,
             "model_change": (
@@ -590,6 +595,13 @@ class ModifyRunMixin:
         self._is_fix_run = self._fix_target is not None
         self._previous_target = Target.from_payload(state.get("previous_target"))
         self._model_change = model_change_from_dict(state.get("model_change"))
+        self._seed_unresolved_issues = [
+            i for i in state.get("seed_unresolved_issues") or [] if isinstance(i, str)]
+        converted = state.get("seed_converted_rules")
+        self._seed_converted_rules = set(converted) if isinstance(converted, list) else None
+        self._seed_dropped_rules = [
+            i for i in state.get("seed_dropped_rules") or [] if isinstance(i, dict)]
+        self._mark_rules_broken_by_model_change()
         classes = state.get("model_sync_classes")
         if isinstance(classes, list) and classes and self.domain_model is not None:
             self._model_sync_classes = classes

@@ -188,10 +188,15 @@ _QUOTED_COMMAND = re.compile(r"""(['"])besser ([a-z]+)(.*?)\1""")
 _FLAG_ARGUMENTS = (
     ("pass --exec-py", "restart the server with --exec-py"),
     ("--use NAME", "the `use` argument"),
+    ("--use", "the `use` argument"),
     ("--option", "the `options` argument"),
+    ("--from", "the `from` argument"),
+    # -o is `output_dir` where it takes a directory (generate, regenerate), `output` where a file (convert).
+    ("-o takes a directory", "`output_dir` takes a directory"),
+    ("-o takes a file", "`output` takes a file"),
 )
 # CLI flags that are a tool's boolean argument of the same name ("--dry-run" -> "dry_run: true").
-_BOOLEAN_FLAG = re.compile(r"--(force|adopt|strict|ocl|dry-run)\b")
+_BOOLEAN_FLAG = re.compile(r"--(force|adopt|strict|ocl|dry-run|class-diagram)\b")
 _MESSAGE_KEYS = frozenset({"errors", "warnings", "notes"})
 
 
@@ -243,6 +248,8 @@ def _tool_wording(message: str) -> str:
         if match.group(2) not in tool_specs():
             return match.group(0)
         arguments = _tool_call(match.group(2), match.group(3))
+        if arguments == "{}":  # the command alone ('besser regenerate')
+            return f"the `{match.group(2)}` tool"
         if arguments is None:
             flags = [_boolean_argument(flag) for flag in _BOOLEAN_FLAG.finditer(match.group(3))]
             return f"the `{match.group(2)}` tool" + (f" with {', '.join(flags)}" if flags else "")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import importlib.util
 import json
 import logging
 import os
@@ -546,21 +547,53 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
 # The output 'besser init' configures for a domain model: an API a coding agent can test.
 _INIT_GENERATOR = {DEFAULT_KIND: "backend"}
 _INIT_MODEL = "model.py"
-# The options of a new project's output: POST and PUT answer what GET does (off by default for older apps).
-_INIT_OPTIONS = {"backend": "{ uniform_responses = true }", "web_app": "{ uniform_responses = true }"}
+# The options of a new project's output, both off by default for older apps: the API's tests are generated
+# (a 'client' fixture, a CRUD test per class), and POST and PUT answer what GET does.
+_INIT_OPTIONS = {"backend": "{ tests = true, uniform_responses = true }",
+                 "web_app": "{ tests = true, uniform_responses = true }"}
+_INIT_CONFTEST = "conftest.py"
 
 
-def _init_config(kind: str) -> str | None:
-    """The ``besser.toml`` of a new project whose model is of ``kind``; None when no generator reads it."""
-    generator = _INIT_GENERATOR.get(kind) or STARTERS[kind].generator
+# Generators that write API tests (option 'tests'): where their pytest fixtures are, from the project folder.
+_INIT_TEST_FIXTURES = {"backend": "backend.tests.conftest", "web_app": "web_app.backend.tests.conftest"}
+# What the generated API tests import; 'besser apply' runs them only when all are installed.
+_API_TEST_PACKAGES = ("pytest", "fastapi", "httpx")
+
+
+def _missing_test_packages() -> list[str]:
+    """The packages of ``_API_TEST_PACKAGES`` that this interpreter, the one 'besser apply' tests with, lacks."""
+    return [name for name in _API_TEST_PACKAGES if importlib.util.find_spec(name) is None]
+
+
+def _init_generator(kind: str) -> str | None:
+    return _INIT_GENERATOR.get(kind) or STARTERS[kind].generator
+
+
+def _init_config(kind: str, can_test: bool = True) -> str | None:
+    """The ``besser.toml`` of a new project whose model is of ``kind``; None when no generator reads it.
+    An output that can generate its API tests does, and ``test`` runs them unless ``can_test`` is false."""
+    generator = _init_generator(kind)
     if generator is None:
         return None
+    tests = generator in _INIT_TEST_FIXTURES
+    test = 'test = "python -m pytest -q"' if tests and can_test else '# test = "python -m pytest -q"'
     return (f'model = "{_INIT_MODEL}"\n'
-            '# test = "python -m pytest -q"   # what \'besser apply\' runs after the build\n\n'
+            f"{test}   # what 'besser apply' runs after the build\n\n"
             f"[output.{generator}]\n"
             f'generator = "{generator}"\n'
             f'dir = "{generator}"\n'
             + (f"options = {_INIT_OPTIONS[generator]}\n" if generator in _INIT_OPTIONS else ""))
+
+
+def _init_conftest(kind: str) -> str | None:
+    """The project's ``conftest.py``, which gives every test of the project the generated ``client`` fixture;
+    None when the output of ``kind`` generates no tests."""
+    generator = _init_generator(kind)
+    if generator not in _INIT_TEST_FIXTURES:
+        return None
+    return ('"""pytest fixtures for the tests of this project. client: a TestClient on the generated API, on an\n'
+            'empty temporary database (see the conftest.py it comes from)."""\n'
+            f"from {_INIT_TEST_FIXTURES[generator]} import client  # noqa: F401\n")
 
 
 def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
@@ -576,7 +609,11 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
     warnings: list[str] = []
     try:
         root.mkdir(parents=True, exist_ok=True)
-        planned = {_INIT_MODEL: starter_source(kind, _INIT_MODEL), CONFIG_FILENAME: _init_config(kind)}
+        missing = _missing_test_packages()
+        planned = {_INIT_MODEL: starter_source(kind, _INIT_MODEL), CONFIG_FILENAME: _init_config(kind, not missing)}
+        conftest = _init_conftest(kind)
+        if conftest is not None:
+            planned[_INIT_CONFTEST] = conftest
         for name, text in planned.items():
             target = root / name
             if text is None:
@@ -590,6 +627,10 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
         return failure("init", f"cannot write in {root}: {exc}", EXIT_FAILED, data, cause=exc)
     files.extend(_write_agent_files(root, warnings, notes))
     brief = f"Set up {root.as_posix()}: wrote {', '.join(files) or 'nothing (all up to date)'}"
+    if missing and (root / CONFIG_FILENAME).as_posix() in files and conftest is not None:
+        # The generated tests are configured but 'test' is commented out: 'besser apply' would fail on an import.
+        brief += (f"; to run the generated API tests: pip install {' '.join(missing)}, "
+                  f"then uncomment 'test' in {CONFIG_FILENAME}")
     if (root / CONFIG_FILENAME).is_file():
         text = f"{brief}.\nNext: edit {_INIT_MODEL}, then run 'besser apply' (validate, build, test)."
     else:

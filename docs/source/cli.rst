@@ -272,14 +272,29 @@ repeats the other.
 .. code-block:: console
 
    $ besser init shop
-   Set up shop: wrote shop/model.py, shop/besser.toml, shop/AGENTS.md, shop/CLAUDE.md, shop/.ignore.
+   Set up shop: wrote shop/model.py, shop/besser.toml, shop/conftest.py, shop/AGENTS.md, shop/CLAUDE.md, shop/.ignore.
    Next: edit model.py, then run 'besser apply' (validate, build, test).
 
 Sets a folder (default: the current one) up as a project a coding agent can
 work in: the starter model of ``--kind`` as ``model.py``, a ``besser.toml``
 that builds it (a ``backend`` API into ``backend/`` for a class diagram, the
-generator ``new`` suggests for another kind) with a commented ``test`` line to
-fill in, and the agent files ``new`` writes. A ``model.py`` or ``besser.toml``
+generator ``new`` suggests for another kind), and the agent files ``new``
+writes. When that output is a ``backend`` or a ``web_app``, it generates its
+API tests (the ``tests`` option, see :doc:`generators/backend`),
+``test = "python -m pytest -q"`` runs them, and a ``conftest.py`` in the folder
+gives every test of the project, such as yours in ``tests/``, the generated
+``client`` fixture (``from backend.tests.conftest import client``). So the
+first ``besser apply`` reports the generated tests passing:
+
+.. code-block:: console
+
+   $ besser apply
+   OK: 1 output, 0 failed: [backend] Generated 12 files in backend with the 'backend' generator; tests: 3 passed in 2.20s
+
+When the interpreter running ``besser`` lacks ``pytest``, ``fastapi`` or
+``httpx``, the ``test`` line is written commented out and the report says what
+to install, so that a first ``besser apply`` does not fail on an import the
+user did not choose. A ``model.py``, ``besser.toml`` or ``conftest.py``
 that exists is kept, and a note says so. A kind no generator reads gets
 neither a ``besser.toml`` nor the agent files, which describe the
 ``besser apply`` loop; a note says so. For a class diagram ``besser.toml`` reads:
@@ -287,14 +302,14 @@ neither a ``besser.toml`` nor the agent files, which describe the
 .. code-block:: toml
 
    model = "model.py"
-   # test = "python -m pytest -q"   # what 'besser apply' runs after the build
+   test = "python -m pytest -q"   # what 'besser apply' runs after the build
 
    [output.backend]
    generator = "backend"
    dir = "backend"
-   options = { uniform_responses = true }
+   options = { tests = true, uniform_responses = true }
 
-``uniform_responses`` (also on the ``web_app`` output of ``--kind gui``) makes
+Both options are also on the ``web_app`` output of ``--kind gui``. ``uniform_responses`` makes
 ``POST /x/`` and ``PUT /x/{x_id}/`` of the generated API answer what
 ``GET /x/{x_id}/`` answers, for every class; it is off by default, for apps
 generated before it (see :ref:`backend-response-shapes`). ``.ignore`` then reads:
@@ -1661,10 +1676,10 @@ and what ``besser guide`` prints:
 
 .. code-block:: console
 
-   $ besser init                    # model.py, besser.toml, AGENTS.md, CLAUDE.md, .ignore
-   $ # edit model.py; fill in 'test' in besser.toml
+   $ besser init                    # model.py, besser.toml, conftest.py, AGENTS.md, CLAUDE.md, .ignore
+   $ # edit model.py
    $ besser apply
-   OK: 1 output, 0 failed: [backend] Generated 10 files in backend with the 'backend' generator; tests: 4 passed in 0.52s
+   OK: 1 output, 0 failed: [backend] Generated 12 files in backend with the 'backend' generator; tests: 3 passed in 2.20s
    $ besser info model.py           # the model and its routes, when the agent needs them
    $ # write extensions.py and its tests; for each model change, one shell call:
    $ besser model add-attribute Contact source:str? && besser apply

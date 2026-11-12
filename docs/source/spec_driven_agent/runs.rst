@@ -1,6 +1,5 @@
 Runs, budgets and modify mode
-=============================
-
+======================
 Budgets and caps
 ----------------
 
@@ -86,6 +85,11 @@ in its prompt), requirements, generator-file tags, routed stack and record of
 successful writes, a modify run's model change and seed-run findings, and a
 fresh model-contract check. In the recipe's history it replaces the interrupted
 attempt's entry instead of adding one.
+=======
+A resume that fails (a changed project, a rejected key, a provider error)
+leaves the interrupted run's workspace, checkpoint and download in place, so
+it can be resumed again with the right input until the 24-hour temp cleanup
+removes it.
 
 .. _spec-driven-modify-mode:
 

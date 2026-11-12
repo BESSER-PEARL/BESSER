@@ -2743,6 +2743,13 @@ class SmartGenerationRunner:
             )
 
     def _cleanup_temp_dir(self) -> None:
+        """Delete this run's workspace after a failure, unless it is a resumed one."""
+        if self._resume_run_id:
+            # The workspace is the interrupted attempt's: its files, checkpoint
+            # and download outlive a failed resume, so the user can retry with
+            # the right input. The 24 h temp cleanup removes it.
+            logger.warning("Run %s: resume failed; keeping its workspace for another resume", self.run_id)
+            return
         if self.temp_dir and os.path.isdir(self.temp_dir):
             try:
                 _remove_run_dir(self.temp_dir)

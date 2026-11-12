@@ -588,7 +588,8 @@ def test_a_tree_the_probe_could_not_measure_is_not_kept_over_a_measured_one(orch
                          side_effect=lambda: f"rev-{state['rev']}"):
         orch._run_phase3_validation()
 
-    snap.assert_not_called()
+    # Once, for the validated entry tree: the hung tree is never snapshotted as best.
+    snap.assert_called_once()
     restore.assert_called_once()
     assert orch._phase3_rolled_back is True
 

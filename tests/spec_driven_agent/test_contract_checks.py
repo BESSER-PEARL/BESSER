@@ -251,6 +251,21 @@ def test_int_typed_fk_param_for_string_id_class_is_blocker():
     assert all(f.blocker for f in findings)
 
 
+def test_integer_fk_to_a_table_that_only_starts_with_a_string_id_class_is_not_flagged():
+    order = Class(name="Order")
+    order.attributes = {Property(name="code", type=StringType, is_id=True)}
+    item = Class(name="OrderItem")
+    item.attributes = {Property(name="id", type=IntegerType, is_id=True)}
+    contract = build_data_contract(DomainModel(name="Shop", types={order, item}))
+    findings = lint_file(
+        "backend/sql_alchemy.py",
+        'orderitem_id = Column(Integer, ForeignKey("orderitem.id"))\n'
+        'order_id = Column(Integer, ForeignKey("order.code"))\n',
+        contract,
+    )
+    assert [(f.line, f.blocker) for f in findings] == [(2, True)]
+
+
 def test_string_fk_column_is_not_flagged():
     contract = build_data_contract(_string_id_model())
     findings = lint_file(

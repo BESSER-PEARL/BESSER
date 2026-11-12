@@ -1451,8 +1451,9 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
                 ),
                 blocker=True,
             ))
-        # Integer FK column pointing at a string PK.
-        for m in re.finditer(rf"ForeignKey\(\s*['\"]{re.escape(c_low)}", content):
+        # Integer FK column pointing at a string PK. The `.` ends the table
+        # name: "orderitem.id" is not a key of `order`.
+        for m in re.finditer(rf"ForeignKey\(\s*['\"]{re.escape(c_low)}\.", content):
             line_start = content.rfind("\n", 0, m.start()) + 1
             line_end = content.find("\n", m.start())
             line_text = content[line_start:line_end if line_end != -1 else None]

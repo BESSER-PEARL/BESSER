@@ -161,15 +161,16 @@ def test_apply_on_a_new_project_builds_a_backend_whose_post_answers_like_get(bes
     besser("init")
     assert besser("model", "add-class", "Deal", "amount:float").returncode == 0
     config = (tmp_path / "besser.toml").read_text()
-    write("besser.toml", config.replace('# test = "python -m pytest -q"',
+    write("besser.toml", config.replace('test = "python -m pytest -q"',
                                         f'test = "{sys.executable} -m pytest -q -p no:cacheprovider"'))
-    write("tests/conftest.py", GUIDE.split("```python\n")[1].split("```")[0])
+    # The project's conftest.py, written by init, gives this test the generated `client` fixture.
     write("tests/test_answers.py", UNIFORM_ANSWERS_TEST)
 
     run = besser("apply", output=None)
 
     assert run.returncode == 0, run.stdout + run.stderr
-    assert "tests: 1 passed" in run.stdout
+    # The generated test of each class (Library, Book, Author, Deal) and the one written here.
+    assert "tests: 5 passed" in run.stdout
 
 
 def test_init_keeps_a_model_and_a_configuration_that_exist(besser, write, tmp_path):

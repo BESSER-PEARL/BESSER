@@ -790,15 +790,7 @@ class ModelEditor:
         for statement in self.src.tree.body:
             if isinstance(statement, ast.ImportFrom) and statement.module == module \
                     and not any(alias.name == "*" for alias in statement.names):
-                aliases = list(statement.names)
-                text = self.src.segment(statement)
-                close = self.src.end(statement) - 1 if text.rstrip().endswith(")") else None
-                if close is None:
-                    self.src.replace(self.src.end(aliases[-1]), self.src.end(aliases[-1]), "".join(
-                        f", {name}" for name in names))
-                else:
-                    for name in names:
-                        self.src.add_item(aliases, close, name)
+                self._add_imported(statement, names)
                 return
         imports = [statement for statement in self.src.tree.body if isinstance(statement, (ast.Import, ast.ImportFrom))]
         line = f"from {module} import {', '.join(names)}\n"
@@ -812,6 +804,41 @@ class ModelEditor:
                 self.src.insert_before(first, line, separate=False)
         else:
             self.src.replace(0, 0, line)
+
+    def _add_imported(self, statement: ast.ImportFrom, names: list[str]) -> None:
+        """Add ``names`` to the import ``statement``: in order when its names are sorted, after them
+        otherwise; an import on one line that would grow past ``_MAX_IMPORT_LINE`` becomes one name a line."""
+        aliases = list(statement.names)
+        existing = [alias.name for alias in aliases]
+        in_order = existing == sorted(existing)
+        text = self.src.segment(statement)
+        if not text.rstrip().endswith(")"):  # from module import A, B
+            items = [self.src.segment(alias) for alias in aliases]
+            items = sorted([*items, *names], key=lambda item: item.split()[0]) if in_order else [*items, *names]
+            line = f"from {statement.module} import {', '.join(items)}"
+            indent = self.src.indent(self.src.start(statement))
+            if len(indent) + len(line) > _MAX_IMPORT_LINE:
+                line = f"from {statement.module} import (\n" + "".join(f"{indent}    {item},\n" for item in items) \
+                    + f"{indent})"
+            self.src.replace(self.src.start(statement), self.src.end(statement), line)
+            return
+        close = self.src.end(statement) - 1
+        for name in names:
+            following = next((alias for alias in aliases if alias.name > name), None) if in_order else None
+            if following is None:
+                self.src.add_item(aliases, close, name)
+                continue
+            start = self.src.start(following)
+            line_start = self.src.line_start(start)
+            if self.src.text[line_start:start].strip():  # on a line with others: before it, on that line
+                self.src.replace(start, start, f"{name}, ")
+            else:
+                self.src.replace(line_start, line_start, f"{self.src.text[line_start:start]}{name},\n")
+
+
+# An import on one line is wrapped, one name a line, before it grows past this many characters (the code style's
+# line target).
+_MAX_IMPORT_LINE = 120
 
 
 def find_type(model: DomainModel, name: str, kind: type | tuple[type, ...] = (Class, Enumeration)) -> Any:

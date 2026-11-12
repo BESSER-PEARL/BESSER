@@ -819,7 +819,9 @@ form ``besser convert`` writes), inline in its set otherwise (the form
 ``besser new`` writes), on a line of its own in a set written one item per
 line. A new enumeration goes before the classes, a new class before the
 associations, and a metamodel name the file does not import is added to its
-``besser.BUML.metamodel.structural`` import. When the file builds an element
+``besser.BUML.metamodel.structural`` import, in order when its names are sorted;
+an import on one line that would grow past 120 characters is written one name
+a line. When the file builds an element
 with its own code (a helper function), the change is one statement after the
 line that defines its variable (``Stage.literals = {...}``); when the element
 has no variable either, or a removed element is still used elsewhere, the

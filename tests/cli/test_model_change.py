@@ -557,3 +557,48 @@ def test_a_batch_mixes_in_place_changes_and_renames(project, change, besser):
     info = besser("info", "model.py").stdout
     assert "length:int?" in info and "volumes:Book[1..*]" in info
     assert besser("validate", "model.py", "--ocl").returncode == 0
+
+
+# ── the imports a change adds or leaves unused ──────────────────────────────
+
+
+def _imports(text: str) -> str:
+    return text[text.index("from besser.BUML.metamodel.structural import"):text.index("\n)\n") + 3]
+
+
+def test_a_new_name_goes_in_order_into_a_sorted_import(project, change):
+    before = project()
+
+    change("add-attribute", "Book", "due:datetime", "opened:time")
+
+    # Before: DateTimeType and TimeType were appended after StringType.
+    assert _imports(project()) == (
+        "from besser.BUML.metamodel.structural import (\n    BinaryAssociation,\n    Class,\n    DateTimeType,\n"
+        "    DateType,\n    DomainModel,\n    IntegerType,\n    Multiplicity,\n    Property,\n    StringType,\n"
+        "    TimeType,\n)\n")
+    assert _changed_lines(before, project())[0] == []
+
+
+ONE_LINE_IMPORT = '''\
+from besser.BUML.metamodel.structural import BinaryAssociation, Class, DomainModel, Property, StringType
+
+a = Class(name="A", attributes={Property(name="x", type=StringType)})
+b = Class(name="B", attributes={Property(name="y", type=StringType)})
+ab = BinaryAssociation(name="ab", ends={Property(name="a", type=a), Property(name="bs", type=b)})
+m = DomainModel(name="M", types={a, b}, associations={ab})
+'''
+
+
+def test_an_import_on_one_line_stays_in_order_and_is_wrapped_past_the_line_limit(write, change, tmp_path):
+    write("model.py", ONE_LINE_IMPORT)
+
+    change("set-multiplicity", "ab.bs", "[*]")
+    one_line = (tmp_path / "model.py").read_text()
+    change("add-attribute", "A", "n:int")
+
+    assert one_line.startswith("from besser.BUML.metamodel.structural import BinaryAssociation, Class, DomainModel, "
+                               "Multiplicity, Property, StringType\n\n")
+    # Before: 'IntegerType' was appended, a line of 130 characters.
+    assert (tmp_path / "model.py").read_text().startswith(
+        "from besser.BUML.metamodel.structural import (\n    BinaryAssociation,\n    Class,\n    DomainModel,\n"
+        "    IntegerType,\n    Multiplicity,\n    Property,\n    StringType,\n)\n\n")

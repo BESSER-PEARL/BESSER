@@ -138,7 +138,11 @@ def test_fake_executed_is_blocker():
 
 
 def test_create_schema_with_server_owned_fields_is_blocker():
-    contract = build_data_contract(_string_id_model())
+    # Reservation declares no id, so its `id` is the server's surrogate. (A
+    # DECLARED `id` is client-supplied: see the scaffold test below.)
+    reservation = Class(name="Reservation")
+    reservation.attributes = {Property(name="date", type=StringType)}
+    contract = build_data_contract(DomainModel(name="Hotel", types={reservation}))
     content = (
         "class ReservationCreate(BaseModel):\n"
         "    id: str\n"
@@ -149,6 +153,54 @@ def test_create_schema_with_server_owned_fields_is_blocker():
     flagged = sorted(f.message.split("`")[1] for f in findings)
     assert flagged == ["created_at", "id"]
     assert all(f.blocker for f in findings)
+
+
+@pytest.mark.parametrize("id_type", [IntegerType, StringType])
+def test_scaffold_create_schema_with_declared_id_is_not_flagged(tmp_path, id_type):
+    """The generator puts a declared `id` in OrderCreate and its create
+    endpoint reads `order_data.id`; flagging it asks for an edit that the
+    router check then reports as a 500."""
+    order = Class(name="Order")
+    order.attributes = {
+        Property(name="id", type=id_type, is_id=True),
+        Property(name="label", type=StringType),
+    }
+    model = DomainModel(name="Shop", types={order})
+    executor = ToolExecutor(workspace=str(tmp_path), domain_model=model)
+    assert json.loads(executor.execute("generate_fastapi_backend", {}))["status"] == "ok"
+    pydantic = (tmp_path / "backend" / "pydantic_classes.py").read_text(encoding="utf-8")
+    assert f"    id: {id_type.name}  # the id" in pydantic
+    shim = types.SimpleNamespace(output_dir=str(tmp_path), domain_model=model)
+    assert LLMOrchestrator._collect_data_contract_issues(shim) == []
+
+
+def test_declared_id_exempts_only_its_own_create_schema():
+    order = Class(name="Order")
+    order.attributes = {Property(name="id", type=StringType, is_id=True)}
+    item = Class(name="OrderItem")  # surrogate id: server-owned
+    item.attributes = {Property(name="sku", type=StringType)}
+    contract = build_data_contract(DomainModel(name="Shop", types={order, item}))
+    content = (
+        "class OrderCreate(BaseModel):\n"
+        "    id: str\n"
+        "class OrderItemCreate(BaseModel):\n"
+        "    id: int\n"
+    )
+    findings = lint_file("backend/pydantic_classes.py", content, contract)
+    assert [(f.line, f.blocker) for f in findings] == [(4, True)]
+
+
+def test_create_schema_server_owned_check_reads_fields_not_text():
+    contract = build_data_contract(_string_id_model())
+    content = (
+        "class OrderItemCreate(BaseModel):\n"
+        '    """Payload for a new item.\n'
+        "    created_at: set by the server\n"
+        '    """\n'
+        "    # updated_at: never sent\n"
+        "    name: str\n"
+    )
+    assert lint_file("backend/pydantic_classes.py", content, contract) == []
 
 
 def test_create_schema_with_natural_key_is_not_flagged():

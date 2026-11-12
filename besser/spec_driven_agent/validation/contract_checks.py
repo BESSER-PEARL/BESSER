@@ -95,6 +95,11 @@ class DataContract:
     # Association-end ownership; None when the model declares no usable
     # binary association, in which case the inverted-end check is a no-op.
     ends: EndOwnership | None = None
+    # class name (every class) -> names of the id attributes the model
+    # declares on it or an ancestor. The scaffold puts these in ``<X>Create`` whatever their name
+    # (``id`` included) and reads them off the payload, so they are
+    # client-supplied, not server-owned.
+    declared_keys: dict = field(default_factory=dict)
 
     @property
     def string_id_classes(self) -> list:
@@ -125,7 +130,10 @@ def build_data_contract(domain_model) -> DataContract | None:
 
     pk_types: dict = {}
     action_arity: dict = {}
+    declared_keys: dict = {}
     for cls in classes:
+        declared_keys[cls.name] = frozenset(
+            a.name for a in cls.all_attributes() if a.is_id)
         for attr in getattr(cls, "attributes", []) or []:
             if getattr(attr, "is_id", False):
                 attr_type = getattr(attr, "type", None)
@@ -150,6 +158,7 @@ def build_data_contract(domain_model) -> DataContract | None:
         pk_types=pk_types,
         action_arity=action_arity,
         ends=_build_end_ownership(domain_model, classes),
+        declared_keys=declared_keys,
     )
 
 
@@ -293,15 +302,36 @@ _POST_WITH_ID_RE = re.compile(r"(?:\.post\s*\(|method\s*:\s*['\"]POST['\"]).*\bi
 # Backend faking success for a method it never implemented.
 _FAKE_EXECUTED_RE = re.compile(r"['\"]status['\"]\s*:\s*['\"]executed['\"]")
 
-# `class FooCreate(...):` block capture for the server-owned-field scan.
-_CREATE_SCHEMA_RE = re.compile(
-    r"^class\s+\w*Create\w*\s*\(.*?\):\s*\n((?:[ \t]+.*\n?)*)",
-    re.MULTILINE,
-)
-_SERVER_OWNED_FIELD_RE = re.compile(
-    r"^[ \t]+(%s)\s*:" % "|".join(SERVER_OWNED_FIELDS),
-    re.MULTILINE,
-)
+def _server_owned_create_fields(content: str, contract: DataContract) -> list:
+    """``(line, field)`` per server-owned field a ``*Create*`` schema declares.
+
+    Reads the class body's annotated fields, so a docstring or comment that
+    mentions ``id:`` is not a field. A field the model declares as the
+    class's identifier is exempt: the scaffold itself puts it in
+    ``<X>Create`` and its create endpoint reads it off the payload.
+    """
+    if "Create" not in content:
+        return []
+    try:
+        tree = parse_source(content)
+    except (SyntaxError, ValueError):
+        return []  # a half-written file is python_source's problem, not ours
+    out: list = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or "Create" not in node.name:
+            continue
+        # OrderItemCreate -> OrderItem, not Order: the longest model class
+        # the schema name starts with.
+        stem = node.name.replace("Create", "", 1)
+        entity = max((c for c in contract.declared_keys if stem.startswith(c)),
+                     key=len, default=None)
+        exempt = contract.declared_keys.get(entity, frozenset())
+        for child in node.body:
+            if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name) \
+                    and child.target.id in SERVER_OWNED_FIELDS \
+                    and child.target.id not in exempt:
+                out.append((child.lineno, child.target.id))
+    return out
 
 
 def lint_file(rel_path: str, content: str, contract: DataContract | None) -> list:
@@ -1343,19 +1373,17 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
                 blocker=True,
             ))
 
-    for schema in _CREATE_SCHEMA_RE.finditer(content):
-        block = schema.group(1)
-        for field in _SERVER_OWNED_FIELD_RE.finditer(block):
-            findings.append(Finding(
-                path=rel,
-                line=_line_of(content, schema.start(1) + field.start()),
-                message=(
-                    f"create schema declares server-owned field "
-                    f"`{field.group(1)}` — the backend assigns it; remove "
-                    "it from the create schema and the create form"
-                ),
-                blocker=True,
-            ))
+    for line, name in _server_owned_create_fields(content, contract):
+        findings.append(Finding(
+            path=rel,
+            line=line,
+            message=(
+                f"create schema declares server-owned field "
+                f"`{name}` — the backend assigns it; remove "
+                "it from the create schema and the create form"
+            ),
+            blocker=True,
+        ))
 
     stem = rel.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
     for cls in contract.string_id_classes:

@@ -39,7 +39,7 @@ Read:
   sources or `--help`.
 
 Change the model with `besser model` (one line back; the file is written only if the result is valid):
-- `besser model add-class Invoice number:str total:float paid:bool=false [--parent Base]`
+- `besser model add-class Invoice number:str total:float paid:bool=false [--parent Document]`
 - `besser model add-attribute Contact source:str? score:int=0`
 - `besser model add-association invoice_contact invoices:Invoice[*] contact:Contact[1]`
 - `besser model set-enum Stage LEAD WON LOST` (creates or replaces the literals)
@@ -64,9 +64,9 @@ Hand-written code:
 What the `backend` generator gives per class `X` (path segment: the class name in lower case): `POST /x/`,
 `GET /x/`, `GET|PUT|DELETE /x/{x_id}/`, plus `/x/bulk/`, `/x/count/`, `/x/paginated/`, `/x/search/`, routes
 per association end and `/health`, `/statistics`. Bodies take the attributes and each association end by
-name (`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (400 without it). `POST`, `PUT`
-and `GET /x/{x_id}/` answer `{"x": {attributes, "id", "<end>_id" per to-one end}, "<...>_ids": [...]}`;
-`GET /x/` a list of the inner objects. OCL constraints are enforced (422) only when they compare one
+name (`"author": 3`, `"books": [1, 2]`); an end with lower bound 1 is required (422 when missing, 400 when
+empty or an unknown id). `POST`, `PUT` and `GET /x/{x_id}/` answer
+`{"x": {attributes, "id", "<end>_id" per to-one end}, "<...>_ids": [...]}`; `GET /x/` a list of the inner objects. OCL constraints are enforced (422) only when they compare one
 attribute with a number or use `matches('regex')`; write other rules in `extensions.py`. A `Method` becomes
 `POST /x/{x_id}/methods/<name>/`. Run it from its folder: `uvicorn main_api:app` (`PORT`, `DATABASE_URL`).
 """

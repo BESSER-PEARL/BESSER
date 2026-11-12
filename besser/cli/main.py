@@ -250,14 +250,16 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--list", action="store_true", dest="list_kinds", help="list the kinds and write nothing")
     new.add_argument("--force", action="store_true", help="overwrite the file if it exists")
     new.add_argument("--no-agent-files", dest="agent_files", action="store_false",
-                     help="write only the model, not the agent guide (AGENTS.md, CLAUDE.md) and .ignore beside it")
+                     help="write only the model, not the agent guide (AGENTS.md, CLAUDE.md) and .ignore beside it "
+                          "(written only in a folder with a besser.toml)")
 
     init = add_command(
         "init", "set up a project for a coding agent",
         "Write a starter model (model.py), a besser.toml that builds it (a 'backend' API for a\n"
         "class diagram), the agent guide in AGENTS.md (imported by CLAUDE.md) and the .ignore\n"
         "rules that keep the generated folders out of an agent's searches. A model or besser.toml\n"
-        "that exists is kept; the guide and the rules are blocks of their files, updated in place.",
+        "that exists is kept; the guide and the rules are blocks of their files, updated in place.\n"
+        "A kind no generator reads gets no besser.toml, and so no guide.",
     )
     init.add_argument("folder", nargs="?", default=".", help="the project folder (default: the current one)")
     init.add_argument("--kind", choices=list(STARTERS), default=DEFAULT_KIND,

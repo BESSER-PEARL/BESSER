@@ -465,8 +465,16 @@ def _generated_dirs(config_path: Path) -> list[GeneratedDir]:
     return dirs
 
 
-def _write_agent_files(folder: Path, warnings: list[str]) -> list[str]:
-    """Write the agent guide and ignore rules in ``folder``; a file that cannot be written is a warning."""
+def _write_agent_files(folder: Path, warnings: list[str], notes: list[str]) -> list[str]:
+    """Write the agent guide and ignore rules in ``folder``; a file that cannot be written is a warning.
+
+    Only in a project: the guide sends the agent to ``besser apply`` and ``besser model``, which read
+    ``besser.toml``, so a folder without one gets no guide (and a note saying so).
+    """
+    if not (folder / CONFIG_FILENAME).is_file():
+        shown = folder.as_posix()
+        notes.append(f"no agent guide: {shown} has no {CONFIG_FILENAME} for it to describe ('besser init' sets one up)")
+        return []
     try:
         return write_agent_files(folder, _generated_dirs(folder / CONFIG_FILENAME))
     except (OSError, UnicodeDecodeError) as exc:
@@ -479,7 +487,8 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
     """Write the starter model of ``kind`` to ``path``: a B-UML script, or an editor project for ``.json``.
 
     With ``agent_files``, also write the agent guide (``AGENTS.md``, imported by ``CLAUDE.md``) and the
-    ``.ignore`` rules that keep generated code out of an agent's searches, beside the model.
+    ``.ignore`` rules that keep generated code out of an agent's searches, beside the model, when that
+    folder has a ``besser.toml``.
     """
     if list_kinds:
         return _starter_list()
@@ -499,6 +508,7 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
     if target.exists() and not force:
         return failure("new", f"{target} exists: pass --force to overwrite it", data=data)
     warnings: list[str] = []
+    notes: list[str] = []
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         if suffix == ".py":
@@ -509,7 +519,7 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
         return failure("new", f"cannot write {target}: {exc}", EXIT_FAILED, data, cause=exc)
     except ModelLoadError as exc:  # editor JSON needs the backend's packages
         return failure("new", str(exc), data=data, cause=exc)
-    guide_files = _write_agent_files(target.parent, warnings) if agent_files else []
+    guide_files = _write_agent_files(target.parent, warnings, notes) if agent_files else []
     shown = shlex.quote(str(target))
     brief = f"Wrote a starter {kind} model to {target}"
     if guide_files:
@@ -523,8 +533,8 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
     if generator:
         lines.append(f"  besser generate {generator} {shown} -o out")
     lines.append(f"  besser schema {kind}          the classes to write it with")
-    return Result(command="new", warnings=warnings, files=[target.as_posix(), *guide_files], data=data,
-                  text="\n".join(lines), brief=f"{brief}.")
+    return Result(command="new", warnings=warnings, notes=notes, files=[target.as_posix(), *guide_files],
+                  data=data, text="\n".join(lines), brief=f"{brief}.")
 
 
 # The output 'besser init' configures for a domain model: an API a coding agent can test.
@@ -546,7 +556,8 @@ def _init_config(kind: str) -> str | None:
 
 def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
     """Set ``folder`` up as a BESSER project: a starter model, a ``besser.toml`` that builds it, and the
-    agent guide and ignore rules. A model or configuration file that exists is kept."""
+    agent guide and ignore rules. A model or configuration file that exists is kept. A kind no generator
+    reads gets no ``besser.toml``, and so no guide."""
     root = Path(folder)
     data: dict[str, Any] = {"folder": folder, "kind": kind}
     if kind not in STARTERS:
@@ -568,9 +579,12 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
                 files.append(target.as_posix())
     except OSError as exc:
         return failure("init", f"cannot write in {root}: {exc}", EXIT_FAILED, data, cause=exc)
-    files.extend(_write_agent_files(root, warnings))
+    files.extend(_write_agent_files(root, warnings, notes))
     brief = f"Set up {root.as_posix()}: wrote {', '.join(files) or 'nothing (all up to date)'}"
-    text = f"{brief}.\nNext: edit {_INIT_MODEL}, then run 'besser apply' (validate, build, test)."
+    if (root / CONFIG_FILENAME).is_file():
+        text = f"{brief}.\nNext: edit {_INIT_MODEL}, then run 'besser apply' (validate, build, test)."
+    else:
+        text = f"{brief}.\nNext: edit {_INIT_MODEL}, then run 'besser validate {_INIT_MODEL}'."
     return Result(command="init", warnings=warnings, notes=notes, files=files, data=data, text=text,
                   brief=f"{brief}.")
 
@@ -1658,6 +1672,8 @@ def default_model_path(config_path: str = CONFIG_FILENAME) -> str:
 
 
 def _read_model_text(path: Path) -> str:
+    if not path.exists():
+        raise _Stopped(failure("model", f"{path}: no such file; name the model file with -f FILE"))
     try:
         return path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:

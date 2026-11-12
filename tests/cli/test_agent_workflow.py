@@ -62,7 +62,8 @@ def test_json_is_complete_off_a_terminal(besser, model):
 # ── new, init and the agent files ───────────────────────────────────────────
 
 
-def test_new_writes_the_guide_and_the_ignore_rules_beside_the_model(besser, tmp_path):
+def test_new_writes_the_guide_and_the_ignore_rules_beside_the_model_of_a_project(besser, write, tmp_path):
+    _config(write)
     run = besser("new", "model.py", output=None)
 
     assert run.stdout == ("Wrote a starter domain model to model.py, and the agent guide: AGENTS.md, CLAUDE.md, "
@@ -72,14 +73,36 @@ def test_new_writes_the_guide_and_the_ignore_rules_beside_the_model(besser, tmp_
     assert "**/.besser_generated.json" in (tmp_path / ".ignore").read_text()
 
 
-def test_new_without_agent_files_writes_only_the_model(besser, tmp_path):
+def test_new_without_agent_files_writes_only_the_model(besser, write, tmp_path):
+    _config(write)
     run = besser("new", "model.py", "--no-agent-files", "--json")
 
     assert run.json["files"] == ["model.py"]
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["model.py"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["besser.toml", "model.py"]
+
+
+def test_new_outside_a_project_writes_no_guide_for_commands_that_would_fail(besser, tmp_path):
+    run = besser("new", "crm.py", "--json")
+    edit = besser("model", "add-class", "Invoice", "number:str")
+
+    assert run.returncode == 0 and run.json["files"] == ["crm.py"]
+    assert run.json["notes"] == ["no agent guide: . has no besser.toml for it to describe ('besser init' sets one up)"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["crm.py"]
+    assert edit.returncode == 2
+    assert edit.stderr == "error: model.py: no such file; name the model file with -f FILE\n"
+
+
+@pytest.mark.parametrize("kind", ["state_machine", "feature"])
+def test_init_of_a_kind_without_a_build_writes_no_guide_about_apply(besser, kind, tmp_path):
+    run = besser("init", "--kind", kind, "--json")
+
+    assert run.returncode == 0 and run.json["files"] == ["model.py"]
+    assert not (tmp_path / "AGENTS.md").exists() and not (tmp_path / "besser.toml").exists()
+    assert "no agent guide: . has no besser.toml for it to describe" in run.json["notes"][-1]
 
 
 def test_what_people_wrote_in_the_agent_files_is_kept(besser, write, tmp_path):
+    _config(write)
     write("AGENTS.md", "# Shop\n\nRun the shop with make.\n")
     write("CLAUDE.md", "Be brief.\n")
     write(".ignore", "dist/\n")
@@ -129,7 +152,7 @@ def test_guide_prints_the_rules_in_little_space(besser):
 
 @needs_pygit2
 def test_build_keeps_the_ignore_rules_in_step_with_the_outputs(besser, model, write, tmp_path):
-    besser("new", "starter.py")  # before besser.toml: the rules name no generated folder yet
+    besser("init")  # its besser.toml builds 'backend'; the rules name that folder
     _config(write)
     build = besser("build", "--json")
 

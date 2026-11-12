@@ -24,7 +24,7 @@ runs the same command.
        the agent guide (``AGENTS.md``, ``CLAUDE.md``) and ``.ignore`` rules.
    * - ``besser new <file> [--kind KIND]``
      - Writes a starter model to edit, of any model kind (``--list`` names them),
-       and the agent guide beside it.
+       and, in a project, the agent guide beside it.
    * - ``besser guide``
      - Prints the rules a coding agent follows in a BESSER project.
    * - ``besser schema [topic]``
@@ -204,7 +204,7 @@ editor.
 .. code-block:: console
 
    $ besser new model.py
-   Wrote a starter domain model to model.py, and the agent guide: AGENTS.md, CLAUDE.md, .ignore. Next:
+   Wrote a starter domain model to model.py. Next:
      besser validate model.py
      besser info model.py
      besser generate python model.py -o out
@@ -245,13 +245,16 @@ bpmn``), which needs the :ref:`backend packages <cli-model-files>`; the editor
 has no diagram for the ``deployment`` and ``feature`` kinds, which are ``.py``
 only. An existing file is kept unless you pass ``--force``.
 
-Beside the model, ``new`` also writes what a :ref:`coding agent <cli-agents>`
-needs: the guide ``besser guide`` prints, as a block of ``AGENTS.md``; a
-``CLAUDE.md`` that imports it (``@AGENTS.md``); and a block of ``.ignore`` that
-keeps the generated folders of ``besser.toml`` out of searches. What people
-wrote in those files is kept: each block sits between markers and is replaced
-in place, and a file already up to date is not rewritten. ``--no-agent-files``
-writes the model alone.
+In a folder with a ``besser.toml`` (a project ``besser init`` set up), ``new``
+also writes, beside the model, what a :ref:`coding agent <cli-agents>` needs:
+the guide ``besser guide`` prints, as a block of ``AGENTS.md``; a ``CLAUDE.md``
+that imports it (``@AGENTS.md``); and a block of ``.ignore`` that keeps the
+generated folders of ``besser.toml`` out of searches. Elsewhere it writes the
+model alone and a note says why: the guide sends the agent to ``besser apply``
+and ``besser model``, which read ``besser.toml``. What people wrote in those
+files is kept: each block sits between markers and is replaced in place, and a
+file already up to date is not rewritten. ``--no-agent-files`` writes the model
+alone.
 
 The guide's block sits between ``<!-- besser-guide:begin -->`` and
 ``<!-- besser-guide:end -->``. A repository the editor's Spec-Driven Agent
@@ -277,7 +280,9 @@ work in: the starter model of ``--kind`` as ``model.py``, a ``besser.toml``
 that builds it (a ``backend`` API into ``backend/`` for a class diagram, the
 generator ``new`` suggests for another kind) with a commented ``test`` line to
 fill in, and the agent files ``new`` writes. A ``model.py`` or ``besser.toml``
-that exists is kept, and a note says so. ``.ignore`` then reads:
+that exists is kept, and a note says so. A kind no generator reads gets
+neither a ``besser.toml`` nor the agent files, which describe the
+``besser apply`` loop; a note says so. ``.ignore`` then reads:
 
 .. code-block:: text
 

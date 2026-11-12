@@ -213,6 +213,13 @@ def test_star_import_misuse_never_pastes_a_value_repr(tmp_path):
     assert "PATH" not in misuse[0]["message"] and len(misuse[0]["message"]) < 600
 
 
+def test_enum_members_bound_by_tuple_assignment_exist():
+    findings = diagnose_written_content("backend/enums.py", (
+        "from enum import Enum\nclass Color(Enum):\n    RED, GREEN = 1, 2\n    [BLUE] = [3]\n"
+        "print(Color.RED, Color.GREEN, Color.BLUE, Color.PINK)\n"))
+    assert [f["message"].split(" does not")[0] for f in findings] == ["Color.PINK"]
+
+
 # ------------------------------------------------- duplicate declarations
 
 def _declaration_findings(source: str) -> list[dict]:

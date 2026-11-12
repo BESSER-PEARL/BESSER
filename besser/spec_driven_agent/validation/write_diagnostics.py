@@ -90,7 +90,11 @@ def _bound_names(statement: ast.stmt) -> list[str]:
     targets = statement.targets if isinstance(statement, ast.Assign) else (
         [statement.target] if isinstance(statement, ast.AnnAssign) else []
     )
-    return [target.id for target in targets if isinstance(target, ast.Name)]
+    # ``RED, GREEN = 1, 2`` binds each name, as an enum member too.
+    return [name.id for target in targets
+            for name in ([target] if isinstance(target, ast.Name) else
+                         target.elts if isinstance(target, (ast.Tuple, ast.List)) else [])
+            if isinstance(name, ast.Name)]
 
 
 def _decorator_root(decorator: ast.expr) -> tuple[str, str]:

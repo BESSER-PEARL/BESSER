@@ -164,6 +164,37 @@ def test_generated_backend_contract_failures_are_reported_same_turn(tmp_path):
     assert _call(executor, "validate_app", {}) == report
 
 
+# ------------------------------------------------------ bounded messages
+
+def test_invalid_enum_member_lists_a_bounded_set_of_closest_members():
+    """A 250-member enum misused 25 times used to paste all 250 names into
+    each of the 25 findings (~84k characters re-sent every turn)."""
+    source = ("from enum import Enum\nclass Country(Enum):\n"
+              + "".join(f"    COUNTRY_{i:03d} = {i}\n" for i in range(250))
+              + "".join(f"x{i} = Country.country_17\n" for i in range(25)))
+    findings = diagnose_written_content("backend/enums.py", source, limit=25)
+    assert len(findings) == 25
+    message = findings[0]["message"]
+    assert len(message) < 400, len(message)
+    assert "Country.country_17 does not exist" in message
+    assert message.index("COUNTRY_017") < message.index("(+240 more)")
+    small = diagnose_written_content(
+        "e.py", "from enum import Enum\nclass S(Enum):\n    A = 1\n    B = 2\nS.C\n")
+    assert "declared members: A, B." in small[0]["message"]
+
+
+def test_star_import_misuse_never_pastes_a_value_repr(tmp_path):
+    """``from os import environ`` re-exported by a star import: the finding
+    named the object by ``repr()``, i.e. the whole process environment."""
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "settings.py").write_text("from os import environ\n")
+    findings = diagnose_written_content(
+        "backend/app.py", "from settings import *\nkey = environ.API_KEY\n", workspace=str(tmp_path))
+    misuse = [f for f in findings if f["code"] == "star-import-attribute-misuse"]
+    assert len(misuse) == 1
+    assert "PATH" not in misuse[0]["message"] and len(misuse[0]["message"]) < 600
+
+
 # ------------------------------------------------- duplicate declarations
 
 def _declaration_findings(source: str) -> list[dict]:

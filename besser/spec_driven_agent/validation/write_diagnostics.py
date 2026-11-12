@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import difflib
 import importlib
 import inspect
 import json
@@ -29,6 +30,9 @@ from besser.utilities.workspace_fs import is_plain_file, open_plain, walk_plain
 logger = logging.getLogger(__name__)
 
 MAX_WRITE_DIAGNOSTICS = 10
+# Names listed in one finding: every finding is re-sent on each later turn
+# and pasted into the Phase 3 fix prompt, so a 250-member enum must not be.
+MAX_LISTED_NAMES = 10
 
 
 _WARNED_PYFLAKES_MISSING = False
@@ -197,10 +201,24 @@ def python_structural_diagnostics(
             continue
         members = enums.get(node.value.id)
         if members is not None and node.attr not in members and not node.attr.startswith("_"):
-            add(node, "invalid-enum-member", f"{node.value.id}.{node.attr} does not exist; declared members: {', '.join(sorted(members))}. Use an actual member, not an invented spelling.")
+            add(node, "invalid-enum-member", f"{node.value.id}.{node.attr} does not exist; declared members: {_listed_names(members, node.attr)}. Use an actual member, not an invented spelling.")
     findings.extend(_enum_column_value_misuse(tree, rel_path, workspace))
     findings.extend(_star_import_attribute_misuse(tree, rel_path, workspace))
     return findings
+
+
+def _listed_names(names, near: str = "") -> str:
+    """``names`` comma-separated, at most ``MAX_LISTED_NAMES`` of them; when
+    capped, the ones closest to the misspelled ``near`` come first."""
+    names = sorted(names)
+    if len(names) <= MAX_LISTED_NAMES:
+        return ", ".join(names)
+
+    def distance(name: str) -> float:
+        return -difflib.SequenceMatcher(None, near.lower(), name.lower()).ratio()
+
+    shown = sorted(names, key=distance)[:MAX_LISTED_NAMES]
+    return f"{', '.join(shown)} (+{len(names) - len(shown)} more)"
 
 
 def _finding(
@@ -720,7 +738,7 @@ def _enum_column_value_misuse(
                     f"'{col}' is a Column(Enum({enum_cls})) attribute; SQLAlchemy's ORM "
                     f"returns the enum member for it, not its .value, so it can never be "
                     f"{comparator} a container of .value strings "
-                    f"({', '.join(f'{enum_cls}.{m}.value' for m in members)}). Compare against "
+                    f"({_listed_names(f'{enum_cls}.{m}.value' for m in members)}). Compare against "
                     f"the members directly, without '.value'.",
                     code="enum-column-compared-to-value",
                     line=node.lineno,
@@ -874,9 +892,12 @@ def _describe_binding(obj: object) -> str:
     generated code mistakenly assumes it has."""
     if inspect.ismodule(obj):
         return f"the module '{obj.__name__}'"
-    qualname = getattr(obj, "__qualname__", getattr(obj, "__name__", repr(obj)))
+    qualname = getattr(obj, "__qualname__", getattr(obj, "__name__", None))
+    if not isinstance(qualname, str):
+        # Never repr() a value: os.environ's would paste the environment.
+        return f"a {type(obj).__name__} value"
     home = getattr(obj, "__module__", None)
-    label = f"{home}.{qualname}" if home else str(qualname)
+    label = f"{home}.{qualname}" if home else qualname
     if isinstance(obj, type):
         kind = "class"
     elif inspect.isroutine(obj):

@@ -868,36 +868,16 @@ class Phase3RepairMixin:
             if i.message.startswith(("tsc [", "cargo [", "kotlinc ["))
         ]
 
-        prompt_parts: list[str] = []
-        if self._instructions:
-            prompt_parts.extend([
-                "## Original request (the authority for required behavior)",
-                self._instructions, "",
-            ])
-        if self._phase2_inspection_handoff:
-            prompt_parts.extend(["## Prior inspection handoff", self._phase2_inspection_handoff, ""])
-        if self.domain_model is not None:
-            serialized = serialize_domain_model(self.domain_model)
-            prompt_parts.extend([
-                "## Domain model and conversion losses",
-                "conversion_issues are NOT implemented constraints. Recover their "
-                "intended behavior using actual relationship names; the original "
-                "request takes precedence over conflicting model expressions.",
-                *([DROPPED_RULES_NOTE] if DROPPED in serialized else []),
-                to_prompt_json(serialized), "",
-            ])
+        # The run-constant sections go in ``system``; this message holds only
+        # what depends on the current tree and blockers.
         requirements = self._requirements_for_validation()
-        if requirements:
-            prompt_parts.extend([
-                "## Requirements to verify (including conversion recovery)",
-                _requirements_ledger.render_requirements(requirements), "",
-            ])
-        prompt_parts.extend([
+        system = self._phase3_fix_system_prompt(requirements)
+        prompt_parts: list[str] = [
             "## Current files and symbols (use these paths; do not invent models/ or schemas/ folders)",
             build_inventory(self.output_dir, self.domain_model, self._generator_used or "existing workspace"),
             "", "## Actual action handlers",
             format_action_inventory(collect_action_endpoints(self.output_dir)), "",
-        ])
+        ]
         mutation_manifest = build_mutation_manifest(
             self.output_dir, scenario_records=self._api_scenarios.values(),
             current_revision=self._workspace_revision(),
@@ -1002,17 +982,6 @@ class Phase3RepairMixin:
             )
 
         fix_prompt = "\n".join(prompt_parts)
-        system = (
-            "You are fixing validation errors in generated code. "
-            "Fix each issue concisely. Call validate_app to recheck startup and "
-            "data entry after a coherent repair. When shell tools are unavailable, "
-            "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs. When shell tools "
-            "are available and the report contains "
-            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
-            "re-running that toolchain with run_command; the diff alone does "
-            "not show that it compiles."
-        )
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
 
         # Inject a high-salience reminder as a separate user message
@@ -1160,6 +1129,48 @@ class Phase3RepairMixin:
         """
         return (self._checkpoint_phase == "phase3" or self._phase2_exited_cleanly
                 or self._phase2_stop_reason == "validation_required")
+
+    def _phase3_fix_system_prompt(self, requirements: list[dict]) -> str:
+        """The fix prompt's run-constant part: instructions, request, handoff, model, ledger.
+
+        Byte-identical in every round of a run, so the provider reads it from
+        its prompt cache instead of re-writing it with each round's blockers.
+        The handoff is set by Phase 2 only, so it is constant here too.
+        """
+        parts = [
+            "You are fixing validation errors in generated code. "
+            "Fix each issue concisely. Call validate_app to recheck startup and "
+            "data entry after a coherent repair. When shell tools are unavailable, "
+            "validate_app and test_api are the supported verification tools. Use test_api "
+            "for specification-based workflow assertions and invalid inputs. When shell tools "
+            "are available and the report contains "
+            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
+            "re-running that toolchain with run_command; the diff alone does "
+            "not show that it compiles.", "",
+        ]
+        if self._instructions:
+            parts.extend([
+                "## Original request (the authority for required behavior)",
+                self._instructions, "",
+            ])
+        if self._phase2_inspection_handoff:
+            parts.extend(["## Prior inspection handoff", self._phase2_inspection_handoff, ""])
+        if self.domain_model is not None:
+            serialized = serialize_domain_model(self.domain_model)
+            parts.extend([
+                "## Domain model and conversion losses",
+                "conversion_issues are NOT implemented constraints. Recover their "
+                "intended behavior using actual relationship names; the original "
+                "request takes precedence over conflicting model expressions.",
+                *([DROPPED_RULES_NOTE] if DROPPED in serialized else []),
+                to_prompt_json(serialized), "",
+            ])
+        if requirements:
+            parts.extend([
+                "## Requirements to verify (including conversion recovery)",
+                _requirements_ledger.render_requirements(requirements),
+            ])
+        return "\n".join(parts).rstrip("\n")
 
     def _excerpts_for(
         self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3

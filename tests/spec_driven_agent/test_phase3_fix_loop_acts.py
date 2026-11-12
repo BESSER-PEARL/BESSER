@@ -263,7 +263,9 @@ def test_the_fix_prompt_asks_for_an_edit_up_front(tmp_path):
         return_value="Relationship mutation coverage: reverse create, update and unlink paths",
     ):
         orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
-    first_prompt = spy.call_args_list[0].kwargs["messages"][0]["content"]
+    # The run-constant sections (request, model, ledger) are in the system prompt.
+    call = spy.call_args_list[0].kwargs
+    first_prompt = call["system"] + "\n" + call["messages"][0]["content"]
     assert "modify_file" in first_prompt
     assert "do not stop" in first_prompt.lower() or "not done" in first_prompt.lower()
     assert orch._instructions in first_prompt

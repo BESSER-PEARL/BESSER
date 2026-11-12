@@ -331,6 +331,8 @@ def test_phase3_fix_prompt_lists_a_dropped_rule_as_dropped(tmp_path):
     orch.domain_model.conversion_issues[0]["dropped_by_model_change"] = ["Book.pages"]
     with patch.object(client, "chat", wraps=client.chat) as spy:
         orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
-    prompt = spy.call_args_list[0].kwargs["messages"][0]["content"]
+    # The run-constant sections (the model among them) are in the system prompt.
+    call = spy.call_args_list[0].kwargs
+    prompt = call["system"] + "\n" + call["messages"][0]["content"]
     assert DROPPED_RULES_NOTE in prompt
     assert "self.pages" not in prompt and "Recover model constraint" not in prompt

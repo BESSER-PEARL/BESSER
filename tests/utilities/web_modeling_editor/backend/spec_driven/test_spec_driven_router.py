@@ -4,6 +4,8 @@ import asyncio
 import io
 import json
 import os
+import pathlib
+import time
 import zipfile
 from typing import Iterable
 
@@ -13,6 +15,7 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
@@ -252,6 +255,60 @@ class TestDownloadEndpoint:
         r2 = asyncio.run(_get(f"/besser_api/spec-driven/download/{run_id}"))
         assert r2.status_code == 200
         assert r2.content == r1.content
+
+    def test_download_never_serves_a_file_the_run_can_redirect(self, tmp_path, monkeypatch):
+        """The run's shell writes an artifact and a manifest naming it, the user
+        downloads once, then the shell replaces the artifact with a link to a
+        worker file: no response may carry that file."""
+        from besser.utilities.web_modeling_editor.backend.settings import get_settings
+
+        monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
+        secret = tmp_path / "environ"
+        secret.write_text("BESSER_FREE_LLM_TOKEN=server-paid-token\n", encoding="utf-8")
+        run_id = "ab" * 16
+        workspace = tmp_path / f"besser_llm_{run_id}_pg2wfopn"
+        workspace.mkdir()
+        (workspace / "out.bin").write_text("hi\n", encoding="utf-8")
+        (workspace / ".besser_download.json").write_text(json.dumps({
+            "version": 1, "runId": run_id, "relativePath": "out.bin", "fileName": "out.bin",
+            "isZip": False, "createdAt": time.time()}), encoding="utf-8")
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(f"/besser_api/spec-driven/download/{run_id}")
+
+        first = asyncio.run(_get())
+        (workspace / "out.bin").unlink()
+        (workspace / "out.bin").symlink_to(secret)
+        second = asyncio.run(_get())
+
+        for response in (first, second):
+            assert b"server-paid-token" not in response.content
+        assert second.status_code == 404
+
+    def test_download_refuses_a_link_at_the_registered_file(self, tmp_path):
+        """Defence in depth: even a registered path is opened without following a link."""
+        secret = tmp_path / "environ"
+        secret.write_text("BESSER_FREE_LLM_TOKEN=server-paid-token\n", encoding="utf-8")
+        run_id = "cd" * 16
+        workspace = tmp_path / f"besser_llm_{run_id}_x"
+        workspace.mkdir()
+        download_dir = pathlib.Path(f"{workspace}.download")
+        download_dir.mkdir()
+        (download_dir / "artifact").symlink_to(secret)
+        current_runtime().registry._entries[run_id] = runner_module.SmartRunEntry(
+            file_path=str(download_dir / "artifact"), file_name="out.bin", is_zip=False,
+            temp_dir=str(workspace), created_at=time.time())
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(f"/besser_api/spec-driven/download/{run_id}")
+
+        response = asyncio.run(_get())
+        assert response.status_code == 404
+        assert b"server-paid-token" not in response.content
 
     def test_unknown_run_id_returns_404(self, stub_backend):
         transport = ASGITransport(app=app)

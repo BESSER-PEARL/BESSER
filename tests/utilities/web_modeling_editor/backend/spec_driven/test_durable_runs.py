@@ -516,7 +516,11 @@ def test_download_registry_restores_artifact_after_restart(tmp_path, monkeypatch
         assert await restarted.restore_persisted() == 1
         restored = await restarted.get(run_id)
         assert restored is not None
-        assert os.path.samefile(restored.file_path, artifact)
+        # A copy kept beside the workspace, which the run's shell cannot change.
+        with open(restored.file_path, encoding="utf-8") as fh:
+            assert fh.read() == "result"
+        assert os.path.dirname(restored.file_path) == f"{workspace}.download"
+        assert restored.temp_dir == str(workspace)
         assert restored.file_name == "result.txt"
         assert restored.created_at == created_at
 

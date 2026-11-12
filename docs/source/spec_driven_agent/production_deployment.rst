@@ -184,6 +184,12 @@ Sandbox and network
   incident log folder (``BESSER_INCIDENT_LOG_DIR``, default
   ``/app/incidents``, which names other runs) are masked from every run.
   Deleting a run removes its sandbox ``$HOME`` along with its workspace.
+- A finished run's download (its ZIP or single file, and a manifest naming the
+  run) is kept in ``<run dir>.download``, which the run's shell cannot see, and
+  is opened without following links. A manifest inside a workspace or a
+  sandbox ``$HOME`` is never read. Runs finished before this layout (a
+  ``.besser_download.json`` in the workspace) are not restored after the
+  upgrade: their download, push and modify answer as expired.
 - ``cargo check`` has no network, so only crates that the run already fetched
   through ``run_command`` resolve. Otherwise the check is reported as
   "dependencies could not be fetched", a skipped check rather than a compile

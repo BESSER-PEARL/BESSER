@@ -29,7 +29,7 @@ import tempfile
 import time
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
 
@@ -45,7 +45,7 @@ from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
 from besser.utilities.workspace_fs import (
-    copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, write_atomic_plain,
+    copy_plain_file, copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, write_atomic_plain,
 )
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
@@ -130,7 +130,15 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
-_DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
+# A run's download (the served file and its manifest) lives in ``<run dir>.download``,
+# outside the tree the run's shell can write, so neither can be swapped for a link.
+# Its ``besser_llm_`` prefix puts it under the run-root cleanup.
+_DOWNLOAD_DIR_SUFFIX = ".download"
+_DOWNLOAD_MANIFEST_NAME = "manifest.json"
+_DOWNLOAD_ARTIFACT_NAME = "artifact"
+_DOWNLOAD_DIR_RE = re.compile(
+    re.escape(LLM_TEMP_DIR_PREFIX) + r"(?P<run_id>[a-f0-9]{32})_[a-z0-9_]+" + re.escape(_DOWNLOAD_DIR_SUFFIX)
+)
 # Written into a run imported from GitHub: where it came from. Its ``.besser_``
 # prefix keeps it out of every push and download.
 GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
@@ -174,12 +182,18 @@ _EXCLUDED_OUTPUT_DIRS = {
 }
 
 
+def run_download_dir(workspace: str) -> str:
+    """Where the run's download and its manifest are kept: beside its workspace."""
+    return workspace.rstrip("/\\") + _DOWNLOAD_DIR_SUFFIX
+
+
 def _remove_run_dir(path: str) -> None:
-    """Delete a run's workspace and the sandbox ``$HOME`` beside it, ending the
-    run's shell session first so none of its processes outlive the folder."""
+    """Delete a run's workspace and the sandbox ``$HOME`` and download beside it,
+    ending the run's shell session first so none of its processes outlive the folder."""
     close_sessions_for(path)
     shutil.rmtree(path, ignore_errors=True)
     shutil.rmtree(sandbox_home(path), ignore_errors=True)
+    shutil.rmtree(run_download_dir(path), ignore_errors=True)
 
 
 
@@ -627,47 +641,42 @@ class SmartRunRegistry:
         self._lock = asyncio.Lock()
 
     async def put(self, run_id: str, entry: SmartRunEntry) -> None:
-        self._persist_download_manifest(run_id, entry)
+        """Register ``entry``, keeping its file and manifest in the run's download dir.
+
+        The file is copied there unless it is already there (a packaged ZIP), so
+        the download no longer depends on the workspace the run's shell can
+        still change. When it cannot be kept the run is still registered (push
+        and modify read its workspace) but its download answers 404.
+        """
+        try:
+            entry = self._store_download(run_id, entry)
+        except OSError:
+            logger.warning("Run %s: its download could not be kept; /download will answer 404",
+                           run_id, exc_info=True)
         async with self._lock:
             self._entries[run_id] = entry
 
     @staticmethod
-    def _persist_download_manifest(run_id: str, entry: SmartRunEntry) -> None:
-        """Best-effort persistence of non-secret download metadata."""
-        if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-            return
-        temp_dir = os.path.realpath(entry.temp_dir)
-        file_path = os.path.realpath(entry.file_path)
-        if not os.path.isdir(temp_dir) or not os.path.isfile(file_path):
-            return
-        try:
-            if os.path.commonpath([temp_dir, file_path]) != temp_dir:
-                return
-            relative_path = os.path.relpath(file_path, temp_dir)
-            # Replaces a link planted at the manifest path rather than writing through it.
-            write_atomic_plain(os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME), json.dumps(
-                {
-                    "version": 1,
-                    "runId": run_id,
-                    "relativePath": relative_path,
-                    "fileName": entry.file_name,
-                    "isZip": entry.is_zip,
-                    "createdAt": entry.created_at,
-                },
-                separators=(",", ":"),
-            ), root=temp_dir)
-        except (OSError, TypeError, ValueError):
-            logger.warning(
-                "Could not persist download metadata for run %s",
-                run_id,
-                exc_info=True,
-            )
+    def _store_download(run_id: str, entry: SmartRunEntry) -> SmartRunEntry:
+        download_dir = run_download_dir(entry.temp_dir)
+        os.makedirs(download_dir, exist_ok=True)
+        artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+        if os.path.abspath(entry.file_path) != os.path.abspath(artifact):
+            copy_plain_file(entry.file_path, artifact, root=entry.temp_dir, dst_root=download_dir)
+        write_atomic_plain(os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME), json.dumps({
+            "version": 2,
+            "runId": run_id,
+            "fileName": entry.file_name,
+            "isZip": entry.is_zip,
+            "createdAt": entry.created_at,
+        }, separators=(",", ":")), root=download_dir)
+        return dataclass_replace(entry, file_path=artifact)
 
     async def restore_persisted(
         self,
         ttl_seconds: Optional[int] = None,
     ) -> int:
-        """Rehydrate downloadable artifacts from persistent run workspaces."""
+        """Rehydrate downloadable artifacts from the run root's download dirs."""
         if ttl_seconds is None:
             ttl_seconds = get_settings().llm_download_ttl_seconds
         root = _run_workspace_root()
@@ -680,9 +689,7 @@ class SmartRunRegistry:
             return 0
 
         for name in names:
-            if not name.startswith(LLM_TEMP_DIR_PREFIX):
-                continue
-            entry = self._entry_from_workspace(root, name, now, ttl_seconds)
+            entry = self._entry_from_download_dir(root, name, now, ttl_seconds)
             if entry is not None:
                 restored[entry[0]] = entry[1]
 
@@ -695,61 +702,51 @@ class SmartRunRegistry:
             )
         return len(restored)
 
-    def _entry_from_workspace(
+    def _entry_from_download_dir(
         self,
         root: str,
         name: str,
         now: float,
         ttl_seconds: int,
     ) -> Optional[tuple[str, "SmartRunEntry"]]:
-        """Parse one run workspace into a registry entry.
+        """Parse one ``<run dir>.download`` into a registry entry.
 
         Shared by ``restore_persisted`` (boot-time sweep of everything) and
         ``get`` (targeted lookup for a single run). Returns ``None`` for
-        anything unusable -- no manifest, expired, or a manifest that does not
-        agree with its own directory name.
+        anything unusable -- not a download dir, no manifest, expired, or a
+        manifest that does not agree with its directory name. A manifest in a
+        run workspace or its sandbox ``$HOME`` (where releases before this one
+        kept it, and where the run's shell can write one) is never read.
 
         Pure disk IO: the caller takes the lock.
         """
-        temp_dir = os.path.realpath(os.path.join(root, name))
-        manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
+        match = _DOWNLOAD_DIR_RE.fullmatch(name)
+        if match is None:
+            return None
+        download_dir = os.path.join(root, name)
+        manifest_path = os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME)
+        data = read_run_json(manifest_path, _MAX_DOWNLOAD_MANIFEST_BYTES)
+        run_id = match["run_id"]
+        if not isinstance(data, dict) or data.get("runId") != run_id:
+            return None
+        workspace = download_dir[: -len(_DOWNLOAD_DIR_SUFFIX)]
         try:
-            if (
-                not os.path.isfile(manifest_path)
-                or os.path.getsize(manifest_path) > _MAX_DOWNLOAD_MANIFEST_BYTES
-            ):
-                return None
-            with open(manifest_path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            run_id = str(data.get("runId") or "")
-            if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-                return None
-            if not name.startswith(f"{LLM_TEMP_DIR_PREFIX}{run_id}_"):
-                return None
             created_at = float(data["createdAt"])
             if max(0.0, now - created_at) > max(1, ttl_seconds):
-                _remove_run_dir(temp_dir)
+                _remove_run_dir(workspace)
                 return None
-            relative_path = str(data["relativePath"])
-            file_path = os.path.realpath(os.path.join(temp_dir, relative_path))
-            if (
-                os.path.commonpath([temp_dir, file_path]) != temp_dir
-                or not os.path.isfile(file_path)
-            ):
+            artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            if not is_plain_file(artifact, root=download_dir):
                 return None
             return run_id, SmartRunEntry(
-                file_path=file_path,
+                file_path=artifact,
                 file_name=str(data["fileName"]),
                 is_zip=bool(data["isZip"]),
-                temp_dir=temp_dir,
+                temp_dir=workspace,
                 created_at=created_at,
             )
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-            logger.warning(
-                "Ignoring invalid download metadata at %s",
-                manifest_path,
-                exc_info=True,
-            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Ignoring invalid download metadata at %s", manifest_path, exc_info=True)
             return None
 
     async def pop(self, run_id: str) -> Optional[SmartRunEntry]:
@@ -774,7 +771,7 @@ class SmartRunRegistry:
         if not re.fullmatch(r"[a-f0-9]{32}", run_id or ""):
             return None
 
-        # Targeted: only directories belonging to this run, not a full sweep.
+        # Targeted: only this run's download dirs, not a full sweep.
         root = _run_workspace_root()
         now = time.time()
         prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
@@ -784,7 +781,7 @@ class SmartRunRegistry:
             return None
 
         for name in names:
-            found = self._entry_from_workspace(
+            found = self._entry_from_download_dir(
                 root, name, now, get_settings().llm_download_ttl_seconds
             )
             if found is None:
@@ -2374,8 +2371,11 @@ class SmartGenerationRunner:
             )
         else:
             zip_name = f"besser_smart_{self.run_id}.zip"
-            zip_path = os.path.join(self.temp_dir, zip_name)
-            with open_plain_write(zip_path, "wb", root=self.temp_dir) as handle, \
+            # Written straight to the download dir, outside the tree the run's shell can write.
+            download_dir = run_download_dir(self.temp_dir)
+            os.makedirs(download_dir, exist_ok=True)
+            zip_path = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            with open_plain_write(zip_path, "wb", root=download_dir) as handle, \
                     zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as zf:
                 for path in user_files:
                     _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)

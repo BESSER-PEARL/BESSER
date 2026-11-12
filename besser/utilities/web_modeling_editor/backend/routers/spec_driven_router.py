@@ -70,7 +70,9 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview i
 # Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _locate_run_temp_dir,
+    run_download_dir,
 )
+from besser.utilities.workspace_fs import open_plain
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
     MAX_GENERATED_CODE_BYTES,
     import_generated_code,
@@ -827,10 +829,12 @@ async def download_smart(
             detail="Unknown or expired run ID",
         )
 
-    if not os.path.isfile(entry.file_path):
-        # Should not happen, but guard against disk-level races.
+    try:
+        # Only a regular file in the run's download dir, never through a link.
+        handle = open_plain(entry.file_path, "rb", root=run_download_dir(entry.temp_dir))
+    except OSError:
         logger.error(
-            "SmartRunRegistry had an entry for %s but file %s is missing",
+            "SmartRunRegistry had an entry for %s but file %s is missing or not a plain file",
             run_id,
             entry.file_path,
         )
@@ -846,7 +850,7 @@ async def download_smart(
     )
 
     async def _iter_file() -> AsyncIterator[bytes]:
-        with open(entry.file_path, "rb") as fh:
+        with handle as fh:
             while True:
                 chunk = fh.read(_DOWNLOAD_CHUNK_SIZE)
                 if not chunk:

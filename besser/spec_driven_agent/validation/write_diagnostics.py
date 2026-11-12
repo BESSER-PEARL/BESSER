@@ -15,6 +15,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import tomllib
@@ -491,12 +492,14 @@ def _enum_member_value_ref(node: ast.expr) -> tuple[str, str] | None:
     return None
 
 
-def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | None:
+def _scan_orm_module(
+    path: str,
+) -> tuple[dict[str, str], dict[str, set[str]], set[str], set[str]] | None:
     """One module's ``Column(Enum(X))`` / ``mapped_column(Enum(X))`` columns.
 
-    Returns ``(column name -> enum class name, every locally-declared enum
-    class name, the subset of those that mix in str/int and so compare equal
-    to their own .value)``. ``None`` when the file cannot be parsed - nothing
+    Returns ``(column name -> enum class name, column name -> the classes
+    declaring it, every locally-declared enum class name, the subset of those
+    that mix in str/int and so compare equal to their own .value)``. ``None`` when the file cannot be parsed - nothing
     can be judged against it.
     """
     try:
@@ -518,6 +521,7 @@ def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | N
 
     enum_classes: dict[str, bool] = {}
     columns: dict[str, str] = {}
+    owners: dict[str, set[str]] = {}
     for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
         base_names = {getattr(b, "id", getattr(b, "attr", "")) for b in cls.bases}
         if base_names & enum_bases:
@@ -541,7 +545,8 @@ def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | N
                 names = [value.args[0].value]
             for name in names:
                 columns[name] = enum_arg.args[0].id
-    return columns, set(enum_classes), {name for name, comparable in enum_classes.items() if comparable}
+                owners.setdefault(name, set()).add(cls.name)
+    return columns, owners, set(enum_classes), {name for name, comparable in enum_classes.items() if comparable}
 
 
 def _star_import_paths(tree: ast.Module, rel_path: str, workspace: str) -> list[str] | None:
@@ -562,6 +567,48 @@ def _star_import_paths(tree: ast.Module, rel_path: str, workspace: str) -> list[
     return paths
 
 
+def _declared_receiver_types(tree: ast.Module) -> dict[ast.Name, set[str]]:
+    """Each ``Name`` load whose class its function declares, mapped to the
+    identifiers of that declaration: a parameter annotation (``Optional[X]``,
+    ``"X"`` included), ``self``/``cls`` in a method, or ``x = X(...)`` with a
+    PascalCase ``X``. A name the function never declares is absent."""
+    result: dict[ast.Name, set[str]] = {}
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    owner = {stmt: cls.name for cls in classes for stmt in cls.body}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        declared: dict[str, set[str]] = {}
+        arguments = function.args.posonlyargs + function.args.args + function.args.kwonlyargs
+        if function in owner and arguments:
+            declared[arguments[0].arg] = {owner[function]}
+        for argument in arguments:
+            if argument.annotation is not None:
+                declared.setdefault(argument.arg, set()).update(_annotation_identifiers(argument.annotation))
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name) and node.value.func.id[:1].isupper()):
+                declared.setdefault(node.targets[0].id, set()).add(node.value.func.id)
+        # Walked outermost first, so a nested function's own view wins.
+        for node in ast.walk(function):
+            if isinstance(node, ast.Name) and node.id in declared:
+                result[node] = declared[node.id]
+    return result
+
+
+def _annotation_identifiers(annotation: ast.expr) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(annotation):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names.update(re.findall(r"[A-Za-z_]\w*", node.value))
+    return names
+
+
 def _enum_column_value_misuse(
     tree: ast.Module, rel_path: str | None, workspace: str | None
 ) -> list[dict]:
@@ -579,8 +626,10 @@ def _enum_column_value_misuse(
     module(s), never guessed from the attribute name alone; an enum whose
     class mixes in ``str``/``int`` (``StrEnum``, ``IntEnum``, ``IntFlag``,
     or an explicit mixin base) is excluded, since those members do compare
-    equal to their own ``.value``. If any star-imported module cannot be
-    resolved and parsed, this reports nothing for the file.
+    equal to their own ``.value``. A receiver its function declares as a
+    class that does not map ``col`` (``flt: OrderFilter``) is skipped. If any
+    star-imported module cannot be resolved and parsed, this reports nothing
+    for the file.
     """
     if not rel_path or not workspace:
         return []
@@ -589,14 +638,17 @@ def _enum_column_value_misuse(
         return []
 
     columns: dict[str, str] = {}
+    owners: dict[str, set[str]] = {}
     known_enums: set[str] = set()
     value_comparable: set[str] = set()
     for path in paths:
         scanned = _scan_orm_module(path)
         if scanned is None:
             return []
-        module_columns, module_enums, module_value_comparable = scanned
+        module_columns, module_owners, module_enums, module_value_comparable = scanned
         columns.update(module_columns)
+        for col, classes in module_owners.items():
+            owners.setdefault(col, set()).update(classes)
         known_enums |= module_enums
         value_comparable |= module_value_comparable
 
@@ -607,9 +659,22 @@ def _enum_column_value_misuse(
     if not eligible:
         return []
 
-    def match(attr_side, value_side):
+    declared = _declared_receiver_types(tree)
+
+    def enum_column(attr_side) -> str | None:
         col = _attr_access(attr_side)
         if col is None or col not in eligible:
+            return None
+        # A receiver declared as another class (a Pydantic filter with a
+        # ``status: str`` field) holds that class's value, not the ORM's.
+        types = declared.get(attr_side.value)
+        if types is not None and not types & owners[col]:
+            return None
+        return col
+
+    def match(attr_side, value_side):
+        col = enum_column(attr_side)
+        if col is None:
             return None
         ref = _enum_member_value_ref(value_side)
         if ref is None or ref[0] != eligible[col]:
@@ -641,8 +706,8 @@ def _enum_column_value_misuse(
                     line=node.lineno,
                 ))
             elif isinstance(op, (ast.In, ast.NotIn)):
-                col = _attr_access(left)
-                if col is None or col not in eligible or not isinstance(right, (ast.Tuple, ast.List, ast.Set)):
+                col = enum_column(left)
+                if col is None or not isinstance(right, (ast.Tuple, ast.List, ast.Set)):
                     continue
                 enum_cls = eligible[col]
                 members = [ref[1] for elt in right.elts

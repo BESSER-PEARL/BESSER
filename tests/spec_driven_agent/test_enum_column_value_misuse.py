@@ -225,6 +225,42 @@ def test_unresolvable_orm_module_reports_nothing(tmp_path):
     assert _enum_findings(findings) == []
 
 
+# -- the receiver must be the ORM class, not any object with that attribute --
+def test_a_receiver_typed_as_a_non_orm_class_is_not_flagged(tmp_path):
+    """A Pydantic filter with a ``physicalStatus: str`` field holds the plain
+    string, so comparing it to ``.value`` is correct. The check used to key
+    on the attribute name alone."""
+    router = textwrap.dedent("""\
+        from typing import Optional
+        from sql_alchemy import *
+        from pydantic_classes import BookingFilter
+
+
+        def search(flt: BookingFilter, maybe: Optional[BookingFilter] = None, other: "BookingFilter" = None):
+            built = BookingFilter(physicalStatus="CHECKED_IN")
+            return (flt.physicalStatus == BookingPhysicalStatus.CHECKED_IN.value,
+                    maybe.physicalStatus == BookingPhysicalStatus.CHECKED_IN.value,
+                    other.physicalStatus == BookingPhysicalStatus.CHECKED_IN.value,
+                    built.physicalStatus == BookingPhysicalStatus.CHECKED_IN.value,
+                    flt.physicalStatus in (BookingPhysicalStatus.CHECKED_IN.value,))
+        """)
+    assert _enum_findings(_findings(tmp_path, SQL_ALCHEMY, router)) == []
+
+
+def test_a_receiver_typed_as_the_orm_class_is_still_flagged(tmp_path):
+    router = textwrap.dedent("""\
+        from typing import Optional
+        from sql_alchemy import *
+
+
+        def arrived(booking: Booking, maybe: Optional[Booking] = None):
+            return (booking.physicalStatus == BookingPhysicalStatus.CHECKED_IN.value,
+                    maybe.physicalStatus == BookingPhysicalStatus.CHECKED_IN.value)
+        """)
+    findings = _enum_findings(_findings(tmp_path, SQL_ALCHEMY, router))
+    assert [f["line"] for f in findings] == [6, 7]
+
+
 # -- backward compatibility: the pre-existing 2-argument call still works --
 def test_python_structural_diagnostics_keeps_its_old_two_argument_call_working():
     """requirements_ledger.py calls python_structural_diagnostics(tree,

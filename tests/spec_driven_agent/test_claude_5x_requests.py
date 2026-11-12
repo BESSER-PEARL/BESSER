@@ -171,6 +171,34 @@ def test_the_history_before_the_one_off_instruction_stays_cacheable():
     assert "cache_control" not in history[-1]["content"][0]  # caller's history untouched
 
 
+def test_a_forced_reply_carries_no_thinking_bound_to_the_one_off_instruction():
+    """The instruction is in the request that produced the reply and in no
+    later one. A thinking block is bound to every message before it, so the
+    reply's reasoning, replayed next turn behind the history WITHOUT the
+    instruction, is a 400 on the models that take this path ("The block is
+    bound to a different conversation"). The reply comes back without it."""
+    thinking = at.ThinkingBlock(type="thinking", thinking="", signature="sig")
+    reply = _tool_use()
+    reply.content.insert(0, thinking)
+    client = _claude("claude-opus-5-5", reply, _text())
+    history = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t0", "name": "submit", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t0", "content": "refused"}]},
+    ]
+
+    result = client.chat(system="s", messages=history, tools=[TOOL], force_tool="submit")
+    history += [{"role": "assistant", "content": result["content"]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1",
+                                              "content": "ok"}]}]
+    client.chat(system="s", messages=history, tools=[TOOL])
+
+    forced, following = _requests(client)
+    assert "`submit`" in forced["messages"][2]["content"][-1]["text"]
+    assert following["messages"][2]["content"][-1]["type"] == "tool_result"  # instruction gone
+    assert [b.type for b in following["messages"][3]["content"]] == ["tool_use"]
+
+
 def _cache_markers(request) -> dict:
     """Where a request carries ``cache_control``: tools / system / messages."""
     system = request["system"]

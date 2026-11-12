@@ -704,12 +704,7 @@ class ClaudeLLMClient(LLMProvider):
                 break
             logger.info("Model answered without calling %s under "
                         "tool_choice=auto", force_tool)
-        # The reply's thinking was signed over a conversation ending in the
-        # one-off instruction, which the next request does not send: replayed,
-        # it is "bound to a different conversation" (HTTP 400).
-        result["content"] = [b for b in result["content"]
-                             if getattr(b, "type", None) not in ("thinking", "redacted_thinking")]
-        return result
+        return _without_reasoning(result)
 
     def _create(
         self,
@@ -847,6 +842,28 @@ def _with_refusal_detail(result: dict, response) -> dict:
     if result.get("stop_reason") == "refusal":
         details = getattr(response, "stop_details", None)
         result["refusal_category"] = getattr(details, "category", None)
+    return result
+
+
+# Reasoning blocks of a Claude response.
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+def _without_reasoning(result: dict) -> dict:
+    """``result`` minus the thinking blocks of a reply to a one-off instruction.
+
+    A thinking block is bound to every message before it, and the trailing
+    instruction is never sent again: replayed next turn behind the history
+    without it, the block is a 400 on the models that take the forced-via-auto
+    path ("The block is bound to a different conversation"). Removing the
+    newest blocks keeps every earlier one valid; text and tool calls stay.
+    """
+    content = result.get("content") or []
+    kept = [b for b in content if getattr(b, "type", None) not in _THINKING_BLOCK_TYPES]
+    if len(kept) != len(content):
+        logger.info("Dropped %d thinking block(s) bound to a one-off tool instruction",
+                    len(content) - len(kept))
+        result = {**result, "content": kept}
     return result
 
 

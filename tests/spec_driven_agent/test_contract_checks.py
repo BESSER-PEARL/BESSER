@@ -101,6 +101,32 @@ def test_parseint_on_id_is_advisory_when_model_also_has_int_ids():
     assert not findings[0].blocker
 
 
+def test_parseint_is_advisory_when_a_class_has_a_surrogate_int_id():
+    """Author declares no id, so it gets the server's integer `id` and
+    `parseInt(authorId)` may be right."""
+    book = Class(name="Book")
+    book.attributes = {Property(name="isbn", type=StringType, is_id=True)}
+    author = Class(name="Author")
+    author.attributes = {Property(name="name", type=StringType)}
+    contract = build_data_contract(DomainModel(name="Lib", types={book, author}))
+    assert contract.has_int_ids
+    findings = lint_file(
+        "frontend/src/pages/Authors.tsx", "const id = parseInt(authorId, 10);", contract,
+    )
+    assert [f.blocker for f in findings] == [False]
+
+
+def test_an_inherited_string_id_is_not_a_surrogate_int():
+    from besser.BUML.metamodel.structural import Generalization
+    person = Class(name="Person")
+    person.attributes = {Property(name="code", type=StringType, is_id=True)}
+    clerk = Class(name="Clerk")
+    contract = build_data_contract(DomainModel(
+        name="Staff", types={person, clerk},
+        generalizations={Generalization(general=person, specific=clerk)}))
+    assert not contract.has_int_ids
+
+
 def test_parseint_on_non_id_is_not_flagged():
     contract = build_data_contract(_string_id_model())
     findings = lint_file(

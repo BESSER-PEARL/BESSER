@@ -110,7 +110,10 @@ class DataContract:
 
     @property
     def has_int_ids(self) -> bool:
-        return any(t.lower() in _INT_TYPES for _, t in self.pk_types.values())
+        # A class with no declared id (own or inherited) gets the server's
+        # integer surrogate `id`.
+        return any(t.lower() in _INT_TYPES for _, t in self.pk_types.values()) \
+            or any(not keys for keys in self.declared_keys.values())
 
 
 def build_data_contract(domain_model) -> DataContract | None:

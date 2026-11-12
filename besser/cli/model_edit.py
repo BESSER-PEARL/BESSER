@@ -609,7 +609,14 @@ class ModelEditor:
         name = _TYPE_ALIASES.get(name, name)
         if name in PRIMITIVE_TYPES:
             return self._structural(PRIMITIVE_TYPES[name])
-        element = self.find_type(name)
+        element = self.model.get_type_by_name(name)
+        if not isinstance(element, (Class, Enumeration)):
+            primitive = _TYPE_ALIASES.get(name.lower(), name.lower())
+            hint = f"did you mean {primitive}? " if primitive in PRIMITIVE_TYPES else ""
+            known = ", ".join(sorted(t.name for t in self.model.types
+                                     if isinstance(t, (Class, Enumeration)))) or "none"
+            raise EditError(f"'{name}' is not a type: {hint}write {', '.join(PRIMITIVE_TYPES)}, or a class or "
+                            f"enumeration of {self.model.name} ({known})")
         var = self.var_of(element)
         if var is None:
             raise EditError(f"'{name}' has no variable in {self.path.name} to refer to it by; give it one")

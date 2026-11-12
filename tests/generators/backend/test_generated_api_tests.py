@@ -149,7 +149,7 @@ def _self_association_model() -> DomainModel:
     """A required self association (no first object can exist) and an optional one.
 
     The backend generator itself writes a broken app for an N:M or a 1:1 self association (an ambiguous
-    secondary join, an unknown ``<end>_id`` keyword), so only the 1:N shape is here.
+    secondary join, an unknown ``<end>_id`` keyword): their tests are skipped (see the test at the end).
     """
     node = Class(name="Node", attributes={Property(name="label", type=StringType)})
     person = Class(name="Person", attributes={Property(name="name", type=StringType)})
@@ -322,3 +322,35 @@ def test_without_the_option_nothing_changes(tmp_path, library_book_author_model)
     assert tested - plain == {Path("tests/conftest.py"), Path("tests/test_generated_api.py")}
     for rel in plain:
         assert (tmp_path / "plain" / rel).read_bytes() == (tmp_path / "tested" / rel).read_bytes(), rel
+
+
+def _generator_limit_model(ends, subclass: bool) -> DomainModel:
+    person = Class(name="Person", attributes={Property(name="name", type=StringType)})
+    student = Class(name="Student", attributes={Property(name="school", type=StringType)})
+    classes = {"Person": person, "Student": student}
+    association = _assoc("link", *(Property(name=role, type=classes[cls], multiplicity=multiplicity)
+                                   for role, cls, multiplicity in ends))
+    return DomainModel(name="People", types={person, student} if subclass else {person},
+                       associations={association},
+                       generalizations={Generalization(general=person, specific=student)} if subclass else set())
+
+
+# Valid models the backend generator writes an app for that does not run: an N:M self association, and a
+# to-one association between a class and its parent or child, break every mapper; a 1:1 self association
+# breaks POST of its class and of its subclasses.
+@pytest.mark.parametrize("ends, subclass, expected, reason", [
+    ([("friends", "Person", _many()), ("friend_of", "Person", _many())], False, {"skipped": 1},
+     "the many-to-many self-association 'link' of Person"),
+    ([("mentor", "Person", _one(0)), ("mentee", "Person", _one(0))], True, {"skipped": 2},
+     "the one-to-one self-association 'link' of Person"),
+    ([("tutor", "Person", _one(0)), ("pupils", "Student", _many())], True, {"skipped": 2},
+     "the association 'link' between Student and Person"),
+    ([("head", "Student", _one(0)), ("members", "Person", _many())], True, {"skipped": 2},
+     "the association 'link' between Person and Student"),
+], ids=["many_to_many_self", "one_to_one_self", "subclass_to_parent", "parent_to_subclass"])
+def test_a_shape_the_backend_generator_breaks_is_skipped_naming_the_generator(ends, subclass, expected, reason,
+                                                                              tmp_path):
+    counts, output = _run_generated_tests(_generator_limit_model(ends, subclass), tmp_path)
+
+    assert counts == expected, output
+    assert reason in output and "A limitation of the generator, not of the model" in output

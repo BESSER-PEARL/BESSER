@@ -349,6 +349,43 @@ class _ApiShape:
         self.pk_names = get_pk_names(model)
         self.constraints_map = build_constraints_map(model, include_model_level=True, include_skipped=True)
         self.classes = {cls.name: cls for cls in model.get_classes()}
+        self.unmapped, self.uncreatable = self._generator_limits()
+
+    def _generator_limits(self) -> tuple[str | None, dict[str, str]]:
+        """Shapes the backend generator writes code for that does not run, though the model is valid: why no
+        route of the app works (its SQLAlchemy mappers cannot be configured), or None; and, by class, why
+        ``POST`` of that class fails. Their tests are skipped with that reason, not left to fail."""
+        unmapped = None
+        uncreatable: dict[str, str] = {}
+        for association in sorted(self.model.associations, key=lambda assoc: assoc.name):
+            ends = list(association.ends)
+            if len(ends) != 2 or association.name in self.link_class:
+                continue
+            first, second = ends[0].type, ends[1].type
+            to_many = [end.multiplicity.max > 1 for end in ends]
+            if first is second and all(to_many):
+                unmapped = unmapped or (
+                    f"the many-to-many self-association '{association.name}' of {first.name}: the backend generator "
+                    "writes it without the join columns SQLAlchemy needs (ambiguous join), so no route of the "
+                    "generated app works. A limitation of the generator, not of the model")
+            elif first is second and not any(to_many):
+                for cls in [first, *first.all_specializations()]:
+                    uncreatable.setdefault(cls.name, (
+                        f"the one-to-one self-association '{association.name}' of {first.name}: the backend "
+                        f"generator's POST /{cls.name.lower()}/ passes its foreign key under a name the table "
+                        "does not have. A limitation of the generator, not of the model"))
+            elif first is not second and not all(to_many):
+                holder_name, _ = self.fkeys.get(association.name, ("", ""))
+                holder = first if first.name == holder_name else second
+                target = second if holder is first else first
+                if target in holder.all_parents() or holder in target.parents():
+                    unmapped = unmapped or (
+                        f"the association '{association.name}' between {holder.name} and {target.name}, which "
+                        f"{'specializes' if target in holder.all_parents() else 'is specialized by'} it: the "
+                        "backend generator writes its foreign key beside the inheritance one without telling "
+                        "SQLAlchemy which joins them (ambiguous inherit condition), so no route of the generated "
+                        "app works. A limitation of the generator, not of the model")
+        return unmapped, uncreatable
 
     def attributes(self, cls: Class) -> list[Property]:
         """The client-supplied attributes of ``cls``, inherited ones included, by name."""
@@ -464,6 +501,8 @@ class _Planner:
 
     def build(self, cls: Class, chain: tuple[str, ...] = ()) -> _Object:
         """Plan an object of ``cls`` after the objects its required ends name."""
+        if cls.name in self.shape.uncreatable:
+            raise _Unbuildable(self.shape.uncreatable[cls.name])
         chain = (*chain, cls.name)
         fields: list[tuple[str, str]] = []
         links = []
@@ -562,6 +601,8 @@ def _class_test(shape: _ApiShape, cls: Class) -> _ClassTest:
                                            "the objects it links, so test them in your own tests")
     if "POST" not in shape.http_methods:
         return _ClassTest(name, cls, skip="the API has no POST route (http_methods), so nothing can be created")
+    if shape.unmapped:
+        return _ClassTest(name, cls, skip=shape.unmapped)
     planner = _Planner(shape)
     try:
         obj = planner.build(cls)

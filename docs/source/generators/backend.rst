@@ -80,7 +80,10 @@ the tests of the API it generates, regenerated with the model like every other f
 
 A class no valid payload can be derived for gets a skipped test whose reason says why, never a failing one:
 an abstract class (its subclasses' tests create it), an association class, a cycle of required association
-ends (``Node -> Node`` when every node needs a parent), a constraint no generated value satisfies. The
+ends (``Node -> Node`` when every node needs a parent), a constraint no generated value satisfies. A valid
+model whose generated app does not run is skipped too, the reason naming the generator's limitation: a
+many-to-many self association, or a to-one association between a class and its parent or child (no mapper can
+be configured, so every test), and a one-to-one self association (creating that class or a subclass). The
 tests need ``pytest``, ``fastapi`` and ``httpx``; run them with ``python -m pytest`` from the backend folder or
 any folder above it. ``web_app`` takes the same option for the backend it writes in ``backend/``.
 

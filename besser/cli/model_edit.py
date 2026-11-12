@@ -830,6 +830,25 @@ def add_class(editor: ModelEditor, name: str, attributes: Sequence[str], parent:
     return Edited(editor.finish(), f"added class {name}{extra}{with_attributes}", check)
 
 
+def add_parent(editor: ModelEditor, class_name: str, parent: str) -> Edited:
+    cls = editor.find_type(class_name, Class)
+    parent_class = editor.find_type(parent, Class)
+    if parent_class is cls or cls in parent_class.all_parents():
+        raise EditError(f"{parent} is {class_name} or one of its subclasses: a class cannot specialize itself")
+    if parent_class in cls.all_parents():
+        raise EditError(f"{class_name} is a {parent} already")
+    var, parent_var = editor.type_code(class_name), editor.type_code(parent)
+    generalization = f"{editor._structural('Generalization')}(general={parent_var}, specific={var})"
+    editor.add(editor.model, "generalizations", generalization,
+               lambda: editor.free_name(f"{var}_is_{parent_var}"), need_var=False, separate=True)
+
+    def check(model: DomainModel) -> str | None:
+        found = model.get_class_by_name(class_name)
+        return None if found and parent in {p.name for p in found.parents()} else f"{class_name} is not a {parent}"
+
+    return Edited(editor.finish(), f"made {class_name} a {parent}", check)
+
+
 def set_enum(editor: ModelEditor, name: str, literals: Sequence[str]) -> Edited:
     if len(set(literals)) != len(literals) or not literals:
         raise EditError("give each literal once, at least one")
@@ -1342,6 +1361,7 @@ def remove(editor: ModelEditor, path: str) -> Edited:
 OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
     "add-class": ("add a class: NAME [ATTRIBUTE...] [--parent CLASS] [--abstract]", add_class),
     "add-attribute": ("add attributes to a class: CLASS ATTRIBUTE...", add_attribute),
+    "add-parent": ("make a class specialize another (a generalization): CLASS PARENT", add_parent),
     "add-association": ("add an association: NAME END END [--composite]", add_association),
     "add-method": ("add a method: CLASS 'name(param:type, ...) -> type' [--code CODE]", add_method),
     "add-constraint": ("add an OCL invariant: CLASS EXPRESSION [--name NAME]", add_constraint),

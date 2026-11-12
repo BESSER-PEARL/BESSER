@@ -279,6 +279,21 @@ def test_a_new_class_with_an_attribute_typed_by_a_class_is_refused(edit):
     assert "besser model add-association loan_book loan:Loan[*] book:Book[1]" in run.stderr
 
 
+def test_add_parent_makes_an_existing_class_specialize_another(edit, besser):
+    _, text = edit(INLINE, "add-class", "Ebook", "format:str")
+    run, after = edit(text, "add-parent", "Ebook", "Book", output=None)
+
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "model.py: made Ebook a Book\n"
+    assert _changed_lines(text, after) == ([], [
+        "    Generalization,", "    generalizations={Generalization(general=book, specific=ebook)},"])
+    assert besser("info", "model.py", "--class", "Ebook", "--json").json["classes"][0]["parents"] == ["Book"]
+    again, unchanged = edit(after, "add-parent", "Ebook", "Book")
+    assert again.returncode == 2 and "Ebook is a Book already" in again.stderr and unchanged == after
+    loop, _ = edit(after, "add-parent", "Book", "Ebook")
+    assert loop.returncode == 2 and "a class cannot specialize itself" in loop.stderr
+
+
 def test_an_association_end_is_named_by_its_association_too(edit, besser):
     # The association's name is how add-association and info name it.
     run, text = edit(INLINE, "rename", "library_books.books", "volumes", output=None)

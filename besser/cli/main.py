@@ -130,6 +130,10 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("class_name",), {"metavar": "CLASS", "help": "the class"}),
         (("attributes",), {"nargs": "+", "metavar": "ATTRIBUTE", "help": "name:type, name:type? or name:type=default"}),
     ],
+    "add-parent": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("parent",), {"metavar": "PARENT", "help": "the class it specializes"}),
+    ],
     "add-association": [
         (("name",), {"help": "the association name"}),
         (("first",), {"metavar": "END", "help": "role:Class[multiplicity], e.g. invoices:Invoice[*]"}),

@@ -660,6 +660,8 @@ the file holds several.
        ``time``, ``timedelta``, ``any``) or name an enumeration. A class is
        no attribute type: the refusal gives the ``add-association`` command
        that links the two classes.
+   * - ``add-parent CLASS PARENT``
+     - Makes an existing class specialize another (a generalization).
    * - ``add-association NAME END END [--composite]``
      - A binary association; each end is ``role:Class[multiplicity]`` with
        ``[1]``, ``[0..1]``, ``[*]``, ``[1..*]`` or ``[n..m]``. ``--composite``

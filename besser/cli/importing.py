@@ -189,7 +189,9 @@ def import_models(fmt: ImportFormat, inputs: Sequence[str]) -> tuple[LoadedModel
     except Exception as exc:
         # The importers raise what their parsers and the metamodel setters raise.
         raise ModelLoadError(f"{paths[0]}: cannot be read as {fmt.name}: {type(exc).__name__}: {exc}") from exc
-    if model is None or (fmt.kind == "domain" and not (model.get_classes() or model.get_enumerations())):
+    empty = (model is None or (fmt.kind == "domain" and not (model.get_classes() or model.get_enumerations()))
+             or (fmt.kind == "kg" and not model.nodes))
+    if empty:
         raise ModelLoadError(f"{paths[0]}: no model found: it holds nothing the {fmt.name} import reads")
     name = getattr(model, "name", None) or fmt.kind
     loaded = LoadedModels(path=paths[0], models=[LoadedModel(name=name, kind=fmt.kind, model=model)],

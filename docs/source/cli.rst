@@ -1326,6 +1326,10 @@ of a ``.py`` or ``.json`` model file), the class diagram derived from it:
 classes, attributes, associations and OCL constraints. A knowledge graph is
 also written as RDF: ``-o`` with ``.ttl`` (Turtle), ``.owl`` or ``.rdf``
 (RDF/XML). An import is not validated: run ``besser validate`` on the result.
+An input that gives no model (an RDF file with no triple, a CSV or code import
+with no class) is exit status 2, and a class diagram derived with no class or
+enumeration is left out with a warning, or, when no graph gives one, is exit
+status 1; nothing is written then.
 
 ``--dry-run`` converts into a scratch file, so it fails and warns as the real
 conversion would, and says whether the output would be created, overwritten,

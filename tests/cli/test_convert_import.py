@@ -147,6 +147,25 @@ def test_python_data_classes_are_read_without_running_them(besser, write, tmp_pa
     assert not (tmp_path / "ran.txt").exists()
 
 
+def test_an_rdf_file_with_no_triple_is_no_model(besser, write, tmp_path):
+    write("empty.ttl", "@prefix ex: <http://example.org/> .\n")
+    run = besser("convert", "empty.ttl", "-o", "graph.py", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == ["empty.ttl: no model found: it holds nothing the rdf import reads"]
+    assert not (tmp_path / "graph.py").exists()
+
+
+def test_a_class_diagram_derived_with_no_class_is_not_written(besser, write, tmp_path):
+    write("individual.ttl", '@prefix ex: <http://example.org/> .\nex:a ex:label "a value" .\n')
+    run = besser("convert", "individual.ttl", "-o", "classes.py", "--class-diagram", "--json")
+
+    assert run.returncode == 1
+    assert run.json["errors"] == ["--class-diagram derived no class or enumeration from individual.ttl "
+                                  "(knowledge_graph (KnowledgeGraph)): nothing was written"]
+    assert not (tmp_path / "classes.py").exists()
+
+
 def test_the_help_and_the_error_of_the_code_import_name_the_same_classes(besser, tmp_path):
     (tmp_path / "empty").mkdir()
     help_text = " ".join(besser("convert", "--help").stdout.split())

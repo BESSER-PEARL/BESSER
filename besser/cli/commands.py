@@ -1479,25 +1479,38 @@ def _source_format(inputs: Sequence[str], source_format: str | None) -> ImportFo
 def _derive_class_diagrams(loaded: LoadedModels) -> tuple[LoadedModels, list[str]]:
     """``loaded`` with each knowledge graph replaced by the class diagram derived from it, and the warnings.
 
+    A class diagram with no class or enumeration is left out, with a warning.
+
     Raises:
-        _Stopped: The file holds no knowledge graph.
+        _Stopped: The file holds no knowledge graph, or none gives a class diagram with something in it.
     """
     from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 
-    if not loaded.of_kind("kg"):
+    graphs = loaded.of_kind("kg")
+    if not graphs:
         held = ", ".join(model.label for model in loaded.models)
         raise _Stopped(failure(
             "convert", f"--class-diagram derives a class diagram from a knowledge graph and {loaded.path} "
                        f"holds none (it holds: {held})",
         ))
-    models, warnings = [], []
+    models, warnings, empty = [], [], []
     for model in loaded.models:
         if model.kind != "kg":
             models.append(model)
             continue
         result = kg_to_class_diagram(model.model)
         warnings.extend(f"{model.name}: {warning.message}" for warning in result.warnings)
-        models.append(LoadedModel(name=result.domain_model.name, kind="domain", model=result.domain_model))
+        derived = result.domain_model
+        if derived.get_classes() or derived.get_enumerations():
+            models.append(LoadedModel(name=derived.name, kind="domain", model=derived))
+        else:
+            empty.append(model.label)
+    if len(empty) == len(graphs):
+        raise _Stopped(Result(command="convert", exit_code=EXIT_FAILED, warnings=warnings, errors=[
+            f"--class-diagram derived no class or enumeration from {loaded.path} ({', '.join(empty)}): "
+            "nothing was written"]))
+    warnings.extend(f"{label} was left out: --class-diagram derived no class or enumeration from it"
+                    for label in empty)
     # The file's own Project holds the graphs: the models are wrapped in a new one.
     return dataclasses.replace(loaded, models=models, project=None), warnings
 

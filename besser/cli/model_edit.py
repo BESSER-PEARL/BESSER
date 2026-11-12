@@ -1820,7 +1820,7 @@ def _refuse_breaking(editor: ModelEditor, what: str, constraints: Sequence[str],
         raise EditError(f"the object model would be invalid once {what}: {errors[0]} Change the objects first")
 
 
-def _argument(call: ast.Call, name: str) -> ast.AST | None:
+def _constructor_argument(call: ast.Call, name: str) -> ast.AST | None:
     """The argument ``name`` of a constructor call: its keyword, or its positional argument."""
     for keyword_ in call.keywords:
         if keyword_.arg == name:
@@ -1841,7 +1841,7 @@ def _set_field(editor: ModelEditor, element: Any, field_name: str, code: str | N
         return
     call = editor.call_of(element)
     if call is not None:
-        node = _argument(call, field_name)
+        node = _constructor_argument(call, field_name)
         arguments = sorted([*call.args, *call.keywords], key=editor.src.start)
         if isinstance(node, ast.keyword) and code is None:
             editor.src.remove_items(call, arguments, {arguments.index(node)})
@@ -1968,7 +1968,7 @@ def set_multiplicity(editor: ModelEditor, path: str, multiplicity: str) -> Edite
     _refuse_breaking(editor, f"{path} is {new_text}", *_broken_by(editor, apply, undo))
     high_code = '"*"' if high >= UNLIMITED_MAX_MULTIPLICITY else str(high)
     call = editor.call_of(end)
-    node = _argument(call, "multiplicity") if call is not None else None
+    node = _constructor_argument(call, "multiplicity") if call is not None else None
     value = node.value if isinstance(node, ast.keyword) else node
     if _callee(value) == "Multiplicity" and not value.keywords and len(value.args) == 2:
         # Only the bounds change: Multiplicity(0, "*") -> Multiplicity(1, "*"), quoted as the file quotes.
@@ -2060,7 +2060,7 @@ def remove_parent(editor: ModelEditor, class_name: str, parent: str) -> Edited:
         editor.src.remove_items(literal, items, {index})
     # A table of the class (or of a subclass) shows no column of what it no longer has.
     tables = []
-    for table in sorted({id(t): t for c in below for t in editor.tables_of(c)}.values(), key=lambda t: t.name):
+    for table in _tables_inheriting(editor, cls):
         located = _column_items(editor, table)
         drop = {i for i, (column, _, _) in enumerate(located or ()) if any(_columns_of(column, m) for m in lost)}
         if located is None and any(_columns_of(column, m) for column in table.columns for m in lost):

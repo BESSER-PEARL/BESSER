@@ -651,3 +651,17 @@ def test_a_parent_class_the_cli_wrote_is_removed_with_its_generalizations(projec
     text = project()
     assert "person" not in text and "Generalization" not in text and "    generalizations=set(),\n" in text
     assert besser("info", "model.py", "--class", "Book", "--json").json["classes"][0]["parents"] == []
+
+
+def test_remove_parent_drops_the_inherited_columns_add_screen_and_add_parent_wrote(besser, change, tmp_path):
+    assert besser("init", "--kind", "gui").returncode == 0
+    change("batch", stdin="add-class Work code:str\nadd-parent Book Work\nadd-class Novel genre:str --parent Book "
+                          "--screen\n")
+    assert (tmp_path / "model.py").read_text().count("field=work_code") == 2  # Books and Novels show the code
+
+    line = change("remove-parent", "Book", "Work")
+
+    assert line == "model.py: Book is no longer a Work; its columns of Work from table book_table, novel_table"
+    assert "field=work_code" not in (tmp_path / "model.py").read_text()
+    assert besser("validate", "model.py", "--ocl").returncode == 0
+    assert besser("generate", "web_app", "model.py", "-o", "out").returncode == 0

@@ -662,10 +662,11 @@ class ToolExecutor:
         # Per generator output dir: file stamps taken just before the
         # generator ran (see _gen_dir / _track_generated_files).
         self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
-        # Per-path modify_file counts. After >= 2 targeted edits on a small
-        # generator file the write_file guardrail relaxes, so a deliberate
-        # rewrite is not bounced with "use modify_file".
-        self._modify_counts: dict[str, int] = {}
+        # Per-path targeted edit attempts (modify_file and replace_file_lines,
+        # landed or refused). Two unlock write_file on a large generator file
+        # and in a modify run - the rewrite the recovery ladder sends to after
+        # two refused edits of either kind.
+        self._edit_attempts: dict[str, int] = {}
         # Consecutive failed modify_file attempts per path. Escalates the
         # error message from "not found" to "stop retyping old_text, read the
         # file".
@@ -2367,6 +2368,8 @@ class ToolExecutor:
         frozen = self._frozen(args["path"])
         if frozen:
             return frozen
+        rel_path = args["path"].replace("\\", "/")
+        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         view = self._read_views.get(args.get("read_id", ""))
         if view is None or view[0] != os.path.normcase(path):
             return {"error": "Unknown read_id for this file. Call read_file on the target region first.",
@@ -2531,13 +2534,12 @@ class ToolExecutor:
         # Edit-first guardrail (MODIFY runs only): every existing
         # non-trivial file is part of the user's working app — reject a
         # whole-file rewrite until the model has tried at least two
-        # targeted modify_file edits on it. The rejection text teaches
-        # the model the recovery path, and the >= 2 relaxation keeps the
-        # modify-streak reminder ("switch to write_file") consistent.
+        # targeted edits on it. The >= 2 relaxation is what lets the
+        # recovery ladder's rewrite step (two refused edits) run.
         if (
             self._modify_guard
             and os.path.isfile(path)
-            and self._modify_counts.get(rel_path, 0) < 2
+            and self._edit_attempts.get(rel_path, 0) < 2
         ):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 existing_lines = f.read().count("\n") + 1
@@ -2562,7 +2564,7 @@ class ToolExecutor:
         if rel_path in self._generator_files and os.path.isfile(path):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
                 existing_lines = f.read().count("\n") + 1
-            if existing_lines > 200 and self._modify_counts.get(rel_path, 0) < 2:
+            if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
                 return {
                     "error": (
                         f"'{rel_path}' was created by a BESSER generator and is large "
@@ -2573,8 +2575,8 @@ class ToolExecutor:
                 }
             # Rewrite allowed (large file, or repeated modifies already tried) — log it
             logger.info(
-                "Allowing rewrite of generated file: %s (%d lines, %d prior modifies)",
-                rel_path, existing_lines, self._modify_counts.get(rel_path, 0),
+                "Allowing rewrite of generated file: %s (%d lines, %d prior targeted edits)",
+                rel_path, existing_lines, self._edit_attempts.get(rel_path, 0),
             )
 
         before = None
@@ -2732,7 +2734,7 @@ class ToolExecutor:
         if frozen:
             self._note_rejection(rel_path, old_text, new_text)
             return frozen
-        self._modify_counts[rel_path] = self._modify_counts.get(rel_path, 0) + 1
+        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             content = f.read()
         replace_all = args.get("replace_all") is True
@@ -3125,7 +3127,7 @@ class ToolExecutor:
                 existing_lines = fh.read().count("\n") + 1
         except OSError:
             existing_lines = 0
-        if existing_lines > 200 and self._modify_counts.get(rel_path, 0) < 2:
+        if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
             return (
                 "Edit it in place with modify_file; write_file on this file "
                 "unlocks only after two modify_file attempts."

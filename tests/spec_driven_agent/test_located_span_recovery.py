@@ -216,7 +216,7 @@ def test_no_range_once_range_edits_are_exhausted_for_the_path(executor):
     the range editor has been given up on, so nothing steers back into it.
     """
     read = call(executor, "read_file", path="bill_methods.py")
-    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+    for _ in range(3):  # past the two refusals that escalate to a rewrite
         refused = call(executor, "replace_file_lines", path="bill_methods.py",
                        read_id=read["read_id"], start_line=6, end_line=6,
                        new_text="async def execute_bill_registerPayment(\n")

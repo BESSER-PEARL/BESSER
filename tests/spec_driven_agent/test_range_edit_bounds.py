@@ -24,6 +24,8 @@ SOURCE = "# keep\nasync def action():\n    return False\n\ndef unrelated():\n   
 # Unbalanced bracket on the first replacement line: always refused by the
 # syntax guard, so the file never changes and the read_id stays valid.
 BROKEN = "  @bad(\nasync def action():\n    return True\n"
+# More range refusals in a row than the two that escalate to a rewrite.
+REPEATED = 3
 
 
 @pytest.fixture
@@ -165,15 +167,13 @@ def test_the_ladder_stops_steering_into_range_edits_when_they_keep_failing(execu
 
     Renamed from ``..._goes_back_to_text_...``: the
     destination is no longer text quotation. The "smallest unique old_text"
-    reversal it used to assert is genuinely obsolete - that tier sits below
-    the two-refusal rewrite in ``_add_edit_recovery`` and can no longer be
-    reached, because ``_range_edit_failures`` and ``_edit_recovery`` are
-    incremented and cleared together, so three range refusals always imply
-    at least two edit refusals. The obligation that survives is the one in
+    reversal it used to assert was unreachable below the two-refusal
+    rewrite (three range refusals always imply two edit refusals) and has
+    been deleted with its counter. The obligation that survives is the one in
     the name: after repeated range failures the ladder must not point back
     at ``replace_file_lines``.
     """
-    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+    for _ in range(REPEATED):
         result = _failing_range_edit(executor)
 
     assert result["edit_recovery"]["next_tool"] != "replace_file_lines"
@@ -183,7 +183,7 @@ def test_the_ladder_stops_steering_into_range_edits_when_they_keep_failing(execu
 
 
 def test_a_read_stops_advertising_range_edits_once_they_are_exhausted(executor):
-    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+    for _ in range(REPEATED):
         _failing_range_edit(executor)
 
     read = call(executor, "read_file", path="app.py", offset=1, limit=2)
@@ -192,13 +192,13 @@ def test_a_read_stops_advertising_range_edits_once_they_are_exhausted(executor):
 
 
 def test_one_success_re_enables_the_range_editor(executor):
-    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+    for _ in range(REPEATED):
         _failing_range_edit(executor)
     read = call(executor, "read_file", path="app.py", offset=1, limit=2)
     call(executor, "replace_file_lines", path="app.py", read_id=read["read_id"],
          start_line=2, end_line=3, new_text="async def action():\n    return True\n")
 
-    assert executor._range_edit_failures.get("app.py") is None
+    assert executor._edit_recovery.get("app.py") is None
 
 
 def test_the_range_editor_is_a_first_miss_aid_only(executor):

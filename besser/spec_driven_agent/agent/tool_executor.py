@@ -714,10 +714,8 @@ class ToolExecutor:
         # Reads per path, to catch a model crawling one file in tiny windows.
         self._read_counts: dict[str, int] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
+        # Consecutive refused edits per path: the edit-recovery ladder's rung.
         self._edit_recovery: dict[str, int] = {}
-        # Range-edit refusals per path; past _RANGE_EDIT_GIVE_UP the
-        # ladder stops steering this file toward replace_file_lines.
-        self._range_edit_failures: dict[str, int] = {}
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
         self.api_tester = None
         # When True (weak / free-tier models only), the deterministic Phase-1
@@ -2263,19 +2261,14 @@ class ToolExecutor:
 
         return result
 
-    # Consecutive range-edit refusals on one path before the ladder sends the
-    # model back to text matching. Measured on Qwen, modify_file lands 86-92%
-    # of edits while replace_file_lines lands 15-43%, so the ladder must not
-    # keep steering into a failing range edit.
-    _RANGE_EDIT_GIVE_UP = 3
-
     def _add_edit_recovery(self, tool: str, args: dict, result: dict) -> None:
-        """Change strategy after two refusals, in every orchestration phase.
+        """Attach the edit-recovery ladder's next step to a refused edit.
 
-        The ladder runs both ways: quoting text, then a revision-bound range
-        edit, then back to quoting when the range edit is the thing failing.
-        Keep this in the typed execution path so a reworded/no-op/ambiguous
-        failure cannot escape recovery. A read does not count as a write.
+        First refusal that comes with a ``located_range``: replace_file_lines
+        on that range. From the second refused edit on a path: read the whole
+        file and write_file it back. A landed edit resets the ladder; a read
+        does not count as a write. Kept in the typed execution path so every
+        orchestration phase, and every kind of refusal, gets the same ladder.
         """
         path = args["path"].replace("\\", "/")
         if tool in {"modify_file", "replace_file_lines", "write_file", "delete_file"}:
@@ -2283,7 +2276,6 @@ class ToolExecutor:
                 self._edit_recovery.pop(path, None)
                 self._failed_modifies.pop(path, None)
                 self._last_missed_old_text.pop(path, None)
-                self._range_edit_failures.pop(path, None)
                 self._clear_rejections(path)
             elif (tool in {"modify_file", "replace_file_lines"}
                     and result.get("status") not in {"already_applied", "possible_replay"}):
@@ -2299,17 +2291,11 @@ class ToolExecutor:
                         path, f"lines {args.get('start_line')}-{args.get('end_line')}",
                         args.get("new_text") or "",
                     )
-                    self._range_edit_failures[path] = self._range_edit_failures.get(path, 0) + 1
-        exhausted = self._range_edit_failures.get(path, 0) >= self._RANGE_EDIT_GIVE_UP
         # _modify_file already bracketed the target and issued a read_id for it,
         # so steer on the FIRST miss: the span saves a re-read and a guess at
-        # line numbers.
+        # line numbers. located_range carries the read_id, lines and
+        # instruction; the orchestrator reads only next_tool.
         located = result.get("located_range") if tool == "modify_file" else None
-        # The located-range assist is a FIRST-miss aid only. Once two edits on
-        # this path have been refused the ladder escalates to a whole-file
-        # rewrite rather than to replace_file_lines.
-        # located_range carries the read_id, lines and instruction; the
-        # orchestrator reads only next_tool.
         if located and self._edit_recovery.get(path, 0) < 2:
             result["edit_recovery"] = {"next_tool": "replace_file_lines"}
             return
@@ -2333,31 +2319,6 @@ class ToolExecutor:
                                "elide, or drop code you were not asked to change. No rejected "
                                "edit was applied; do not mark the requirement done.",
             }
-            return
-        if tool == "read_file" and "read_id" in result and not exhausted:
-            result["edit_recovery"] = {
-                "next_tool": "replace_file_lines", "path": path,
-                "read_id": result["read_id"],
-                "instruction": "Select the exact 1-based inclusive lines shown here and supply their complete replacement. "
-                               "Do not quote old_text again. Keep surrounding code unchanged; a read is not an implementation.",
-            }
-        elif tool in {"modify_file", "replace_file_lines"} and self._result_status(result) == "error":
-            if exhausted:
-                result["edit_recovery"] = {
-                    "next_tool": "modify_file", "path": path,
-                    "instruction": "Range edits on this file keep being refused, so stop using them here. "
-                                   "Go back to modify_file with the SMALLEST unique old_text that "
-                                   "brackets your change - one or two lines copied from the latest "
-                                   "read - instead of rewriting a whole block. No rejected edit was "
-                                   "applied; do not mark the requirement done.",
-                }
-            else:
-                result["edit_recovery"] = {
-                    "next_tool": "read_file", "path": path,
-                    "instruction": "Read the target function/block with offset/limit, then use replace_file_lines with its "
-                                   "read_id and line numbers. Stop retrying the same text replacement. "
-                                   "No rejected edit was applied; do not mark the requirement done.",
-                }
 
     def _replace_file_lines(self, args: dict) -> dict:
         """Replace a deliberately selected range from an unchanged, visible read.
@@ -2996,8 +2957,7 @@ class ToolExecutor:
             # read_file -> guess a range) with one pre-filled replace_file_lines.
             # Both documented range-edit failure modes are line-number selection
             # errors, so the numbers come from here, not from the model.
-            if (span and err.get("status") != "possible_replay"
-                    and self._range_edit_failures.get(rel_path, 0) < self._RANGE_EDIT_GIVE_UP):
+            if span and err.get("status") != "possible_replay":
                 numbered = chr(10).join(
                     f"{n:>4}| {line}"
                     for n, line in enumerate(content.split(chr(10))[span[0] - 1:span[1]], span[0])

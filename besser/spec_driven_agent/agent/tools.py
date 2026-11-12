@@ -29,7 +29,11 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [tool.schema() for tool in agent_tools()
 FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "list_files",
-        "description": "List all files in the output workspace with sizes in bytes.",
+        "description": (
+            "List the files in the output workspace, one '<path> <size in bytes>' line each. "
+            "Installed dependencies, virtualenvs and build output are not listed; past 300 "
+            "files, source files are listed first and the rest counted per directory."
+        ),
         "input_schema": {"type": "object", "properties": {}},
     },
     {

@@ -91,7 +91,7 @@ class TestFileTools:
     def test_list_files(self, executor):
         _call(executor, "write_file", {"path": "a.py", "content": "1"})
         _call(executor, "write_file", {"path": "sub/b.py", "content": "2"})
-        paths = {f["path"] for f in _call(executor, "list_files")["files"]}
+        paths = {line.rsplit(" ", 1)[0] for line in _call(executor, "list_files")["files"].splitlines()}
         assert "a.py" in paths and "sub/b.py" in paths
 
     def test_read_missing(self, executor):

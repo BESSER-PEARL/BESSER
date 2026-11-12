@@ -18,10 +18,12 @@ import functools
 import hashlib
 import logging
 import os
+import posixpath
 import re
 import sys
 import threading
 import weakref
+from collections import Counter
 from contextlib import nullcontext
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -321,6 +323,12 @@ MAX_SPILL_SIZE = 2_000_000
 _UNSEARCHED_DIRS = frozenset({
     "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
 })
+
+# list_files shows at most this many files. A scaffold has ~150; an uncapped
+# listing of a stray dependency tree was 232k chars in one result.
+_LIST_FILES_MAX = 300
+# Directories named in a capped listing's "more files" line; the rest are counted.
+_LIST_FILES_MAX_DIRS = 20
 
 # Maximum file content returned by read_file (chars)
 # A generated router runs to ~35k chars; 60k covers the largest observed
@@ -1730,18 +1738,28 @@ class ToolExecutor:
         except ValueError:
             return False
 
-    def _list_dir(self, directory: str) -> list[dict]:
+    def _list_dir(self, directory: str, virtualenvs: list[str] | None = None) -> list[dict]:
         """List files recursively, relative to workspace.
 
         Installed dependencies and caches are pruned: a single npm install
         can put 10k node_modules paths into one listing and overflow the
-        model's context on the next turn.
+        model's context on the next turn. So is a virtualenv under any name
+        (``env/``, ``.env311/``), recognised by its ``pyvenv.cfg``; its
+        workspace-relative path is appended to ``virtualenvs`` when given.
         """
         from besser.spec_driven_agent.agent.prompt_builder import _SNAPSHOT_SKIP_DIRS
 
         files = []
         for root, dirs, filenames in walk_plain(directory):
             dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+            venvs = [d for d in dirs if os.path.isfile(os.path.join(root, d, "pyvenv.cfg"))]
+            if venvs:
+                dirs[:] = [d for d in dirs if d not in venvs]
+                if virtualenvs is not None:
+                    virtualenvs.extend(
+                        os.path.relpath(os.path.join(root, d), self.workspace).replace("\\", "/")
+                        for d in venvs
+                    )
             for f in filenames:
                 abs_path = os.path.join(root, f)
                 if not self._resolves_inside(abs_path):
@@ -2151,10 +2169,40 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     def _list_files(self, args: dict) -> dict:
-        files = self._list_dir(self.workspace)
-        # Exclude internal files
-        files = [f for f in files if not f["path"].startswith(".besser_")]
-        return {"files": files, "total": len(files)}
+        """One ``path size`` line per file, at most ``_LIST_FILES_MAX`` of them.
+
+        Past the cap, source files are kept first and the rest are counted
+        per directory, so the model knows what exists without paying for it.
+        """
+        from besser.spec_driven_agent.agent.prompt_builder import _SYMBOL_PATTERNS
+
+        virtualenvs: list[str] = []
+        files = [f for f in self._list_dir(self.workspace, virtualenvs)
+                 if not f["path"].startswith(".besser_")]
+        shown = files
+        if len(files) > _LIST_FILES_MAX:
+            ranked = sorted(files, key=lambda f: (
+                os.path.splitext(f["path"])[1].lower() not in _SYMBOL_PATTERNS, f["path"],
+            ))
+            kept = {f["path"] for f in ranked[:_LIST_FILES_MAX]}
+            shown = [f for f in files if f["path"] in kept]
+        lines = [f"{f['path']} {f['size']}" for f in shown]
+        result: dict[str, Any] = {"total": len(files)}
+        if len(shown) < len(files):
+            cut = Counter(posixpath.dirname(f["path"]) or "." for f in files if f["path"] not in kept)
+            named = ", ".join(f"{d}/ ({n})" for d, n in cut.most_common(_LIST_FILES_MAX_DIRS))
+            more_dirs = len(cut) - _LIST_FILES_MAX_DIRS
+            lines.append(
+                f"... {len(files) - len(shown)} more files not listed, by directory: {named}"
+                + (f", and {more_dirs} more directories" if more_dirs > 0 else "")
+                + ". Use search_in_files or read_file on a path to look further."
+            )
+            result["truncated"] = True
+        result["files"] = "\n".join(lines)
+        if virtualenvs:
+            result["not_listed"] = "Python virtualenvs (installed packages): " + ", ".join(
+                f"{v}/" for v in sorted(virtualenvs))
+        return result
 
     def _located_range(self, rel: str, path: str, content: str, start: int, end: int,
                        why: str) -> dict | None:

@@ -81,6 +81,13 @@ same-file range edit. IDs are session-local and expire on resume. The tool share
 path containment, per-file locking, diagnostics, and successful-write evidence
 with the other editors. An accepted edit is not proof of business correctness.
 
+Every tool result reaches the model as JSON with non-ASCII text kept literal
+(``é``, not ``\u00e9``). ``list_files`` returns one ``<path> <size>`` line per
+file, skipping installed dependencies, build output and any directory holding
+a ``pyvenv.cfg`` (a virtualenv, whatever its name; it is named under
+``not_listed``). Past 300 files it lists source files first and ends with a
+``... N more files not listed`` line counting the rest per directory.
+
 ``task_list(action='done')`` runs an attached verifier. A verifier exception is a
 failed check, not success. Without a verifier, supply
 ``evidence=[{"id": N, "path": "...", "quote": "..."}]`` from a successful current

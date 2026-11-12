@@ -4,6 +4,7 @@ import importlib.util
 import json
 import re
 import sys
+import time
 
 import pytest
 
@@ -368,6 +369,52 @@ def test_apply_whose_test_command_cannot_run_still_reports_what_the_build_wrote(
     assert "api/main_api.py" in run.json["files"]  # written by the build: listed, as build lists them
     assert run.json["files"] == run.json["outputs"][0]["files"]
     assert text.stdout.startswith("FAILED: tests not run; build OK: 1 output, 0 failed: [api] ")
+
+
+# A test command that starts a server (a child process that runs on) and then waits on it.
+HANGING_TEST = """
+    import subprocess, sys, time
+    server = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    with open("server.pid", "w") as pid_file:
+        pid_file.write(str(server.pid))
+    print("server started", flush=True)
+    time.sleep(120)
+"""
+
+
+def _running(pid: int) -> bool:
+    """Whether the process ``pid`` runs: it exists and is not a zombie waiting to be reaped."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stat:
+            return stat.read().rpartition(")")[2].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc to see the processes left")
+def test_apply_stops_tests_that_run_past_test_timeout_and_every_process_they_started(besser, model, write,
+                                                                                      tmp_path):
+    write("hang.py", HANGING_TEST)
+    _config(write, 'test = "python hang.py"\ntest_timeout = 1\n')
+    started = time.monotonic()
+    run = besser("apply", "--json")
+    elapsed = time.monotonic() - started
+    server = int((tmp_path / "server.pid").read_text())
+    (tmp_path / "server.pid").unlink()
+    text = besser("apply", output=None)
+
+    assert elapsed < 60  # not the two minutes the test command and its server sleep
+    assert not _running(server)
+    assert run.returncode == 1
+    assert run.json["errors"] == ["the tests timed out after 1 s (test_timeout in besser.toml) and were stopped, "
+                                  "with the processes they started: python hang.py"]
+    assert run.json["test"] == {"command": "python hang.py", "exit_code": None, "timed_out": True,
+                                "output_tail": ["server started"], "failing": []}
+    assert "api/main_api.py" in run.json["files"]  # the build's report is kept
+    assert text.returncode == 1 and text.stderr == ""
+    assert text.stdout.startswith("FAILED: the tests timed out after 1 s (test_timeout in besser.toml)")
+    assert len(text.stdout.splitlines()) == 1
+    assert not _running(int((tmp_path / "server.pid").read_text()))
 
 
 def test_apply_without_a_test_command_says_so_in_its_one_line(besser, model, write):

@@ -1121,8 +1121,9 @@ all (``besser schema config`` prints this example):
 
    model = "model.py"              # the model file every output reads, unless it names its own
    test = "python -m pytest -q"    # optional: what 'besser apply' runs after the build (no shell)
+   test_timeout = 600              # optional: seconds before 'besser apply' stops the tests (default 600)
 
-   [output.api]                    # one table per output; 'besser build api' builds this one alone
+   [output.api]                  # one table per output; 'besser build api' builds this one alone
    generator = "backend"           # a generator id ('besser generators' lists them)
    dir = "generated/api"           # where its code goes
    options = { http_methods = ["GET", "POST"] }   # the generator's options, typed
@@ -1228,10 +1229,22 @@ name a failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``; under unittest's
 ``FAIL:`` and ``ERROR:``, the exception line of its traceback) and the last line,
 else the last 40 lines of the output. Colour codes are removed first. A
 conflict left by the build says to resolve the markers, then run ``besser apply``
-again. ``-c FILE`` reads another configuration file. ``--json`` is the object of
+again.
+
+The tests run for at most ``test_timeout`` seconds (600 when ``besser.toml``
+does not set it), so a test command that starts a server or waits for input
+does not block ``apply`` for ever. The command runs in a process group of its
+own (a process tree on Windows); past the limit, it and every process it
+started are stopped, and ``apply`` prints one line,
+``FAILED: the tests timed out after N s (test_timeout in besser.toml) ...;
+build ...``, and exits with status 1. The build's files and notes are kept, as
+when the command cannot be started.
+
+``-c FILE`` reads another configuration file. ``--json`` is the object of
 ``build`` with ``command`` ``apply`` and ``test``: its ``command``,
-``exit_code``, ``output_tail`` and ``failing`` (the tests pytest's summary
-names), or ``null`` when no test ran.
+``exit_code`` (``null`` when the tests timed out), ``timed_out``,
+``output_tail`` (the last lines, up to where they were stopped) and
+``failing`` (the tests pytest's summary names), or ``null`` when no test ran.
 
 ``besser convert``
 ------------------
@@ -1452,9 +1465,10 @@ Each command adds its own:
      - ``config``, ``dry_run`` and ``outputs``: per output its ``name`` and
        the object of the run that built it.
    * - ``apply``
-     - The keys of ``build``, and ``test``: ``command``, ``exit_code``,
-       ``output_tail`` (the last lines of its output) and ``failing`` (the
-       tests pytest's short summary names), or ``null``.
+     - The keys of ``build``, and ``test``: ``command``, ``exit_code``
+       (``null`` when the tests timed out), ``timed_out``, ``output_tail``
+       (the last lines of its output) and ``failing`` (the tests pytest's
+       short summary names), or ``null``.
    * - ``init``
      - ``folder`` and ``kind``.
    * - ``guide``

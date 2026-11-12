@@ -248,9 +248,11 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "config": {"type": "string", "description": "the configuration file read"},
         "dry_run": {"type": "boolean"},
         "outputs": {"type": "array", "description": "as build"},
-        "test": {"type": ["object", "null"], "description": "the tests run after the build: command, exit_code, "
-                                                            "output_tail (the last lines), failing (the tests "
-                                                            "pytest's summary names); null when none ran"},
+        "test": {"type": ["object", "null"], "description": "the tests run after the build: command, exit_code "
+                                                            "(null when they timed out), timed_out (they ran past "
+                                                            "test_timeout and were stopped), output_tail (the last "
+                                                            "lines), failing (the tests pytest's summary names); "
+                                                            "null when none ran"},
     },
     "convert": {
         "input": {"type": "string"}, "inputs": _STRINGS, "output": {"type": "string"},

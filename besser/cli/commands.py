@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ from besser.cli.config import (
     OutputConfig,
     load_config,
     load_default_model,
-    load_test_command,
+    load_test_config,
 )
 from besser.cli.importing import IMPORT_FORMATS, ImportFormat, format_of, import_format, import_models
 from besser.cli.discovery import SKIP_NO_MODEL, SKIP_PY, ModelFiles, SkippedFile, find_model_files
@@ -1683,12 +1684,60 @@ def _test_argv(command: str) -> list[str]:
     return argv
 
 
+# How long the test command's output may take to end once its processes are stopped: a process that left
+# their group (a daemon) can hold the pipes open, and what it would still print is then given up.
+_STOPPED_OUTPUT_SECONDS = 5
+
+
+def _stop_process_tree(process: subprocess.Popen) -> None:
+    """Kill ``process`` and every process it started: its process group on POSIX (it leads a session of
+    its own), its tree with ``taskkill`` on Windows."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False,
+                       timeout=_STOPPED_OUTPUT_SECONDS)
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError):
+        process.kill()
+
+
+def _run_tests(argv: list[str], cwd: Path, timeout: float) -> tuple[int | None, str]:
+    """Run the test command; return its exit status, ``None`` when it ran past ``timeout`` seconds and was
+    stopped with every process it started, and its output (standard output, then standard error).
+
+    The command leads a process group (a session, on POSIX) of its own, so a server or a watcher it
+    starts is stopped with it; Ctrl-C, which that group does not receive from the terminal, stops it too.
+    """
+    group: dict[str, Any] = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                             else {"start_new_session": True})
+    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", **group)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        return process.returncode, stdout + stderr
+    except subprocess.TimeoutExpired:
+        _stop_process_tree(process)
+        try:
+            stdout, stderr = process.communicate(timeout=_STOPPED_OUTPUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+        return None, (stdout or "") + (stderr or "")
+    except BaseException:  # Ctrl-C while the tests run
+        _stop_process_tree(process)
+        raise
+    finally:
+        for stream in (process.stdout, process.stderr):
+            stream.close()
+
+
 def apply(config_path: str = CONFIG_FILENAME) -> Result:
     """Build every output of the configuration file, then run its ``test`` command: one call per model change.
 
     The build validates each model first and generates nothing from one with errors. The tests run
     only after a build that succeeded, from the configuration file's folder, without a shell and
-    without besser's standard input. The one-line report always ends with what the tests did.
+    without besser's standard input, for at most ``test_timeout`` seconds. The one-line report always
+    ends with what the tests did.
     """
     built = build((), config_path=config_path, rerun="besser apply")
     result = dataclasses.replace(built, command="apply")
@@ -1696,30 +1745,39 @@ def apply(config_path: str = CONFIG_FILENAME) -> Result:
     if built.exit_code != EXIT_OK:
         return result
     try:
-        command = load_test_command(config_path)
+        test = load_test_config(config_path)
     except ConfigError as exc:  # build read the same file: only a change in between gets here
         return _tests_not_run(result, built, str(exc), EXIT_USAGE, exc)
+    command, config_name = test.command, Path(config_path).name
     if command is None:
         result.notes.append(f"no tests run: {config_path} has no 'test' command")
-        return _with_tests(result, built, f"none (set 'test' in {Path(config_path).name})")
+        return _with_tests(result, built, f"none (set 'test' in {config_name})")
     try:
-        process = subprocess.run(_test_argv(command), cwd=Path(config_path).parent, capture_output=True,
-                                 stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-                                 check=False)
+        returncode, printed = _run_tests(_test_argv(command), Path(config_path).parent, test.timeout)
     except (OSError, ValueError) as exc:
         return _tests_not_run(result, built, f"cannot run the test command '{command}': {exc}", EXIT_FAILED, exc)
-    output = _ANSI.sub("", process.stdout + process.stderr).strip().splitlines()
+    output = _ANSI.sub("", printed).strip().splitlines()
     tail = output[-_TEST_TAIL_LINES:]
-    result.data["test"] = {"command": command, "exit_code": process.returncode, "output_tail": tail,
-                           "failing": _failing_tests(output)}
-    if process.returncode == _PYTEST_NO_TESTS and "pytest" in command:
-        return _with_tests(result, built, "none collected")
-    if process.returncode != 0:
+    result.data["test"] = {"command": command, "exit_code": returncode, "timed_out": returncode is None,
+                           "output_tail": tail, "failing": _failing_tests(output)}
+    if returncode is None:
         result.exit_code = EXIT_FAILED
-        error = f"the tests failed (exit status {process.returncode}): {command}"
+        error = (f"the tests timed out after {test.timeout:g} s (test_timeout in {config_name}) and were stopped, "
+                 f"with the processes they started: {command}")
+        result.errors.append(error)
+        result.text = f"FAILED: {error}; build {built.brief}"
+        # The FAILED line says it: the error, for --json, is not printed a second time on standard error.
+        result.shown_in_text = frozenset({error})
+        result.brief = ""
+        return result
+    if returncode == _PYTEST_NO_TESTS and "pytest" in command:
+        return _with_tests(result, built, "none collected")
+    if returncode != 0:
+        result.exit_code = EXIT_FAILED
+        error = f"the tests failed (exit status {returncode}): {command}"
         result.errors.append(error)
         result.text = "\n".join([*_failing_lines(output),
-                                 f"FAILED: tests (exit status {process.returncode}); build {built.brief}"])
+                                 f"FAILED: tests (exit status {returncode}); build {built.brief}"])
         # The FAILED line says it: the error, for --json, is not printed a second time on standard error.
         result.shown_in_text = frozenset({error})
         result.brief = ""

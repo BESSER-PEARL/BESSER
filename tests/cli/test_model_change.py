@@ -403,8 +403,8 @@ def test_set_abstract_and_back(project, change, besser, post_book):
     assert 'work = Class(name="Work")' in project()
     change("remove-parent", "Book", "Work")
     change("remove", "Work")
-    # What add-class Work --parent left: the empty set of generalizations, and its import.
-    assert _changed_lines(before, project()) == ([], ["    Generalization,", "    generalizations=set(),"])
+    # What add-parent left: the empty set of generalizations (its import went with the last one).
+    assert _changed_lines(before, project()) == ([], ["    generalizations=set(),"])
 
 
 @pytest.mark.parametrize("args, message", [
@@ -602,3 +602,39 @@ def test_an_import_on_one_line_stays_in_order_and_is_wrapped_past_the_line_limit
     assert (tmp_path / "model.py").read_text().startswith(
         "from besser.BUML.metamodel.structural import (\n    BinaryAssociation,\n    Class,\n    DomainModel,\n"
         "    IntegerType,\n    Multiplicity,\n    Property,\n    StringType,\n)\n\n")
+
+
+def test_an_import_a_change_leaves_unused_goes(project, change):
+    before = project()
+
+    change("set-attribute", "Book.pages", ":float")
+    change("set-attribute", "Book.pages", ":int")
+    assert project() == before  # FloatType came and went
+    change("remove", "Book.release")
+
+    # Before: DateType stayed imported, used by nothing.
+    assert _changed_lines(before, project()) == (["    DateType,", '    Property(name="release", type=DateType),'], [])
+
+
+def test_an_import_used_elsewhere_stays(write, change, tmp_path):
+    # IntegerType: in a __main__ block; DateType: by another model of the file; Method: by no one before.
+    write("model.py", '''\
+        from besser.BUML.metamodel.structural import Class, DateType, DomainModel, IntegerType, Method, Property
+
+        book = Class(name="Book", attributes={Property(name="pages", type=IntegerType),
+                                              Property(name="due", type=DateType)})
+        shelf = Class(name="Shelf", attributes={Property(name="since", type=DateType)})
+        library = DomainModel(name="Library", types={book})
+        storage = DomainModel(name="Storage", types={shelf})
+
+        if __name__ == "__main__":
+            print(IntegerType)
+        ''')
+    before = (tmp_path / "model.py").read_text()
+
+    change("--use", "library", "batch", stdin="remove Book.pages\nremove Book.due\n")
+
+    assert _changed_lines(before, (tmp_path / "model.py").read_text()) == (
+        ['book = Class(name="Book", attributes={Property(name="pages", type=IntegerType),',
+         '                                      Property(name="due", type=DateType)})'],
+        ['book = Class(name="Book", attributes=set())'])

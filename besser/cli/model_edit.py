@@ -784,7 +784,7 @@ class ModelEditor:
         """The new text: the planned edits, and an import of the metamodel names it uses."""
         for module in sorted(self.needed):
             self._import(module, sorted(self.needed[module]))
-        return self.src.result()
+        return _without_unused_imports(self.src.text, self.src.result())
 
     def _import(self, module: str, names: list[str]) -> None:
         for statement in self.src.tree.body:
@@ -839,6 +839,49 @@ class ModelEditor:
 # An import on one line is wrapped, one name a line, before it grows past this many characters (the code style's
 # line target).
 _MAX_IMPORT_LINE = 120
+
+
+def _used_names(text: str, tree: ast.Module) -> dict[str, int]:
+    """How many times each name is used in ``text`` outside its top-level imports (as a name, or a word of a
+    string, which a name can be looked up by)."""
+    imported_lines = {line for statement in tree.body if isinstance(statement, (ast.Import, ast.ImportFrom))
+                      for line in range(statement.lineno, statement.end_lineno + 1)}
+    counts: dict[str, int] = {}
+    for token in _tokens(text):
+        if token.start[0] in imported_lines:
+            continue
+        words = [token.string] if token.type == tokenize.NAME else \
+            re.findall(r"\w+", token.string) if token.type == tokenize.STRING else []
+        for word in words:
+            counts[word] = counts.get(word, 0) + 1
+    return counts
+
+
+def _without_unused_imports(before: str, after: str) -> str:
+    """``after`` without the metamodel names it imports and no longer uses, which ``before`` used: the
+    change left them unused. A name used anywhere (a ``__main__`` block, another model, a string) stays."""
+    if "\r" in after or "\r" in before:  # tokenize and ast count lines alike only on "\n"
+        return after
+    try:
+        tree = ast.parse(after)
+        used_before, used_after = _used_names(before, ast.parse(before)), _used_names(after, tree)
+    except SyntaxError:
+        return after
+    text = _Text(after)
+    for statement in tree.body:
+        if not (isinstance(statement, ast.ImportFrom) and (statement.module or "").startswith("besser.BUML.metamodel")):
+            continue
+        aliases = list(statement.names)
+        drop = {index for index, alias in enumerate(aliases) if alias.name != "*"
+                and used_before.get(alias.asname or alias.name) and not used_after.get(alias.asname or alias.name)}
+        try:
+            if len(drop) == len(aliases):
+                text.delete_statement(statement)
+            elif drop:
+                text.remove_items(statement, aliases, drop)
+        except EditError:  # the import shares its line with other code: it stays, unused but harmless
+            continue
+    return text.result()
 
 
 def find_type(model: DomainModel, name: str, kind: type | tuple[type, ...] = (Class, Enumeration)) -> Any:

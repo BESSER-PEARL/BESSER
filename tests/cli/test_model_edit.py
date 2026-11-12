@@ -258,7 +258,8 @@ def test_remove_an_attribute(edit):
 
     assert run.returncode == 0
     removed, added = _changed_lines(INLINE, text)
-    assert removed == ['    Property(name="pages", type=IntegerType),'] and added == []
+    # IntegerType is no longer used: it leaves the import.
+    assert removed == ['    IntegerType,', '    Property(name="pages", type=IntegerType),'] and added == []
 
 
 def test_methods_and_constraints(edit, besser):

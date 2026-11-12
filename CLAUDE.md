@@ -293,7 +293,9 @@ and note the merge order.
 - `deploy-wme.yml` — manual (`workflow_dispatch`) build + push of backend, `smartgen_worker`, frontend and
   agent-simulator images, then EC2 deploy. A backend deploy recreates `besser-wme-backend` and
   `besser-wme-smartgen` and verifies the build stamp in both; it aborts before pushing if the host's compose
-  file is missing a service or the worker is not on the `smartgen_worker` image.
+  file is missing a service or the worker is not on the `smartgen_worker` image. Images go through
+  `.github/scripts/publish_image.sh` (Buildx push as an OCI index, then a check that the registry serves that
+  digest): a plain `docker push` to Artifactory does not move a tag that already holds an index.
 
 ## Documentation Sync
 Keep `docs/source/` in step with code:

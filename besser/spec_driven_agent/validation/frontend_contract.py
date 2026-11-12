@@ -16,6 +16,7 @@ import re as _re
 from besser.spec_driven_agent.pipeline.constants import FRONTEND_WALK_SKIP_DIRS
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
+from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.utilities.workspace_fs import walk_plain
 
 
@@ -75,6 +76,28 @@ def _method_button_source_issues(output_dir: str) -> list[str]:
                     f"table (or move it to the {route_entity} page)."
                 )
     return issues
+
+
+_DATA_ROUTER = _re.compile(r"\b(?:create(?:Browser|Hash|Memory)Router|useRoutes)\s*\(")
+
+
+def _route_may_serve_home(files: list[tuple[str, str]], blob: str) -> bool:
+    """A route that is an index route, serves "/", or has a computed path.
+
+    A computed path (``path={ROUTES.HOME}``, ``path: ROUTES.HOME``) may be
+    "/", so the check cannot decide and stays silent.
+    """
+    for _, text in files:
+        for _, attrs, top in _jsx_tags(text, "Route"):
+            if _re.search(r"(?:^|\s)index\b", top):  # anywhere among the attributes
+                return True
+            expr = _attr(attrs, "path")
+            if expr is None:
+                continue  # layout route
+            literal = _re.fullmatch(r"\s*(['\"`])(.*)\1\s*", expr, _re.S)
+            if literal is None or "${" in literal.group(2) or literal.group(2) == "/":
+                return True
+    return bool(_DATA_ROUTER.search(blob) and _re.search(r"\bpath\s*:\s*[A-Za-z_$`]", blob))
 
 
 def collect_frontend_contract_issues(output_dir: str) -> list[str]:
@@ -148,6 +171,7 @@ def collect_frontend_contract_issues(output_dir: str) -> list[str]:
             or _re.search(r"<Route\s+index\b", blob)          # <Route index .../>
             or _re.search(r"\bindex\s*:\s*true\b", blob)       # data-router index: true
             or _re.search(r"<Navigate\b", blob)                # redirect to a default
+            or _route_may_serve_home(frontend_files, blob)
         )
         if not has_home:
             route_file = next(

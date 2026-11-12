@@ -939,6 +939,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.target = Target.from_payload(checkpoint.target)
         if checkpoint.modify is not None:
             self._restore_modify_state(checkpoint.modify)
+        self.executor._generator_files.clear()
+        self.executor._generator_files.update(checkpoint.generator_files)
         self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
@@ -2672,6 +2674,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 repair_progress=self._repair_progress if phase == "phase3" else {},
                 locked_generators=sorted(self.executor.locked_generators),
                 modify=self._modify_checkpoint_state(),
+                generator_files=sorted(self.executor._generator_files),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:

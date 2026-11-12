@@ -394,6 +394,43 @@ def test_repair_resume_retains_corrected_state_but_rechecks_results(simple_model
     assert load_checkpoint(str(tmp_path)) is None
 
 
+class _KilledWorker(_ScriptedClient):
+    """Dies like a killed worker on the call after its script: Phase 2 cannot catch it."""
+
+    def chat(self, system, messages, tools):
+        if not self.script:
+            raise KeyboardInterrupt("worker killed")
+        return super().chat(system, messages, tools)
+
+
+def _crash_in_phase2(model, tmp_path, script, instructions="Build a blog") -> LLMOrchestrator:
+    crashed = LLMOrchestrator(
+        llm_client=_KilledWorker(script), domain_model=model,
+        output_dir=str(tmp_path), max_turns=10, use_streaming=False,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        crashed.run(instructions)
+    assert load_checkpoint(str(tmp_path)).phase == "phase2"
+    return crashed
+
+
+def test_resume_keeps_the_generator_file_tags(simple_model, tmp_path):
+    """A create-run checkpoint had no generator-file tags: the resumed run lost
+    the scaffold guardrail and its recipe called every file LLM-written."""
+    crashed = _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert crashed.executor._generator_files
+
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([_end_turn()]), domain_model=simple_model,
+        output_dir=str(tmp_path), max_turns=10, use_streaming=False,
+    )
+    resumed.resume("Build a blog")
+
+    assert resumed.executor._generator_files == crashed.executor._generator_files
+    recipe = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))
+    assert recipe["output_summary"]["from_generator"] == len(crashed.executor._generator_files)
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

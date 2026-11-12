@@ -564,7 +564,6 @@ class ModifyRunMixin:
         change = getattr(self, "_model_change", None)
         return {
             "seed_generator_used": self._seed_generator_used,
-            "generator_files": sorted(self.executor._generator_files),
             "seed_llm_modified": sorted(self._seed_llm_modified),
             "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
             "previous_target": self._previous_target.to_dict() if self._previous_target else None,
@@ -582,8 +581,6 @@ class ModifyRunMixin:
         self._modify_mode = True
         self.executor.enable_modify_guard()
         self._seed_generator_used = state.get("seed_generator_used")
-        self.executor._generator_files.update(
-            p for p in state.get("generator_files") or [] if isinstance(p, str))
         self._seed_llm_modified.update(
             p for p in state.get("seed_llm_modified") or [] if isinstance(p, str))
         fix_target = state.get("fix_target")

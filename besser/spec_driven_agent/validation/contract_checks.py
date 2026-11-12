@@ -26,8 +26,10 @@ demoted to advisory findings (``blocker=False``).
 from __future__ import annotations
 
 import ast
+import io
 import os
 import re
+import tokenize
 from dataclasses import dataclass, field
 from besser.spec_driven_agent.parsed_source import parse_source
 from besser.utilities.workspace_fs import walk_plain
@@ -352,6 +354,41 @@ def lint_file(rel_path: str, content: str, contract: DataContract | None) -> lis
 
 def _line_of(content: str, pos: int) -> int:
     return content.count("\n", 0, pos) + 1
+
+
+_STATEMENT_START = frozenset({tokenize.NEWLINE, tokenize.NL, tokenize.INDENT,
+                              tokenize.DEDENT, tokenize.ENCODING})
+
+
+def _without_comments_and_docstrings(source: str) -> str:
+    """``source`` with comments and statement-level strings blanked.
+
+    Line breaks are kept, so line numbers still match the original. A
+    source that does not tokenize (a half-written file) comes back as is.
+    """
+    lines = source.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+    spans = []
+    previous = tokenize.ENCODING
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT or (
+                    token.type == tokenize.STRING and previous in _STATEMENT_START):
+                spans.append((starts[token.start[0] - 1] + token.start[1],
+                              starts[token.end[0] - 1] + token.end[1]))
+            if token.type not in (tokenize.COMMENT, tokenize.NL):
+                previous = token.type
+    except (tokenize.TokenError, SyntaxError):
+        return source
+    out, cursor = [], 0
+    for start, end in spans:
+        out.append(source[cursor:start])
+        out.append("\n" * source.count("\n", start, end))
+        cursor = end
+    out.append(source[cursor:])
+    return "".join(out)
 
 
 def _lint_frontend(rel: str, content: str, contract: DataContract) -> list:
@@ -1438,13 +1475,14 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
         ))
 
     stem = rel.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    code = _without_comments_and_docstrings(content)
     for cls in contract.string_id_classes:
         c_low = cls.lower()
         # foo_id: int  — an int-typed param/field for a string-id class.
-        for m in re.finditer(rf"\b{re.escape(c_low)}_id\s*:\s*int\b", content):
+        for m in re.finditer(rf"\b{re.escape(c_low)}_id\s*:\s*int\b", code):
             findings.append(Finding(
                 path=rel,
-                line=_line_of(content, m.start()),
+                line=_line_of(code, m.start()),
                 message=(
                     f"`{m.group(0)}` — {cls}.id is a string in the model; "
                     "declare the param/field as str"
@@ -1453,14 +1491,14 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
             ))
         # Integer FK column pointing at a string PK. The `.` ends the table
         # name: "orderitem.id" is not a key of `order`.
-        for m in re.finditer(rf"ForeignKey\(\s*['\"]{re.escape(c_low)}\.", content):
-            line_start = content.rfind("\n", 0, m.start()) + 1
-            line_end = content.find("\n", m.start())
-            line_text = content[line_start:line_end if line_end != -1 else None]
+        for m in re.finditer(rf"ForeignKey\(\s*['\"]{re.escape(c_low)}\.", code):
+            line_start = code.rfind("\n", 0, m.start()) + 1
+            line_end = code.find("\n", m.start())
+            line_text = code[line_start:line_end if line_end != -1 else None]
             if "Integer" in line_text:
                 findings.append(Finding(
                     path=rel,
-                    line=_line_of(content, m.start()),
+                    line=_line_of(code, m.start()),
                     message=(
                         f"Integer ForeignKey to `{c_low}` — {cls}.id is a "
                         "string in the model; the FK column must be String"
@@ -1469,10 +1507,10 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
                 ))
         # routers/reservation.py declaring `id: int` for a string-id entity.
         if stem == c_low:
-            for m in re.finditer(r"\bid\s*:\s*int\b", content):
+            for m in re.finditer(r"\bid\s*:\s*int\b", code):
                 findings.append(Finding(
                     path=rel,
-                    line=_line_of(content, m.start()),
+                    line=_line_of(code, m.start()),
                     message=(
                         f"`id: int` — {cls}.id is a string in the model; "
                         "path params and fields for it must be str"

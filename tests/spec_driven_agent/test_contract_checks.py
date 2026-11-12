@@ -287,6 +287,20 @@ def test_id_int_in_entity_named_file_is_blocker():
     assert findings[0].blocker
 
 
+def test_id_type_checks_skip_comments_and_docstrings():
+    contract = build_data_contract(_string_id_model())
+    content = (
+        'def get_reservation(reservation_id: str):\n'
+        '    """Was `id: int` and `guest_id: int` before the ids became strings."""\n'
+        '    # old: guest_id = Column(Integer, ForeignKey("guest.id"))\n'
+        '    return reservation_id  # reservation_id: int broke edits\n'
+        'def get_guest(id: int):\n'
+        '    pass\n'
+    )
+    findings = lint_file("backend/routers/reservation.py", content, contract)
+    assert [(f.line, f.blocker) for f in findings] == [(5, True)]
+
+
 def test_id_int_in_unrelated_file_is_not_flagged():
     contract = build_data_contract(_string_id_model())
     findings = lint_file(

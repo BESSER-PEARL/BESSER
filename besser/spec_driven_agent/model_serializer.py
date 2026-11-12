@@ -33,10 +33,11 @@ def to_prompt_json(value: Any) -> str:
     in about half the tokens (measured on a 15-class model: 4,448 -> 2,181).
     Each element of a top-level list (a class, an association, a screen, a
     state machine) keeps a line of its own, so one element can still be found
-    and quoted.
+    and quoted. Non-ASCII text stays readable: ``é`` is one token, ``\\u00e9``
+    is several, and the model must match names as the user wrote them.
     """
     def one_line(item: Any) -> str:
-        return json.dumps(item, separators=_PROMPT_JSON_SEPARATORS)
+        return json.dumps(item, separators=_PROMPT_JSON_SEPARATORS, ensure_ascii=False)
 
     def lines(items: list) -> str:
         return "[\n" + ",\n".join(one_line(item) for item in items) + "\n]"
@@ -47,7 +48,7 @@ def to_prompt_json(value: Any) -> str:
 
     if isinstance(value, dict):
         return "{" + ",\n".join(
-            json.dumps(key) + ":" + (lines(item) if is_element_list(item) else one_line(item))
+            one_line(key) + ":" + (lines(item) if is_element_list(item) else one_line(item))
             for key, item in value.items()
         ) + "}"
     if is_element_list(value):

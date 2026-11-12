@@ -35,7 +35,7 @@ from besser.spec_driven_agent.planning.action_inventory import (
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_inventory
 from besser.spec_driven_agent.planning.model_rules import DROPPED
 from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest
-from besser.spec_driven_agent.model_serializer import serialize_domain_model
+from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_FIX_TURNS,
@@ -884,7 +884,7 @@ class Phase3RepairMixin:
                 "intended behavior using actual relationship names; the original "
                 "request takes precedence over conflicting model expressions.",
                 *([DROPPED_RULES_NOTE] if DROPPED in serialized else []),
-                json.dumps(serialized, ensure_ascii=False), "",
+                to_prompt_json(serialized), "",
             ])
         requirements = self._requirements_for_validation()
         if requirements:

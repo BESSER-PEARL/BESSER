@@ -593,3 +593,15 @@ def test_prompt_json_of_a_list_of_models_is_one_line_each():
     assert json.loads(text) == machines
     assert text.count("\n") == 3
     assert to_prompt_json({}) == "{}" and to_prompt_json([]) == "[]"
+
+
+def test_prompt_json_keeps_non_ascii_names_readable():
+    import json
+
+    from besser.spec_driven_agent.model_serializer import to_prompt_json
+
+    model = {"Größe": "Café", "classes": [{"name": "Œuvre"}]}
+    text = to_prompt_json(model)
+    assert json.loads(text) == model
+    assert "Größe" in text and "Café" in text and "Œuvre" in text
+    assert "\\u" not in text

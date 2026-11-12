@@ -669,6 +669,9 @@ class ToolExecutor:
         # The old_text of the last miss per path. A byte-identical resend
         # cannot succeed.
         self._last_missed_old_text: dict[str, str] = {}
+        # A turn's tool calls run on a thread pool: hold this while iterating
+        # or evicting the shared rejection and read-view records below.
+        self._bookkeeping_lock = threading.RLock()
         # Every rejected modify_file this run, (path, old_text, new_text) ->
         # times seen, and per path the highest repeat count; no-op calls
         # (old_text == new_text) count too. Only a successful edit on the path
@@ -2160,11 +2163,11 @@ class ToolExecutor:
     def _mint_read_view(self, path: str, content: str, start_line: int, end_line: int) -> str:
         """Authorize a 1-based inclusive line span of ``content`` for a range edit."""
         read_id = f"{self._read_epoch}:{next(self._read_sequence)}"
-        self._read_views[read_id] = (
-            os.path.normcase(path), self._content_digest(content), start_line, end_line,
-        )
-        if len(self._read_views) > 128:
-            del self._read_views[next(iter(self._read_views))]
+        view = (os.path.normcase(path), self._content_digest(content), start_line, end_line)
+        with self._bookkeeping_lock:
+            self._read_views[read_id] = view
+            if len(self._read_views) > 128:
+                del self._read_views[next(iter(self._read_views))]
         return read_id
 
     def _read_file(self, args: dict) -> dict:
@@ -2643,11 +2646,7 @@ class ToolExecutor:
 
     def consecutive_modify_misses(self, path: str) -> int:
         """Failed modify_file attempts on ``path`` since its last successful edit."""
-        key = self._rel_key(path)
-        for rel_path, misses in self._failed_modifies.items():
-            if rel_path.strip() == key:
-                return misses
-        return 0
+        return self._failed_modifies.get(self._rel_key(path), 0)
 
     def repeat_rejections(self, path: str) -> int:
         """Highest number of times one already-rejected edit was sent to ``path``."""
@@ -2678,34 +2677,35 @@ class ToolExecutor:
     def _note_rejection(self, rel_path: str, old_text: str, new_text: str) -> int:
         """Record a rejected edit; return how often this exact call has now been seen."""
         key = (rel_path.strip(), old_text, new_text)
-        seen = self._rejected_edits.get(key, 0) + 1
-        self._rejected_edits[key] = seen
         target = (key[0], old_text)
-        hits = self._rejected_targets.get(target, 0) + 1
-        self._rejected_targets[target] = hits
-        reported = max(seen if seen > 1 else 0,
-                       hits if hits >= self._TARGET_REPEAT_AT else 0)
-        if reported:
-            self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), reported)
-            self._repeat_reports[key[0]] = reported
+        with self._bookkeeping_lock:
+            seen = self._rejected_edits.get(key, 0) + 1
+            self._rejected_edits[key] = seen
+            hits = self._rejected_targets.get(target, 0) + 1
+            self._rejected_targets[target] = hits
+            reported = max(seen if seen > 1 else 0,
+                           hits if hits >= self._TARGET_REPEAT_AT else 0)
+            if reported:
+                self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), reported)
+                self._repeat_reports[key[0]] = reported
         return seen
 
     @property
     def last_repeat(self) -> tuple[str, int] | None:
         """``(path, times seen)`` with the highest count among paths whose
         latest call repeated a rejected edit; None when there is none."""
-        if not self._repeat_reports:
-            return None
-        return max(self._repeat_reports.items(), key=lambda item: item[1])
+        with self._bookkeeping_lock:
+            return max(self._repeat_reports.items(), key=lambda item: item[1], default=None)
 
     def _clear_rejections(self, rel_path: str) -> None:
         key_path = rel_path.strip()
-        for key in [k for k in self._rejected_edits if k[0] == key_path]:
-            del self._rejected_edits[key]
-        for key in [k for k in self._rejected_targets if k[0] == key_path]:
-            del self._rejected_targets[key]
-        self._repeat_hits.pop(key_path, None)
-        self._repeat_reports.pop(key_path, None)
+        with self._bookkeeping_lock:
+            for key in [k for k in self._rejected_edits if k[0] == key_path]:
+                del self._rejected_edits[key]
+            for key in [k for k in self._rejected_targets if k[0] == key_path]:
+                del self._rejected_targets[key]
+            self._repeat_hits.pop(key_path, None)
+            self._repeat_reports.pop(key_path, None)
 
     def _modify_file(self, args: dict) -> dict:
         """Targeted search-and-replace, with a flexible apply ladder.

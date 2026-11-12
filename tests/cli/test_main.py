@@ -257,6 +257,15 @@ def test_a_run_does_not_import_the_mcp_server():
     assert run.stdout.splitlines()[-1] == "False False"
 
 
+def test_json_is_one_line_off_a_terminal_and_indented_on_one(besser, monkeypatch, capsys):
+    piped = besser("--version", "--json")
+    assert piped.stdout.count("\n") == 1 and '"ok":true' in piped.stdout
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    main(["--version", "--json"])
+    assert capsys.readouterr().out.startswith('{\n  "ok": true,\n')
+
+
 def test_the_help_says_what_quiet_keeps_and_what_apply_exits_with(besser):
     quiet_listing = besser("new", "--list", "-q")
     missing_config = besser("apply")

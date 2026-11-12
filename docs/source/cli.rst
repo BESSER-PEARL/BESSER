@@ -1267,7 +1267,8 @@ it.
 JSON output and exit status
 ---------------------------
 
-With ``--json``, standard output is exactly one JSON object. ``besser schema
+With ``--json``, standard output is exactly one JSON object: indented on a
+terminal, on one line otherwise (a program or an agent reads it). ``besser schema
 result`` prints its JSON Schema, and the test suite checks every command's
 output against it. These keys are on every command and are stable:
 

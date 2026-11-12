@@ -61,6 +61,7 @@ _HEARTBEAT_SECONDS = 15.0
 # Run rows outlive their events this long: services/cleanup.py removes a run's
 # (resumable) workspace after 24 h, and a resume must continue its numbering.
 _RUN_RECORD_RETENTION_SECONDS = 24 * 3600
+_INTERRUPTED_MESSAGE = "The server restarted before this run finished."
 
 
 @dataclass(frozen=True)
@@ -167,8 +168,18 @@ class SqliteRunEventStore:
     so a PostgreSQL implementation can replace it for a multi-instance deploy.
     """
 
-    def __init__(self, path: Optional[str] = None) -> None:
-        """Open (creating if needed) the SQLite store at ``path`` or the default path."""
+    def __init__(
+        self,
+        path: Optional[str] = None,
+        *,
+        has_checkpoint: Optional[Callable[[str], bool]] = None,
+    ) -> None:
+        """Open (creating if needed) the SQLite store at ``path`` or the default path.
+
+        Runs a previous process left unfinished are marked ``interrupted`` and
+        given a terminal frame; ``has_checkpoint(run_id)`` says whether each can
+        be resumed (``False`` for all when omitted).
+        """
         self.path = path or default_store_path()
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -250,6 +261,53 @@ class SqliteRunEventStore:
                 """,
                 (now, now),
             )
+        self._finish_interrupted_runs(has_checkpoint)
+
+    def _finish_interrupted_runs(
+        self, has_checkpoint: Optional[Callable[[str], bool]]
+    ) -> None:
+        """Give each ``interrupted`` run that lacks one a terminal ``error`` frame.
+
+        Without it a reconnecting client gets an empty stream and no outcome.
+        A run whose events were already swept is left alone.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT r.run_id, r.last_sequence, e.event_type, e.payload_json
+                  FROM spec_runs r
+                  LEFT JOIN spec_run_events e
+                    ON e.run_id = r.run_id AND e.sequence = r.last_sequence
+                 WHERE r.status = 'interrupted'
+                """
+            ).fetchall()
+        for row in rows:
+            run_id = row["run_id"]
+            if row["event_type"] is None and int(row["last_sequence"]) > 0:
+                continue  # events swept
+            if row["event_type"] == "done":
+                continue
+            if row["event_type"] == "error":
+                code = json.loads(row["payload_json"] or "{}").get("code")
+                if code not in _NON_TERMINAL_ERROR_CODES:
+                    continue
+            can_resume = False
+            if has_checkpoint is not None:
+                try:
+                    can_resume = bool(has_checkpoint(run_id))
+                except Exception:
+                    logger.exception("Could not inspect checkpoint for interrupted run %s", run_id)
+            self.append(
+                run_id,
+                format_sse(
+                    ErrorEvent(
+                        code="INTERNAL",
+                        message=_INTERRUPTED_MESSAGE,
+                        resumeAvailable=can_resume,
+                    )
+                ),
+            )
+            self.set_resume_available(run_id, can_resume)
 
     def close(self) -> None:
         """Close the SQLite connection."""

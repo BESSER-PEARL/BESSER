@@ -302,7 +302,8 @@ SSE event types
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``
-       are non-terminal warnings emitted just before ``done``.
+       are non-terminal warnings emitted just before ``done``. A run a server
+       restart interrupted ends with ``INTERNAL`` and ``resumeAvailable``.
 
 Example
 -------

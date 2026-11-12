@@ -78,7 +78,9 @@ the event store itself fails mid-run (a full disk, a lock held past its
 timeout), or the backend stops, the run's worker is cancelled at its next turn
 boundary, and its concurrency slot is freed only once the worker has stopped;
 the run is recorded ``failed`` (``interrupted`` on shutdown). A
-server restart marks still-running records ``interrupted``;
+server restart marks still-running records ``interrupted`` and ends their event
+log with a terminal ``error`` frame (code ``INTERNAL``) whose ``resumeAvailable``,
+like the status record's, says whether a checkpoint is on disk;
 ``POST /besser_api/spec-driven/resume/{run_id}`` can then continue them from
 their checkpoint when the client re-supplies the request body. Resume relies on
 the checkpoint written after every tool-use turn (see :doc:`how_it_works`): it

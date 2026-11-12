@@ -105,15 +105,51 @@ def test_store_marks_orphaned_running_record_interrupted(tmp_path):
     first = SqliteRunEventStore(path)
     first.begin_run(run_id)
     first.set_status(run_id, "running")
+    first.append(run_id, _start(run_id))
     first.close()
 
-    restarted = SqliteRunEventStore(path)
+    restarted = SqliteRunEventStore(path, has_checkpoint=lambda rid: rid == run_id)
     record = restarted.get_run(run_id)
+    replay = restarted.events_after(run_id, 0)
     restarted.close()
+    # A second restart must not add a second terminal frame.
+    again = SqliteRunEventStore(path, has_checkpoint=lambda rid: True)
+    replay_again = again.events_after(run_id, 0)
+    again.close()
 
     assert record is not None
     assert record.status == "interrupted"
     assert record.terminal_event == "interrupted"
+    # A reconnecting client gets a terminal frame, not an empty stream, and is
+    # told the checkpoint on disk can be resumed.
+    assert record.resume_available is True
+    assert [e.event_type for e in replay] == ["start", "error"]
+    assert replay[-1].payload["code"] == "INTERNAL"
+    assert replay[-1].payload["resumeAvailable"] is True
+    assert record.last_sequence == replay[-1].sequence == 2
+    assert len(replay_again) == 2
+
+
+def test_run_stopped_by_a_shutdown_gets_its_terminal_frame_on_restart(tmp_path):
+    """A graceful shutdown cancels the producer, which marks the run
+    ``interrupted`` without a frame; the next start must still add one."""
+    path = str(tmp_path / "runs.sqlite3")
+    run_id = "d" * 32
+
+    first = SqliteRunEventStore(path)
+    first.begin_run(run_id)
+    first.append(run_id, _start(run_id))
+    first.set_status(run_id, "interrupted", terminal_event="interrupted")
+    first.close()
+
+    restarted = SqliteRunEventStore(path)
+    replay = restarted.events_after(run_id, 0)
+    record = restarted.get_run(run_id)
+    restarted.close()
+
+    assert [e.event_type for e in replay] == ["start", "error"]
+    assert replay[-1].payload["resumeAvailable"] is False
+    assert record.resume_available is False
 
 
 def test_subscriber_disconnect_does_not_stop_producer_and_replay_is_exact():

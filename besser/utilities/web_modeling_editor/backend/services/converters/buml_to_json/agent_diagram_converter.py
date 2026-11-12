@@ -14,7 +14,7 @@ import ast
 import logging
 import textwrap
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from besser.utilities.buml_code_builder.agent_model_builder import GUI_BUILDER_FUNCTION_PREFIX
 from ..json_to_buml.a2a_tags import format_a2a_line
@@ -146,12 +146,19 @@ def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, 
     }
 
 
-def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
+def _note_unread(warnings: Optional[List[str]], what: str, error: Exception) -> None:
+    """Record that ``what`` was left out of the diagram because reading it failed."""
+    if warnings is not None:
+        warnings.append(f"Left out {what} of the agent file that could not be read ({type(error).__name__}: {error}).")
+
+
+def _agent_buml_to_flat_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Convert an agent Python file content to JSON format matching the frontend structure.
 
     Args:
         content: Agent model Python code as string
+        warnings: Receives a message for every part of the file that could not be read
 
     Returns:
         Dictionary representing the agent diagram in JSON format
@@ -1839,6 +1846,7 @@ def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
 
                         except Exception as e:
                             logger.error("Error processing agent body: %s", e, exc_info=True)
+                            _note_unread(warnings, "a state body", e)
                             continue
 
                     # Add handling for fallback bodies
@@ -1981,9 +1989,11 @@ def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
                                 elements[state["id"]]["fallbackBodies"].append(body_id)
                         except Exception as e:
                             logger.warning("Error processing agent fallback body: %s", e, exc_info=True)
+                            _note_unread(warnings, "a fallback body", e)
                             continue
             except Exception as e:
                 logger.error("Error processing agent state machine: %s", e, exc_info=True)
+                _note_unread(warnings, "a statement", e)
                 continue
         # Find initial state and create initial transition
         initial_state = None
@@ -2184,8 +2194,13 @@ def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
             result["config"] = {"default_llm_name": default_llm_name_value}
         return result
 
-    except Exception:
+    except Exception as e:
         logger.exception("Error converting agent BUML to JSON; returning partial diagram")
+        if warnings is not None:
+            warnings.append(
+                f"The agent file could be read only up to an unsupported statement ({type(e).__name__}: {e}); "
+                "the diagram holds what was read before it, the rest of the file is not imported."
+            )
         # On error return partial results, also split into canvas / components
         _COMPONENT_TYPES_FALLBACK = {
             'AgentIntent', 'AgentIntentBody', 'AgentRagElement',
@@ -2379,7 +2394,7 @@ def _flat_to_v4(flat: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def agent_buml_to_json(content: str) -> Dict[str, Any]:
+def agent_buml_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
     """Convert agent B-UML Python code to the v4 AgentDiagram wire shape.
 
     Canvas: ``AgentState`` nodes (inline ``data.bodies`` / ``data.fallbackBodies``
@@ -2388,8 +2403,12 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     ``CommentLink`` edges. Off-canvas: intents (+ ``AgentIntentBody`` entries),
     LLMs, RAG databases, tools, skills, workspaces and GUIs in the top-level
     ``components`` map.
+
+    ``warnings`` receives a message for every part of the file that could not
+    be read and is missing from the diagram (the parser recognises the forms
+    the B-UML exporter writes, not every way to build an agent).
     """
-    model = _flat_to_v4(_agent_buml_to_flat_json(content))
+    model = _flat_to_v4(_agent_buml_to_flat_json(content, warnings))
     _restore_a2a_tags(model, _read_a2a(content))
     return model
 

@@ -79,6 +79,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     deployment_buml_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import adopt_element_ids
+from besser.utilities.web_modeling_editor.backend.services.converters.layout_adoption import adopt_existing_layout
 
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
@@ -380,9 +381,12 @@ async def export_buml(input_data: DiagramInput, settings: SettingsDep):
             )
 
 
-def _import_repair_warnings(repairs: list[str]) -> list[dict] | None:
-    """What the import changed to load a BUML file, in the response's warning shape."""
-    return [{"code": "buml-import-repaired", "message": message} for message in repairs] or None
+def _import_repair_warnings(repairs: list[str], unread: list[str] | None = None) -> list[dict] | None:
+    """What the import changed or could not read in a BUML file, in the response's warning shape."""
+    return (
+        [{"code": "buml-import-repaired", "message": message} for message in repairs]
+        + [{"code": "buml-import-partial", "message": message} for message in unread or []]
+    ) or None
 
 
 @router.post("/get-project-json-model", response_model=ProjectExportResponse)
@@ -405,10 +409,16 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
 
 @router.post("/get-json-model", response_model=DiagramExportResponse)
 @handle_endpoint_errors("get_single_json_model")
-async def get_single_json_model(buml_file: UploadFile = File(...)):
+async def get_single_json_model(buml_file: UploadFile = File(...), existing_model: str = Form(None)):
     """
     Convert a BUML Python file to JSON format for single diagram import.
     This endpoint handles both full project files and single diagram files.
+
+    When `existing_model` is provided (as a stringified v4 diagram JSON of the
+    diagram the file updates), the imported diagram is laid out like it:
+    matched elements keep their id, position and size, new ones are placed
+    next to a neighbour. `warnings` then reports what was kept, added and not
+    in the file. Class, Agent and State Machine diagrams only.
     """
     content = await buml_file.read()
     validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
@@ -420,6 +430,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     diagram_type = None
     parse_error = None
     repairs: list[str] = []
+    unread: list[str] = []
     safe_filename = os.path.basename(buml_file.filename) if buml_file.filename else ""
     diagram_title = safe_filename.rsplit('.', 1)[0] if safe_filename else "Imported Diagram"
 
@@ -537,7 +548,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     elif is_agent:
         try:
             logger.info("Detected Agent diagram, parsing...")
-            agent_json = agent_buml_to_json(buml_content)
+            agent_json = agent_buml_to_json(buml_content, unread)
             diagram_data = {
                 "title": diagram_title,
                 "model": agent_json
@@ -659,17 +670,20 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             "KnowledgeGraphDiagram, ComponentDiagram, DeploymentDiagram, or Project."
         )
 
+    model = {**diagram_data.get("model", {}), "type": diagram_type}
+    warnings = _import_repair_warnings(repairs, unread) or []
+    if existing_model is not None:
+        model, layout_warnings = adopt_existing_layout(existing_model, model, diagram_type)
+        warnings.extend(layout_warnings)
+
     # Return the diagram in the format expected by the frontend
     return {
         "title": diagram_title,
-        "model": {
-            **diagram_data.get("model", {}),
-            "type": diagram_type
-        },
+        "model": model,
         "diagramType": diagram_type,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION,
-        "warnings": _import_repair_warnings(repairs),
+        "warnings": warnings or None,
     }
 
 @router.post("/get-svg")

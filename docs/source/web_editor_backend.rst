@@ -653,7 +653,22 @@ Conversion
 - ``POST /get-json-model`` -- BUML Python file to JSON (auto-detects diagram type)
 - ``POST /get-project-json-model`` -- BUML project file to JSON. Both import endpoints answer 400 with the
   reason when a model cannot be read, and list in ``warnings`` (``{code, message}``) what they repaired to
-  load it, e.g. a composition whose owner end was not navigable
+  load it, e.g. a composition whose owner end was not navigable. ``/get-json-model`` also lists the parts of an
+  agent file it could not read (``buml-import-partial``) rather than returning a shorter diagram silently.
+
+  Updating an existing diagram from a file: ``/get-json-model`` takes an optional ``existing_model`` form field,
+  the editor's v4 model of the diagram the file updates (as JSON text; a project diagram entry with the model
+  under ``model`` works too). For a Class, Agent or State Machine diagram the import is then laid out like it
+  (``services/converters/layout_adoption.py``): an element matched by id, or else by type and name inside its
+  matched parent, keeps its id, position and size (the size grows when its new content needs more room), as do
+  its attribute, method and body rows and the agent's components; a renamed element is recognised only when its
+  connections to matched neighbours are unchanged; a new element is placed next to a matched neighbour it is
+  connected to; a matched edge keeps its id, handles and bend points (the points are dropped when an end grew).
+  ``warnings`` reports the outcome: ``layout-adopted`` (summary and edge counts), ``element-renamed``,
+  ``element-added`` (with ``placedNextTo``) and ``element-not-in-import``, each with the ``elementId``, ``type``
+  and ``name``. An ``existing_model`` that is not JSON, not a v4 model, of another diagram type, or of a type
+  without layout adoption leaves the import as is, with a ``layout-not-adopted`` warning saying why. Without the
+  field the response is unchanged
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- **Deprecated.** Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON through OpenAI (requires an OpenAI API key). Use ``/kg/import-owl`` and ``/kg/to-class-diagram`` instead
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)

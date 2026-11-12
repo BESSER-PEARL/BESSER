@@ -1143,14 +1143,7 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
     heading of the screen and the label of a button that opens it.
     """
     if isinstance(element, Property) and isinstance(element.owner, Class):
-        relabelled = []
-        for table in editor.tables_of(element.owner):
-            for column, item, _ in _column_items(editor, table) or ():
-                if _columns_of(column, element) and _replace_strings(
-                        editor, _item_call(editor, item), ("label",), {_label(old): _label(new)}):
-                    relabelled.append(table.name)
-        tables = ", ".join(sorted(set(relabelled)))
-        return f"; column {_label(old)} -> {_label(new)} in table {tables}" if relabelled else ""
+        return _relabel_columns(editor, element, old, new)
     if not isinstance(element, Class):
         return ""
     # The plural last, so that it wins for a name that is its own plural (News -> Articles).
@@ -1183,6 +1176,67 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
     titles = sorted({f"{old_title} -> {new_title}" for old_title, new_title in changes
                      if old_title in _derived_titles(old)})
     return f"; GUI titles {', '.join(titles)}" if titles else ""
+
+
+def _relabel_columns(editor: ModelEditor, attribute: Property, old: str, new: str) -> str:
+    """Relabel the columns of the renamed ``attribute`` labelled after its old name, wherever the file
+    writes them (in the table's list, ``table.columns.append(...)``, ``[...] + [...]``, a variable);
+    returns what changed, for the summary. A column the file does not write with the attribute's
+    variable keeps its label, and a warning names its table."""
+    old_label, new_label = _label(old), _label(new)
+    relabelled, left = [], []
+    for table in editor.tables_of(attribute.owner):
+        shown = sum(_columns_of(column, attribute) and column.label == old_label for column in table.columns)
+        if not shown:
+            continue
+        found = 0
+        for call in _column_calls(editor, table):
+            label, *shows = (_argument(call, name, index) for index, name in enumerate(_COLUMN_ARGUMENTS[_callee(call)]))
+            if any(isinstance(node, ast.Name) and editor.namespace.get(node.id) is attribute for node in shows) \
+                    and isinstance(label, ast.Constant) and label.value == old_label:
+                editor.src.replace(editor.src.start(label), editor.src.end(label),
+                                   _string_code(editor.src.segment(label), old_label, new_label))
+                found += 1
+        (relabelled if found else left).append(table.name)
+        if found and found < shown:
+            left.append(table.name)
+    if left:
+        editor.warnings.append(f"the column {old_label} of table {', '.join(left)} keeps its label: it is not "
+                               f"written as FieldColumn(label=..., field=<variable>); relabel it by hand")
+    return f"; column {old_label} -> {new_label} in table {', '.join(relabelled)}" if relabelled else ""
+
+
+def _column_calls(editor: ModelEditor, table: Table) -> list[ast.Call]:
+    """The column constructor calls the file writes for ``table``: in the statements that build it or
+    set and call on its variable, and the values of the variables those name."""
+    var = editor.var_of(table)
+    if var is not None:
+        statements = [editor.src.assignment(var)]
+        for statement in editor.src.tree.body:  # table.columns = [...], table.columns.append(...)
+            target = statement.targets[0] if isinstance(statement, ast.Assign) else \
+                getattr(statement.value, "func", None) if isinstance(statement, ast.Expr) else None
+            while isinstance(target, ast.Attribute):
+                target = target.value
+            if isinstance(target, ast.Name) and target.id == var:
+                statements.append(statement)
+    else:
+        statements = [editor.call_of(table)]
+    nodes = [node for statement in statements if statement is not None for node in ast.walk(statement)]
+    for name in [node for node in nodes if isinstance(node, ast.Name)]:
+        value = getattr(editor.src.assignment(name.id), "value", None)
+        if _callee(value) in _COLUMN_ARGUMENTS:
+            nodes.append(value)
+    return list({id(node): node for node in nodes if _callee(node) in _COLUMN_ARGUMENTS}.values())
+
+
+# The arguments of a column's constructor, in order: its label, then the attributes it shows.
+_COLUMN_ARGUMENTS = {"FieldColumn": ("label", "field"), "LookupColumn": ("label", "path", "field")}
+
+
+def _argument(call: ast.Call, name: str, index: int) -> ast.expr | None:
+    """The argument ``name`` of ``call``, given by keyword or at position ``index``."""
+    found = next((keyword_.value for keyword_ in call.keywords if keyword_.arg == name), None)
+    return found if found is not None or index >= len(call.args) else call.args[index]
 
 
 # Plurals no rule spells (``_plural``), and words that are their own plural.
@@ -1608,14 +1662,6 @@ def _column_items(editor: ModelEditor, table: Table) -> list[tuple[Any, ast.AST,
     if len(items) != len(table.columns):
         return None
     return [(column, item, literal) for column, item in zip(table.columns, items)]
-
-
-def _item_call(editor: ModelEditor, item: ast.AST) -> ast.Call | None:
-    """The call an item of a literal is: itself, or the value of the variable it names."""
-    if isinstance(item, ast.Name):
-        statement = editor.src.assignment(item.id)
-        item = getattr(statement, "value", None)
-    return item if isinstance(item, ast.Call) else None
 
 
 def _columns_of(column: Any, member: Property) -> bool:

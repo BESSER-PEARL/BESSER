@@ -721,7 +721,10 @@ name one of each).
        (another class's member of the same name stays). A literal's attribute
        defaults are renamed too. Renaming a class names the association ends
        still named after it, with the ``rename`` that changes each. A column
-       label derived from an attribute's name follows it; so do the titles of
+       label derived from an attribute's name follows it, however the table's
+       columns are written (one list, ``.append(...)``, ``[...] + [...]``); a
+       column not written with the attribute's variable keeps its label, and a
+       warning names its table. So do the titles of
        a class's screen, table, heading and the button that opens it, when they
        are derived from its name (``Authors``, ``Author``): another title is kept.
    * - ``remove PATH``

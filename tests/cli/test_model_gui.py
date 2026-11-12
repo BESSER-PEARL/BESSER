@@ -229,6 +229,30 @@ def test_a_column_relabelled_in_several_tables_is_named_once(write, change):
         "model.py: renamed Customer.name to Customer.full_name; column Name -> Full name in table everyone, recent")
 
 
+def test_a_column_appended_or_added_to_a_list_is_relabelled_too(write, besser, change, app, tmp_path):
+    # Before: "renamed Customer.name to Customer.full_name" alone: no column relabelled, and nothing said.
+    write("model.py", HAND_WRITTEN.replace(
+        'columns=[FieldColumn(label="Who", field=customer_name)])',
+        'columns=[FieldColumn(label="Name", field=customer_name)] + [FieldColumn(label="Age", field=customer_age)])',
+    ) + 'everyone.columns.append(FieldColumn("Name", customer_name))\n')
+    assert change("rename", "Customer.name", "full_name") == (
+        "model.py: renamed Customer.name to Customer.full_name; column Name -> Full name in table everyone, recent")
+    text = (tmp_path / "model.py").read_text()
+    assert 'columns=[FieldColumn(label="Full name", field=customer_name)] + [' in text
+    assert 'everyone.columns.append(FieldColumn("Full name", customer_name))' in text
+    pages, _, _ = app()
+    assert _columns(pages["Home"]) == ["Full name", "Age"]
+    assert _columns(pages["Customers"]) == ["Full name", "Age", "Full name"]
+    # A column the file builds with an expression keeps its label, and the warning says so.
+    with (tmp_path / "model.py").open("a", encoding="utf-8") as file:
+        file.write('recent.columns.append(FieldColumn(label="Age", field=globals()["customer_age"]))\n')
+    renamed = besser("model", "rename", "Customer.age", "years")
+    assert renamed.returncode == 0
+    assert renamed.stdout.endswith("; column Age -> Years in table everyone, recent\n")
+    assert ("warning: the column Age of table recent keeps its label: it is not written as "
+            "FieldColumn(label=..., field=<variable>); relabel it by hand") in renamed.stderr
+
+
 def test_a_screen_goes_in_the_first_module_and_the_main_page_inline_gets_its_button(write, change, app, tmp_path):
     write("model.py", HAND_WRITTEN)
     line = change("add-class", "Order", "number:str", "--screen")

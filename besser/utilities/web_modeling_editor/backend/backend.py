@@ -15,6 +15,8 @@ from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -310,6 +312,20 @@ app.include_router(agent_simulator_router.router)
 
 
 # Exception handlers
+# Pydantic's ``input`` (the whole body when a model validator fails, API keys
+# included) and ``ctx`` are dropped from a 422; ``type`` / ``loc`` / ``msg`` stay.
+_REDACTED_VALIDATION_ERROR_KEYS = frozenset({"input", "ctx"})
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request, exc):
+    errors = [
+        {key: value for key, value in error.items() if key not in _REDACTED_VALIDATION_ERROR_KEYS}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 @app.exception_handler(ConversionError)
 async def conversion_error_handler(request, exc):
     return JSONResponse(status_code=400, content={"detail": str(exc)})

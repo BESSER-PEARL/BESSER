@@ -6,12 +6,38 @@ executed, and no importer calls a language model or the network.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 from besser.cli.loading import LoadedModel, LoadedModels, MissingDependencyError, ModelLoadError
 from besser.cli.loading import missing_backend_dependency_message
+
+
+class _Collect(logging.Handler):
+    """Keeps the messages logged at warning level or above."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+@contextlib.contextmanager
+def _logged_warnings() -> Iterator[list[str]]:
+    """The warnings logged while the block runs. They are the caller's to report: with this handler on the
+    root logger, Python no longer prints them on standard error itself."""
+    handler = _Collect()
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        yield handler.messages
+    finally:
+        root.removeHandler(handler)
 
 # What an importer returns: the model and what it could not take from the source.
 _Imported = tuple[Any, list[str]]
@@ -183,7 +209,12 @@ def import_models(fmt: ImportFormat, inputs: Sequence[str]) -> tuple[LoadedModel
         if not fmt.directory and not path.is_file():
             raise ModelLoadError(f"{path}: no such file")
     try:
-        model, warnings = fmt.read(paths)
+        with _logged_warnings() as logged:
+            model, warnings = fmt.read(paths)
+        # What an importer only logs (a dangling draw.io edge, the file cap of a code import) is a warning of
+        # the result, which a --json or MCP caller reads; a message it also returns is not repeated.
+        warnings = [*warnings, *(message for message in logged
+                                 if not any(message == said or message.endswith(f": {said}") for said in warnings))]
     except ModelLoadError:
         raise
     except Exception as exc:

@@ -2,6 +2,7 @@
 
 import gzip
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -145,6 +146,23 @@ def test_python_data_classes_are_read_without_running_them(besser, write, tmp_pa
     assert run.returncode == 0, run.stderr
     assert _classes(besser, "app.py") == ["Author", "Book"]
     assert not (tmp_path / "ran.txt").exists()
+
+
+def test_what_an_import_only_logs_is_a_warning_of_the_result(monkeypatch, tmp_path, capsys):
+    from besser.cli.main import main
+    from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import code_reverse
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(code_reverse, "_MAX_PY_FILES", 1)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("from dataclasses import dataclass\n\n@dataclass\nclass Book:\n"
+                                           "    title: str\n", encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("", encoding="utf-8")
+
+    status = main(["convert", "src", "-o", "model.py", "--from", "code", "--json"])
+
+    assert status == 0
+    assert json.loads(capsys.readouterr().out)["warnings"] == ["Read only the first 1 Python files of src"]
 
 
 def test_an_rdf_file_with_no_triple_is_no_model(besser, write, tmp_path):

@@ -1067,8 +1067,8 @@ Each output is built as the two commands above build it:
 file than ``besser.toml`` in the current directory; ``--dry-run`` writes
 nothing and reports what each output would write. An output that fails does
 not stop the others, and the exit status is the worst output's. An unknown
-key, a value of the wrong type or a missing ``generator``, ``dir`` or model is
-exit status 2, naming the file and the table. With ``--json``, ``outputs``
+key, a value of the wrong type, a missing ``generator``, ``dir`` or model, or a
+``dir`` another output has is exit status 2, naming the file and the table. With ``--json``, ``outputs``
 holds, per output, its ``name`` and the whole object of the ``generate`` or
 ``regenerate`` run that built it; ``errors``, ``warnings`` and ``notes`` repeat
 their messages, each starting with the output's name, and ``files`` lists all

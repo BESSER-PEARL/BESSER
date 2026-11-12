@@ -160,6 +160,10 @@ def test_paths_are_relative_to_the_configuration_file(besser, write, model, tmp_
      "besser.toml: [output.a]: unknown key option; an output takes generator, dir, model, use, options, overwrite"),
     ('[output.a]\ngenerator = "python"\ndir = "o"\nmodel = "m.py"\nuse = "x"\n',
      "besser.toml: [output.a]: use must be a list of strings"),
+    # Each generator records its output in its dir: a second one there would overwrite or refuse it.
+    ('model = "m.py"\n[output.a]\ngenerator = "python"\ndir = "o"\noverwrite = true\n'
+     '[output.b]\ngenerator = "sqlalchemy"\ndir = "./o/"\noverwrite = true\n',
+     "besser.toml: [output.b]: dir './o/' is also the dir of [output.a]: give each output its own directory"),
 ])
 def test_a_configuration_it_cannot_read_is_a_usage_error(besser, write, content, message):
     if content is not None:

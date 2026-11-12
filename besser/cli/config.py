@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -111,6 +112,8 @@ def load_config(path: str) -> list[OutputConfig]:
         raise ConfigError(f"{path}: no output to build: add an [output.NAME] table with 'generator' and 'dir'")
 
     outputs = []
+    # A directory holds one generator's output and its record: a second would overwrite or refuse it.
+    dir_owners: dict[str, str] = {}
     for name, table in tables.items():
         where = f"{path}: [output.{name}]"
         unknown = sorted(set(table) - set(_OUTPUT_KEYS))
@@ -126,6 +129,10 @@ def load_config(path: str) -> list[OutputConfig]:
             missing.append("model (or a top-level model)")
         if missing:
             raise ConfigError(f"{where}: missing {', '.join(missing)}")
+        owner = dir_owners.setdefault(os.path.normpath(table["dir"]), name)
+        if owner != name:
+            raise ConfigError(f"{where}: dir {table['dir']!r} is also the dir of [output.{owner}]: "
+                              "give each output its own directory")
         outputs.append(OutputConfig(
             name=name, generator=table["generator"],
             model=(file.parent / model).as_posix(), output_dir=(file.parent / table["dir"]).as_posix(),

@@ -296,10 +296,12 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 source = _stripped_source(path)
                 rel_file = os.path.relpath(path, project_dir).replace("\\", "/")
 
-                for _, spec in _SPEC_RE.findall(source):
+                for _, written in _SPEC_RE.findall(source):
+                    # Vite drops a query suffix (?react, ?raw, ?url, ...) before resolving.
+                    spec = written.split("?", 1)[0]
                     if spec.startswith("."):
                         if not _resolves(folder, spec):
-                            missing_paths.append((rel_file, spec))
+                            missing_paths.append((rel_file, written))
                     elif spec.startswith("/") or spec.startswith("~") or spec.startswith("#"):
                         continue  # root/alias-relative: a bundler decides
                     else:

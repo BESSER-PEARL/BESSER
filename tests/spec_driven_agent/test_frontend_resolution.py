@@ -164,6 +164,34 @@ def test_react_imported_but_not_in_plugins_is_one_finding_naming_every_file(tmp_
     assert "src/App.jsx" in issue and "src/main.jsx" in issue
 
 
+def test_a_vite_query_suffix_resolves_to_the_file(tmp_path):
+    """Vite strips ``?react``, ``?raw``, ``?url``, ``?inline``, ``?worker``."""
+    workspace = _frontend(tmp_path, manifest=_MANIFEST, files={
+        "src/logo.svg": "<svg/>", "src/help.md": "# help", "src/a.css": "a{}",
+        "src/worker.js": "self.onmessage = () => {};\n",
+        "src/App.jsx": "import React from 'react';\n"
+                       "import Logo from './logo.svg?react';\n"
+                       "import help from './help.md?raw';\n"
+                       "import logoUrl from './logo.svg?url';\n"
+                       "import css from './a.css?inline';\n"
+                       "import W from './worker?worker';\n"
+                       "export default function App() { return <Logo />; }\n",
+    })
+
+    assert collect_frontend_resolution_issues(workspace) == []
+
+
+def test_a_missing_file_with_a_query_suffix_is_still_reported(tmp_path):
+    workspace = _frontend(tmp_path, manifest=_MANIFEST, files={
+        "src/App.jsx": "import React from 'react';\nimport Logo from './gone.svg?react';\n"
+                       "export default function App() { return <Logo />; }\n",
+    })
+
+    [issue] = collect_frontend_resolution_issues(workspace)
+
+    assert "'./gone.svg?react'" in issue
+
+
 def test_an_undeclared_package_is_reported_but_does_not_drive_the_loop(tmp_path):
     """Run mz30st3s imported ``axios`` with no entry in ``package.json`` and
     rendered nothing. It is reported - but as a warning, because a bundler

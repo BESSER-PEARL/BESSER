@@ -302,11 +302,15 @@ is left alone.
 ``besser guide``
 ----------------
 
-Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 4 KB (57
-lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
+Prints the guide ``new`` and ``init`` write to ``AGENTS.md`` in the current
+folder, in about 4 KB (57 lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
 commands, the names ``extensions.py`` imports, a ``tests/conftest.py`` with a
 ``client`` fixture, and what the ``backend`` generator's API answers, so that
-an agent needs neither the generated code nor this documentation. ``--json`` puts it in ``guide``.
+an agent needs neither the generated code nor this documentation. In a project
+whose ``besser.toml`` has an output that reads a GUI model (``web_app``,
+``react``, ``flutter``), it has 5 more lines (about 500 bytes) on pages:
+``add-screen``, the tables that follow their class, and that the generated
+frontend has no file for hand-written code. ``--json`` puts it in ``guide``.
 
 ``besser schema``
 -----------------
@@ -614,7 +618,10 @@ is the command that fails on them. The model an editor project marks current is
 shown ``(current in the editor)``, and a note says when the file holds several
 models of a kind with none current (see :ref:`cli-several-diagrams`).
 ``besser info --json`` gives ``model`` (the file), ``models`` (``name``, ``kind``, ``type``,
-``model_name``, ``current``, ``counts`` and, for a domain model, ``classes``
+``model_name``, ``current``, ``counts``, for a GUI model ``screens`` (each
+with ``name``, ``route``, ``main``, ``tables``, each table's ``name``,
+``class`` and ``columns`` (attribute names), and ``opens``, the screens its
+buttons open) and, for a domain model, ``classes``
 (each attribute with ``name``, ``type``, ``optional`` and ``default``),
 ``enumerations``, ``associations``, ``constraints`` (``name``, ``context``,
 ``expression``) and ``backend_endpoints`` (class name -> ``"METHOD /path/"``
@@ -651,15 +658,16 @@ the file holds several.
 
    * - Operation
      - What it does
-   * - ``add-class NAME [ATTRIBUTE...] [--parent CLASS] [--abstract]``
-     - A class, with its attributes and the generalization to its parent.
+   * - ``add-class NAME [ATTRIBUTE...] [--parent CLASS] [--abstract] [--screen]``
+     - A class, with its attributes and the generalization to its parent;
+       ``--screen`` adds its screen too, as ``add-screen`` does.
    * - ``add-attribute CLASS ATTRIBUTE...``
      - Attributes: ``name:type``, ``name:type?`` (optional) or
        ``name:type=default``. Types are written as ``besser info`` prints them
        (``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``,
        ``time``, ``timedelta``, ``any``) or name an enumeration. A class is
        no attribute type: the refusal gives the ``add-association`` command
-       that links the two classes.
+       that links the two classes. A table of the class gets a column for each.
    * - ``add-parent CLASS PARENT``
      - Makes an existing class specialize another (a generalization).
    * - ``add-association NAME END END [--composite]``
@@ -673,6 +681,15 @@ the file holds several.
        expression does not start with it), named ``<class>_rule_<n>`` without
        ``--name``. It must parse against the model
        (see :ref:`OCL constraints <cli-ocl>`).
+   * - ``add-screen CLASS [--title TITLE]``
+     - A screen of the file's GUI model (``--use`` names one when there are
+       several) that shows a table of the class: a column per attribute,
+       labelled after it, with pagination and the buttons that add, edit and
+       delete an object. The screen is named after ``TITLE`` (default: the
+       plural of the class, ``Publishers``), which is also its heading, and
+       goes in the first module; a button on the main page opens it (the
+       generated app navigates with buttons only). Refused when the file has
+       no GUI model, the class has no attribute, or a screen shows it already.
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
        is an attribute's default is not removed.
@@ -685,13 +702,18 @@ the file holds several.
        and a member's name only where the constraint navigates to that member
        (another class's member of the same name stays). A literal's attribute
        defaults are renamed too. Renaming a class names the association ends
-       still named after it, with the ``rename`` that changes each.
+       still named after it, with the ``rename`` that changes each. A column
+       label derived from an attribute's name follows it; so do the titles of
+       a class's screen, table, heading and the button that opens it, when they
+       are derived from its name (``Authors``, ``Author``): another title is kept.
    * - ``remove PATH``
      - Removes the element. A class goes with its associations,
        generalizations and constraints; an association end with its
        association. An attribute or end a constraint navigates, or a literal
        an attribute's default is, is not removed: the message names the
-       constraint or the attribute.
+       constraint or the attribute. An attribute's columns go with it; a
+       class's tables go with it, with the screens that show nothing else and
+       the buttons that open them.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``
@@ -714,8 +736,28 @@ associations, and a metamodel name the file does not import is added to its
 ``besser.BUML.metamodel.structural`` import. When the file builds an element
 with its own code (a helper function), the change is one statement after the
 line that defines its variable (``Stage.literals = {...}``); when the element
-has no variable either, or a removed element is still used elsewhere (a GUI
-model's column), the command refuses and names the lines to change by hand.
+has no variable either, or a removed element is still used elsewhere, the
+command refuses and names the lines to change by hand.
+
+In a file that also holds a GUI model (``besser init --kind gui`` writes one),
+the tables bound to a class (``DataBinding``) follow it, and each line says
+what changed in them:
+
+.. code-block:: console
+
+   $ besser model add-class Publisher name:str country:str --screen
+   model.py: added class Publisher with 2 attributes; added screen Publishers (table of Publisher: name, country; button on Authors)
+   $ besser model add-attribute Author bio:str?
+   model.py: added Author.bio:str?; column added to table author_table
+   $ besser model rename Author Writer
+   model.py: renamed Author to Writer (variable author -> writer); GUI titles Authors -> Writers; ...
+   $ besser model remove Writer.email
+   model.py: removed Writer.email; its column from table author_table
+
+A column refers to its attribute's variable, so an attribute of a class with a
+table gets one (as the starter writes them), and ``add-screen`` gives one to
+the attributes written inside their class's set. ``besser info`` lists each
+screen with the class and attributes of its tables.
 
 The file is written only when the new text loads, holds every change and has
 no validation error the old text did not have; one line says what changed.

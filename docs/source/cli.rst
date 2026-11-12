@@ -741,7 +741,8 @@ name one of each).
        -> ``OrderLines.tsx``: one file on macOS or Windows).
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
-       is an attribute's default is not removed.
+       is an attribute's default, or that a
+       constraint compares to, is not removed.
    * - ``rename PATH NEW_NAME``
      - Renames a class, enumeration, association or constraint (``Name``), an
        attribute, method or association end (``Class.member``; an end also
@@ -750,7 +751,9 @@ name one of each).
        constraints that name it are updated: only names, never text in quotes,
        and a member's name only where the constraint navigates to that member
        (another class's member of the same name stays). A literal's attribute
-       defaults are renamed too. Renaming a class names the association ends
+       defaults are renamed too, and its quoted name where a constraint compares
+       an attribute of its enumeration to it (``self.status <> 'Done'``); a
+       warning names a constraint where that cannot be told. Renaming a class names the association ends
        still named after it, with the ``rename`` that changes each. A column
        label derived from an attribute's name follows it, however the table's
        columns are written (one list, ``.append(...)``, ``[...] + [...]``); a
@@ -765,7 +768,8 @@ name one of each).
      - Removes the element. A class goes with its associations,
        generalizations and constraints; an association end with its
        association. An attribute or end a constraint navigates, or a literal
-       an attribute's default is, is not removed: the message names the
+       an attribute's default is or a constraint
+       compares to, is not removed: the message names the
        constraint or the attribute. An attribute's columns go with it (in
        its subclasses' tables too); a
        class's tables go with it, with the screens that show nothing else and

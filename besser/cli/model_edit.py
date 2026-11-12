@@ -1012,6 +1012,7 @@ def set_enum(editor: ModelEditor, name: str, literals: Sequence[str]) -> Edited:
             raise EditError(f"the default of {', '.join(stranded)} is a literal this removes: change it first")
         if current == set(literals):
             raise EditError(f"{name} has these literals already")
+        _refuse_literal_in_constraints(editor, [lit for lit in enumeration.literals if lit.name not in literals])
         literal_set = editor.collection(enumeration, "literals")
         items = _items(literal_set) if literal_set is not None else []
         located = {_item_name(editor, item): item for item in items}
@@ -1043,7 +1044,7 @@ def set_enum(editor: ModelEditor, name: str, literals: Sequence[str]) -> Edited:
         names = {literal.name for literal in getattr(found, "literals", ())}
         return None if names == set(literals) else f"{name} has {', '.join(sorted(names))}"
 
-    return Edited(editor.finish(), summary, check)
+    return Edited(editor.finish(), summary, check, editor.warnings)
 
 
 def _item_name(editor: ModelEditor, item: ast.AST) -> str | None:
@@ -1166,10 +1167,12 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
     if new_var is not None:
         _rename_variable(editor, var, new_var)
     _rename_in_constraints(editor, element, old_name, new_name)
+    quoted = ""
     if isinstance(element, EnumerationLiteral):
         _rename_defaults(editor, element, new_name)
+        quoted = _rename_literal_texts(editor, element, new_name)
     new_path = f"{path.rsplit('.', 1)[0]}.{new_name}" if "." in path else new_name
-    summary = f"renamed {path} to {new_path}" + (f" (variable {var} -> {new_var})" if new_var else "")
+    summary = f"renamed {path} to {new_path}" + (f" (variable {var} -> {new_var})" if new_var else "") + quoted
     summary += _rename_in_gui(editor, element, old_name, new_name)
     if isinstance(element, Class):
         summary += _ends_named_after(editor, element, old_name, new_name)
@@ -1542,6 +1545,117 @@ def _rename_defaults(editor: ModelEditor, literal: EnumerationLiteral, new: str)
             editor.src.replace(editor.src.start(node), editor.src.end(node),
                                _string_code(editor.src.segment(node), default,
                                             re.sub(rf"\b{re.escape(literal.name)}(?=\s*$)", new, default)))
+
+
+# ── an enumeration literal in OCL text ───────────────────────────────────────
+#
+# OCL compares an enumeration attribute to the literal's name in quotes (self.status <> 'Done'): the text
+# names the literal, so a rename or a removal of the literal changes what the constraint means.
+
+_COMPARISONS = (BOCLLexer.EQUAL, BOCLLexer.NOTEQUAL)
+
+
+def _compared_navigation(tokens: Sequence[Any], index: int) -> list[str] | None:
+    """The navigation the quoted text at ``index`` is compared to (``x.status = 'Done'``,
+    ``'Done' <> self.book.status``): its start (``self`` or a variable) and the names after it, or ``None``
+    when it is compared to something else."""
+    if index >= 3 and tokens[index - 1].type in _COMPARISONS:
+        position, names = index - 2, []
+        while position >= 1 and tokens[position].type == BOCLLexer.ID and tokens[position - 1].type == BOCLLexer.DOT:
+            names.insert(0, tokens[position].text)
+            position -= 2
+        if names and tokens[position].type in (BOCLLexer.SELF, BOCLLexer.ID):
+            return [tokens[position].text, *names]
+    position = index + 2
+    if index + 1 < len(tokens) and tokens[index + 1].type in _COMPARISONS and position < len(tokens) \
+            and tokens[position].type in (BOCLLexer.SELF, BOCLLexer.ID):
+        navigation = [tokens[position].text]
+        while position + 2 < len(tokens) and tokens[position + 1].type == BOCLLexer.DOT \
+                and tokens[position + 2].type == BOCLLexer.ID:
+            navigation.append(tokens[position + 2].text)
+            position += 2
+        following = tokens[position + 1].type if position + 1 < len(tokens) else None
+        if len(navigation) > 1 and following not in (BOCLLexer.LPAREN, BOCLLexer.ARROW):
+            return navigation
+    return None
+
+
+def _literal_texts(editor: ModelEditor, literal: EnumerationLiteral) -> tuple[dict[str, list[Any]], list[str]]:
+    """The quoted names of ``literal`` in the constraints, compared to an attribute its enumeration types
+    (constraint name -> tokens), and the constraints that hold the quoted name where that cannot be told."""
+    quoted = f"'{literal.name}'"
+    classes = editor.model.get_classes()
+    found: dict[str, list[Any]] = {}
+    unclear = []
+    for constraint in sorted(editor.model.constraints, key=lambda c: c.name):
+        if quoted not in (constraint.expression or ""):
+            continue
+        tokens = _ocl_tokens(constraint.expression)
+        mine, doubt = [], False
+        for index, token in enumerate(tokens):
+            if token.type != BOCLLexer.STRING_LITERAL or token.text != quoted:
+                continue
+            navigation = _compared_navigation(tokens, index)
+            if navigation is not None and navigation[0] == "self" and len(navigation) == 2:
+                # An attribute of the context class: its type is known.
+                owners = [constraint.context] if isinstance(constraint.context, Class) else classes
+                types = {id(a.type): a.type for c in owners for a in c.all_attributes() if a.name == navigation[1]}
+            else:
+                types = {id(a.type): a.type for c in classes for a in c.attributes
+                         if navigation is not None and a.name == navigation[-1]}
+            if navigation is None or (literal.owner in types.values() and len(types) > 1):
+                doubt = True
+            elif literal.owner in types.values():
+                mine.append(token)
+        if doubt:
+            unclear.append(constraint.name)
+        elif mine:
+            found[constraint.name] = mine
+    return found, unclear
+
+
+def _rename_literal_texts(editor: ModelEditor, literal: EnumerationLiteral, new: str) -> str:
+    """Rename the quoted name of a renamed literal in the constraints that compare it to an attribute of its
+    enumeration; returns what changed, for the summary. Where that cannot be told, a warning names the constraint."""
+    found, unclear = _literal_texts(editor, literal)
+    by_name = {constraint.name: constraint for constraint in editor.model.constraints}
+    changed = []
+    for name, tokens in found.items():
+        constraint = by_name[name]
+        call = editor.call_of(constraint)
+        node = next((k.value for k in call.keywords if k.arg == "expression"), None) if call is not None else None
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            unclear.append(name)
+            continue
+        start, end = editor.src.start(node), editor.src.end(node)
+        # Literal::NAME in the same text, renamed by _rename_in_constraints: one edit makes both changes.
+        spans = [(token.start, token.stop, f"'{new}'") for token in tokens]
+        spans += [(token.start, token.stop, new) for token in _renamed_tokens(editor, literal, constraint,
+                                                                              literal.name) or ()]
+        expression = node.value
+        for low, high, text in sorted(spans, reverse=True):
+            expression = expression[:low] + text + expression[high + 1:]
+        editor.src.edits = [edit for edit in editor.src.edits if edit[:2] != (start, end)]
+        editor.src.replace(start, end, _string_code(editor.src.segment(node), node.value, expression))
+        changed.append(name)
+    for name in sorted(set(unclear)):
+        editor.warnings.append(f"constraint {name} holds '{literal.name}' where it may not mean "
+                               f"{literal.owner.name}.{literal.name}: check it says '{new}' where it should")
+    return f"; constraint {', '.join(changed)}: '{literal.name}' -> '{new}'" if changed else ""
+
+
+def _refuse_literal_in_constraints(editor: ModelEditor, literals: Sequence[EnumerationLiteral]) -> None:
+    """Refuse removing ``literals`` a constraint names; warn of a constraint that may name one."""
+    for literal in literals:
+        found, unclear = _literal_texts(editor, literal)
+        users = set(found) | {constraint.name for constraint in editor.model.constraints
+                              if literal.name in (constraint.expression or "")
+                              and _renamed_tokens(editor, literal, constraint, literal.name)}
+        if users:
+            raise EditError(f"constraint {', '.join(sorted(users))} compares to {literal.owner.name}.{literal.name}: "
+                            f"change it first, or remove it (besser model remove {sorted(users)[0]})")
+        editor.warnings.extend(f"constraint {name} holds '{literal.name}' where it may mean "
+                               f"{literal.owner.name}.{literal.name}: check it" for name in unclear)
 
 
 # ── changing an element in place ─────────────────────────────────────────────
@@ -1936,6 +2050,7 @@ def _removed_elements(editor: ModelEditor, element: Any) -> tuple[list[Any], lis
                  .removeprefix(f"{element.owner.name}.") == element.name]
         if users:
             raise EditError(f"the default of {', '.join(sorted(users))} is {element.name}: change it first")
+        _refuse_literal_in_constraints(editor, [element])
     members: list[Any] = []
     for item in outer:
         if isinstance(item, Class):

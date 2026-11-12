@@ -464,6 +464,45 @@ def test_remove_parent_refuses_an_object_that_holds_what_was_inherited(write, re
             in refused("remove-parent", "Book", "Work"))
 
 
+# ── an enumeration literal in OCL text ──────────────────────────────────────
+
+STATUS = """\
+set-enum Status Open Done
+add-attribute Book status:Status=Open
+add-attribute Author status:str?
+add-constraint Book "self.status <> 'Done'" --name not_done
+add-constraint Author "self.status <> 'Done'" --name author_text
+add-constraint Library "self.books->forAll(b | b.status <> 'Done')" --name all_open
+"""
+
+
+def test_rename_a_literal_renames_its_quoted_name_where_it_is_compared(project, change, besser):
+    change("batch", stdin=STATUS)
+    before = project()
+
+    run = besser("model", "rename", "Status.Done", "Finished", output=None)
+
+    # Before: the constraint kept 'Done', which no status is any longer: it held for every book.
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "model.py: renamed Status.Done to Status.Finished; constraint not_done: 'Done' -> 'Finished'\n"
+    removed, added = _changed_lines(before, project())
+    assert [line for line in added if "not_done" in line] == [line.replace("<> 'Done'", "<> 'Finished'")
+                                                             for line in removed if "not_done" in line]
+    assert "self.status <> 'Done'\", language=\"OCL\")" in project()  # Author's status is text
+    # b.status: Book's or Author's status, which the text does not tell: the file keeps it, a warning names it.
+    assert ("warning: constraint all_open holds 'Done' where it may not mean Status.Done: check it says 'Finished' "
+            "where it should") in run.stderr
+    assert besser("validate", "model.py", "--ocl").returncode == 0
+
+
+@pytest.mark.parametrize("args", [("remove", "Status.Done"), ("set-enum", "Status", "Open")])
+def test_a_literal_a_constraint_compares_to_is_not_removed(project, change, refused, args):
+    change("batch", stdin=STATUS)
+
+    assert ("constraint not_done compares to Status.Done: change it first, or remove it "
+            "(besser model remove not_done)") in refused(*args)
+
+
 # The GUI starter, with Book a Work whose code its table shows.
 def _gui_with_parent(text: str) -> str:
     text = text.replace('book_title = Property(name="title", type=StringType)\n',

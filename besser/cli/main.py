@@ -104,8 +104,9 @@ examples, in the order of a session:
 
 _MODEL_EDIT_EXAMPLES = """\
 attributes are name:type, name:type? (optional) or name:type=default; types as 'besser info'
-prints them (str, int, float, bool, date, datetime, time, timedelta, any) or a class or
-enumeration of the model; an association end is role:Class[multiplicity] ([1], [0..1], [*], [1..*]).
+prints them (str, int, float, bool, date, datetime, time, timedelta, any) or an enumeration of
+the model (a link to a class is an association); an association end is role:Class[multiplicity]
+([1], [0..1], [*], [1..*]).
 
 examples:
   besser model add-class Invoice number:str total:float paid:bool=false
@@ -114,10 +115,15 @@ examples:
   besser model set-enum Stage LEAD WON LOST
   besser model add-method Deal "discount(rate:float) -> float" --code "def discount(self, rate): ..."
   besser model add-constraint Deal "self.amount >= 0" --name amount_positive
-  besser model rename Customer Account          (also Class.attribute, Enum.LITERAL, association)
+  besser model add-parent Customer Party
+  besser model rename Customer Account          (also Class.attribute, Enum.LITERAL, association,
+                                                 association.end)
   besser model remove Contact.phone
   besser model batch - <<'EOF'                  (several changes, one write)
 """
+
+# What rename and remove take.
+_MODEL_PATH_HELP = "Class, Enumeration, association, association.end, constraint, Class.member or Enumeration.LITERAL"
 
 # Operation -> its arguments, named as the function of besser.cli.model_edit takes them.
 _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
@@ -156,11 +162,11 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("literals",), {"nargs": "+", "metavar": "LITERAL", "help": "all its literals, in order"}),
     ],
     "rename": [
-        (("path",), {"help": "Class, Enumeration, association, constraint, Class.member or Enumeration.LITERAL"}),
+        (("path",), {"help": _MODEL_PATH_HELP}),
         (("new_name",), {"metavar": "NEW_NAME", "help": "the new name"}),
     ],
     "remove": [
-        (("path",), {"help": "Class, Enumeration, association, constraint, Class.member or Enumeration.LITERAL"}),
+        (("path",), {"help": _MODEL_PATH_HELP}),
     ],
 }
 

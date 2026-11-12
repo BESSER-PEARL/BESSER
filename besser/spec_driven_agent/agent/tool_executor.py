@@ -568,18 +568,15 @@ def _breaks_module_import(path: str, before: str, after: str,
 
 def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
     """The lines of ``new`` that differ from ``old``, numbered, with
-    ``context`` lines either side."""
+    ``context`` lines either side. Separate changes (an edit and the import
+    the repair added for it) are shown as separate hunks."""
     old_lines, new_lines = old.split("\n"), new.split("\n")
-    first = 0
-    while first < min(len(old_lines), len(new_lines)) and old_lines[first] == new_lines[first]:
-        first += 1
-    tail = 0
-    while (tail < min(len(old_lines), len(new_lines)) - first
-           and old_lines[-1 - tail] == new_lines[-1 - tail]):
-        tail += 1
-    start = max(0, first - context)
-    end = min(len(new_lines), len(new_lines) - tail + context)
-    rows = [f"{i + 1:>4}| {new_lines[i]}" for i in range(start, end)]
+    matcher = SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    rows = []
+    for group in matcher.get_grouped_opcodes(context):
+        if rows:
+            rows.append("   ...|")
+        rows += [f"{i + 1:>4}| {new_lines[i]}" for i in range(group[0][3], group[-1][4])]
     if len(rows) > cap:
         rows = rows[:cap] + [f"   ...| ({len(rows) - cap} more changed lines)"]
     return "\n".join(rows)
@@ -1455,27 +1452,25 @@ class ToolExecutor:
         )
         return f"{switch}\n{note}" if switch else note
 
-    def _repair_imports(self, rel_path: str, content: str, result: dict) -> str:
-        """Write back the same file with the forgotten import added.
+    def _repair_imports(self, rel_path: str, content: str) -> tuple[str, list[str]]:
+        """``content`` with a forgotten framework import added, and the notes
+        for the result's ``auto_imports``. Called before the write, so the
+        receipt and snippet describe what lands on disk. An ORM module that
+        stops importing kills every router that star-imports it.
 
-        Returns the content now on disk. Silent on failure: this is a
-        convenience, and Phase 3 remains the backstop.
+        Silent on failure: this is a convenience, and Phase 3 remains the
+        backstop.
         """
         try:
             from besser.spec_driven_agent.repair.import_repair import repair_missing_imports
 
             repaired, notes = repair_missing_imports(rel_path, content)
             if not notes or repaired == content:
-                return content
-            path = self._safe_path(rel_path)
-            with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
-                target.write(repaired)
-            self._successful_writes[os.path.normcase(path)] = self._content_digest(repaired)
-            result["auto_imports"] = notes
-            return repaired
+                return content, []
+            return repaired, notes
         except Exception:
             logger.debug("import repair failed on %s", rel_path, exc_info=True)
-            return content
+            return content, []
 
     def _append_write_feedback(
         self,
@@ -1483,13 +1478,7 @@ class ToolExecutor:
         rel_path: str,
         content: str,
     ) -> None:
-        """Attach bounded contract and parser feedback to a successful write.
-
-        A framework name the file never imported is repaired here first, so
-        the break cannot cascade: an ORM module that stops importing kills
-        every router that star-imports it.
-        """
-        content = self._repair_imports(rel_path, content, result)
+        """Attach bounded contract and parser feedback to a successful write."""
         warnings = self._contract_warnings(rel_path, content)
         if warnings:
             result["contract_warnings"] = warnings
@@ -2452,6 +2441,7 @@ class ToolExecutor:
                              + _IMPORT_BREAK_ADVICE,
                     "rejection_kind": "breaks_import",
                     "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after)}
+        after, auto_imports = self._repair_imports(args["path"], after)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
             target.write(after)
         self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
@@ -2463,6 +2453,8 @@ class ToolExecutor:
                 "line; they were stripped before writing. Send the code itself, "
                 "not the numbered display."
             )
+        if auto_imports:
+            result["auto_imports"] = auto_imports
         self._append_write_feedback(result, args["path"], after)
         return result
 
@@ -2616,12 +2608,16 @@ class ToolExecutor:
         stray = stray_gutter_line(args["content"], before or "", before or "")
         if stray:
             return _gutter_refusal("content", stray)
+        repaired, auto_imports = self._repair_imports(rel_path, args["content"])
+        args = {**args, "content": repaired}
         makedirs_plain(os.path.dirname(path), root=self.workspace)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
         if before != args["content"]:
             self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
+        if auto_imports:
+            result["auto_imports"] = auto_imports
         self._known_paths.add(args["path"].replace("\\", "/").strip())
         self._fully_seen.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
@@ -3081,6 +3077,7 @@ class ToolExecutor:
                 + _changed_region(content, new_content),
             }
 
+        new_content, auto_imports = self._repair_imports(rel_path, new_content)
         # newline="\n": a text-mode write translates "\n" to os.linesep, which
         # on a Windows host re-encodes the whole file as CRLF - and the React
         # generator copies some templates verbatim out of a CRLF checkout.
@@ -3108,6 +3105,8 @@ class ToolExecutor:
             # Surfaced for telemetry and as a nudge: old_text did not match
             # byte-for-byte, so the model's copy of the file is drifting.
             result["matched_by"] = matched_by
+        if auto_imports:
+            result["auto_imports"] = auto_imports
         self._append_write_feedback(result, rel_path, new_content)
         return result
 

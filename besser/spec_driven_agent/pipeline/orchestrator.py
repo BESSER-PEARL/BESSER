@@ -4820,12 +4820,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if tc.get("tool") in ("write_file", "modify_file", "replace_file_lines")
             and isinstance((tc.get("input") or {}).get("path"), str)
         })
-        history.append({
+        entry = {
             "instructions": request_text(instructions)[:300],  # bounded: one history line
             "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "mode": "modify" if self._modify_mode else "create",
             "files_touched": touched[:20],
-        })
+        }
+        if self.run_id:
+            entry["run_id"] = self.run_id
+        # A resumed run keeps the run id and the tool log of the attempt it
+        # continues: it replaces that attempt's entry instead of adding one.
+        if self.run_id and history and history[-1].get("run_id") == self.run_id:
+            history[-1] = entry
+        else:
+            history.append(entry)
         history = history[-10:]
 
         from besser.spec_driven_agent.state.checkpoint import api_scenario_snapshot

@@ -482,6 +482,26 @@ def test_resume_accepts_evidence_for_an_edit_made_before_the_crash(simple_model,
     assert "no successful write matches" in refused["error"]
 
 
+def test_a_resumed_run_updates_its_history_entry(simple_model, tmp_path):
+    """Each resume appended another entry for the same request, filling the
+    ten-entry history and the next run's "Previous work on this app"."""
+    def leg(client, max_turns):
+        return LLMOrchestrator(
+            llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+            max_turns=max_turns, use_streaming=False, run_id="run-1",
+        )
+
+    leg(_ScriptedClient([_tool_use("c1")]), 1).run("Build a blog")  # stops at the turn cap
+    leg(_ScriptedClient([_tool_use("c2", "write_file", path="notes.txt", content="x")]), 2).resume("Build a blog")
+    assert load_checkpoint(str(tmp_path)) is not None
+    leg(_ScriptedClient([_end_turn()]), 3).resume("Build a blog")
+
+    history = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))["history"]
+    assert [(h["mode"], h["instructions"]) for h in history] == [("create", "Build a blog")]
+    assert history[0]["run_id"] == "run-1"
+    assert "notes.txt" in history[0]["files_touched"]
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

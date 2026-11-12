@@ -136,6 +136,20 @@ def test_it_lists_the_commands_as_tools(serve):
     assert tools["generate"]["annotations"]["destructiveHint"] is True
 
 
+def test_the_tool_list_and_the_results_are_read_by_a_model_so_they_stay_small(serve):
+    server = serve()
+    tools = server.request("tools/list")["result"]["tools"]
+    result = server.request("tools/call", {"name": "generators", "arguments": {}})["result"]
+
+    # An agent reads the descriptions and input schemas on every turn: the commands' names say they are
+    # the CLI's (the instructions say it once), and the root is in the instructions, not in each path.
+    described = "".join(tool["name"] + tool["description"] + json.dumps(tool["inputSchema"]) for tool in tools)
+    assert "the CLI's 'besser" not in described and "under the server's root" not in described
+    assert len(described) < 7600
+    # The JSON text is read on every call: no indentation.
+    assert "\n" not in result["content"][0]["text"]
+
+
 def test_with_exec_py_the_tools_that_load_models_are_not_read_only(serve):
     tools = {tool["name"]: tool for tool in serve("--exec-py").request("tools/list")["result"]["tools"]}
 

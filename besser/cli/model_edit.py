@@ -1160,15 +1160,13 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
             contents = _contents(screen)
             if not any(table in contents for table in tables):
                 continue
-            # Routes ignore case: a screen named the same but for case is another's route.
             new_name = renamed.get(screen.name, screen.name)
-            clash = next((other for other in screens if other is not screen
-                          and other.name.lower() == new_name.lower()), None)
+            clash = _clashing_screen(screens, new_name, renamed.get(screen.description, screen.description), screen)
             if clash is not None:
                 kept += [table for table in tables if table in contents]
                 editor.warnings.append(f"screen {screen.name} keeps its titles, as do its heading, tables and the "
-                                       f"buttons that open it: {new_name} would be the route of screen {clash.name} "
-                                       "(routes ignore case)")
+                                       f"buttons that open it: {new_name} would be the route or page file of screen "
+                                       f"{clash.name} (they ignore case)")
                 continue
             changes += _replace_strings(editor, editor.call_of(screen), ("name", "component_id", "description"),
                                         renamed)
@@ -1740,6 +1738,29 @@ def _gui_model(editor: ModelEditor) -> Any:
     return guis[0].model
 
 
+def _clashing_screen(screens: Sequence[Screen], name: str, description: str | None,
+                     besides: Screen | None = None) -> Screen | None:
+    """The screen of ``screens`` (other than ``besides``) that a screen named ``name`` with ``description``
+    would collide with in the generated app: the same route but for case (routes ignore case, so one
+    would open the other), or the same page file but for case (one overwrites the other on a
+    case-insensitive file system, as macOS's and Windows' are)."""
+    def keys(screen_name: str, screen_description: str | None) -> set[tuple[str, str]]:
+        return {("route", screen_name.lower()), ("file", _page_file(screen_name, screen_description).lower())}
+
+    new = keys(name, description)
+    return next((other for other in screens if other is not besides and keys(other.name, other.description) & new),
+                None)
+
+
+def _page_file(name: str, description: str | None) -> str:
+    """The name of the page file the React generator writes for a screen, without ``.tsx`` (and without
+    the number it appends to a name taken exactly): its description, or its name, in PascalCase with
+    inner words lowercased (``OrderLines`` -> ``Orderlines``, ``Order lines`` -> ``OrderLines``)."""
+    from besser.generators.react.page_builder import PageBuilderMixin  # noqa: PLC0415 - only for a GUI model
+
+    return PageBuilderMixin._to_pascal_case(description or name.replace("_", " ").strip())
+
+
 def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edited:
     cls = editor.find_type(class_name, Class)
     gui = _gui_model(editor)
@@ -1756,10 +1777,9 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
     screen_name = "".join(word[:1].upper() + word[1:] for word in re.split(r"\W+", title))
     if not screen_name:
         raise EditError(f"'{title}' is no title: give it letters or digits")
-    # The generated app's routes ignore case: a name that differs only in case would open the other screen.
-    taken = {screen.name.lower(): screen.name for screen in screens}
-    if screen_name.lower() in taken:
-        raise EditError(f"{gui.name} has a screen named '{taken[screen_name.lower()]}' already: give another --title")
+    clash = _clashing_screen(screens, screen_name, title)
+    if clash is not None:
+        raise EditError(f"{gui.name} has a screen named '{clash.name}' already: give another --title")
     module = min(gui.modules, key=lambda m: m.name, default=None)
     literal = editor.collection(module, "screens") if module is not None else None
     if literal is None:

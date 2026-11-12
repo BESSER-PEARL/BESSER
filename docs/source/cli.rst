@@ -707,7 +707,10 @@ name one of each).
        goes in the first module; a button on the main page opens it (the
        generated app navigates with buttons only). Refused when the file has
        no GUI model, the class has no attribute, a screen shows it already, or
-       a screen has its name but for case (the app's routes ignore case).
+       a screen has its name but for case (the app's routes ignore case) or
+       would have the same page file but for case (the React generator names
+       it after the title, ``OrderLines`` -> ``Orderlines.tsx``, ``Order_lines``
+       -> ``OrderLines.tsx``: one file on macOS or Windows).
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
        is an attribute's default is not removed.
@@ -727,8 +730,8 @@ name one of each).
        warning names its table. So do the titles of
        a class's screen, table, heading and the button that opens it, when they
        are derived from its name (``Authors``, ``Author``): another title is kept.
-       A screen whose new name would be another screen's route but for case
-       keeps all of its titles (heading, tables, buttons too), and a warning
+       A screen whose new name would be another screen's route or page file
+       but for case keeps all of its titles (heading, tables, buttons too), and a warning
        says so.
    * - ``remove PATH``
      - Removes the element. A class goes with its associations,

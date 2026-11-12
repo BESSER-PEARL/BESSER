@@ -301,9 +301,28 @@ def test_a_screen_whose_route_differs_only_in_case_is_refused(besser, starter, c
     assert renamed.returncode == 0 and renamed.stdout == "model.py: renamed Box to BOOK\n"
     # Before: the table was titled BOOKs and the rest kept Boxes: one page, two names.
     assert renamed.stderr == ("warning: screen Boxes keeps its titles, as do its heading, tables and the buttons "
-                              "that open it: BOOKs would be the route of screen Books (routes ignore case)\n")
+                              "that open it: BOOKs would be the route or page file of screen Books (they ignore case)\n")
     pages, routes, _ = app()
     assert '<Route path="/Boxes"' in routes and "/BOOKS" not in routes
     assert 'title="Boxes"' in pages["Boxes"] and '{"Boxes"}' in pages["Boxes"] and "BOOKs" not in pages["Boxes"]
     assert '"Boxes"' in pages["Authors"] and "BOOKs" not in pages["Authors"]  # the button that opens it
     assert "GUI titles Authors -> AUTHORs" in change("rename", "Author", "AUTHOR")  # its own route, but for case
+
+
+def test_a_screen_whose_page_file_differs_only_in_case_is_refused(besser, starter, change, app):
+    # The React generator names a page file after its title in PascalCase with inner words lowercased:
+    # OrderLines -> Orderlines.tsx, Order_lines -> OrderLines.tsx, one file on macOS or Windows.
+    assert change("add-class", "OrderLine", "x:str", "--screen").endswith("added screen OrderLines "
+                                                                         "(table of OrderLine: x; button on Authors)")
+    assert change("add-class", "Item", "y:str").startswith("model.py: added class Item")
+    refused = besser("model", "add-screen", "Item", "--title", "Order_lines")
+    # Before: added, and the app had pages/Orderlines.tsx and pages/OrderLines.tsx.
+    assert refused.returncode == 2
+    assert "LibraryApp has a screen named 'OrderLines' already: give another --title" in refused.stderr
+    # Nor does a renamed class's screen take such a name.
+    renamed = besser("model", "rename", "Book", "Order_line")
+    assert renamed.returncode == 0 and ("screen Books keeps its titles, as do its heading, tables and the buttons "
+                                        "that open it: Order_lines would be the route or page file of screen "
+                                        "OrderLines") in renamed.stderr
+    pages, _, _ = app()
+    assert sorted(pages) == ["Authors", "Books", "Orderlines"]

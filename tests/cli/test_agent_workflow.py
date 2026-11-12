@@ -538,3 +538,22 @@ def test_adopting_output_generated_before_the_header_finds_no_edit(besser, model
     run = besser("regenerate", "python", model, "-o", "out", "--adopt", "--json")
 
     assert run.returncode == 0 and run.json["differs_from_model"] == []
+
+
+def test_the_guides_test_fixture_runs_in_a_gui_project_without_generated_tests(besser, write, tmp_path):
+    """The fixture's backend folder is the output's dir for a backend, its backend/ for a web_app."""
+    pytest.importorskip("fastapi.testclient")
+    besser("init", "--kind", "gui")
+    (tmp_path / "conftest.py").unlink()
+    config = (tmp_path / "besser.toml").read_text().replace("tests = true", "tests = false")
+    write("besser.toml", config.replace('test = "python -m pytest -q"',
+                                        f'test = "{sys.executable} -m pytest -q -p no:cacheprovider"'))
+    guide = besser("guide", output=None).stdout
+    assert "(`backend`: the output's `dir`; of a\n  `web_app`, `<dir>/backend`)" in guide
+    fixture = guide.split("```python\n")[1].split("```")[0]
+    write("tests/conftest.py", fixture.replace("/../backend", "/../web_app/backend"))
+    write("tests/test_listed.py", "def test_listed(client):\n    assert client.get('/book/').status_code == 200\n")
+
+    run = besser("apply", output=None)
+
+    assert run.returncode == 0 and "tests: 1 passed" in run.stdout, run.stdout + run.stderr

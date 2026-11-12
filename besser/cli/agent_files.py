@@ -101,7 +101,8 @@ _TESTS_GUIDE = '''- Check behaviour with tests, not by reading the output: `bess
   an empty database per test).
 '''
 _NO_TESTS_GUIDE = '''- Check behaviour with tests, not by reading the output: set `test = "python -m pytest -q"` in `besser.toml`
-  and give the tests a `client` fixture in `tests/conftest.py` (`backend`: the output's `dir`):
+  and give the tests a `client` fixture in `tests/conftest.py` (`backend`: the output's `dir`; of a
+  `web_app`, `<dir>/backend`):
   ```python
   import os, sys, tempfile, pytest
   os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"

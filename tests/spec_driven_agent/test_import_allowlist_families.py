@@ -232,3 +232,55 @@ def test_other_pyproject_layouts_stay_clean(tmp_path, pyproject, rel, source):
     _write(tmp_path, "pyproject.toml", pyproject)
     _write(tmp_path, rel, source)
     assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+# ----------------------------------------------------------------------
+# Imports that cannot stop the app from starting
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("source", [
+    "try:\n    import uvloop\nexcept ImportError:\n    uvloop = None\n",
+    "try:\n    import tomllib\nexcept ModuleNotFoundError:\n    import tomli as tomllib\n",
+    "try:\n    import orjson_ext\nexcept (ImportError, AttributeError):\n    orjson_ext = None\n",
+    "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from mypy_boto3_s3 import S3Client\n",
+    "import typing\nif typing.TYPE_CHECKING:\n    from mypy_boto3_s3 import S3Client\n",
+])
+def test_a_guarded_import_is_not_a_missing_module(tmp_path, source):
+    """The app runs without these: the import is optional or type-only."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_an_import_under_another_handler_is_still_reported(tmp_path):
+    """Only a handler that catches the import failure makes it optional."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", (
+        "try:\n    import nonexistent_vendor_sdk\nexcept ValueError:\n    pass\n"
+        "if TYPE_CHECKING:\n    pass\nelse:\n    import sql_alchemy\n"
+    ))
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 2, problems
+
+
+@pytest.mark.parametrize("dist,module", [
+    ("djangorestframework-simplejwt", "rest_framework_simplejwt.tokens"),
+    ("python-socketio", "socketio"),
+    ("strawberry-graphql", "strawberry"),
+    ("PyPDF2", "PyPDF2"),
+    ("pycryptodome", "Crypto.Cipher"),
+    ("google-cloud-storage", "google.cloud.storage"),
+])
+def test_a_declared_package_imported_under_another_name_is_not_missing(tmp_path, dist, module):
+    _write(tmp_path, "requirements.txt", f"fastapi\n{dist}==1.0\n")
+    _write(tmp_path, "backend/main.py", f"import {module}\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_a_declared_package_does_not_hide_a_missing_local_module(tmp_path):
+    """``sql_alchemy`` is the app's own module, not the ``sqlalchemy`` package."""
+    _write(tmp_path, "requirements.txt", "sqlalchemy\nfastapi\nstrawberry-graphql\n")
+    _write(tmp_path, "backend/main.py", "from sql_alchemy import *\nimport strawberry_utils\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 2, problems

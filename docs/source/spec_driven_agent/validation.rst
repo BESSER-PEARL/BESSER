@@ -38,7 +38,11 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
   so the delivered file is pinned even when Phase 3 is skipped.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
-  excuses every name), and it is fatal at startup.
+  excuses every name), and it is fatal at startup. Imports the app starts
+  without are not checked: inside a ``try`` that handles ``ImportError``, and
+  under ``if TYPE_CHECKING:``. A package declared in the app's manifest
+  satisfies its import name, matched case-insensitively and, for names that
+  differ (``python-socketio`` / ``socketio``), by name prefix.
 - Frontend contract — high-precision correctness defects that leave the UI
   visibly broken: a router with no home route (blank on load), or a form whose
   submit handler is a no-op (cannot save).

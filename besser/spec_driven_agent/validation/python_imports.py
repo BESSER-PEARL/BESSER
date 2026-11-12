@@ -100,7 +100,25 @@ _DIST_TO_IMPORT_ROOT = {
     "mysqlclient": "MySQLdb",
     "python-docx": "docx",
     "attrs": "attr",
+    "djangorestframework-simplejwt": "rest_framework_simplejwt",
+    "django-filter": "django_filters",
+    "pycryptodome": "Crypto",
+    "pycryptodomex": "Cryptodome",
+    "pyopenssl": "OpenSSL",
+    "pymupdf": "fitz",
+    "protobuf": "google",
+    "grpcio": "grpc",
+    "websocket-client": "websocket",
+    "factory-boy": "factory",
+    "scikit-image": "skimage",
+    "opencv-python-headless": "cv2",
+    "mysql-connector-python": "mysql",
+    "pyserial": "serial",
 }
+
+# Distribution-name prefixes the import name usually drops
+# (``python-socketio`` -> ``socketio``, ``django-allauth`` -> ``allauth``).
+_DIST_NAME_PREFIXES = ("python_", "py_", "django_")
 
 # A quoted requirement-looking token, for manifests read as text: setup.py,
 # setup.cfg, and a TOML file that does not parse.
@@ -194,6 +212,62 @@ def _declared_dependency_roots(output_dir: str) -> set[str]:
 
 
 
+def _is_declared(root: str, declared: set[str]) -> bool:
+    """Whether import ``root`` plausibly belongs to a declared distribution.
+
+    Case-insensitive (``PyPDF2`` declares ``pypdf2``). A distribution whose
+    import name is not in ``_DIST_TO_IMPORT_ROOT`` is matched by its name, or
+    the name without a ``_DIST_NAME_PREFIXES`` prefix, starting with the root
+    at a word boundary: ``strawberry-graphql`` provides ``strawberry``, but
+    ``sqlalchemy`` never provides an app's own ``sql_alchemy``.
+    """
+    root = root.lower()
+    for name in declared:
+        name = name.lower()
+        for candidate in {name, *(name.removeprefix(p) for p in _DIST_NAME_PREFIXES)}:
+            if candidate == root or candidate.startswith(root + "_"):
+                return True
+    return False
+
+
+_IMPORT_FAILURES = frozenset({"ImportError", "ModuleNotFoundError", "Exception", "BaseException"})
+
+
+def _catches_import_failure(handler: _ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return True
+    types = handler.type.elts if isinstance(handler.type, _ast.Tuple) else [handler.type]
+    return any(isinstance(t, (_ast.Name, _ast.Attribute))
+               and (t.id if isinstance(t, _ast.Name) else t.attr) in _IMPORT_FAILURES
+               for t in types)
+
+
+def _is_type_checking(test: _ast.expr) -> bool:
+    return ((isinstance(test, _ast.Name) and test.id == "TYPE_CHECKING")
+            or (isinstance(test, _ast.Attribute) and test.attr == "TYPE_CHECKING"))
+
+
+def _required_import_roots(node: _ast.AST) -> list[str]:
+    """Roots of the absolute imports the app needs in order to start.
+
+    Skipped, because the app starts without them: imports inside a ``try``
+    that handles the import failure (and the fallback in its handler), and
+    ``if TYPE_CHECKING:`` imports, which never run.
+    """
+    if isinstance(node, _ast.ImportFrom):
+        return [node.module.split(".")[0]] if node.module and not node.level else []
+    if isinstance(node, _ast.Import):
+        return [alias.name.split(".")[0] for alias in node.names]
+    if isinstance(node, (_ast.Try, _ast.TryStar)) and any(
+            _catches_import_failure(h) for h in node.handlers):
+        children = [*node.orelse, *node.finalbody]
+    elif isinstance(node, _ast.If) and _is_type_checking(node.test):
+        children = node.orelse
+    else:
+        children = list(_ast.iter_child_nodes(node))
+    return [root for child in children for root in _required_import_roots(child)]
+
+
 def _unresolvable_local_imports(output_dir: str) -> list[str]:
     """Local imports that name a module the app does not ship where it is used.
 
@@ -253,22 +327,14 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
                 break
             probe = parent
 
-        roots: list[str] = []
-        for node in _ast.walk(tree):
-            if isinstance(node, _ast.ImportFrom):
-                if node.level:            # explicit relative import
-                    continue
-                if node.module:
-                    roots.append(node.module.split(".")[0])
-            elif isinstance(node, _ast.Import):
-                roots.extend(alias.name.split(".")[0] for alias in node.names)
+        roots = _required_import_roots(tree)
 
         rel = os.path.relpath(path, output_dir).replace("\\", "/")
         for root_name in sorted(set(roots)):
             if (root_name in _EXTERNAL_IMPORT_ROOTS
                     or root_name in _STDLIB_ROOTS
-                    or root_name in declared
-                    or root_name in reachable):
+                    or root_name in reachable
+                    or _is_declared(root_name, declared)):
                 continue
             if any(os.path.basename(d) == root_name and os.path.dirname(d) ==
                    os.path.dirname(path) for d in package_dirs):

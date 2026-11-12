@@ -688,7 +688,11 @@ the file holds several.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``
-       comments are skipped. The file is written once, when all apply.
+       comments are skipped. Each operation applies to the model as the lines
+       before it left it, so a line can rename or remove what an earlier one
+       added. ``-f``, ``--use`` and the output options are the whole batch's:
+       they go before ``batch``, not on a line. The file is written once, when
+       all apply.
 
 How the file keeps its form: the file is executed, as every command that reads
 it does, so each element and the top-level variable holding it are known;

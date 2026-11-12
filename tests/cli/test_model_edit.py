@@ -270,6 +270,31 @@ def test_batch_writes_nothing_when_one_change_fails(edit):
     assert "rename Nope Other: Library has no class" in run.stderr
 
 
+@pytest.mark.parametrize("changes, holds", [
+    ("set-enum Stage LEAD WON LOST\nrename Stage.WON CLOSED\n", "enumeration Stage: LEAD, CLOSED, LOST"),
+    ("add-class Invoice number:str\nrename Invoice Bill\n", "class Bill: number:str"),
+    ("remove Book.pages\nadd-attribute Book pages:int\n", "class Book: title:str, pages:int"),
+])
+def test_batch_checks_each_change_on_the_model_of_its_own_step(edit, besser, changes, holds):
+    run, _ = edit(INLINE, "batch", "-", stdin=changes)
+
+    assert run.returncode == 0, run.stderr
+    assert holds in besser("info", "model.py").stdout
+
+
+@pytest.mark.parametrize("line, message", [
+    ("add-class Tag label:str -h", "a batch line takes no -h ('besser model add-class --help')"),
+    ("add-class Tag label:str --file other.py", "--file applies to the whole batch: give it before 'batch'"),
+    ("add-class Tag label:str --use other", "--use applies to the whole batch"),
+    ("add-class", "the following arguments are required: name"),
+])
+def test_a_batch_line_takes_no_help_and_no_option_of_the_whole_batch(edit, line, message):
+    run, text = edit(INLINE, "batch", "-", stdin=f"add-attribute Book isbn:str\n{line}\n", output=None)
+
+    assert run.returncode == 2 and text == INLINE and run.stdout == ""
+    assert run.stderr.startswith("error: -: line 2: ") and message in run.stderr
+
+
 def test_the_model_file_comes_from_besser_toml(besser, write, tmp_path):
     write("models/shop.py", LIBRARY_MODEL)
     write("besser.toml", 'model = "models/shop.py"\n[output.api]\ngenerator = "backend"\ndir = "api"\n')

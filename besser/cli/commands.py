@@ -1705,25 +1705,26 @@ def model(operations: Sequence[Operation], model_path: str | None = None, use: S
     text = raw.replace("\r\n", "\n")
     try:
         before = _validate_model(pick_domain_model(load_python_text(path, text)[0], use))
-        edits: list[Edited] = []
-        for operation in operations:
-            try:
-                edited = run_operation(path, text, operation, use)
-            except EditError as exc:
-                raise EditError(f"{operation.line}: {exc}") from exc
-            edits.append(edited)
-            text = edited.text
     except (ModelLoadError, EditError) as exc:
         return failure("model", f"{exc} ({path} not changed)", data=data, cause=exc)
-    try:
-        loaded_after = pick_domain_model(load_python_text(path, text)[0], use)
-    except (ModelLoadError, EditError) as exc:
-        return failure("model", f"the change would break {path} ({exc}); not changed: make it by hand",
-                       EXIT_FAILED, data, exc)
-    missed = [problem for edited in edits if (problem := edited.check(loaded_after.model))]
-    if missed:
-        return failure("model", f"the change did not land as expected ({'; '.join(missed)}); {path} not changed: "
-                                "make it by hand", EXIT_FAILED, data)
+    edits: list[Edited] = []
+    for operation in operations:
+        try:
+            edited = run_operation(path, text, operation, use)
+        except (ModelLoadError, EditError) as exc:
+            return failure("model", f"{operation.line}: {exc} ({path} not changed)", data=data, cause=exc)
+        try:
+            loaded_after = pick_domain_model(load_python_text(path, edited.text)[0], use)
+        except (ModelLoadError, EditError) as exc:
+            return failure("model", f"{operation.line}: the change would break {path} ({exc}); not changed: "
+                                    "make it by hand", EXIT_FAILED, data, exc)
+        # Checked on the model of this step: a later operation of a batch may rename or remove what it added.
+        missed = edited.check(loaded_after.model)
+        if missed:
+            return failure("model", f"{operation.line}: the change did not land as expected ({missed}); {path} "
+                                    "not changed: make it by hand", EXIT_FAILED, data)
+        edits.append(edited)
+        text = edited.text
     after = _validate_model(loaded_after)
     new_errors = [error for error in after["errors"] if error not in before["errors"]]
     data["changes"] = [edited.summary for edited in edits]

@@ -547,6 +547,10 @@ def _model_operation(args: argparse.Namespace) -> Operation:
     return Operation(args.operation, {name: getattr(args, name) for name in names})
 
 
+# The options of an operation's parser that are the whole batch's (an operation line's would be ignored).
+_BATCH_OPTIONS = ("file", "use", "json", "quiet", "verbose")
+
+
 def _model(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
     if not args.operation:
         raise _UsageError(f"an operation is required (see '{PROG} model --help')", "model")
@@ -566,10 +570,19 @@ def _model(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Result:
                 words = shlex.split(line)
             except ValueError as exc:
                 raise _UsageError(f"{args.source}: line {number}: {exc}", "model") from None
+            where = f"{args.source}: line {number}"
             if words[0] not in OPERATIONS:
-                raise _UsageError(f"{args.source}: line {number}: '{words[0]}' is not an operation "
-                                  f"({', '.join(OPERATIONS)})", "model")
-            parsed = operation_parsers[words[0]].parse_args(words[1:])
+                raise _UsageError(f"{where}: '{words[0]}' is not an operation ({', '.join(OPERATIONS)})", "model")
+            if "-h" in words or "--help" in words:  # argparse would print the help and apply nothing
+                raise _UsageError(f"{where}: a batch line takes no -h ('{PROG} model {words[0]} --help')", "model")
+            try:
+                parsed = operation_parsers[words[0]].parse_args(words[1:])
+            except _UsageError as exc:
+                raise _UsageError(f"{where}: {exc}", "model") from None
+            whole_batch = sorted(option for option in _BATCH_OPTIONS if option in vars(parsed))
+            if whole_batch:
+                raise _UsageError(f"{where}: {', '.join('--' + option for option in whole_batch)} applies to the "
+                                  f"whole batch: give it before 'batch'", "model")
             parsed.operation = words[0]
             operations.append(_model_operation(parsed))
         if not operations:

@@ -813,7 +813,9 @@ class SmartRunRegistry:
 
             for run_id, entry in expired:
                 try:
-                    _remove_run_dir(entry.temp_dir)
+                    # Off the loop: a large workspace or a busy shell session
+                    # takes seconds to remove and would stall every stream.
+                    await asyncio.to_thread(_remove_run_dir, entry.temp_dir)
                 except Exception:
                     logger.exception(
                         "Failed to remove temp dir for expired run %s", run_id

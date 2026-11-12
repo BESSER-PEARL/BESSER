@@ -625,10 +625,15 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
 
     Errors are mapped by ``handle_endpoint_errors`` (``ValueError`` -> 400).
     """
-    assembled = assemble_models_from_project(
+    # Off the event loop: a large project takes seconds, which would stall
+    # every SSE stream, heartbeat and /cancel on this process. The default
+    # pool, not the runtime's: this keyless call must not take run threads.
+    assembled = await asyncio.to_thread(
+        assemble_models_from_project,
         request.project, primary_kind_override=request.primary_kind_override,
     )
-    plan = build_preview(
+    plan = await asyncio.to_thread(
+        build_preview,
         assembled,
         instructions=request.instructions,
         max_cost_usd=request.max_cost_usd,
@@ -643,7 +648,9 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
     if request.mode == "modify" and request.base_run_id:
         base = await runtime.registry.get(request.base_run_id)
         if base is not None and base.temp_dir:
-            change = compare_with_base(base.temp_dir, assembled.domain_model)
+            change = await asyncio.to_thread(
+                compare_with_base, base.temp_dir, assembled.domain_model,
+            )
             model_change = change.to_dict() if change else None
     payload["model_change"] = model_change
     return payload

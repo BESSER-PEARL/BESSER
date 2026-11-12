@@ -87,3 +87,30 @@ def test_unknown_base_or_generate_mode_reports_none(base_run):
     del body["base_run_id"]
     resp = _preview(body)
     assert resp.status_code == 200 and resp.json()["model_change"] is None
+
+
+def test_preview_work_runs_off_the_event_loop(base_run, monkeypatch):
+    """Assembly, planning and the base comparison can take seconds on a large
+    project; on the loop they stall every SSE stream and /cancel meanwhile."""
+    import threading
+
+    from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
+
+    loop_thread = threading.current_thread()  # asyncio.run drives the app here
+    threads: dict[str, threading.Thread] = {}
+
+    def recording(name):
+        original = getattr(spec_driven_router, name)
+
+        def wrapper(*args, **kwargs):
+            threads[name] = threading.current_thread()
+            return original(*args, **kwargs)
+        monkeypatch.setattr(spec_driven_router, name, wrapper)
+
+    for name in ("assemble_models_from_project", "build_preview", "compare_with_base"):
+        recording(name)
+    base_run(_classes({"Book": ["title"]}))
+
+    assert _preview(_body()).status_code == 200
+    assert set(threads) == {"assemble_models_from_project", "build_preview", "compare_with_base"}
+    assert all(thread is not loop_thread for thread in threads.values()), threads

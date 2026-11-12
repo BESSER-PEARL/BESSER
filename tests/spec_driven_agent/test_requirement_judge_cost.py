@@ -201,3 +201,40 @@ def test_the_citation_repair_call_sends_the_focused_digest(orch, tmp_path, monke
     assert "### routers/booking.py" in digests[0]
     assert digests[1].startswith("### routers/room.py")
     assert "### routers/booking.py" not in digests[1]
+
+
+# ------------------------------------------------------------ the spend cap
+
+
+class _CostlyClient(_ProseClient):
+    """Every call costs $0.30; the planning model raises, the primary answers in prose."""
+
+    def chat(self, system, messages, tools, force_tool=None, model_override=None):
+        self.calls.append(model_override)
+        self.usage._extra_cost_usd += 0.30
+        if model_override:
+            raise RuntimeError("planning model not reachable")
+        return {"stop_reason": "end_turn", "content": []}
+
+
+def test_the_spend_cap_is_checked_before_every_paid_judge_call(tmp_path, monkeypatch):
+    """Checked once before the judge, three full-digest calls ran from $0.95
+    to $1.85 against a $1.00 cap: planning model, its primary fallback, retry."""
+    monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
+    client = _CostlyClient()
+    orch = LLMOrchestrator(
+        llm_client=client, domain_model=_model(), output_dir=str(tmp_path),
+        enable_tracing=False, enable_checkpointing=False, max_cost_usd=1.0,
+    )
+    orch._instructions = SPEC
+    orch._generator_used = "generate_fastapi_backend"
+    orch._requirements = [dict(REQUIREMENT)]
+    _write(tmp_path, "routers/room.py", "def create_room():\n    return 1\n")
+    client.usage._extra_cost_usd = 0.95
+
+    issues = orch._collect_requirement_issues()
+
+    assert client.calls == ["cheap-model"]
+    assert issues == ["requirement unverified: verification stopped or budget exhausted; "
+                      "original-specification coverage is not verified."]
+    assert not orch._requirement_judge_failures, "a budget stop is not a judge failure"

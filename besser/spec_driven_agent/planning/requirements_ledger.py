@@ -20,7 +20,7 @@ import json
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 import re
 import time
 
@@ -490,7 +490,8 @@ def latest_user_message(instructions: str) -> str:
 
 
 def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
-                    use_planning_model: bool = True) -> dict | None:
+                    use_planning_model: bool = True,
+                    can_call: Callable[[], bool] | None = None) -> dict | None:
     """One forced tool call (planning model first, primary on error); the
     tool's input dict, or None when the call failed or returned nothing.
 
@@ -498,6 +499,7 @@ def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
     retry's second attempt should not repeat the same cheap-sibling call
     that just failed or came back empty; on a provider with no cheap
     sibling (``planning_model`` is already ``None``) this changes nothing.
+    ``can_call`` is asked before the primary fallback, itself a paid call.
     """
     structured = _chat_supports_kwargs(llm_client, "force_tool", "model_override")
     planning_model = (
@@ -518,6 +520,10 @@ def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
     except Exception:
         if not planning_model:
             logger.warning("Requirements ledger: %s call failed", tool["name"], exc_info=True)
+            return None
+        if can_call is not None and not can_call():
+            logger.warning("Requirements ledger: %s failed on the planning model; the primary "
+                           "fallback is not sent (stopped or budget exhausted)", tool["name"], exc_info=True)
             return None
         try:
             response = _chat(None)
@@ -773,12 +779,12 @@ def _verdict_id(value) -> int | None:
 
 
 def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
-                use_planning_model: bool) -> dict[int, dict]:
+                use_planning_model: bool, can_call: Callable[[], bool] | None = None) -> dict[int, dict]:
     """One judge call parsed into ``{id: verdict}``; empty when the call
     raised, came back with no tool call, or parsed to nothing usable."""
     payload = _call_with_tool(
         llm_client, _JUDGE_SYSTEM_PROMPT, judge_prompt, _SUBMIT_VERDICTS_TOOL,
-        use_planning_model=use_planning_model,
+        use_planning_model=use_planning_model, can_call=can_call,
     )
     verdicts: dict[int, dict] = {}
     for item in (payload or {}).get("verdicts") or []:
@@ -804,8 +810,13 @@ def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
 
 def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                    original_spec: str | None = None,
-                   previous_verdicts: list[dict] | None = None) -> list[dict] | None:
-    """One verdict per requirement, or None when the call failed."""
+                   previous_verdicts: list[dict] | None = None,
+                   can_call: Callable[[], bool] | None = None) -> list[dict] | None:
+    """One verdict per requirement, or None when the call failed.
+
+    ``can_call`` (the run's stop and spend check) is asked before every paid
+    call: an attempt, the retry and the primary fallback each carry the digest.
+    """
     if not requirements or not _is_real_provider(llm_client):
         return None
     application_requirements = [r for r in requirements if r.get("kind") != "verification"]
@@ -834,7 +845,12 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
         # empty. Bounded to _JUDGE_MAX_ATTEMPTS: every attempt is a full,
         # paid call carrying the whole digest.
         for attempt in range(_JUDGE_MAX_ATTEMPTS):
-            verdicts = _judge_once(llm_client, judge_prompt, by_id, use_planning_model=attempt == 0)
+            if can_call is not None and not can_call():
+                logger.warning("Requirements ledger: judge attempt %d/%d not sent (stopped or "
+                               "budget exhausted)", attempt + 1, _JUDGE_MAX_ATTEMPTS)
+                break
+            verdicts = _judge_once(llm_client, judge_prompt, by_id,
+                                   use_planning_model=attempt == 0, can_call=can_call)
             if verdicts or attempt + 1 >= _JUDGE_MAX_ATTEMPTS:
                 break
             logger.warning(

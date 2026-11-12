@@ -3788,9 +3788,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         cached = verdicts is not None
         judge_failed = ("requirement unverified: the requirements judge returned no verdicts; "
                         "coverage of the original specification has not been verified.")
+        judge_stopped = ("requirement unverified: verification stopped or budget exhausted; "
+                         "original-specification coverage is not verified.")
         if verdicts is None:
             if not self._verification_call_allowed():
-                return ["requirement unverified: verification stopped or budget exhausted; original-specification coverage is not verified."]
+                return [judge_stopped]
             if cache_key in self._requirement_judge_failures:
                 return [judge_failed]  # the same prompt already failed; asking again re-rolls a full-price call
             if len(self._requirement_judge_failures) >= _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN:
@@ -3800,8 +3802,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "revisions and is not asked again this run."]
             verdicts = _requirements_ledger.judge_coverage(
                 requirements, digest, self.client, original_spec=self._instructions,
+                can_call=self._verification_call_allowed,
             )
         if verdicts is None:
+            if not self._verification_call_allowed():
+                return [judge_stopped]  # a stop mid-judgment is not a judge failure
             self._requirement_judge_failures.add(cache_key)
             return [judge_failed]
         # Cache successful judgments only, keyed to the full bytes of the judged
@@ -3833,6 +3838,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 focused_digest, self.client, original_spec=self._instructions,
                 previous_verdicts=[item for item in self._requirement_verdicts
                                    if item["id"] in unknown_ids],
+                can_call=self._verification_call_allowed,
             )
             # Only a verified 'implemented' replaces a verdict: the focused digest
             # omits most of the app, so a 'missing' from it proves nothing.

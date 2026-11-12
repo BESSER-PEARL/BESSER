@@ -116,6 +116,35 @@ def test_the_blocker_list_is_capped_with_an_honest_remainder(tmp_path):
     assert bullets[-1].endswith(", requirement x5; the next validation lists them again)")
 
 
+def test_a_requirement_text_is_quoted_once_and_blockers_cite_its_id(tmp_path):
+    """Run t14: one rule's 875-char text was pasted 3x per prompt (ledger,
+    ``requirement:`` blocker, ``task unverified:`` blocker)."""
+    from besser.spec_driven_agent.planning import requirements_ledger
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+
+    orch, client = _build(tmp_path)
+    long_text = ("Recover model constraint 'positivePages' rejected during conversion. "
+                 "Original OCL: context Book inv positivePages: self.pages > 0. " * 4).strip()
+    orch._requirements = [{"id": 1, "kind": "rule", "text": long_text},
+                          {"id": 2, "kind": "rule", "text": "Guests can book."}]
+    verdicts = [{"id": 1, "text": long_text, "kind": "rule", "status": "missing", "note": "no check found"},
+                {"id": 2, "text": "Guests can book.", "kind": "rule", "status": "partial", "note": ""}]
+    orch.executor.set_tasks([long_text])
+    blockers = [_classify_issue(m) for m in
+                requirements_ledger.ledger_issues(verdicts) + orch._collect_task_issues()]
+    assert len(blockers) == 3 and all(b.severity == "blocker" for b in blockers)
+
+    orch._invoke_phase3_fix_loop(blockers, is_first_attempt=True)
+
+    call = client.calls[0]
+    assert _whole_prompt(call).count(long_text) == 1
+    assert f"R1. {long_text}" in call["system"]
+    message = _first_message(call)
+    assert "- requirement: R1 is not implemented (no check found)" in message
+    assert "remains unresolved: R1 (text in the requirements ledger)." in message
+    assert "- requirement partial: R2; inspect" in message
+
+
 def test_a_long_blocker_is_cut_with_a_marker_keeping_its_tail(tmp_path):
     from besser.spec_driven_agent.pipeline.phase3_repair import _FIX_PROMPT_BLOCKER_CHARS
 

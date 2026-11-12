@@ -94,14 +94,34 @@ def _blocker_kind(message: str) -> str:
     return " ".join(words[:3]) if len(words) > 3 else head
 
 
-def _fix_prompt_blocker_lines(ranked: list[ValidationIssue]) -> list[str]:
+# A requirement text at least this long is cited by id wherever a blocker
+# quotes it; a shorter one could match unrelated text and saves little.
+_CITED_REQUIREMENT_MIN_CHARS = 60
+
+
+def _cite_ledger_requirements(message: str, requirements: list[dict]) -> str:
+    """Name a requirement the ledger already quotes by its id, not its text again.
+
+    A conversion-recovery requirement runs to ~900 chars and was pasted three
+    times per prompt: the ledger, its ``requirement:`` blocker and its
+    ``task unverified:`` blocker. The ledger keeps the one full copy.
+    """
+    for requirement in requirements:
+        rid, text = f"R{requirement['id']}", requirement["text"]
+        message = message.replace(f"{rid} — {text}", rid)
+        if len(text) >= _CITED_REQUIREMENT_MIN_CHARS:
+            message = message.replace(text, f"{rid} (text in the requirements ledger)")
+    return message
+
+
+def _fix_prompt_blocker_lines(ranked: list[ValidationIssue], requirements: list[dict]) -> list[str]:
     """The fix prompt's blocker bullets, in priority order, capped in count and length.
 
     Only the prompt is capped; Phase 3 records and reports every blocker.
     """
     lines = []
     for issue in ranked[:_FIX_PROMPT_MAX_BLOCKERS]:
-        text = issue.message
+        text = _cite_ledger_requirements(issue.message, requirements)
         if len(text) > _FIX_PROMPT_BLOCKER_CHARS:
             head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
             cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
@@ -957,7 +977,7 @@ class Phase3RepairMixin:
             "Do not invent authentication, new roles, or destructive data deletion "
             "from a generic usability or release requirement."
         )
-        prompt_parts.extend(_fix_prompt_blocker_lines(sorted(blockers, key=self._repair_priority)))
+        prompt_parts.extend(_fix_prompt_blocker_lines(sorted(blockers, key=self._repair_priority), requirements))
 
         # Show the offending lines: with only "file line N" a model spends a
         # turn on read_file; with the excerpt it calls modify_file immediately.

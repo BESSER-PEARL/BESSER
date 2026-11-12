@@ -1155,7 +1155,7 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
     renamed = dict(zip(_derived_titles(old), _derived_titles(new)))
     renamed[f"Go to the {_plural(old).lower()}"] = f"Go to the {_plural(new).lower()}"
     tables = editor.tables_of(element)
-    taken = {screen.name for gui in editor.gui_models() for screen in _screens(gui)}
+    taken = {screen.name.lower(): screen.name for gui in editor.gui_models() for screen in _screens(gui)}
     changes = []
     for table in tables:
         changes += _replace_strings(editor, editor.call_of(table), ("title",), renamed)
@@ -1164,9 +1164,10 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
             contents = _contents(screen)
             if not any(table in contents for table in tables):
                 continue
-            if screen.name in renamed and renamed[screen.name] in taken:
+            # Routes ignore case: a screen named the same but for case is another's (or this one's) route.
+            if screen.name in renamed and taken.get(renamed[screen.name].lower(), screen.name) != screen.name:
                 editor.warnings.append(f"screen {screen.name} keeps its name: a screen is named "
-                                       f"{renamed[screen.name]} already")
+                                       f"{taken[renamed[screen.name].lower()]} already")
                 continue
             changes += _replace_strings(editor, editor.call_of(screen), ("name", "component_id", "description"),
                                         renamed)
@@ -1660,8 +1661,10 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
     screen_name = "".join(word[:1].upper() + word[1:] for word in re.split(r"\W+", title))
     if not screen_name:
         raise EditError(f"'{title}' is no title: give it letters or digits")
-    if screen_name in {screen.name for screen in screens}:
-        raise EditError(f"{gui.name} has a screen named '{screen_name}' already: give another --title")
+    # The generated app's routes ignore case: a name that differs only in case would open the other screen.
+    taken = {screen.name.lower(): screen.name for screen in screens}
+    if screen_name.lower() in taken:
+        raise EditError(f"{gui.name} has a screen named '{taken[screen_name.lower()]}' already: give another --title")
     module = min(gui.modules, key=lambda m: m.name, default=None)
     literal = editor.collection(module, "screens") if module is not None else None
     if literal is None:

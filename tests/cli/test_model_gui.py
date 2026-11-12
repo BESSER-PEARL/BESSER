@@ -229,3 +229,18 @@ def test_use_names_the_gui_model_a_screen_goes_in(starter, besser, change, app):
     line = change("--use", "admin_gui", "add-screen", "Book", "--title", "Catalog")
     assert line == "model.py: added screen Catalog (table of Book: title, pages; button on Start)"
     assert besser("validate", "model.py").returncode == 0
+
+
+def test_a_screen_whose_route_differs_only_in_case_is_refused(besser, starter, change, app):
+    # The generated app's routes ignore case: /BOOKS would open the Books page, and the new one never.
+    assert change("add-class", "Shelf", "code:str").startswith("model.py: added class Shelf")
+    refused = besser("model", "add-screen", "Shelf", "--title", "BOOKS")
+    assert refused.returncode == 2
+    assert "LibraryApp has a screen named 'Books' already: give another --title" in refused.stderr
+    # Nor does a renamed class take such a name for its screen.
+    assert change("add-class", "Box", "code:str", "--screen").endswith("button on Authors)")
+    renamed = besser("model", "rename", "Box", "BOOK")
+    assert renamed.returncode == 0 and "screen Boxes keeps its name: a screen is named Books already" in renamed.stderr
+    _, routes, _ = app()
+    assert '<Route path="/Boxes"' in routes and "/BOOKS" not in routes
+    assert "GUI titles Authors -> AUTHORs" in change("rename", "Author", "AUTHOR")  # its own route, but for case

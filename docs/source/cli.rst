@@ -690,7 +690,8 @@ name one of each).
        plural of the class, ``Publishers``), which is also its heading, and
        goes in the first module; a button on the main page opens it (the
        generated app navigates with buttons only). Refused when the file has
-       no GUI model, the class has no attribute, or a screen shows it already.
+       no GUI model, the class has no attribute, a screen shows it already, or
+       a screen has its name but for case (the app's routes ignore case).
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
        is an attribute's default is not removed.

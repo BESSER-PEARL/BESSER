@@ -253,6 +253,30 @@ def test_a_change_that_does_not_apply_says_why_and_writes_nothing(edit, args, me
     assert message in run.stderr
 
 
+@pytest.mark.parametrize("args, command", [
+    # Library is written before Book: its attribute would refer to a variable not yet defined.
+    # Book has an end named library already: the suggested role is another.
+    (("add-attribute", "Library", "featured:Book"),
+     "besser model add-association library_featured library_featured:Library[*] featured:Book[1]"),
+    (("add-attribute", "Book", "shelf:Library?"),
+     "besser model add-association book_shelf book:Book[*] shelf:Library[0..1]"),
+])
+def test_an_attribute_typed_by_a_class_is_refused_with_the_association_to_add(edit, args, command):
+    run, text = edit(INLINE, *args)
+
+    assert run.returncode == 2 and text == INLINE
+    assert "an attribute cannot hold a class" in run.stderr and command in run.stderr
+    suggested, _ = edit(INLINE, *command.split()[2:])
+    assert suggested.returncode == 0, suggested.stderr
+
+
+def test_a_new_class_with_an_attribute_typed_by_a_class_is_refused(edit):
+    run, text = edit(INLINE, "add-class", "Loan", "due:date", "book:Book")
+
+    assert run.returncode == 2 and text == INLINE
+    assert "besser model add-association loan_book loan:Loan[*] book:Book[1]" in run.stderr
+
+
 def test_batch_makes_every_change_in_one_write(edit, besser):
     changes = "# the new feature\nadd-class Tag label:str\n\nadd-association tagged tags:Tag[*] books:Book[*]\n"
     run, text = edit(INLINE, "batch", "-", stdin=changes, output=None)

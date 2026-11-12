@@ -388,7 +388,7 @@ def parse_attribute(spec: str) -> tuple[str, str, bool, str | None]:
     match = _ATTRIBUTE.match(spec.strip())
     if not match:
         raise EditError(f"'{spec}' is not an attribute: write name:type, name:type? (optional) or name:type=default "
-                        f"(types: {', '.join(PRIMITIVE_TYPES)}, or a class or enumeration of the model)")
+                        f"(types: {', '.join(PRIMITIVE_TYPES)}, or an enumeration of the model)")
     return match["name"], match["type"], bool(match["optional"]), match["default"]
 
 
@@ -615,12 +615,22 @@ class ModelEditor:
             raise EditError(f"'{name}' has no variable in {self.path.name} to refer to it by; give it one")
         return var
 
-    def property_code(self, spec: str, existing: Iterable[str]) -> tuple[str, str, str]:
-        """The ``Property(...)`` of an attribute spec, its name, and the spec as ``besser info`` prints it."""
+    def property_code(self, owner: str, spec: str, existing: Iterable[str]) -> tuple[str, str, str]:
+        """The ``Property(...)`` of an attribute spec of the class ``owner``, its name, and the spec as
+        ``besser info`` prints it."""
         name, type_name, optional, default = parse_attribute(spec)
         if name in existing:
             raise EditError(f"'{name}' exists already; rename or remove it first")
         type_name = _TYPE_ALIASES.get(type_name, type_name)
+        target = self.model.get_type_by_name(type_name)
+        if isinstance(target, Class):
+            # The backends cannot store one (validate warns), and the class may be defined after the owner.
+            role = _snake(owner)
+            if role in {a.name for a in target.all_attributes()} | {e.name for e in target.association_ends()}:
+                role = f"{role}_{name}"
+            raise EditError(f"'{type_name}' is a class: an attribute cannot hold a class, an association links "
+                            f"them: besser model add-association {_snake(owner)}_{name} {role}:{owner}[*] "
+                            f"{name}:{type_name}[{'0..1' if optional else '1'}]")
         code = f"{self._structural('Property')}(name={_q(name)}, type={self.type_code(type_name)}"
         if optional:
             code += ", is_optional=True"
@@ -650,7 +660,7 @@ class ModelEditor:
         properties = []
         names: list[str] = []
         for spec in attributes:
-            code, attribute, _ = self.property_code(spec, names)
+            code, attribute, _ = self.property_code(name, spec, names)
             names.append(attribute)
             properties.append(code)
         code = f"{self._structural('Class')}(name={_q(name)}"
@@ -771,7 +781,7 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
     existing = [attribute.name for attribute in cls.all_attributes()] + [end.name for end in cls.association_ends()]
     shown = []
     for spec in attributes:
-        code, name, text = editor.property_code(spec, existing)
+        code, name, text = editor.property_code(class_name, spec, existing)
         existing.append(name)
         shown.append(text)
         editor.add(cls, "attributes", code, lambda name=name: editor.free_name(_attribute_var_base(editor, cls, name)),

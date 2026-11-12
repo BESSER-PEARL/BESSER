@@ -657,7 +657,9 @@ the file holds several.
      - Attributes: ``name:type``, ``name:type?`` (optional) or
        ``name:type=default``. Types are written as ``besser info`` prints them
        (``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``,
-       ``time``, ``timedelta``, ``any``) or name a class or enumeration.
+       ``time``, ``timedelta``, ``any``) or name an enumeration. A class is
+       no attribute type: the refusal gives the ``add-association`` command
+       that links the two classes.
    * - ``add-association NAME END END [--composite]``
      - A binary association; each end is ``role:Class[multiplicity]`` with
        ``[1]``, ``[0..1]``, ``[*]``, ``[1..*]`` or ``[n..m]``. ``--composite``

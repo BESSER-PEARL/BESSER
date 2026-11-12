@@ -282,7 +282,22 @@ generator ``new`` suggests for another kind) with a commented ``test`` line to
 fill in, and the agent files ``new`` writes. A ``model.py`` or ``besser.toml``
 that exists is kept, and a note says so. A kind no generator reads gets
 neither a ``besser.toml`` nor the agent files, which describe the
-``besser apply`` loop; a note says so. ``.ignore`` then reads:
+``besser apply`` loop; a note says so. For a class diagram ``besser.toml`` reads:
+
+.. code-block:: toml
+
+   model = "model.py"
+   # test = "python -m pytest -q"   # what 'besser apply' runs after the build
+
+   [output.backend]
+   generator = "backend"
+   dir = "backend"
+   options = { uniform_responses = true }
+
+``uniform_responses`` (also on the ``web_app`` output of ``--kind gui``) makes
+``POST /x/`` and ``PUT /x/{x_id}/`` of the generated API answer what
+``GET /x/{x_id}/`` answers, for every class; it is off by default, for apps
+generated before it (see :ref:`backend-response-shapes`). ``.ignore`` then reads:
 
 .. code-block:: text
 

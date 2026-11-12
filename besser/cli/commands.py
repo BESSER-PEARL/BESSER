@@ -546,6 +546,8 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
 # The output 'besser init' configures for a domain model: an API a coding agent can test.
 _INIT_GENERATOR = {DEFAULT_KIND: "backend"}
 _INIT_MODEL = "model.py"
+# The options of a new project's output: POST and PUT answer what GET does (off by default for older apps).
+_INIT_OPTIONS = {"backend": "{ uniform_responses = true }", "web_app": "{ uniform_responses = true }"}
 
 
 def _init_config(kind: str) -> str | None:
@@ -557,7 +559,8 @@ def _init_config(kind: str) -> str | None:
             '# test = "python -m pytest -q"   # what \'besser apply\' runs after the build\n\n'
             f"[output.{generator}]\n"
             f'generator = "{generator}"\n'
-            f'dir = "{generator}"\n')
+            f'dir = "{generator}"\n'
+            + (f"options = {_INIT_OPTIONS[generator]}\n" if generator in _INIT_OPTIONS else ""))
 
 
 def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:

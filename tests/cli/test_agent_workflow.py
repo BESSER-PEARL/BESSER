@@ -133,6 +133,43 @@ def test_init_sets_up_a_project_that_apply_builds(besser, tmp_path):
     assert (tmp_path / "shop" / "backend" / "main_api.py").is_file()
 
 
+@pytest.mark.parametrize("kind, generator", [("domain", "backend"), ("gui", "web_app")])
+def test_init_turns_on_uniform_responses(besser, tmp_path, kind, generator):
+    assert besser("init", "--kind", kind).returncode == 0
+
+    assert (tmp_path / "besser.toml").read_text().endswith(
+        f'[output.{generator}]\ngenerator = "{generator}"\ndir = "{generator}"\n'
+        "options = { uniform_responses = true }\n")
+
+
+# A class of the starter model without a to-many end answers POST and PUT like GET, in the new project.
+UNIFORM_ANSWERS_TEST = """\
+def test_answers(client):
+    deal = client.post("/deal/", json={"amount": 2}).json()
+    assert deal == {"deal": {"id": deal["deal"]["id"], "amount": 2.0}}
+    deal_id = deal["deal"]["id"]
+    assert client.put(f"/deal/{deal_id}/", json={"amount": 3}).json() == client.get(f"/deal/{deal_id}/").json()
+    library = client.post("/library/", json={"name": "City", "address": "Main St"}).json()
+    assert set(library) == {"library", "books_ids"}
+"""
+
+
+def test_apply_on_a_new_project_builds_a_backend_whose_post_answers_like_get(besser, write, tmp_path):
+    pytest.importorskip("fastapi.testclient")
+    besser("init")
+    assert besser("model", "add-class", "Deal", "amount:float").returncode == 0
+    config = (tmp_path / "besser.toml").read_text()
+    write("besser.toml", config.replace('# test = "python -m pytest -q"',
+                                        f'test = "{sys.executable} -m pytest -q -p no:cacheprovider"'))
+    write("tests/conftest.py", GUIDE.split("```python\n")[1].split("```")[0])
+    write("tests/test_answers.py", UNIFORM_ANSWERS_TEST)
+
+    run = besser("apply", output=None)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "tests: 1 passed" in run.stdout
+
+
 def test_init_keeps_a_model_and_a_configuration_that_exist(besser, write, tmp_path):
     write("model.py", "mine = 1\n")
     run = besser("init", "--json")

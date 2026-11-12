@@ -237,3 +237,48 @@ def test_a_range_edit_keeps_pipe_delimited_rows(executor):
     on_disk = open(os.path.join(executor.workspace, "Page.tsx"), encoding="utf-8").read()
     assert "1|Alice\n2|Bob\n" in on_disk, on_disk
     assert "note" not in result
+
+
+def test_write_file_strips_the_unpadded_display_of_a_file_it_could_have_read(executor):
+    """read_file now shows ``1| code``. A rewrite of an existing file that
+    carries it is a copied display; the same text for a new file is data."""
+    call(executor, "read_file", path="Page.tsx")
+
+    result, on_disk = _write(executor, "Page.tsx", "1| const a = 1;\n2| const b = 2;\n")
+
+    assert on_disk == "const a = 1;\nconst b = 2;\n"
+    assert "line numbers" in result.get("note", "")
+
+
+def _as_shown(executor, padded):
+    """read_file's lines for Page.tsx, or the padded form older reads used."""
+    lines = call(executor, "read_file", path="Page.tsx")["content"].split("\n")
+    if padded:
+        return [f"{line.split('|', 1)[0]:>4}|{line.split('|', 1)[1]}" for line in lines]
+    return lines
+
+
+@pytest.mark.parametrize("padded", [False, True])
+def test_a_block_copied_from_either_gutter_form_is_stripped(executor, padded):
+    shown = _as_shown(executor, padded)
+    assert shown[0] == ("   1| const a = 1;" if padded else "1| const a = 1;")
+    read = call(executor, "read_file", path="Page.tsx")
+
+    result = call(executor, "replace_file_lines", path="Page.tsx", read_id=read["read_id"],
+                  start_line=1, end_line=3, new_text="\n".join(shown[:2] + ["3| const z = 9;"]))
+
+    assert result["status"] == "modified", result
+    on_disk = open(os.path.join(executor.workspace, "Page.tsx"), encoding="utf-8").read()
+    assert on_disk == "const a = 1;\nconst b = 2;\nconst z = 9;\n", repr(on_disk)
+
+
+@pytest.mark.parametrize("padded", [False, True])
+def test_a_lone_copied_line_in_either_gutter_form_is_refused(executor, padded):
+    shown = _as_shown(executor, padded)
+
+    result = call(executor, "modify_file", path="Page.tsx", old_text="const c = 3;",
+                  new_text="const c = 30;\n" + shown[0])
+
+    assert "gutter" in result.get("error", ""), result
+    on_disk = open(os.path.join(executor.workspace, "Page.tsx"), encoding="utf-8").read()
+    assert on_disk == SOURCE

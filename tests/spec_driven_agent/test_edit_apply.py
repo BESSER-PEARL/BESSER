@@ -281,7 +281,7 @@ def test_typed_execution_result_distinguishes_error_and_success(tmp_path):
 
     assert ok.status == "ok" and ok.succeeded is True
     assert error.status == "error" and error.succeeded is False
-    assert json.loads(ok.to_json())["content"] == "   1| a = 1\n   2| "
+    assert json.loads(ok.to_json())["content"] == "1| a = 1\n2| "
 
 
 # ----------------------------------------------------------------------
@@ -354,16 +354,21 @@ def test_modify_file_accepts_a_quote_with_collapsed_blank_lines(tmp_path):
 
 
 # ----------------------------------------------------------------------
-# read_file numbers its output ("   7| code"). The model pastes those lines
-# back verbatim; tier 5 strips the prefix. And a template copied verbatim out
-# of a Windows checkout reaches the workspace with CRLF.
+# read_file numbers its output ("7| code"; the post-edit echo and older reads
+# pad it, "   7| code"). The model pastes those lines back verbatim; tier 5
+# strips either prefix. And a template copied verbatim out of a Windows
+# checkout reaches the workspace with CRLF.
 # ----------------------------------------------------------------------
 
-def test_a_quote_copied_with_read_file_line_numbers_still_applies(tmp_path):
+@pytest.mark.parametrize("padded", [False, True])
+def test_a_quote_copied_with_read_file_line_numbers_still_applies(tmp_path, padded):
     _seed(tmp_path, "app.py", "def f():\n    a = 1\n    b = 2\n    return a + b\n")
     ex = ToolExecutor(workspace=str(tmp_path))
     numbered = _call(ex, "read_file", {"path": "app.py"})["content"].split("\n")
-    assert numbered[1] == "   2|     a = 1", numbered
+    assert numbered[1] == "2|     a = 1", numbered
+    if padded:
+        numbered = [f"{line.split('|', 1)[0]:>4}|{line.split('|', 1)[1]}" for line in numbered]
+        assert numbered[1] == "   2|     a = 1"
 
     res = _call(ex, "modify_file", {
         "path": "app.py",

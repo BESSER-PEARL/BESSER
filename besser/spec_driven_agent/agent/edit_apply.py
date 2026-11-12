@@ -411,11 +411,20 @@ def _replace_with_collapsed_blank_runs(
     return result
 
 
-# read_file's own ``NNN| `` form, the only numbering trusted: ``N:`` / ``N\t``
+# read_file's own ``N| `` form, the only numbering trusted: ``N:`` / ``N\t``
 # is also how numeric dict keys and TSV rows start (``200: "OK",``). read_file
 # always puts a space after the pipe (gone only with a blank line's trailing
 # whitespace), so ``1|Alice`` is pipe-delimited data, not a copied gutter.
+# The one description of the gutter: read_file emits ``7| `` (gutter_line);
+# the post-edit echo and reads from before that change pad it (``   7| ``).
+# A quote of either form must strip the same way.
 _PIPE_NUMBERED = re.compile(r"^\s*(\d+)\|(?: |$)")
+
+
+def gutter_line(number: int, line: str) -> str:
+    """One line as read_file displays it. Unpadded: right-aligning the number
+    to 4 columns cost ~10% of a read's tokens for nothing a parser needs."""
+    return f"{number}| {line}"
 
 
 def _strip_line_numbers(lines: list[str]) -> list[str] | None:
@@ -455,34 +464,36 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
             for i, ln in enumerate(lines)]
 
 
-def strip_read_display(lines: list[str]) -> list[str] | None:
+def strip_read_display(lines: list[str], *, unpadded: bool = True) -> list[str] | None:
     """``lines`` without read_file's gutter when they are exactly its display
     of a whole file, else ``None``.
 
     For write_file, whose content is a whole file: unlike a quoted edit there
     is no file text to confirm a looser match, and a numbered table or
     pipe-delimited data would lose its first column. So every line must carry
-    the exact ``f"{n:>4}| "`` prefix, numbered 1, 2, 3, ... A final empty
-    string (content ending in a newline) is not a line.
+    read_file's exact prefix - ``f"{n}| "``, or the padded ``f"{n:>4}| "`` of
+    the post-edit echo and of older reads - numbered 1, 2, 3, ... A final
+    empty string (content ending in a newline) is not a line.
+
+    The unpadded form is also how a numbered table reads (``1| setup | done``),
+    so a caller passes ``unpadded=False`` when the model had no display to
+    copy from: content for a file that does not exist yet.
     """
     body = lines[:-1] if lines and lines[-1] == "" else lines
     if not body:
         return None
     stripped = []
     for number, line in enumerate(body, 1):
-        prefix = f"{number:>4}|"
-        if line == prefix:  # a blank line, its trailing space trimmed
-            stripped.append("")
-        elif line.startswith(prefix + " "):
-            stripped.append(line[len(prefix) + 1:])
+        for prefix in ((f"{number}|", f"{number:>4}|") if unpadded else (f"{number:>4}|",)):
+            if line == prefix:  # a blank line, its trailing space trimmed
+                stripped.append("")
+                break
+            if line.startswith(prefix + " "):
+                stripped.append(line[len(prefix) + 1:])
+                break
         else:
             return None
     return stripped + lines[len(body):]
-
-
-# read_file's gutter on a line that _strip_line_numbers leaves alone because
-# it is a minority - typically one context line copied past the selected range.
-_GUTTER = re.compile(r"^\s*(\d+)\| ?(.*)$")
 
 
 def stray_gutter_line(text: str, file_text: str, existing: str = "") -> tuple[int, str] | None:
@@ -498,12 +509,14 @@ def stray_gutter_line(text: str, file_text: str, existing: str = "") -> tuple[in
     lines = _strip_line_numbers(lines) or lines
     file_lines = file_text.split("\n")
     kept = {line.strip() for line in existing.split("\n")}
+    # A gutter on a line _strip_line_numbers left alone because it is a
+    # minority - typically one context line copied past the selected range.
     for number, line in enumerate(lines, 1):
-        match = _GUTTER.match(line)
+        match = _PIPE_NUMBERED.match(line)
         if not match or line.strip() in kept:
             continue
         shown = int(match.group(1))
-        if 1 <= shown <= len(file_lines) and file_lines[shown - 1].strip() == match.group(2).strip():
+        if 1 <= shown <= len(file_lines) and file_lines[shown - 1].strip() == line[match.end():].strip():
             return number, line
     return None
 

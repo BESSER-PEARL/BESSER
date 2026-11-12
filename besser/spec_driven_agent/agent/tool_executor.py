@@ -71,6 +71,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     locate_chunk,
     replace_most_similar_chunk,
     replacement_spans,
+    gutter_line,
     stray_gutter_line,
     _strip_line_numbers,
     strip_read_display,
@@ -2192,7 +2193,7 @@ class ToolExecutor:
 
     def _read_file(self, args: dict) -> dict:
         """
-        Read a file with optional line-based pagination, numbered ``   7| code``.
+        Read a file with optional line-based pagination, numbered ``7| code``.
 
         Supports offset (start line, 0-indexed) and limit (number of lines)
         for reading specific sections of large files without dumping
@@ -2222,11 +2223,11 @@ class ToolExecutor:
         if limit is not None:
             end = min(start + limit, total_lines)
 
-        # Prefix every line with its TRUE file line number, in the same format
-        # the post-edit echo uses, so a region quoted straight out of this
-        # output lands on modify_file's line-number tier instead of a miss.
+        # Prefix every line with its TRUE file line number, in the gutter
+        # modify_file's line-number tier strips, so a region quoted straight
+        # out of this output lands on that tier instead of a miss.
         selected = "\n".join(
-            f"{n:>4}| {line}"
+            gutter_line(n, line)
             for n, line in enumerate(lines[start:end], start=start + 1)
         )
 
@@ -2552,9 +2553,11 @@ class ToolExecutor:
         # back. Strip it, or a rewrite arriving as "   1| import re" is refused
         # as "unexpected indent at line 1" and resent unchanged (most of Qwen's
         # write_file refusals). Only read_file's exact display of a whole file
-        # counts: numbered data (a .psv id column, "1| setup | done") is kept.
+        # counts: numbered data (a .psv id column) is kept, and so is a new
+        # file's "1| setup | done" table, which no read could have displayed.
         content = args.get("content")
-        unnumbered = strip_read_display(content.split("\n")) if isinstance(content, str) else None
+        unnumbered = (strip_read_display(content.split("\n"), unpadded=os.path.isfile(path))
+                      if isinstance(content, str) else None)
         if unnumbered is not None:
             args = {**args, "content": "\n".join(unnumbered)}
 

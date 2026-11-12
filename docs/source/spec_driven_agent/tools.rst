@@ -42,8 +42,9 @@ them for the requested path.
 this run; a rewrite from memory would drop scaffold code. Like the other
 editors, it refuses an edit that would make the ORM or Pydantic module
 (``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
-``NNN| `` line numbering that ``read_file`` displays is stripped from edit
-text, and only when it is uniform; a single copied numbered line is refused
+``N| `` line numbering that ``read_file`` displays (``7| code``, or the padded
+``   7| code`` of the post-edit echo) is stripped from edit text, and only
+when it is uniform; a single copied numbered line is refused
 rather than guessed at. ``write_file`` strips it only when the content is
 exactly that display of a whole file (every line numbered from 1), so numbered
 data such as a pipe-delimited id column is written as sent; any stripping is

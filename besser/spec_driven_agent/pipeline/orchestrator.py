@@ -2212,7 +2212,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = (
                     "The model hit its output token limit"
                     + (f" ({current_max_tokens} tokens)" if current_max_tokens else "")
-                    + f" on {self._truncation_retries + 1} consecutive turns, so "
+                    # A run total: a complete turn does not reset the count.
+                    + f" on {self._truncation_retries + 1} turns of this run, so "
                     "the generated code may be truncated. The run can be resumed "
                     "to continue from the last completed step, or try a smaller "
                     "scope / fewer files per run."

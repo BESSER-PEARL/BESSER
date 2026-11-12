@@ -207,3 +207,19 @@ def test_retry_budget_is_a_per_run_total(tmp_path):
     orch._run_phase2("build it", extra_issues=[])
 
     assert orch._truncation_retries <= orch._MAX_TRUNCATION_RETRIES
+
+
+def test_the_give_up_message_counts_truncations_across_the_run(tmp_path):
+    """The budget is a run total, so the error must not call the truncated
+    turns consecutive when a complete turn came between them."""
+    list_files = {"stop_reason": "tool_use", "content": [
+        _Block("tool_use", id="t1", name="list_files", input={})]}
+    client = _ScriptedClient([_truncated(), list_files] + [_truncated()] * 4)
+    orch = _orch(tmp_path, client)
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    error = orch._phase2_api_error or ""
+    assert orch._phase2_stop_reason == "api_error"
+    assert "consecutive" not in error
+    assert f"on {orch._MAX_TRUNCATION_RETRIES + 1} turns of this run" in error

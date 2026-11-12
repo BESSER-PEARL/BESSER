@@ -1646,9 +1646,12 @@ def apply(config_path: str = CONFIG_FILENAME) -> Result:
         return _with_tests(result, built, "none collected")
     if process.returncode != 0:
         result.exit_code = EXIT_FAILED
-        result.errors.append(f"the tests failed (exit status {process.returncode}): {command}")
+        error = f"the tests failed (exit status {process.returncode}): {command}"
+        result.errors.append(error)
         result.text = "\n".join([*_failing_lines(output),
                                  f"FAILED: tests (exit status {process.returncode}); build {built.brief}"])
+        # The FAILED line says it: the error, for --json, is not printed a second time on standard error.
+        result.shown_in_text = frozenset({error})
         result.brief = ""
         return result
     return _with_tests(result, built, tail[-1].strip() if tail else "no output")

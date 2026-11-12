@@ -193,7 +193,18 @@ def test_apply_prints_the_end_of_the_output_of_tests_that_fail(besser, model, wr
 
     assert run.returncode == 1
     assert run.stdout.startswith("1 failed\n")
-    assert "error: the tests failed (exit status 3)" in run.stderr
+    assert run.stdout.splitlines()[-1].startswith("FAILED: tests (exit status 3); build OK")
+    assert run.stderr == ""  # the FAILED line says it once; --json has it in errors
+
+
+@needs_pygit2
+def test_apply_says_once_that_the_tests_failed(besser, model, write):
+    _config(write, FAILING_TEST)
+    run = besser("apply", output=None)
+    as_json = besser("apply", "--json")
+
+    assert run.stderr == "" and run.stdout.count("exit status 3") == 1
+    assert as_json.json["errors"][0].startswith("the tests failed (exit status 3): ")
 
 
 @needs_pygit2

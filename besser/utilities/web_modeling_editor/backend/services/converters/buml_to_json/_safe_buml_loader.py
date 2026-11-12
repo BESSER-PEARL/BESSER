@@ -27,19 +27,22 @@ from typing import Any, Dict, Mapping, Set
 
 
 # Stand-in for the ``datetime`` module, for ``allowed_names``. Generated BUML
-# rebuilds element timestamps (and object slot values) with
-# ``datetime.datetime.fromisoformat("...")`` after an ``import datetime`` that
-# the caller strips. Only the ``datetime`` class is exposed, not the module.
+# rebuilds element timestamps with ``datetime.datetime.fromisoformat("...")``,
+# and object slot values with ``datetime.datetime``, ``datetime.date`` or
+# ``datetime.time.fromisoformat("...")``, after an ``import datetime`` that the
+# caller strips. Only these three classes are exposed, not the module.
 #
 # Callers put this sentinel in ``allowed_names``; ``safe_load_buml`` swaps it
 # for a fresh namespace from ``make_safe_datetime_module()`` on every call, so
 # the object an upload actually sees is never shared with another upload.
-SAFE_DATETIME_MODULE = types.SimpleNamespace(datetime=_datetime.datetime)
+SAFE_DATETIME_MODULE = types.SimpleNamespace(
+    datetime=_datetime.datetime, date=_datetime.date, time=_datetime.time,
+)
 
 
 def make_safe_datetime_module() -> types.SimpleNamespace:
     """Return a new, per-load stand-in for the ``datetime`` module."""
-    return types.SimpleNamespace(datetime=_datetime.datetime)
+    return types.SimpleNamespace(datetime=_datetime.datetime, date=_datetime.date, time=_datetime.time)
 
 
 class SafeBumlLoaderError(ValueError):

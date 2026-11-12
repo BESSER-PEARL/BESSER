@@ -4,6 +4,7 @@ Domain Model Builder
 This module generates Python code for BUML domain models and object models.
 """
 
+import datetime
 import keyword
 import logging
 import os
@@ -702,8 +703,8 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
                 # Format the value based on type
                 if isinstance(slot.value.value, str):
                     value_str = f'"{_escape_python_string(slot.value.value)}"'
-                elif hasattr(slot.value.value, 'isoformat'):  # datetime objects
-                    value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
+                elif isinstance(slot.value.value, (datetime.date, datetime.time)):
+                    value_str = _temporal_value_expr(slot.value.value)
                 elif hasattr(slot.value.value, 'owner') and hasattr(slot.value.value.owner, 'name'):
                     # This is an enumeration literal - generate the proper reference
                     enum_var = safe_class_name(slot.value.value.owner.name)
@@ -767,6 +768,13 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
     else:
         f.write("\n")
     f.write(")\n")
+
+
+def _temporal_value_expr(value) -> str:
+    """Python source rebuilding a date, time or datetime slot value with its own type."""
+    # datetime is a subclass of date: test it first.
+    kind = "datetime" if isinstance(value, datetime.datetime) else "date" if isinstance(value, datetime.date) else "time"
+    return f'datetime.{kind}.fromisoformat("{_escape_python_string(value.isoformat())}")'
 
 
 def object_model_to_code(

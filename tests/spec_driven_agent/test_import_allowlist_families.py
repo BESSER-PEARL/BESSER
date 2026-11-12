@@ -284,3 +284,21 @@ def test_a_declared_package_does_not_hide_a_missing_local_module(tmp_path):
     _write(tmp_path, "backend/main.py", "from sql_alchemy import *\nimport strawberry_utils\n")
     problems = _unresolvable_local_imports(str(tmp_path))
     assert len(problems) == 2, problems
+
+
+@pytest.mark.parametrize("source", [
+    "import sys\nif sys.version_info >= (3, 11):\n    import tomllib\nelse:\n    import tomli as tomllib\n",
+    "import contextlib\nwith contextlib.suppress(ImportError):\n    import uvloop\n",
+])
+def test_a_version_or_suppress_guarded_import_is_not_a_missing_module(tmp_path, source):
+    """A backport behind a version check, or an import whose failure is suppressed."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_a_namespace_package_nested_without_top_level_files_resolves(tmp_path):
+    """``services/`` holds only ``billing/``: still importable as a namespace package."""
+    _write(tmp_path, "backend/services/billing/invoice.py", "x = 1\n")
+    _write(tmp_path, "backend/main.py", "from services.billing.invoice import x\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []

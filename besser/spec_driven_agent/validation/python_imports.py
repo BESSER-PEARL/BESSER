@@ -247,12 +247,31 @@ def _is_type_checking(test: _ast.expr) -> bool:
             or (isinstance(test, _ast.Attribute) and test.attr == "TYPE_CHECKING"))
 
 
+def _is_version_check(test: _ast.expr) -> bool:
+    """``sys.version_info ...``: one branch never runs on the app's Python."""
+    return any(isinstance(n, _ast.Attribute) and n.attr == "version_info"
+               for n in _ast.walk(test))
+
+
+def _suppresses_import_failure(node: _ast.With) -> bool:
+    """``with suppress(ImportError):`` / ``with contextlib.suppress(...)``."""
+    return any(
+        isinstance(call, _ast.Call)
+        and isinstance(call.func, (_ast.Name, _ast.Attribute))
+        and (call.func.id if isinstance(call.func, _ast.Name) else call.func.attr) == "suppress"
+        and any(isinstance(arg, (_ast.Name, _ast.Attribute))
+                and (arg.id if isinstance(arg, _ast.Name) else arg.attr) in _IMPORT_FAILURES
+                for arg in call.args)
+        for call in (item.context_expr for item in node.items))
+
+
 def _required_import_roots(node: _ast.AST) -> list[str]:
     """Roots of the absolute imports the app needs in order to start.
 
     Skipped, because the app starts without them: imports inside a ``try``
-    that handles the import failure (and the fallback in its handler), and
-    ``if TYPE_CHECKING:`` imports, which never run.
+    that handles the import failure (and the fallback in its handler) or a
+    ``with suppress(ImportError)``, ``if TYPE_CHECKING:`` imports, which never
+    run, and both branches of a ``sys.version_info`` check (a backport).
     """
     if isinstance(node, _ast.ImportFrom):
         return [node.module.split(".")[0]] if node.module and not node.level else []
@@ -263,6 +282,10 @@ def _required_import_roots(node: _ast.AST) -> list[str]:
         children = [*node.orelse, *node.finalbody]
     elif isinstance(node, _ast.If) and _is_type_checking(node.test):
         children = node.orelse
+    elif isinstance(node, _ast.If) and _is_version_check(node.test):
+        children = []
+    elif isinstance(node, _ast.With) and _suppresses_import_failure(node):
+        children = []
     else:
         children = list(_ast.iter_child_nodes(node))
     return [root for child in children for root in _required_import_roots(child)]
@@ -299,10 +322,15 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
     # PARENT, not only as a sibling of the importing file: e.g.
     # `from core.config import settings` in backend/routers/x.py resolves
     # to backend/core/ when backend/ is the service's cwd.
+    # Every ancestor too: ``services/`` holding only ``billing/`` is still an
+    # importable namespace package.
     for directory in package_dirs:
-        parent = os.path.dirname(directory)
-        if parent and parent != directory:
+        while os.path.normpath(directory) != os.path.normpath(output_dir):
+            parent = os.path.dirname(directory)
+            if not parent or parent == directory:
+                break
             provided.setdefault(parent, set()).add(os.path.basename(directory))
+            directory = parent
 
     declared = _declared_dependency_roots(output_dir)
 

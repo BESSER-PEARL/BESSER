@@ -99,6 +99,17 @@ class GeneratorSpec:
 _DOMAIN = frozenset({"domain"})
 _DOMAIN_GUI = frozenset({"domain", "gui"})
 _HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+# An option of the FastAPI backend, of ``backend`` and of ``web_app``'s backend. Off by default: deployed
+# apps and their clients read the historical shapes. ``besser init`` turns it on for a new project.
+_UNIFORM_RESPONSES = {
+    "type": "boolean",
+    "description": (
+        'POST /x/, PUT /x/{x_id}/ and the items of GET /x/paginated/?detailed=true answer what GET /x/{x_id}/ '
+        'answers ({"x": object} plus the ids per to-many end) for every class; off, only a class with a '
+        "to-many end answers that, others the bare object"
+    ),
+    "default": False,
+}
 _DBMS = ["sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"]
 
 
@@ -225,6 +236,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="backend",
         class_path="besser.generators.backend:BackendGenerator",
+        extra_options={"uniform_responses": _UNIFORM_RESPONSES},
         category="web_framework",
         output_type="zip",
         file_extension=".zip",

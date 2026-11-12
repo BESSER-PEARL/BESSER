@@ -35,6 +35,11 @@ class BackendGenerator(GeneratorInterface):
         api_description (str, optional): Description shown in the generated API docs. Defaults to a generic
                                 description of the generated API.
         api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
+        uniform_responses (bool, optional): ``POST /x/``, ``PUT /x/{x_id}/`` and the items of
+                                ``GET /x/paginated/?detailed=true`` answer what ``GET /x/{x_id}/`` answers
+                                (``{"x": object}`` plus the ids per to-many end) for every class but an
+                                association class. Defaults to False: they answer that only when the class has a
+                                to-many end, else the bare object.
     """
 
     regenerable = True
@@ -42,7 +47,8 @@ class BackendGenerator(GeneratorInterface):
     extension_file = "extensions.py"
 
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
-                 api_title: str = None, api_description: str = None, api_version: str = None):
+                 api_title: str = None, api_description: str = None, api_version: str = None,
+                 uniform_responses: bool = False):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -57,6 +63,7 @@ class BackendGenerator(GeneratorInterface):
         self.api_title = api_title
         self.api_description = api_description
         self.api_version = api_version
+        self.uniform_responses = uniform_responses
         self.config = self.load_config()
         self.has_nn_methods = False
 
@@ -126,6 +133,7 @@ class BackendGenerator(GeneratorInterface):
             api_title=self.api_title,
             api_description=self.api_description,
             api_version=self.api_version,
+            uniform_responses=self.uniform_responses,
         )
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)

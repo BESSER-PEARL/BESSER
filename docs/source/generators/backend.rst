@@ -227,6 +227,63 @@ CRUD Operations
    type; otherwise generation raises ``InvalidDefaultValueError``. See the
    :doc:`release notes </releases/v8/v8.0.0>`.
 
+.. _backend-response-shapes:
+
+Response Shapes
+^^^^^^^^^^^^^^^
+
+For a class ``X`` (``x``: its name in lower case), an *object* is
+``{attributes, "id", "<end>_id" per to-one end}``. ``GET /x/`` answers a list of
+objects, and ``GET /x/{x_id}/`` answers the object with the ids of each to-many end
+beside it:
+
+.. code-block:: json
+
+   {"x": {"id": 1, "name": "...", "owner_id": 4}, "pets_ids": [2, 3], "course_ids": [5]}
+
+The key of a one-to-many end is ``"<end>_ids"``, that of a many-to-many end
+``"<other class>_ids"`` (the other class's name in lower case), and that of an end
+materialized by an association class ``"<end>_ids"``. A class without a to-many end
+answers ``{"x": object}``.
+
+What ``POST /x/`` and ``PUT /x/{x_id}/`` answer depends on the ``uniform_responses``
+option:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - Route
+     - ``uniform_responses=False`` (default)
+     - ``uniform_responses=True``
+   * - ``POST /x/``, ``PUT /x/{x_id}/``
+     - what ``GET /x/{x_id}/`` answers if ``X`` has a to-many end, else the bare object
+     - what ``GET /x/{x_id}/`` answers
+   * - each item of ``GET /x/paginated/?detailed=true``
+     - the same split
+     - what ``GET /x/{x_id}/`` answers
+
+.. code-block:: python
+
+    backend = BackendGenerator(model=library_model, uniform_responses=True)
+
+Without the option, adding a to-many end to a class moves the object its ``POST``
+and ``PUT`` answer from the top level to ``"x"``, so a client of the API breaks on
+an unrelated model edit; with it, the object is always at ``"x"`` and a new end only
+adds a key. The default is off because deployed apps and their clients read the
+historical shapes; ``besser init`` turns it on for a new project
+(``options = { uniform_responses = true }`` in its ``besser.toml``), and the
+:doc:`full_web_app` (``web_app``) takes the same option and passes it to the backend it
+writes (its React frontend reads only the status of a create or update, then the list).
+
+The option changes nothing else: an association class is addressed by the ids of
+its two ends and answers the bare link on ``GET``, ``POST`` and ``PUT`` alike;
+``GET /x/`` and ``GET /x/paginated/`` without ``detailed`` answer bare objects;
+``POST /x/bulk/`` answers ``{"created_count", "created_ids", "message"}``; a method
+route answers ``{"method", "status", "result", "output"}`` with the class name or the
+instance id; the relationship routes under ``/x/{x_id}/<end>/`` answer a message or the
+related objects.
+
 Relationship Management (N:M)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

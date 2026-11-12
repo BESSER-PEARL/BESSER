@@ -942,6 +942,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
+        # Phase 3 keeps only what ``_model_contract_issues`` holds; the
+        # checkpoint's list, restored next, replaces what this appends.
+        self._collect_model_contract_issues()
         self._validation_issues = [
             ValidationIssue(i.get("severity", "warning"), i.get("message", ""))
             for i in checkpoint.validation_issues

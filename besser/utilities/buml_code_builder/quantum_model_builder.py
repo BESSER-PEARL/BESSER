@@ -2,6 +2,8 @@
 Quantum Model Builder: Generates Python code for BESSER QuantumCircuit models.
 """
 
+import itertools
+
 from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header, safe_var_name
 from besser.BUML.metamodel.quantum.quantum import (
     QuantumCircuit, HadamardGate, PauliXGate, PauliYGate, PauliZGate,
@@ -38,10 +40,11 @@ def quantum_model_to_code(model: QuantumCircuit, file_path: str, model_var_name:
         f.write("    GateDefinition\n")
         f.write(")\n\n")
 
-        _write_circuit(f, model, model_var_name)
+        # Gate variables are numbered in writing order, so the same model gives the same code.
+        _write_circuit(f, model, model_var_name, itertools.count(1))
 
-def _write_circuit(f, model: QuantumCircuit, var_name: str):
-    """Helper to write a circuit definition."""
+def _write_circuit(f, model: QuantumCircuit, var_name: str, numbers):
+    """Helper to write a circuit definition; ``numbers`` numbers its gate variables."""
     f.write(f"# Quantum Circuit: {_comment_safe(model.name)}\n")
     total_qubits = sum(reg.size for reg in model.qregs)
     f.write(f"{var_name} = QuantumCircuit(name='{_escape_python_string(model.name)}', qubits={total_qubits})\n\n")
@@ -54,23 +57,25 @@ def _write_circuit(f, model: QuantumCircuit, var_name: str):
 
     # Operations
     for op in model.operations:
-        _write_operation(f, op, var_name)
+        _write_operation(f, op, numbers, var_name)
 
     f.write("\n")
 
-def _write_operation(f, op, qc_var="qc", target_list=None):
+def _write_operation(f, op, numbers, qc_var="qc", target_list=None):
     """
     Helper to write a single operation.
 
     Args:
         f: File handle
         op: The operation object
+        numbers: The iterator that numbers the file's gate variables
         qc_var: Name of the QuantumCircuit variable to add to (if target_list is None)
         target_list: Name of the list variable to append to (if not None)
     """
 
     # Generate a unique variable name for this gate instance
-    gate_var = f"gate_{type(op).__name__}_{id(op)}"
+    number = next(numbers)
+    gate_var = f"gate_{type(op).__name__}_{number}"
 
     # === Specific Gate Classes (check these first as they're subclasses) ===
     if isinstance(op, HadamardGate):
@@ -165,23 +170,23 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
         name_part = safe_var_name(op.name)
         if op.definition and op.definition.circuit:
             # Generate nested circuit code
-            nested_qc_var = f"qc_{name_part}_{id(op)}"
-            _write_circuit(f, op.definition.circuit, nested_qc_var)
+            nested_qc_var = f"qc_{name_part}_{number}"
+            _write_circuit(f, op.definition.circuit, nested_qc_var, numbers)
 
             # Create GateDefinition
-            def_var = f"def_{name_part}_{id(op)}"
+            def_var = f"def_{name_part}_{number}"
             f.write(f"{def_var} = GateDefinition(name='{_escape_python_string(op.name)}', circuit={nested_qc_var})\n")
 
             f.write(f"{gate_var} = FunctionGate(name='{_escape_python_string(op.name)}', target_qubits={op.target_qubits}, definition={def_var})\n")
 
         elif op.gates:
             # Handle explicit gates list
-            gates_list_var = f"gates_{name_part}_{id(op)}"
+            gates_list_var = f"gates_{name_part}_{number}"
             f.write(f"{gates_list_var} = []\n")
 
             # Recursively write each gate in the list
             for g in op.gates:
-                _write_operation(f, g, qc_var=None, target_list=gates_list_var)
+                _write_operation(f, g, numbers, qc_var=None, target_list=gates_list_var)
 
             f.write(f"{gate_var} = FunctionGate(name='{_escape_python_string(op.name)}', target_qubits={op.target_qubits}, gates={gates_list_var})\n")
         else:

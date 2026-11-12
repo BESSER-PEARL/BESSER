@@ -92,11 +92,8 @@ def test_two_refusals_escalate_to_a_rewrite_then_force_a_fresh_read(simple_model
     So the hard steer arrives one refusal later, from the orchestrator's
     own ``_REPEAT_FORCE_AT = 3``: turn 4 instead of turn 3. Both halves are
     asserted, because dropping either one is how this escalation could
-    silently stop happening. The surviving ``replace_file_lines``
-    assertion is that orchestrator reminder's wording, which the ladder
-    change did not update; it is left in place deliberately so that
-    re-pointing it at the rewrite shows up here as a failing test rather
-    than as two guards quietly disagreeing.
+    silently stop happening. That reminder used to name ``replace_file_lines``
+    while the executor named the rewrite; it now quotes the executor's step.
     """
     orch, client = _run(simple_model, tmp_path)
 
@@ -111,7 +108,7 @@ def test_two_refusals_escalate_to_a_rewrite_then_force_a_fresh_read(simple_model
     forced = [n for n, f in client.turns if f == "read_file"]
     assert forced, client.turns
     assert forced[0] == 4, "the hard steer is _REPEAT_FORCE_AT, one refusal later"
-    assert any("replace_file_lines" in t and "app.py" in t for t in client.texts_seen)
+    assert any("read_file on the WHOLE file" in t and "app.py" in t for t in client.texts_seen)
 
 
 def test_ignoring_recovery_is_bounded_but_does_not_freeze_the_file(simple_model, tmp_path):
@@ -154,7 +151,7 @@ def test_a_client_without_force_tool_still_gets_the_message_and_the_stop(simple_
                            output_dir=str(tmp_path), max_turns=20)
     orch.run("Build an app")
     assert orch._phase2_stop_reason == "stuck_edit_loop"
-    assert any("replace_file_lines" in t for t in client.texts_seen)
+    assert any("read_file on the WHOLE file" in t for t in client.texts_seen)
 
 
 def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_path):

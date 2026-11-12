@@ -2347,35 +2347,44 @@ class ToolExecutor:
                     )
         # A modify_file miss that brackets one region, or a stale range edit,
         # already issued a read_id for the span, so steer on the FIRST refusal:
-        # it saves a re-read and a guess at line numbers. located_range carries the read_id, lines and
-        # instruction; the orchestrator reads only next_tool.
+        # it saves a re-read and a guess at line numbers. located_range carries
+        # the read_id, lines and instruction; the orchestrator reads only next_tool.
         located = result.get("located_range")
         if located and self._edit_recovery.get(path, 0) < 2:
             result["edit_recovery"] = {"next_tool": "replace_file_lines"}
             return
-        if (self._edit_recovery.get(path, 0) < 2 or self._frozen(path)
-                or self._unreadable_line(path)):
-            return
-        # Two refused edits on this path -> rewrite the whole file.
-        # NOT because write_file is more reliable (it is not): successful range
-        # edits on a drifted view overwrite neighbouring classes, so ending the
-        # ladder at replace_file_lines measurably loses scaffold code.
+        step = self.rewrite_step(path)
         # Only on the refusal itself: repeating it on every later read of the
         # path cost 11k chars in one recorded loop.
-        if tool in {"modify_file", "replace_file_lines"}:
+        if step and tool in {"modify_file", "replace_file_lines"}:
             # One instruction per result: drop the first-miss aids that point
             # back at piecemeal edits.
             for competing in ("located_range", "did_you_mean", "advice"):
                 result.pop(competing, None)
             result["edit_recovery"] = {
                 "next_tool": "write_file", "path": path,
-                "instruction": "Two edits on this file have been refused. Stop editing it "
-                               "piecemeal: call read_file on the WHOLE file (no offset/limit), "
-                               "then write_file the complete file back with your change "
-                               "applied. Reproduce every line you read - do not summarise, "
-                               "elide, or drop code you were not asked to change. No rejected "
+                "instruction": f"Two edits on this file have been refused. {step} No rejected "
                                "edit was applied; do not mark the requirement done.",
             }
+
+    def rewrite_step(self, path: str) -> str | None:
+        """The ladder's top rung for ``path``, or ``None`` while it does not apply.
+
+        It applies from the second refused edit since the last landed one, on a
+        file that is open and has no line too long to reproduce. NOT because
+        write_file is more reliable (it is not): successful range edits on a
+        drifted view overwrite neighbouring classes, so ending the ladder at
+        replace_file_lines measurably loses scaffold code. The orchestrator's
+        reminders quote this text, so every voice names the same step.
+        """
+        path = self._rel_key(path)
+        if (self._edit_recovery.get(path, 0) < 2 or self._frozen(path)
+                or self._unreadable_line(path)):
+            return None
+        return ("Stop editing it piecemeal: call read_file on the WHOLE file (no offset/limit), "
+                "then write_file the complete file back with your change applied. Reproduce "
+                "every line you read - do not summarise, elide, or drop code you were not "
+                "asked to change.")
 
     def _replace_file_lines(self, args: dict) -> dict:
         """Replace a deliberately selected range from an unchanged, visible read.

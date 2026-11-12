@@ -131,3 +131,52 @@ def test_the_rewrite_step_rides_on_the_refusal_not_on_every_read(service):
     for args in ({}, {"offset": 3, "limit": 5}):
         read = call(service, "read_file", path="svc.py", **args)
         assert "edit_recovery" not in read, read["edit_recovery"]
+
+
+# -- the orchestrator's reminders voice the same ladder ---------------------
+
+
+@pytest.fixture
+def stuck(simple_library_book_model, tmp_path):
+    """An orchestrator whose executor has refused three range edits on app.py."""
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent.providers.llm_client import UsageTracker
+
+    _seed(tmp_path, "app.py", 40)
+    client = type("Client", (), {"model": "mock-model", "usage": UsageTracker("mock-model")})()
+    orch = LLMOrchestrator(llm_client=client, domain_model=simple_library_book_model, output_dir=str(tmp_path))
+    for _ in range(3):
+        refused = _refused_range_edit(orch.executor, "app.py")
+    assert refused["edit_recovery"]["next_tool"] == "write_file"
+    orch._recent_tool_failures.append({"tool": "replace_file_lines", "path": "app.py",
+                                       "error": refused["error"], "rejection_kind": "syntax_error"})
+    return orch
+
+
+def test_the_repeat_escalation_names_the_rewrite_step(stuck):
+    messages: list[dict] = []
+    stuck.executor.last_repeat = ("app.py", stuck._REPEAT_FORCE_AT)
+
+    assert stuck._escalate_repeat_rejection(messages) is False
+
+    text = messages[-1]["content"][0]["text"]
+    assert "read_file on the WHOLE file" in text and "write_file" in text, text
+    assert "use replace_file_lines" not in text and "select the whole enclosing block" not in text
+    assert stuck._force_tool_next == "read_file"
+
+
+def test_the_per_file_reminder_names_the_rewrite_step(stuck):
+    reminder = stuck._build_modify_loop_reminder("app.py")
+
+    assert "syntax guard" in reminder and "NOT applied" in reminder
+    assert "read_file on the WHOLE file" in reminder and "write_file" in reminder, reminder
+    assert "switch to replace_file_lines" not in reminder and "focused edit" not in reminder
+
+
+def test_the_tool_descriptions_name_the_same_ladder():
+    from besser.spec_driven_agent.agent.tools import FILE_TOOLS
+
+    described = {tool["name"]: tool["description"] for tool in FILE_TOOLS}
+    assert "After matching failures, read the target block and use replace_file_lines" not in described["modify_file"]
+    assert "located_range" in described["modify_file"] and "write_file" in described["modify_file"]
+    assert "located_range" in described["replace_file_lines"]

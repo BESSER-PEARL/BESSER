@@ -103,8 +103,8 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "requires a receipt for this exact edit and unchanged post-edit file; "
             "it confirms the edit only, not the whole requirement. A possible_replay "
             "result refuses a duplicate-looking insertion without claiming success. "
-            "After matching failures, read the target block and use replace_file_lines; "
-            "do not keep retyping a failing old_text."
+            "After a miss, use its located_range with replace_file_lines; after two refused "
+            "edits, read the whole file and write_file it back. Do not keep retyping a failing old_text."
         ),
         "input_schema": {
             "type": "object",
@@ -128,7 +128,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "name": "replace_file_lines",
         "description": (
             "Replace a specific range of an existing file WITHOUT quoting old_text. "
-            "Use this after modify_file matching failures or for a complete function/block replacement. "
+            "Use this with the located_range a refused edit returns, or for a complete function/block replacement. "
             "First call read_file on the target block; copy its read_id and select the displayed "
             "1-based start_line and end_line (both inclusive). new_text is the complete literal "
             "replacement, with correct indentation and no numbered prefixes or omitted code. "

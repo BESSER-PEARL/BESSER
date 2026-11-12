@@ -58,16 +58,22 @@ for an array; any other mismatch (a boolean or ``1.5`` for an integer, ``inf``, 
 object for a string, a value outside an ``enum``) is refused with an error naming
 the argument, the expected type and the type received.
 
-After two rejected text edits on a file, the executor provides an explicit
-recovery sequence: ``read_file`` followed by ``replace_file_lines``. This applies
-in customization and validation repair. Repeated quotation failures do not
-permanently freeze the file; an agent that ignores recovery is still bounded by
-the loop and run budgets.
+A refused edit carries one next step (``edit_recovery``), the same in
+customization and validation repair. When a ``modify_file`` miss brackets one
+region, or a range edit's ``read_id`` is stale, the result holds that span as a
+``located_range`` with a fresh ``read_id`` for ``replace_file_lines``. From the
+second refused edit on a file (with no landed edit between), the step is to read
+the whole file and ``write_file`` it back; two targeted edit attempts of either
+kind also unlock ``write_file`` where it is otherwise held back (a large
+generated file, a modify run). The orchestrator's reminders repeat that step.
+Repeated failures do not permanently freeze the file; an agent that ignores
+recovery is still bounded by the loop and run budgets.
 
 ``read_file`` returns a ``read_id`` tied to the resolved path, whole-file content
 hash, and actually displayed lines. ``replace_file_lines`` accepts that ID,
 1-based inclusive ``start_line``/``end_line``, and complete ``new_text``. It does
-not require reproducing the old text. Unread/truncated ranges, stale IDs,
+not require reproducing the old text. A line longer than one read's cap is
+shown clipped and never authorized by a ``read_id``. Unread/truncated ranges, stale IDs,
 no-ops, new elisions, and changes that break previously valid Python syntax are
 refused without writing. After a successful edit, read again before another
 same-file range edit. IDs are session-local and expire on resume. The tool shares

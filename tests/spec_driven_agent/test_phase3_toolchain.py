@@ -325,6 +325,9 @@ def test_fix_loop_prompt_never_asks_for_run_command_with_shell_tools_off(tmp_pat
     assert "invoke run_command" not in text
     assert "using run_command" not in text
     assert "do not call run_command" in text
+    # The re-checks are named as the harness's, not as run_command calls.
+    assert "run_command:" not in text and "working_dir=" not in text
+    assert "- `npx tsc --noEmit` in ." in text
 
 
 def test_fix_loop_prompt_cargo_command(tmp_path) -> None:

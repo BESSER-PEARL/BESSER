@@ -127,15 +127,17 @@ def _is_android_module(module_dir: str) -> bool:
 
 
 def _toolchain_commands_for(
-    toolchain_blockers: list[ValidationIssue]
+    toolchain_blockers: list[ValidationIssue], *, shell_tools: bool = True
 ) -> list[str]:
     """Pick the right re-run command for each toolchain in the report.
 
     Looks at the prefix on each blocker message (``tsc [...]:``,
     ``cargo [...]:``, ``kotlinc [...]:``) and returns the matching
     command (with the project sub-path) the LLM should invoke via
-    ``run_command`` to verify its fix. The list is deduplicated so
-    the same command isn't suggested twice for a multi-error report.
+    ``run_command`` to verify its fix. Without shell tools there is no
+    ``run_command``, so each line names the check the harness re-runs.
+    The list is deduplicated so the same command isn't suggested twice
+    for a multi-error report.
     """
     commands: list[str] = []
     seen: set[str] = set()
@@ -150,25 +152,17 @@ def _toolchain_commands_for(
             # ``npx tsc --noEmit`` works whether or not tsc is on
             # PATH globally — npm projects nearly always have it
             # installed locally as a devDependency.
-            cmd = (
-                f"run_command: command='npx tsc --noEmit', "
-                f"working_dir='{path}'"
-            )
+            command, working_dir = "npx tsc --noEmit", path
         elif tool == "cargo":
-            cmd = (
-                f"run_command: command='cargo check', "
-                f"working_dir='{path}'"
-            )
+            command, working_dir = "cargo check", path
         elif tool == "kotlinc":
             # The .kt files under the module root, compiled to
             # /dev/null.
-            cmd = (
-                f"run_command: command='kotlinc -nowarn "
-                f"-d /tmp/out $(find {path} -name \"*.kt\")', "
-                f"working_dir='.'"
-            )
+            command, working_dir = f'kotlinc -nowarn -d /tmp/out $(find {path} -name "*.kt")', "."
         else:  # pragma: no cover - defensive
             continue
+        cmd = (f"run_command: command='{command}', working_dir='{working_dir}'" if shell_tools
+               else f"`{command}` in {working_dir}")
         if cmd not in seen:
             commands.append(cmd)
             seen.add(cmd)

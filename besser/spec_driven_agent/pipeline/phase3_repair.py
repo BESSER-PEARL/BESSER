@@ -1286,7 +1286,7 @@ class Phase3RepairMixin:
 
     def _toolchain_commands_for(self, toolchain_blockers: list[ValidationIssue]) -> list[str]:
         """Delegate to the toolchain module."""
-        return _toolchain_commands_for(toolchain_blockers)
+        return _toolchain_commands_for(toolchain_blockers, shell_tools=self.allow_shell_tools)
 
     def _build_toolchain_reminder(self, toolchain_blockers: list[ValidationIssue]) -> str:
         """Delegate to the toolchain module."""

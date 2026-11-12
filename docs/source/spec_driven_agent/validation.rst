@@ -138,9 +138,15 @@ configured ``npm run build`` is checked only when both toolchain validation and
 shell tools are explicitly enabled and its dependencies are already installed.
 Validation never installs packages or enables shell access. Configured checks
 execute generated build scripts under that explicit permission, inside a fresh
-bubblewrap sandbox with no network. Source is checked before and after execution. Results
-are reused only for unchanged source and dependency-install markers during the
-same run; source changes during a build invalidate its result. With shell tools
+bubblewrap sandbox with no network. Source is checked before and after execution. Results,
+failures included, are reused only for unchanged source and dependency-install
+markers during the same run; source changes during a build invalidate its
+result. The same holds for ``tsc`` (also keyed by the compiler it would use),
+``cargo check``, ``kotlinc`` and the ``pip install --dry-run`` check: Phase 3
+re-validates after rounds that edit nothing and after a rollback, and those
+passes do not run the same check on the same tree again. A check that did not
+finish (a timeout, no sandbox, an unreachable package index, unfetched crates)
+gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
 

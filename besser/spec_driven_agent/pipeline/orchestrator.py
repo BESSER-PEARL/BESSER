@@ -138,6 +138,7 @@ from besser.spec_driven_agent.validation.docker_context import (
     dockerfile_copy_issues,
     missing_copy_manifests,
 )
+from besser.spec_driven_agent.validation.frontend_build import install_markers
 from besser.spec_driven_agent.validation.python_imports import (
     _declared_dependency_roots as _declared_dependency_roots,
     _import_smoke_issues,
@@ -3148,35 +3149,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
                         if rel.startswith(_SNAPSHOT_DIR):
                             continue
-                        try:
-                            # Dry-run install to check for conflicts
-                            req_dir = os.path.dirname(req_path)
-                            result = run_confined(
-                                [sys.executable, "-m", "pip", "install",
-                                 "--dry-run", "-r", "requirements.txt", "--quiet"],
-                                workspace=self.output_dir, network=True,
-                                timeout=30,
-                                cwd=req_dir,
-                                # Never expose provider keys / OAuth secrets to a
-                                # (possibly untrusted) requirements.txt's build
-                                # backend, which pip may execute to resolve sdists.
-                                env=_safe_subprocess_env(),
-                            )
-                            if result.returncode != 0:
-                                issue = dependency_check_issue(rel, result.stderr)
-                                if issue:
-                                    raw_issues.append(issue)
-                        except SandboxUnavailable as exc:
-                            raw_issues.append(_check_did_not_run(
-                                f"the dependency check for {rel}",
-                                str(exc)))
-                        except Exception as exc:
-                            # A timeout is "not checked", never "no conflict".
-                            reason = ("timed out after 30s"
-                                      if isinstance(exc, subprocess.TimeoutExpired)
-                                      else type(exc).__name__)
-                            raw_issues.append(_check_did_not_run(
-                                f"the dependency check for {rel}", reason))
+                        raw_issues.extend(self._revision_cached(
+                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel)))
 
         # Static checks catch per-project compile errors that would
         # otherwise only surface at deploy time. ruff is near-instant
@@ -3289,14 +3263,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "the frontend form check", f"it crashed: {type(exc).__name__}"))
 
         from besser.spec_driven_agent.validation.frontend_build import collect_frontend_build_issues
-        build_cache = getattr(self, "_successful_frontend_builds", {})
-        self._successful_frontend_builds = build_cache
+        build_verdicts = vars(self).setdefault("_frontend_build_verdicts", {})
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
             allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
-            successful_builds=build_cache, can_run=self._verification_call_allowed,
+            build_verdicts=build_verdicts, can_run=self._verification_call_allowed,
             timeout=remaining,
         ))
 
@@ -4019,12 +3992,78 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Delegate to the toolchain module."""
         return _ruff_line_path(line)
 
+    # Skips that a compiler run reports next to its verdict and whose cause is
+    # in the cache key (node_modules markers, the tree). Any other "did not
+    # run" - timeout, no sandbox, launch failure, unfetched crates, no network,
+    # a missing or disabled tool - keeps the result out of the cache: a later
+    # attempt may run, and those skips cost seconds, not minutes.
+    _STABLE_SKIP_REASONS = (
+        "dependencies are not installed; only partial source checks are possible",
+        "Android module: the build server has no Android SDK",
+    )
+
+    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]]) -> list[str]:
+        """``collect()``'s findings, reused for the same tree and ``inputs``.
+
+        Phase 3 re-validates after no-edit rounds and after a rollback
+        restore; tsc, cargo, kotlinc and the pip dry-run cost up to 30-180 s
+        each for an answer that cannot have changed. A failure is a verdict
+        and is reused too; a result holding a check that did not run is not.
+        Keyed by revision, not just the latest one, so a restored tree hits.
+        In memory only, per run, like ``_runtime_probe_issues``.
+        """
+        results = vars(self).setdefault("_check_results", {})
+        key = (check, self._workspace_revision(), inputs)
+        if key in results:
+            return list(results[key])
+        issues = collect()
+        if not any(issue.startswith("validation")
+                   and not any(reason in issue for reason in self._STABLE_SKIP_REASONS)
+                   for issue in issues):
+            results[key] = list(issues)
+        return issues
+
+    def _pip_dry_run_issues(self, rel: str) -> list[str]:
+        """``pip install --dry-run`` of one requirements file, sandboxed."""
+        try:
+            result = run_confined(
+                [sys.executable, "-m", "pip", "install",
+                 "--dry-run", "-r", "requirements.txt", "--quiet"],
+                workspace=self.output_dir, network=True,
+                timeout=30,
+                cwd=os.path.dirname(os.path.join(self.output_dir, rel)),
+                # Never expose provider keys / OAuth secrets to a
+                # (possibly untrusted) requirements.txt's build
+                # backend, which pip may execute to resolve sdists.
+                env=_safe_subprocess_env(),
+            )
+        except SandboxUnavailable as exc:
+            return [_check_did_not_run(f"the dependency check for {rel}", str(exc))]
+        except Exception as exc:
+            # A timeout is "not checked", never "no conflict".
+            reason = ("timed out after 30s"
+                      if isinstance(exc, subprocess.TimeoutExpired)
+                      else type(exc).__name__)
+            return [_check_did_not_run(f"the dependency check for {rel}", reason)]
+        issue = dependency_check_issue(rel, result.stderr) if result.returncode != 0 else None
+        return [issue] if issue else []
+
     def _collect_tsc_issues(self) -> list[str]:
-        """Delegate to the toolchain module."""
-        return _collect_tsc_issues(
-            self.output_dir, self.allow_shell_tools,
-            self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
-        )
+        """Delegate to the toolchain module, once per tree, install state and
+        compiler choice (host ``tsc``/``npm``, a project-local ``tsc``)."""
+        local_tsc = os.path.join("node_modules", ".bin", "tsc.cmd" if os.name == "nt" else "tsc")
+        installs = tuple(
+            (folder, install_markers(os.path.join(self.output_dir, folder)),
+             os.path.isfile(os.path.join(self.output_dir, folder, local_tsc)))
+            for folder in sorted({rel.rpartition("/")[0] for rel in self._workspace_file_list()
+                                  if rel.rpartition("/")[2] == "tsconfig.json"}))
+        tools = tuple(shutil.which(name) for name in ("tsc", "tsc.cmd", "npm", "npm.cmd"))
+        return self._revision_cached(
+            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs),
+            lambda: _collect_tsc_issues(
+                self.output_dir, self.allow_shell_tools,
+                self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
+            ))
 
     @classmethod
     def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:
@@ -4050,12 +4089,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return _demote_tsc_without_deps(err_lines, rel, issues)
 
     def _collect_cargo_issues(self) -> list[str]:
-        """Delegate to the toolchain module."""
-        return _collect_cargo_issues(self.output_dir)
+        """Delegate to the toolchain module, once per tree."""
+        return self._revision_cached("cargo", (), lambda: _collect_cargo_issues(self.output_dir))
 
     def _collect_kotlinc_issues(self) -> list[str]:
-        """Delegate to the toolchain module."""
-        return _collect_kotlinc_issues(self.output_dir)
+        """Delegate to the toolchain module, once per tree."""
+        return self._revision_cached("kotlinc", (), lambda: _collect_kotlinc_issues(self.output_dir))
 
     # ==================================================================
     # Snapshot / Rollback

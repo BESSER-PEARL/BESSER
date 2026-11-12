@@ -413,7 +413,7 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
     monkeypatch.setattr(sandbox_mod, "run_confined", build)
     monkeypatch.setenv("OPENAI_API_KEY", "never-pass-this-to-build")
-    options = dict(source_revision=orch._workspace_revision, successful_builds=cache, can_run=lambda: True)
+    options = dict(source_revision=orch._workspace_revision, build_verdicts=cache, can_run=lambda: True)
     for enabled, allowed in ((False, True), (True, False), (True, True)):
         findings = collect_frontend_build_issues(str(tmp_path), enabled=enabled, allow_shell=allowed, **options)
         assert len(findings) == 1 and is_completion_issue(_classify_issue(findings[0]))
@@ -437,6 +437,10 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
     mode["outcome"] = "fail"
     findings = collect_frontend_build_issues(str(tmp_path), enabled=True, allow_shell=True, **options)
     assert _classify_issue(findings[0]).severity == "blocker"
+    builds = len(calls)
+    assert collect_frontend_build_issues(str(tmp_path), enabled=True, allow_shell=True, **options) == findings
+    assert len(calls) == builds, "a failure is a verdict on this source too"
+    source.write_text("export const value = 4;")
     mode["outcome"] = "timeout"
     findings = collect_frontend_build_issues(str(tmp_path), enabled=True, allow_shell=True, **options)
     assert _classify_issue(findings[0]).severity == "warning" and "timed out" in findings[0]

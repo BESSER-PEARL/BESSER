@@ -304,9 +304,18 @@ opinion alone does not. Cancellation is checked between repair and validation,
 so stopping a run does not trigger another paid coverage judgment.
 
 Repair prompts retain the original specification, current files/symbols, actual
-action handlers and recent rejected operations. Excerpts use the file/line
-formats emitted by the checks. Unchanged source is not counted as repair
-progress merely because a judge's blocker count changed.
+action handlers and recent rejected operations. The parts that are fixed for the
+run (the original specification, the inspection handoff, the domain model and the
+requirements ledger) form the system prompt, identical in every repair round so
+the provider can serve it from its prompt cache; each round's message carries the
+files, the blockers and the excerpts. The action handlers and the relationship
+mutation coverage are sent only when a blocker concerns behaviour, not for a round
+whose blockers are all syntax, import, lint, compiler or dependency errors. The
+prompt lists at most 30 blockers in repair order, counts the rest by kind, cuts a
+message over 1,200 characters with a marker, and names a requirement already in
+the ledger by its id. Validation still records and reports every blocker.
+Excerpts use the file/line formats emitted by the checks. Unchanged source is not
+counted as repair progress merely because a judge's blocker count changed.
 
 Requirement judgments are cached by source/configuration revision. A single
 bounded citation-repair judgment may revisit only unverified entries without a

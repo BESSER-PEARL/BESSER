@@ -85,7 +85,8 @@ def test_a_failed_tool_never_shows_the_server_path(executor):
     os.makedirs(os.path.join(executor.workspace, "dir1"))
     error = _run(executor, "write_file", {"path": "dir1", "content": "x"})["error"]
     assert executor.workspace not in error
-    assert error == "write_file failed: Is a directory: dir1"
+    # The link-safe open refuses anything that is not a regular file.
+    assert error == "write_file failed: not a regular file: dir1"
 
 
 def test_an_os_error_outside_the_workspace_names_only_the_file(executor, monkeypatch):

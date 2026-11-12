@@ -254,7 +254,8 @@ Storage and lifecycle
 - ``BESSER_LLM_RUN_WORKSPACE_ROOT`` -- Persistent parent directory for run
   workspaces and checkpoints (default: the OS temp directory).
 - ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (1800) -- How long an output stays
-  downloadable.
+  downloadable, and how long a finished run's events stay replayable. The run's
+  status record is kept for 24 hours, as long as its workspace can be resumed.
 - ``BESSER_LLM_CANCEL_ABANDONED_RUNS`` (on) and
   ``BESSER_LLM_DISCONNECTED_GRACE_SECONDS`` (``300``) -- How long a run with no
   subscribers keeps going before it is cooperatively cancelled through the

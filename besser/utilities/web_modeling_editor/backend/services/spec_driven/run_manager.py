@@ -58,6 +58,9 @@ TERMINAL_RUN_STATUSES = frozenset(
 _NON_TERMINAL_ERROR_CODES = frozenset({"COST_CAP", "TIMEOUT", "INCOMPLETE"})
 _DEFAULT_DB_NAME = "besser_spec_driven_runs.sqlite3"
 _HEARTBEAT_SECONDS = 15.0
+# Run rows outlive their events this long: services/cleanup.py removes a run's
+# (resumable) workspace after 24 h, and a resume must continue its numbering.
+_RUN_RECORD_RETENTION_SECONDS = 24 * 3600
 
 
 @dataclass(frozen=True)
@@ -500,18 +503,32 @@ class SqliteRunEventStore:
         return events
 
     def sweep_expired(self, ttl_seconds: int) -> int:
-        """Delete finished runs idle longer than ``ttl_seconds``; return the count."""
-        cutoff = time.time() - max(1, ttl_seconds)
+        """Delete the events of finished runs idle longer than ``ttl_seconds``; return how many runs.
+
+        The small run row (with ``last_sequence``) stays until no workspace of
+        the run can still be resumed, so a later resume keeps numbering.
+        """
+        now = time.time()
+        events_cutoff = now - max(1, ttl_seconds)
+        record_cutoff = now - max(ttl_seconds, _RUN_RECORD_RETENTION_SECONDS)
         with self._lock, self._conn:
-            cursor = self._conn.execute(
-                """
-                DELETE FROM spec_runs
-                 WHERE updated_at < ?
-                   AND status NOT IN ('queued', 'running')
-                """,
-                (cutoff,),
+            expired = """
+                SELECT run_id FROM spec_runs
+                 WHERE updated_at < ? AND status NOT IN ('queued', 'running')
+            """
+            swept = self._conn.execute(
+                f"SELECT COUNT(DISTINCT run_id) FROM spec_run_events WHERE run_id IN ({expired})",
+                (events_cutoff,),
+            ).fetchone()[0]
+            self._conn.execute(
+                f"DELETE FROM spec_run_events WHERE run_id IN ({expired})",
+                (events_cutoff,),
             )
-            return max(0, cursor.rowcount)
+            self._conn.execute(
+                f"DELETE FROM spec_runs WHERE run_id IN ({expired})",
+                (record_cutoff,),
+            )
+            return int(swept)
 
     def clear(self) -> None:
         """Remove all records. Intended for isolated tests only."""

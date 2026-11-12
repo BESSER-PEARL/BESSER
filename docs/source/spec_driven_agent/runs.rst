@@ -57,7 +57,9 @@ runs survive a dropped connection:
   larger of the two cursors wins, so a stale query value can't replay
   duplicates. A resumed run drops the previous attempt's frames but keeps
   numbering from where it stopped, so a cursor from that attempt replays the
-  whole new attempt.
+  whole new attempt. A finished run's events are deleted after
+  ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``; its status record stays for 24 hours,
+  as long as its workspace can be resumed, so numbering continues after that too.
 
 .. code-block:: bash
 

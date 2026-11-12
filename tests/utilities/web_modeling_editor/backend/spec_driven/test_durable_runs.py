@@ -884,3 +884,66 @@ def test_a_store_failure_recording_the_terminal_status_does_not_escape():
         store.close()
 
     asyncio.run(exercise())
+
+
+def _age_run(store: SqliteRunEventStore, run_id: str, seconds: float) -> None:
+    """Move a run's last update ``seconds`` into the past."""
+    with store._conn:
+        store._conn.execute(
+            "UPDATE spec_runs SET updated_at = updated_at - ? WHERE run_id = ?",
+            (seconds, run_id),
+        )
+
+
+def test_resume_after_the_events_were_swept_keeps_numbering():
+    """The sweep (download TTL, 30 min) deleted the whole run row while the
+    checkpointed workspace stays resumable for 24 h; a later resume then
+    restarted numbering at 1 and a client holding cursor 30 missed the new
+    attempt's first 30 frames (``start`` and phase among them)."""
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "6" * 32
+        ttl = 1800
+
+        def frames(count: int):
+            async def source():
+                yield _start(run_id)
+                for i in range(count):
+                    yield format_sse(ErrorEvent(code="COST_CAP", message=f"warn-{i}"))
+                yield format_sse(ErrorEvent(code="CANCELLED", message="stopped"))
+            return source()
+
+        await manager.start(run_id, frames(28))
+        await manager.wait(run_id)
+        cursor = manager.get_run(run_id).last_sequence
+        assert cursor == 30
+
+        _age_run(store, run_id, ttl + 60)
+        assert store.sweep_expired(ttl) == 1
+        assert store.events_after(run_id, 0) == [], "the sweep must still drop the events"
+
+        await manager.start(run_id, frames(58), resume=True)
+        await manager.wait(run_id)
+        got = [_payload(f) async for f in manager.subscribe(run_id, after_sequence=cursor)]
+
+        assert len(got) == 60
+        assert got[0]["event"] == "start"
+        assert got[0]["sequence"] == cursor + 1
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_sweep_drops_the_run_record_once_no_workspace_can_be_resumed():
+    store = SqliteRunEventStore(":memory:")
+    run_id = "5" * 32
+    store.begin_run(run_id)
+    store.append(run_id, _start(run_id))
+    store.set_status(run_id, "cancelled", terminal_event="CANCELLED")
+
+    _age_run(store, run_id, 25 * 3600)
+    store.sweep_expired(1800)
+
+    assert store.get_run(run_id) is None
+    store.close()

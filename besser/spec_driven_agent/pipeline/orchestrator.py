@@ -1828,6 +1828,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # contains whatever task list the original run established.
             gap_tasks: list[str] | None = None
             messages = list(self._resume_messages or [])
+        elif budget_stop := self._budget_stop_reason():
+            # Phase 1 / 1.5 can outlast a cap or a cancel; the loop below
+            # records the stop reason before any call.
+            logger.warning("Phase 2: gap analysis skipped: %s", budget_stop)
+            gap_tasks = None
+            messages = [self._kickoff_message(instructions)]
         else:
             gap_tasks = analyze_gaps_via_llm(
                 instructions=self._planner_instructions(instructions),

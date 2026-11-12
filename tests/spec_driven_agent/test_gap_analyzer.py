@@ -289,6 +289,35 @@ def test_phase2_not_skipped_when_scoped_issues_present(tmp_path, monkeypatch):
     assert client.chat_calls == 1
 
 
+@pytest.mark.parametrize("stop", ["cancelled", "cost_cap", "timeout"])
+def test_gap_analysis_not_paid_once_the_run_must_stop(tmp_path, monkeypatch, stop):
+    """A run cancelled, over its cost cap or past its runtime before Phase 2
+    (e.g. during Phase 1 or the Phase 1.5 toolchain checks) does not pay for
+    the planning call; the Phase 2 loop then stops with that reason."""
+    import time
+    client = _MockClient()
+    orch = _make_orchestrator(tmp_path, client)
+    orch._generator_used = "generate_fastapi_backend"
+    orch._start_time = time.monotonic()
+    if stop == "cancelled":
+        orch._should_continue = lambda: False
+    elif stop == "cost_cap":
+        client.usage.seed_cost(orch.max_cost_usd + 0.5)
+    else:
+        orch._start_time -= orch.max_runtime_seconds + 1
+    planning_calls = []
+    monkeypatch.setattr(
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
+        lambda **kwargs: planning_calls.append(kwargs) or ["a task"],
+    )
+
+    orch._run_phase2("build a library api", extra_issues=[])
+
+    assert planning_calls == []
+    assert client.chat_calls == 0
+    assert orch._phase2_stop_reason == stop
+
+
 # ----------------------------------------------------------------------
 # write_file guardrail relaxation
 # ----------------------------------------------------------------------

@@ -262,8 +262,11 @@ def test_a_change_that_makes_the_model_invalid_writes_nothing(edit):
     (("add-attribute", "Book", "isbn"), "'isbn' is not an attribute: write name:type"),
     (("add-attribute", "Book", "title:str"), "'title' exists already"),
     (("add-attribute", "Book", "year:Date"), "'Date' is not a type: did you mean date? write str, int, float, "
-                                             "bool, date, datetime, time, timedelta, any, or a class or "
-                                             "enumeration of Library (Book, Library)"),
+                                             "bool, date, datetime, time, timedelta, any, or an enumeration "
+                                             "of Library (none)"),  # an attribute holds no class
+    (("add-method", "Book", "lend(to:Reader) -> bool"), "'Reader' is not a type: write str, int, float, bool, "
+                                                        "date, datetime, time, timedelta, any, or a class or "
+                                                        "enumeration of Library (Book, Library)"),
     (("add-attribute", "Book", "price:decimal"), "'decimal' is not a type: write str, int,"),
     (("add-attribute", "Book", "isbn:String"), "did you mean str?"),
     (("add-attribute", "Shelf", "year:int"), "has no class named 'Shelf' (it has: Book, Library)"),

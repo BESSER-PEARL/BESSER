@@ -606,19 +606,20 @@ class ModelEditor:
             statements.append(model)
         return min(statements, key=lambda statement: statement.lineno, default=None)
 
-    def type_code(self, name: str) -> str:
-        """How the file refers to the type ``name``: a primitive's constant or a class's variable."""
+    def type_code(self, name: str, kinds: tuple[type, ...] = (Class, Enumeration)) -> str:
+        """How the file refers to the type ``name``: a primitive's constant or the variable of a class or
+        enumeration (of ``kinds``: an attribute's type is never a class)."""
         name = _TYPE_ALIASES.get(name, name)
         if name in PRIMITIVE_TYPES:
             return self._structural(PRIMITIVE_TYPES[name])
         element = self.model.get_type_by_name(name)
-        if not isinstance(element, (Class, Enumeration)):
+        if not isinstance(element, kinds):
             primitive = _TYPE_ALIASES.get(name.lower(), name.lower())
             hint = f"did you mean {primitive}? " if primitive in PRIMITIVE_TYPES else ""
-            known = ", ".join(sorted(t.name for t in self.model.types
-                                     if isinstance(t, (Class, Enumeration)))) or "none"
-            raise EditError(f"'{name}' is not a type: {hint}write {', '.join(PRIMITIVE_TYPES)}, or a class or "
-                            f"enumeration of {self.model.name} ({known})")
+            known = ", ".join(sorted(t.name for t in self.model.types if isinstance(t, kinds))) or "none"
+            described = "a class or enumeration" if Class in kinds else "an enumeration"
+            raise EditError(f"'{name}' is not a type: {hint}write {', '.join(PRIMITIVE_TYPES)}, or {described} "
+                            f"of {self.model.name} ({known})")
         var = self.var_of(element)
         if var is None:
             raise EditError(f"'{name}' has no variable in {self.path.name} to refer to it by; give it one")
@@ -640,7 +641,7 @@ class ModelEditor:
             raise EditError(f"'{type_name}' is a class: an attribute cannot hold a class, an association links "
                             f"them: besser model add-association {_snake(owner)}_{name} {role}:{owner}[*] "
                             f"{name}:{type_name}[{'0..1' if optional else '1'}]")
-        code = f"{self._structural('Property')}(name={_q(name)}, type={self.type_code(type_name)}"
+        code = f"{self._structural('Property')}(name={_q(name)}, type={self.type_code(type_name, (Enumeration,))}"
         if optional:
             code += ", is_optional=True"
         if default is not None:

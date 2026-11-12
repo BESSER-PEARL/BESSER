@@ -199,6 +199,25 @@ def test_a_file_swapped_for_a_link_after_the_walk_never_reaches_the_zip(tmp_path
         assert all(SECRET not in archive.read(n).decode("utf-8") for n in archive.namelist())
 
 
+@pytest.mark.parametrize("year", [1975, 2200])
+def test_a_file_dated_outside_the_zip_range_does_not_fail_the_packaging(tmp_path, year):
+    # ZIP stores years 1980-2107 only; the run's shell can ``touch -d`` any date.
+    workspace = tmp_path / "besser_llm_ws"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (workspace / "app.py").write_text("app = 1\n", encoding="utf-8")
+    import datetime
+    stamp = datetime.datetime(year, 6, 1).timestamp()
+    os.utime(workspace / "app.py", (stamp, stamp))
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+    runner.temp_dir = str(workspace)
+
+    _done, entry = runner._package_result(str(workspace))
+
+    with zipfile.ZipFile(entry.file_path) as archive:
+        assert archive.read("app.py") == b"app = 1\n"
+
+
 def test_seed_and_push_copy_never_follow_a_link_swapped_in_after_the_check(tmp_path, monkeypatch):
     from besser.utilities import workspace_fs
 

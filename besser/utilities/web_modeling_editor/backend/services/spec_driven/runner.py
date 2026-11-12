@@ -197,14 +197,19 @@ def _remove_run_dir(path: str) -> None:
 
 
 
+# The range of a ZIP entry's DOS timestamp.
+_ZIP_FIRST_STAMP = (1980, 1, 1, 0, 0, 0)
+_ZIP_LAST_STAMP = (2107, 12, 31, 23, 59, 58)
+
+
 def _zip_plain_file(zf: zipfile.ZipFile, path: str, arcname: str, root: str) -> None:
     """Add ``path`` to ``zf`` through a link-refusing open, so a file the run's
     shell swaps for a link after the walk is left out, not read through."""
     try:
         with open_plain(path, "rb", root=root) as src:
             info = os.fstat(src.fileno())
-            # ZIP has no timestamp before 1980; a file touched earlier must not fail the packaging.
-            stamp = max(time.localtime(info.st_mtime)[:6], (1980, 1, 1, 0, 0, 0))
+            # ZIP stores years 1980-2107 only; a file touched outside them must not fail the packaging.
+            stamp = min(max(time.localtime(info.st_mtime)[:6], _ZIP_FIRST_STAMP), _ZIP_LAST_STAMP)
             entry = zipfile.ZipInfo(arcname.replace(os.sep, "/"), stamp)
             entry.external_attr = (info.st_mode & 0xFFFF) << 16  # keeps the executable bit, as zf.write does
             entry.compress_type = zipfile.ZIP_DEFLATED

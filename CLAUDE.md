@@ -313,3 +313,17 @@ Keep `docs/source/` in step with code:
 - **Open pull requests against `development`, not `master`.**
 - `.github/copilot-instructions.md` and `.cursorrules` only point here — edit `CLAUDE.md`, not them.
   See also `CONTRIBUTING.md`, `DEVELOPMENT_SETUP.md`, `GOVERNANCE.md`.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues via `gh` (this repo, plus the web editor and modeling-agent with `--repo`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. See `docs/agents/domain.md`.

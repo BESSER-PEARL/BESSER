@@ -16,6 +16,7 @@ import threading
 import pytest
 
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.utilities import workspace_fs
 
 CONTENT = "alpha = 1\n"
 SECRET = "OPENAI_API_KEY=sk-live-must-not-leak\n"
@@ -159,3 +160,72 @@ def test_task_evidence_does_not_read_through_a_swapped_link(monkeypatch, setup):
         {"id": 1, "path": rel, "quote": "sk-live-must-not-leak"}], "existing": True})
 
     assert error and "not a readable workspace file" in error, error
+
+
+# -- FIFOs: never opened, never block the per-path lock ---------------------
+
+needs_mkfifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no mkfifo on this platform")
+
+
+@needs_mkfifo
+@pytest.mark.parametrize("tool,args", [
+    ("write_file", {"content": "x"}),
+    ("read_file", {}),
+    ("check_syntax", {}),
+])
+def test_a_fifo_is_refused_without_blocking(setup, tool, args):
+    executor, workspace, _ = setup
+    os.mkfifo(workspace / "pipe")
+
+    result = call(executor, tool, path="pipe", **args)
+
+    assert "error" in result, result
+
+
+def fifo_after(monkeypatch, owner, attr, target, concerns):
+    """Wrap ``owner.attr`` so that the first call ``concerns`` accepts is
+    followed by ``target`` being replaced with a FIFO (the racer's window)."""
+    real = getattr(owner, attr)
+    armed = [True]
+
+    def checked_then_fifo(*args, **kwargs):
+        answer = real(*args, **kwargs)
+        if armed[0] and concerns(*args, **kwargs):
+            armed[0] = False
+            os.remove(target)
+            os.mkfifo(target)
+        return answer
+
+    monkeypatch.setattr(owner, attr, checked_then_fifo)
+
+
+# Each check a FIFO can slip past: the tool's own isfile, open_plain's lstat,
+# and open_plain_write's lstat of the name it is about to open.
+SWAP_POINTS = {
+    "isfile": lambda target: (os.path, "isfile", lambda path: os.fspath(path) == target),
+    "read_check": lambda target: (workspace_fs, "_refuse_unless_plain_file",
+                                  lambda path, root: os.fspath(path) == target),
+    "write_check": lambda target: (os, "stat", lambda path, *a, follow_symlinks=True, **k:
+                                   not follow_symlinks and os.path.basename(os.fspath(path)) == "x.txt"),
+}
+
+
+@needs_mkfifo
+@pytest.mark.parametrize("tool,args,point", [
+    ("read_file", {}, "isfile"),
+    ("read_file", {}, "read_check"),
+    ("check_syntax", {}, "read_check"),
+    ("modify_file", {"old_text": "alpha = 1", "new_text": "alpha = 2"}, "read_check"),
+    ("modify_file", {"old_text": "alpha = 1", "new_text": "alpha = 2"}, "write_check"),
+    ("write_file", {"content": "beta = 2\n"}, "write_check"),
+])
+def test_a_fifo_swapped_in_after_a_check_does_not_block(monkeypatch, setup, tool, args, point):
+    executor, workspace, _ = setup
+    call(executor, "read_file", path="x.txt")  # write_file needs a full read first
+    target = str(workspace / "x.txt")
+    owner, attr, concerns = SWAP_POINTS[point](target)
+    fifo_after(monkeypatch, owner, attr, target, concerns)
+
+    result = call(executor, tool, path="x.txt", **args)
+
+    assert "error" in result, result

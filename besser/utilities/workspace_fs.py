@@ -58,9 +58,9 @@ def _refuse_link_parents(path: str, root: "str | None") -> str:
     return path
 
 
-# The open never follows a link at the leaf; the type is then checked on the
-# open descriptor.
-_NO_LINK_NO_WAIT = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+# The open never follows a link at the leaf and never waits for a FIFO's
+# other end; the type is then checked on the open descriptor.
+_NO_LINK_NO_WAIT = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
 # O_PATH: a directory handle that needs no read permission (Linux).
 _DIR_HANDLE = getattr(os, "O_PATH", os.O_RDONLY) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 # Where the platform can, each directory below the root is opened relative to

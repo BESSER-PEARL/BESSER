@@ -11,6 +11,9 @@ the object model's values and running ``eval()`` on it, so a crafted value runs
 code. Parsing is safe. Invariants are evaluated only when running the file's
 code was already allowed: a ``.py`` model (it was executed to load it), or
 ``--exec-py``.
+
+``parse_problems`` is the part every validation runs, with or without ``--ocl``:
+it parses each invariant against the model, without evaluating anything.
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ _OCL_EXTRA = 'pip install "besser[ocl]"'
 _OCL_EXTRA_MODULES = frozenset({"bocl", "antlr4"})
 # A message of ``check_ocl_constraint``: an optional marker ("❌", "OCL"), the label, the rest.
 _CHECKER_MESSAGE = re.compile(r"^\S*?\s*(\[[^\]]*\])\s*(.*)$", re.DOTALL)
+# An error of ``parse_problems``: the constraint's name, its class.
+_PARSE_ERROR = re.compile(rf"^{OCL_PREFIX} '([^']*)' on (\S+) does not parse: ")
 
 
 class OclUnavailable(Exception):
@@ -81,6 +86,40 @@ def _message(entry: str) -> tuple[str, str]:
     return label, f"{OCL_PREFIX} {label}: {rest}"
 
 
+def invariant_text(constraint: Any) -> str:
+    """The OCL text of an invariant, with its ``context X inv name:`` header added when it has none."""
+    expression = constraint.expression or ""
+    if expression.lstrip().lower().startswith("context"):
+        return expression
+    return f"context {constraint.context.name} inv {constraint.name}: {expression}"
+
+
+def parse_problems(domain_model: Any) -> tuple[list[str], list[str]]:
+    """The OCL invariants of ``domain_model`` that do not parse against the model, as (errors, warnings).
+
+    The parse is the editor's (``parse_ocl``) and resolves each name in its context class, so an
+    unknown attribute or role is an error as well as a syntax error. Nothing is evaluated, and it
+    needs no optional package. A failure of the parser itself is a warning: the constraint may be fine.
+    """
+    from besser.BUML.metamodel.structural import Class  # pylint: disable=import-outside-toplevel
+    from besser.BUML.notations.ocl.api import parse_ocl  # pylint: disable=import-outside-toplevel
+    from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError  # pylint: disable=import-outside-toplevel
+
+    errors, warnings = [], []
+    for constraint in sorted(getattr(domain_model, "constraints", None) or (), key=lambda c: c.name):
+        if str(constraint.language).upper() != "OCL" or not isinstance(constraint.context, Class):
+            continue
+        try:
+            parse_ocl(invariant_text(constraint), domain_model, context_class=constraint.context)
+        except (BOCLSyntaxError, ValueError) as exc:
+            reason = " ".join(str(exc).split())
+            errors.append(f"{OCL_PREFIX} '{constraint.name}' on {constraint.context.name} does not parse: {reason}")
+        except Exception as exc:  # noqa: BLE001 - a parser defect must not block the model
+            warnings.append(f"{OCL_PREFIX} '{constraint.name}' on {constraint.context.name} not checked: "
+                            f"the OCL parser failed ({type(exc).__name__}: {exc})")
+    return errors, warnings
+
+
 def _instantiates(object_model: Any, domain_model: Any) -> bool:
     """Whether some object of ``object_model`` is an instance of a class of ``domain_model``."""
     types = domain_model.types
@@ -108,10 +147,14 @@ def check_ocl(models: list[LoadedModel], checker: Callable[..., dict[str, Any]],
             outcome.errors.setdefault(id(domain), []).append(f"{OCL_PREFIX}s not checked: {syntax['message']}")
             continue
         broken = set()
+        # Every validation reports the invariants that do not parse (``parse_problems``): not twice.
+        reported = {f"[{context} inv {constraint}]" for constraint, context in
+                    (_PARSE_ERROR.match(error).groups() for error in parse_problems(domain.model)[0])}
         for entry in syntax["invalid_constraints"]:
             label, message = _message(entry)
             broken.add(label)
-            outcome.errors.setdefault(id(domain), []).append(message)
+            if label not in reported:
+                outcome.errors.setdefault(id(domain), []).append(message)
         dropped = getattr(domain.model, "ocl_warnings", None) or []
         outcome.constraints += len(dropped)
         outcome.errors.setdefault(id(domain), []).extend(f"{OCL_PREFIX} dropped: {reason}" for reason in dropped)

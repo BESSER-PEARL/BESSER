@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import builtins
 import io
+import itertools
 import json
 import keyword
 import re
@@ -30,6 +31,8 @@ import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
+
+from antlr4 import InputStream
 
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
@@ -43,7 +46,10 @@ from besser.BUML.metamodel.structural import (
     Method,
     Property,
 )
+from besser.BUML.notations.ocl.api import parse_ocl
+from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
 from besser.cli.loading import LoadedModels, ModelLoadError, load_python_text
+from besser.cli.ocl_check import invariant_text
 
 STRUCTURAL_MODULE = "besser.BUML.metamodel.structural"
 # The type names ``besser info`` prints -> the constants of the structural metamodel.
@@ -54,6 +60,11 @@ PRIMITIVE_TYPES = {
 _TYPE_ALIASES = {"string": "str", "integer": "int", "boolean": "bool", "double": "float"}
 # A set written on one line is wrapped before it grows past this many characters.
 _MAX_LINE = 110
+# A renamed member's name in a constraint: tell which mentions are of the member by trying every choice
+# of them, up to this many mentions in one constraint (2**n parses); with more, the user updates it.
+_MAX_OCL_OCCURRENCES = 6
+# The name a renamed member takes while the constraints are parsed: nothing else in a model has it.
+_OCL_PROBE = "besser_renamed_member_"
 # The method that adds an element to each collection, for an owner the file builds with its own code.
 _ADDERS = {
     "attributes": "add_attribute", "methods": "add_method", "literals": "add_literal", "types": "add_type",
@@ -529,6 +540,10 @@ class ModelEditor:
             return f"{element.owner.name}.{element.name}"
         if isinstance(element, EnumerationLiteral) and element.owner is not None:
             return f"{element.owner.name}.{element.name}"
+        association = self.association_of(element) if isinstance(element, Property) else None
+        if association is not None:  # an end is a member of the class at the other end
+            holder = next((end.type for end in association.ends if end is not element), element.type)
+            return f"{holder.name}.{element.name}"
         if isinstance(element, DomainModel):
             return f"the model {self.model_var}"
         return f"'{getattr(element, 'name', element)}'"
@@ -982,6 +997,8 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
     if new_var is not None:
         _rename_variable(editor, var, new_var)
     _rename_in_constraints(editor, element, old_name, new_name)
+    if isinstance(element, EnumerationLiteral):
+        _rename_defaults(editor, element, new_name)
     new_path = f"{path.rsplit('.', 1)[0]}.{new_name}" if "." in path else new_name
     summary = f"renamed {path} to {new_path}" + (f" (variable {var} -> {new_var})" if new_var else "")
 
@@ -1027,26 +1044,152 @@ def _rename_variable(editor: ModelEditor, old: str, new: str) -> None:
             editor.src.replace(start, start + len(old), new)
 
 
-def _rename_in_constraints(editor: ModelEditor, element: Any, old: str, new: str) -> None:
-    """Update the OCL of the constraints that name the renamed class, member or literal."""
-    if isinstance(element, (Class, Enumeration)):
-        pattern = re.compile(rf"\b{re.escape(old)}\b")
-    elif isinstance(element, Property):
-        pattern = re.compile(rf"(?<=\.){re.escape(old)}\b")
-    elif isinstance(element, EnumerationLiteral):
-        pattern = re.compile(rf"(?<=::){re.escape(old)}\b")
-    else:
-        return
+def _ocl_tokens(expression: str) -> list[Any]:
+    """The tokens of an OCL text (strings are one token each, so a name inside quotes is no name)."""
+    lexer = BOCLLexer(InputStream(expression))
+    lexer.removeErrorListeners()
+    return [token for token in lexer.getAllTokens() if token.channel == 0]
+
+
+def _parses(text: str, model: DomainModel, context: Class) -> bool:
+    try:
+        parse_ocl(text, model, context_class=context)
+    except Exception:  # noqa: BLE001 - any failure: the text does not hold against the model
+        return False
+    return True
+
+
+def _member_occurrences(editor: ModelEditor, member: Property, constraint: Constraint,
+                        candidates: list[Any]) -> list[Any] | None:
+    """Which of ``candidates`` (``.name`` tokens) navigate to ``member``; ``None`` when that cannot be told.
+
+    Two classes may have a member of the same name, so the text alone does not say. The parse does:
+    with ``member`` renamed to a name nothing else has, exactly one choice of the tokens to rename
+    still parses.
+    """
+    text = invariant_text(constraint)
+    shift = len(text) - len(constraint.expression)
+    if len(candidates) > _MAX_OCL_OCCURRENCES or not _parses(text, editor.model, constraint.context):
+        return None
+    old = member.name
+    member.name = _OCL_PROBE
+    try:
+        fits = []
+        for size in range(len(candidates) + 1):
+            for chosen in itertools.combinations(candidates, size):
+                probe = _replace_tokens(text, [(token.start + shift, token.stop + shift) for token in chosen],
+                                        _OCL_PROBE)
+                if _parses(probe, editor.model, constraint.context):
+                    fits.append(list(chosen))
+    finally:
+        member.name = old
+    return fits[0] if len(fits) == 1 else None
+
+
+def _constraints_using(editor: ModelEditor, member: Property, removed: Sequence[Any]) -> list[str]:
+    """The names of the constraints (other than ``removed``) that navigate to ``member``.
+
+    One does when it parses, and no longer does with the member under a name nothing else has.
+    """
+    users = []
     for constraint in sorted(editor.model.constraints, key=lambda c: c.name):
-        if not pattern.search(constraint.expression):
+        if constraint in removed or not isinstance(constraint.context, Class):
+            continue
+        tokens = _ocl_tokens(constraint.expression or "")
+        if not any(token.text == member.name and index and tokens[index - 1].type == BOCLLexer.DOT
+                   for index, token in enumerate(tokens)):
+            continue
+        text = invariant_text(constraint)
+        if not _parses(text, editor.model, constraint.context):
+            continue
+        old = member.name
+        member.name = _OCL_PROBE
+        try:
+            if not _parses(text, editor.model, constraint.context):
+                users.append(constraint.name)
+        finally:
+            member.name = old
+    return users
+
+
+def _replace_tokens(text: str, spans: Iterable[tuple[int, int]], new: str) -> str:
+    """``text`` with each (start, inclusive stop) span replaced by ``new``."""
+    for start, stop in sorted(spans, reverse=True):
+        text = text[:start] + new + text[stop + 1:]
+    return text
+
+
+def _renamed_tokens(editor: ModelEditor, element: Any, constraint: Constraint, old: str) -> list[Any] | None:
+    """The tokens of ``constraint`` that name ``element``, renamed from ``old``; ``None`` when unknown."""
+    tokens = _ocl_tokens(constraint.expression)
+    previous = [None, None, *(token.type for token in tokens)]
+    named = [(index, token) for index, token in enumerate(tokens) if token.text == old]
+    if isinstance(element, (Class, Enumeration)):  # a type name, not a member after "." or "->"
+        return [token for index, token in named if previous[index + 1] not in (BOCLLexer.DOT, BOCLLexer.ARROW)]
+    if isinstance(element, EnumerationLiteral):  # Enum::LITERAL of this enumeration only
+        return [token for index, token in named if previous[index + 1] == BOCLLexer.DOUBLECOLON
+                and index >= 2 and tokens[index - 2].text == element.owner.name]
+    if isinstance(element, Constraint):  # its own "inv name"
+        return [token for index, token in named if previous[index + 1] == BOCLLexer.INV] \
+            if constraint is element else []
+    if isinstance(element, Property):
+        candidates = [token for index, token in named if previous[index + 1] == BOCLLexer.DOT]
+        return _member_occurrences(editor, element, constraint, candidates) if candidates else []
+    return []
+
+
+def _rename_in_constraints(editor: ModelEditor, element: Any, old: str, new: str) -> None:
+    """Update the OCL of the constraints that name the renamed class, member, literal or constraint.
+
+    Only names are rewritten, never text in quotes; a member's name only where it navigates to that
+    member (see ``_member_occurrences``). A constraint left as it was and broken by the rename is
+    caught by the validation the edit has to pass.
+    """
+    for constraint in sorted(editor.model.constraints, key=lambda c: c.name):
+        if old not in (constraint.expression or ""):
+            continue
+        tokens = _renamed_tokens(editor, element, constraint, old)
+        if tokens == []:
             continue
         call = editor.call_of(constraint)
         node = next((k.value for k in call.keywords if k.arg == "expression"), None) if call is not None else None
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            segment = editor.src.segment(node)
-            editor.src.replace(editor.src.start(node), editor.src.end(node), pattern.sub(new, segment))
-        else:
+        if tokens is None or not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             editor.warnings.append(f"constraint {constraint.name} mentions '{old}': update its expression")
+            continue
+        expression = _replace_tokens(node.value, [(token.start, token.stop) for token in tokens], new)
+        editor.src.replace(editor.src.start(node), editor.src.end(node), _string_code(editor.src.segment(node),
+                                                                                       node.value, expression))
+
+
+def _string_code(segment: str, value: str, new_value: str) -> str:
+    """``new_value`` as a Python string literal, quoted as ``segment`` (the literal of ``value``) is when it can."""
+    quote = segment[:1]
+    if quote in ("'", '"') and segment[1:-1] == value and quote not in new_value and "\\" not in new_value \
+            and "\n" not in new_value:
+        return f"{quote}{new_value}{quote}"
+    return _q(new_value)
+
+
+def _rename_defaults(editor: ModelEditor, literal: EnumerationLiteral, new: str) -> None:
+    """Rename the literal in the defaults of the attributes its enumeration types."""
+    enumeration = literal.owner
+    for cls in sorted(editor.model.get_classes(), key=lambda c: c.name):
+        for attribute in sorted(cls.attributes, key=lambda a: a.name):
+            default = attribute.default_value
+            if attribute.type is not enumeration or not isinstance(default, str):
+                continue
+            if default.strip().removeprefix(f"{enumeration.name}.") != literal.name:
+                continue
+            call = editor.call_of(attribute)
+            node = next((k.value for k in call.keywords if k.arg == "default_value"), None) \
+                if call is not None else None
+            if not (isinstance(node, ast.Constant) and node.value == default):
+                editor.warnings.append(f"the default of {cls.name}.{attribute.name} is {literal.name}: "
+                                       f"change it to {new}")
+                continue
+            editor.src.replace(editor.src.start(node), editor.src.end(node),
+                               _string_code(editor.src.segment(node), default,
+                                            re.sub(rf"\b{re.escape(literal.name)}(?=\s*$)", new, default)))
 
 
 def _forget_var(editor: ModelEditor, var: str) -> None:
@@ -1073,6 +1216,13 @@ def _removed_elements(editor: ModelEditor, element: Any) -> tuple[list[Any], lis
                  if attribute.type is element]
         if users:
             raise EditError(f"{element.name} is the type of {', '.join(sorted(users))}: remove or change those first")
+    if isinstance(element, EnumerationLiteral):
+        users = [f"{cls.name}.{attribute.name}" for cls in model.get_classes() for attribute in cls.attributes
+                 if attribute.type is element.owner and attribute.default_value is not None
+                 and str(getattr(attribute.default_value, "name", attribute.default_value)).strip()
+                 .removeprefix(f"{element.owner.name}.") == element.name]
+        if users:
+            raise EditError(f"the default of {', '.join(sorted(users))} is {element.name}: change it first")
     members: list[Any] = []
     for item in outer:
         if isinstance(item, Class):
@@ -1089,6 +1239,10 @@ def remove(editor: ModelEditor, path: str) -> Edited:
     if isinstance(element, Property) and editor.association_of(element) is not None:
         element = editor.association_of(element)  # an end goes with its association
     outer, members = _removed_elements(editor, element)
+    for item in (item for item in [*outer, *members] if isinstance(item, Property)):
+        users = _constraints_using(editor, item, outer)
+        if users:
+            raise EditError(f"constraint {', '.join(users)} uses {editor.describe(item)}: remove or change it first")
     removed_vars: list[str] = []
     drops: dict[int, tuple[ast.AST, set[int]]] = {}
     for item in [*outer, *members]:

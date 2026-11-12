@@ -2582,6 +2582,7 @@ class DomainModel(Model):
         self._validate_unique_end_names(errors)
         self._validate_identifier_names(errors)
         self._validate_attribute_types(errors)
+        self._validate_enumeration_defaults(errors)
         self._validate_mandatory_cycles(warnings)
         self._validate_duplicate_associations(warnings)
         self._validate_attribute_end_collisions(warnings)
@@ -2829,6 +2830,26 @@ class DomainModel(Model):
                     f"which is not in the domain model '{self.name}'. Generated code would refer to a type "
                     f"it never defines. Add '{type_name}' to the model or use a primitive type."
                 )
+
+    def _validate_enumeration_defaults(self, errors: list[str]):
+        """Report an attribute typed by an enumeration whose default is not one of its literals.
+
+        The generators refuse such a default (``InvalidDefaultValueError``). The
+        default may be the literal, its name, or its name qualified by the
+        enumeration's (``Status.OPEN``), as the generators accept.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if not isinstance(attr.type, Enumeration) or attr.default_value is None:
+                    continue
+                default = attr.default_value
+                member = str(getattr(default, "name", default)).strip().removeprefix(f"{attr.type.name}.")
+                literals = {literal.name for literal in attr.type.literals}
+                if literals and member not in literals:  # an empty enumeration has its own warning
+                    errors.append(
+                        f"Attribute '{attr.name}' of class '{cls.name}' has the default '{member}', which is not "
+                        f"a literal of its enumeration '{attr.type.name}' ({', '.join(sorted(literals))})."
+                    )
 
     def _validate_attribute_end_collisions(self, warnings: list[str]):
         """Warn about a class reaching an attribute and an association end of the same name.

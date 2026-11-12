@@ -5,6 +5,8 @@ layout stay, and a change that cannot be made or makes the model invalid writes 
 """
 
 import difflib
+import subprocess
+import sys
 
 import pytest
 
@@ -309,3 +311,126 @@ def test_adding_then_removing_a_class_gives_the_file_back(edit, besser):
 
     assert run.returncode == 0
     assert text == INLINE
+
+
+# ── OCL: the constraints name members of the model ──────────────────────────
+
+
+@pytest.fixture
+def project(besser, tmp_path):
+    """A project of 'besser init' (the starter's Library, Book and Author); returns a reader of model.py."""
+    assert besser("init").returncode == 0
+    return lambda: (tmp_path / "model.py").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("expression, reason", [
+    ("self.weight > 0", "Property 'weight' not found in context 'Book'"),
+    ("self.pages >>> 0", "mismatched input '>'"),
+])
+def test_a_constraint_that_does_not_parse_against_the_model_is_refused(besser, project, expression, reason):
+    before = project()
+
+    run = besser("model", "add-constraint", "Book", expression)
+
+    assert run.returncode == 1 and project() == before
+    assert "error: OCL constraint 'book_rule_1' on Book does not parse: " in run.stderr and reason in run.stderr
+    assert "model.py not changed: the change makes the model invalid" in run.stderr
+
+
+def test_validate_and_apply_refuse_a_constraint_that_names_no_member(besser, write, tmp_path):
+    write("model.py", LIBRARY_MODEL.replace("library_model = DomainModel(", '''
+from besser.BUML.metamodel.structural import Constraint
+rule = Constraint(name="heavy", context=book, language="OCL", expression="context Book inv heavy: self.weight > 0")
+library_model = DomainModel(constraints={rule}, '''))
+    write("besser.toml", 'model = "model.py"\n[output.backend]\ngenerator = "backend"\ndir = "backend"\n')
+
+    validated = besser("validate", "model.py")
+    applied = besser("apply")
+
+    assert validated.returncode == 1
+    assert ("error: OCL constraint 'heavy' on Book does not parse: Property 'weight' not found in context 'Book'"
+            in validated.stdout)
+    assert applied.returncode == 1 and "nothing was generated: the model has validation errors" in applied.stderr
+    assert not (tmp_path / "backend").exists()
+
+
+def test_validate_ocl_reports_a_constraint_that_does_not_parse_once(besser, write):
+    write("model.py", LIBRARY_MODEL.replace("library_model = DomainModel(", '''
+from besser.BUML.metamodel.structural import Constraint
+rule = Constraint(name="odd", context=book, language="OCL", expression="context Book inv odd: self.pages >>> 0")
+library_model = DomainModel(constraints={rule}, '''))
+
+    run = besser("validate", "model.py", "--ocl", "--json")
+
+    assert run.json["exit_code"] == 1
+    assert [error for error in run.json["errors"] if "odd" in error] == [
+        error for error in run.json["errors"] if error.startswith("library_model: OCL constraint 'odd' on Book")]
+    assert len(run.json["errors"]) == 1
+
+
+def test_remove_refuses_a_member_a_constraint_uses(besser, project):
+    besser("model", "add-constraint", "Book", "self.pages > 0")
+    besser("model", "add-constraint", "Library", "self.books->forAll(b | b.title <> '')", "--name", "titled")
+    before = project()
+
+    attribute = besser("model", "remove", "Book.pages")
+    navigated = besser("model", "remove", "Book.title")
+    end = besser("model", "remove", "library_books")
+    unused = besser("model", "remove", "Author.email")
+
+    assert attribute.returncode == 2 and navigated.returncode == 2 and end.returncode == 2
+    assert "constraint book_rule_1 uses Book.pages: remove or change it first (model.py not changed)" \
+        in attribute.stderr
+    assert "constraint titled uses Book.title: remove or change it first" in navigated.stderr
+    assert "constraint titled uses Library.books: remove or change it first" in end.stderr
+    assert unused.returncode == 0 and project() == before.replace(
+        '    Property(name="email", type=StringType),\n', "")
+
+
+def test_rename_rewrites_the_names_a_constraint_navigates_and_no_quoted_text(besser, project, tmp_path):
+    besser("model", "add-constraint", "Author", "self.name <> 'Book'")
+    besser("model", "add-constraint", "Library", "self.name <> ''")
+    besser("model", "add-constraint", "Library", "self.books->forAll(b | b.title <> self.name)", "--name", "titles")
+
+    runs = [besser("model", "rename", "Library.name", "label"), besser("model", "rename", "Book", "Volume"),
+            besser("model", "rename", "Volume.title", "heading"), besser("model", "rename", "titles", "unique")]
+    applied = besser("apply")
+    imported = subprocess.run([sys.executable, "-c", "import main_api"], cwd=tmp_path / "backend",
+                              capture_output=True, text=True, check=False)
+
+    assert [run.returncode for run in runs] == [0, 0, 0, 0]
+    text = project()
+    assert "expression=\"context Author inv author_rule_1: self.name <> 'Book'\"" in text
+    assert "expression=\"context Library inv library_rule_1: self.label <> ''\"" in text
+    assert ("expression=\"context Library inv unique: self.books->forAll(b | b.heading <> self.label)\""
+            in text)
+    assert applied.returncode == 0, applied.stderr
+    assert imported.returncode == 0, imported.stderr
+
+
+def test_rename_a_literal_renames_the_defaults_that_use_it(besser, project):
+    besser("model", "set-enum", "Genre", "NOVEL", "POEM")
+    besser("model", "add-attribute", "Book", "genre:Genre=NOVEL")
+
+    renamed = besser("model", "rename", "Genre.NOVEL", "FICTION")
+    removed = besser("model", "remove", "Genre.FICTION")
+
+    assert renamed.returncode == 0
+    assert 'Property(name="genre", type=genre, default_value="FICTION")' in project()
+    assert "class Book: title:str, pages:int, release:date, genre:Genre='FICTION'" in besser("info", "model.py").stdout
+    assert removed.returncode == 2
+    assert "the default of Book.genre is FICTION: change it first" in removed.stderr
+    assert besser("apply").returncode == 0
+
+
+def test_validate_reports_a_default_that_is_no_literal_of_its_enumeration(besser, project, tmp_path):
+    besser("model", "set-enum", "Genre", "NOVEL", "POEM")
+    besser("model", "add-attribute", "Book", "genre:Genre=NOVEL")
+    (tmp_path / "model.py").write_text(project().replace('default_value="NOVEL"', 'default_value="ESSAY"'),
+                                       encoding="utf-8")
+
+    run = besser("validate", "model.py")
+
+    assert run.returncode == 1
+    assert ("error: Attribute 'genre' of class 'Book' has the default 'ESSAY', which is not a literal of its "
+            "enumeration 'Genre' (NOVEL, POEM).") in run.stdout

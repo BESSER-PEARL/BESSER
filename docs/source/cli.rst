@@ -486,6 +486,23 @@ editor JSON file has no lines: its messages name the element.
 OCL constraints
 ~~~~~~~~~~~~~~~
 
+Every validation, with or without ``--ocl``, parses each OCL invariant of a
+domain model against the model, as the editor's converter does: a name the
+constraint navigates must be an attribute or association end of the class it
+is navigated from. An invariant that does not parse is an error of the domain
+model, so ``build``, ``apply`` and ``besser model`` refuse it too: the
+generators read the constraints, and the backend generated from one that names
+nothing does not start. Nothing is evaluated, and no optional package is
+needed:
+
+.. code-block:: console
+
+   $ besser validate model.py
+   model.py: 1 model
+     library_model (DomainModel): 1 error, 0 warnings
+       error: OCL constraint 'heavy' on Book does not parse: Property 'weight' not found in context 'Book' (model.py, line 53)
+   FAILED: 1 error, 0 warnings
+
 ``--ocl`` also checks the OCL constraints of the domain models, as the editor's
 validation does: every constraint (invariants, pre- and postconditions) is
 parsed, and the invariants are evaluated on each object model of the same file
@@ -501,7 +518,7 @@ and the constraint:
    $ besser validate books.py --ocl
    books.py: 2 models
      book_model (DomainModel): 1 error, 0 warnings
-       error: OCL constraint [Book inv broken]: 'context Book inv broken: self.pages >' - line 1, column 37: Expression ends unexpectedly — the operand on the right is missing.
+       error: OCL constraint 'broken' on Book does not parse: line 1, column 37: Expression ends unexpectedly — the operand on the right is missing.
      shelf (ObjectModel): 1 error, 0 warnings
        error: OCL constraint [Book inv positive_pages]: 'context Book inv positive_pages: self.pages > 0' - Constraint violation: Evaluates to False
    FAILED: 2 errors, 0 warnings
@@ -649,7 +666,8 @@ the file holds several.
      - A method; ``--code`` is its Python code, which the ``backend`` runs.
    * - ``add-constraint CLASS EXPRESSION [--name NAME]``
      - An OCL invariant on the class (``context ... inv`` is added when the
-       expression does not start with it).
+       expression does not start with it). It must parse against the model
+       (see :ref:`OCL constraints <cli-ocl>`).
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
        is an attribute's default is not removed.
@@ -657,11 +675,16 @@ the file holds several.
      - Renames a class, enumeration, association or constraint (``Name``), an
        attribute, method or association end (``Class.member``) or a literal
        (``Enumeration.LITERAL``). A variable that spells the old name is
-       renamed with it, and the OCL constraints that name it are updated.
+       renamed with it, and the OCL constraints that name it are updated:
+       only names, never text in quotes, and a member's name only where the
+       constraint navigates to that member (another class's member of the same
+       name stays). A literal's attribute defaults are renamed too.
    * - ``remove PATH``
      - Removes the element. A class goes with its associations,
        generalizations and constraints; an association end with its
-       association.
+       association. An attribute or end a constraint navigates, or a literal
+       an attribute's default is, is not removed: the message names the
+       constraint or the attribute.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``

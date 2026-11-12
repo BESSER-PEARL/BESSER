@@ -72,7 +72,8 @@ def test_a_constraint_that_does_not_parse_fails_naming_it(besser, write):
 
     assert run.returncode == 1
     [error] = run.json["errors"]
-    assert error.startswith(f"book_model: {OCL_PREFIX} [Book inv broken]: 'context Book inv broken: self.pages >'")
+    assert error == (f"book_model: {OCL_PREFIX} 'broken' on Book does not parse: line 1, column 37: Expression ends "
+                     "unexpectedly — the operand on the right is missing.")
     assert run.json["models"][0]["errors"] == [error.removeprefix("book_model: ")]
 
 
@@ -95,14 +96,18 @@ def test_a_broken_constraint_is_reported_once_with_an_object_model(besser, write
 
     assert run.returncode == 1
     assert sorted(error.split(":")[1].strip() for error in run.json["errors"]) == [
-        f"{OCL_PREFIX} [Book inv broken]", f"{OCL_PREFIX} [Book inv positive_pages]",
+        f"{OCL_PREFIX} 'broken' on Book does not parse", f"{OCL_PREFIX} [Book inv positive_pages]",
     ]
 
 
-def test_without_ocl_the_constraints_are_not_checked(besser, write):
-    run = besser("validate", write("books.py", book_model(pages=-3, broken=True)), "--json")
+def test_without_ocl_the_constraints_are_parsed_and_not_evaluated(besser, write):
+    violated = besser("validate", write("books.py", book_model(pages=-3)), "--json")
+    broken = besser("validate", write("broken.py", book_model(pages=-3, broken=True)), "--json")
 
-    assert run.returncode == 0 and run.json["notes"] == []
+    assert violated.returncode == 0 and violated.json["notes"] == []
+    assert broken.returncode == 1
+    assert broken.json["errors"] == [f"book_model: {OCL_PREFIX} 'broken' on Book does not parse: line 1, column 37: "
+                                     "Expression ends unexpectedly — the operand on the right is missing."]
 
 
 @needs_bocl
@@ -133,7 +138,7 @@ def besser_without_bocl(besser_without):
 
 
 def test_without_bocl_ocl_is_skipped_with_a_warning_saying_what_to_install(besser_without_bocl, write):
-    write("books.py", book_model(pages=-3, broken=True))
+    write("books.py", book_model(pages=-3))
     run = besser_without_bocl("validate", "books.py", "--ocl")
 
     assert run.returncode == 0
@@ -152,6 +157,8 @@ def test_without_bocl_validate_still_runs_when_ocl_is_not_asked_for(besser_witho
     write("library.py", LIBRARY_MODEL)
 
     assert besser_without_bocl("validate", "library.py", "--strict").returncode == 0
+    # Parsing the constraints needs no optional package.
+    assert besser_without_bocl("validate", write("broken.py", book_model(broken=True))).returncode == 1
 
 
 # An object value that breaks out of the string literal bocl builds for eval(): it writes MARKER when evaluated.
@@ -282,7 +289,7 @@ def besser_without(tmp_path):
 
 
 def test_without_the_backend_packages_ocl_is_skipped_with_a_warning_saying_what_to_install(besser_without, write):
-    write("books.py", book_model(pages=-3, broken=True))
+    write("books.py", book_model(pages=-3))
     run = besser_without(("deep_translator",), "validate", "books.py", "--ocl", "--json")
 
     assert run.returncode == 0, run.stdout

@@ -52,7 +52,7 @@ from besser.cli.output import (
     stdout_to_stderr,
 )
 from besser.cli.model_edit import EditError, Edited, Operation, pick_domain_model, run_operation
-from besser.cli.ocl_check import OclOutcome, OclUnavailable, check_ocl, load_checker
+from besser.cli.ocl_check import OclOutcome, OclUnavailable, check_ocl, load_checker, parse_problems
 from besser.cli.starters import DEFAULT_KIND, STARTERS, starter_source
 from besser.cli.summary import class_lines, describe_class, describe_model, summary_lines
 from besser.generators import regeneration
@@ -101,6 +101,11 @@ def _validate_model(loaded: LoadedModel) -> dict[str, Any]:
         return report
     report["errors"].extend(str(error) for error in outcome.get("errors", []))
     report["warnings"].extend(str(warning) for warning in outcome.get("warnings", []))
+    if loaded.kind == "domain":
+        # Generators read the constraints, so one that names nothing of the model breaks the output.
+        ocl_errors, ocl_warnings = parse_problems(loaded.model)
+        report["errors"].extend(ocl_errors)
+        report["warnings"].extend(ocl_warnings)
     return report
 
 

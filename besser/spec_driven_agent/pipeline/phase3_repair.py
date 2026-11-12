@@ -405,15 +405,15 @@ class Phase3RepairMixin:
                 return
 
             # Keep the best tree, not the last one. Strictly better only, so a
-            # flat round never overwrites the snapshot it would restore.
+            # flat round never overwrites the snapshot it would restore. The
+            # best findings move only with the snapshot: they must describe it.
             score_after = self._phase3_tree_score(blockers_after)
-            if score_after < best_score:
+            if score_after < best_score and self._create_snapshot():
                 logger.info(
                     "Phase 3: attempt %d is the best tree so far %s -> %s; "
-                    "re-snapshotting it as the rollback target.",
+                    "re-snapshotted it as the rollback target.",
                     attempts_run, best_score, score_after,
                 )
-                self._create_snapshot()
                 self._trace.write(
                     EVENT_SNAPSHOT, before_phase="phase3_best",
                     attempt=attempts_run, score=list(score_after),
@@ -1227,8 +1227,8 @@ class Phase3RepairMixin:
             return 3, message
         return 2, message
 
-    def _create_snapshot(self) -> None:
-        """Snapshot the output directory as the rollback target.
+    def _create_snapshot(self) -> bool:
+        """Snapshot the output directory as the rollback target; True on success.
 
         Taken before Phase 3, again once entry validation has applied its own
         rewrites, and after any repair attempt that reaches a strictly better
@@ -1265,9 +1265,11 @@ class Phase3RepairMixin:
                 shutil.rmtree(snapshot_path)
             os.replace(staging_path, snapshot_path)
             logger.info("Snapshot created at %s", snapshot_path)
+            return True
         except Exception as e:
-            logger.warning("Failed to create snapshot: %s", e)
+            logger.warning("Failed to create snapshot; the previous rollback target stays: %s", e)
             shutil.rmtree(staging_path, ignore_errors=True)
+            return False
 
     def _restore_snapshot(self) -> bool:
         """Restore the output directory from the post-Phase-1 snapshot.

@@ -151,6 +151,41 @@ def test_the_discard_keeps_the_rewrites_entry_validation_made(orchestrator, tmp_
     assert dockerfile.read_text(encoding="utf-8") == "RUN npm install\n"
 
 
+def test_a_failed_best_tree_snapshot_keeps_the_findings_of_the_tree_it_holds(orchestrator, tmp_path):
+    """Attempt 1 reaches a better tree but its snapshot copy fails (disk full).
+    The rollback target is still the entry tree, so discarding attempt 2 must
+    report the entry tree's findings, not attempt 1's."""
+    app = tmp_path / "app.py"
+    app.write_text("v = 0\n", encoding="utf-8")
+    state = {"attempts": 0}
+    real_create_snapshot = orchestrator._create_snapshot
+
+    def create_snapshot():
+        if state["attempts"] == 0:
+            return real_create_snapshot()
+        with patch("shutil.copy2", side_effect=OSError(28, "No space left on device")):
+            return real_create_snapshot()
+
+    def collect():
+        return _blockers(39) if state["attempts"] == 0 else _blockers(20)
+
+    def fix(blockers, is_first_attempt):
+        state["attempts"] += 1
+        app.write_text(f"v = {state['attempts']}\n", encoding="utf-8")
+        if state["attempts"] == 2:
+            _provider_error(orchestrator)
+        return 1
+
+    with patch.object(orchestrator, "_collect_validation_issues", side_effect=collect), \
+            patch.object(orchestrator, "_create_snapshot", side_effect=create_snapshot), \
+            patch.object(orchestrator, "_invoke_phase3_fix_loop", side_effect=fix):
+        orchestrator._run_phase3_validation()
+
+    assert app.read_text(encoding="utf-8") == "v = 0\n"
+    blockers = [i.message for i in orchestrator._validation_issues if i.severity == "blocker"]
+    assert sorted(blockers) == sorted(i.message for i in _blockers(39))
+
+
 def test_an_attempt_that_raises_is_discarded_and_the_error_still_propagates(orchestrator):
     """An auth failure must still reach the runner as INVALID_KEY."""
     from besser.spec_driven_agent.errors import InvalidApiKeyError

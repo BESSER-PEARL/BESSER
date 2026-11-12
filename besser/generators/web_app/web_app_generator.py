@@ -92,6 +92,8 @@ class WebAppGenerator(GeneratorInterface):
         uniform_responses (bool, optional): Passed to the :class:`BackendGenerator` of
             ``backend/``: its ``POST`` and ``PUT`` answer what ``GET /x/{x_id}/`` answers
             for every class. Defaults to False. The React app does not read those answers.
+        tests (bool, optional): Also write the backend's API tests in ``backend/tests/`` (see the
+            ``tests`` option of :class:`BackendGenerator`). Defaults to False.
     """
 
     regenerable = True
@@ -102,8 +104,9 @@ class WebAppGenerator(GeneratorInterface):
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,
                  agent_config_yamls=None, link_agent_database: bool = True,
-                 uniform_responses: bool = False):
+                 uniform_responses: bool = False, tests: bool = False):
         super().__init__(model, output_dir)
+        self.tests = tests
         self.gui_model = gui_model
         self.uniform_responses = uniform_responses
         self.link_agent_database = link_agent_database
@@ -164,7 +167,8 @@ class WebAppGenerator(GeneratorInterface):
     def _generate_backend(self, env):
         # Generate backend code in 'backend' subfolder
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
-        backend_gen = BackendGenerator(self.model, output_dir=backend_dir, uniform_responses=self.uniform_responses)
+        backend_gen = BackendGenerator(self.model, output_dir=backend_dir,
+                                       uniform_responses=self.uniform_responses, tests=self.tests)
         backend_gen.generate()
 
     def _generate_agent(self, env):

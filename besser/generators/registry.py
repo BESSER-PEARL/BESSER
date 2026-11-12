@@ -113,7 +113,7 @@ _UNIFORM_RESPONSES = {
 # The backend's own API tests, written with it; shared by ``backend`` and ``web_app``.
 _API_TESTS = {
     "type": "boolean",
-    "description": "Also generate tests/: a pytest 'client' fixture and a CRUD test of each class",
+    "description": "Also generate the backend's tests/: a pytest 'client' fixture and a CRUD test of each class",
     "default": False,
 }
 _DBMS = ["sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"]
@@ -271,7 +271,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         id="web_app",
         class_path="besser.generators.web_app:WebAppGenerator",
         models=("domain", "gui"),
-        extra_options={"uniform_responses": _UNIFORM_RESPONSES},
+        extra_options={"uniform_responses": _UNIFORM_RESPONSES, "tests": _API_TESTS},
         category="web_framework",
         output_type="zip",
         file_extension=".zip",

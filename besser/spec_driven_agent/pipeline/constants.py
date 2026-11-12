@@ -42,12 +42,16 @@ WORKSPACE_SKIP_DIRS = frozenset(
 # The narrower set the frontend-source walks skip (build output only).
 FRONTEND_WALK_SKIP_DIRS = frozenset({"node_modules", "dist", "build"})
 
+# Append-only sidecar of untruncated write-tool inputs (see _LOG_VALUE_BUDGET).
+TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"
+
 # Run bookkeeping that a rollback must NOT revert. The snapshot predates them,
-# so restoring it would rewind the append-only trace and resurrect a stale
-# checkpoint, making a later resume replay work already on disk.
+# so restoring it would rewind the append-only trace and tool-input sidecar and
+# resurrect a stale checkpoint, making a later resume replay work already on disk.
 _ROLLBACK_PRESERVED = {
     TRACE_FILENAME,
     CHECKPOINT_FILENAME,
+    TOOL_INPUTS_FILENAME,
     ".besser_recipe.json",
     _SNAPSHOT_DIR,
     _SNAPSHOT_STAGING_DIR,
@@ -305,4 +309,3 @@ _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY = {
 # recipe. Untruncated write-tool inputs go to TOOL_INPUTS_FILENAME.
 _LOG_VALUE_BUDGET = 500
 _WRITE_TOOLS_ON_RECORD = frozenset({"modify_file", "replace_file_lines", "write_file", "delete_file"})
-TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"

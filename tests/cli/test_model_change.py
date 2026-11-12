@@ -299,6 +299,17 @@ def test_an_enumeration_type_and_its_literal_as_default(project, change, besser)
     assert besser("validate", "model.py").returncode == 0
 
 
+def test_an_attribute_defined_on_its_own_takes_a_new_enumeration_as_type(besser, change, tmp_path):
+    """The GUI starter defines each attribute before its class: a new enumeration goes before them."""
+    assert besser("init", "--kind", "gui").returncode == 0
+    change("set-enum", "Genre", "NOVEL", "POEM")
+
+    assert change("set-attribute", "Book.title", ":Genre=POEM") == "model.py: changed Book.title from str to Genre=POEM"
+    text = (tmp_path / "model.py").read_text(encoding="utf-8")
+    assert text.index("genre = Enumeration(") < text.index('book_title = Property(name="title", type=genre')
+    assert besser("validate", "model.py").returncode == 0
+
+
 def test_set_attribute_keeps_windows_line_endings(project, change, tmp_path):
     path = tmp_path / "model.py"
     path.write_bytes(project().replace("\n", "\r\n").encode())

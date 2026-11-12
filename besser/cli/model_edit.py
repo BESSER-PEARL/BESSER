@@ -1066,8 +1066,10 @@ def set_enum(editor: ModelEditor, name: str, literals: Sequence[str]) -> Edited:
         var = editor._type_var_style(name)
         code = (f"{editor._structural('Enumeration')}(name={_q(name)}, literals={{"
                 + ", ".join(literal_code.values()) + "})")
-        # Before the classes, whose attributes may take it as their type.
-        definitions = [editor.src.assignment(v) for v in map(editor.var_of, editor.model.get_classes()) if v]
+        # Before the classes and their attributes defined on their own (as the GUI starter writes them),
+        # which may take it as their type: set-attribute retypes such an attribute in place.
+        elements = [element for cls in editor.model.get_classes() for element in (cls, *cls.attributes)]
+        definitions = [editor.src.assignment(v) for v in map(editor.var_of, elements) if v]
         first = min((statement for statement in definitions if statement is not None),
                     key=lambda statement: statement.lineno, default=None)
         editor.add(editor.model, "types", code, lambda: var, need_var=True, separate=True, before=first)

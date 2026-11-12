@@ -177,6 +177,8 @@ def import_models(fmt: ImportFormat, inputs: Sequence[str]) -> tuple[LoadedModel
     for path in paths:
         if fmt.directory and not path.is_dir():
             raise ModelLoadError(f"{path}: --from {fmt.name} reads a directory")
+        if not fmt.directory and path.is_dir():
+            raise ModelLoadError(f"{path} is a directory: --from {fmt.name} reads a file")
         if not fmt.directory and not path.is_file():
             raise ModelLoadError(f"{path}: no such file")
     try:

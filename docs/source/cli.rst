@@ -144,6 +144,10 @@ A ``<model>`` is one of:
 
    A ``.json`` model is parsed as data and never executed.
 
+``info``, ``generate``, ``regenerate`` and ``convert`` take one model file; a
+directory given in its place is exit status 2, and the error says that
+``besser validate`` is the command that takes a directory.
+
 From a ``.py`` file, the command takes the models of the ``Project`` the file
 defines. Without a ``Project``, it takes every model bound to a top-level name
 (``DomainModel``, ``ObjectModel``, ``GUIModel``, ``Agent``, ``StateMachine``,

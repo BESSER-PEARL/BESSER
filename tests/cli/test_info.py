@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from besser.generators.registry import GENERATORS
 from tests.cli.conftest import INVALID_MODEL, LIBRARY_MODEL, PROJECT_EXPORT, TWO_DOMAIN_MODELS
 
@@ -133,6 +135,35 @@ def test_a_file_that_does_not_load_is_a_load_error(besser):
 
     assert run.returncode == 2
     assert run.stderr == "error: missing.py: no such file\n"
+
+
+DIRECTORY_GIVEN = ("models is a directory: name a model file (a B-UML .py file or an editor .json export); "
+                   "'besser validate' takes a directory and checks the model files in it")
+
+
+@pytest.mark.parametrize("args", [
+    ("info", "models"),
+    ("generate", "python", "models", "-o", "out"),
+    ("regenerate", "python", "models", "-o", "out"),
+])
+def test_a_directory_where_a_model_file_goes_is_named_a_directory(besser, tmp_path, args):
+    (tmp_path / "models").mkdir()
+    run = besser(*args, "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == [DIRECTORY_GIVEN]
+
+
+def test_a_directory_named_like_a_model_file_is_named_a_directory(besser, tmp_path):
+    (tmp_path / "models.py").mkdir()
+    (tmp_path / "graph.ttl").mkdir()
+    converted = besser("convert", "models.py", "-o", "x.json", "--json")
+    imported = besser("convert", "graph.ttl", "-o", "x.py", "--from", "rdf", "--json")
+    edited = besser("model", "-f", "models.py", "add-class", "Shelf", "--json")
+
+    assert converted.json["errors"] == [DIRECTORY_GIVEN.replace("models is", "models.py is")]
+    assert imported.json["errors"] == ["graph.ttl is a directory: --from rdf reads a file"]
+    assert edited.json["errors"] == ["models.py is a directory: name the model file with -f FILE"]
 
 
 def test_quiet_prints_no_notes_or_warnings(besser, write):

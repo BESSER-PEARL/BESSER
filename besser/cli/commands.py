@@ -1932,6 +1932,8 @@ def default_model_path(config_path: str = CONFIG_FILENAME) -> str:
 
 
 def _read_model_text(path: Path) -> str:
+    if path.is_dir():
+        raise _Stopped(failure("model", f"{path} is a directory: name the model file with -f FILE"))
     if not path.exists():
         raise _Stopped(failure("model", f"{path}: no such file; name the model file with -f FILE"))
     try:

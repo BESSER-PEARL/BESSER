@@ -182,6 +182,9 @@ def load_models(path: str | Path) -> LoadedModels:
         loaded = _load_json(path, text) if suffix == ".json" else _load_python(path, _execute(path, text))
     else:
         path = Path(path)
+        if path.is_dir():
+            raise ModelLoadError(f"{path} is a directory: name a model file (a B-UML .py file or an editor .json "
+                                 "export); 'besser validate' takes a directory and checks the model files in it")
         if not path.is_file():
             raise ModelLoadError(f"{path}: no such file")
         suffix = path.suffix.lower()

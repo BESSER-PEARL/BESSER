@@ -1115,7 +1115,6 @@ adopts (``regenerate --adopt``) without reading the header as an edit.
    !!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
    1 error in 0.47s
    FAILED: tests (exit status 2); build OK: 1 output, 0 failed: [backend] backend is up to date with model.py: no file changed
-   error: the tests failed (exit status 2): python -m pytest -q
 
 The one command to run after a model change: ``besser build`` for every output
 (each model is validated first, and nothing is generated from a model with
@@ -1126,8 +1125,8 @@ one line when everything passes, and that line always ends with what the tests
 did: their last output line, ``tests: none collected`` (pytest found no test),
 or ``tests: none (set 'test' in besser.toml)`` when there is no ``test`` key.
 When the tests fail it prints only the failing tests, then a line starting with
-``FAILED: tests (exit status N)`` and an ``error:`` line naming the test
-command, and exits with status 1: pytest's short test
+``FAILED: tests (exit status N)`` (said once: no ``error:`` line follows;
+``--json`` has the test command in ``errors``), and exits with status 1: pytest's short test
 summary (one line per failing test with its first error line, then the counts,
 preceded by pytest's first ``E`` lines, about 600 bytes, when a test module
 does not import, so the cause and its file are shown), else the lines that

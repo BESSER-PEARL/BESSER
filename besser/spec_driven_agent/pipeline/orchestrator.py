@@ -88,7 +88,7 @@ from besser.spec_driven_agent.errors import (
     EmptyInstructionsError,
     InvalidApiKeyError,
 )
-from besser.spec_driven_agent.planning.gap_analyzer import analyze_gaps_via_llm
+from besser.spec_driven_agent.planning.gap_analyzer import _placement_advice, analyze_gaps_via_llm
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
@@ -3493,8 +3493,26 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # A path the user wrote must exist verbatim, whatever the planner judged.
             tasks.extend(requested_route_tasks(
                 self.output_dir, _requirements_ledger.original_request(self._instructions)))
-        tasks.extend(item["text"] for item in self._requirements_for_validation()
-                     if item.get("conversion_issue_id"))
+        tasks.extend(self._conversion_recovery_tasks())
+        return tasks
+
+    def _conversion_recovery_tasks(self) -> list:
+        """The one checklist item per rejected model constraint.
+
+        The text is the requirement's own, so the requirements judge can close
+        it (``_collect_task_issues``). On a FastAPI scaffold a planning note says
+        where the check can run: a rule reading related rows needs the router
+        handler and the database session, not a Pydantic validator.
+        """
+        tasks: list = []
+        for item in self._requirements_for_validation():
+            if not item.get("conversion_issue_id"):
+                continue
+            if self._scaffold_family() == "fastapi":
+                tasks.append({"text": item["text"], "planning_notes": [
+                    _placement_advice(item["text"], "the generated Pydantic schemas (pydantic_classes.py)")]})
+            else:
+                tasks.append(item["text"])
         return tasks
 
     def _expected_action_endpoints(self):

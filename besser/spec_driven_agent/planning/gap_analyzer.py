@@ -47,7 +47,6 @@ from typing import Any, Callable
 
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
-from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
 from besser.llm import clean_json_response, extract_json, parse_json_safely
 
 logger = logging.getLogger(__name__)
@@ -244,7 +243,9 @@ def analyze_gaps_via_llm(
     # (worse) judge "nothing to do" — this must survive even an empty list,
     # since [] can short-circuit Phase 2 entirely (see the module docstring).
     cleaned = _dedupe(_note_derived_enum_initial_state(domain_model, instructions) + cleaned)
-    cleaned = _dedupe(_note_rejected_constraints(domain_model, cleaned) + cleaned)
+    # A rejected OCL constraint is not added here: the orchestrator seeds one
+    # recovery item per rejected constraint (_deterministic_gap_tasks), the one
+    # the requirements judge can close. A second copy here was a duplicate.
     if tasks and not cleaned:
         # Only the planner may say "the scaffold covers it": a list the
         # sanitizers emptied means no usable checklist, not "skip Phase 2".
@@ -531,55 +532,6 @@ def _rejected_constraint_names(domain_model) -> set:
 
 def _mentions_rejected_constraint(task: str, rejected_names: set) -> bool:
     return any(re.search(rf"\b{re.escape(n)}\b", task, re.IGNORECASE) for n in rejected_names)
-
-
-# A model can reject many constraints; the checklist is a scarce resource.
-_MAX_REJECTED_CONSTRAINT_TASKS = 6
-
-
-def _note_rejected_constraints(domain_model, tasks: list) -> list[str]:
-    """Harness-owned tasks for OCL invariants the converter threw away.
-
-    The generator leaves a TODO where it could not enforce a constraint
-    (``pydantic_classes/ocl_utils.py``), which makes the omission visible but
-    does not make it anyone's job; if the planner does not raise it, the rule
-    ships as a comment. Rejected invariants are exactly the rules the
-    deterministic path cannot express, so the agent implements them.
-
-    Only constraints no existing task already names are added, since the
-    planner's own phrasing carries the spec's wording and already gets
-    placement advice. The rejection reason rides along: it usually says
-    which property name did not resolve, and that is the model-vs-spec
-    delta the agent needs in order to write the check against the ends the
-    model actually declares rather than the ones the OCL text assumed.
-    """
-    issues = getattr(domain_model, "conversion_issues", None) or []
-    added: list[str] = []
-    for issue in issues:
-        if not isinstance(issue, dict) or is_dropped_by_model_change(issue):
-            continue  # the user's model change removed what it uses
-        name = issue.get("name")
-        expression = issue.get("expression") or issue.get("original_text") or ""
-        if not name or not expression:
-            continue
-        if any(_mentions_rejected_constraint(t, {str(name)}) for t in tasks):
-            continue
-        context = issue.get("context") or ""
-        reason = (issue.get("reason") or "").removeprefix("Warning: ")
-        reason = reason.replace(f" in '{expression}'", "", 1).strip()
-        where = f"that create or update {context}" if context else "for this operation"
-        added.append(
-            f"Enforce the '{name}' rule, which the model records but no generated code "
-            f"checks: {expression}. The OCL converter rejected it"
-            + (f" ({reason})" if reason else "")
-            + f", so pydantic_classes.py carries only a TODO for it. Implement the check "
-            f"in the router handlers {where}, after loading the related rows via the "
-            f"database session, and write it against the relationship names the model "
-            f"actually declares - the ones in the OCL text above may not exist."
-        )
-        if len(added) >= _MAX_REJECTED_CONSTRAINT_TASKS:
-            break
-    return added
 
 
 def _mentioned_classes(sentence: str, classes: list) -> list:
@@ -1499,6 +1451,22 @@ def _clip(text: str, limit: int, label: str) -> str:
     return f"{head}\n…[{label} truncated at {limit} chars]"
 
 
+def _planner_conversion_issue(issue: Any) -> Any:
+    """A rejected-constraint diagnostic without the copies of its own expression.
+
+    The converter sets ``original_text`` to the expression it parsed and quotes
+    that expression again inside ``reason``; the planner needs it once.
+    """
+    if not isinstance(issue, dict) or not issue.get("expression"):
+        return issue
+    expression = issue["expression"]
+    compact = {key: value for key, value in issue.items()
+               if not (key == "original_text" and value == expression)}
+    if isinstance(compact.get("reason"), str):
+        compact["reason"] = compact["reason"].replace(f" in '{expression}'", "", 1)
+    return compact
+
+
 def _safe_serialize_model(domain_model) -> str:
     """Best-effort JSON dump of the domain model.
 
@@ -1522,13 +1490,16 @@ def _safe_serialize_model(domain_model) -> str:
         fallback = {}
         issues = getattr(domain_model, "conversion_issues", None)
         if issues:
-            fallback["conversion_issues"] = issues
+            fallback["conversion_issues"] = [_planner_conversion_issue(i) for i in issues]
         try:
             names = [c.name for c in domain_model.get_classes()]
             fallback["classes"] = [{"name": n} for n in names]
         except Exception:
             pass
         return json.dumps(fallback, default=str)
+
+    if data.get("conversion_issues"):
+        data = {**data, "conversion_issues": [_planner_conversion_issue(i) for i in data["conversion_issues"]]}
 
     def _dump(payload: Any) -> str:
         return json.dumps(payload, default=str, separators=(",", ":"))

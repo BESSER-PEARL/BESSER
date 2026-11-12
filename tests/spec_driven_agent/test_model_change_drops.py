@@ -28,7 +28,6 @@ from besser.BUML.metamodel.structural import (
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_system_prompt
 from besser.spec_driven_agent.model_serializer import serialize_domain_model
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.planning.gap_analyzer import _note_rejected_constraints
 from besser.spec_driven_agent.planning.model_change import model_summary
 from besser.spec_driven_agent.planning.model_rules import converted_rule_fingerprints
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.ocl_parser import (
@@ -155,7 +154,8 @@ def test_rule_on_a_removed_attribute_is_dropped(tmp_path, monkeypatch):
     assert "self.pages" not in prompt
     assert "Where the model disagrees with your specification" not in prompt
 
-    assert [t for t in _note_rejected_constraints(current, []) if "positivePages" in t] == []
+    # No checklist item recovers it (the harness is the one producer of these items).
+    assert [t for t in orch._deterministic_gap_tasks() if "positivePages" in str(t)] == []
 
     report = build_verification_report({"model_conversion_issues": current.conversion_issues})
     [item] = report.shippedUnenforced

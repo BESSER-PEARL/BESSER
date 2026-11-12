@@ -802,6 +802,30 @@ def test_a_cancelled_run_task_stops_the_worker_before_its_slot_is_freed(monkeypa
     asyncio.run(exercise())
 
 
+def test_a_crashed_helper_task_does_not_skip_stopping_the_worker(monkeypatch):
+    """A helper task's error re-raised from the runner's ``finally`` skipped
+    stopping the worker and still freed the run id."""
+    _use_spending_orchestrator(monkeypatch)
+    # Makes the runtime watchdog raise TypeError on its first sleep.
+    monkeypatch.setattr(get_settings(), "llm_watchdog_grace_seconds", None)
+    runtime = current_runtime()
+
+    async def exercise() -> None:
+        runner = runner_module.SmartGenerationRunner(_build_request(), runtime=runtime)
+        frames = runner.generate_and_stream()
+        try:
+            while not _SpendsUntilCancelled.running:
+                await asyncio.wait_for(anext(frames), 10)
+            with contextlib.suppress(Exception):
+                await frames.aclose()
+            assert _SpendsUntilCancelled.running is False, "the worker outlived its run"
+            assert runtime.active_runs._events == {}
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
 def test_a_store_failure_marking_the_run_running_returns_its_slot(monkeypatch):
     """The first status write ran inside the background task, before the run
     stream started: a failure there kept the slot and the run id reserved for

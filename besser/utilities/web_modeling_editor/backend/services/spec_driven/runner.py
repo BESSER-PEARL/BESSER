@@ -185,6 +185,18 @@ def _is_excluded_output_file(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in _EXCLUDED_OUTPUT_DIRS)
 
 
+async def _stop_helper_task(task: asyncio.Task, run_id: str) -> None:
+    """Cancel one of a run's helper tasks; its own error is logged, not raised,
+    so it cannot skip stopping the worker and releasing the run."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Run %s: helper task %s failed", run_id, task.get_name())
+
+
 def _dir_has_user_output(path: Optional[str]) -> bool:
     """True when *path* holds at least one generated USER file.
 
@@ -1853,15 +1865,8 @@ class SmartGenerationRunner:
             aborted = True
             raise
         finally:
-            emitter_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await emitter_task
-            disconnect_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await disconnect_task
-            watchdog_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watchdog_task
+            for helper in (emitter_task, disconnect_task, watchdog_task):
+                await _stop_helper_task(helper, self.run_id)
 
             if not worker_task.done():
                 # The stream ended before the worker did: stop it and wait, so

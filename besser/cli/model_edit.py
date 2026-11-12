@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import datetime
 import io
 import itertools
 import json
@@ -37,6 +38,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from antlr4 import InputStream
 
+from besser.BUML.metamodel import structural as structural_metamodel
 from besser.BUML.metamodel.gui import Button, LookupColumn, Screen, Table, Text
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
@@ -347,7 +349,11 @@ class _Text:
         own_lines = "\n" in between
         indent = self._item_indent(items)
         item = item.replace("\n", "\n" + indent)  # an item of several lines keeps its shape
-        if comma and own_lines:
+        commented = re.match(r"[ \t]*,[ \t]*#[^\r\n]*(\r\n|\r|\n)", between)
+        if commented:  # the last item's comment stays on its line
+            self.replace(last_end + commented.end(), last_end + commented.end(),
+                         f"{indent}{item},{commented.group(1)}")
+        elif comma and own_lines:
             self.replace(last_end + comma.end(), last_end + comma.end(), f"\n{indent}{item},")
         elif comma:
             self.replace(last_end + comma.end(), last_end + comma.end(), f" {item},")
@@ -711,22 +717,28 @@ class ModelEditor:
         if name in existing:
             raise EditError(f"'{name}' exists already; rename or remove it first")
         type_name = _TYPE_ALIASES.get(type_name, type_name)
-        target = self.model.get_type_by_name(type_name)
-        if isinstance(target, Class):
-            # The backends cannot store one (validate warns), and the class may be defined after the owner.
-            role = _snake(owner)
-            if role in {a.name for a in target.all_attributes()} | {e.name for e in target.association_ends()}:
-                role = f"{role}_{name}"
-            raise EditError(f"'{type_name}' is a class: an attribute cannot hold a class, an association links "
-                            f"them: besser model add-association {_snake(owner)}_{name} {role}:{owner}[*] "
-                            f"{name}:{type_name}[{'0..1' if optional else '1'}]")
-        code = f"{self._structural('Property')}(name={_q(name)}, type={self.type_code(type_name, (Enumeration,))}"
+        self.refuse_class_type(owner, name, type_name, optional)
+        code =f"{self._structural('Property')}(name={_q(name)}, type={self.type_code(type_name, (Enumeration,))}"
         if optional:
             code += ", is_optional=True"
         if default is not None:
             code += f", default_value={self.default_code(type_name, default.strip())}"
         shown = f"{name}:{type_name}{'?' if optional else ''}" + (f"={default.strip()}" if default is not None else "")
         return code + ")", name, shown
+
+    def refuse_class_type(self, owner: str, name: str, type_name: str, optional: bool, first: str = "") -> None:
+        """Refuse a class as the type of the attribute ``name`` of ``owner``, with the association to add
+        instead (after ``first``, a command to run before it)."""
+        target = self.model.get_type_by_name(type_name)
+        if not isinstance(target, Class):
+            return
+        # The backends cannot store one (validate warns), and the class may be defined after the owner.
+        role = _snake(owner)
+        if role in {a.name for a in target.all_attributes()} | {e.name for e in target.association_ends()}:
+            role = f"{role}_{name}"
+        raise EditError(f"'{type_name}' is a class: an attribute cannot hold a class, an association links "
+                        f"them: {first}besser model add-association {_snake(owner)}_{name} {role}:{owner}[*] "
+                        f"{name}:{type_name}[{'0..1' if optional else '1'}]")
 
     def default_code(self, type_name: str, text: str) -> str:
         """The Python value of a default written on the command line, checked against the attribute's type."""
@@ -1532,6 +1544,223 @@ def _rename_defaults(editor: ModelEditor, literal: EnumerationLiteral, new: str)
                                             re.sub(rf"\b{re.escape(literal.name)}(?=\s*$)", new, default)))
 
 
+# ── changing an element in place ─────────────────────────────────────────────
+#
+# The element stays the object it was, written where it was: what refers to it (constraints, table columns,
+# objects, method code) keeps referring to it. What the change would break is refused, named.
+
+# The type names of besser info -> the types of the metamodel.
+_PRIMITIVES = {name: getattr(structural_metamodel, constant) for name, constant in PRIMITIVE_TYPES.items()}
+# What an OCL expression does with a value of a type; a constraint written for one kind does not hold for
+# another. An enumeration's value is compared to quoted text, as a string is.
+_VALUE_KINDS = {"int": "number", "float": "number", "str": "text", "bool": "boolean", "date": "time",
+                "datetime": "time", "time": "time", "timedelta": "duration"}
+# The Python values an object's attribute holds, per type.
+_VALUE_CLASSES: dict[str, tuple[type, ...]] = {
+    "int": (int,), "float": (float,), "str": (str,), "bool": (bool,), "date": (datetime.date,),
+    "datetime": (datetime.datetime,), "time": (datetime.time,), "timedelta": (datetime.timedelta,),
+}
+# Property(name, type, owner, multiplicity, visibility, is_composite, is_navigable, is_id, is_read_only,
+# is_optional, is_external_id, default_value): where an argument is when it is given by position.
+_PROPERTY_POSITIONS = {"type": 1, "multiplicity": 3, "is_optional": 9, "default_value": 11}
+
+
+def _type_name(type_: Any) -> str:
+    return getattr(type_, "name", str(type_))
+
+
+def _value_kind(type_: Any) -> str:
+    return "text" if isinstance(type_, Enumeration) else _VALUE_KINDS.get(_type_name(type_), _type_name(type_))
+
+
+def _default_text(value: Any) -> str:
+    """A default as the command line writes it."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(getattr(value, "name", value))
+
+
+def _fits(value: Any, type_: Any) -> bool:
+    """Whether an object's value is a value of ``type_``."""
+    if value is None or _type_name(type_) == "any":
+        return True
+    if isinstance(type_, Enumeration):
+        return str(getattr(value, "name", value)) in {literal.name for literal in type_.literals}
+    classes = _VALUE_CLASSES.get(_type_name(type_), (object,))
+    if isinstance(value, bool) and bool not in classes:
+        return False
+    if isinstance(value, datetime.datetime) and datetime.datetime not in classes:
+        return False  # a datetime is a date to Python, not to a date column
+    return isinstance(value, classes)
+
+
+def _objects(editor: ModelEditor) -> list[tuple[str, Any]]:
+    """The objects of the file's object models, with the name of their model."""
+    return [(loaded.name, obj) for loaded in editor.loaded.of_kind("object") for obj in loaded.model.objects]
+
+
+def _object_name(obj: Any) -> str:
+    return str(getattr(obj, "name_", None) or obj.name)
+
+
+def _unparsed(editor: ModelEditor) -> set[str]:
+    """The constraints of the model that do not parse against it."""
+    return {constraint.name for constraint in editor.model.constraints
+            if isinstance(constraint.context, Class) and str(constraint.language).upper() == "OCL"
+            and not _parses(invariant_text(constraint), editor.model, constraint.context)}
+
+
+def _object_errors(editor: ModelEditor) -> set[str]:
+    return {error for loaded in editor.loaded.of_kind("object")
+            for error in loaded.model.validate(raise_exception=False)["errors"]}
+
+
+def _broken_by(editor: ModelEditor, apply: Callable[[], None], undo: Callable[[], None]) -> tuple[list[str], list[str]]:
+    """What a change, made on the loaded models by ``apply`` (and undone by ``undo``), breaks: the
+    constraints that no longer parse, and the new errors of the object models."""
+    constraints, errors = _unparsed(editor), _object_errors(editor)
+    apply()
+    try:
+        return sorted(_unparsed(editor) - constraints), sorted(_object_errors(editor) - errors)
+    finally:
+        undo()
+
+
+def _refuse_breaking(editor: ModelEditor, what: str, constraints: Sequence[str], errors: Sequence[str]) -> None:
+    if constraints:
+        raise EditError(f"constraint {', '.join(constraints)} would no longer hold against the model once {what}: "
+                        f"change it first, or remove it (besser model remove {constraints[0]})")
+    if errors:
+        raise EditError(f"the object model would be invalid once {what}: {errors[0]} Change the objects first")
+
+
+def _argument(call: ast.Call, name: str) -> ast.AST | None:
+    """The argument ``name`` of a constructor call: its keyword, or its positional argument."""
+    for keyword_ in call.keywords:
+        if keyword_.arg == name:
+            return keyword_
+    position = _PROPERTY_POSITIONS.get(name) if _callee(call) == "Property" else None
+    return call.args[position] if position is not None and position < len(call.args) else None
+
+
+def _set_field(editor: ModelEditor, element: Any, field_name: str, code: str | None, default: str) -> None:
+    """Make the field ``field_name`` of ``element`` the value ``code`` where the file writes it; ``None`` puts
+    it back to its default (whose code is ``default``): the argument goes."""
+    var = editor.var_of(element)
+    later = [statement for statement in editor.src.attribute_statements(var, field_name)
+             if isinstance(statement, (ast.Assign, ast.AnnAssign))] if var else []
+    if later:  # element.field = ... after the constructor: that statement is what holds
+        value = later[-1].value
+        editor.src.replace(editor.src.start(value), editor.src.end(value), code if code is not None else default)
+        return
+    call = editor.call_of(element)
+    if call is not None:
+        node = _argument(call, field_name)
+        arguments = sorted([*call.args, *call.keywords], key=editor.src.start)
+        if isinstance(node, ast.keyword) and code is None:
+            editor.src.remove_items(call, arguments, {arguments.index(node)})
+        elif node is not None:
+            value = node.value if isinstance(node, ast.keyword) else node
+            editor.src.replace(editor.src.start(value), editor.src.end(value), code if code is not None else default)
+        elif code is not None:
+            editor.src.add_item(arguments, editor.src.end(call) - 1, f"{field_name}={code}")
+        return
+    statement = editor.src.assignment(var) if var else None
+    if statement is None:
+        raise EditError(f"cannot find where {editor.describe(element)} is written; edit it by hand")
+    editor.src.insert_after(statement, f"{var}.{field_name} = {code if code is not None else default}\n")
+
+
+def _attribute_text(type_name: str, optional: bool, default: str | None) -> str:
+    """An attribute's type, ``?`` and default as add-attribute writes them, without the name."""
+    return f"{type_name}{'?' if optional else ''}" + (f"={default}" if default is not None else "")
+
+
+def set_attribute(editor: ModelEditor, path: str, spec: str) -> Edited:
+    attribute = editor.resolve(path)
+    if isinstance(attribute, Property) and editor.association_of(attribute) is not None:
+        raise EditError(f"{path} is an association end: besser model set-multiplicity {path} "
+                        f"{multiplicity_text(attribute.multiplicity.min, attribute.multiplicity.max)}")
+    if not isinstance(attribute, Property) or not isinstance(attribute.owner, Class):
+        raise EditError(f"'{path}' is not an attribute: name one as Class.attribute")
+    cls, name = attribute.owner, attribute.name
+    match = _ATTRIBUTE_CHANGE.match(spec.strip())
+    example = f"e.g. besser model set-attribute {path} :int?=0"
+    if not match or not (match["type"] or match["default"] is not None):
+        raise EditError(f"'{spec}' changes nothing: write the parts to change as add-attribute writes them, "
+                        f"without the name: :type, :type? (optional), =default, = (no default); {example}")
+    if match["name"] not in (None, name):
+        raise EditError(f"'{spec}' names another attribute: write :type, :type? or =default, the name stays "
+                        f"(besser model rename {path} {match['name']} renames it)")
+    old_type, old_optional, old_default = attribute.type, attribute.is_optional, attribute.default_value
+    old_text = _attribute_text(_type_name(old_type), old_optional,
+                               None if old_default is None else _default_text(old_default))
+    type_name = _TYPE_ALIASES.get(match["type"], match["type"]) if match["type"] else _type_name(old_type)
+    optional = bool(match["optional"]) if match["type"] else old_optional
+    if match["type"]:
+        editor.refuse_class_type(cls.name, name, type_name, optional, first=f"besser model remove {path}, then ")
+        type_code = editor.type_code(type_name, (Enumeration,))
+    new_type = _PRIMITIVES.get(type_name) or editor.model.get_type_by_name(type_name)
+    retyped = new_type is not old_type
+    default_given = match["default"].strip() if match["default"] is not None else None
+    if default_given == "" and old_default is None:
+        raise EditError(f"{path} has no default to drop")
+    default = None if default_given == "" else default_given
+    if default_given is None and old_default is not None:
+        default = _default_text(old_default)
+    default_code = None
+    if default is not None and (default_given is not None or retyped):
+        try:
+            default_code = editor.default_code(type_name, default)
+        except EditError as exc:
+            if default_given is not None:
+                raise
+            q = "?" if optional else ""
+            raise EditError(f"the default {default} of {path} does not fit {type_name} ({exc}): give one "
+                            f"(besser model set-attribute {path} :{type_name}{q}=VALUE) or drop it "
+                            f"(besser model set-attribute {path} :{type_name}{q}=)") from exc
+    new_text = _attribute_text(type_name, optional, default)
+    if new_text == old_text and not retyped:
+        raise EditError(f"{path} is {old_text} already")
+    if retyped:
+        kinds = {_value_kind(old_type), _value_kind(new_type)}
+        users = _constraints_using(editor, attribute, []) if len(kinds) == 2 and "any" not in kinds else []
+        if users:
+            raise EditError(f"constraint {', '.join(users)} uses {path} as {_type_name(old_type)} and would not "
+                            f"hold for {type_name}: change it first, or remove it (besser model remove {users[0]})")
+        wrong = [f"{_object_name(obj)} ({name}={_default_text(slot.value.value)})" for _, obj in _objects(editor)
+                 for slot in obj.slots if slot.attribute is attribute and not _fits(slot.value.value, new_type)]
+        if wrong:
+            raise EditError(f"object {', '.join(sorted(wrong))} holds no {type_name}: change the value first")
+
+        def retype() -> None:
+            attribute.type = new_type
+
+        def undo() -> None:
+            attribute.type = old_type
+
+        _refuse_breaking(editor, f"{path} is {type_name}", *_broken_by(editor, retype, undo))
+        _set_field(editor, attribute, "type", type_code, "")
+    if optional != old_optional:
+        _set_field(editor, attribute, "is_optional", "True" if optional else None, "False")
+    if default_given is not None or (retyped and default is not None):
+        _set_field(editor, attribute, "default_value", default_code, "None")
+    wanted_default = None if default is None else (
+        ast.literal_eval(default_code) if default_code is not None else old_default)
+
+    def check(model: DomainModel) -> str | None:
+        try:
+            found = resolve(model, f"{cls.name}.{name}")
+        except EditError as exc:
+            return str(exc)
+        held = _attribute_text(_type_name(found.type), found.is_optional,
+                               None if found.default_value is None else _default_text(found.default_value))
+        wanted = _attribute_text(type_name, optional, None if wanted_default is None else _default_text(wanted_default))
+        return None if held == wanted else f"{cls.name}.{name} is {held}"
+
+    return Edited(editor.finish(), f"changed {cls.name}.{name} from {old_text} to {new_text}", check)
+
+
 def _forget_var(editor: ModelEditor, var: str) -> None:
     """Delete the statements that define ``var`` or set something on it."""
     statement = editor.src.assignment(var)
@@ -2068,6 +2297,8 @@ OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
     "set-enum": ("create an enumeration or set its literals: NAME LITERAL...", set_enum),
     "rename": ("rename a class, enumeration, member, literal, association or constraint: PATH NEW_NAME", rename),
     "remove": ("remove an element (a class with its associations): PATH", remove),
+    "set-attribute": ("change an attribute's type, ?, default in place: CLASS.ATTRIBUTE :TYPE[?][=DEFAULT]",
+                      set_attribute),
 }
 
 

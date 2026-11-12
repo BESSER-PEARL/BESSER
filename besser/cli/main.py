@@ -122,6 +122,7 @@ examples:
   besser model add-screen Invoice --title Bills (a page with a table of the class, in the GUI model)
   besser model add-class Tag label:str --screen (a class and its page)
   besser model batch - <<'EOF'                  (several changes, one write)
+  besser model set-attribute Book.pages :int?=0 (type, ? and default in place; = drops the default)
 """
 
 # What rename and remove take.
@@ -174,6 +175,11 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
     ],
     "remove": [
         (("path",), {"help": _MODEL_PATH_HELP}),
+    ],
+    "set-attribute": [
+        (("path",), {"metavar": "CLASS.ATTRIBUTE", "help": "the attribute"}),
+        (("spec",), {"metavar": "CHANGE", "help": "what changes, as add-attribute writes it without the name: "
+                                                  ":type, :type? (optional), =default, = (no default)"}),
     ],
 }
 

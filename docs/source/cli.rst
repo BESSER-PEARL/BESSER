@@ -772,6 +772,15 @@ name one of each).
        the buttons that open them. When the main screen goes, the first screen
        left (by module, then name, the generator's order) becomes the main
        page, with a button to each other screen left (the line names it).
+   * - ``set-attribute CLASS.ATTRIBUTE CHANGE``
+     - Changes an attribute where it is written, so the constraints, table
+       columns, objects and method code that refer to it keep doing so.
+       ``CHANGE`` is the ``add-attribute`` notation without the name, the parts
+       to change only: ``:int`` (type, required), ``:int?`` (optional),
+       ``=0`` (default), ``=`` (no default), or together (``:int?=0``). Refused
+       when a constraint uses the attribute as a value of another kind
+       (``self.pages > 0`` for a ``str``), an object holds a value of another
+       type, or the kept default does not fit the new type.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``

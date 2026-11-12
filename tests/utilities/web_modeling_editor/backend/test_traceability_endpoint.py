@@ -123,6 +123,19 @@ def test_trace_with_edits_round_trips(traced):
                        "startedAt": "2026-10-29T09:58:00.000Z", "logs": []}],
         "reads": ["prompt-1"], "writes": ["prompt-1:R1"],
     })
+    trace["tools"].append({"id": "gui-generator", "type": "ModelGenerator", "name": "BESSER GUI generator",
+                           "timestamp": "2026-10-29T10:06:00.000Z"})
+    trace["artifacts"].append({"id": "page-1", "type": "ModelArtifact", "name": "Book", "elementId": "page-1",
+                               "elementType": "Screen", "timestamp": "2026-10-29T10:06:00.000Z"})
+    trace["operations"].append({
+        "id": "op-derivation", "type": "ModelingSession", "status": "SUCCEEDED",
+        "startedAt": "2026-10-29T10:06:00.000Z", "performedBy": [trace["actors"][0]["id"]],
+        "toolCalls": [{"id": "call-g", "toolId": "gui-generator", "sequenceNumber": 0, "status": "SUCCEEDED",
+                       "startedAt": "2026-10-29T10:06:00.000Z", "logs": []}],
+        "reads": [class_artifact["id"]], "writes": [],
+        "changes": [{"id": "ch-g", "kind": "CREATED", "artifactId": "page-1",
+                     "timestamp": "2026-10-29T10:06:00.000Z"}],
+    })
     assert trace_buml_to_json(process_trace(trace)) == trace
 
 

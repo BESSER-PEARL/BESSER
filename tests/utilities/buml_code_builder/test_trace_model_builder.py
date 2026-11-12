@@ -6,7 +6,8 @@ import pytest
 
 from besser.BUML.metamodel.traceability import (
     LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGenerator, Confidence, Editor,
-    LogRecord, LogType, ModelArtifact, ModelingSession, CodeGeneration, Conversation, ExecutionStatus, Person, PromptArtifact,
+    LogRecord, LogType, ModelArtifact, ModelGenerator, ModelingSession, CodeGeneration, Conversation,
+    ExecutionStatus, Person, PromptArtifact,
     RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall, TraceLink,
     TraceModel,
 )
@@ -68,9 +69,17 @@ def trace():
                            [RuleEvidence("quote found in the prompt", timestamp=_at(0))], timestamp=_at(0)))
     links.append(TraceLink(requirement, book, modeling, [AIEvidence("llm", logs=[answer], timestamp=_at(1))],
                            timestamp=_at(1)))
-    return TraceModel(project_id="project-1", actors=[owner, assistant], tools=[editor, generator, llm],
-                      artifacts=[lines, book, model, file, prompt, requirement],
-                      operations=[chat, extraction, modeling, generation], trace_links=links)
+    gui_generator = ModelGenerator("BESSER GUI generator", timestamp=_at(6))
+    gui = ModelArtifact("Library GUI", "gui-1", "GUIModel", timestamp=_at(6))
+    page = ModelArtifact("Book", "page-1", "Screen", parent=gui, timestamp=_at(6))
+    derivation = ModelingSession([owner], started_at=_at(6), reads=[book],
+                                 changes=[ChangeEvent(ChangeKind.CREATED, page, timestamp=_at(6))],
+                                 tool_calls=[ToolCall(gui_generator, 0, started_at=_at(6))])
+    links.append(TraceLink(book, page, derivation, [RuleEvidence("GUI element bound to the model element",
+                                                                 timestamp=_at(6))], timestamp=_at(6)))
+    return TraceModel(project_id="project-1", actors=[owner, assistant], tools=[editor, generator, llm, gui_generator],
+                      artifacts=[lines, book, model, file, prompt, requirement, gui, page],
+                      operations=[chat, extraction, modeling, generation, derivation], trace_links=links)
 
 
 def _code(trace, tmp_path) -> str:

@@ -11,7 +11,8 @@ an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
   :class:`Transformation`) derives code from models, :class:`RequirementExtraction`
   (a :class:`Transformation` too) derives requirements from a prompt, :class:`Conversation`
   is a dialogue between a user and an agent. Whether a person or an agent did the
-  work is told by its actors, not by its kind.
+  work is told by its actors, not by its kind; whether edits were made by hand or
+  derived by a model generator is told by its tools.
 * An operation reaches its Tools only through its :class:`ToolCall` records: each
   call invokes one tool and holds the :class:`LogRecord` messages exchanged with it
   (a prompt and its answer). The tools an operation used are derived from its calls.
@@ -53,6 +54,7 @@ __all__ = [
     "Tool",
     "Editor",
     "CodeGenerator",
+    "ModelGenerator",
     "LLM",
     "LogRecord",
     "ToolCall",
@@ -672,6 +674,10 @@ class CodeGenerator(Tool):
     """A deterministic BESSER code generator."""
 
 
+class ModelGenerator(Tool):
+    """A deterministic BESSER model generator (the GUI generator deriving a GUI from a class diagram)."""
+
+
 class LLM(Tool):
     """A large language model.
 
@@ -1115,6 +1121,10 @@ class Operation(TraceElement, ABC):
 class ModelingSession(Operation):
     """A modeling session: edits made to models, by a person, an agent (an
     assistant), or both, recorded change by change.
+
+    Its tool calls tell how: an :class:`Editor` for edits made in the editor, a
+    :class:`ModelGenerator` for a model derived from another in one run (a GUI generated from a
+    class diagram), whose links to what it was derived from the session makes too.
 
     Args:
         performed_by (list[Actor]): Who made the edits (at least one).

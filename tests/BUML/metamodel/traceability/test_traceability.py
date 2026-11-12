@@ -7,7 +7,8 @@ import pytest
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
 from besser.BUML.metamodel.traceability import (
     LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
-    Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Conversation, ModelingSession, Operation, OutOfDateReason,
+    Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, ModelGenerator, Conversation,
+    ModelingSession, Operation, OutOfDateReason,
     Person, PromptArtifact, RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall,
     TraceLink, TraceModel, Transformation,
 )
@@ -364,6 +365,19 @@ def test_a_requirement_extraction_calls_an_llm_and_writes_only_requirements(gene
     errors = "\n".join(trace.validate(raise_exception=False)["errors"])
     assert "RequirementExtraction that calls no LLM" in errors
     assert f"RequirementExtraction that writes ModelArtifact {book.id!r}" in errors
+
+
+def test_a_gui_derived_from_a_class_diagram_is_a_session_of_the_model_generator(generation_trace):
+    trace, _, owner, book, _ = generation_trace
+    generator = trace.add_tool(ModelGenerator("BESSER GUI generator"))
+    gui = trace.add_artifact(ModelArtifact("Library GUI", "gui-1", "GUIModel", timestamp=T0))
+    page = trace.add_artifact(ModelArtifact("Book", "page-1", "Screen", parent=gui, timestamp=T0))
+    derivation = trace.add_operation(ModelingSession(
+        [owner], started_at=T0, tool_calls=[ToolCall(generator, 0, started_at=T0)], reads=[book],
+        changes=[ChangeEvent(ChangeKind.CREATED, page, timestamp=T0)]))
+    trace.add_trace_link(TraceLink(book, page, derivation, [RuleEvidence("GUI element bound to the model element",
+                                                                         timestamp=T0)], timestamp=T0))
+    assert trace.validate(raise_exception=False)["errors"] == []
 
 
 def test_a_code_generation_calls_a_generator_or_an_llm(generation_trace):

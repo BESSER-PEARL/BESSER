@@ -64,15 +64,27 @@ Traceability
 
 The *Traceability* page (in the project section of the sidebar, next to *Settings*)
 records and shows what happened to the project's models and the code generated from
-them. Class diagrams are recorded today; the page is project-wide so that other model
-types can join. Recording is on for a new project; *Record traces for this project*
+them. Class diagrams and GUI diagrams are recorded today; the page is project-wide so that
+other model types can join. Recording is on for a new project; *Record traces for this project*
 on that page turns it off or on.
 
 * **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
   class, attribute, method, enumeration, association, generalization or OCL
   constraint) become modeling sessions, attributed to the project owner (or
   ``anonymous``) and, for assistant edits, to the assistant. Layout changes are not
-  recorded, and quick successive edits of one element are merged. A SQLAlchemy
+  recorded, and quick successive edits of one element are merged. GUI-diagram edits are
+  recorded the same way for pages and the components that show, edit or act on data
+  (tables, charts, metric cards, maps, agent components, forms, inputs, buttons, menus;
+  not text, images or layout containers), each linked from the class-diagram elements it
+  is bound to (a table from its class, a button from its method). A table's columns are
+  recorded as its parts, known by the field they show: a field column linked from its
+  attribute, a lookup column from the association it follows and the attribute it displays.
+  The editor gives each of those components a persistent id to know it from one
+  save to the next. A GUI the editor generates from the class diagram (*Auto-generate*) is
+  one modeling session of the *BESSER GUI generator*, recorded once the generator is done:
+  every page it replaced and every element it made, each page linked from the class it was
+  generated for. Its links stay current until the GUI is edited again. A GUI the assistant
+  writes is its edit, linked from the request. A SQLAlchemy
   or *Full Backend* generation records which files and lines each class,
   enumeration, association, attribute, method and OCL constraint produced. A chat
   with the modeling assistant is a conversation: each request is a turn holding the
@@ -118,8 +130,10 @@ on that page turns it off or on.
   was edited since (a class the assistant made, then changed by hand), and *upstream
   changed* (dashed amber) when neither end changed but something its source was
   derived from did. Selecting a link shows its evidence, the operation, actor and tool
-  that made it, and each reason it is out of date with the changes behind it. Older
-  generation runs are hidden unless asked for.
+  that made it, and each reason it is out of date with the changes behind it. The lineage
+  shows the project as it is: older generation runs, and deleted elements with their links,
+  show only with *Show history* (a deleted element struck through). The *Diagrams* tab keeps
+  deleted elements, struck through, with their history.
 * **Stored.** In the browser (IndexedDB), apart from the project. Deleting the
   project deletes its trace, and *Clear* on the page deletes it alone. The newest five
   runs of each generator keep their trace links; older runs keep only their files and

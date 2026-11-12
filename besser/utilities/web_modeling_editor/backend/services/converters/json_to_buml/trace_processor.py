@@ -11,7 +11,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from besser.BUML.metamodel.traceability import (
     LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
-    Conversation, Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, ModelingSession, Person, PromptArtifact,
+    Conversation, Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, ModelGenerator,
+    ModelingSession, Person, PromptArtifact,
     RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.utilities.utils import parse_iso_timestamp
@@ -23,7 +24,7 @@ _OPERATION_TYPES = {
     "ModelingSession": ModelingSession, "CodeGeneration": CodeGeneration,
     "RequirementExtraction": RequirementExtraction, "Conversation": Conversation,
 }
-_TOOL_TYPES = {"Editor": Editor, "CodeGenerator": CodeGenerator, "LLM": LLM}
+_TOOL_TYPES = {"Editor": Editor, "CodeGenerator": CodeGenerator, "ModelGenerator": ModelGenerator, "LLM": LLM}
 
 
 def _field(data: Dict[str, Any], key: str, where: str, optional: bool = False) -> Any:

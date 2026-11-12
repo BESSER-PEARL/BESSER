@@ -47,14 +47,16 @@ Concepts
 
 - **Operation** -- an activity, performed by one or more **Actors** (``Person``,
   ``Agent``). It has a status (``ExecutionStatus``) and start/end times, reads and
-  writes artifacts, and reaches its **Tools** (``Editor``, ``CodeGenerator``, ``LLM``)
+  writes artifacts, and reaches its **Tools** (``Editor``, ``CodeGenerator``, ``ModelGenerator``, ``LLM``)
   only through its **ToolCalls**; the tools it used (``Operation.tools``) are derived
   from them. It may have a **Confidence** in its result, as a trace link may (none is
   computed yet). ``Operation`` is abstract; its kind is its class:
 
   - **ModelingSession** -- edits made to models, recorded as its **ChangeEvents** (at least one).
     Whether a person or the assistant made them is told by the actors (a ``Person``,
-    an ``Agent``, or both), not by the kind of operation.
+    an ``Agent``, or both), not by the kind of operation; how, by its tool calls: an ``Editor``
+    for edits made in the editor, a deterministic ``ModelGenerator`` for a model derived from
+    another in one run (a GUI generated from a class diagram), linked from what it was derived from.
   - **CodeGeneration** -- a generation run, deriving code from models; it calls at least
     one ``CodeGenerator`` or ``LLM`` (a deterministic generator, or an LLM writing the
     code; its links' evidence tells which). It is a **Transformation** (abstract): an operation that

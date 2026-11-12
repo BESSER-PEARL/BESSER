@@ -25,8 +25,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, TextIO, Tuple
 
 from besser.BUML.metamodel.traceability import (
     AIEvidence, Agent, Artifact, ChangeEvent, CodeArtifact, CodeGeneration, Confidence, Evidence, LLM,
-    Conversation, LogRecord, ModelArtifact, ModelingSession, Operation, PromptArtifact, RequirementArtifact,
-    RequirementExtraction, RuleEvidence, ToolCall, TraceElement, TraceLink, TraceModel,
+    Conversation, LogRecord, ModelArtifact, ModelingSession, Operation, PromptArtifact,
+    RequirementArtifact, RequirementExtraction, RuleEvidence, ToolCall, TraceElement, TraceLink, TraceModel,
 )
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.utilities.buml_code_builder.common import (
@@ -44,9 +44,10 @@ _TRACE_NAMES = re.compile(r"^((actor|tool|artifact|change|log|call|operation|evi
 TRACE_SECTION_KEYWORD = "TRACEABILITY"
 
 _IMPORTED_NAMES = (
-    "TraceModel, Person, Agent, Editor, CodeGenerator, LLM, ModelArtifact, CodeArtifact, PromptArtifact,\n"
+    "TraceModel, Person, Agent, Editor, CodeGenerator, ModelGenerator, LLM, ModelArtifact, CodeArtifact, PromptArtifact,\n"
     "    RequirementArtifact, RequirementKind,\n"
-    "    ModelingSession, CodeGeneration, RequirementExtraction, Conversation, ExecutionStatus, ChangeEvent, ChangeKind, ToolCall, LogRecord, LogType,\n"
+    "    ModelingSession, CodeGeneration, RequirementExtraction, Conversation, ExecutionStatus,\n"
+    "    ChangeEvent, ChangeKind, ToolCall, LogRecord, LogType,\n"
     "    RuleEvidence, AIEvidence, Confidence, TraceLink,"
 )
 

@@ -217,6 +217,19 @@ def test_apply_runs_no_test_after_a_build_that_fails(besser, write):
     assert "ValueError: broken" in run.json["errors"][0]
 
 
+def test_apply_whose_test_command_cannot_run_still_reports_what_the_build_wrote(besser, model, write):
+    _config(write, 'test = "no-such-test-runner -q"\n')
+    run = besser("apply", "--json")
+    text = besser("apply", output=None)
+
+    assert run.returncode == 1 and run.json["exit_code"] == 1
+    assert run.json["errors"] == ["cannot run the test command 'no-such-test-runner -q': "
+                                  "[Errno 2] No such file or directory: 'no-such-test-runner'"]
+    assert "api/main_api.py" in run.json["files"]  # written by the build: listed, as build lists them
+    assert run.json["files"] == run.json["outputs"][0]["files"]
+    assert text.stdout.startswith("FAILED: tests not run; build OK: 1 output, 0 failed: [api] ")
+
+
 def test_apply_without_a_test_command_says_so_in_its_one_line(besser, model, write):
     _config(write)
     run = besser("apply", output=None)

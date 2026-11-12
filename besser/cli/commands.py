@@ -1628,7 +1628,7 @@ def apply(config_path: str = CONFIG_FILENAME) -> Result:
     try:
         command = load_test_command(config_path)
     except ConfigError as exc:  # build read the same file: only a change in between gets here
-        return failure("apply", str(exc), data=result.data, cause=exc)
+        return _tests_not_run(result, built, str(exc), EXIT_USAGE, exc)
     if command is None:
         result.notes.append(f"no tests run: {config_path} has no 'test' command")
         return _with_tests(result, built, f"none (set 'test' in {Path(config_path).name})")
@@ -1637,7 +1637,7 @@ def apply(config_path: str = CONFIG_FILENAME) -> Result:
                                  stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                                  check=False)
     except (OSError, ValueError) as exc:
-        return failure("apply", f"cannot run the test command '{command}': {exc}", EXIT_FAILED, result.data, exc)
+        return _tests_not_run(result, built, f"cannot run the test command '{command}': {exc}", EXIT_FAILED, exc)
     output = _ANSI.sub("", process.stdout + process.stderr).strip().splitlines()
     tail = output[-_TEST_TAIL_LINES:]
     result.data["test"] = {"command": command, "exit_code": process.returncode, "output_tail": tail,
@@ -1652,6 +1652,16 @@ def apply(config_path: str = CONFIG_FILENAME) -> Result:
         result.brief = ""
         return result
     return _with_tests(result, built, tail[-1].strip() if tail else "no output")
+
+
+def _tests_not_run(result: Result, built: Result, error: str, exit_code: int, cause: BaseException) -> Result:
+    """``result`` failed with ``error`` before the tests ran: the build's files, notes and report are kept."""
+    result.exit_code = exit_code
+    result.errors.append(error)
+    result.traceback = format_traceback(cause)
+    result.text = f"{built.text}\nFAILED: tests not run"
+    result.brief = f"FAILED: tests not run; build {built.brief}"
+    return result
 
 
 def _with_tests(result: Result, built: Result, outcome: str) -> Result:

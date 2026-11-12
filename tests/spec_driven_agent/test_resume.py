@@ -502,6 +502,39 @@ def test_a_resumed_run_updates_its_history_entry(simple_model, tmp_path):
     assert "notes.txt" in history[0]["files_touched"]
 
 
+def test_the_resumed_prompt_shows_the_checklist_and_the_scaffold_issues(simple_model, tmp_path, monkeypatch):
+    """The checklist and the Phase 1.5 findings live in the system prompt,
+    which a resume rebuilds; it rebuilt it without them while the end_turn
+    gate still held the model to the restored checklist."""
+    import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
+
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: [
+        "Add a JWT login endpoint", "Hash passwords with bcrypt"])
+    monkeypatch.setattr(LLMOrchestrator, "_validate_phase1_output",
+                        lambda self: ["main_api.py imports a module that does not exist"])
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    saved = json.loads((tmp_path / CHECKPOINT_FILENAME).read_text(encoding="utf-8"))
+    saved["tasks"][0]["done"] = True
+    (tmp_path / CHECKPOINT_FILENAME).write_text(json.dumps(saved), encoding="utf-8")
+
+    class _Recording(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            self.systems = [*getattr(self, "systems", []), system]
+            return super().chat(system, messages, tools)
+
+    client = _Recording([_end_turn()])
+    LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    ).resume("Build a blog")
+
+    system = client.systems[0]
+    # Numbered by task id, as task_list(id=N) addresses them.
+    assert "1. Add a JWT login endpoint (done)" in system
+    assert "2. Hash passwords with bcrypt\n" in system
+    assert "main_api.py imports a module that does not exist" in system
+
+
 def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
     """Calling ``resume()`` with no saved checkpoint is an explicit error."""
     client = _ScriptedClient([_end_turn()])

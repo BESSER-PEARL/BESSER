@@ -220,30 +220,8 @@ class ModifyRunMixin:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="seed_forward", message=issue,
                 )
-        # Feed the tool's OWN structural findings that match the reported
-        # target into Phase 2 as explicit fix instructions, so the LLM acts
-        # on the concrete defect (e.g. "the Watchlist create form is not
-        # wired") instead of only the user's paraphrase. Empty on a
-        # non-fix modify run and on run()/resume().
-        fix_seed_issues = self._fix_run_scoped_issues()
-        if fix_seed_issues:
-            for issue in fix_seed_issues:
-                self._trace.write(
-                    EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue,
-                )
-        # The model change leads the issues, after the reported failure's
-        # headline in a fix run.
-        leading = [note for note in (model_note, regeneration_note) if note]
-        if leading and fix_seed_issues:
-            leading = fix_seed_issues[:1] + leading
-            fix_seed_issues = fix_seed_issues[1:]
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
-        self._run_phase2(
-            instructions,
-            extra_issues=(
-                leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
-            ),
-        )
+        self._run_phase2(instructions, extra_issues=self._modify_scoped_issues(phase1_issues))
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,
             stop_reason=self._phase2_stop_reason,
@@ -298,6 +276,25 @@ class ModifyRunMixin:
             validation_issues=len(self._validation_issues),
         )
         return self.output_dir
+
+    def _modify_scoped_issues(self, phase1_issues: list[str]) -> list[str]:
+        """The issues a modify run's Phase 2 opens with; its resume rebuilds them."""
+        # The tool's OWN structural findings that match the reported target,
+        # as explicit fix instructions, so the LLM acts on the concrete defect
+        # (e.g. "the Watchlist create form is not wired") instead of only the
+        # user's paraphrase. Empty on a non-fix modify run.
+        fix_seed_issues = self._fix_run_scoped_issues()
+        for issue in fix_seed_issues:
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue)
+        # The model change leads the issues, after the reported failure's
+        # headline in a fix run. A resume has no regeneration note: the
+        # restored inventory carries it.
+        regeneration_note = self._regeneration.note() if self._regeneration else ""
+        leading = [note for note in (self._render_model_change(), regeneration_note) if note]
+        if leading and fix_seed_issues:
+            leading = fix_seed_issues[:1] + leading
+            fix_seed_issues = fix_seed_issues[1:]
+        return leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
 
     def _render_model_change(self) -> str:
         """Every model change since the seed run, so the edit follows the new
@@ -643,7 +640,7 @@ class ModifyRunMixin:
         LLM knows the success criterion even when nothing structural
         matched), then appends the tool's OWN structural findings on the
         SEED workspace that match the target (acceptance matrix +
-        data-contract lint). Empty on a non-fix run and on run()/resume().
+        data-contract lint). Empty on a non-fix run and on run().
         """
         if not self._is_fix_run or self._fix_target is None:
             return []

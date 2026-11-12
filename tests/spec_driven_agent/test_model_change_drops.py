@@ -366,10 +366,15 @@ def test_a_resumed_modify_run_keeps_the_drop_and_the_seed_blockers(tmp_path, mon
 
     current = _with_rules(_model(book=("title:str",)), PAGES_RULE)
     resumed = orchestrator(current)
-    monkeypatch.setattr(resumed, "_run_phase2", lambda instructions, extra_issues=None: None)
+    phase2_issues: list[str] = []
+    monkeypatch.setattr(resumed, "_run_phase2", lambda instructions, extra_issues=None: (
+        phase2_issues.extend(extra_issues)))
     monkeypatch.setattr(resumed, "_save_recipe", lambda instructions, elapsed: None)
     resumed.resume("update the app to the new model")
 
     assert current.conversion_issues[0]["dropped_by_model_change"] == ["Book.pages"]
     assert _recover_texts(resumed) == []
     assert resumed._seed_unresolved_issues == first._seed_unresolved_issues
+    # The resumed Phase 2 prompt opens with the same model change and seed debt.
+    assert phase2_issues[0] == resumed._render_model_change()
+    assert first._seed_unresolved_issues[0] in phase2_issues

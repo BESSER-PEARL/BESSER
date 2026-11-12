@@ -981,8 +981,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._apply_adaptive_budget()
 
         if checkpoint.phase == "phase2":
+            # The scoped issues are in the system prompt, which is rebuilt:
+            # recompute them against the workspace as it is now.
+            phase1_issues = self._validate_phase1_output()
+            for issue in phase1_issues:
+                self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
             self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
-            self._run_phase2(instructions, extra_issues=[])
+            self._run_phase2(instructions, extra_issues=(
+                self._modify_scoped_issues(phase1_issues) if self._modify_mode else phase1_issues))
             self._trace.write(
                 EVENT_PHASE_EXIT, phase="phase2_resume", turns=self.total_turns,
                 stop_reason=self._phase2_stop_reason,
@@ -1830,15 +1836,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         scoped_issues = list(extra_issues) if extra_issues else []
         scoped_issues.extend(self._validate_app()["issues"])
 
-        # On resume we skip gap analysis entirely — the checkpoint's
-        # message history already contains whatever task-list the
-        # original run established. Running a new gap-analyzer call
-        # now would contradict the mid-run reasoning.
         resumed = self._resume_messages is not None
         if resumed:
-            # Skip gap analysis — the checkpoint's message history already
-            # contains whatever task list the original run established.
-            gap_tasks: list[str] | None = None
+            # No new gap analysis: resume() restored the executor's checklist.
+            # It lives in the system prompt, which is rebuilt here, so show it
+            # again, every item in id order (task_list addresses items by id).
+            gap_tasks: list | None = []
+            for task in self.executor.task_snapshot():
+                closed = ("dropped" if task.get("dropped") else "done" if task["done"]
+                          else "blocked" if task["blocked"] else "")
+                gap_tasks.append(f"{task['text']} ({closed})" if closed else task)
             messages = list(self._resume_messages or [])
         elif budget_stop := self._budget_stop_reason():
             # Phase 1 / 1.5 can outlast a cap or a cancel; the loop below
@@ -1927,8 +1934,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 gap_tasks = merge_action_tasks(
                     deterministic_tasks + (gap_tasks or []), self._expected_action_endpoints(),
                 )
-        if gap_tasks:
-            self.executor.set_tasks(gap_tasks)
+            if gap_tasks:
+                self.executor.set_tasks(gap_tasks)
 
         system = self._build_system_prompt(
             instructions=instructions,

@@ -245,7 +245,8 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "dry_run": {"type": "boolean"},
         "outputs": {"type": "array", "description": "as build"},
         "test": {"type": ["object", "null"], "description": "the tests run after the build: command, exit_code, "
-                                                            "output_tail (the last lines); null when none ran"},
+                                                            "output_tail (the last lines), failing (the tests "
+                                                            "pytest's summary names); null when none ran"},
     },
     "convert": {
         "input": {"type": "string"}, "inputs": _STRINGS, "output": {"type": "string"},

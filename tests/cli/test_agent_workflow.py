@@ -106,7 +106,7 @@ def test_init_sets_up_a_project_that_apply_builds(besser, tmp_path):
         "/backend/*\n!/backend/extensions.py\n**/.besser_generated.json\n# besser:end\n")
     assert applied.returncode == 0
     assert applied.stdout == ("OK: 1 output, 0 failed: [backend] Generated 10 files in shop/backend with the "
-                              "'backend' generator\n")
+                              "'backend' generator; tests: none (set 'test' in besser.toml)\n")
     assert (tmp_path / "shop" / "backend" / "main_api.py").is_file()
 
 
@@ -194,11 +194,62 @@ def test_apply_runs_no_test_after_a_build_that_fails(besser, write):
     assert "ValueError: broken" in run.json["errors"][0]
 
 
-def test_apply_without_a_test_command_says_so(besser, model, write):
+def test_apply_without_a_test_command_says_so_in_its_one_line(besser, model, write):
     _config(write)
-    run = besser("apply", "--json")
+    run = besser("apply", output=None)
+    as_json = besser("apply", "--json")
 
-    assert run.returncode == 0 and run.json["notes"][-1] == "no tests run: besser.toml has no 'test' command"
+    assert run.returncode == 0
+    assert run.stdout.rstrip("\n").endswith("; tests: none (set 'test' in besser.toml)")
+    assert as_json.json["notes"][-1] == "no tests run: besser.toml has no 'test' command"
+
+
+@needs_pygit2
+def test_apply_that_fails_never_reports_ok(besser, model, write):
+    _config(write, FAILING_TEST)
+    run = besser("apply", output=None)
+
+    last = run.stdout.splitlines()[-1]
+    assert run.returncode == 1
+    assert last.startswith("FAILED: tests (exit status 3)") and "OK" not in last.split(";")[0]
+
+
+@needs_pygit2
+def test_apply_shows_the_cause_of_a_pytest_collection_error(besser, model, write):
+    _config(write, 'test = "python -m pytest -q -p no:cacheprovider tests"\n')
+    write("helper.py", "def broken(:\n    pass\n")
+    write("tests/test_a.py", """
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        import helper
+
+        def test_a():
+            assert helper
+    """)
+    run = besser("apply", "--json", output=None)
+    text = besser("apply", output=None)
+
+    assert run.returncode == 1 and run.json["test"]["failing"] == ["tests/test_a.py"]
+    assert "helper.py\", line 1" in text.stdout and "SyntaxError" in text.stdout
+    assert text.stdout.splitlines()[-1].startswith("FAILED: tests (exit status 2)")
+
+
+@needs_pygit2
+def test_apply_runs_the_tests_without_besser_s_standard_input(besser, model, write):
+    _config(write, f'test = "python -c \\"import sys; print(repr(sys.stdin.read()) + \' passed\')\\""\n')
+    run = besser("apply", output=None, stdin="secret")
+
+    assert run.returncode == 0 and run.stdout.rstrip("\n").endswith("; tests: '' passed")
+
+
+@needs_pygit2
+def test_apply_reports_no_collected_test_as_none(besser, model, write):
+    write("tests/__init__.py", "")
+    _config(write, 'test = "python -m pytest -q -p no:cacheprovider tests"\n')
+    run = besser("apply", output=None)
+
+    assert run.returncode == 0
+    assert run.stdout.rstrip("\n").endswith("; tests: none collected")
 
 
 # ── what the agent reads instead of the code ────────────────────────────────

@@ -1058,19 +1058,36 @@ adopts (``regenerate --adopt``) without reading the header as an edit.
 
    $ besser apply
    OK: 1 output, 0 failed: [backend] backend is up to date with model.py: no file changed; tests: 12 passed in 0.41s
+   $ besser apply                   # a test module that does not import
+   E     File "/home/me/shop/backend/extensions.py", line 2
+   E       x = (
+   E           ^
+   E   SyntaxError: '(' was never closed
+   ERROR tests/test_api.py
+   !!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+   1 error in 0.47s
+   FAILED: tests (exit status 2); build OK: 1 output, 0 failed: [backend] backend is up to date with model.py: no file changed
 
 The one command to run after a model change: ``besser build`` for every output
 (each model is validated first, and nothing is generated from a model with
 errors), then, when the build succeeded, the ``test`` command line of
-``besser.toml``, run from its folder without a shell. It prints one line when
-everything passes. When the tests fail it prints only the failing tests and
-exits with status 1: pytest's short test summary (one line per failing test
-with its first error line, then the counts), else the lines that name a
-failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``) and the last line, else
-the last 40 lines of the output. Without a ``test`` key it builds and notes that no test ran;
-``-c FILE`` reads another configuration file. ``--json`` is the object of
+``besser.toml``, run from its folder without a shell and with no standard
+input (a leading ``python`` is the interpreter running ``besser``). It prints
+one line when everything passes, and that line always ends with what the tests
+did: their last output line, ``tests: none collected`` (pytest found no test),
+or ``tests: none (set 'test' in besser.toml)`` when there is no ``test`` key.
+When the tests fail it prints only the failing tests, then a line starting with
+``FAILED: tests (exit status N)``, and exits with status 1: pytest's short test
+summary (one line per failing test with its first error line, then the counts,
+preceded by pytest's first ``E`` lines, about 600 bytes, when a test module
+does not import, so the cause and its file are shown), else the lines that
+name a failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``) and the last line,
+else the last 40 lines of the output. Colour codes are removed first. A
+conflict left by the build says to resolve the markers, then run ``besser apply``
+again. ``-c FILE`` reads another configuration file. ``--json`` is the object of
 ``build`` with ``command`` ``apply`` and ``test``: its ``command``,
-``exit_code`` and ``output_tail``, or ``null`` when no test ran.
+``exit_code``, ``output_tail`` and ``failing`` (the tests pytest's summary
+names), or ``null`` when no test ran.
 
 ``besser convert``
 ------------------
@@ -1290,8 +1307,9 @@ Each command adds its own:
      - ``config``, ``dry_run`` and ``outputs``: per output its ``name`` and
        the object of the run that built it.
    * - ``apply``
-     - The keys of ``build``, and ``test``: ``command``, ``exit_code`` and
-       ``output_tail`` (the last lines of its output), or ``null``.
+     - The keys of ``build``, and ``test``: ``command``, ``exit_code``,
+       ``output_tail`` (the last lines of its output) and ``failing`` (the
+       tests pytest's short summary names), or ``null``.
    * - ``init``
      - ``folder`` and ``kind``.
    * - ``guide``

@@ -123,6 +123,20 @@ def test_the_conflict_files_are_listed_and_the_next_run_waits_for_them(besser, m
 
 
 @needs_pygit2
+def test_a_conflict_left_by_apply_says_to_run_apply_again(besser, model, write, classes):
+    write("besser.toml", f'model = "{model}"\n\n[output.out]\ngenerator = "python"\ndir = "out"\n')
+    besser("apply")
+    classes.write_text(classes.read_text().replace(BOOK_CONSTRUCTOR, "def __init__(self, title: str, pages: int = 0,"))
+    write("library.py", LIBRARY_MODEL_WITH_ISBN)
+
+    run = besser("apply", "--json")
+    again = besser("apply", "--json")
+
+    assert run.returncode == 1 and run.json["errors"][0].endswith("then run besser apply again")
+    assert again.returncode == 2 and again.json["errors"][0].endswith("then run besser apply again.")
+
+
+@needs_pygit2
 def test_a_second_run_with_the_same_model_changes_nothing(besser, model, classes):
     besser("regenerate", "python", model, "-o", "out")
     classes.write_text(HAND_EDIT + classes.read_text())

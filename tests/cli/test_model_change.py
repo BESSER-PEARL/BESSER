@@ -383,7 +383,7 @@ def test_an_end_without_a_multiplicity_gets_one(write, change, tmp_path):
     assert 'Property(name="bs", type=b,\n' in text and ' multiplicity=Multiplicity(0, "*"))})\n' in text
 
 
-# ── set-abstract ───────────────────────────────────────────────────────────
+# ── set-abstract, remove-parent ─────────────────────────────────────────────
 
 
 def test_set_abstract_and_back(project, change, besser, post_book):
@@ -401,6 +401,10 @@ def test_set_abstract_and_back(project, change, besser, post_book):
     post_book(BOOK)
     assert change("set-abstract", "Work", "false") == "model.py: made Work concrete"
     assert 'work = Class(name="Work")' in project()
+    change("remove-parent", "Book", "Work")
+    change("remove", "Work")
+    # What add-class Work --parent left: the empty set of generalizations, and its import.
+    assert _changed_lines(before, project()) == ([], ["    Generalization,", "    generalizations=set(),"])
 
 
 @pytest.mark.parametrize("args, message", [
@@ -410,6 +414,94 @@ def test_set_abstract_and_back(project, change, besser, post_book):
 ])
 def test_set_abstract_refusals(hand_written, refused, args, message):
     assert message in refused("set-abstract", *args)
+
+
+# A hand-written file with a parent: Book specializes Work by a variable, Author specializes Person in the set.
+WITH_PARENTS = '''\
+from besser.BUML.metamodel.structural import (
+    Class, Constraint, DomainModel, Generalization, Property, StringType,
+)
+
+work = Class(name="Work", attributes={Property(name="code", type=StringType)})
+book = Class(name="Book", attributes={Property(name="title", type=StringType)})
+person = Class(name="Person", attributes={Property(name="name", type=StringType)})
+author = Class(name="Author", attributes={Property(name="email", type=StringType)})
+book_is_work = Generalization(general=work, specific=book)  # a book is a work
+coded = Constraint(name="coded", context=book, language="OCL", expression="context Book inv coded: self.code <> ''")
+model = DomainModel(
+    name="Library",
+    types={work, book, person, author},
+    generalizations={book_is_work, Generalization(general=person, specific=author)},
+    constraints={coded},
+)
+'''
+
+
+def test_remove_parent_keeps_the_class(write, change, refused, besser, tmp_path):
+    write("model.py", WITH_PARENTS)
+
+    assert change("remove-parent", "Author", "Person") == "model.py: Author is no longer a Person"
+    after = (tmp_path / "model.py").read_text()
+    assert _changed_lines(WITH_PARENTS, after) == (
+        ["    generalizations={book_is_work, Generalization(general=person, specific=author)},"],
+        ["    generalizations={book_is_work},"])
+    assert ("constraint coded would no longer hold against the model once Book is no Work: change it first, or "
+            "remove it (besser model remove coded)") in refused("remove-parent", "Book", "Work")
+    assert "Author is no direct Person (its parents: none)" in refused("remove-parent", "Author", "Person")
+    change("remove", "coded")
+    assert change("remove-parent", "Book", "Work") == "model.py: Book is no longer a Work"
+    text = (tmp_path / "model.py").read_text()
+    assert "book_is_work" not in text and "    generalizations=set(),\n" in text
+    assert besser("info", "model.py", "--class", "Book", "--json").json["classes"][0]["parents"] == []
+
+
+def test_remove_parent_refuses_an_object_that_holds_what_was_inherited(write, refused):
+    write("model.py", WITH_PARENTS + 'from besser.BUML.metamodel.object import ObjectModel\n'
+                                     'emma = book("emma").attributes(title="Emma", code="E1").build()\n'
+                                     'objects = ObjectModel(name="Objects", objects={emma})\n')
+
+    assert ("object emma (code) holds a value of an attribute Book has from Work: change the objects first"
+            in refused("remove-parent", "Book", "Work"))
+
+
+# The GUI starter, with Book a Work whose code its table shows.
+def _gui_with_parent(text: str) -> str:
+    text = text.replace('book_title = Property(name="title", type=StringType)\n',
+                        'work_code = Property(name="code", type=StringType)\n'
+                        'work = Class(name="Work", attributes={work_code})\n'
+                        'book_title = Property(name="title", type=StringType)\n')
+    text = text.replace('types={book, author}, associations={book_authors})',
+                        'types={work, book, author}, associations={book_authors},\n'
+                        '                             generalizations={Generalization(general=work, specific=book)})')
+    text = text.replace('    FieldColumn(label="Pages", field=book_pages),\n',
+                        '    FieldColumn(label="Pages", field=book_pages),\n'
+                        '    FieldColumn(label="Code", field=work_code),\n')
+    return text.replace("    Class,\n", "    Class,\n    Generalization,\n")
+
+
+def test_the_gui_tables_follow_each_in_place_change(besser, change, tmp_path):
+    assert besser("init", "--kind", "gui").returncode == 0
+    path = tmp_path / "model.py"
+    path.write_text(_gui_with_parent(path.read_text()), encoding="utf-8")
+    assert besser("validate", "model.py").returncode == 0
+
+    line = change("batch", stdin=(
+        "set-attribute Book.pages :float?=0\n"
+        "set-multiplicity book_authors.authors [*]\n"
+        "set-abstract Work true\n"
+        "remove-parent Book Work\n"))
+
+    assert line == ("model.py: changed Book.pages from int to float?=0; changed Book.authors (book_authors) from "
+                    "[1..*] to [*]; made Work abstract; Book is no longer a Work; its columns of Work from table "
+                    "book_table")
+    text = path.read_text()
+    # The column of the retyped attribute stays; the one of what Book no longer inherits goes.
+    assert '    FieldColumn(label="Pages", field=book_pages),\n])' in text and "field=work_code" not in text
+    assert besser("validate", "model.py", "--ocl").returncode == 0
+    generated = besser("generate", "web_app", "model.py", "-o", "out")
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+    page = (tmp_path / "out" / "frontend" / "src" / "pages" / "Books.tsx").read_text(encoding="utf-8")
+    assert '"label": "Pages"' in page and '"label": "Code"' not in page
 
 
 def test_a_batch_mixes_in_place_changes_and_renames(project, change, besser):

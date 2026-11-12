@@ -791,6 +791,11 @@ name one of each).
      - Makes a class abstract or concrete. Refused while an object model has
        an object of the class; a warning says when no concrete class
        specializes it.
+   * - ``remove-parent CLASS PARENT``
+     - Removes the generalization that makes the class a ``PARENT``; the
+       classes stay. The columns of what the class no longer inherits leave
+       the tables of the class and its subclasses. Refused when a constraint
+       or an object uses what it inherited.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``

@@ -125,6 +125,7 @@ examples:
   besser model set-attribute Book.pages :int?=0 (type, ? and default in place; = drops the default)
   besser model set-multiplicity book_authors.authors "[*]"   (also Class.end)
   besser model set-abstract Party true
+  besser model remove-parent Customer Party     (the class stays)
 """
 
 # What rename and remove take.
@@ -191,7 +192,10 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("class_name",), {"metavar": "CLASS", "help": "the class"}),
         (("abstract",), {"choices": ["true", "false"], "help": "true: abstract; false: concrete"}),
     ],
-
+    "remove-parent": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("parent",), {"metavar": "PARENT", "help": "the parent it no longer specializes"}),
+    ],
 }
 
 

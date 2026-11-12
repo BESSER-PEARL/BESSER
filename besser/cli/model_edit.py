@@ -1829,6 +1829,82 @@ def set_abstract(editor: ModelEditor, class_name: str, abstract: str) -> Edited:
     return Edited(editor.finish(), f"made {class_name} {word}", check, warnings)
 
 
+def remove_parent(editor: ModelEditor, class_name: str, parent: str) -> Edited:
+    cls = editor.find_type(class_name, Class)
+    parent_class = editor.find_type(parent, Class)
+    generalization = next((g for g in editor.model.generalizations
+                           if g.specific is cls and g.general is parent_class), None)
+    if generalization is None:
+        parents = ", ".join(sorted(p.name for p in cls.parents())) or "none"
+        raise EditError(f"{class_name} is no direct {parent} (its parents: {parents})")
+    below = [cls, *sorted(cls.all_specializations(), key=lambda c: c.name)]
+    before = {id(member): member for c in below for member in (*c.all_attributes(), *c.all_association_ends())}
+
+    def detach() -> None:
+        cls._delete_generalization(generalization)
+        parent_class._delete_generalization(generalization)
+
+    def attach() -> None:
+        cls._add_generalization(generalization)
+        parent_class._add_generalization(generalization)
+
+    detach()
+    try:
+        kept = {id(member) for c in below for member in (*c.all_attributes(), *c.all_association_ends())}
+    finally:
+        attach()
+    lost = [member for key, member in before.items() if key not in kept]
+    held = sorted(f"{_object_name(obj)} ({slot.attribute.name})" for _, obj in _objects(editor)
+                  if obj.classifier in below for slot in obj.slots if slot.attribute in lost)
+    if held:
+        raise EditError(f"object {', '.join(held)} holds a value of an attribute {class_name} has from {parent}: "
+                        "change the objects first")
+    _refuse_breaking(editor, f"{class_name} is no {parent}", *_broken_by(editor, detach, attach))
+    # The generalization goes from where it is written.
+    var = editor.var_of(generalization)
+    literal = editor.collection(editor.model, "generalizations")
+    items = _items(literal) if literal is not None else []
+    index = next((i for i, item in enumerate(items) if (isinstance(item, ast.Name) and item.id == var)
+                  or (var is None and _generalizes(editor, item, cls, parent_class))), None)
+    if var is not None:
+        _forget_var(editor, var)
+    elif index is None:
+        raise EditError(f"cannot find where {class_name} is made a {parent} in {editor.path.name}; edit it by hand")
+    if index is not None:
+        editor.src.remove_items(literal, items, {index})
+    # A table of the class (or of a subclass) shows no column of what it no longer has.
+    tables = []
+    for table in sorted({id(t): t for c in below for t in editor.tables_of(c)}.values(), key=lambda t: t.name):
+        located = _column_items(editor, table)
+        drop = {i for i, (column, _, _) in enumerate(located or ()) if any(_columns_of(column, m) for m in lost)}
+        if located is None and any(_columns_of(column, m) for column in table.columns for m in lost):
+            raise EditError(f"table {table.name} has a column of what {class_name} has from {parent}: "
+                            "remove it by hand first")
+        if drop:
+            editor.src.remove_items(located[0][2], _items(located[0][2]), drop)
+            tables.append(table.name)
+    summary = f"{class_name} is no longer a {parent}"
+    if tables:
+        summary += f"; its columns of {parent} from table {', '.join(tables)}"
+
+    def check(model: DomainModel) -> str | None:
+        found = model.get_class_by_name(class_name)
+        return None if found is not None and parent not in {p.name for p in found.parents()} \
+            else f"{class_name} is still a {parent}"
+
+    return Edited(editor.finish(), summary, check)
+
+
+def _generalizes(editor: ModelEditor, item: ast.AST, specific: Class, general: Class) -> bool:
+    """Whether the item ``Generalization(general=..., specific=...)`` of a set makes ``specific`` a ``general``."""
+    if _callee(item) != "Generalization":
+        return False
+    names = {k.arg: k.value for k in item.keywords}
+    values = [names.get("general", item.args[0] if item.args else None),
+              names.get("specific", item.args[1] if len(item.args) > 1 else None)]
+    return [editor.namespace.get(v.id) if isinstance(v, ast.Name) else None for v in values] == [general, specific]
+
+
 def _forget_var(editor: ModelEditor, var: str) -> None:
     """Delete the statements that define ``var`` or set something on it."""
     statement = editor.src.assignment(var)
@@ -2370,7 +2446,7 @@ OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
     "set-multiplicity": ("change an association end's multiplicity in place: ASSOCIATION.END|CLASS.END MULTIPLICITY",
                          set_multiplicity),
     "set-abstract": ("make a class abstract (true) or concrete (false): CLASS true|false", set_abstract),
-
+    "remove-parent": ("make a class no longer specialize a parent (the class stays): CLASS PARENT", remove_parent),
 }
 
 

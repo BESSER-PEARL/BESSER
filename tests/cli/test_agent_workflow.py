@@ -248,6 +248,22 @@ def test_the_guides_test_fixture_runs_and_its_answers_hold_on_a_generated_backen
     assert "400 when\nempty); an unknown id is 400 (404 in a list)" in GUIDE  # what the test above checks
 
 
+def test_a_build_keeps_the_guide_in_agents_md_in_step_with_the_options(besser, write, tmp_path):
+    """AGENTS.md is what an agent reads: turning the generated tests off must not leave it telling the agent
+    to use their fixture."""
+    besser("init")
+    (tmp_path / "conftest.py").unlink()
+    config = (tmp_path / "besser.toml").read_text()
+    write("besser.toml", config.replace("tests = true, uniform_responses = true", "tests = false"))
+
+    run = besser("build", "--json")
+
+    agents = (tmp_path / "AGENTS.md").read_text()
+    assert guide_text(tests=False, uniform_responses=False) in agents and GUIDE not in agents
+    assert "updated AGENTS.md: the guide follows the outputs of besser.toml" in run.json["notes"]
+    assert besser("guide", output=None).stdout in agents
+
+
 def test_the_guide_of_a_new_project_is_the_short_one(besser, tmp_path):
     """'besser init' turns the generated tests and the uniform answers on, so its guide needs neither the
     fixture recipe nor the two answer shapes."""

@@ -3,8 +3,8 @@
 Every token an agent reads is re-read on each later turn of its session, so the guide is short
 and tells it what not to read: generated code, BESSER's docs and sources, the model file.
 
-``besser new`` and ``besser init`` write these files; ``besser build`` keeps the ``.ignore`` block
-in step with the outputs of ``besser.toml``; ``besser guide`` prints the guide.
+``besser new`` and ``besser init`` write these files; ``besser build`` keeps the guide and the ``.ignore``
+block in step with the outputs of ``besser.toml``; ``besser guide`` prints the guide.
 """
 
 from __future__ import annotations
@@ -228,6 +228,18 @@ def write_agent_files(folder: Path, generated: Sequence[GeneratedDir]) -> list[s
                 changed)
     ignore = folder / IGNORE_FILENAME
     _update(ignore, _with_block(_read(ignore), _IGNORE_BEGIN, _IGNORE_END, ignore_block(generated)), changed)
+    return changed
+
+
+def sync_guide(folder: Path, generated: Sequence[GeneratedDir]) -> list[str]:
+    """Bring the guide in ``AGENTS.md`` up to the outputs of ``besser.toml`` and their options, when it has
+    the guide's block; ``AGENTS.md`` without one is left alone. Returns the files that changed."""
+    agents = folder / AGENTS_FILENAME
+    if not _has_block(agents, _GUIDE_BEGIN):
+        return []
+    changed: list[str] = []
+    block = f"{_GUIDE_BEGIN}\n{guide_for(generated)}{_GUIDE_END}"
+    _update(agents, _with_block(_read(agents), _GUIDE_BEGIN, _GUIDE_END, block), changed)
     return changed
 
 

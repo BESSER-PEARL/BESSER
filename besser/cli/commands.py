@@ -21,7 +21,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
 from besser.cli import loading
 from besser.cli import schema as schema_module
-from besser.cli.agent_files import GeneratedDir, guide_for, sync_ignore, write_agent_files
+from besser.cli.agent_files import GeneratedDir, guide_for, sync_guide, sync_ignore, write_agent_files
 from besser.cli.config import (
     CONFIG_EXAMPLE,
     CONFIG_FILENAME,
@@ -1756,9 +1756,14 @@ def build(names: Sequence[str] = (), config_path: str = CONFIG_FILENAME, dry_run
     lines.append(verdict)
     if not dry_run:
         config_file = Path(config_path)
-        updated = sync_ignore(config_file.parent, _generated_dirs(config_file))
+        generated = _generated_dirs(config_file)
+        updated = sync_ignore(config_file.parent, generated)
         result.files.extend(updated)
         result.notes.extend(f"updated {path}: the generated folders of {config_path}" for path in updated)
+        # The guide says what the outputs and their options (tests, uniform_responses) give the agent.
+        guide = sync_guide(config_file.parent, generated)
+        result.files.extend(guide)
+        result.notes.extend(f"updated {path}: the guide follows the outputs of {config_path}" for path in guide)
     result.text = "\n".join(lines)
     # A dry run is read for its list of files.
     result.brief = "" if dry_run else f"{verdict}: {' '.join(briefs)}"

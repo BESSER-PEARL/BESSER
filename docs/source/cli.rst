@@ -357,7 +357,9 @@ the generated code nor this documentation. The guide follows ``besser.toml``:
   ``PUT`` then answer, and how to read either.
 
 ``besser init`` turns both options on, so a new project reads the short guide.
-``--json`` puts it in ``guide``.
+``besser build`` (and so ``apply``) keeps the guide in ``AGENTS.md`` in step with
+``besser.toml``, as it keeps ``.ignore``; an ``AGENTS.md`` without the guide's block
+is left alone. ``--json`` puts it in ``guide``.
 
 ``besser schema``
 -----------------

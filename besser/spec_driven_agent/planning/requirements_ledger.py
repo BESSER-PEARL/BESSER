@@ -260,9 +260,11 @@ def _evidence_quote(text: str, escapes: bool = True) -> str:
 _DIGEST_SKIP_NAMES = frozenset({"bal_stdlib.py"})
 _DIGEST_SKIP_DIRS = frozenset({
     "node_modules", "dist", "build", "__pycache__", "venv", "tests", "test",
-    "__tests__", "fixtures", "coverage", "verification",
+    "__tests__", "fixtures", "coverage", "verification", "vendor",
 })
 _ARTIFACT_ROOT_DIRS = frozenset({"reports", "logs"})
+# Third-party code copied into the app: it would spend the digest's frontend share.
+_MINIFIED_NAME_RE = re.compile(r"\.min\.[cm]?js$", re.I)
 # Every language the agent is expected to produce, because this one set feeds
 # BOTH the digest the judge reads and the citation checker. A missing language
 # gives the judge an empty digest on that stack, so every requirement comes
@@ -622,15 +624,18 @@ def _digest_priority(rel: str) -> tuple[int, str]:
 
 
 def _source_files(output_dir: str) -> dict[str, str]:
-    """Only application source, never run logs/recipes or an escaped symlink."""
+    """Only application source, never run logs/recipes, vendored or minified
+    code (a frontend's ``public/`` is copied verbatim) or an escaped symlink."""
     base = Path(output_dir).resolve()
     files: dict[str, str] = {}
     for root, dirs, names in walk_plain(base):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _DIGEST_SKIP_DIRS
+                   and not (d == "public" and Path(root, "package.json").is_file())
                    and not (Path(root) == base and d in _ARTIFACT_ROOT_DIRS)]
         for name in names:
             source = Path(root, name)
-            if name.startswith(".") or not _is_judged_source(source) or _TEST_SOURCE_NAME.search(name):
+            if (name.startswith(".") or not _is_judged_source(source) or _TEST_SOURCE_NAME.search(name)
+                    or _MINIFIED_NAME_RE.search(name)):
                 continue
             try:
                 if not source.resolve().is_relative_to(base) or not source.is_file():

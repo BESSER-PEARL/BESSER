@@ -251,6 +251,36 @@ def test_the_judge_cache_key_follows_an_edit_to_a_judged_frontend_file(tmp_path)
     assert ledger.judged_source_fingerprint(str(tmp_path)) != before
 
 
+def _vendored_frontend(root):
+    """A React app that ships minified third-party bundles beside its own source."""
+    _write(root, "frontend/package.json", '{"name": "dashboard"}\n')
+    _write(root, "frontend/src/api.js", "".join(  # larger than what the bundles leave of the frontend share
+        f"export const fetchEntity{i} = () => fetch('/api/entity{i}');\n" for i in range(250)))
+    for i in range(40):
+        _write(root, f"frontend/public/vendor/lib{i:02}.min.js", "!function(t){" + "var a=1;" * 750 + "}(this);")
+    _write(root, "frontend/src/lib/chart.min.js", "var c=1;" * 100)
+    _write(root, "frontend/vendor/leaflet.js", "var l=1;\n")
+
+
+def test_vendored_minified_code_does_not_crowd_the_app_out_of_the_digest(tmp_path):
+    """Review probe: three public/vendor/*.min.js bundles took the frontend share
+    and the app's own src/api.js was left out of the judge's digest."""
+    _vendored_frontend(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### frontend/src/api.js" in digest
+    assert set(ledger._source_files(str(tmp_path))) == {"frontend/src/api.js"}
+
+
+def test_the_judge_cache_key_ignores_vendored_code(tmp_path):
+    _vendored_frontend(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "frontend/public/vendor/lib00.min.js", "var b=2;")
+    _write(tmp_path, "frontend/src/lib/chart.min.js", "var d=2;")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "frontend/src/api.js", "export const fetchPlants = () => fetch('/api/plants');\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
 # ---------------------------------------------------------- evidence check
 
 

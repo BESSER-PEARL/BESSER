@@ -292,6 +292,19 @@ def test_an_authentication_wall_is_not_checked():
     assert issues[0].startswith(UNVERIFIED_PREFIX)
 
 
+def test_an_unverified_create_says_what_settles_it():
+    """Live, Sonnet 5.5, a login-protected 13-class app: told only to "read the
+    persisted result", the repair round saved a create-only scenario and ended
+    with 11-13 of these findings open. Only a POST read back by id retires one."""
+    unauthorized = _issues_from_report(_report(Room=_entity("unauthorized", 401)), "b")
+    dependent = _issues_from_report(_report(
+        Y={"path": "/y/", "verdict": "unresolved", "unresolved": [["x", "X"]]}), "b")
+    for [issue], path in ((unauthorized, "/x/"), (dependent, "/y/")):
+        assert f"one test_api scenario must POST {path}" in issue
+        assert f"then GET that record by its id under {path}" in issue
+        assert "not read back stays unverified" in issue
+
+
 def test_a_payload_the_probe_could_not_build_is_no_verdict():
     for verdict, status, body in (("invalid", 422, "pattern mismatch"),
                                   ("rejected", 409, "identifyingNumber must be unique"),

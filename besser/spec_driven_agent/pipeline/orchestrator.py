@@ -2973,7 +2973,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
             "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
             "next_step": ("Repair concrete failures and call validate_app again. For create unverified (guessed fixtures), "
-                          "use test_api with valid unique fixtures and a GET of the persisted record; do not remove "
+                          "use one test_api scenario that creates the record with valid unique fixtures and then GETs it by id "
+                          "under the same path, for every listed endpoint; do not remove "
                           "business validation to satisfy guessed samples.") if blockers else
                          ("Some required checks did not run on this server (the validation unverified findings); "
                           "no source edit can settle them, so do not edit code for them. Verify the remaining "

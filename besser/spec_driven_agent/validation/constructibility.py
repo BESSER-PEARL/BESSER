@@ -315,9 +315,11 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                           + json.dumps(unresolved, sort_keys=True))
             text = (
                 f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - {reason}. "
-                "These guessed inputs do not prove this endpoint is broken. Use test_api "
-                "with valid specification-based fixtures and read the persisted result; "
-                "do not remove business validation to satisfy guessed samples"
+                "These guessed inputs do not prove this endpoint is broken. To settle it, "
+                f"one test_api scenario must POST {entry['path']} with valid specification-based "
+                "fixtures (logging in first where the API requires it) and then GET that "
+                f"record by its id under {entry['path']}; a create that is not read back "
+                "stays unverified; do not remove business validation to satisfy guessed samples"
             )
         site = entry.get("site")
         column = attempt.get("missing_column")

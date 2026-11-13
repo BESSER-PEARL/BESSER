@@ -24,7 +24,9 @@ from typing import Callable, NamedTuple
 import re
 import time
 
-from besser.spec_driven_agent.planning.code_text import code_only
+from pygments.token import Comment
+
+from besser.spec_driven_agent.planning.code_text import _lexer_for, code_only
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
@@ -193,6 +195,7 @@ class _Source(NamedTuple):
     tree: ast.AST | None
     diagnostics: list[dict]
     comments: set[int]
+    bare: list[str]  # normalised lines without comments; strings kept
 
 
 def _in_code(quoted: str, source: _Source, index: int) -> bool:
@@ -211,9 +214,16 @@ def _is_complete_call(quoted: str) -> bool:
             and quoted.count("(") == quoted.count(")") and quoted.count("{") == quoted.count("}"))
 
 
-def _quote_spans(quoted: str, source: _Source, cut: bool = False):
-    """1-based (first, last) source line spans whose text is the quote."""
-    normalised = source.normalised
+def _quote_spans(quoted: str, source: _Source, cut: bool = False) -> list[tuple[int, int]]:
+    """1-based (first, last) source line spans whose text is the quote, read as
+    written or else without comments (a judge leaves out a "# noqa")."""
+    spans = list(_spans_in(quoted, source, source.normalised, cut))
+    if not spans and source.bare != source.normalised:
+        spans = list(_spans_in(quoted, source, source.bare, cut))
+    return spans
+
+
+def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):
     target = _joined_strings(quoted)
     inline = _is_complete_call(quoted) or len(_collapse(code_only(quoted, source.path))) >= _MIN_INLINE_QUOTE
     for start, first in enumerate(normalised):
@@ -1016,6 +1026,10 @@ def _noop_validator(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return True
 
 
+# A JSX comment is written as an expression: {/* note */}.
+_JSX_COMMENT_RE = re.compile(r"\{\s*(/\*(?:(?!\*/)[\s\S])*\*/)\s*\}")
+
+
 def _comment_only_lines(source: str, suffix: str) -> set[int]:
     """Recognise comments in their source language, not by a shared prefix.
 
@@ -1023,6 +1037,8 @@ def _comment_only_lines(source: str, suffix: str) -> set[int]:
     Mask C-style/SQL comments while skipping quoted strings, so interior lines
     of block comments cannot masquerade as code citations either.
     """
+    if suffix in (".js", ".jsx", ".tsx"):
+        source = _JSX_COMMENT_RE.sub(r"\1", source)
     lines = source.splitlines()
     if suffix == ".py":
         return {i for i, line in enumerate(lines, 1) if line.lstrip().startswith("#")}
@@ -1090,6 +1106,19 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
     return statement, ""
 
 
+def _without_comments(text: str, filename: str) -> str:
+    """``text`` without its comments (Pygments), strings kept, every line break kept;
+    a JSX ``{/* note */}`` goes with its braces."""
+    suffix = Path(filename).suffix.lower()
+    lexer = _lexer_for(suffix)
+    if lexer is None:
+        return text
+    if suffix in (".js", ".jsx", ".tsx"):
+        text = _JSX_COMMENT_RE.sub(r"\1", text)
+    return "".join("\n" * value.count("\n") if token in Comment else value
+                   for token, value in lexer.get_tokens(text))
+
+
 def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
     """One cited file, read and prepared once per verification."""
     if candidate not in parsed:
@@ -1097,7 +1126,7 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
             with open(candidate, "r", encoding="utf-8-sig", errors="ignore") as fh:
                 source = fh.read()
         except OSError:
-            parsed[candidate] = _Source(candidate, [], [], [], None, [], set())
+            parsed[candidate] = _Source(candidate, [], [], [], None, [], set(), [])
             return parsed[candidate]
         tree = None
         if candidate.endswith(".py"):
@@ -1108,10 +1137,12 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
         lines = source.splitlines()
         normalised = [_normalise_line(line) for line in lines]
         code = [_normalise_line(line) for line in code_only(source, candidate).splitlines()]
+        bare = [_normalise_line(line) for line in _without_comments(source, candidate).splitlines()]
         parsed[candidate] = _Source(
             candidate, lines, normalised, code if len(code) == len(lines) else normalised, tree,
             python_structural_diagnostics(tree, sqlite=sqlite) if tree else [],
             _comment_only_lines(source, Path(candidate).suffix.lower()),
+            bare if len(bare) == len(lines) else normalised,
         )
     return parsed[candidate]
 

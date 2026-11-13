@@ -444,3 +444,63 @@ def test_joined_quotes_still_refuse_an_invented_or_misfiled_part(tmp_path):
         "... backend/routers/dashboard.py: def get_summary(...) return {\"plants\": n_plants, \"viruses\": n}",
     ):
         assert _check_two_files(tmp_path, evidence)["status"] == "unverified", evidence
+
+
+# Live (2026-11-13, claude-sonnet-5-5, risk-awareness app): a verbatim citation of
+# a comprehension was rejected because a middle line ends in "# noqa: E712".
+ENGINE_PY = '''def detect(db, account, since):
+    unwanted = [
+        m
+        for m in db.query(Message)
+        .filter(Message.sender_id == account.id, Message.isUnwanted == True)
+        .all()  # noqa: E712
+        if m.sentAt >= since and m.channel != "#general"
+    ]
+    return unwanted
+'''
+UNWANTED = ("unwanted = [ m for m in db.query(Message) .filter(Message.sender_id == account.id, "
+            "Message.isUnwanted == True) .all() if m.sentAt >= since and m.channel != \"#general\" ]")
+STATS_JSX = '''export default function Stats({ s }) {
+  return (
+    <section>
+      <Kpi label="Signals" value={s.signals} />
+      {/* risk summary */}
+      <Kpi label="Risk // level" value={s.level} />
+    </section>
+  );
+}
+'''
+
+
+def _check_engine(tmp_path, evidence, text="Detect repeated unwanted messages", kind="computed"):
+    (tmp_path / "backend").mkdir(exist_ok=True)
+    (tmp_path / "frontend").mkdir(exist_ok=True)
+    (tmp_path / "backend" / "risk_engine.py").write_text(ENGINE_PY, encoding="utf-8")
+    (tmp_path / "frontend" / "Stats.jsx").write_text(STATS_JSX, encoding="utf-8")
+    return verify_evidence([_verdict(evidence, text=text, kind=kind)], str(tmp_path))[0]
+
+
+def test_a_multi_line_quote_over_a_trailing_comment_verifies(tmp_path):
+    verdict = _check_engine(tmp_path, f"backend/risk_engine.py: {UNWANTED}")
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_a_multi_line_jsx_quote_over_a_comment_line_verifies(tmp_path):
+    evidence = ('frontend/Stats.jsx: <Kpi label="Signals" value={s.signals} /> '
+                '<Kpi label="Risk // level" value={s.level} />')
+    verdict = _check_engine(tmp_path, evidence, text="Show the risk level", kind="ui")
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_comments_are_not_dropped_from_strings_or_accepted_alone(tmp_path):
+    for evidence, kind in (
+        # a "#" inside a string is not a comment: the string cannot be cut there
+        ("backend/risk_engine.py: " + UNWANTED.replace('"#general"', '"'), "computed"),
+        # the comment alone, and the comment as a line's substance
+        ("backend/risk_engine.py: # noqa: E712", "computed"),
+        ("backend/risk_engine.py: .all() # noqa: E712 must be unwanted", "computed"),
+        ("frontend/Stats.jsx: {/* risk summary */}", "ui"),
+        # a quote whose comment-free text was invented
+        ("backend/risk_engine.py: " + UNWANTED.replace(".all()", ".limit(5)"), "computed"),
+    ):
+        assert _check_engine(tmp_path, evidence, kind=kind)["status"] == "unverified", evidence

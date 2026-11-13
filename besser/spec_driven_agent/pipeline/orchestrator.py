@@ -445,6 +445,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.enable_requirements_ledger = enable_requirements_ledger
         self._requirements: list[dict] | None = None
         self._requirement_verdicts: list[dict] = []
+        self._requirement_verdicts_scope = ""  # the requirements and request they answered
         self._requirement_judgments: dict[str, list[dict]] = {}
         self._requirement_evidence_retries: set[str] = set()
         self._requirement_extraction_attempts = 0
@@ -3831,8 +3832,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         digest = _requirements_ledger.build_app_digest(self.output_dir)
         cache_key = self._requirement_cache_key(requirements)
+        scope = json.dumps([requirements, self._instructions], sort_keys=True)
         verdicts = self._requirement_judgments.get(cache_key)
-        cached = verdicts is not None
         # A judge outage is an unknown no code edit settles: a warning that
         # still refuses verified completion, not a blocker that buys repair rounds.
         judge_failed = required_check_unverified(
@@ -3851,10 +3852,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                "not asked again this run", len(self._requirement_judge_failures))
                 return [f"{judge_failed} It failed on {len(self._requirement_judge_failures)} "
                         "revisions and is not asked again this run."]
+            kept = self._requirements_still_verified(scope)
+            to_judge = [item for item in requirements if item["id"] not in kept]
             verdicts = _requirements_ledger.judge_coverage(
-                requirements, digest, self.client, original_spec=self._instructions,
+                to_judge, digest, self.client, original_spec=self._instructions,
                 can_call=self._verification_call_allowed,
-            )
+            ) if to_judge else []
+            if verdicts is not None and kept:
+                logger.info("Requirements ledger: %d verdict(s) kept, their citations still verify; "
+                            "%d judged again", len(kept), len(to_judge))
+                verdicts = sorted([*kept.values(), *verdicts], key=lambda item: item["id"])
         if verdicts is None:
             if not self._verification_call_allowed():
                 return [judge_stopped]  # a stop mid-judgment is not a judge failure
@@ -3870,7 +3877,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         unknown_ids = {item["id"] for item in self._requirement_verdicts
                        if item["status"] == "unverified"}
-        if (cached and unknown_ids and cache_key not in self._requirement_evidence_retries
+        if (unknown_ids and cache_key not in self._requirement_evidence_retries
+                and len(self._requirement_judge_failures) < _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN
                 and self._verification_call_allowed()):
             # Bad citations need a bounded way to recover without gratuitous
             # code edits. Rejudge only unknown entries once per revision; never
@@ -3902,7 +3910,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir)
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
             self._requirement_verdicts, self._ui_in_scope())
+        self._requirement_verdicts_scope = scope
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
+
+    def _requirements_still_verified(self, scope: str) -> dict[int, dict]:
+        """The last pass's verified verdicts whose citation still verifies on the
+        current source (no call): an unrelated edit must not re-roll them."""
+        if scope != self._requirement_verdicts_scope:
+            return {}
+        previous = [item for item in self._requirement_verdicts if item.get("status") == "implemented"]
+        return {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir)
+                if item["status"] == "implemented"}
 
     def _format_python_output(self) -> None:
         """Format the Python files the LLM wrote whole (``write_file``) in this run.

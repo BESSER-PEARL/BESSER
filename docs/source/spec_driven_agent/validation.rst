@@ -432,9 +432,11 @@ the ledger by its id. Validation still records and reports every blocker.
 Excerpts use the file/line formats emitted by the checks. Unchanged source is not
 counted as repair progress merely because a judge's blocker count changed.
 
-Requirement judgments are cached by source/configuration revision. A single
-bounded citation-repair judgment may revisit only unverified entries without a
-code change. Evidence must name a real application source file and quote an
+Requirement judgments are cached by source/configuration revision. After an
+edit, a requirement whose verified citation still verifies on the new source
+keeps its verdict and is not judged again. A single bounded citation-repair
+judgment per revision, right after the judgment or on a later pass, may revisit
+only unverified entries without a code change. Evidence must name a real application source file and quote an
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
 

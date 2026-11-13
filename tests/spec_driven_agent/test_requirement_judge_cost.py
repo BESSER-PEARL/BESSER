@@ -249,3 +249,96 @@ def test_the_spend_cap_is_checked_before_every_paid_judge_call(tmp_path, monkeyp
     assert issues == ["requirement unverified: verification stopped or budget exhausted; "
                       "original-specification coverage is not verified."]
     assert not orch._requirement_judge_failures, "a budget stop is not a judge failure"
+
+
+# ------------------------------------- an edit elsewhere, and the citation repair
+
+
+# Live (Sonnet 5.5, risk-awareness app): a repair round removed one duplicate import;
+# every requirement was judged again from scratch, a verified one came back
+# unverified with a worse citation, and the fresh judgment got no citation repair.
+UNIQUE = {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"}
+CAPACITY = {"id": 2, "text": "A room holds at most four guests", "kind": "rule"}
+ROOM_PY = "import os\nimport os\n\ndef create_room(number, taken):\n    if number in taken:\n        raise HTTPException(409)\n"
+
+
+@pytest.fixture
+def scripted(orch, tmp_path, monkeypatch):
+    """The judge answers from ``answers`` (id -> verdict fields); ``calls`` records
+    the requirement ids of every call and whether it carried citation feedback."""
+    orch._requirements = [dict(UNIQUE), dict(CAPACITY)]
+    _write(tmp_path, "routers/room.py", ROOM_PY)
+    answers = {1: {"status": "implemented", "evidence": "routers/room.py: raise HTTPException(409)"},
+               2: {"status": "missing", "evidence": ""}}
+    calls = []
+
+    def judge(requirements, digest, client, **kwargs):
+        calls.append(([item["id"] for item in requirements], bool(kwargs.get("previous_verdicts"))))
+        return [{**item, "note": "", **answers[item["id"]]} for item in requirements]
+
+    monkeypatch.setattr(ledger, "judge_coverage", judge)
+    return answers, calls
+
+
+def _statuses(orch):
+    return {item["id"]: item["status"] for item in orch._requirement_verdicts}
+
+
+def test_an_edit_elsewhere_keeps_a_verdict_whose_citation_still_verifies(orch, tmp_path, scripted):
+    answers, calls = scripted
+    orch._collect_requirement_issues()
+    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", "import os\n"))
+    answers[1] = {"status": "unverified", "evidence": "", "note": "not re-checked"}  # what a re-roll would say
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False), ([2], False)], "the kept verdict was paid for again"
+    assert _statuses(orch) == {1: "implemented", 2: "missing"}
+
+    answers[2] = {"status": "implemented", "evidence": "routers/room.py: if number in taken:"}
+    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", ""))
+    orch._collect_requirement_issues()
+    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", "import sys\n"))
+    orch._collect_requirement_issues()
+
+    assert calls[2:] == [([2], False)], "with every verdict kept no call is due"
+    assert _statuses(orch) == {1: "implemented", 2: "implemented"}
+
+
+def test_a_verdict_whose_cited_code_was_deleted_is_judged_again(orch, tmp_path, scripted):
+    answers, calls = scripted
+    orch._collect_requirement_issues()
+    _write(tmp_path, "routers/room.py", ROOM_PY.replace("        raise HTTPException(409)\n", "        pass\n"))
+    answers[1] = {"status": "missing", "evidence": ""}
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False), ([1, 2], False)]
+    assert _statuses(orch) == {1: "missing", 2: "missing"}
+
+
+def test_a_verdict_kept_for_another_request_is_judged_again(orch, scripted):
+    _, calls = scripted
+    orch._collect_requirement_issues()
+    orch._instructions = SPEC + " Rooms have a floor."
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False), ([1, 2], False)]
+
+
+def test_a_fresh_judgment_gets_the_citation_repair_once(orch, tmp_path, scripted):
+    answers, calls = scripted
+    answers[1] = {"status": "implemented", "evidence": "routers/room.py: raise HTTPException(409, 'taken')"}
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False), ([1], True)], "the fresh judgment's bad citation was not repaired"
+    for _ in range(2):
+        orch._collect_requirement_issues()
+    assert len(calls) == 2, "the repair repeated on an unchanged tree"
+
+
+def test_the_citation_repair_is_not_sent_after_a_stop(orch, scripted):
+    answers, calls = scripted
+    answers[1] = {"status": "implemented", "evidence": "routers/room.py: raise HTTPException(409, 'taken')"}
+    orch._should_continue = lambda: not calls
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False)]

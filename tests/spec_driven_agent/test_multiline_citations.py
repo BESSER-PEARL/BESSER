@@ -504,3 +504,26 @@ def test_comments_are_not_dropped_from_strings_or_accepted_alone(tmp_path):
         ("backend/risk_engine.py: " + UNWANTED.replace(".all()", ".limit(5)"), "computed"),
     ):
         assert _check_engine(tmp_path, evidence, kind=kind)["status"] == "unverified", evidence
+
+
+# Live (2026-11-13, claude-sonnet-5-5): the judge stitched separate JSX lines into
+# one quote, or glued an elided signature to a return lines later; the rejection
+# note did not say which part failed, so the re-judge could not correct it.
+def test_a_rejected_citation_names_the_part_that_matched_nothing(tmp_path):
+    evidence = ("frontend/src/MapView.jsx: const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 }); "
+                "... backend/routers/dashboard.py: def get_summary(...) return {\"plants\": n_plants, \"viruses\": n}")
+    note = _check_two_files(tmp_path, evidence)["note"]
+    assert 'no source line matches the part `) return {"plants": n_plants, "viruses": n}`' in note
+
+
+def test_the_named_part_is_clipped(tmp_path):
+    evidence = "frontend/src/MapView.jsx: " + "<>...<Metric title=\"Detections\" value={metrics.count} />" * 4
+    note = _check_two_files(tmp_path, evidence)["note"]
+    part = note.split("matches the part `", 1)[1].split("`", 1)[0]
+    assert part.startswith("<>...<Metric title=\"Detections\"") and part.endswith("...") and len(part) == 80
+
+
+def test_the_judge_is_told_to_cite_lines_as_separate_parts():
+    from besser.spec_driven_agent.planning.requirements_ledger import _JUDGE_SYSTEM_PROMPT
+    assert "never join separate lines" in _JUDGE_SYSTEM_PROMPT
+    assert 'separate "file: line" parts joined by " and "' in _JUDGE_SYSTEM_PROMPT

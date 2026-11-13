@@ -427,7 +427,9 @@ _JUDGE_SYSTEM_PROMPT = (
     "- the line that enforces or performs it: a unique=True, a validator, an "
     "if/raise in a router, the assignment that performs a transition. To cite "
     "two files write \"a.py: line and b.jsx: line\"; explanations go in the note, "
-    "never in the evidence. A "
+    "never in the evidence. Quote each source line exactly as written: never "
+    "join separate lines or put \"...\" inside a JSX element; cite several lines "
+    "as separate \"file: line\" parts joined by \" and \". A "
     "column, relationship or field EXISTING is not evidence that a rule "
     "about it is enforced; a comment, docstring or TODO is not an "
     "implementation. A modeled action whose body raises HTTP 501 or "
@@ -1222,6 +1224,18 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     return ""
 
 
+_UNMATCHED_NOTE_CHARS = 80
+
+
+def _as_written(raw: str, fragment: str) -> str:
+    """``fragment`` (a whitespace-free quote part) as the judge wrote it in
+    ``raw``, clipped, so a re-judge can see which part to correct."""
+    kept = [i for i, char in enumerate(raw) if not char.isspace()]
+    at = "".join(raw[i] for i in kept).replace("'", '"').find(fragment) if fragment else -1
+    text = " ".join(raw[kept[at]:kept[at + len(fragment) - 1] + 1].split()) if at >= 0 else fragment
+    return text if len(text) <= _UNMATCHED_NOTE_CHARS else text[:_UNMATCHED_NOTE_CHARS - 3] + "..."
+
+
 def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     """Re-check every 'implemented' citation against the output tree.
 
@@ -1264,6 +1278,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
                 spans = list(_quote_spans(literal, source))
                 quoted = literal if spans else quoted
             located = [(source, quoted, spans)]
+            unmatched = quoted
             if not located[0][2]:
                 located = []
                 for part_path, part, cut in _citation_parts(raw_quote, path, files):
@@ -1274,10 +1289,12 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
                     # splits at its ";"), but it must be code in that file.
                     if not spans and not (part_source and any(
                             _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
-                        located = []
+                        located, unmatched = [], part
                         break
                     located.append((part_source, part, spans))
             reason = "the quoted executable line was not found in the cited source"
+            if not any(spans for _, _, spans in located):
+                reason += f": no source line matches the part `{_as_written(raw_quote, unmatched)}`"
             for part_source, part, spans in located:
                 for first_line, lineno in spans:
                     reason = _span_failure(item, part_source, first_line, lineno, part)

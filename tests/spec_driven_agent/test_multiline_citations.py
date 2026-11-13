@@ -387,3 +387,60 @@ def test_jsx_citations_still_refuse_invented_misfiled_and_comment_quotes(tmp_pat
         "frontend/src/pages/Dashboard.jsx: RegionPlot which renders the detections of the selected region",
     ):
         assert _check_jsx(tmp_path, evidence)["status"] == "unverified", evidence
+
+
+# Live (2026-11-13, claude-sonnet-5-5, wastewater dashboard): "; and" joined two
+# quotes of one file and the "and" was read as code ("andL.tileLayer(").
+LEAFLET_JSX = '''export default function MapView() {
+  useEffect(() => {
+    const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+    }).addTo(map);
+  }, []);
+}
+'''
+SUMMARY_PY = '''def get_summary(database):
+    n_plants = database.query(TreatmentPlant).count()
+    return {"plants": n_plants}
+'''
+
+
+def _check_two_files(tmp_path, evidence):
+    (tmp_path / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "backend" / "routers").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "frontend" / "src" / "MapView.jsx").write_text(LEAFLET_JSX, encoding="utf-8")
+    (tmp_path / "backend" / "routers" / "dashboard.py").write_text(SUMMARY_PY, encoding="utf-8")
+    return verify_evidence([_verdict(evidence, text="Show a map with plant counts", kind="ui")], str(tmp_path))[0]
+
+
+def test_and_after_a_semicolon_joins_two_quotes_of_one_file(tmp_path):
+    evidence = ("frontend/src/MapView.jsx: const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 }); "
+                "and L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {")
+    verdict = _check_two_files(tmp_path, evidence)
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_a_file_path_after_an_ellipsis_switches_the_file(tmp_path):
+    evidence = ("frontend/src/MapView.jsx: const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 }); "
+                "... backend/routers/dashboard.py: n_plants = database.query(TreatmentPlant).count()")
+    verdict = _check_two_files(tmp_path, evidence)
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_joined_quotes_still_refuse_an_invented_or_misfiled_part(tmp_path):
+    for evidence in (
+        # invented code after "; and"
+        "frontend/src/MapView.jsx: const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 }); "
+        "and L.marker(PLANT).addTo(map).openPopup();",
+        # a real Python line cited under the JSX file
+        "frontend/src/MapView.jsx: const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 }); "
+        "and n_plants = database.query(TreatmentPlant).count()",
+        # a path that names no judged file does not switch: the line is not in MapView.jsx
+        "frontend/src/MapView.jsx: const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 }); "
+        "... backend/routers/missing.py: n_plants = database.query(TreatmentPlant).count()",
+        # an elided signature glued to a return statement lines later
+        "frontend/src/MapView.jsx: const map = L.map(elRef.current, { center: LUX_CENTER, zoom: 9 }); "
+        "... backend/routers/dashboard.py: def get_summary(...) return {\"plants\": n_plants, \"viruses\": n}",
+    ):
+        assert _check_two_files(tmp_path, evidence)["status"] == "unverified", evidence

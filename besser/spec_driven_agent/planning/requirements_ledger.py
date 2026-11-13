@@ -95,7 +95,9 @@ _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
 # A judge abridges a run of code as "a ... b", lists lines as "a; b", and cites
 # two places as "x.py: a and y.py: b". Each part must still be verbatim source.
 # An ellipsis may carry the comma of the arguments it left out: "f(..., x)".
-_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;?\s+and\s+([\w./\\-]+\.\w{1,5}):\s|;\s+")
+_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;?\s+and\s+([\w./\\-]+\.\w{1,5}):\s|;\s+(?:and\s+)?")
+# "a ... y.py: b" switches file without an "and"; only a judged file's path counts.
+_FILE_SWITCH_RE = re.compile(r"(?<!\S)([\w./\\-]+\.\w{1,5}):\s")
 # "<Plot region={r} /> which calls ...": an explanation after a closed statement
 # or element runs to the next cited file and is not matched.
 _EXPLANATION_RE = re.compile(r"(?:(?<=[);\]])|(?<=/>))\s+(?:which|that)\s.*?(?=;?\s+and\s+[\w./\\-]+\.\w{1,5}:\s|$)", re.S)
@@ -134,24 +136,31 @@ def _normalise_line(line: str) -> str:
     return _collapse(line.replace("'", '"'))
 
 
-def _citation_parts(raw: str, path: str) -> list[tuple[str, str, bool]]:
+def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:
     """(path, quote, cut) for each part of an abridged or listed citation.
 
     ``cut`` when an ellipsis right after the part marks the rest of its line
-    as left out; "and other.py: b" moves the following parts to that file.
+    as left out; "and other.py: b", or "other.py: b" naming one of ``files``,
+    moves the following parts to that file.
     """
     parts: list[tuple[str, str, bool]] = []
     position = 0
     raw = _EXPLANATION_RE.sub("", raw)
-    for match in _ABRIDGED_RE.finditer(raw):
-        quote = _evidence_quote(raw[position:match.start()])
+    bounds = [(m.start(), m.end(), m.group(1), m.group().strip().startswith(("...", "\u2026")))
+              for m in _ABRIDGED_RE.finditer(raw)] + [(len(raw), len(raw), None, False)]
+    for start, end, next_path, cut in bounds:
+        segment, offset = raw[position:start], 0
+        for switch in _FILE_SWITCH_RE.finditer(segment) if files else ():
+            if len(_resolve_cited_path(switch.group(1), "", files, {})) == 1:
+                quote = _evidence_quote(segment[offset:switch.start()])
+                if len(quote) >= _MIN_PART_QUOTE:
+                    parts.append((path, quote, False))
+                path, offset = switch.group(1), switch.end()
+        quote = _evidence_quote(segment[offset:])
         if len(quote) >= _MIN_PART_QUOTE:
-            parts.append((path, quote, match.group().strip().startswith(("...", "\u2026"))))
-        path = match.group(1) or path
-        position = match.end()
-    quote = _evidence_quote(raw[position:])
-    if len(quote) >= _MIN_PART_QUOTE:
-        parts.append((path, quote, False))
+            parts.append((path, quote, cut))
+        path = next_path or path
+        position = end
     return parts
 
 
@@ -1200,7 +1209,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
             located = [(source, quoted, spans)]
             if not located[0][2]:
                 located = []
-                for part_path, part, cut in _citation_parts(raw_quote, path):
+                for part_path, part, cut in _citation_parts(raw_quote, path, files):
                     homes = _resolve_cited_path(part_path, part, files, quote_cache)
                     part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
                     spans = list(_quote_spans(part, part_source, cut)) if part_source else []

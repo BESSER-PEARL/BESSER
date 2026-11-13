@@ -110,7 +110,8 @@ def test_requirement_judgment_is_stable_until_source_changes(orch, tmp_path, mon
     assert len(calls) == 2
 
     # Citation-only mistakes can recover once, without editing a working app
-    # or rerolling the already-missing requirement.
+    # or rerolling the already-missing requirement; a fresh judgment's
+    # citations are repaired in the same pass.
     orch._requirements.append({"id": 2, "text": "Value is stored", "kind": "attribute"})
     original = {"id": 1, "text": "An action works", "kind": "action", "status": "missing", "evidence": ""}
     rounds = []
@@ -129,18 +130,20 @@ def test_requirement_judgment_is_stable_until_source_changes(orch, tmp_path, mon
 
     monkeypatch.setattr(ledger, "judge_coverage", citation_judge)
     orch._collect_requirement_issues()
-    assert orch._requirement_verdicts[1]["status"] == "unverified"
+    assert rounds == [[1, 2], [2]]
+    assert [item["status"] for item in orch._requirement_verdicts] == ["missing", "implemented"]
     orch._collect_requirement_issues()
     orch._collect_requirement_issues()
     assert rounds == [[1, 2], [2]]
-    assert [item["status"] for item in orch._requirement_verdicts] == ["missing", "implemented"]
 
     # Stopping between the initial judgment and citation retry cannot spend a
     # second request, consume the retry, or convert unknown evidence to success.
-    (tmp_path / "extra.py").write_text("other = 1\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("value = 3\n", encoding="utf-8")  # the verified citation no longer holds
     rounds.clear()
+    monkeypatch.setattr(orch, "_should_continue", lambda: not rounds)
     orch._collect_requirement_issues()
     assert len(rounds) == 1 and orch._requirement_verdicts[1]["status"] == "unverified"
+    monkeypatch.setattr(orch, "_should_continue", None)
     monkeypatch.setattr(orch, "max_cost_usd", 0)
     assert orch._collect_requirement_issues() and len(rounds) == 1
     monkeypatch.setattr(orch, "max_cost_usd", 10)
@@ -413,7 +416,7 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
     monkeypatch.setattr(sandbox_mod, "run_confined", build)
     monkeypatch.setenv("OPENAI_API_KEY", "never-pass-this-to-build")
-    options = dict(source_revision=orch._workspace_revision, successful_builds=cache, can_run=lambda: True)
+    options = dict(source_revision=orch._workspace_revision, build_verdicts=cache, can_run=lambda: True)
     for enabled, allowed in ((False, True), (True, False), (True, True)):
         findings = collect_frontend_build_issues(str(tmp_path), enabled=enabled, allow_shell=allowed, **options)
         assert len(findings) == 1 and is_completion_issue(_classify_issue(findings[0]))
@@ -437,6 +440,10 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
     mode["outcome"] = "fail"
     findings = collect_frontend_build_issues(str(tmp_path), enabled=True, allow_shell=True, **options)
     assert _classify_issue(findings[0]).severity == "blocker"
+    builds = len(calls)
+    assert collect_frontend_build_issues(str(tmp_path), enabled=True, allow_shell=True, **options) == findings
+    assert len(calls) == builds, "a failure is a verdict on this source too"
+    source.write_text("export const value = 4;")
     mode["outcome"] = "timeout"
     findings = collect_frontend_build_issues(str(tmp_path), enabled=True, allow_shell=True, **options)
     assert _classify_issue(findings[0]).severity == "warning" and "timed out" in findings[0]

@@ -1,7 +1,7 @@
 """HTTP-level tests for POST /besser_api/spec-driven/preview.
 
 The preview endpoint is pure computation — no LLM call, no API key, no
-worker thread — so these tests exercise the full route with a real
+run slot — so these tests exercise the full route with a real
 ASGITransport and assert on the response body shape rather than SSE
 frames.
 """

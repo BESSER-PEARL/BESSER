@@ -29,7 +29,7 @@ import tempfile
 import time
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
 
@@ -44,7 +44,9 @@ from besser.spec_driven_agent.errors import (
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
-from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
+from besser.utilities.workspace_fs import (
+    copy_plain_file, copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, write_atomic_plain,
+)
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
@@ -56,6 +58,7 @@ from besser.spec_driven_agent.providers.llm_client import (
 from besser.llm.catalog import load_model_catalog
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
+from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
@@ -92,6 +95,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     telemetry,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
@@ -127,7 +131,15 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
-_DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
+# A run's download (the served file and its manifest) lives in ``<run dir>.download``,
+# outside the tree the run's shell can write, so neither can be swapped for a link.
+# Its ``besser_llm_`` prefix puts it under the run-root cleanup.
+_DOWNLOAD_DIR_SUFFIX = ".download"
+_DOWNLOAD_MANIFEST_NAME = "manifest.json"
+_DOWNLOAD_ARTIFACT_NAME = "artifact"
+_DOWNLOAD_DIR_RE = re.compile(
+    re.escape(LLM_TEMP_DIR_PREFIX) + r"(?P<run_id>[a-f0-9]{32})_[a-z0-9_]+" + re.escape(_DOWNLOAD_DIR_SUFFIX)
+)
 # Written into a run imported from GitHub: where it came from. Its ``.besser_``
 # prefix keeps it out of every push and download.
 GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
@@ -171,18 +183,59 @@ _EXCLUDED_OUTPUT_DIRS = {
 }
 
 
+def run_download_dir(workspace: str) -> str:
+    """Where the run's download and its manifest are kept: beside its workspace."""
+    return workspace.rstrip("/\\") + _DOWNLOAD_DIR_SUFFIX
+
+
 def _remove_run_dir(path: str) -> None:
-    """Delete a run's workspace and the sandbox ``$HOME`` beside it, ending the
-    run's shell session first so none of its processes outlive the folder."""
+    """Delete a run's workspace and the sandbox ``$HOME`` and download beside it,
+    ending the run's shell session first so none of its processes outlive the folder."""
     close_sessions_for(path)
     shutil.rmtree(path, ignore_errors=True)
     shutil.rmtree(sandbox_home(path), ignore_errors=True)
+    shutil.rmtree(run_download_dir(path), ignore_errors=True)
 
+
+
+# The range of a ZIP entry's DOS timestamp.
+_ZIP_FIRST_STAMP = (1980, 1, 1, 0, 0, 0)
+_ZIP_LAST_STAMP = (2107, 12, 31, 23, 59, 58)
+
+
+def _zip_plain_file(zf: zipfile.ZipFile, path: str, arcname: str, root: str) -> None:
+    """Add ``path`` to ``zf`` through a link-refusing open, so a file the run's
+    shell swaps for a link after the walk is left out, not read through."""
+    try:
+        with open_plain(path, "rb", root=root) as src:
+            info = os.fstat(src.fileno())
+            # ZIP stores years 1980-2107 only; a file touched outside them must not fail the packaging.
+            stamp = min(max(time.localtime(info.st_mtime)[:6], _ZIP_FIRST_STAMP), _ZIP_LAST_STAMP)
+            entry = zipfile.ZipInfo(arcname.replace(os.sep, "/"), stamp)
+            entry.external_attr = (info.st_mode & 0xFFFF) << 16  # keeps the executable bit, as zf.write does
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.file_size = info.st_size
+            with zf.open(entry, "w") as dst:
+                shutil.copyfileobj(src, dst)
+    except OSError:
+        logger.warning("Left %s out of the download: no longer a plain file", arcname)
 
 
 def _is_excluded_output_file(name: str) -> bool:
     """True for a file the push's ``ignore_patterns`` would drop too."""
     return any(fnmatch.fnmatch(name, pattern) for pattern in _EXCLUDED_OUTPUT_DIRS)
+
+
+async def _stop_helper_task(task: asyncio.Task, run_id: str) -> None:
+    """Cancel one of a run's helper tasks; its own error is logged, not raised,
+    so it cannot skip stopping the worker and releasing the run."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Run %s: helper task %s failed", run_id, task.get_name())
 
 
 def _dir_has_user_output(path: Optional[str]) -> bool:
@@ -405,7 +458,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             verified.append(_item(
                 "ocl_constraint", label, what,
                 how="rejected by the OCL converter, then recovered in code: "
-                    + str(verdict.get("evidence") or "no citation"),
+                    + (render_evidence(verdict.get("evidence")) or "no citation"),
             ))
             continue
         if is_dropped_by_model_change(issue):
@@ -443,7 +496,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             verified.append(_item(
                 "requirement", ident, what,
                 how="implementation cited and re-checked against the delivered "
-                    f"source: {verdict.get('evidence') or 'no citation'}",
+                    f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}",
             ))
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
@@ -594,51 +647,42 @@ class SmartRunRegistry:
         self._lock = asyncio.Lock()
 
     async def put(self, run_id: str, entry: SmartRunEntry) -> None:
-        self._persist_download_manifest(run_id, entry)
+        """Register ``entry``, keeping its file and manifest in the run's download dir.
+
+        The file is copied there unless it is already there (a packaged ZIP), so
+        the download no longer depends on the workspace the run's shell can
+        still change. When it cannot be kept the run is still registered (push
+        and modify read its workspace) but its download answers 404.
+        """
+        try:
+            entry = self._store_download(run_id, entry)
+        except OSError:
+            logger.warning("Run %s: its download could not be kept; /download will answer 404",
+                           run_id, exc_info=True)
         async with self._lock:
             self._entries[run_id] = entry
 
     @staticmethod
-    def _persist_download_manifest(run_id: str, entry: SmartRunEntry) -> None:
-        """Best-effort persistence of non-secret download metadata."""
-        if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-            return
-        temp_dir = os.path.realpath(entry.temp_dir)
-        file_path = os.path.realpath(entry.file_path)
-        if not os.path.isdir(temp_dir) or not os.path.isfile(file_path):
-            return
-        try:
-            if os.path.commonpath([temp_dir, file_path]) != temp_dir:
-                return
-            relative_path = os.path.relpath(file_path, temp_dir)
-            manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
-            pending_path = manifest_path + ".tmp"
-            with open(pending_path, "w", encoding="utf-8") as handle:
-                json.dump(
-                    {
-                        "version": 1,
-                        "runId": run_id,
-                        "relativePath": relative_path,
-                        "fileName": entry.file_name,
-                        "isZip": entry.is_zip,
-                        "createdAt": entry.created_at,
-                    },
-                    handle,
-                    separators=(",", ":"),
-                )
-            os.replace(pending_path, manifest_path)
-        except (OSError, TypeError, ValueError):
-            logger.warning(
-                "Could not persist download metadata for run %s",
-                run_id,
-                exc_info=True,
-            )
+    def _store_download(run_id: str, entry: SmartRunEntry) -> SmartRunEntry:
+        download_dir = run_download_dir(entry.temp_dir)
+        os.makedirs(download_dir, exist_ok=True)
+        artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+        if os.path.abspath(entry.file_path) != os.path.abspath(artifact):
+            copy_plain_file(entry.file_path, artifact, root=entry.temp_dir, dst_root=download_dir)
+        write_atomic_plain(os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME), json.dumps({
+            "version": 2,
+            "runId": run_id,
+            "fileName": entry.file_name,
+            "isZip": entry.is_zip,
+            "createdAt": entry.created_at,
+        }, separators=(",", ":")), root=download_dir)
+        return dataclass_replace(entry, file_path=artifact)
 
     async def restore_persisted(
         self,
         ttl_seconds: Optional[int] = None,
     ) -> int:
-        """Rehydrate downloadable artifacts from persistent run workspaces."""
+        """Rehydrate downloadable artifacts from the run root's download dirs."""
         if ttl_seconds is None:
             ttl_seconds = get_settings().llm_download_ttl_seconds
         root = _run_workspace_root()
@@ -651,9 +695,7 @@ class SmartRunRegistry:
             return 0
 
         for name in names:
-            if not name.startswith(LLM_TEMP_DIR_PREFIX):
-                continue
-            entry = self._entry_from_workspace(root, name, now, ttl_seconds)
+            entry = self._entry_from_download_dir(root, name, now, ttl_seconds)
             if entry is not None:
                 restored[entry[0]] = entry[1]
 
@@ -666,61 +708,51 @@ class SmartRunRegistry:
             )
         return len(restored)
 
-    def _entry_from_workspace(
+    def _entry_from_download_dir(
         self,
         root: str,
         name: str,
         now: float,
         ttl_seconds: int,
     ) -> Optional[tuple[str, "SmartRunEntry"]]:
-        """Parse one run workspace into a registry entry.
+        """Parse one ``<run dir>.download`` into a registry entry.
 
         Shared by ``restore_persisted`` (boot-time sweep of everything) and
         ``get`` (targeted lookup for a single run). Returns ``None`` for
-        anything unusable -- no manifest, expired, or a manifest that does not
-        agree with its own directory name.
+        anything unusable -- not a download dir, no manifest, expired, or a
+        manifest that does not agree with its directory name. A manifest in a
+        run workspace or its sandbox ``$HOME`` (where releases before this one
+        kept it, and where the run's shell can write one) is never read.
 
         Pure disk IO: the caller takes the lock.
         """
-        temp_dir = os.path.realpath(os.path.join(root, name))
-        manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
+        match = _DOWNLOAD_DIR_RE.fullmatch(name)
+        if match is None:
+            return None
+        download_dir = os.path.join(root, name)
+        manifest_path = os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME)
+        data = read_run_json(manifest_path, _MAX_DOWNLOAD_MANIFEST_BYTES)
+        run_id = match["run_id"]
+        if not isinstance(data, dict) or data.get("runId") != run_id:
+            return None
+        workspace = download_dir[: -len(_DOWNLOAD_DIR_SUFFIX)]
         try:
-            if (
-                not os.path.isfile(manifest_path)
-                or os.path.getsize(manifest_path) > _MAX_DOWNLOAD_MANIFEST_BYTES
-            ):
-                return None
-            with open(manifest_path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            run_id = str(data.get("runId") or "")
-            if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-                return None
-            if not name.startswith(f"{LLM_TEMP_DIR_PREFIX}{run_id}_"):
-                return None
             created_at = float(data["createdAt"])
             if max(0.0, now - created_at) > max(1, ttl_seconds):
-                _remove_run_dir(temp_dir)
+                _remove_run_dir(workspace)
                 return None
-            relative_path = str(data["relativePath"])
-            file_path = os.path.realpath(os.path.join(temp_dir, relative_path))
-            if (
-                os.path.commonpath([temp_dir, file_path]) != temp_dir
-                or not os.path.isfile(file_path)
-            ):
+            artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            if not is_plain_file(artifact, root=download_dir):
                 return None
             return run_id, SmartRunEntry(
-                file_path=file_path,
+                file_path=artifact,
                 file_name=str(data["fileName"]),
                 is_zip=bool(data["isZip"]),
-                temp_dir=temp_dir,
+                temp_dir=workspace,
                 created_at=created_at,
             )
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-            logger.warning(
-                "Ignoring invalid download metadata at %s",
-                manifest_path,
-                exc_info=True,
-            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Ignoring invalid download metadata at %s", manifest_path, exc_info=True)
             return None
 
     async def pop(self, run_id: str) -> Optional[SmartRunEntry]:
@@ -745,7 +777,7 @@ class SmartRunRegistry:
         if not re.fullmatch(r"[a-f0-9]{32}", run_id or ""):
             return None
 
-        # Targeted: only directories belonging to this run, not a full sweep.
+        # Targeted: only this run's download dirs, not a full sweep.
         root = _run_workspace_root()
         now = time.time()
         prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
@@ -755,7 +787,7 @@ class SmartRunRegistry:
             return None
 
         for name in names:
-            found = self._entry_from_workspace(
+            found = self._entry_from_download_dir(
                 root, name, now, get_settings().llm_download_ttl_seconds
             )
             if found is None:
@@ -801,7 +833,9 @@ class SmartRunRegistry:
 
             for run_id, entry in expired:
                 try:
-                    _remove_run_dir(entry.temp_dir)
+                    # Off the loop: a large workspace or a busy shell session
+                    # takes seconds to remove and would stall every stream.
+                    await asyncio.to_thread(_remove_run_dir, entry.temp_dir)
                 except Exception:
                     logger.exception(
                         "Failed to remove temp dir for expired run %s", run_id
@@ -853,9 +887,11 @@ def _locate_run_temp_dir(run_id: str) -> str | None:
     tempdir = _run_workspace_root()
     prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
     try:
+        # A dot marks a sibling (``.sandbox-home``, ``.download``), never a
+        # workspace: mkdtemp names have none, and the run's shell writes the home.
         candidates = [
             entry for entry in os.listdir(tempdir)
-            if entry.startswith(prefix)
+            if entry.startswith(prefix) and "." not in entry
         ]
     except OSError:
         return None
@@ -997,15 +1033,18 @@ class SmartGenerationRunner:
         for successful AND failed runs (failures are the friction data).
         Recording is best-effort and can never affect the stream itself.
         """
-        inner = self._generate_and_stream_impl(http_request=http_request)
+        # aclosing: closing this stream closes the run, which stops its worker.
+        inner = contextlib.aclosing(self._generate_and_stream_impl(http_request=http_request))
         if not self._is_study_run():
-            async for frame in inner:
-                yield frame
+            async with inner as frames:
+                async for frame in frames:
+                    yield frame
             return
         try:
-            async for frame in inner:
-                self._telemetry_observe_frame(frame)
-                yield frame
+            async with inner as frames:
+                async for frame in frames:
+                    self._telemetry_observe_frame(frame)
+                    yield frame
         except GeneratorExit:
             # The consumer closed the stream (client disconnect) before a
             # terminal frame was delivered.
@@ -1767,6 +1806,7 @@ class SmartGenerationRunner:
         # ---- 7. Drain the queue, yielding events ----------------------
         worker_exception: Optional[BaseException] = None
         result_path: Optional[str] = None
+        aborted = False
 
         try:
             while True:
@@ -1843,29 +1883,24 @@ class SmartGenerationRunner:
                         code="INTERNAL",
                         message="Internal server error",
                     ))
+        except BaseException:
+            # The stream was closed (GeneratorExit), cancelled or crashed:
+            # yielding now would swallow that or raise "ignored GeneratorExit".
+            aborted = True
+            raise
         finally:
-            emitter_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await emitter_task
-            disconnect_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await disconnect_task
-            watchdog_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watchdog_task
+            for helper in (emitter_task, disconnect_task, watchdog_task):
+                await _stop_helper_task(helper, self.run_id)
 
-            # Drain any events the emitter enqueued between the sentinel
-            # being put and the task being cancelled. These are cost
-            # ticks — not critical — but missing them can make the
-            # final `cost` event stale by up to the emitter interval.
-            while True:
-                try:
-                    leftover = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if leftover is None:
-                    continue
-                yield self._sse(leftover)
+            if not worker_task.done():
+                # The stream ended before the worker did: stop it and wait, so
+                # the run id and the slot are freed only once it has stopped.
+                logger.warning("Run %s: stream ended before its worker; cancelling the worker", self.run_id)
+                cancel_event.set()
+                await asyncio.wait({worker_task})
+            if aborted and not worker_task.cancelled() and worker_task.exception() is not None:
+                logger.warning("Run %s: worker failed after its stream ended: %r",
+                               self.run_id, worker_task.exception())
 
             # A caller-supplied reservation is owned by the durable stream
             # adapter, which releases it only after packaging and the terminal
@@ -1874,6 +1909,19 @@ class SmartGenerationRunner:
             if self._reserved_cancel_event is None:
                 await self._runtime.active_runs.release(self.run_id, cancel_event)
 
+            # Drain any events the emitter enqueued between the sentinel
+            # being put and the task being cancelled. These are cost
+            # ticks — not critical — but missing them can make the
+            # final `cost` event stale by up to the emitter interval.
+            while not aborted:
+                try:
+                    leftover = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if leftover is None:
+                    continue
+                yield self._sse(leftover)
+
             # Terminal events are mutually exclusive: CANCELLED (or
             # TIMEOUT when the watchdog fired) is emitted ONLY when the
             # cancellation actually interrupted the run. A run cancelled
@@ -1881,7 +1929,7 @@ class SmartGenerationRunner:
             # to the normal `done` path below — emitting both signals
             # contradicted the documented contract (CANCELLED is
             # terminal) and confused clients.
-            if cancel_event.is_set() and (worker_exception is not None or not result_path):
+            if not aborted and cancel_event.is_set() and (worker_exception is not None or not result_path):
                 if watchdog_fired["value"]:
                     yield self._sse(ErrorEvent(
                         code="TIMEOUT",
@@ -2269,10 +2317,9 @@ class SmartGenerationRunner:
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
-        if os.path.isfile(recipe_path):
+        if is_plain_file(recipe_path, root=result_path):
             try:
-                with open(recipe_path, "w", encoding="utf-8") as handle:
-                    json.dump(recipe, handle, indent=2)
+                write_atomic_plain(recipe_path, json.dumps(recipe, indent=2), root=result_path)
             except OSError:
                 logger.debug("Could not persist secret finding count", exc_info=True)
 
@@ -2332,18 +2379,21 @@ class SmartGenerationRunner:
             )
         else:
             zip_name = f"besser_smart_{self.run_id}.zip"
-            zip_path = os.path.join(self.temp_dir, zip_name)
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Written straight to the download dir, outside the tree the run's shell can write.
+            download_dir = run_download_dir(self.temp_dir)
+            os.makedirs(download_dir, exist_ok=True)
+            zip_path = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            with open_plain_write(zip_path, "wb", root=download_dir) as handle, \
+                    zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as zf:
                 for path in user_files:
-                    arcname = os.path.relpath(path, result_path)
-                    zf.write(path, arcname)
-                zf.write(provenance_path, PROVENANCE_FILENAME)
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
+                _zip_plain_file(zf, provenance_path, PROVENANCE_FILENAME, result_path)
                 for path in trace_files:
-                    zf.write(path, os.path.relpath(path, result_path))
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
                 for name in CARRIED_RUN_FILES:
                     path = os.path.join(result_path, name)
-                    if os.path.isfile(path) and is_plain_entry(path):
-                        zf.write(path, name)
+                    if is_plain_entry(path) and os.path.isfile(path):
+                        _zip_plain_file(zf, path, name, result_path)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
@@ -2416,7 +2466,8 @@ class SmartGenerationRunner:
 
     def _read_recipe(self, result_path: str) -> dict:
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
-        if not os.path.isfile(recipe_path):
+        # Not a plain file (absent, or a link the model planted): never read through.
+        if not is_plain_file(recipe_path, root=result_path):
             return {}
         try:
             size = os.path.getsize(recipe_path)
@@ -2428,15 +2479,10 @@ class SmartGenerationRunner:
                 self.run_id, size, _MAX_RECIPE_BYTES,
             )
             return {"warning": "recipe file exceeded size limit and was dropped"}
-        try:
-            with open(recipe_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            logger.exception(
-                "Failed to read .besser_recipe.json for run %s", self.run_id
-            )
+        data = read_run_json(recipe_path, _MAX_RECIPE_BYTES)
+        if isinstance(data, dict):
+            return data
+        logger.warning("Ignoring unreadable .besser_recipe.json for run %s", self.run_id)
         return {}
 
     def _reset_temp_dir_after_failed_seed(self) -> None:
@@ -2724,6 +2770,20 @@ class SmartGenerationRunner:
             )
 
     def _cleanup_temp_dir(self) -> None:
+        """Delete this run's workspace after a failure, unless it can be resumed."""
+        if self._resume_run_id:
+            # The workspace is the interrupted attempt's: its files, checkpoint
+            # and download outlive a failed resume, so the user can retry with
+            # the right input. The 24 h temp cleanup removes it.
+            logger.warning("Run %s: resume failed; keeping its workspace for another resume", self.run_id)
+            return
+        from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+
+        if self.temp_dir and os.path.isfile(os.path.join(self.temp_dir, CHECKPOINT_FILENAME)):
+            # A checkpoint makes the run resumable, and an abandoned run has
+            # already told its client so (``resumeAvailable``).
+            logger.warning("Run %s failed after a checkpoint; keeping its workspace for resume", self.run_id)
+            return
         if self.temp_dir and os.path.isdir(self.temp_dir):
             try:
                 _remove_run_dir(self.temp_dir)

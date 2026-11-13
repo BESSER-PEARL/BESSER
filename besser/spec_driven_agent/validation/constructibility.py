@@ -47,6 +47,11 @@ given only the symptom tends to spend its fix attempts elsewhere. The line
 feeds the fix prompt's excerpt. When the refusal is a NOT NULL violation, the
 column is named too, and the create-time-rule advice is left out.
 
+A login-protected app is logged into once, on the first 401/403, as an
+account the probe registers through the app's own register/login routes; never
+by overriding its auth dependency, which would also lift the role and
+ownership rules a real user meets.
+
 Runs in two halves. The parent (``collect_constructibility_report``) is
 ordinary orchestrator code; it also hands the child the modelled action list
 in a JSON file, since the model is what states an action's parameters. The
@@ -309,15 +314,22 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                           f"attempted input: {payload}")
                 if attempt.get("outcome") == "unauthorized":
                     reason += "; this endpoint requires authentication"
+                    login = report.get("auth") or {}
+                    if login.get("source"):
+                        reason += f" and still refused the probe after it logged in through {login['source']}"
+                    elif login.get("error"):
+                        reason += f", and the probe could not log in ({login['error']})"
             else:
                 unresolved = entry.get("unresolved") or []
                 reason = ("no request could be constructed; unresolved related IDs: "
                           + json.dumps(unresolved, sort_keys=True))
             text = (
                 f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - {reason}. "
-                "These guessed inputs do not prove this endpoint is broken. Use test_api "
-                "with valid specification-based fixtures and read the persisted result; "
-                "do not remove business validation to satisfy guessed samples"
+                "These guessed inputs do not prove this endpoint is broken. To settle it, "
+                f"one test_api scenario must POST {entry['path']} with valid specification-based "
+                "fixtures (logging in first where the API requires it) and then GET that "
+                f"record by its id under {entry['path']}; a create that is not read back "
+                "stays unverified; do not remove business validation to satisfy guessed samples"
             )
         site = entry.get("site")
         column = attempt.get("missing_column")
@@ -1200,6 +1212,204 @@ async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasse
     return reports, calls, ordinal
 
 
+# ---------------------------------------------------------------------------
+# Logging in: only through the app's own routes, as any visitor could
+# ---------------------------------------------------------------------------
+
+_REGISTER_PATH = re.compile(r"/(register|signup|sign-up|sign_up)/?$", re.I)
+_LOGIN_PATH = re.compile(r"/(login|signin|sign-in|sign_in|token)/?$", re.I)
+_TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
+# Whole words of a field name (adjacent pairs joined: ``isSuperUser``, ``account_type``).
+_PRIVILEGE_WORDS = frozenset({"role", "admin", "administrator", "superuser", "staff", "permission", "scope",
+                              "privilege", "manager", "owner", "moderator", "accounttype", "usertype"})
+# A required box every visitor must tick to register (terms, consent, age) grants nothing,
+# so the probe ticks one naming at least one consent noun (or an age: "over 18", "18 or older") with
+# every other word a filler, a number or a qualifier that follows a document noun ("privacy policy",
+# "terms of use"); any other boolean is a choice.
+_CONSENT_DOCUMENTS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "cookie", "cookies", "legal"})
+_CONSENT_NOUNS = _CONSENT_DOCUMENTS | {"newsletter", "marketing", "remember", "adult", "age"}
+_CONSENT_QUALIFIERS = frozenset({"policy", "conditions", "service", "use"})
+_CONSENT_FILLERS = frozenset({"is", "has", "i", "accept", "accepted", "accepts", "agree", "agreed", "agrees", "to",
+                              "the", "of", "and", "opt", "in", "confirm", "confirmed", "me", "over", "read",
+                              "given", "signup", "user", "data", "processing", "acknowledge", "acknowledged",
+                              "agreement", "confirmation", "have", "or", "older"})
+_AGE_RE = re.compile(r"\bover \d+\b|\b\d+ or older\b")
+# A required number naming a rank picks the account's standing, like a reference to another record.
+_RANK_WORDS = frozenset({"level", "tier", "rank", "grade", "clearance", "plan"})
+_PROBE_USERNAME = "probe_auth_user"
+_PROBE_EMAIL = "probe.auth.user@example.com"
+_PROBE_PASSWORD = "Probe-Passw0rd-2817"
+
+
+def _auth_routes(spec: dict) -> dict:
+    """Unsecured, untemplated POST register/login routes; an OAuth2 ``tokenUrl`` wins for login."""
+    found: dict = {}
+    for path, ops in spec.get("paths", {}).items():
+        op = ops.get("post")
+        if not op or op.get("security") or "{" in path:
+            continue
+        if _REGISTER_PATH.search(path):
+            found.setdefault("register", (path, op))
+        elif _LOGIN_PATH.search(path):
+            found.setdefault("login", (path, op))
+    for scheme in (spec.get("components", {}).get("securitySchemes") or {}).values():
+        token_url = ((scheme.get("flows") or {}).get("password") or {}).get("tokenUrl")
+        op = (spec.get("paths", {}).get("/" + str(token_url or "").lstrip("/")) or {}).get("post")
+        if token_url and op:
+            found["login"] = ("/" + token_url.lstrip("/"), op)
+    return found
+
+
+def _body_schema(op: dict, schemas: dict) -> tuple[str | None, dict]:
+    """``(httpx body keyword, resolved body schema)``, or ``(None, {})`` without a JSON or form body."""
+    content = (op.get("requestBody") or {}).get("content") or {}
+    if "application/json" in content:
+        kind, media = "json", content["application/json"]
+    elif "application/x-www-form-urlencoded" in content or "multipart/form-data" in content:
+        kind = "data"
+        media = content.get("application/x-www-form-urlencoded") or content["multipart/form-data"]
+    else:
+        return None, {}
+    return kind, _resolve(media.get("schema") or {}, schemas)
+
+
+def _name_tokens(field: str) -> list[str]:
+    """The lowercase words of a snake_case, camelCase or kebab-case name."""
+    return [t.lower() for t in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", field)]
+
+
+def _is_consent(tokens: list[str]) -> bool:
+    """Whether a boolean's name words state consent, an age or "remember me" and nothing else."""
+    def qualifies(k: int) -> bool:  # follows a document noun, directly or across "of"/"and"
+        before = tokens[k - 2] if k > 1 and tokens[k - 1] in ("of", "and") else tokens[k - 1] if k else ""
+        return before in _CONSENT_DOCUMENTS
+
+    if not all(t in _CONSENT_NOUNS or t in _CONSENT_FILLERS or t.isdigit()
+               or t in _CONSENT_QUALIFIERS and qualifies(k) for k, t in enumerate(tokens)):
+        return False
+    return any(t in _CONSENT_NOUNS for t in tokens) or bool(_AGE_RE.search(" ".join(tokens)))
+
+
+def _choice(field: str, schema: dict) -> str | None:
+    """Why a value for ``field`` would choose what kind of account the probe gets, or None.
+
+    Only plain text or numbers under a name that is no privilege, reference or
+    rank, and consent boxes, are free input; another boolean, an enum/Literal,
+    an object/array or a privilege-named field is a choice.
+    """
+    tokens = _name_tokens(field)
+    words = {*tokens, *(a + b for a, b in zip(tokens, tokens[1:]))}
+    words |= {word[:-1] for word in words if word.endswith("s")}
+    if words & _PRIVILEGE_WORDS:
+        return "a privilege-named field"
+    if "enum" in schema or "const" in schema:
+        return "one of fixed values"
+    if schema.get("type") == "boolean" and _is_consent(tokens):
+        return None
+    if schema.get("type") in ("integer", "number") and (
+            (len(tokens) > 1 and tokens[-1] == "id") or words & _RANK_WORDS):
+        return "a reference to another record or a rank"
+    if schema.get("type") not in ("string", "integer", "number"):
+        return f"a {schema.get('type') or 'untyped'} value"
+    return None
+
+
+def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
+    """``(httpx body keyword, body)`` for a register/login route, or ``(None, why)``."""
+    kind, schema = _body_schema(op, schemas)
+    if kind is None:
+        return None, "no JSON or form request body"
+    body: dict = {}
+    for field, raw in schema.get("properties", {}).items():
+        resolved, low = _resolve(raw, schemas), field.lower()
+        choice = _choice(field, resolved)
+        if choice:
+            if field in schema.get("required", []):
+                return None, f"it requires `{field}` ({choice}), a choice the probe does not make for its account"
+        elif "password" in low:
+            body[field] = _PROBE_PASSWORD
+        elif "email" in low or resolved.get("format") == "email":
+            body[field] = _PROBE_EMAIL
+        elif low in ("username", "user_name", "login", "name"):
+            body[field] = _PROBE_USERNAME
+        elif field in schema.get("required", []):
+            # A birth date lies about 33 years back; any other date tomorrow.
+            past = "birth" in low or "dob" in _name_tokens(field)
+            body[field] = _sample(field, resolved, -12_000 if past else 1, entity="probeauth")
+    return kind, body
+
+
+def _find_token(body) -> str | None:
+    for value in (body, *(body.values() if isinstance(body, dict) else ())):
+        if isinstance(value, dict):
+            token = next((value[k] for k in _TOKEN_KEYS if isinstance(value.get(k), str) and value[k]), None)
+            if token:
+                return token
+    return None
+
+
+async def _discovered_login(client, spec: dict, schemas: dict) -> tuple[dict | None, str, str]:
+    """Register (when offered) and log in a probe account; ``(headers, error, identity)``.
+
+    Empty headers mean a session cookie, which the client's jar carries. A
+    failed registration still tries the login route.
+    """
+    routes = _auth_routes(spec)
+    if not routes:
+        return None, "the OpenAPI document lists no unsecured register or login route", ""
+    token, errors, done = None, [], set()
+    for step in ("register", "login"):
+        if step not in routes:
+            continue
+        path, op = routes[step]
+        kind, body = _credential_body(op, schemas)
+        if kind is None:
+            errors.append(f"POST {path}: {body}")
+            continue
+        response = await client.post(path, **{kind: body})
+        if not 200 <= response.status_code < 300:
+            errors.append(f"POST {path} answered {response.status_code}: {response.text[:120]}")
+            continue
+        done.add(step)
+        try:
+            token = _find_token(response.json()) or token
+        except ValueError:
+            pass
+    if ("login" if "login" in routes else "register") not in done:
+        return None, "; ".join(errors), ""
+    identity = ("a new account the probe registered" if "register" in done
+                else "the probe's own credentials, without registering")
+    return ({"Authorization": f"Bearer {token}"} if token else {}), "", identity
+
+
+async def _log_in(client, spec: dict, schemas: dict, retry) -> tuple[dict, tuple | None]:
+    """Log ``client`` in after ``retry``'s request was refused 401/403.
+
+    A login counts only if that request then gets past the wall; the retried
+    result is returned with the record. Never raises.
+    """
+    try:
+        headers, error, identity = await _discovered_login(client, spec, schemas)
+        if headers is not None:
+            client.headers.update(headers)
+            retried = await retry()
+            if retried[1] not in (401, 403):
+                return {"source": "its register/login routes", "identity": identity,
+                        "credential": sorted(headers) or "session cookie"}, retried
+            # 403 to a request that carried the account's credential: the route needs a
+            # privilege or a step (such as a CSRF token) the probe does not take.
+            refused = retried[1] == 403 and bool(headers or len(client.cookies))
+            for name in headers:
+                client.headers.pop(name, None)
+            error = (f"{identity} was refused 403 ({retried[2][:120]}), so the route needs a privilege "
+                     "or a step, such as a CSRF token, the probe does not take" if refused else
+                     f"the refused request still answered {retried[1]} after logging in ({retried[2][:120]})")
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"[:160]
+    client.cookies.clear()
+    return {"error": f"its register/login routes: {error}"[:400]}, None
+
+
 def _load_model_actions() -> dict:
     """The modelled action list the parent wrote out, if it had a model."""
     path = os.environ.get(_ACTIONS_ENV)
@@ -1300,6 +1510,7 @@ def _probe_cwd() -> dict:
     abstract = {name.strip() for name in
                 (os.environ.get(_ABSTRACT_ENV) or "").split(",") if name.strip()}
     skipped_abstract: list = []
+    skipped_non_entity: list = []
     for path, ops in spec.get("paths", {}).items():
         body = (ops.get("post") or {}).get("requestBody", {})
         ref = body.get("content", {}).get("application/json", {}).get("schema", {}).get("$ref", "")
@@ -1311,6 +1522,12 @@ def _probe_cwd() -> dict:
                 # concrete subclass carries the same rows.
                 skipped_abstract.append(entity)
                 continue
+            if entity not in orm:
+                # A ``*Create`` body with no table behind it (a signup, a
+                # login form) persists no record a test_api read-back could
+                # confirm, so reporting it unverified is a blocker no edit clears.
+                skipped_non_entity.append(entity)
+                continue
             creates[entity] = (path, schema_name)
 
     import asyncio
@@ -1321,14 +1538,24 @@ def _probe_cwd() -> dict:
         pending = dict(creates)
         ordinal = 0
         transport = httpx.ASGITransport(app=app)
+        auth: dict = {}
         async with httpx.AsyncClient(transport=transport, base_url="http://probe") as client:
-            async def request(path, payload, variant):
+            async def post(path, payload):
                 try:
                     response = await client.post(path, json=payload)
-                    status, text = response.status_code, response.text or ""
+                    return response, response.status_code, response.text or ""
                 except Exception as exc:
-                    response, status = None, "EXC"
-                    text = f"{type(exc).__name__}: {exc}"
+                    return None, "EXC", f"{type(exc).__name__}: {exc}"
+
+            async def request(path, payload, variant):
+                response, status, text = await post(path, payload)
+                if status in (401, 403) and not auth:
+                    # Kept apart from the create's result: evidence that auth is enforced.
+                    auth.update(refused=f"POST {path}", anonymous_status=status)
+                    record, retried = await _log_in(client, spec, schemas, lambda: post(path, payload))
+                    auth.update(record)
+                    if retried is not None:
+                        response, status, text = retried
                 attempt = {
                     "variant": " ".join(str(v) for v in variant),
                     "status": status, "outcome": _outcome(status),
@@ -1369,8 +1596,6 @@ def _probe_cwd() -> dict:
             while pending and progress:
                 progress = False
                 for entity, (path, schema_name) in list(pending.items()):
-                    if entity not in orm:
-                        continue  # cannot tell attributes from foreign keys: unprovable
                     schema = schemas[schema_name]
                     _, unresolved = _build_payload(
                         schema, schemas, orm[entity], ids, subclasses, ("base",))
@@ -1440,17 +1665,22 @@ def _probe_cwd() -> dict:
             actions, action_calls, _ordinal = await _probe_actions(
                 app, spec, request, read_state, schemas, orm, subclasses, unique_fields,
                 creates, entities, ids, ordinal, _load_model_actions())
-        return {"entities": entities, "actions": actions, "action_calls": action_calls}
+        return {"entities": entities, "actions": actions, "action_calls": action_calls,
+                "auth": auth}
 
     try:
         result = asyncio.run(run())
     except Exception as exc:
         return {"boot": "probe_error", "error": f"{type(exc).__name__}: {exc}"[:300]}
-    return {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
-            "action_calls": result["action_calls"],
-            # Named so a reader can tell "not probed because the model says
-            # it is abstract" from "probed and passed".
-            "skipped_abstract": sorted(set(skipped_abstract))}
+    report = {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
+              "action_calls": result["action_calls"],
+              # Named so a reader can tell "not probed because the model says
+              # it is abstract" from "probed and passed".
+              "skipped_abstract": sorted(set(skipped_abstract)),
+              "skipped_non_entity": sorted(set(skipped_non_entity))}
+    if result["auth"]:
+        report["auth"] = result["auth"]
+    return report
 
 
 if __name__ == "__main__":

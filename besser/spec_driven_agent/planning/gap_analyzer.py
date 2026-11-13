@@ -47,8 +47,7 @@ from typing import Any, Callable
 
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
-from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
-from besser.llm import extract_json
+from besser.llm import clean_json_response, extract_json, parse_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +87,9 @@ _SUBMIT_TASKS_TOOL = {
                             "enum": list(_TASK_KINDS),
                             "description": (
                                 "change: work on top of the scaffold. removes_scaffold: "
-                                "deletes or replaces generated code wholesale (the "
-                                "frontend, the backend, the scaffold). switches_framework: "
+                                "deletes or replaces generated code wholesale, never "
+                                "adding or wiring new work, even a new frontend. "
+                                "switches_framework: "
                                 "moves the app to another framework than the scaffold's."
                             ),
                         },
@@ -244,7 +244,9 @@ def analyze_gaps_via_llm(
     # (worse) judge "nothing to do" — this must survive even an empty list,
     # since [] can short-circuit Phase 2 entirely (see the module docstring).
     cleaned = _dedupe(_note_derived_enum_initial_state(domain_model, instructions) + cleaned)
-    cleaned = _dedupe(_note_rejected_constraints(domain_model, cleaned) + cleaned)
+    # A rejected OCL constraint is not added here: the orchestrator seeds one
+    # recovery item per rejected constraint (_deterministic_gap_tasks), the one
+    # the requirements judge can close. A second copy here was a duplicate.
     if tasks and not cleaned:
         # Only the planner may say "the scaffold covers it": a list the
         # sanitizers emptied means no usable checklist, not "skip Phase 2".
@@ -330,13 +332,15 @@ def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) ->
     every action endpoint returning 501. Annotate explicit action references
     without discarding requirements or guessing that an ORM method is
     connected. Harness-owned action tasks enforce omissions independently of
-    this hint.
+    this hint. A task that only mentions the action (a Cancel button) is
+    annotated too, since it needs the route; ``merge_action_tasks`` folds a
+    task into the handler's own item only when it names the handler.
     """
     noted = []
     for task in tasks:
         matches = [item for item in endpoints if re.search(
             rf"\b{_class_name_pattern(item.action)}\b", task, re.IGNORECASE,
-        )]
+        ) or re.search(rf"\b{re.escape(item.function)}\b", task)]
         if matches:
             locations = "; ".join(
                 f"{item.http_method} {item.route} is served by {item.path} "
@@ -409,9 +413,16 @@ def _drop_scaffold_conflicts(tasks: list) -> list[str]:
 
 # An add/create/define verb within three tokens of "enum": proposes the
 # enumeration itself, as opposed to using one ("add a cancel endpoint that
-# moves BookingCommercialStatus ...").
+# moves BookingCommercialStatus ..."). A UI or API word next to "enum" makes
+# the enumeration a means, not the object ("add a status enum dropdown",
+# "create a filter by enum value"), so the task is real work.
+_ENUM_USE_WORDS = (
+    r"(?:drop-?downs?|selects?|selectors?|pickers?|filters?|fields?|values?|columns?|badges?|chips?|"
+    r"inputs?|options?|radios?|labels?|params?|parameters?|query|forms?|endpoints?)\b"
+)
 _ADD_ENUM_RE = re.compile(
-    r"\b(?:add|create|introduce|define|declare)\b(?:\s+\S+){0,3}?\s+enum",
+    rf"\b(?:add|create|introduce|define|declare)\b(?:\s+(?!{_ENUM_USE_WORDS})\S+){{0,3}}?"
+    rf"\s+enum\w*\b(?!\s+{_ENUM_USE_WORDS})",
     re.IGNORECASE,
 )
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -467,10 +478,18 @@ _QUOTED_IDENT_RE = re.compile(r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]")
 # 'awaiting payment' to 'confirmed' when the bill is settled" names an
 # existing attribute, but the transition LOGIC the model does not encode is
 # the real ask. This downgrades a drop to an annotation so the requirement
-# itself is never lost.
+# itself is never lost. A rule on the attribute (unique, a check, an index,
+# reject ...) is the same: the declaration is present, the rule is not. The
+# rule words are prefixes ("valid" covers "validate"); they follow
+# requirements_ledger._CONSTRAINT_WORDS, which this module cannot import (that
+# module imports this one).
 _ATTR_BEHAVIOR_RE = re.compile(
     r"\b(?:derive[ds]?\s+from|computed?\s+from|transition\w*|based\s+on|"
-    r"calculat\w+|whenever|logic)\b",
+    r"calculat\w+|whenever|logic)\b"
+    r"|\b(?:unique|constrain|check|index|valid|enforc|reject|refus|must|cannot|can\s+not|"
+    r"may\s+not|never|at\s+least|at\s+most|no\s+more\s+than|exceed|only\s+(?:if|when|after)|"
+    r"format|match|overlap|before|after|greater|less|between|positive|non-negative|"
+    r"minimum|maximum|default|search|filter|sort)",
     re.IGNORECASE,
 )
 _TYPE_SYNONYMS = {"boolean": "bool", "string": "str", "text": "str", "integer": "int"}
@@ -516,55 +535,6 @@ def _mentions_rejected_constraint(task: str, rejected_names: set) -> bool:
     return any(re.search(rf"\b{re.escape(n)}\b", task, re.IGNORECASE) for n in rejected_names)
 
 
-# A model can reject many constraints; the checklist is a scarce resource.
-_MAX_REJECTED_CONSTRAINT_TASKS = 6
-
-
-def _note_rejected_constraints(domain_model, tasks: list) -> list[str]:
-    """Harness-owned tasks for OCL invariants the converter threw away.
-
-    The generator leaves a TODO where it could not enforce a constraint
-    (``pydantic_classes/ocl_utils.py``), which makes the omission visible but
-    does not make it anyone's job; if the planner does not raise it, the rule
-    ships as a comment. Rejected invariants are exactly the rules the
-    deterministic path cannot express, so the agent implements them.
-
-    Only constraints no existing task already names are added, since the
-    planner's own phrasing carries the spec's wording and already gets
-    placement advice. The rejection reason rides along: it usually says
-    which property name did not resolve, and that is the model-vs-spec
-    delta the agent needs in order to write the check against the ends the
-    model actually declares rather than the ones the OCL text assumed.
-    """
-    issues = getattr(domain_model, "conversion_issues", None) or []
-    added: list[str] = []
-    for issue in issues:
-        if not isinstance(issue, dict) or is_dropped_by_model_change(issue):
-            continue  # the user's model change removed what it uses
-        name = issue.get("name")
-        expression = issue.get("expression") or issue.get("original_text") or ""
-        if not name or not expression:
-            continue
-        if any(_mentions_rejected_constraint(t, {str(name)}) for t in tasks):
-            continue
-        context = issue.get("context") or ""
-        reason = (issue.get("reason") or "").removeprefix("Warning: ")
-        reason = reason.replace(f" in '{expression}'", "", 1).strip()
-        where = f"that create or update {context}" if context else "for this operation"
-        added.append(
-            f"Enforce the '{name}' rule, which the model records but no generated code "
-            f"checks: {expression}. The OCL converter rejected it"
-            + (f" ({reason})" if reason else "")
-            + f", so pydantic_classes.py carries only a TODO for it. Implement the check "
-            f"in the router handlers {where}, after loading the related rows via the "
-            f"database session, and write it against the relationship names the model "
-            f"actually declares - the ones in the OCL text above may not exist."
-        )
-        if len(added) >= _MAX_REJECTED_CONSTRAINT_TASKS:
-            break
-    return added
-
-
 def _mentioned_classes(sentence: str, classes: list) -> list:
     """Model classes named in ``sentence``, tolerating a Create, Update,
     Read or Response schema suffix (``BookingCreate`` still names
@@ -591,7 +561,7 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
     (float/int/bool/...) that contradicts the model's actual type blocks the
     match entirely - that names a real gap, not a duplicate. Only a task
     that is PURELY a declaration is dropped; one that also asks for derived
-    behaviour (see ``_ATTR_BEHAVIOR_RE``) is annotated instead, so the
+    behaviour or a rule (see ``_ATTR_BEHAVIOR_RE``) is annotated instead, so the
     requirement is never silently lost.
     """
     if domain_model is None:
@@ -626,7 +596,8 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
                     type_name = getattr(getattr(attr_by_lower[quoted[0].lower()], "type", None), "name", None)
                     if type_name and word != str(type_name).lower():
                         continue  # names a type the model disagrees with - a real gap
-                decision = "annotate" if _ATTR_BEHAVIOR_RE.search(sentence) else "drop"
+                # The whole task: the rule may sit in another sentence.
+                decision = "annotate" if _ATTR_BEHAVIOR_RE.search(task) else "drop"
                 break
             if decision:
                 break
@@ -930,6 +901,11 @@ def _nearest_existing(path: str, workspace_files: list[str]) -> list[str]:
     return [real for _, real in scored[:_MAX_NEAREST]]
 
 
+def _normalize_task_path(path: str) -> str:
+    """``/``-separated, without a leading ``./`` (a dot-directory keeps its dot)."""
+    return re.sub(r"^(?:\./)+", "", path.replace("\\", "/"))
+
+
 def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     """Repair the file paths a task list names, against the real tree.
 
@@ -951,7 +927,7 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     if not workspace_files:
         return tasks
 
-    real = {f.replace("\\", "/").lstrip("./") for f in workspace_files}
+    real = {_normalize_task_path(f) for f in workspace_files}
     by_suffix: dict[str, set] = {}
     for full in real:
         parts = full.split("/")
@@ -963,13 +939,15 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
         text = task
         missing: list[str] = []
         for token in dict.fromkeys(_TASK_PATH_RE.findall(task)):
-            norm = token.replace("\\", "/").lstrip("./")
+            norm = _normalize_task_path(token)
             if norm in real:
                 continue
             matches = by_suffix.get(norm, set())
             if len(matches) == 1:
                 target = next(iter(matches))
-                text = text.replace(token, target)
+                # Whole tokens only: a plain replace would also rewrite the
+                # tail of a right path that ends in this token.
+                text = re.sub(rf"(?<![\w/\\.]){re.escape(token)}(?![\w/\\])", lambda _: target, text)
                 logger.info(
                     "Gap sanitizer repaired task path %r -> %r", token, target
                 )
@@ -1234,6 +1212,10 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
         tasks = None
     if tasks is not None:
         return tasks
+    if not structured:
+        # The repair retry already was a plain call; a third would be identical.
+        logger.warning("Gap analyzer unparseable after repair retry; no checklist")
+        return None
 
     # Final fallback, NO tools: some OpenAI-compatible gateways (ollama
     # for certain models, e.g. devstral) reject a FORCED tool_choice with
@@ -1470,6 +1452,22 @@ def _clip(text: str, limit: int, label: str) -> str:
     return f"{head}\n…[{label} truncated at {limit} chars]"
 
 
+def _planner_conversion_issue(issue: Any) -> Any:
+    """A rejected-constraint diagnostic without the copies of its own expression.
+
+    The converter sets ``original_text`` to the expression it parsed and quotes
+    that expression again inside ``reason``; the planner needs it once.
+    """
+    if not isinstance(issue, dict) or not issue.get("expression"):
+        return issue
+    expression = issue["expression"]
+    compact = {key: value for key, value in issue.items()
+               if not (key == "original_text" and value == expression)}
+    if isinstance(compact.get("reason"), str):
+        compact["reason"] = compact["reason"].replace(f" in '{expression}'", "", 1)
+    return compact
+
+
 def _safe_serialize_model(domain_model) -> str:
     """Best-effort JSON dump of the domain model.
 
@@ -1493,13 +1491,16 @@ def _safe_serialize_model(domain_model) -> str:
         fallback = {}
         issues = getattr(domain_model, "conversion_issues", None)
         if issues:
-            fallback["conversion_issues"] = issues
+            fallback["conversion_issues"] = [_planner_conversion_issue(i) for i in issues]
         try:
             names = [c.name for c in domain_model.get_classes()]
             fallback["classes"] = [{"name": n} for n in names]
         except Exception:
             pass
         return json.dumps(fallback, default=str)
+
+    if data.get("conversion_issues"):
+        data = {**data, "conversion_issues": [_planner_conversion_issue(i) for i in data["conversion_issues"]]}
 
     def _dump(payload: Any) -> str:
         return json.dumps(payload, default=str, separators=(",", ":"))
@@ -1580,5 +1581,18 @@ def _extract_text(response: dict[str, Any]) -> str:
 
 
 def _parse_task_array(text: str) -> list | None:
-    """The first JSON array in a model response (fenced, bare or in prose)."""
-    return extract_json(text, list)
+    """The task list in a model response (fenced, bare or in prose): a JSON
+    array, or the ``submit_tasks`` schema's own ``{"tasks": [...]}``, which a
+    gateway that ignores tool_choice may send as text."""
+    tasks = extract_json(text, list)
+    if tasks is not None:
+        return tasks
+    wrapped = extract_json(text, dict)
+    tasks = wrapped.get("tasks") if wrapped else None
+    if not isinstance(tasks, list):
+        return None
+    # Like a bare [], an empty list means "scaffold sufficient" only when it
+    # is the whole reply, never an example quoted in prose.
+    if not tasks and parse_json_safely(clean_json_response(text)) != wrapped:
+        return None
+    return tasks

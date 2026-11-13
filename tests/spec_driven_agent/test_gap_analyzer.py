@@ -155,6 +155,74 @@ def test_parse_task_array_fenced_json():
     assert _parse_task_array(text) == ["task one", "task two"]
 
 
+_TASK = {"task": "Add a lend endpoint to routers/book.py", "kind": "change"}
+
+
+@pytest.mark.parametrize("text, expected", [
+    # The submit_tasks schema's own shape, from a gateway that ignores tool_choice.
+    (json.dumps({"tasks": [_TASK]}), [_TASK]),
+    ("```json\n" + json.dumps({"tasks": [_TASK]}) + "\n```", [_TASK]),
+    ("Here is the list:\n" + json.dumps({"tasks": [_TASK]}), [_TASK]),
+    # An empty list is "scaffold sufficient" only as the whole reply, as for a bare [].
+    ('{"tasks": []}', []),
+    ('```json\n{"tasks": []}\n```', []),
+    ('I found nothing obvious, e.g. {"tasks": []} - but see above.', None),
+    ('{"tasks": "add an endpoint"}', None),
+    ('{"steps": ["add an endpoint"]}', None),
+])
+def test_parse_task_array_accepts_the_tool_schema_object(text, expected):
+    assert _parse_task_array(text) == expected
+
+
+class _TextPlanner:
+    """A real-looking provider whose every reply is ``text``."""
+
+    model = "mock-model"
+    _client = object()
+    planning_model = None
+
+    def __init__(self, text):
+        self.usage = UsageTracker("mock-model")
+        self.text = text
+        self.calls = []
+
+    def chat(self, system, messages, tools, force_tool=None, model_override=None):
+        self.calls.append((system, messages, tools))
+        return {"content": [_MockBlock("text", text=self.text)]}
+
+
+class _PlainTextPlanner(_TextPlanner):
+    """No ``force_tool`` / ``model_override``: the legacy free-text protocol."""
+
+    def chat(self, system, messages, tools):
+        return super().chat(system, messages, tools)
+
+
+def _analyze(client):
+    return analyze_gaps_via_llm("Books can be lent.", "generate_fastapi_backend", None, "inv", client)
+
+
+def test_a_tool_schema_object_in_text_is_read_on_the_first_call():
+    client = _TextPlanner(json.dumps({"tasks": [_TASK]}))
+    assert _analyze(client) == [_TASK["task"]]
+    assert len(client.calls) == 1
+
+
+def test_an_unparseable_reply_without_forced_tools_is_not_resent_identically():
+    """Without forced tools the repair retry already is the plain call, so a
+    third, byte-identical request cannot change the answer."""
+    client = _PlainTextPlanner("I could not decide.")
+    assert _analyze(client) is None
+    assert len(client.calls) == 2
+
+
+def test_an_unparseable_reply_with_forced_tools_still_tries_the_plain_call():
+    client = _TextPlanner("I could not decide.")
+    assert _analyze(client) is None
+    assert [tools for _, _, tools in client.calls][-1] == []
+    assert len(client.calls) == 3
+
+
 def test_safe_serialize_model_truncation_is_always_valid_json(monkeypatch):
     """A model far over budget must still serialize to parseable JSON."""
     huge = {
@@ -287,6 +355,35 @@ def test_phase2_not_skipped_when_scoped_issues_present(tmp_path, monkeypatch):
     )
 
     assert client.chat_calls == 1
+
+
+@pytest.mark.parametrize("stop", ["cancelled", "cost_cap", "timeout"])
+def test_gap_analysis_not_paid_once_the_run_must_stop(tmp_path, monkeypatch, stop):
+    """A run cancelled, over its cost cap or past its runtime before Phase 2
+    (e.g. during Phase 1 or the Phase 1.5 toolchain checks) does not pay for
+    the planning call; the Phase 2 loop then stops with that reason."""
+    import time
+    client = _MockClient()
+    orch = _make_orchestrator(tmp_path, client)
+    orch._generator_used = "generate_fastapi_backend"
+    orch._start_time = time.monotonic()
+    if stop == "cancelled":
+        orch._should_continue = lambda: False
+    elif stop == "cost_cap":
+        client.usage.seed_cost(orch.max_cost_usd + 0.5)
+    else:
+        orch._start_time -= orch.max_runtime_seconds + 1
+    planning_calls = []
+    monkeypatch.setattr(
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
+        lambda **kwargs: planning_calls.append(kwargs) or ["a task"],
+    )
+
+    orch._run_phase2("build a library api", extra_issues=[])
+
+    assert planning_calls == []
+    assert client.chat_calls == 0
+    assert orch._phase2_stop_reason == stop
 
 
 # ----------------------------------------------------------------------
@@ -453,6 +550,13 @@ def test_gap_sanitizer_drops_the_tasks_the_planner_labels_as_fighting_the_scaffo
     assert _drop_scaffold_conflicts([" add a borrow endpoint ", "", 3]) == ["add a borrow endpoint"]
 
 
+def test_planner_schema_says_the_removes_scaffold_label_never_covers_new_work():
+    """Sonnet 5.5, backend-only scaffold: the planner labelled four additive frontend
+    tasks removes_scaffold and they were dropped; the label alone decides, so its text must exclude them."""
+    kind = gap_analyzer._SUBMIT_TASKS_TOOL["input_schema"]["properties"]["tasks"]["items"]["properties"]["kind"]
+    assert "never adding or wiring new work, even a new frontend" in kind["description"]
+
+
 def test_planner_prompt_does_not_tell_tasks_to_follow_a_user_named_stack():
     """Phase 2 is told to keep the scaffold's stack whatever the user named;
     the planner was told every task must respect the user's framework."""
@@ -545,6 +649,17 @@ class TestPresentEnumerationsAreNotGaps:
             "Add a cancel endpoint that moves BookingCommercialStatus from "
             "AWAITING_PAYMENT or CONFIRMED to CANCELLED"
         )
+        assert _drop_present_enumerations([task], _booking_model()) == [task]
+
+    @pytest.mark.parametrize("task", [
+        "Add a status enum dropdown (NOT_ARRIVED, CHECKED_IN, CHECKED_OUT) to the Booking form in the frontend.",
+        "Create a filter by enum value on GET /booking so clients can list NOT_ARRIVED, "
+        "CHECKED_IN or CHECKED_OUT bookings.",
+        "Add a select for enum NOT_ARRIVED / CHECKED_IN / CHECKED_OUT on the Booking page.",
+    ])
+    def test_a_task_that_uses_the_enumeration_in_ui_or_api_is_kept(self, task):
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
+
         assert _drop_present_enumerations([task], _booking_model()) == [task]
 
     def test_no_model_means_no_filtering(self):
@@ -900,6 +1015,46 @@ async def execute_order_approve(order_id):
     merged = merge_action_tasks(action_gap_tasks(tmp_path, both) + multi + [other], both)
     assert len(merged) == 4
     assert multi[0] in merged and other in merged
+
+
+def test_a_task_that_only_mentions_an_action_stays_on_the_checklist(tmp_path):
+    """A Cancel button, a 'cancelled' badge or an email after check-out name an
+    action without being its handler. Folded into the handler task's notes they
+    left the checklist, and that task closes as soon as the handler is no
+    longer a 501 stub, so the requested work was gated by nothing."""
+    from besser.spec_driven_agent.planning.action_inventory import (
+        action_gap_tasks, collect_action_endpoints, merge_action_tasks,
+    )
+
+    (tmp_path / "order_methods.py").write_text('''\
+@router.post("/order/{order_id}/methods/approve/")
+async def execute_order_approve(order_id):
+    raise HTTPException(status_code=501)
+''', encoding="utf-8")
+    endpoints = collect_action_endpoints(tmp_path)
+    canonical = action_gap_tasks(tmp_path, endpoints)
+
+    other_work = gap_analyzer._note_action_placement([
+        "Add an Approve button to every row of the orders table in the React frontend.",
+        "Show a green badge on orders the admin may approve; never let the user approve twice.",
+        "Send a confirmation email to the customer when an admin clicks Approve.",
+    ], endpoints)
+    assert all("ACTION HANDOFF" in task for task in other_work)  # still told where the route lives
+    merged = merge_action_tasks(canonical + other_work, endpoints)
+    assert merged[1:] == other_work
+    assert "planning_notes" not in merged[0] or merged[0]["planning_notes"] == []
+
+    handler_work = gap_analyzer._note_action_placement([
+        "Implement approve in sql_alchemy.py",
+        "Implement the approve endpoint so an order is approved once.",
+        "Make the approve action set approvedAt.",
+        "Implement the 'approve' method in the Order class (Requirement R36).",  # live run wording
+        "Fill in execute_order_approve with the approval logic.",
+        "POST /order/{order_id}/methods/approve/ must refuse an already approved order.",
+    ], endpoints)
+    merged = merge_action_tasks(canonical + handler_work, endpoints)
+    assert len(merged) == 1
+    assert merged[0]["planning_notes"] == handler_work
 
 
 def test_action_task_names_the_instrument_rather_than_only_saying_verify(tmp_path):

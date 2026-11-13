@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import ast
 import builtins
+import difflib
 import importlib
 import inspect
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import tomllib
@@ -28,6 +30,9 @@ from besser.utilities.workspace_fs import is_plain_file, open_plain, walk_plain
 logger = logging.getLogger(__name__)
 
 MAX_WRITE_DIAGNOSTICS = 10
+# Names listed in one finding: every finding is re-sent on each later turn
+# and pasted into the Phase 3 fix prompt, so a 250-member enum must not be.
+MAX_LISTED_NAMES = 10
 
 
 _WARNED_PYFLAKES_MISSING = False
@@ -85,7 +90,36 @@ def _bound_names(statement: ast.stmt) -> list[str]:
     targets = statement.targets if isinstance(statement, ast.Assign) else (
         [statement.target] if isinstance(statement, ast.AnnAssign) else []
     )
-    return [target.id for target in targets if isinstance(target, ast.Name)]
+    # ``RED, GREEN = 1, 2`` binds each name, as an enum member too.
+    return [name.id for target in targets
+            for name in ([target] if isinstance(target, ast.Name) else
+                         target.elts if isinstance(target, (ast.Tuple, ast.List)) else [])
+            if isinstance(name, ast.Name)]
+
+
+def _decorator_root(decorator: ast.expr) -> tuple[str, str]:
+    """``@a.b.c(...)`` -> ``("a", "c")``; ``@name`` -> ``(name, name)``."""
+    node = decorator.func if isinstance(decorator, ast.Call) else decorator
+    last = getattr(node, "attr", getattr(node, "id", ""))
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return getattr(node, "id", ""), last
+
+
+def _reuses_name_on_purpose(name: str, first: ast.stmt, second: ast.stmt) -> bool:
+    """A re-declaration Python idioms make on purpose (ruff F811 is silent too).
+
+    ``@name.<attr>`` builds on the first binding (property ``setter``/
+    ``deleter``, SQLAlchemy ``expression``/``comparator``/``inplace``,
+    ``singledispatchmethod.register``); ``@overload`` stubs precede the
+    implementation; ``_`` is the conventional throwaway name.
+    """
+    if name == "_":
+        return True
+    if any(_decorator_root(d)[0] == name for d in getattr(second, "decorator_list", [])):
+        return True
+    return any(_decorator_root(d)[1] == "overload"
+               for d in getattr(first, "decorator_list", []) + getattr(second, "decorator_list", []))
 
 
 def python_structural_diagnostics(
@@ -121,20 +155,14 @@ def python_structural_diagnostics(
         columns = []
         for stmt in cls.body:
             for name in _bound_names(stmt):
-                if name in seen:
-                    # Property setters and overload signatures intentionally reuse names.
-                    decorators = getattr(stmt, "decorator_list", [])
-                    intentional = any(
-                        (isinstance(d, ast.Attribute) and d.attr in {"setter", "deleter"})
-                        or getattr(d, "id", getattr(d, "attr", "")) == "overload"
-                        for d in decorators + getattr(seen[name], "decorator_list", [])
-                    )
-                    if not intentional and (
-                        name in {"__table_args__", "__mapper_args__"}
-                        or isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    ):
-                        add(seen[name], "shadowed-declaration", f"{cls.name}.{name} is overwritten by its second declaration at line {stmt.lineno}; merge the declarations instead of silently discarding behavior.")
-                        add(stmt, "duplicate-declaration", f"{cls.name}.{name} duplicates line {seen[name].lineno}; only this last declaration takes effect.")
+                if name in seen and not _reuses_name_on_purpose(name, seen[name], stmt) and (
+                    name in {"__table_args__", "__mapper_args__"}
+                    or isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ):
+                    # One finding, on the discarded declaration: the requirements
+                    # ledger treats a citation inside its lines as invalid evidence.
+                    first = seen[name].lineno
+                    add(seen[name], "duplicate-declaration", f"{cls.name}.{name} is declared at line {first} and again at line {stmt.lineno}; only the line {stmt.lineno} declaration takes effect, so line {first}'s behavior is silently discarded. Merge them into one declaration.")
                 seen[name] = stmt
             value = getattr(stmt, "value", None)
             if isinstance(value, ast.Call) and getattr(value.func, "id", getattr(value.func, "attr", "")).rstrip("_") in {"mapped_column", "Column"}:
@@ -177,10 +205,24 @@ def python_structural_diagnostics(
             continue
         members = enums.get(node.value.id)
         if members is not None and node.attr not in members and not node.attr.startswith("_"):
-            add(node, "invalid-enum-member", f"{node.value.id}.{node.attr} does not exist; declared members: {', '.join(sorted(members))}. Use an actual member, not an invented spelling.")
+            add(node, "invalid-enum-member", f"{node.value.id}.{node.attr} does not exist; declared members: {_listed_names(members, node.attr)}. Use an actual member, not an invented spelling.")
     findings.extend(_enum_column_value_misuse(tree, rel_path, workspace))
     findings.extend(_star_import_attribute_misuse(tree, rel_path, workspace))
     return findings
+
+
+def _listed_names(names, near: str = "") -> str:
+    """``names`` comma-separated, at most ``MAX_LISTED_NAMES`` of them; when
+    capped, the ones closest to the misspelled ``near`` come first."""
+    names = sorted(names)
+    if len(names) <= MAX_LISTED_NAMES:
+        return ", ".join(names)
+
+    def distance(name: str) -> float:
+        return -difflib.SequenceMatcher(None, near.lower(), name.lower()).ratio()
+
+    shown = sorted(names, key=distance)[:MAX_LISTED_NAMES]
+    return f"{', '.join(shown)} (+{len(names) - len(shown)} more)"
 
 
 def _finding(
@@ -209,6 +251,8 @@ _COROUTINE_SCHEDULERS = {
     "run_until_complete", "run_coroutine_threadsafe", "shield", "as_completed",
     "to_thread", "start_soon", "spawn",
 }
+# ``tasks.append(coro)``: collecting coroutines to await or gather later.
+_COLLECTION_METHODS = {"append", "add", "extend", "insert"}
 
 
 def _is_async_generator(fn: ast.AsyncFunctionDef) -> bool:
@@ -253,19 +297,65 @@ def _unawaited_coroutines(tree: ast.Module) -> list[dict[str, Any]]:
         for child in ast.iter_child_nodes(node):
             parents[child] = node
 
+    def is_scheduler(call: ast.Call) -> bool:
+        func = call.func
+        return (func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")) in _COROUTINE_SCHEDULERS
+
+    def holder_of(call: ast.Call) -> str | None:
+        """The variable a coroutine is collected into: ``x = c``, ``x: T = c``,
+        ``x = [c for ...]`` / ``(c, d)``, or ``x.append(c)``."""
+        node: ast.AST = call
+        while True:
+            parent = parents.get(node)
+            if (isinstance(parent, (ast.ListComp, ast.SetComp, ast.GeneratorExp)) and parent.elt is node
+                    or isinstance(parent, (ast.List, ast.Tuple, ast.Set))):
+                node = parent
+                continue
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node:
+                targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+                if len(targets) == 1 and isinstance(targets[0], ast.Name):
+                    return targets[0].id
+                return None
+            if (isinstance(parent, ast.Call) and node in parent.args
+                    and isinstance(parent.func, ast.Attribute) and parent.func.attr in _COLLECTION_METHODS
+                    and isinstance(parent.func.value, ast.Name)):
+                return parent.func.value.id
+            return None
+
+    def holder_is_consumed(call: ast.Call, holder: str) -> bool:
+        """``holder`` (or a loop variable over it) is awaited or handed to a
+        scheduler somewhere in the call's enclosing function."""
+        scope = parents.get(call)
+        while scope is not None and not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            scope = parents.get(scope)
+        nodes = list(ast.walk(scope or tree))
+        names = {holder}
+        for node in nodes:
+            if (isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension))
+                    and isinstance(node.iter, ast.Name) and node.iter.id in names):
+                names |= {n.id for n in ast.walk(node.target) if isinstance(n, ast.Name)}
+
+        def named(expr: ast.AST) -> bool:
+            expr = expr.value if isinstance(expr, ast.Starred) else expr
+            return isinstance(expr, ast.Name) and expr.id in names
+
+        return any(
+            isinstance(node, ast.Await) and named(node.value)
+            or isinstance(node, ast.Call) and is_scheduler(node) and any(map(named, node.args))
+            for node in nodes
+        )
+
     def is_consumed(call: ast.Call) -> bool:
         node: ast.AST = call
         while True:
             parent = parents.get(node)
             if parent is None or isinstance(parent, ast.stmt):
-                return False
+                holder = holder_of(call)
+                return holder is not None and holder_is_consumed(call, holder)
             if isinstance(parent, ast.Await):
                 return True
-            if isinstance(parent, ast.Call):
-                func = parent.func
-                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-                if name in _COROUTINE_SCHEDULERS:
-                    return True
+            if isinstance(parent, ast.Call) and is_scheduler(parent):
+                return True
             node = parent
 
     findings = []
@@ -424,12 +514,14 @@ def _enum_member_value_ref(node: ast.expr) -> tuple[str, str] | None:
     return None
 
 
-def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | None:
+def _scan_orm_module(
+    path: str,
+) -> tuple[dict[str, str], dict[str, set[str]], set[str], set[str]] | None:
     """One module's ``Column(Enum(X))`` / ``mapped_column(Enum(X))`` columns.
 
-    Returns ``(column name -> enum class name, every locally-declared enum
-    class name, the subset of those that mix in str/int and so compare equal
-    to their own .value)``. ``None`` when the file cannot be parsed - nothing
+    Returns ``(column name -> enum class name, column name -> the classes
+    declaring it, every locally-declared enum class name, the subset of those
+    that mix in str/int and so compare equal to their own .value)``. ``None`` when the file cannot be parsed - nothing
     can be judged against it.
     """
     try:
@@ -451,6 +543,7 @@ def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | N
 
     enum_classes: dict[str, bool] = {}
     columns: dict[str, str] = {}
+    owners: dict[str, set[str]] = {}
     for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
         base_names = {getattr(b, "id", getattr(b, "attr", "")) for b in cls.bases}
         if base_names & enum_bases:
@@ -474,7 +567,8 @@ def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | N
                 names = [value.args[0].value]
             for name in names:
                 columns[name] = enum_arg.args[0].id
-    return columns, set(enum_classes), {name for name, comparable in enum_classes.items() if comparable}
+                owners.setdefault(name, set()).add(cls.name)
+    return columns, owners, set(enum_classes), {name for name, comparable in enum_classes.items() if comparable}
 
 
 def _star_import_paths(tree: ast.Module, rel_path: str, workspace: str) -> list[str] | None:
@@ -495,6 +589,48 @@ def _star_import_paths(tree: ast.Module, rel_path: str, workspace: str) -> list[
     return paths
 
 
+def _declared_receiver_types(tree: ast.Module) -> dict[ast.Name, set[str]]:
+    """Each ``Name`` load whose class its function declares, mapped to the
+    identifiers of that declaration: a parameter annotation (``Optional[X]``,
+    ``"X"`` included), ``self``/``cls`` in a method, or ``x = X(...)`` with a
+    PascalCase ``X``. A name the function never declares is absent."""
+    result: dict[ast.Name, set[str]] = {}
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    owner = {stmt: cls.name for cls in classes for stmt in cls.body}
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        declared: dict[str, set[str]] = {}
+        arguments = function.args.posonlyargs + function.args.args + function.args.kwonlyargs
+        if function in owner and arguments:
+            declared[arguments[0].arg] = {owner[function]}
+        for argument in arguments:
+            if argument.annotation is not None:
+                declared.setdefault(argument.arg, set()).update(_annotation_identifiers(argument.annotation))
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name) and node.value.func.id[:1].isupper()):
+                declared.setdefault(node.targets[0].id, set()).add(node.value.func.id)
+        # Walked outermost first, so a nested function's own view wins.
+        for node in ast.walk(function):
+            if isinstance(node, ast.Name) and node.id in declared:
+                result[node] = declared[node.id]
+    return result
+
+
+def _annotation_identifiers(annotation: ast.expr) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(annotation):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names.update(re.findall(r"[A-Za-z_]\w*", node.value))
+    return names
+
+
 def _enum_column_value_misuse(
     tree: ast.Module, rel_path: str | None, workspace: str | None
 ) -> list[dict]:
@@ -512,8 +648,10 @@ def _enum_column_value_misuse(
     module(s), never guessed from the attribute name alone; an enum whose
     class mixes in ``str``/``int`` (``StrEnum``, ``IntEnum``, ``IntFlag``,
     or an explicit mixin base) is excluded, since those members do compare
-    equal to their own ``.value``. If any star-imported module cannot be
-    resolved and parsed, this reports nothing for the file.
+    equal to their own ``.value``. A receiver its function declares as a
+    class that does not map ``col`` (``flt: OrderFilter``) is skipped. If any
+    star-imported module cannot be resolved and parsed, this reports nothing
+    for the file.
     """
     if not rel_path or not workspace:
         return []
@@ -522,14 +660,17 @@ def _enum_column_value_misuse(
         return []
 
     columns: dict[str, str] = {}
+    owners: dict[str, set[str]] = {}
     known_enums: set[str] = set()
     value_comparable: set[str] = set()
     for path in paths:
         scanned = _scan_orm_module(path)
         if scanned is None:
             return []
-        module_columns, module_enums, module_value_comparable = scanned
+        module_columns, module_owners, module_enums, module_value_comparable = scanned
         columns.update(module_columns)
+        for col, classes in module_owners.items():
+            owners.setdefault(col, set()).update(classes)
         known_enums |= module_enums
         value_comparable |= module_value_comparable
 
@@ -540,9 +681,22 @@ def _enum_column_value_misuse(
     if not eligible:
         return []
 
-    def match(attr_side, value_side):
+    declared = _declared_receiver_types(tree)
+
+    def enum_column(attr_side) -> str | None:
         col = _attr_access(attr_side)
         if col is None or col not in eligible:
+            return None
+        # A receiver declared as another class (a Pydantic filter with a
+        # ``status: str`` field) holds that class's value, not the ORM's.
+        types = declared.get(attr_side.value)
+        if types is not None and not types & owners[col]:
+            return None
+        return col
+
+    def match(attr_side, value_side):
+        col = enum_column(attr_side)
+        if col is None:
             return None
         ref = _enum_member_value_ref(value_side)
         if ref is None or ref[0] != eligible[col]:
@@ -574,8 +728,8 @@ def _enum_column_value_misuse(
                     line=node.lineno,
                 ))
             elif isinstance(op, (ast.In, ast.NotIn)):
-                col = _attr_access(left)
-                if col is None or col not in eligible or not isinstance(right, (ast.Tuple, ast.List, ast.Set)):
+                col = enum_column(left)
+                if col is None or not isinstance(right, (ast.Tuple, ast.List, ast.Set)):
                     continue
                 enum_cls = eligible[col]
                 members = [ref[1] for elt in right.elts
@@ -588,7 +742,7 @@ def _enum_column_value_misuse(
                     f"'{col}' is a Column(Enum({enum_cls})) attribute; SQLAlchemy's ORM "
                     f"returns the enum member for it, not its .value, so it can never be "
                     f"{comparator} a container of .value strings "
-                    f"({', '.join(f'{enum_cls}.{m}.value' for m in members)}). Compare against "
+                    f"({_listed_names(f'{enum_cls}.{m}.value' for m in members)}). Compare against "
                     f"the members directly, without '.value'.",
                     code="enum-column-compared-to-value",
                     line=node.lineno,
@@ -742,9 +896,12 @@ def _describe_binding(obj: object) -> str:
     generated code mistakenly assumes it has."""
     if inspect.ismodule(obj):
         return f"the module '{obj.__name__}'"
-    qualname = getattr(obj, "__qualname__", getattr(obj, "__name__", repr(obj)))
+    qualname = getattr(obj, "__qualname__", getattr(obj, "__name__", None))
+    if not isinstance(qualname, str):
+        # Never repr() a value: os.environ's would paste the environment.
+        return f"a {type(obj).__name__} value"
     home = getattr(obj, "__module__", None)
-    label = f"{home}.{qualname}" if home else str(qualname)
+    label = f"{home}.{qualname}" if home else qualname
     if isinstance(obj, type):
         kind = "class"
     elif inspect.isroutine(obj):
@@ -938,10 +1095,19 @@ def _python_diagnostics(
     return findings
 
 
+# Config files whose tools read them as JSONC (or JSON5): comments and
+# trailing commas are valid there.
+_JSONC_NAME_PREFIXES = (
+    "tsconfig", "jsconfig", ".eslintrc", ".babelrc", "babel.config", "devcontainer",
+    ".devcontainer", "api-extractor",
+)
+
+
 def _is_jsonc(rel_path: str) -> bool:
-    """TypeScript/JavaScript project configs and VS Code settings are JSONC."""
+    """``*.jsonc``, the JS/TS tool configs above, and VS Code / dev-container folders."""
     parts = rel_path.replace("\\", "/").lower().split("/")
-    return parts[-1].startswith(("tsconfig", "jsconfig")) or ".vscode" in parts[:-1]
+    return (parts[-1].endswith(".jsonc") or parts[-1].startswith(_JSONC_NAME_PREFIXES)
+            or ".vscode" in parts[:-1] or ".devcontainer" in parts[:-1])
 
 
 def _jsonc_to_json(content: str) -> str:
@@ -979,11 +1145,36 @@ def _json_diagnostics(content: str, rel_path: str = "") -> list[dict[str, Any]]:
     return []
 
 
+def _yaml_structure_loader():
+    """A SafeLoader that builds any tag it does not know as plain data.
+
+    Only the YAML structure is checked: ``!reference`` (GitLab CI) or
+    ``!Ref`` (CloudFormation) belong to the consuming tool, not to YAML.
+    """
+    import yaml
+
+    class StructureLoader(yaml.SafeLoader):
+        pass
+
+    def untagged(loader, _suffix, node):
+        if isinstance(node, yaml.MappingNode):
+            return loader.construct_mapping(node)
+        if isinstance(node, yaml.SequenceNode):
+            return loader.construct_sequence(node)
+        return loader.construct_scalar(node)
+
+    StructureLoader.add_multi_constructor("!", untagged)
+    StructureLoader.add_multi_constructor("tag:", untagged)
+    return StructureLoader
+
+
 def _yaml_diagnostics(content: str) -> list[dict[str, Any]]:
     try:
         import yaml
 
-        yaml.safe_load(content)
+        # Every document: a Kubernetes manifest holds several, split by ``---``.
+        for _ in yaml.load_all(content, Loader=_yaml_structure_loader()):
+            pass
     except Exception as exc:
         mark = getattr(exc, "problem_mark", None)
         message = getattr(exc, "problem", None) or str(exc).splitlines()[0]
@@ -1049,7 +1240,7 @@ def diagnose_written_content(
     try:
         if extension in {".py", ".pyi"}:
             findings = _python_diagnostics(rel_path, content, workspace)
-        elif extension == ".json":
+        elif extension in {".json", ".jsonc"}:
             findings = _json_diagnostics(content, rel_path)
         elif extension in {".yaml", ".yml"}:
             findings = _yaml_diagnostics(content)

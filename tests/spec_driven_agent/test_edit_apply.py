@@ -30,6 +30,33 @@ def test_exact_match_replaces_first_occurrence_only():
     )
 
 
+@pytest.mark.parametrize("whole, old, new, corrupted", [
+    ("debug: false\nport: 8000\nhost: 0.0.0.0\n", " port: 8000", "port: 9000", "port: 8000port: 9000"),
+    ("fastapi==0.110.0\nuvicorn==0.29.0\n", " uvicorn==0.29.0", "uvicorn==0.30.0", "uvicorn==0.29.0uvicorn"),
+    ("FROM python:3.12\nEXPOSE 8000\n", "  EXPOSE 8000", "EXPOSE 9000", "EXPOSE 800EXPOSE 9000"),
+])
+def test_an_over_indented_quote_never_splices_file_text_into_the_replacement(whole, old, new, corrupted):
+    """old_text carried a stray leading space (copied from read_file's gutter)
+    and new_text did not. The whitespace tier took a negative slice of the
+    file's line as the "missing indent" and prepended it to the replacement:
+    ``uvicorn==0.29.0uvicorn==0.30.0`` was written and reported as modified.
+    """
+    result = replace_most_similar_chunk(whole, old, new)
+    assert result is None or corrupted not in result
+    if result is not None:  # a later tier may still place it; then it must be clean
+        assert new in result.splitlines()
+
+
+def test_the_over_indented_quote_is_refused_end_to_end(tmp_path):
+    (tmp_path / "requirements.txt").write_text("fastapi==0.110.0\nuvicorn==0.29.0\n", encoding="utf-8")
+    executor = ToolExecutor(str(tmp_path), per_write_diagnostics=False)
+    executor.execute("read_file", {"path": "requirements.txt"})
+    executor.execute("modify_file", {
+        "path": "requirements.txt", "old_text": " uvicorn==0.29.0", "new_text": "uvicorn==0.30.0"})
+    on_disk = (tmp_path / "requirements.txt").read_text(encoding="utf-8")
+    assert on_disk in ("fastapi==0.110.0\nuvicorn==0.29.0\n", "fastapi==0.110.0\nuvicorn==0.30.0\n")
+
+
 def test_uniform_missing_leading_whitespace():
     """The model reproduced the block unindented - the commonest real miss."""
     whole = "    line1\n    line2\n    line3\n"
@@ -156,8 +183,11 @@ def test_modify_file_miss_carries_did_you_mean_and_escalates(tmp_path):
     assert "did_you_mean" in first and "return 42" in first["did_you_mean"]
     assert "advice" not in first
 
+    # The escalation is the ladder's one step, not a competing `advice`.
     second = _call(ex, "modify_file", args)
-    assert "advice" in second and "read_file" in second["advice"]
+    assert "advice" not in second and "did_you_mean" not in second
+    assert second["edit_recovery"]["next_tool"] == "write_file"
+    assert "read_file" in second["edit_recovery"]["instruction"]
 
 
 def test_modify_file_needs_a_success_receipt_not_incidental_multiline_text(tmp_path):
@@ -251,7 +281,7 @@ def test_typed_execution_result_distinguishes_error_and_success(tmp_path):
 
     assert ok.status == "ok" and ok.succeeded is True
     assert error.status == "error" and error.succeeded is False
-    assert json.loads(ok.to_json())["content"] == "   1| a = 1\n   2| "
+    assert json.loads(ok.to_json())["content"] == "1| a = 1\n2| "
 
 
 # ----------------------------------------------------------------------
@@ -324,16 +354,21 @@ def test_modify_file_accepts_a_quote_with_collapsed_blank_lines(tmp_path):
 
 
 # ----------------------------------------------------------------------
-# read_file numbers its output ("   7| code"). The model pastes those lines
-# back verbatim; tier 5 strips the prefix. And a template copied verbatim out
-# of a Windows checkout reaches the workspace with CRLF.
+# read_file numbers its output ("7| code"; the post-edit echo and older reads
+# pad it, "   7| code"). The model pastes those lines back verbatim; tier 5
+# strips either prefix. And a template copied verbatim out of a Windows
+# checkout reaches the workspace with CRLF.
 # ----------------------------------------------------------------------
 
-def test_a_quote_copied_with_read_file_line_numbers_still_applies(tmp_path):
+@pytest.mark.parametrize("padded", [False, True])
+def test_a_quote_copied_with_read_file_line_numbers_still_applies(tmp_path, padded):
     _seed(tmp_path, "app.py", "def f():\n    a = 1\n    b = 2\n    return a + b\n")
     ex = ToolExecutor(workspace=str(tmp_path))
     numbered = _call(ex, "read_file", {"path": "app.py"})["content"].split("\n")
-    assert numbered[1] == "   2|     a = 1", numbered
+    assert numbered[1] == "2|     a = 1", numbered
+    if padded:
+        numbered = [f"{line.split('|', 1)[0]:>4}|{line.split('|', 1)[1]}" for line in numbered]
+        assert numbered[1] == "   2|     a = 1"
 
     res = _call(ex, "modify_file", {
         "path": "app.py",

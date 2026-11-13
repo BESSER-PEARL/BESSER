@@ -165,6 +165,38 @@ def test_a_field_missing_from_an_inherited_create_chain_is_still_a_blocker(tmp_p
     assert "does not define `lastName`" in issues[0]
 
 
+def test_a_router_using_pydantic_api_update_payloads_and_dict_locals_is_clean(tmp_path):
+    """A working CRUD router was reported as three "500 on every request" blockers.
+
+    ``booking_data.model_dump()`` is Pydantic's API, ``booking_data`` in the
+    PATCH handler is annotated ``BookingUpdate``, and the GET handler's
+    ``booking_data`` is a local dict - none of them is a ``BookingCreate``.
+    """
+    _write(tmp_path, "backend/pydantic_classes.py", _BOOKING_CREATE + (
+        "\n"
+        "class BookingUpdate(BaseModel):\n"
+        "    status: Optional[str] = None\n"
+    ))
+    _write(tmp_path, "backend/routers/booking.py", (
+        "@router.post('/booking/')\n"
+        "def create_booking(booking_data: BookingCreate):\n"
+        "    return booking_data.model_dump()\n"
+        "\n"
+        "@router.patch('/booking/{booking_id}/')\n"
+        "def update_booking(booking_id: int, booking_data: BookingUpdate):\n"
+        "    changes = booking_data.model_dump(exclude_unset=True)\n"
+        "    if booking_data.status == 'cancelled':\n"
+        "        changes['nights'] = 0\n"
+        "    return changes\n"
+        "\n"
+        "@router.get('/booking/{booking_id}/')\n"
+        "def read_booking(booking_id: int):\n"
+        "    booking_data = {'id': booking_id}\n"
+        "    return booking_data.get('id')\n"
+    ))
+    assert _create_schema_router_mismatches(str(tmp_path)) == []
+
+
 # ---------------------------------------------------------------------------
 # frontend_bindings.py / validation/frontend_schema.py - the non-code scan
 # ---------------------------------------------------------------------------
@@ -410,26 +442,6 @@ def test_an_undefined_name_on_a_reachable_line_is_still_a_blocker():
 # ---------------------------------------------------------------------------
 # validation/issues.py - what the star-import scaffold convention is worth
 # ---------------------------------------------------------------------------
-
-
-def test_star_import_ruff_codes_are_cosmetic_not_warnings():
-    """32,036 F405 findings on the 74 working apps; 4 named a real risk.
-
-    Every generated router star-imports ``sql_alchemy`` / ``pydantic_classes``
-    / ``bal_stdlib``, so ruff answers F403 ("cannot detect undefined names")
-    and F405 ("may be undefined") instead of F821. Resolving each F405 name
-    against what those modules actually export cleared 32,032 of them. The
-    four that did not resolve are precisely what ``undefined name:`` already
-    reports as a blocker with a proven verdict, so F405 adds no signal and
-    was the bulk of the warning stream.
-    """
-    for line in (
-        "ruff: backend/routers/book.py:5:1: F403 `from sql_alchemy import *` used",
-        "ruff: backend/routers/book.py:9:12: F405 `Book` may be undefined, "
-        "or defined from star imports",
-        "ruff: backend/bal_stdlib.py:68:1: E402 Module level import not at top of file",
-    ):
-        assert _classify_issue(line).severity == "style", line
 
 
 def test_the_undefined_name_ruff_codes_are_still_blockers():
@@ -829,7 +841,6 @@ def test_one_literal_segment_is_enough_to_keep_checking(tmp_path):
 # validation/toolchain.py - what the 20-line ruff budget is spent on
 # ---------------------------------------------------------------------------
 
-_UNUSED_IMPORTS = "".join(f"import json as _unused{n}\n" for n in range(30))
 _DUPLICATE_KEY = (
     "def summary(guest):\n"
     "    return {\n"
@@ -854,21 +865,8 @@ def test_ruffs_own_summary_line_is_not_a_finding(tmp_path):
     Deliberately a workspace UNDER the 20-line cap: on a bigger one the
     trailer is truncated away and the defect hides.
     """
-    _write(tmp_path, "backend/a_unused.py", "import json\nimport os\n")
+    _write(tmp_path, "backend/a_dup.py", _DUPLICATE_KEY)
     issues = _ruff(tmp_path)
-    assert issues, "expected the two unused imports to be reported"
+    assert issues, "expected the repeated dict key to be reported"
     for issue in issues:
         assert re.match(r"ruff: .+?:\d+:\d+: \S+ ", issue), issue
-
-
-@pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff is not installed")
-def test_a_real_finding_is_not_crowded_out_by_scaffold_boilerplate(tmp_path):
-    """A duplicate dict key silently drops a value. It sits behind 30 unused
-    imports in path order, and the cap keeps only 20 lines, so it never
-    reached the report: across 25 working apps the budget held 89 actionable
-    lines and 477 cosmetic ones."""
-    _write(tmp_path, "backend/a_unused.py", _UNUSED_IMPORTS)
-    _write(tmp_path, "backend/z_duplicate.py", _DUPLICATE_KEY)
-    issues = _ruff(tmp_path)
-    assert any("F601" in issue for issue in issues), issues
-    assert any(issue.startswith("ruff: (+") for issue in issues), "expected truncation"

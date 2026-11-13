@@ -95,26 +95,17 @@ class EditLoopGuardsMixin:
                 self._phase2_stop_reason = "stuck_edit_loop"
             return True
         if seen >= self._REPEAT_FORCE_AT:
-            # Only steer toward the range editor when the failing strategy is
-            # text quotation. Sending a repeating range edit back through
-            # read -> replace_file_lines is the loop it is already in.
-            #
+            # Name the executor's own next step, never a second ladder. Its
+            # rewrite step starts with a whole-file read, so force that read.
             # _force_tool_next is a single slot the executor's recovery ladder
             # also writes, earlier in the same turn. The executor saw the
             # actual refusal, so never overwrite its choice.
-            if self._force_tool_next is None:
-                self._force_tool_next = "read_file" if tool == "modify_file" else None
-            strategy = (
-                "Read the target block, then use replace_file_lines with the returned "
-                "read_id and inclusive line numbers."
-                if tool == "modify_file" else
-                "Re-selecting the same lines will fail the same way. Correct new_text "
-                "itself — complete lines, real indentation, balanced brackets — or "
-                "select the whole enclosing block."
-            )
+            step = self.executor.rewrite_step(path)
+            if step and self._force_tool_next is None:
+                self._force_tool_next = "read_file"
             text = (
                 f"<system-reminder>{tool} on `{path}` was rejected {seen} times "
-                f"with the same arguments; the executor will not apply it. {strategy} "
+                f"with the same arguments; the executor will not apply it. {step or ''} "
                 "The file remains editable. For an already-present change, verify "
                 "behavior instead of inserting it again. A rejected edit is not "
                 "completion; do not mark it done or drop the requirement."
@@ -196,32 +187,22 @@ class EditLoopGuardsMixin:
         tool = failure.get("tool", "modify_file")
         error = str(failure.get("error", ""))[:400]
         kind = failure.get("rejection_kind")
+        reason = ""
         if kind == "syntax_error" or "syntax" in error.lower():
-            advice = (
+            reason = (
                 "The proposed edit was refused by the syntax guard; this is not evidence that old_text failed to match. "
-                "The proposal was NOT applied. Use the CURRENT ON-DISK excerpt, or read_file around the enclosing "
-                "function/try/except block. Preserve its complete indentation and control-flow structure; "
-                "do not copy the rejected would_write proposal as current source. Correct the replacement, "
-                "then retry one focused edit."
+                "The proposal was NOT applied: the CURRENT ON-DISK excerpt is the source, not the rejected "
+                "would_write proposal. Preserve the complete indentation and control-flow structure "
+                "(function, try/except block). "
             )
-        else:
-            advice = (
-                "Use the reported reason before retrying. For a missing/ambiguous target, call read_file "
-                "on the affected region, then switch to replace_file_lines with its read_id "
-                "and exact inclusive line numbers instead of quoting old_text again. "
-                "For another refusal, resolve that specific guard instead of repeating unchanged arguments. "
-                "Verify any already-present change from current source before marking it done."
-            )
-        if tool == "replace_file_lines":
-            # Re-reading and range-editing again is what just failed N times,
-            # so do not send the model back around that same loop.
-            advice = (
-                "Re-reading and selecting the same range again is what just failed. "
-                "The refusal reason above is about the replacement text, not the line "
-                "numbers: correct new_text (complete lines, real indentation, balanced "
-                "brackets), or select the whole enclosing block. If the change is "
-                "already present, verify the behavior instead of editing again."
-            )
+        # The executor's ladder decides the next step; the reminder repeats it.
+        step = self.executor.rewrite_step(path) or (
+            "Resolve the reported reason instead of repeating unchanged arguments."
+        )
+        advice = (
+            f"{reason}{step} Verify any already-present change from current source "
+            "before marking it done."
+        )
         return (
             f"<system-reminder>Your last {n} {tool} calls on `{path}` "
             f"were refused. Latest reason: {error or 'inspect the tool response'}. "

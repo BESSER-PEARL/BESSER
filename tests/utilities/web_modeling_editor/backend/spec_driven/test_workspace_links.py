@@ -6,6 +6,7 @@ not read through, on every path that copies the tree out.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import pathlib
@@ -133,6 +134,143 @@ def test_attribution_writes_never_follow_a_planted_link(tmp_path):
     assert not trace_dir.is_symlink() and (trace_dir / f"{done.runId}.json").is_file()
     with zipfile.ZipFile(entry.file_path) as archive:
         assert f".agent-trace/{done.runId}.json" in archive.namelist()
+
+
+def test_packaging_never_writes_or_reads_through_a_planted_link(tmp_path):
+    # The download manifest's temp file, the result ZIP and the recipe sit at
+    # names the model can predict; a link it planted at any of them must not
+    # make the unsandboxed harness overwrite (or read) the link's target.
+    outside = _outside(tmp_path)
+    victims = {}
+    for name in ("manifest_tmp", "zip", "recipe"):
+        victims[name] = outside / f"{name}.txt"
+        victims[name].write_text(json.dumps({"other_run_secret": SECRET}), encoding="utf-8")
+    workspace = tmp_path / "besser_llm_ws"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (workspace / "app.py").write_text("app = 1\n", encoding="utf-8")
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+    _symlink(victims["manifest_tmp"], workspace / ".besser_download.json.tmp")
+    _symlink(victims["zip"], workspace / f"besser_smart_{runner.run_id}.zip")
+    _symlink(victims["recipe"], workspace / ".besser_recipe.json")
+
+    runner.temp_dir = str(workspace)
+    done, entry = runner._package_result(str(workspace))
+    asyncio.run(current_runtime().registry.put(runner.run_id, entry))
+
+    assert "other_run_secret" not in done.recipe
+    for victim in victims.values():
+        assert json.loads(victim.read_text(encoding="utf-8")) == {"other_run_secret": SECRET}
+    with zipfile.ZipFile(entry.file_path) as archive:
+        assert sorted(n for n in archive.namelist() if not n.startswith((".", "BESSER"))) == ["app.py", "main.py"]
+
+
+def test_a_file_swapped_for_a_link_after_the_walk_never_reaches_the_zip(tmp_path, monkeypatch):
+    # The run's shell outlives Phase 3, so a background job can swap a file
+    # for a link between the walk that listed it and the ZIP writer reading it.
+    outside = _outside(tmp_path)
+    workspace = tmp_path / "besser_llm_ws"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (workspace / "app.py").write_text("app = 1\n", encoding="utf-8")
+    from besser.utilities import workspace_fs
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+    real_check = workspace_fs._refuse_unless_plain_file
+
+    def check_then_swap(path, root):
+        real_check(path, root)
+        if path.endswith("app.py"):
+            os.remove(path)
+            _symlink(outside / "secret.txt", path)
+
+    def swap_while_zipping(*args, **kwargs):
+        with monkeypatch.context() as patch:
+            patch.setattr(workspace_fs, "_refuse_unless_plain_file", check_then_swap)
+            return real_zip(*args, **kwargs)
+
+    real_zip = runner_module._zip_plain_file
+    monkeypatch.setattr(runner_module, "_zip_plain_file", swap_while_zipping)
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+    runner.temp_dir = str(workspace)
+    _done, entry = runner._package_result(str(workspace))
+
+    with zipfile.ZipFile(entry.file_path) as archive:
+        assert "app.py" not in archive.namelist()
+        assert all(SECRET not in archive.read(n).decode("utf-8") for n in archive.namelist())
+
+
+@pytest.mark.parametrize("year", [1975, 2200])
+def test_a_file_dated_outside_the_zip_range_does_not_fail_the_packaging(tmp_path, year):
+    # ZIP stores years 1980-2107 only; the run's shell can ``touch -d`` any date.
+    workspace = tmp_path / "besser_llm_ws"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (workspace / "app.py").write_text("app = 1\n", encoding="utf-8")
+    import datetime
+    stamp = datetime.datetime(year, 6, 1).timestamp()
+    os.utime(workspace / "app.py", (stamp, stamp))
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+    runner.temp_dir = str(workspace)
+
+    _done, entry = runner._package_result(str(workspace))
+
+    with zipfile.ZipFile(entry.file_path) as archive:
+        assert archive.read("app.py") == b"app = 1\n"
+
+
+def test_seed_and_push_copy_never_follow_a_link_swapped_in_after_the_check(tmp_path, monkeypatch):
+    from besser.utilities import workspace_fs
+
+    outside = _outside(tmp_path)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    real_check = workspace_fs.is_plain_entry
+
+    def check_then_swap(path):
+        plain = real_check(path)
+        if path.endswith("main.py") and plain:
+            os.remove(path)
+            _symlink(outside / "secret.txt", path)
+        return plain
+
+    monkeypatch.setattr(workspace_fs, "is_plain_entry", check_then_swap)
+    dst = tmp_path / "dst"
+    with contextlib.suppress(OSError):  # shutil.Error: the swapped file is refused
+        copytree_plain(str(src), str(dst))
+
+    assert not (dst / "main.py").exists() or SECRET not in (dst / "main.py").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="POSIX link races")
+def test_a_copy_never_sets_mode_or_times_through_a_link_swapped_in_after_the_write(tmp_path, monkeypatch):
+    from besser.utilities import workspace_fs
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("server file\n", encoding="utf-8")
+    victim.chmod(0o600)
+    victim_mtime = victim.stat().st_mtime_ns
+    src = tmp_path / "src.txt"
+    src.write_text("payload\n", encoding="utf-8")
+    src.chmod(0o777)
+    os.utime(src, ns=(0, 0))
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    dst = workspace / "copy.txt"
+    real_copy = workspace_fs.shutil.copyfileobj
+
+    def copy_then_swap(source, target):
+        real_copy(source, target)
+        # The run's background process swaps the fresh copy for a link.
+        os.remove(dst)
+        _symlink(victim, dst)
+
+    monkeypatch.setattr(workspace_fs.shutil, "copyfileobj", copy_then_swap)
+    with contextlib.suppress(OSError):
+        workspace_fs.copy_plain_file(str(src), str(dst), dst_root=str(workspace))
+
+    assert victim.stat().st_mode & 0o777 == 0o600
+    assert victim.stat().st_mtime_ns == victim_mtime
 
 
 def test_a_linked_attribution_state_is_replaced_not_written_through(tmp_path):

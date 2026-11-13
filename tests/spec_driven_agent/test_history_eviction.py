@@ -19,6 +19,7 @@ from besser.spec_driven_agent.agent.history_eviction import (
     evict_stale_file_bodies,
     DEFAULT_PRESERVE_RECENT,
     without_rejected_edit_drafts,
+    without_thinking_blocks,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
@@ -98,6 +99,50 @@ def test_recovery_omits_only_rejected_drafts_without_changing_history_or_results
 
 @pytest.mark.parametrize("tool,key", [("write_file", "content"), ("modify_file", "new_text"),
                                      ("replace_file_lines", "new_text")])
+def _reused_id_history(first_result: str) -> list[dict]:
+    """Two turns from a gateway that numbers its tool-call ids per reply.
+
+    Chat Completions pairs a tool result with the call in the assistant
+    message right before it, so ``call_0`` in two turns is legal."""
+    return [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [_write_use("call_0", "a.py", "GOOD BODY")]},
+        {"role": "user", "content": [_result("call_0", first_result)]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "call_0", "name": "read_file", "input": {"path": "b.py"}}]},
+        {"role": "user", "content": [_result("call_0", json.dumps({"content": _big()}))]},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "call_0", "name": "modify_file",
+             "input": {"path": "c.py", "old_text": "x", "new_text": "BAD DRAFT"}}]},
+        {"role": "user", "content": [_result("call_0", json.dumps({"error": "old_text not found"}))]},
+    ]
+
+
+def test_a_reused_tool_call_id_never_marks_a_landed_edit_rejected():
+    """With ids matched across the whole history, the later refusal of
+    ``call_0`` relabelled the EARLIER successful write as a rejected draft
+    ("NOT applied", is_error) - telling the model to redo landed work - and
+    rewrote an already-sent message, so the prompt cache missed from it."""
+    history = _reused_id_history(json.dumps({"success": True}))
+
+    projected = without_rejected_edit_drafts(history)
+
+    assert projected[1] == history[1] and projected[2] == history[2]
+    assert projected[5]["content"][0]["input"]["new_text"].startswith("[Rejected draft omitted")
+    assert projected[6]["content"][0]["is_error"] is True
+
+
+def test_a_reused_tool_call_id_stubs_only_the_read_result():
+    history = _reused_id_history(json.dumps({"success": True, "note": "w" * 2_000}))
+
+    evicted, count = evict_stale_file_bodies(history, preserve_recent=0)
+
+    assert evicted[2]["content"][0] is history[2]["content"][0]  # the write's result
+    assert "elided" in evicted[4]["content"][0]["content"]       # the read's result
+    assert count == 1
+
+
+@pytest.mark.parametrize("tool,key", [("write_file", "content"), ("modify_file", "new_text")])
 def test_write_file_body_is_stubbed_in_old_messages(tool, key):
     body = _big()
     use = _write_use("t1", "app/main.py", body)
@@ -266,3 +311,80 @@ def test_pairing_count_is_preserved():
         return sum(len(m["content"]) for m in ms if isinstance(m.get("content"), list))
     assert block_count(out) == block_count(msgs)
     assert n >= 1
+
+
+# ----------------------------------------------------------------------
+# Thinking blocks: bound to the conversation that produced them
+# ----------------------------------------------------------------------
+
+def _thinking(text="plan", *, as_object=False):
+    if as_object:
+        return _Obj(type="thinking", thinking=text, signature="sig")
+    return {"type": "thinking", "thinking": text, "signature": "sig"}
+
+
+def test_thinking_blocks_are_removed_and_everything_else_is_kept():
+    use = _read_use("t1", "a.py")
+    messages = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": [
+            _thinking(), {"type": "text", "text": "reading"}, use]},
+        {"role": "user", "content": [_result("t1", "body")]},
+        {"role": "assistant", "content": [
+            _thinking(as_object=True), {"type": "redacted_thinking", "data": "x"}]},
+    ]
+    before = copy.deepcopy(messages[:3])
+
+    stripped, removed = without_thinking_blocks(messages)
+
+    assert removed == 3
+    assert stripped[1]["content"] == [{"type": "text", "text": "reading"}, use]
+    assert stripped[2] is messages[2]
+    # A turn that held only reasoning still has content: an empty assistant
+    # message is a 400 on both providers.
+    assert stripped[3]["content"] == [{"type": "text", "text": "(reasoning omitted)"}]
+    assert messages[:3] == before  # pure
+
+
+def test_a_history_without_thinking_blocks_is_returned_as_is():
+    messages = [{"role": "user", "content": "hi"},
+                {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}]
+    stripped, removed = without_thinking_blocks(messages)
+    assert removed == 0 and stripped is messages
+
+
+def test_a_compaction_does_not_replay_the_kept_turns_thinking(tmp_path):
+    """Keep-tail compaction: the retained turns' thinking blocks were produced
+    with the full history present. Replayed after the summary they fail the
+    request on Claude models that check a block's conversation (HTTP 400,
+    "bound to a different conversation"), which ended Phase 2 as an API error.
+    """
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=_simple_model(), output_dir=str(tmp_path))
+    filler = "y" * (COMPACT_TOKEN_THRESHOLD * 5)
+    messages = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": [_thinking("early"), _read_use("t1", "a.py")]},
+        {"role": "user", "content": [_result("t1", filler)]},
+        {"role": "assistant", "content": [_thinking("late"), _read_use("t2", "b.py")]},
+        {"role": "user", "content": [_result("t2", "small")]},
+    ]
+
+    result = orch._maybe_compact(messages)
+
+    assert orch._compaction_count == 1
+    kinds = [block["type"] for message in result if isinstance(message["content"], list)
+             for block in message["content"]]
+    assert "tool_use" in kinds and "tool_result" in kinds  # the tail is still there
+    assert "thinking" not in kinds
+
+
+def test_an_uncompacted_history_keeps_its_thinking(tmp_path):
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=_simple_model(), output_dir=str(tmp_path))
+    messages = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": [_thinking(), _read_use("t1", "a.py")]},
+        {"role": "user", "content": [_result("t1", "small")]},
+    ]
+    assert orch._maybe_compact(messages) is messages

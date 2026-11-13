@@ -497,18 +497,24 @@ def test_compaction_carries_the_checklist_blockers_and_contract(orch, monkeypatc
     assert any("server-owned" in rule for rule in state["contract_rules"])
 
 
+def _refuse(orch, times):
+    """The same edit on routers/booking.py refused ``times`` times."""
+    for _ in range(times):
+        orch.executor._note_rejection("routers/booking.py", "old", "new")
+
+
 def test_seven_refusals_at_one_target_end_the_phase(orch):
     """``tool_executor`` now counts refusals per TARGET through the same
     ``last_repeat`` channel, so the stop threshold governs redrafts too."""
     assert orch._TARGET_REFUSAL_STOP_AT == orch._REPEAT_STOP_AT == 7
-    orch.executor.last_repeat = ("routers/booking.py", 7)
+    _refuse(orch, 7)
 
     assert orch._escalate_repeat_rejection([]) is True
     assert orch._phase2_stop_reason == "stuck_edit_loop"
 
 
 def test_six_refusals_at_one_target_do_not_end_the_phase(orch):
-    orch.executor.last_repeat = ("routers/booking.py", 6)
+    _refuse(orch, 6)
     messages: list[dict] = []
 
     assert orch._escalate_repeat_rejection(messages) is False
@@ -520,7 +526,7 @@ def test_a_phase3_stuck_edit_loop_does_not_block_a_later_verified_repair(orch):
     ``stuck_edit_loop`` into the Phase 2 stop reason from there meant a later
     attempt that cleared every blocker still reported the run incomplete."""
     orch._phase2_stop_reason = "validation_required"
-    orch.executor.last_repeat = ("routers/booking.py", 7)
+    _refuse(orch, 7)
 
     assert orch._apply_edit_loop_guards([], where="phase 3 repair") is True
     orch._complete_repair_if_verified()

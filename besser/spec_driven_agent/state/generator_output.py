@@ -132,9 +132,11 @@ def load_generator_output(workspace: str, out_dir: str) -> Optional[GeneratorOut
         logger.warning("The stored generator output gives no usable BESSER version, so it is treated as "
                        "written by another BESSER version")
         version = None
-    return GeneratorOutput(out_dir, version,
-                           {rel: content.encode("utf-8") for rel, content in files.items()},
-                           model if isinstance(model, dict) else None, frozenset(pending))
+    try:
+        encoded = {rel: content.encode("utf-8") for rel, content in files.items()}
+    except UnicodeEncodeError as exc:  # JSON may escape a lone surrogate: "\udc80"
+        raise GeneratorOutputError("a stored file is not valid text") from exc
+    return GeneratorOutput(out_dir, version, encoded, model if isinstance(model, dict) else None, frozenset(pending))
 
 
 def attach_model(workspace: str, model: dict) -> None:

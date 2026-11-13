@@ -99,7 +99,8 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
     timeout, and output goes to temp files, which nothing can hold "open"
     against the reader. Raises ``subprocess.TimeoutExpired`` after the kill.
     A stream past :data:`MAX_CAPTURE_BYTES` also kills the tree; only its
-    head and tail are read back. ``input`` is fed on stdin, from a temp file for the same reason.
+    head and tail are read back. ``input`` is fed on stdin, from a temp file for the same reason;
+    without it stdin is empty, never the worker's own (a read would block until the timeout).
     """
     group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
@@ -109,7 +110,7 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
             stdin.write(input.encode(locale.getpreferredencoding(False)))
             stdin.seek(0)
         proc = subprocess.Popen(args, cwd=cwd, env=env, shell=shell,
-                                stdin=stdin if input is not None else None,
+                                stdin=stdin if input is not None else subprocess.DEVNULL,
                                 stdout=out, stderr=err, **group)
         deadline = time.monotonic() + timeout
         flooded = False

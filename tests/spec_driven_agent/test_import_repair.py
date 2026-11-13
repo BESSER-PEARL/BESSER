@@ -146,6 +146,76 @@ def test_the_repair_reaches_the_file_through_a_real_edit(tmp_path):
     ast.parse(on_disk)
 
 
+MODELS = "from pydantic import BaseModel\n\n\nclass A(BaseModel):\n" + "".join(
+    f"    f{n}: int = {n}\n" for n in range(80)) + "    name: str\n"
+
+
+def _numbered(snippet):
+    """``{line number: text}`` of a success snippet."""
+    rows = (row.split("| ", 1) for row in snippet.split("\n") if "| " in row)
+    return {int(number): text for number, text in rows if number.strip().isdigit()}
+
+
+def _assert_snippet_matches_disk(snippet, on_disk):
+    lines = on_disk.split("\n")
+    shown = _numbered(snippet)
+    assert shown, snippet
+    for number, text in shown.items():
+        assert lines[number - 1] == text, (number, text, snippet)
+
+
+@pytest.fixture
+def models(tmp_path):
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+
+    (tmp_path / "models.py").write_text(MODELS, encoding="utf-8")
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.execute_typed("read_file", {"path": "models.py"})
+    return executor, tmp_path / "models.py"
+
+
+def test_a_resent_edit_is_recognized_after_an_import_repair(models):
+    """The receipt and snippet were taken BEFORE the repair added its line:
+    the resend was told "old_text not found", and the snippet's numbers were
+    off by the inserted import."""
+    executor, target = models
+    edit = {"path": "models.py", "old_text": "    name: str",
+            "new_text": "    name: Optional[str] = None"}
+
+    first = executor.execute_typed("modify_file", edit).payload
+
+    assert first["status"] == "modified" and first.get("auto_imports"), first
+    on_disk = target.read_text(encoding="utf-8")
+    assert "from typing import Optional" in on_disk
+    _assert_snippet_matches_disk(first["snippet"], on_disk)
+    assert "Optional[str] = None" in first["snippet"], "the edit itself must be shown"
+    resent = executor.execute_typed("modify_file", edit).payload
+    assert resent.get("status") == "already_applied", resent
+
+
+def test_a_range_edit_snippet_counts_the_repaired_import(models):
+    executor, target = models
+    read = executor.execute_typed("read_file", {"path": "models.py"}).payload
+    last = MODELS.count("\n")
+
+    result = executor.execute_typed("replace_file_lines", {
+        "path": "models.py", "read_id": read["read_id"], "start_line": last,
+        "end_line": last, "new_text": "    name: Optional[str] = None"}).payload
+
+    assert result["status"] == "modified" and result.get("auto_imports"), result
+    _assert_snippet_matches_disk(result["snippet"], target.read_text(encoding="utf-8"))
+
+
+def test_a_written_file_reports_its_repaired_size(models):
+    executor, target = models
+
+    result = executor.execute_typed("write_file", {
+        "path": "models.py", "content": MODELS.replace("name: str", "name: Optional[str] = None")}).payload
+
+    assert result.get("auto_imports"), result
+    assert result["size"] == len(target.read_text(encoding="utf-8"))
+
+
 class TestTheDocumentedBoundary:
     """What this repair deliberately will NOT do.
 

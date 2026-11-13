@@ -50,7 +50,7 @@ def test_list_files_does_not_expose_an_escaping_link(planted):
 
     result = call(executor, "list_files")
 
-    assert [f["path"] for f in result["files"]] == ["app.py"], result
+    assert result["files"].splitlines() == ["app.py 15"], result
 
 
 def test_list_files_survives_a_dangling_link(planted):

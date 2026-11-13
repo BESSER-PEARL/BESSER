@@ -36,8 +36,10 @@ _SKIP_DIRS = {"node_modules", "dist", "build", ".next", ".git", ".besser_snapsho
 _MANIFEST_ROUTE_RE = re.compile(
     r"^ {2}([A-Z][A-Z, ]*?)[ \t]+(/\S*)[ \t]*$", re.MULTILINE
 )
+# The URL ends at its own closing quote: with options passed as a variable the
+# call does not match, rather than the URL running on to a later quote.
 _FETCH_RE = re.compile(
-    r"\bfetch\s*\(\s*(?P<quote>[`\"'])(?P<url>.*?)(?P=quote)"
+    r"\bfetch\s*\(\s*(?P<quote>[`\"'])(?P<url>(?:(?!(?P=quote))[^\n])*)(?P=quote)"
     r"(?P<options>\s*,\s*\{.*?\})?\s*\)",
     re.DOTALL,
 )

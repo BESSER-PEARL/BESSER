@@ -29,7 +29,6 @@ from besser.spec_driven_agent.validation.issues import (
     required_dependency_setup,
     _RUFF_BLOCKER_CODES,
     _RUFF_LINE_RE,
-    _RUFF_STYLE_CODES,
 )
 from besser.utilities.workspace_fs import is_plain_file, open_plain_write, walk_plain
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
@@ -127,15 +126,17 @@ def _is_android_module(module_dir: str) -> bool:
 
 
 def _toolchain_commands_for(
-    toolchain_blockers: list[ValidationIssue]
+    toolchain_blockers: list[ValidationIssue], *, shell_tools: bool = True
 ) -> list[str]:
     """Pick the right re-run command for each toolchain in the report.
 
     Looks at the prefix on each blocker message (``tsc [...]:``,
     ``cargo [...]:``, ``kotlinc [...]:``) and returns the matching
     command (with the project sub-path) the LLM should invoke via
-    ``run_command`` to verify its fix. The list is deduplicated so
-    the same command isn't suggested twice for a multi-error report.
+    ``run_command`` to verify its fix. Without shell tools there is no
+    ``run_command``, so each line names the check the harness re-runs.
+    The list is deduplicated so the same command isn't suggested twice
+    for a multi-error report.
     """
     commands: list[str] = []
     seen: set[str] = set()
@@ -150,25 +151,17 @@ def _toolchain_commands_for(
             # ``npx tsc --noEmit`` works whether or not tsc is on
             # PATH globally — npm projects nearly always have it
             # installed locally as a devDependency.
-            cmd = (
-                f"run_command: command='npx tsc --noEmit', "
-                f"working_dir='{path}'"
-            )
+            command, working_dir = "npx tsc --noEmit", path
         elif tool == "cargo":
-            cmd = (
-                f"run_command: command='cargo check', "
-                f"working_dir='{path}'"
-            )
+            command, working_dir = "cargo check", path
         elif tool == "kotlinc":
             # The .kt files under the module root, compiled to
             # /dev/null.
-            cmd = (
-                f"run_command: command='kotlinc -nowarn "
-                f"-d /tmp/out $(find {path} -name \"*.kt\")', "
-                f"working_dir='.'"
-            )
+            command, working_dir = f'kotlinc -nowarn -d /tmp/out $(find {path} -name "*.kt")', "."
         else:  # pragma: no cover - defensive
             continue
+        cmd = (f"run_command: command='{command}', working_dir='{working_dir}'" if shell_tools
+               else f"`{command}` in {working_dir}")
         if cmd not in seen:
             commands.append(cmd)
             seen.add(cmd)
@@ -189,11 +182,11 @@ def _build_toolchain_reminder(
     """
     # Cap the reminder body so a runaway report (e.g. 100 type
     # errors after a single missing import) doesn't blow out the
-    # context window. The full list is already in the prompt.
+    # context window. The prompt's blocker list carries the rest.
     lines = [i.message for i in toolchain_blockers[:8]]
     bulleted = "\n".join(f"  - {ln}" for ln in lines)
     more = (
-        f"\n  - (+{len(toolchain_blockers) - 8} more — see prompt for full list)"
+        f"\n  - (+{len(toolchain_blockers) - 8} more in the prompt's blocker list)"
         if len(toolchain_blockers) > 8 else ""
     )
     return (
@@ -218,6 +211,12 @@ def _build_toolchain_reminder(
 # How many ruff lines Phase 3 reports. Blocker-code lines are always kept
 # even past this, then files the LLM edited, then the rest.
 _RUFF_MAX_REPORTED = 20
+# An undefined name (F821) or a redefinition (F811), keyed per file and name.
+_RUFF_REPEATED_NAME_RE = _re.compile(
+    r"^(?P<file>.+?):\d+:\d+: (?P<code>F821|F811) [^`]*`(?P<name>[^`]+)`")
+# The python contract's undefined name, keyed the same way.
+PYTHON_CONTRACT_REPEATED_NAME_RE = _re.compile(
+    r"^python contract: (?P<file>.+?) line \d+: undefined name '(?P<name>[^']+)'")
 # A real concise-format line always carries a file, a position and a rule.
 _CONCISE_FINDING_RE = _re.compile(r"^.+?:\d+:\d+: \S+ ")
 
@@ -268,10 +267,25 @@ def _collect_ruff_issues(
                 "--output-format=concise",
                 "--no-cache",
                 "--exit-zero",
-                # The snapshot and the harness's own files (e.g. the runbook's
-                # .besser_probe.py) are not the app. One list: with an absolute
-                # target, a separate --extend-exclude replaces --exclude.
-                "--exclude", f"{_SNAPSHOT_DIR},.besser_*",
+                # Only defects that break or silently misbehave at runtime:
+                # syntax/IO (E9), format-string errors (F5), repeated dict keys
+                # and invalid comparisons (F6), misplaced statements (F7),
+                # undefined names (F82) and redefinitions (F811); `raise
+                # NotImplemented` (F901), a value returned from __init__
+                # (PLE0101), a non-string in __all__ (PLE0604) and a logging call
+                # whose argument count does not match its format (PLE1205/1206).
+                # Ruff's defaults add style rules that flag the scaffold's own
+                # idioms (B008 on Depends(...)). --isolated: a ruff.toml or
+                # pyproject section in the app is not read, so it cannot
+                # ignore F821 or select other rules.
+                "--isolated",
+                "--select", "E9,F5,F6,F7,F82,F811,F901,PLE0101,PLE0604,PLE1205,PLE1206",
+                # The snapshot, the harness's own files (e.g. the runbook's
+                # .besser_probe.py) and installed dependencies are not the app.
+                # --exclude REPLACES ruff's defaults (node_modules, .venv, ...),
+                # so they are listed here. One list: with an absolute target, a
+                # separate --extend-exclude replaces --exclude.
+                "--exclude", ",".join([_SNAPSHOT_DIR, ".besser_*", *sorted(WORKSPACE_SKIP_DIRS)]),
                 output_dir,
             ],
             capture_output=True, text=True, timeout=30,
@@ -304,31 +318,58 @@ def _collect_ruff_issues(
         return [], warned_missing
     # ruff sorts by path, so a plain head-of-output cap keeps the same
     # scaffold files and drops a real F821 late in the alphabet. Keep every
-    # blocker-code line, then actionable lines, then cosmetic ones (generated
-    # routers star-import, so F403/F405/E402 alone would fill the budget);
-    # within each tier, files the LLM edited this run come first.
+    # blocker-code line, then the rest with files the LLM edited this run first.
     touched = _llm_edited_paths(output_dir, tool_calls_log, write_tools)
     blockers = []
-    edited, rest = [], []                  # actionable
-    edited_cosmetic, rest_cosmetic = [], []
+    edited, rest = [], []
     for line in lines:
         match = _RUFF_LINE_RE.search(line)
         code = match.group(1) if match else None
-        was_edited = _ruff_line_path(line, output_dir) in touched
         if code in _RUFF_BLOCKER_CODES:
             blockers.append(line)
-        elif code in _RUFF_STYLE_CODES:
-            (edited_cosmetic if was_edited else rest_cosmetic).append(line)
         else:
-            (edited if was_edited else rest).append(line)
-    # Severity first, then whether the agent touched the file - the
-    # edited-before-scaffold preference still holds inside each tier.
-    ordered = blockers + edited + rest + edited_cosmetic + rest_cosmetic
+            (edited if _ruff_line_path(line, output_dir) in touched else rest).append(line)
+    blockers = _collapse_repeated_names(blockers, _RUFF_REPEATED_NAME_RE)
+    ordered = blockers + edited + rest
     kept = ordered[:max(_RUFF_MAX_REPORTED, len(blockers))]
     issues = [f"ruff: {line}" for line in kept]
     if len(ordered) > len(kept):
         issues.append(f"ruff: (+{len(ordered) - len(kept)} more issues truncated)")
     return issues, warned_missing
+
+
+_SYNTAX_ERROR_RE = _re.compile(r"^Syntax error in (?P<file>.+?) line \d+:")
+_CONTRACT_UNDEFINED_RE = _re.compile(
+    r"^python contract: (?P<file>.+?) line (?P<line>\d+): undefined name '(?P<name>[^']+)'")
+_CONTRACT_FILE_RE = _re.compile(r"^python contract: (?P<file>.+?) line \d+:")
+_RUFF_UNDEFINED_RE = _re.compile(
+    r"^ruff: (?P<file>.+?):(?P<line>\d+):\d+: F821 Undefined name `(?P<name>[^`]+)`")
+_RUFF_FILE_RE = _re.compile(r"^ruff: (?P<file>.+?):\d+:\d+: ")
+
+
+def drop_duplicate_python_findings(raw_issues: list[str]) -> list[str]:
+    """One finding per Python defect, not one per collector that saw it.
+
+    A file that does not parse is ``Syntax error in``; the python contract and
+    ruff report the same parse failure again. An undefined name is reported by
+    both ruff (F821) and the python contract (which also judges names behind a
+    star import); the contract's line is kept, since ``validate_app`` shows the
+    model only the contract.
+    """
+    unparseable = {m.group("file") for m in map(_SYNTAX_ERROR_RE.match, raw_issues) if m}
+    contract_names = {(m.group("file"), m.group("line"), m.group("name"))
+                      for m in map(_CONTRACT_UNDEFINED_RE.match, raw_issues) if m}
+    kept = []
+    for issue in raw_issues:
+        located = _CONTRACT_FILE_RE.match(issue) or _RUFF_FILE_RE.match(issue)
+        if located and located.group("file") in unparseable:
+            continue
+        undefined = _RUFF_UNDEFINED_RE.match(issue)
+        if undefined and (undefined.group("file"), undefined.group("line"),
+                          undefined.group("name")) in contract_names:
+            continue
+        kept.append(issue)
+    return kept
 
 
 def _llm_edited_paths(
@@ -496,20 +537,30 @@ def _collect_tsc_issues(
     return issues
 
 
-def _collapse_repeated_names(err_lines: list[str]) -> list[str]:
-    """Keep the first occurrence of each undefined name per file."""
-    seen: set[tuple[str, str]] = set()
+def _collapse_repeated_names(err_lines: list[str], pattern: _re.Pattern | None = None) -> list[str]:
+    """Keep the first occurrence of each name per file, with ``(+N more uses)``.
+
+    ``pattern`` (default: tsc's TS2304) captures ``file`` and ``name``; any
+    other named group (a rule code) is part of the key too. One missing import
+    used in every endpoint is one cause, not one blocker per use.
+    """
+    pattern = pattern or _TSC_UNDEFINED_NAME_RE
+    first: dict[tuple, int] = {}
+    repeats: dict[tuple, int] = {}
     kept: list[str] = []
     for line in err_lines:
-        match = _TSC_UNDEFINED_NAME_RE.match(line.strip())
+        match = pattern.match(line.strip())
         if not match:
             kept.append(line)
             continue
-        key = (match.group("file"), match.group("name"))
-        if key in seen:
+        key = tuple(match.groupdict().values())
+        if key in first:
+            repeats[key] = repeats.get(key, 0) + 1
             continue
-        seen.add(key)
+        first[key] = len(kept)
         kept.append(line)
+    for key, count in repeats.items():
+        kept[first[key]] += f" (+{count} more uses)"
     return kept
 
 

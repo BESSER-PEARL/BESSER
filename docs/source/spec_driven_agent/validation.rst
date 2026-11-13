@@ -4,18 +4,27 @@ Validation and auto-fix
 Phase 3 attempts validation within the run's budget. Core checks need no network
 and no Docker. Missing runtime prerequisites do not count as verified execution:
 
-- Python syntax on every ``.py`` file.
-- Structural syntax on every ``.ts`` / ``.tsx`` / ``.js`` / ``.jsx`` file:
-  delimiter balance across comments, strings, template literals, regexes and
-  JSX, plus strict-JSON parsing of the ``attr={{...}}`` containers the
-  generated table configuration is written as. No Node toolchain is required,
-  so this holds when ``tsc`` is unavailable or disabled.
+- Python syntax on every ``.py`` file, decoded as Python decodes it (a UTF-8
+  BOM or a ``coding:`` line is valid; an undecodable file is a syntax error).
+  The file is compiled, not run, so an error Python raises only on import
+  (``await`` in a plain function, a late ``from __future__`` import) counts too.
+  Installed dependencies and build output (``node_modules``, ``.venv``,
+  ``venv``, ``dist``, ``build``) are not the app: no check, ``ruff``
+  included, reads or rewrites files there.
 - Python declaration contracts: invalid enum members, overwritten declarations,
   and SQLite-incompatible constant CHECK constraints.
 - Isolated backend startup and create-request probes. An import or DDL failure
   is a blocker, not a skipped check. Schema changes are checked against router
   consumers as well as syntax.
 - Retained ``test_api`` workflows replayed after source changes.
+
+``.ts`` / ``.tsx`` / ``.js`` / ``.jsx`` files get a structural syntax check
+(delimiter balance across comments, strings, template literals, regexes and
+JSX, plus strict-JSON parsing of the ``attr={{...}}`` containers the generated
+table configuration is written as) when they are written, not in the Phase 3
+sweep. It needs no Node toolchain. A write reports what it finds to the model,
+and an edit that breaks a file that was clean is refused; an edit to a file
+that was already broken is never refused, so it can be repaired.
 
 - Dockerfile coherence — referenced ``requirements.txt`` / ``package.json``
   must exist. A ``COPY`` source is resolved against the build context, as
@@ -38,7 +47,11 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
   so the delivered file is pinned even when Phase 3 is skipped.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
-  excuses every name), and it is fatal at startup.
+  excuses every name), and it is fatal at startup. Imports the app starts
+  without are not checked: inside a ``try`` that handles ``ImportError``, and
+  under ``if TYPE_CHECKING:``. A package declared in the app's manifest
+  satisfies its import name, matched case-insensitively and, for names that
+  differ (``python-socketio`` / ``socketio``), by name prefix.
 - Frontend contract — high-precision correctness defects that leave the UI
   visibly broken: a router with no home route (blank on load), or a form whose
   submit handler is a no-op (cannot save).
@@ -59,7 +72,12 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
   Absence of a known stub is structural evidence, not proof of business behavior.
 - Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
   match no generated backend route.
-- ``ruff`` lint.
+- ``ruff`` lint, limited to defects that break at runtime (syntax errors, undefined
+  names, redefinitions, repeated dict keys, invalid format strings and comparisons,
+  ``raise NotImplemented``, a value returned from ``__init__``, a non-string in
+  ``__all__``, logging calls whose arguments do not match the format).
+  Style rules are not run, and a ``ruff.toml`` or ``pyproject.toml`` inside the app
+  is not read.
 - Optionally ``tsc --noEmit``, ``cargo check`` and ``kotlinc``, per project.
 
 Every import a generated frontend makes is resolved against the files it
@@ -67,6 +85,8 @@ actually ships, with no install, no bundler and no shell, so this runs in every
 configuration. A relative import that resolves to no file, and a ``.jsx`` /
 ``.tsx`` file containing JSX in a project that imports no React and configures
 no automatic JSX runtime, are blockers: both leave a blank page in the browser.
+The JSX rule reports one finding per project, naming the files, since one
+config line fixes them all.
 An undeclared package is reported as a warning, because a bundler can still
 satisfy it. The JSX rule matters even where build verification is enabled:
 ``React is not defined`` is a runtime error in a bundle that builds cleanly, so
@@ -115,6 +135,25 @@ fetched* means ``cargo check`` needed a crate the run had not already
 downloaded through ``run_command``. Both are reported as checks that did not
 run, not as defects in the generated code.
 
+The runtime checks (the import smoke check, the boot-and-create probe and the
+replay of a retained ``test_api`` workflow) report a run that did not happen
+(no sandbox, a timeout, a dependency missing from the validation harness, such
+as ``httpx``) as ``validation unverified: runtime check (<check>) did not run
+(<reason>)``. The auto-fix loop does not spend rounds on them, and the run
+ends *unverified*: neither verified complete nor incomplete. A retained
+workflow that did not run is kept and replayed on the next source revision;
+only a workflow that ran and failed is an ``api scenario:`` blocker. A repair
+after which the probe can no longer measure a backend it measured before is
+not accepted as "all blockers fixed": the rollback check ranks that tree
+behind the measured one.
+
+The same applies when these checks are turned off for the run
+(``enable_import_smoke_check=False``): the finding is a warning, not a
+blocker. One cause of a probe timeout is found without running anything: a
+``main_api.py`` that calls ``uvicorn.run()`` outside
+``if __name__ == "__main__":`` never finishes importing, and is reported as an
+``application startup:`` blocker that names the line.
+
 When both toolchain validation and shell tools are explicitly enabled, npm is
 available, and project dependencies are missing, ``verification setup:`` is
 instead actionable. The agent may use its existing authorized dependency tool,
@@ -129,9 +168,15 @@ configured ``npm run build`` is checked only when both toolchain validation and
 shell tools are explicitly enabled and its dependencies are already installed.
 Validation never installs packages or enables shell access. Configured checks
 execute generated build scripts under that explicit permission, inside a fresh
-bubblewrap sandbox with no network. Source is checked before and after execution. Results
-are reused only for unchanged source and dependency-install markers during the
-same run; source changes during a build invalidate its result. With shell tools
+bubblewrap sandbox with no network. Source is checked before and after execution. Results,
+failures included, are reused only for unchanged source and dependency-install
+markers during the same run; source changes during a build invalidate its
+result. The same holds for ``tsc`` (also keyed by the compiler it would use),
+``cargo check``, ``kotlinc`` and the ``pip install --dry-run`` check: Phase 3
+re-validates after rounds that edit nothing and after a rollback, and those
+passes do not run the same check on the same tree again. A check that did not
+finish (a timeout, no sandbox, an unreachable package index, unfetched crates)
+gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
 
@@ -142,6 +187,57 @@ a passing current-revision ``test_api`` scenario that creates through the exact
 endpoint and reads back the identifiable record. Health responses, an isolated
 200, stale results, and evidence from a different route/backend do not qualify.
 Observed server crashes remain failures even if another scenario passes.
+The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
+where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
+``*Create`` body with no table behind it (a signup or login form) persists no
+record to read back, so it is listed in the probe report as
+``skipped_non_entity`` and produces no finding.
+When a request is refused with 401 or 403, the probe tries once to log in as an
+account it registers itself, as any visitor could, and never overrides the
+app's authentication dependency. It registers and logs in through the app's
+unsecured register/login routes (OpenAPI paths such as ``/register``,
+``/login`` or an OAuth2 ``tokenUrl``; a templated path such as
+``/room/{room_id}/register`` is not one). It fills the username, email and
+password, plus any other required field that is plain text or a number (a
+name, a phone number, an age, a study group; a date of birth gets a past
+date), and ticks a required consent box: a boolean whose name contains at
+least one of the words terms, tos, eula, consent, privacy, gdpr, cookie(s),
+legal, newsletter, marketing, remember, adult or age (or an age: "over" and
+a number, or a number and "or older"), and whose other words are only
+numbers, the words is, has, i, accept(ed/s), agree(d/s), to, the, of, and,
+opt, in, confirm(ed), me, over, read, given, signup, user, data, processing,
+acknowledge(d), agreement, confirmation, have, or, older, and the words
+policy, conditions, service or use right after terms, tos, eula, consent,
+privacy, gdpr, cookie(s) or legal (or after "of"/"and" following one)
+(``terms_accepted``, ``termsAndConditions``, ``terms_of_service``,
+``privacyPolicyAgreement``, ``consent_given``, ``over_18``,
+``is18OrOlder``; not ``is_confirmed``, ``has_policy``, ``use_privacy``,
+``privacy_officer`` or ``bypass_age_check``). A staff flag named by a
+consent word alone, such as ``is_marketing`` or ``newsletter``, is ticked
+too. It does not use a route that
+requires any other boolean, an enum/``Literal``, an object or array, a number
+that references another record or names a rank (a name ending in ``_id`` or
+``Id``, or with the word level, tier, rank, grade, clearance or plan, such as
+``group_id`` or ``access_level``), or a field named like a privilege: a field
+whose name contains the whole word role, admin, administrator, superuser,
+staff, permission, scope, privilege, manager, owner or moderator, or the words
+account type or user type, in snake_case, camelCase or kebab-case (``is_admin``,
+``userRole``, ``account-type``; not ``parole_officer``). Those choose what kind
+of account it gets. If registration fails, it still tries the login route. If
+its logged-in account is still refused, it stops there and the finding quotes
+the app's answer: a 403 means the route needs a privilege or a step the probe
+does not take, such as a CSRF token. A login form that needs a fixed value,
+such as ``OAuth2PasswordRequestFormStrict``'s ``grant_type=password``, is not
+filled; the finding quotes the 422.
+
+A login counts only when the refused request then gets past the 401/403. The
+report keeps the first refused request and its status under ``auth`` (evidence
+that authentication is enforced), with the account used. An app that never
+answers 401/403 receives no login requests. When no login works, the refused
+creates stay ``create unverified`` and the finding gives the reason; a passing
+``test_api`` scenario that logs in, creates and reads back the record settles
+them, as above. Saved scenarios are never replayed to log the probe in, so its
+result depends only on the source.
 
 .. _spec-driven-model-contract:
 
@@ -193,16 +289,23 @@ Findings are classified into three severities:
        atomic requirements once and each is judged against the generated
        code, with every "implemented" citation re-checked by the harness;
        only behaviour the request states is listed, so a vague request
-       yields few requirements or none. A citation is code copied from the
+       yields few requirements or none. The judge cites a list of
+       ``{"path", "line"}`` objects, one per source line, and explains in a
+       separate note; every citation must be found in the file it names
+       and at least one found line must enforce or perform the
+       requirement (evidence stored by older versions as one
+       ``path: quote`` string is still read and checked the same way).
+       A citation is code copied from the
        cited file: a whole line, a statement spread over up to 25 lines, a
        complete call of at least 12 characters or a run of at least 30 from
-       inside a line (never from its strings or comment), or a line's start
-       of at least 20 characters the judge cut with ``...``. An abridged or
-       listed quote ("a ... b", "a; b", "x.py: a and y.py: b") passes only
-       when every part is code in the file it names, and each part is
-       checked on its own text, so an invented part cannot supply the proof.
-       Prose, a paraphrase or another file's code leaves the requirement
-       unverified. With a class model and an agent model, the list also holds
+       inside a line (never from its strings or comment), or the start of a
+       line or statement, at least 20 characters, that the judge cut with
+       ``...``. An abridged or listed quote ("a ... b", "a; b", "x.py: a and
+       y.py: b") passes only when every part is code in the file it names,
+       and each part is checked on its own text, so an invented part cannot
+       supply the proof. An explanation after a closed statement or element
+       ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
+       another file's code leaves the requirement unverified. With a class model and an agent model, the list also holds
        one requirement built from the models: every intent that creates,
        lists or changes the model's records reads or writes them through the
        app's code (its models, database, API or a helper), while a greeting
@@ -217,10 +320,25 @@ Findings are classified into three severities:
        (undefined name — the classic "ships green, boots dead" bug) and
        **F811** (redefinition, e.g. an ORM model shadowed by a Pydantic model
        of the same name); per-project toolchain errors from ``tsc`` /
-       ``cargo`` / ``kotlinc``. These drive the auto-fix loop.
+       ``cargo`` / ``kotlinc`` and a failing frontend production build
+       (``frontend build [...]``). By prefix, the blockers are ``Syntax error
+       in``, ``Dependency conflict in``, ``... but it doesn't exist``,
+       ``frontend contract:``, ``api url:``, ``form create target:``,
+       ``form route:``, ``form json textarea:``, ``data contract:``,
+       ``model conformance:``, ``model contract:``, ``missing module:``,
+       ``mapper config:``, ``application startup:``, ``python contract:``
+       (which also reports undefined names, those behind ``from x import *``
+       included), ``runtime unverified:``, ``api scenario:``,
+       ``create contract:``, ``action call:``, ``requirement:``,
+       ``requirement partial:``, ``requirement unverified:``,
+       ``action contract:``, ``task unverified:``, ``verification setup:``
+       (dependencies a permitted install would provide), ``tsc [``,
+       ``cargo [``, ``kotlinc [`` and ``frontend build [``. These drive the
+       auto-fix loop.
    * - ``style``
-     - Cosmetic ``ruff`` rules: ``F401`` / ``F841`` (unused import or
-       variable), ``E501``, whitespace, blank lines, import order.
+     - The ``(+N more ... truncated)`` notes of ``ruff``, ``tsc``, ``cargo``
+       and ``kotlinc``, which are counts, not defects. The lint selects no
+       cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
        now), ``form field type:``, the model-derived acceptance matrix,
@@ -230,9 +348,23 @@ Findings are classified into three severities:
        like the matrix it is reported, never a blocker. Abstract classes are
        left out, at most 20 entities are listed, and the check is skipped
        when a BESSER generator built the base, such as a BAF chatbot or
-       Python classes), and ``requirement out of
+       Python classes), ``requirement out of
        scope:`` — a UI requirement on a run that neither has nor asked for a
-       frontend, which a backend-only output has no files to satisfy.
+       frontend, which a backend-only output has no files to satisfy — and
+       ``validation unverified:`` — a required check that did not run, such
+       as a runtime check (``validation unverified: runtime check (...) did
+       not run``) or a requirements judge that returned no verdicts. No edit
+       to the generated code can settle these, so they spend no repair turns,
+       but they still prevent verified completion.
+
+One Python defect is one finding: a file that does not parse is reported as
+``Syntax error in``, without the python contract's and ``ruff``'s copies of the
+same parse failure, and an undefined name the python contract reports (it also
+judges names behind ``from x import *``, where ``ruff`` cannot) drops ``ruff``'s
+``F821`` for the same name and line. A name used many times in one file is one
+finding, at its first use, ending ``(+N more uses)``: ``ruff`` ``F821`` /
+``F811``, the python contract's undefined names and ``tsc``'s ``TS2304``. One
+forgotten import in a 40-endpoint router is two blockers, not 105.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps
@@ -300,13 +432,29 @@ opinion alone does not. Cancellation is checked between repair and validation,
 so stopping a run does not trigger another paid coverage judgment.
 
 Repair prompts retain the original specification, current files/symbols, actual
-action handlers and recent rejected operations. Excerpts use the file/line
-formats emitted by the checks. Unchanged source is not counted as repair
-progress merely because a judge's blocker count changed.
+action handlers and recent rejected operations. The parts that are fixed for the
+run (the original specification, the inspection handoff, the domain model and the
+requirements ledger) form the system prompt, identical in every repair round so
+the provider can serve it from its prompt cache; each round's message carries the
+files, the blockers and the excerpts. The action handlers and the relationship
+mutation coverage are sent only when a blocker concerns behaviour, not for a round
+whose blockers are all syntax, import, lint, compiler or dependency errors. The
+prompt lists at most 30 blockers in repair order, counts the rest by kind, cuts a
+message over 1,200 characters with a marker, and names a requirement already in
+the ledger by its id. Validation still records and reports every blocker.
+Excerpts use the file/line formats emitted by the checks. Unchanged source is not
+counted as repair progress merely because a judge's blocker count changed.
 
-Requirement judgments are cached by source/configuration revision. A single
-bounded citation-repair judgment may revisit only unverified entries without a
-code change. Evidence must name a real application source file and quote an
+Requirement judgments are cached by source/configuration revision. After an
+edit, a verified requirement keeps its verdict without being judged again only
+while every file its citation names is byte-identical to the version it was
+verified against (a verdict with no recorded file hashes is judged again). An
+edit to a cited file re-judges it, even when the cited line survives; an edit
+to an uncited file does not, so a change elsewhere that stops the cited code
+from running (``main.py`` no longer including the cited router) keeps the
+verdict. A single bounded citation-repair
+judgment per revision, right after the judgment or on a later pass, may revisit
+only unverified entries without a code change. Evidence must name a real application source file and quote an
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
 

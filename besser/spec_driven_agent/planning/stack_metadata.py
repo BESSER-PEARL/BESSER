@@ -52,6 +52,12 @@ from besser.utilities.workspace_fs import open_plain_write
 logger = logging.getLogger(__name__)
 
 
+# Rust and its web crates. Bare "cargo" and "rocket" are left out: they are
+# far more often the domain ("a cargo tracking company", "a model rocket club")
+# than the build tool or the framework.
+_RUST_KEYWORDS: tuple[str, ...] = ("rust", "axum", "actix", "tokio", "serde", "cargo.toml", "rocket.rs")
+
+
 # Order matters: a request mentioning both "Next.js" and "TypeScript"
 # should resolve to ``nextjs`` (the more specific stack). The first
 # match wins; everything below is checked top-down.
@@ -60,9 +66,9 @@ _STACK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("nextjs", ("next.js", "nextjs", "next js")),
     # Kotlin / Spring Boot bundle together — kotlinc + Gradle.
     ("kotlin_spring", ("kotlin", "spring boot", "springboot", "spring-boot")),
-    # Rust + Cargo. ``axum``/``actix``/``rocket`` imply Rust without
-    # the user spelling out "Rust", so they map to the same template.
-    ("rust", ("rust", "cargo", "axum", "actix", "rocket")),
+    # Rust + Cargo. Its crates imply Rust without the user spelling out
+    # "Rust", so they map to the same template.
+    ("rust", _RUST_KEYWORDS),
 )
 
 
@@ -401,7 +407,7 @@ _IDIOM_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Rust web frameworks bundle together -- axum-specific bullets are a
     # minority of the block; the Result/Option guidance applies just as
     # well to actix/rocket handlers.
-    ("rust_axum", ("rust", "cargo", "axum", "actix", "rocket")),
+    ("rust_axum", _RUST_KEYWORDS),
     ("python_web", ("flask", "fastapi", "fast api")),
 )
 
@@ -485,32 +491,44 @@ _IDIOM_STACK_LABEL: dict[str, str] = {
 }
 
 
-def detect_idiom_stack(instructions: str) -> str | None:
+def _named_idioms(text: str) -> list[tuple[str, str]]:
+    """``(idiom id, keyword)`` for every stack keyword in ``text``, in priority order."""
+    if not text or not text.strip():
+        return []
+    named = [(idiom_id, needle) for idiom_id, needles in _IDIOM_KEYWORDS
+             for needle in needles if _contains_word(text, needle)]
+    named += [("generic", needle) for needle in _GENERIC_IDIOM_KEYWORDS if _contains_word(text, needle)]
+    return named
+
+
+def detect_idiom_stack(instructions: str, routed_stack: str | None = None) -> str | None:
     """Identify which idiom block (if any) applies to ``instructions``.
 
     Returns one of ``"spring_boot"``, ``"python_web"``, ``"rust_axum"``,
     ``"generic"``, or ``None`` when no recognisable stack is named.
 
+    ``routed_stack`` is the routing answer's ``unsupported_stack`` ("" for a
+    stack BESSER generates), or ``None`` when no routing answer exists. With
+    one, a keyword counts only when it names a Python stack or the routed
+    stack: "rust-proof paint" or "a model rocket club" is the domain.
+
     See the module comment above ``_IDIOM_KEYWORDS`` for why this is a
     separate detector from ``detect_stack`` rather than a reuse of it.
     """
-    if not instructions or not instructions.strip():
-        return None
-
-    for idiom_id, needles in _IDIOM_KEYWORDS:
-        for needle in needles:
-            if _contains_word(instructions, needle):
-                return idiom_id
-
-    for needle in _GENERIC_IDIOM_KEYWORDS:
-        if _contains_word(instructions, needle):
-            return "generic"
-
-    return None
+    named = _named_idioms(instructions)
+    if routed_stack is None:
+        return named[0][0] if named else None
+    routed = [idiom_id for idiom_id, _ in _named_idioms(routed_stack)]
+    for idiom_id, needle in named:
+        if needle in _PYTHON_STACK_KEYWORDS or idiom_id in routed:
+            return idiom_id
+    return routed[0] if routed else None
 
 
-def idiom_guidance_section(instructions: str) -> str:
+def idiom_guidance_section(instructions: str, routed_stack: str | None = None) -> str:
     """Render the "idiomatic conventions" prompt block for ``instructions``.
+
+    ``routed_stack`` as in :func:`detect_idiom_stack`.
 
     Returns ``""`` when no target stack is recognised — callers should
     not emit an empty heading in that case. Ends with a blank line (two
@@ -518,7 +536,7 @@ def idiom_guidance_section(instructions: str) -> str:
     ``##`` sections in the caller's prompt template; returns "" (no
     newlines at all) when nothing was detected so it's a true no-op.
     """
-    idiom_id = detect_idiom_stack(instructions)
+    idiom_id = detect_idiom_stack(instructions, routed_stack)
     if idiom_id is None:
         return ""
 

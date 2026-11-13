@@ -84,6 +84,7 @@ def test_no_sampling_parameter_reaches_an_anthropic_model(model, force):
 @pytest.mark.parametrize("model", [
     "claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5",
     "us.anthropic.claude-fable-5-1", "anthropic.claude-opus-5-5",
+    "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-2",
 ])
 def test_a_forced_call_never_disables_thinking_where_that_is_a_400(model):
     client = _claude(model, _tool_use())
@@ -116,7 +117,12 @@ def test_fable_5_keeps_its_forced_tool_choice():
 # Forced-tool fallback on Fable 5.1 / Opus 5.5
 # ----------------------------------------------------------------------
 
-@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"])
+# claude-fable-5-2 and the Mythos ids contain the shorter "claude-fable-5" /
+# no marker at all; each needs its own row or the forced call is a 400.
+@pytest.mark.parametrize("model", [
+    "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5",
+    "claude-fable-5-2", "claude-mythos-5-1", "claude-mythos-5-2",
+])
 def test_forced_tool_becomes_auto_plus_an_instruction_and_parses_the_call(model):
     client = _claude(model, _tool_use(payload={"items": ["x", "y"]}))
 
@@ -139,6 +145,125 @@ def test_the_caller_messages_are_not_mutated():
     messages = [{"role": "user", "content": "Extract the items."}]
     client.chat(system="s", messages=messages, tools=[TOOL], force_tool="submit")
     assert messages == [{"role": "user", "content": "Extract the items."}]
+
+
+def test_the_history_before_the_one_off_instruction_stays_cacheable():
+    """The instruction is never sent again, so a breakpoint on it alone caches
+    a prefix no later request can read: the escalated turn then wrote the
+    whole conversation to the cache and the next turn wrote it again."""
+    client = _claude("claude-fable-5-1", _tool_use())
+    history = [
+        {"role": "user", "content": "Extract the items."},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "submit", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "refused"}]},
+    ]
+
+    client.chat(system="s", messages=history, tools=[TOOL], force_tool="submit")
+
+    (request,) = _requests(client)
+    result_block, instruction = request["messages"][-1]["content"]
+    assert result_block["type"] == "tool_result"
+    assert result_block["cache_control"] == {"type": "ephemeral"}
+    assert "`submit`" in instruction["text"]
+    marked = [1 for message in request["messages"] if isinstance(message["content"], list)
+              for block in message["content"] if "cache_control" in block]
+    assert len(marked) <= 2  # with the tools and system markers: the API's limit of 4
+    assert "cache_control" not in history[-1]["content"][0]  # caller's history untouched
+
+
+def test_a_forced_reply_carries_no_thinking_bound_to_the_one_off_instruction():
+    """The instruction is in the request that produced the reply and in no
+    later one. A thinking block is bound to every message before it, so the
+    reply's reasoning, replayed next turn behind the history WITHOUT the
+    instruction, is a 400 on the models that take this path ("The block is
+    bound to a different conversation"). The reply comes back without it."""
+    thinking = at.ThinkingBlock(type="thinking", thinking="", signature="sig")
+    reply = _tool_use()
+    reply.content.insert(0, thinking)
+    client = _claude("claude-opus-5-5", reply, _text())
+    history = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t0", "name": "submit", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t0", "content": "refused"}]},
+    ]
+
+    result = client.chat(system="s", messages=history, tools=[TOOL], force_tool="submit")
+    history += [{"role": "assistant", "content": result["content"]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1",
+                                              "content": "ok"}]}]
+    client.chat(system="s", messages=history, tools=[TOOL])
+
+    forced, following = _requests(client)
+    assert "`submit`" in forced["messages"][2]["content"][-1]["text"]
+    assert following["messages"][2]["content"][-1]["type"] == "tool_result"  # instruction gone
+    assert [b.type for b in following["messages"][3]["content"]] == ["tool_use"]
+
+
+def _cache_markers(request) -> dict:
+    """Where a request carries ``cache_control``: tools / system / messages."""
+    system = request["system"]
+    return {
+        "tools": any("cache_control" in tool for tool in request.get("tools", [])),
+        "system": isinstance(system, list) and any("cache_control" in block for block in system),
+        "messages": any(
+            "cache_control" in block
+            for message in request["messages"] if isinstance(message["content"], list)
+            for block in message["content"] if isinstance(block, dict)),
+    }
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5", "claude-sonnet-5-5"])
+def test_a_one_shot_planning_call_writes_nothing_to_the_prompt_cache(model):
+    """Routing, gap analysis and the requirements judge are one forced call on
+    one message. Their prompt is unique, so a cache marker only buys the 25%
+    cache-write surcharge (measured: a 47k-token judge prompt written to a
+    cache nothing reads)."""
+    client = _claude(model, _tool_use())
+    client.chat(system="s", messages=USER, tools=[TOOL], force_tool="submit")
+    (request,) = _requests(client)
+    assert _cache_markers(request) == {"tools": False, "system": False, "messages": False}
+    assert request["system"] == "s"
+
+
+def test_a_forced_tool_choice_in_a_conversation_keeps_only_the_prefix_markers():
+    """tool_choice does not read the conversation cache, and what it writes
+    only an identical forced call could read; tools and system survive it."""
+    history = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "submit", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "refused"}]},
+    ]
+    client = _claude("claude-sonnet-5", _tool_use())
+    client.chat(system="s", messages=history, tools=[TOOL], force_tool="submit")
+    (request,) = _requests(client)
+    assert _cache_markers(request) == {"tools": True, "system": True, "messages": False}
+
+
+def test_an_ordinary_turn_marks_tools_system_and_the_conversation():
+    client = _claude("claude-sonnet-5", _tool_use())
+    client.chat(system="s", messages=USER, tools=[TOOL])
+    (request,) = _requests(client)
+    assert _cache_markers(request) == {"tools": True, "system": True, "messages": True}
+
+
+def test_a_forced_reply_carries_no_thinking_block():
+    """The reply was produced after a one-off instruction the next request
+    does not send, so its thinking block would be replayed after a different
+    conversation than the one it was signed over: a 400 on these models."""
+    reply = SimpleNamespace(
+        stop_reason="tool_use", usage=at.Usage(input_tokens=1, output_tokens=1),
+        content=[at.ThinkingBlock(type="thinking", thinking="plan", signature="sig"),
+                 at.ToolUseBlock(type="tool_use", id="toolu_1", name="read_file", input={"path": "a"})])
+    client = _claude("claude-sonnet-5-5", reply)
+    history = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "text", "text": "reading"}]},
+        {"role": "user", "content": "now read a"},
+    ]
+
+    result = client.chat(system="s", messages=history, tools=[TOOL, OTHER_TOOL], force_tool="read_file")
+
+    assert [block.type for block in result["content"]] == ["tool_use"]
 
 
 def test_a_reply_without_the_tool_is_asked_again_once():

@@ -142,7 +142,9 @@ class TestPerFileModifyGuard:
         reminder = orch._build_modify_loop_reminder("action.py")
         assert "syntax guard" in reminder and "NOT applied" in reminder
         assert "CURRENT ON-DISK" in reminder and "try/except" in reminder
-        assert "all failed to match" not in reminder and "write_file" not in reminder
+        assert "all failed to match" not in reminder
+        # The executor's ladder is at its rewrite step; the reminder names it.
+        assert "read_file on the WHOLE file" in reminder and "write_file" in reminder
         assert (tmp_path / "action.py").read_text(encoding="utf-8") == source
 
     def test_three_successful_edits_to_one_file_do_not_trigger(self, simple_model, tmp_path):
@@ -160,8 +162,9 @@ class TestPerFileModifyGuard:
     ):
         """N=3 consecutive modify_file calls on the SAME path that all
         fail to match inject a system-style reminder before turn 4: name
-        the path, tell the model to read the file and copy old_text
-        verbatim, and never suggest rewriting it from memory."""
+        the path, name the executor's own next step (read the WHOLE file,
+        then write_file it back), and never suggest rewriting it from
+        memory."""
         target = "app.py"
         joined = _streak_turn4_text(
             simple_model, tmp_path, target, old_text=lambda n: f"nope{n}",
@@ -170,9 +173,10 @@ class TestPerFileModifyGuard:
         # LLM treats it as a meta-instruction, not user content.
         assert "<system-reminder>" in joined, joined
         assert target in joined
-        assert "read_file" in joined and "replace_file_lines" in joined and "read_id" in joined, joined
-        # Never points the model at a rewrite - that is what lost scaffold code.
-        assert "write_file" not in joined, joined
+        assert "read_file on the WHOLE file" in joined and "write_file" in joined, joined
+        assert "switch to replace_file_lines" not in joined, joined
+        # A rewrite from a fresh whole-file read, never from memory.
+        assert "from memory" in joined, joined
         assert "complete new contents" not in joined, joined
 
     def test_reminder_does_not_fire_when_interleaved_with_other_tool(

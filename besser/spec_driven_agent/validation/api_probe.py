@@ -5,8 +5,8 @@ executes generated application code, just like the constructibility probe, in
 the run sandbox with no network; it is not proof of complete specification
 coverage.
 No commands, external URLs or Python expressions are accepted. Request headers
-are limited to an allow-list, and the values of sensitive ones never appear in
-the report.
+are limited to an allow-list, and the values of sensitive ones, credential
+response fields and JWT-shaped strings never appear in the report.
 The child imports no BESSER package and runs this same file as a script, so it
 masks the scenario's own secrets with ``_scrub`` rather than
 ``besser.utilities.secret_redaction``.
@@ -33,6 +33,7 @@ _MAX_INPUT_BYTES = 64_000
 _BODY_CHARS = 2000
 _MAX_REPORTED_FAILURES = 5
 _NO_JSON = object()
+_MISSING = object()
 _REFERENCE = re.compile(r"\{\{(\d+)(?:\.([^{}]+))?\}\}")
 _MAX_HEADERS = 10
 _HEADER_VALUE_CHARS = 4096
@@ -47,7 +48,24 @@ _DENIED_X_HEADERS = frozenset({"x-real-ip", "x-http-method-override", "x-method-
                                "x-original-url", "x-rewrite-url", "x-original-method"})
 _SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "password", "credential")
 _REDACTED = "[REDACTED]"
+# A response field holding a credential, judged on its snake/kebab/camel words: any secret
+# word (``passwordNew``, ``password_reset_code``), ``token`` that is not a page cursor
+# (``next_page_token``), or api/access/private/secret key or auth code, unless the next word
+# only describes or identifies it (``password_changed_at``, ``token_count``, ``api_key_name``).
+_KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
+_SECRET_WORDS = frozenset({"password", "passwd", "passphrase", "secret", "jwt", "apikey", "credential",
+                           "credentials", "otp"})
+_DESCRIBING_WORDS = frozenset({"changed", "updated", "created", "at", "hint", "expires", "expiry", "expiration",
+                               "length", "policy", "required", "strength", "count", "type", "santa",
+                               "question", "sent", "id", "name", "prefix", "suffix", "last", "label"})
+_CURSOR_WORDS = frozenset({"page", "next", "prev", "previous", "continuation", "cursor", "sync"})
+_SECRET_PAIRS = {"key": frozenset({"api", "access", "private", "secret"}), "code": frozenset({"auth", "authorization"})}
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
 _SCOPE = "Only the submitted scenario was checked; this is not complete specification verification."
+# ``boot`` values meaning the scenario never ran: the sandbox was unavailable,
+# the worker timed out, or the harness lacks a dependency (httpx). Unknowns,
+# not application failures - see ``runtime_check_unverified``.
+DID_NOT_RUN_BOOTS = frozenset({"probe_error", "timeout", "missing_dependency"})
 
 
 def _error(message, boot="not_started", **extra):
@@ -114,15 +132,50 @@ def redact_scenario_headers(requests):
             for request in requests]
 
 
+def _credential_key(key):
+    words = [word.lower() for word in _KEY_WORDS.findall(key)] if isinstance(key, str) else []
+    for index, word in enumerate(words):
+        secret = (word in _SECRET_WORDS
+                  or (word == "token" and not _CURSOR_WORDS.intersection(words[:index]))
+                  or (index > 0 and words[index - 1] in _SECRET_PAIRS.get(word, ())))
+        if secret and (index + 1 == len(words) or words[index + 1] not in _DESCRIBING_WORDS):
+            return True
+    return False
+
+
+def _credential_field(key, value):
+    return isinstance(value, str) and bool(value) and _credential_key(key)
+
+
+def _credential_reference(match):
+    return _credential_key((match.group(2) or "").rsplit(".", 1)[-1])
+
+
+def _sent_credentials(request, previous):
+    """Credential-named response values ``request`` sends back by reference, e.g. /reset/{{1.reset_token}}."""
+    sent = set()
+    for match in _REFERENCE.finditer(json.dumps([request.get(key) for key in ("path", "headers", "json")])):
+        if _credential_reference(match) and int(match.group(1)) < len(previous):
+            value = _walk(previous[int(match.group(1))], match.group(2))
+            if isinstance(value, str) and len(value) >= 8:
+                sent.add(value)
+    return sent
+
+
 def _scrub(value, secrets):
     if isinstance(value, str):
         for secret in secrets:
             value = value.replace(secret, _REDACTED)
-        return value
+        return _JWT.sub(_REDACTED, value)
     if isinstance(value, list):
         return [_scrub(item, secrets) for item in value]
     if isinstance(value, dict):
-        return {key: _scrub(item, secrets) for key, item in value.items()}
+        # A validation error echoes the submitted value: {"loc": [..., "password"], "input": ...}.
+        loc = value.get("loc")
+        field = next((part for part in reversed(loc) if isinstance(part, str)), None) if isinstance(loc, list) else None
+        echoed = {"input", "ctx"} if _credential_key(field) else set()
+        return {key: _REDACTED if key in echoed or _credential_field(key, item) else _scrub(item, secrets)
+                for key, item in value.items()}
     return value
 
 
@@ -154,7 +207,7 @@ def _validate_requests(requests):
     return requests
 
 
-def _json_path(body, path):
+def _walk(body, path):
     current = body
     for part in path.split(".") if path else []:
         if isinstance(current, dict) and part in current:
@@ -162,11 +215,39 @@ def _json_path(body, path):
         elif isinstance(current, list) and part.isdecimal() and int(part) < len(current):
             current = current[int(part)]
         else:
-            raise ValueError(f"JSON path {path!r} was not present")
+            return _MISSING
     return current
 
 
-def _resolve_references(value, previous, *, in_path=False, in_header=False):
+def _holds(value, path):
+    if isinstance(value, list):
+        return any(isinstance(item, dict) and _walk(item, path) is not _MISSING for item in value)
+    return _walk(value, path) is not _MISSING
+
+
+def _json_path(body, path):
+    current = _walk(body, path)
+    if current is _MISSING:
+        hint = ""
+        if isinstance(body, dict) and body:
+            # Guess only the one wrapper holding the path, as in {"dataset": {"id": 1}};
+            # with {"meta": {"id": ...}, "data": [...]} a guess could name the wrong id.
+            holders = [key for key, child in body.items()
+                       if isinstance(child, (dict, list)) and _holds(child, path)]
+            if len(holders) == 1 and isinstance(body[holders[0]], dict) and "." not in holders[0]:
+                hint = f"; did you mean {holders[0] + '.' + path!r}?"
+            else:
+                keys = ", ".join(map(repr, list(body)[:10])) + (", ..." if len(body) > 10 else "")
+                hint = f"; the top-level keys are {keys}"
+        elif isinstance(body, list):
+            hint = f"; the body is a list of {len(body)} item(s)"
+            if body and not path.split(".")[0].isdecimal():
+                hint += f", so index one, e.g. {'0.' + path!r}"
+        raise ValueError(f"JSON path {path!r} was not present{hint}")
+    return current
+
+
+def _resolve_references(value, previous, *, in_path=False, in_header=False, redact=False):
     if isinstance(value, dict):
         return {key: _resolve_references(item, previous) for key, item in value.items()}
     if isinstance(value, list):
@@ -185,6 +266,8 @@ def _resolve_references(value, previous, *, in_path=False, in_header=False):
         return copy.deepcopy(resolve(match))
 
     def substitute(match):
+        if redact and _credential_reference(match):
+            return _REDACTED
         replacement = resolve(match)
         if isinstance(replacement, (dict, list)):
             raise ValueError("embedded references must resolve to scalar values")
@@ -251,8 +334,9 @@ def confirmed_create_paths(report: dict) -> set[str]:
             for inserted in records(created.get("json")):
                 for observed in records(read.get("json")):
                     common = set(inserted) & set(observed) - {"id"}
+                    # Two redacted values are equal whatever they hid, so they prove nothing.
                     if (_same_literal(inserted["id"], observed["id"])
-                            and any(isinstance(inserted[key], (str, int, float, bool))
+                            and any(isinstance(inserted[key], (str, int, float, bool)) and inserted[key] != _REDACTED
                                     and _same_literal(inserted[key], observed[key]) for key in common)):
                         confirmed.add(path)
     return confirmed
@@ -379,7 +463,7 @@ async def _run_requests(app, requests):
                 body = _NO_JSON
                 try:
                     path = _local_path(_resolve_references(request["path"], previous, in_path=True))
-                    item["path"] = path
+                    item["path"] = _resolve_references(request["path"], previous, in_path=True, redact=True)
                     kwargs = {"json": _resolve_references(request["json"], previous)} if "json" in request else {}
                     if request.get("headers"):
                         headers = {}
@@ -410,8 +494,10 @@ async def _run_requests(app, requests):
                     item["status"] = response.status_code
                     try:
                         body = response.json()
-                        item["json"] = _bounded(body)
-                        item["truncated"] = len(json.dumps(body, ensure_ascii=True)) > _BODY_CHARS
+                        # References read the raw ``body``; the report keeps a redacted copy, cut after redaction.
+                        shown = _scrub(body, ())
+                        item["json"] = _bounded(shown)
+                        item["truncated"] = len(json.dumps(shown, ensure_ascii=True)) > _BODY_CHARS
                     except ValueError:
                         item["text"] = response.text[:_BODY_CHARS]
                         item["truncated"] = len(response.text) > _BODY_CHARS
@@ -423,11 +509,19 @@ async def _run_requests(app, requests):
                         try:
                             actual = _json_path(body, path)
                             if not _same_literal(actual, expected_value):
+                                # A message is a string: redact the response value before quoting it.
+                                actual = (_REDACTED if _credential_field(path.rsplit(".", 1)[-1], actual)
+                                          else _scrub(actual, ()))
                                 item["failures"].append(f"{path}: expected {_bounded(expected_value)!r}, got {_bounded(actual)!r}")
                         except ValueError as exc:
                             item["failures"].append(str(exc))
                 except Exception as exc:
                     item["failures"].append(f"{type(exc).__name__}: {exc}"[:1000])
+                # An error or failure of this request may quote a credential it sent back.
+                sent = sorted(_sent_credentials(request, previous), key=len, reverse=True)
+                item["failures"] = _scrub(item["failures"], sent)
+                if "error" in item:
+                    item["error"]["message"] = _scrub(item["error"]["message"], sent)
                 previous.append(body)
                 count = len(item["failures"])
                 item["failure_count"] = count

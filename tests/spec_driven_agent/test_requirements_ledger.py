@@ -21,6 +21,8 @@ from besser.BUML.metamodel.structural import (
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
+from besser.spec_driven_agent.state.generator_output import (
+    GENERATOR_OUTPUT_FILENAME, GeneratorOutputError, load_generator_output, store_generator_output)
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run_0c537a4e")
 
@@ -194,6 +196,173 @@ def test_the_digest_reads_schemas_then_routers_and_skips_the_stdlib(tmp_path, mo
     bounded = ledger.build_app_digest(str(tmp_path))
     assert len(bounded) <= 200
     assert "omitted/unreadable files: 2" in bounded
+
+
+_MAP_CLICK = "lyr.on('click', () => onSelect(feature.properties.name));"
+
+
+def _dashboard_app(root, components=1, component_chars=900):
+    """A 13-entity backend whose CRUD routers alone exceed the budget, plus a React dashboard."""
+    _write(root, "backend/pydantic_classes.py", "class PlantCreate(BaseModel):\n    name: str\n" * 20)
+    _write(root, "backend/sql_alchemy.py", "class Plant(Base):\n    name = Column(String)\n" * 20)
+    for i in range(13):
+        _write(root, f"backend/routers/entity{i:02}.py", f"@router.get('/entity{i}/')\ndef read_{i}(): return []\n" * 60)
+    for i in range(40):  # helper modules: Python ranks ahead of the frontend and fills any gap
+        _write(root, f"backend/services/helper{i:02}.py", f"def helper_{i}(): return {i}\n" * 8)
+    _write(root, "frontend/src/pages/Dashboard.jsx", "<MapView geojson={geojson} onSelect={setRegion} />\n" * 10)
+    _write(root, "frontend/src/components/MapView.jsx", f"const layer = L.geoJSON(geojson);\n{_MAP_CLICK}\n" * 5)
+    for i in range(components):
+        _write(root, f"frontend/src/components/Panel{i:02}.jsx", "x" * component_chars + "\n")
+
+
+def test_a_ui_requirement_is_judged_with_the_frontend_in_view(tmp_path, monkeypatch):
+    """Sonnet 5.5, 13-class wastewater dashboard: the generated routers filled the
+    budget, every frontend component was omitted and all UI requirements ended unverified."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _dashboard_app(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### frontend/src/components/MapView.jsx" in digest
+    assert _MAP_CLICK in digest
+    assert "### frontend/src/pages/Dashboard.jsx" in digest
+    assert digest.index("### backend/pydantic_classes.py") < digest.index("### backend/routers/entity00.py")
+    assert len(digest) <= 20_000
+
+
+def test_the_frontend_share_of_the_digest_is_capped(tmp_path, monkeypatch):
+    """A large frontend gets its share; the schemas and routers keep the rest of the budget."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _dashboard_app(tmp_path, components=40)
+    digest = ledger.build_app_digest(str(tmp_path))
+    shown = digest.split("\n\n## Digest coverage")[0].split("### ")
+    backend = sum(len(chunk) for chunk in shown if chunk.startswith("backend/"))
+    router = next(len(chunk) for chunk in shown if chunk.startswith("backend/routers/entity00.py"))
+    assert "### frontend/src/components/MapView.jsx" in digest
+    assert "### backend/sql_alchemy.py" in digest and "### backend/pydantic_classes.py" in digest
+    # 18_000 = the source budget once the footer's 10% is set aside
+    assert backend + router > (1 - ledger._DIGEST_UI_SHARE) * 18_000
+    assert "omitted/unreadable files: 0" not in digest and len(digest) <= 20_000
+
+
+def test_the_judge_cache_key_follows_an_edit_to_a_judged_frontend_file(tmp_path):
+    _dashboard_app(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "README.md", "# Wastewater dashboard\n")
+    _write(tmp_path, "frontend/package.json", '{"name": "dashboard"}\n')
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "frontend/src/components/MapView.jsx", "const layer = L.geoJSON(geojson);\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
+_DETECT = "    unwanted = [m for m in messages if m.isUnwanted]\n"
+
+
+def _generated_backend(root, *, stored_routers=10):
+    """Generated CRUD routers over the budget, one router and one engine module the model wrote."""
+    _write(root, "backend/pydantic_classes.py", "class MessageCreate(BaseModel):\n    body: str\n" * 10)
+    _write(root, "backend/sql_alchemy.py", "class Message(Base):\n    body = Column(String)\n" * 10)
+    generated = {}
+    for i in range(10):
+        rel = f"backend/routers/entity{i:02}.py"
+        generated[rel] = f"@router.get('/entity{i}/')\ndef read_{i}(): return []\n".encode() * 50
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(generated[rel])
+    generated["backend/routers/riskassessment.py"] = b"@router.get('/riskassessment/')\ndef read(): return []\n"
+    _write(root, "backend/routers/riskassessment.py",
+           "@router.post('/riskassessment/{account_id}/assess/')\ndef assess(account_id): return score(account_id)\n" * 20)
+    _write(root, "backend/risk_engine.py", f"def detect_signals(messages):\n{_DETECT}    return unwanted\n" * 20)
+    stored = dict(list(generated.items())[:stored_routers]) | {
+        "backend/routers/riskassessment.py": generated["backend/routers/riskassessment.py"]}
+    store_generator_output(str(root), "backend", stored, "8.0.0")
+
+
+def test_hand_written_backend_code_is_judged_before_untouched_generated_routers(tmp_path, monkeypatch):
+    """Sonnet 5.5, risk-awareness app: the generated CRUD routers filled the digest and
+    risk_engine.py, the only module implementing five requirements, was omitted."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _generated_backend(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### backend/risk_engine.py" in digest and _DETECT.strip() in digest
+    assert "/assess/" in digest
+    assert "Truncated files:" not in digest
+    omitted = digest.split("Omitted files: ", 1)[1].split("\n", 1)[0].split(", ")
+    assert omitted and all(rel.startswith("backend/routers/entity") for rel in omitted)
+    assert digest.index("### backend/sql_alchemy.py") < digest.index("### backend/risk_engine.py")
+    assert len(digest) <= 20_000 and digest == ledger.build_app_digest(str(tmp_path))
+
+
+def test_the_judge_cache_key_follows_which_files_are_untouched_generator_output(tmp_path, monkeypatch):
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _generated_backend(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path)), ledger.build_app_digest(str(tmp_path))
+    _generated_backend(tmp_path, stored_routers=5)  # same source, a different store
+    after = ledger.judged_source_fingerprint(str(tmp_path)), ledger.build_app_digest(str(tmp_path))
+    assert after[1] != before[1] and after[0] != before[0]
+
+
+def test_a_store_with_a_lone_surrogate_is_read_as_no_store(tmp_path):
+    """Review probe: a stored file "\\udc80" (the store can come from an imported
+    repository) raised UnicodeEncodeError and aborted the whole validation."""
+    _generated_backend(tmp_path)
+    store = tmp_path / GENERATOR_OUTPUT_FILENAME
+    data = json.loads(store.read_text(encoding="utf-8"))
+    data["files"]["backend/routers/entity00.py"] = "\udc80"
+    store.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(GeneratorOutputError):
+        load_generator_output(str(tmp_path), "backend")
+    assert ledger._untouched_generator_files(str(tmp_path), ledger._source_files(str(tmp_path))) == frozenset()
+    assert ledger.judged_source_fingerprint(str(tmp_path)) and "### backend/risk_engine.py" in ledger.build_app_digest(
+        str(tmp_path))
+
+
+def _vendored_frontend(root):
+    """A React app that ships minified third-party bundles beside its own source."""
+    _write(root, "frontend/package.json", '{"name": "dashboard"}\n')
+    _write(root, "frontend/src/api.js", "".join(  # larger than what the bundles leave of the frontend share
+        f"export const fetchEntity{i} = () => fetch('/api/entity{i}');\n" for i in range(250)))
+    for i in range(40):
+        _write(root, f"frontend/public/vendor/lib{i:02}.min.js", "!function(t){" + "var a=1;" * 750 + "}(this);")
+    _write(root, "frontend/src/lib/chart.min.js", "var c=1;" * 100)
+    _write(root, "frontend/vendor/leaflet.js", "var l=1;\n")
+
+
+def test_vendored_minified_code_does_not_crowd_the_app_out_of_the_digest(tmp_path):
+    """Review probe: three public/vendor/*.min.js bundles took the frontend share
+    and the app's own src/api.js was left out of the judge's digest."""
+    _vendored_frontend(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### frontend/src/api.js" in digest
+    assert set(ledger._source_files(str(tmp_path))) == {"frontend/src/api.js"}
+
+
+def test_the_judge_cache_key_ignores_vendored_code(tmp_path):
+    _vendored_frontend(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "frontend/public/vendor/lib00.min.js", "var b=2;")
+    _write(tmp_path, "frontend/src/lib/chart.min.js", "var d=2;")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "frontend/src/api.js", "export const fetchPlants = () => fetch('/api/plants');\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
+def test_an_express_apps_own_public_code_is_judged(tmp_path):
+    """Review probe: an app serving public/ with express.static lost public/app.js
+    from the digest, and its citation turned 'unverified'."""
+    _write(tmp_path, "package.json", '{"name": "todo", "dependencies": {"express": "^4.19.2"}}\n')
+    _write(tmp_path, "server.js", "const app = require('express')();\napp.use(require('express').static('public'));\n")
+    line = "document.getElementById('add').addEventListener('click', async () => {"
+    _write(tmp_path, "public/app.js", f"{line}\n  await fetch('/api/todos', {{ method: 'POST' }});\n}});\n")
+    _write(tmp_path, "public/vendor/x.min.js", "!function(t){var a=1;}(this);")
+    assert set(ledger._source_files(str(tmp_path))) == {"public/app.js", "server.js"}
+    assert "### public/app.js" in ledger.build_app_digest(str(tmp_path))
+    verdict = ledger.verify_evidence([{"id": 1, "kind": "ui", "text": "The user adds a todo",
+                                       "status": "implemented", "evidence": f"public/app.js: {line}"}],
+                                     str(tmp_path))[0]
+    assert verdict["status"] == "implemented"
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "public/vendor/x.min.js", "!function(t){var b=2;}(this);")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "public/app.js", "console.log('changed');\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
 
 
 # ---------------------------------------------------------- evidence check
@@ -657,6 +826,31 @@ def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):
     assert orch._collect_requirement_issues() == []
 
 
+CREATE_UNVERIFIED = ("runtime unverified: create unverified: backend: POST /dataset/ - status 401; "
+                     "a guessed request being refused does not prove this endpoint is broken.")
+
+
+@pytest.mark.parametrize("execution_issues, judged", [
+    ([CREATE_UNVERIFIED], True),
+    (["runtime unverified: action unverified: backend: POST /plant/1/close - state not constructible"], True),
+    ([CREATE_UNVERIFIED, "application startup: backend: ImportError: no module named x"], False),
+    (["create contract: backend: POST /dataset/ - status 500"], False),
+])
+def test_only_an_observed_failure_defers_the_requirements_judge(
+        simple_model, tmp_path, monkeypatch, execution_issues, judged):
+    """Sonnet 5.5, login-protected 13-class app: every guessed POST got 401, so
+    the judge was deferred on 7 of 8 runs and no requirement was ever judged."""
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path))
+    monkeypatch.setattr(orch, "_collect_execution_issues", lambda: list(execution_issues))
+    calls = []
+    monkeypatch.setattr(orch, "_collect_requirement_issues", lambda: calls.append(1) or [])
+
+    messages = [i.message for i in orch._collect_validation_issues()]
+
+    assert bool(calls) is judged
+    assert any("judgment deferred" in m for m in messages) is not judged
+
+
 def _run_phase3_with(orch, passes, monkeypatch):
     """Drive the Phase 3 loop with scripted validation passes and record
     whether the pre-Phase-3 snapshot was restored."""
@@ -875,6 +1069,59 @@ def test_verdicts_sent_as_a_json_string_are_still_judged():
     assert [v["status"] for v in verdicts] == ["implemented", "missing"]
 
 
+# Live (Sonnet 5.5, 47 runs): the dominant false blocker was a correct verdict whose
+# free-text evidence mixed prose into, or stitched lines in, the quote.
+_CITATIONS = [{"path": "x.py", "line": "return a"}, {"path": "y.jsx", "line": "<Plot data={d} />"}]
+
+
+def test_the_judge_cites_lines_as_path_and_line_objects():
+    evidence = ledger._SUBMIT_VERDICTS_TOOL["input_schema"]["properties"]["verdicts"]["items"]["properties"]["evidence"]
+    assert evidence["type"] == "array" and evidence["items"]["required"] == ["path", "line"]
+    reqs = [{"id": 1, "text": "a", "kind": ""}, {"id": 2, "text": "b", "kind": ""}]
+    client = _ToolClient([{"verdicts": [
+        {"id": 1, "status": "implemented", "evidence": _CITATIONS, "note": "renders the plot"},
+        # Sonnet 5 sends some arrays as JSON strings; a citation as "path: line" is read too.
+        {"id": 2, "status": "implemented", "evidence": json.dumps(_CITATIONS[:1] + ["y.jsx: <Plot data={d} />"])},
+    ]}])
+    verdicts = ledger.judge_coverage(reqs, "### x.py\nreturn a", client)
+    assert verdicts[0]["evidence"] == _CITATIONS and verdicts[0]["note"] == "renders the plot"
+    assert verdicts[1]["evidence"] == _CITATIONS
+
+
+class _TextClient:
+    """A provider without forced tools: it answers in prose holding JSON."""
+
+    model = "text-model"
+
+    def __init__(self, text):
+        self.usage = UsageTracker("text-model")
+        self._client = object()
+        self.text = text
+
+    def chat(self, system, messages, tools):
+        return {"stop_reason": "end_turn", "content": [type("B", (), {"type": "text", "text": self.text})()]}
+
+
+def test_a_text_reply_with_string_evidence_keeps_the_string_form():
+    reply = 'Verdicts: {"verdicts": [{"id": 1, "status": "implemented", "evidence": "x.py: return a"}]}'
+    verdicts = ledger.judge_coverage([{"id": 1, "text": "a", "kind": ""}], "### x.py\nreturn a", _TextClient(reply))
+    assert verdicts[0]["evidence"] == "x.py: return a"
+
+
+def test_old_and_new_evidence_render_the_same_way_in_issues_and_judge_feedback():
+    old = {"id": 1, "text": "a", "kind": "rule", "status": "unverified", "note": "n",
+           "evidence": "x.py: return a and y.jsx: <Plot data={d} />"}
+    new = dict(old, id=2, text="b", evidence=_CITATIONS)
+    issues = ledger.ledger_issues([old, new])
+    assert all("'x.py: return a and y.jsx: <Plot data={d} />'" in issue for issue in issues), issues
+    assert ledger.cited_paths(new["evidence"]) == ["x.py", "y.jsx"]
+    assert ledger.cited_paths(old["evidence"]) == ["x.py"]
+
+    client = _ToolClient([{"verdicts": [{"id": 2, "status": "missing"}]}])
+    ledger.judge_coverage([{"id": 2, "text": "b", "kind": "rule"}], "", client, previous_verdicts=[new])
+    assert '"rejected_evidence": "x.py: return a and y.jsx: <Plot data={d} />"' in client.calls[0][1]
+
+
 def test_judge_digest_lists_or_includes_init_py(tmp_path):
     """The digest skipped every ``__init__.py`` and ``database.py`` without
     saying so, so a Flask app factory in ``__init__.py`` was invisible to the
@@ -898,3 +1145,91 @@ def test_judge_digest_lists_or_includes_init_py(tmp_path):
     assert "### inventory/database.py" in source
     assert "pkg/__init__.py" not in digest  # empty after comments: nothing to judge
     assert "bal_stdlib.py" not in source and "Omitted files: bal_stdlib.py" in coverage
+
+
+# ------------------------------------------------ LLM output that bends the schema
+
+
+@pytest.mark.parametrize("rid", ["R1", "r1", "#1", "1.", "R1.", " R1 ", "1", 1, 1.0])
+def test_a_verdict_id_in_the_listings_own_form_is_accepted(rid):
+    """The judge reads requirements listed as ``R1. text`` and may echo ``R1``.
+    Discarding those verdicts made the whole reply count as no verdict: the
+    full digest went again to the primary model, then total failure."""
+    client = _ToolClient([{"verdicts": [{"id": rid, "status": "missing", "note": "n"}]}])
+
+    verdicts = ledger.judge_coverage([{"id": 1, "text": "a", "kind": "rule"}], "### x.py\nx = 1", client)
+
+    assert verdicts[0]["status"] == "missing" and verdicts[0]["note"] == "n"
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("rid", ["R1a", "one", "1.5", 1.5, True, "R", "", None, [1]])
+def test_a_verdict_id_that_names_no_requirement_is_still_rejected(rid, monkeypatch):
+    monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
+    payload = {"verdicts": [{"id": rid, "status": "implemented"}]}
+    client = _ToolClient([payload, payload])
+
+    assert ledger.judge_coverage([{"id": 1, "text": "a", "kind": "rule"}], "", client) is None
+
+
+def test_an_extracted_item_without_text_is_not_a_requirement():
+    """``str(None)`` turned a null item into the requirement "None", judged
+    and reported as the blocker "R1 — None is not implemented"."""
+    client = _ToolClient([{"requirements": [
+        {"text": None, "kind": "rule"}, None, {"text": 7}, {"kind": "rule"},
+        {"text": "Titles are unique", "kind": "uniqueness"}, "Books have at most 2000 pages",
+    ]}])
+
+    extracted = ledger.extract_requirements(INSTRUCTIONS, client)
+
+    assert extracted == [
+        {"id": 1, "text": "Titles are unique", "kind": "uniqueness"},
+        {"id": 2, "text": "Books have at most 2000 pages", "kind": ""},
+    ]
+
+
+@pytest.mark.parametrize("kind", [None, "verification", ledger.ENTITY_CRUD_KIND, "something else"])
+def test_an_extracted_kind_outside_the_schema_is_dropped(kind):
+    """No client enforces the schema's enum. 'verification' is the harness's
+    own extraction-incomplete gate, which no code can discharge: a user
+    requirement labelled so would be a blocker forever. ``None`` read "None"."""
+    client = _ToolClient([{"requirements": [{"text": "Titles are unique", "kind": kind}]}])
+
+    assert ledger.extract_requirements(INSTRUCTIONS, client)[0]["kind"] == ""
+
+
+_ROLE_MODELS = """from pydantic import BaseModel
+
+
+class User(BaseModel):
+    nickname: str = ""
+    email: str
+    # TODO: reject a duplicate email on registration
+"""
+_ROLE_ROUTER = """def delete_user(db, user_id):
+    raise HTTPException(status_code=501, detail="Not implemented")
+"""
+
+
+@pytest.mark.parametrize("kind, text, evidence", [
+    ("uniqueness", "A user's email must be unique", "app/models.py: nickname: str; email: str"),
+    ("uniqueness", "A user's email must be unique",
+     "app/models.py: nickname: str; # TODO: reject a duplicate email on registration"),
+    ("uniqueness", "A user's email must be unique",
+     [{"path": "app/models.py", "line": "nickname: str; email: str"}]),
+    ("action", "An admin can delete a user",
+     [{"path": "app/router.py",
+       "line": 'raise HTTPException(; raise HTTPException(status_code=501, detail="Not implemented")'}]),
+])
+def test_a_fragment_cited_first_does_not_skip_the_role_check(tmp_path, kind, text, evidence):
+    """A part matched only inside a line came first, the loop stopped there, and a
+    declaration, a comment or a 501 stub behind it passed as the implementation."""
+    from besser.spec_driven_agent.planning.requirements_ledger import verify_evidence
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "models.py").write_text(_ROLE_MODELS, encoding="utf-8")
+    (tmp_path / "app" / "router.py").write_text(_ROLE_ROUTER, encoding="utf-8")
+    [verdict] = verify_evidence([{"id": 1, "kind": kind, "text": text, "status": "implemented",
+                                  "evidence": evidence}], str(tmp_path))
+    assert verdict["status"] == "unverified"
+

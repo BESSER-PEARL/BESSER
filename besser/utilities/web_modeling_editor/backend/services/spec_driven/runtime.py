@@ -23,6 +23,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_manag
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartRunRegistry,
+    _locate_run_temp_dir,
 )
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
@@ -121,7 +122,10 @@ class SpecDrivenRuntime:
         cap = settings.llm_max_concurrent_runs
         return cls(
             registry=SmartRunRegistry(),
-            durable_runs=DurableRunManager(store or SqliteRunEventStore(default_store_path(settings))),
+            durable_runs=DurableRunManager(store or SqliteRunEventStore(
+                default_store_path(settings),
+                has_checkpoint=lambda run_id: _locate_run_temp_dir(run_id) is not None,
+            )),
             slots=RunSlots(cap),
             active_runs=ActiveRuns(),
             # A little above the cap, so every admitted run gets its own thread.

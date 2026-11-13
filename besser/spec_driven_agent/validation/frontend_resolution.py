@@ -38,13 +38,17 @@ from pygments.util import ClassNotFound
 _EXCLUDED_DIRS = {"node_modules", ".git", ".venv", "venv", "__pycache__",
                   "dist", "build", ".next", "out", "coverage", "target"}
 _SOURCE_EXT = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
-_RESOLVE_EXT = ("", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json",
-                ".css", ".scss", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+# ".d.ts": `import type { Book } from './types'` is erased before anything loads it.
+_RESOLVE_EXT = ("", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".d.ts",
+                ".json", ".css", ".scss", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+# A JS specifier that a TS project writes for its TS source (NodeNext style).
+_TS_SOURCE_FOR = {".js": (".ts", ".tsx"), ".jsx": (".ts", ".tsx"), ".mjs": (".mts",), ".cjs": (".cts",)}
 
-# from/import/require/dynamic-import specifiers
+# from/import/require/dynamic-import specifiers; one followed by "+" is only
+# the prefix of a path built at runtime (``import('./pages/' + name)``).
 _SPEC_RE = re.compile(
     r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)"""
-    r"""(['"])([^'"\n]+)\1""")
+    r"""(['"])([^'"\n]+)\1(?!\s*\+)""")
 
 _NODE_BUILTINS = {
     "assert", "buffer", "child_process", "cluster", "console", "constants",
@@ -56,6 +60,9 @@ _NODE_BUILTINS = {
 
 # Packages a bundler or framework provides without a package.json entry.
 _IMPLICIT_PACKAGES = {"react/jsx-runtime", "react/jsx-dev-runtime", "vite/client"}
+
+# The JSX-without-React finding names this many files; the fix is one config line.
+_JSX_FILES_LISTED = 8
 
 @lru_cache(maxsize=16)
 def _lexer_for(suffix: str) -> Lexer:
@@ -163,13 +170,8 @@ def _resolves(base_dir: str, spec: str) -> bool:
         for ext in _RESOLVE_EXT[1:]:
             if os.path.isfile(os.path.join(target, "index" + ext)):
                 return True
-    # A ".js" specifier that a TS project writes for a ".ts" source.
     stem, ext = os.path.splitext(target)
-    if ext in (".js", ".jsx"):
-        for alt in (".ts", ".tsx"):
-            if os.path.isfile(stem + alt):
-                return True
-    return False
+    return any(os.path.isfile(stem + alt) for alt in _TS_SOURCE_FOR.get(ext, ()))
 
 
 def _has_path_aliases(project_dir: str) -> bool:
@@ -193,10 +195,17 @@ def _registers_vite_react_plugin(config: str) -> bool:
     Declaring ``@vitejs/plugin-react`` in package.json, or naming it in a
     comment, leaves Vite on esbuild's classic transform.
     """
-    for binding in re.findall(
-            r"""import\s+(\w+)\s+from\s+['"](?:@vitejs/plugin-react(?:-swc)?|@preact/preset-vite)['"]""",
-            config):
-        if re.search(rf"\bplugins\s*:\s*\[[^\]]*\b{binding}\s*\(", config):
+    # Imported here so the module stays runnable as a stdlib-only script.
+    from besser.spec_driven_agent.validation.frontend_source import match_bracket
+
+    bindings = re.findall(
+        r"""import\s+(\w+)\s+from\s+['"](?:@vitejs/plugin-react(?:-swc)?|@preact/preset-vite)['"]""",
+        config)
+    for match in re.finditer(r"\bplugins\s*:\s*\[", config):
+        # Bracket-balanced: an earlier plugin's options may hold a "]".
+        end = match_bracket(config, match.end() - 1)
+        plugins = config[match.end():end]  # end None: the rest of the file
+        if any(re.search(rf"\b{binding}\s*\(", plugins) for binding in bindings):
             return True
     return False
 
@@ -286,10 +295,12 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 source = _stripped_source(path)
                 rel_file = os.path.relpath(path, project_dir).replace("\\", "/")
 
-                for _, spec in _SPEC_RE.findall(source):
+                for _, written in _SPEC_RE.findall(source):
+                    # Vite drops a query suffix (?react, ?raw, ?url, ...) before resolving.
+                    spec = written.split("?", 1)[0]
                     if spec.startswith("."):
                         if not _resolves(folder, spec):
-                            missing_paths.append((rel_file, spec))
+                            missing_paths.append((rel_file, written))
                     elif spec.startswith("/") or spec.startswith("~") or spec.startswith("#"):
                         continue  # root/alias-relative: a bundler decides
                     else:
@@ -315,15 +326,20 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 f"frontend dependency: {prefix}{rel_file} imports the package '{package}', "
                 f"which is not declared in {prefix}package.json. Nothing installs it, so "
                 f"the import fails at load. Add it to dependencies or stop importing it.")
-        for rel_file in sorted(set(jsx_without_react)):
+        if jsx_without_react:
+            # One finding per project: the cause is the project's config.
+            shown = sorted(set(jsx_without_react))
+            listed = ", ".join(prefix + rel for rel in shown[:_JSX_FILES_LISTED])
+            if len(shown) > _JSX_FILES_LISTED:
+                listed += f" and {len(shown) - _JSX_FILES_LISTED} more"
             issues.append(
-                f"frontend contract: {prefix}{rel_file} contains JSX but does not import "
+                f"frontend contract: {listed} contain JSX but do not import "
                 f"React, and this project configures no automatic JSX runtime (react() is not "
                 f"registered in vite.config's plugins: [...] - declaring @vitejs/plugin-react "
                 f"or mentioning it in a comment does not enable it - and no \"jsx\": "
                 f"\"react-jsx\"). The classic transform emits React.createElement and every "
                 f"page dies with 'React is not defined'. Import the plugin and add react() "
-                f"to plugins, or add 'import React from \"react\"' to the file.")
+                f"to plugins, or add 'import React from \"react\"' to each file.")
 
     return issues
 

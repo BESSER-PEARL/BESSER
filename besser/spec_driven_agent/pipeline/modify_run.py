@@ -60,7 +60,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
-from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run
+from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run, unresolved_defects
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
 from besser.utilities.workspace_fs import open_plain
 
@@ -220,30 +220,8 @@ class ModifyRunMixin:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="seed_forward", message=issue,
                 )
-        # Feed the tool's OWN structural findings that match the reported
-        # target into Phase 2 as explicit fix instructions, so the LLM acts
-        # on the concrete defect (e.g. "the Watchlist create form is not
-        # wired") instead of only the user's paraphrase. Empty on a
-        # non-fix modify run and on run()/resume().
-        fix_seed_issues = self._fix_run_scoped_issues()
-        if fix_seed_issues:
-            for issue in fix_seed_issues:
-                self._trace.write(
-                    EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue,
-                )
-        # The model change leads the issues, after the reported failure's
-        # headline in a fix run.
-        leading = [note for note in (model_note, regeneration_note) if note]
-        if leading and fix_seed_issues:
-            leading = fix_seed_issues[:1] + leading
-            fix_seed_issues = fix_seed_issues[1:]
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
-        self._run_phase2(
-            instructions,
-            extra_issues=(
-                leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
-            ),
-        )
+        self._run_phase2(instructions, extra_issues=self._modify_scoped_issues(phase1_issues))
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,
             stop_reason=self._phase2_stop_reason,
@@ -298,6 +276,25 @@ class ModifyRunMixin:
             validation_issues=len(self._validation_issues),
         )
         return self.output_dir
+
+    def _modify_scoped_issues(self, phase1_issues: list[str]) -> list[str]:
+        """The issues a modify run's Phase 2 opens with; its resume rebuilds them."""
+        # The tool's OWN structural findings that match the reported target,
+        # as explicit fix instructions, so the LLM acts on the concrete defect
+        # (e.g. "the Watchlist create form is not wired") instead of only the
+        # user's paraphrase. Empty on a non-fix modify run.
+        fix_seed_issues = self._fix_run_scoped_issues()
+        for issue in fix_seed_issues:
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue)
+        # The model change leads the issues, after the reported failure's
+        # headline in a fix run. A resume has no regeneration note: the
+        # restored inventory carries it.
+        regeneration_note = self._regeneration.note() if self._regeneration else ""
+        leading = [note for note in (self._render_model_change(), regeneration_note) if note]
+        if leading and fix_seed_issues:
+            leading = fix_seed_issues[:1] + leading
+            fix_seed_issues = fix_seed_issues[1:]
+        return leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
 
     def _render_model_change(self) -> str:
         """Every model change since the seed run, so the edit follows the new
@@ -445,17 +442,30 @@ class ModifyRunMixin:
             self._seed_converted_rules = set(converted)
             self._seed_dropped_rules = [
                 i for i in recipe.get("model_conversion_issues") or [] if is_dropped_by_model_change(i)]
-        # Seed-issue forwarding: blockers the seed run could not fix are
+        # Seed-issue forwarding: defects the seed run could not fix are
         # THIS run's opening tasks. Blockers only — warnings/style would
-        # bloat the prompt with ruff noise and dilute the real debt.
+        # bloat the prompt with ruff noise and dilute the real debt. Not
+        # forwarded either: unknowns (``unresolved_defects``), the model
+        # contract (Phase 0 checks the current model) and the runtime gate's
+        # verdict (it quotes findings forwarded on their own).
         try:
-            self._seed_unresolved_issues = [
-                f"Unresolved from the previous run: {i.get('message', '')}"
+            seed_blockers = [
+                ValidationIssue("blocker", i["message"])
                 for i in recipe.get("validation_issues", [])
                 if isinstance(i, dict)
                 and i.get("severity") == "blocker"
-                and i.get("message")
+                and isinstance(i.get("message"), str) and i["message"]
             ]
+            forwarded = [
+                i for i in unresolved_defects(seed_blockers)
+                if not i.message.startswith(("model contract:", self._RUNTIME_GATE_PREFIX))
+            ]
+            if len(forwarded) < len(seed_blockers):
+                logger.info(
+                    "Seed run: %d of %d blocker(s) not forwarded (unknowns, model contract, runtime gate)",
+                    len(seed_blockers) - len(forwarded), len(seed_blockers))
+            self._seed_unresolved_issues = [
+                f"Unresolved from the previous run: {i.message}" for i in forwarded]
         except Exception:
             logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:
@@ -562,10 +572,14 @@ class ModifyRunMixin:
         if not self._modify_mode:
             return None
         change = getattr(self, "_model_change", None)
+        converted = getattr(self, "_seed_converted_rules", None)
         return {
             "seed_generator_used": self._seed_generator_used,
-            "generator_files": sorted(self.executor._generator_files),
             "seed_llm_modified": sorted(self._seed_llm_modified),
+            # The seed recipe's findings. The run's own recipe may replace it before a resume.
+            "seed_unresolved_issues": self._seed_unresolved_issues,
+            "seed_converted_rules": sorted(converted) if converted is not None else None,
+            "seed_dropped_rules": getattr(self, "_seed_dropped_rules", []),
             "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
             "previous_target": self._previous_target.to_dict() if self._previous_target else None,
             "model_change": (
@@ -582,8 +596,6 @@ class ModifyRunMixin:
         self._modify_mode = True
         self.executor.enable_modify_guard()
         self._seed_generator_used = state.get("seed_generator_used")
-        self.executor._generator_files.update(
-            p for p in state.get("generator_files") or [] if isinstance(p, str))
         self._seed_llm_modified.update(
             p for p in state.get("seed_llm_modified") or [] if isinstance(p, str))
         fix_target = state.get("fix_target")
@@ -593,6 +605,13 @@ class ModifyRunMixin:
         self._is_fix_run = self._fix_target is not None
         self._previous_target = Target.from_payload(state.get("previous_target"))
         self._model_change = model_change_from_dict(state.get("model_change"))
+        self._seed_unresolved_issues = [
+            i for i in state.get("seed_unresolved_issues") or [] if isinstance(i, str)]
+        converted = state.get("seed_converted_rules")
+        self._seed_converted_rules = set(converted) if isinstance(converted, list) else None
+        self._seed_dropped_rules = [
+            i for i in state.get("seed_dropped_rules") or [] if isinstance(i, dict)]
+        self._mark_rules_broken_by_model_change()
         classes = state.get("model_sync_classes")
         if isinstance(classes, list) and classes and self.domain_model is not None:
             self._model_sync_classes = classes
@@ -621,7 +640,7 @@ class ModifyRunMixin:
         LLM knows the success criterion even when nothing structural
         matched), then appends the tool's OWN structural findings on the
         SEED workspace that match the target (acceptance matrix +
-        data-contract lint). Empty on a non-fix run and on run()/resume().
+        data-contract lint). Empty on a non-fix run and on run().
         """
         if not self._is_fix_run or self._fix_target is None:
             return []

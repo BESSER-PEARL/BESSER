@@ -191,3 +191,35 @@ def test_modify_runs_the_model_contract_check(tmp_path, monkeypatch):
     assert _contract_blockers(orch), (
         "modify() shipped without ever checking the model contract"
     )
+
+
+# --------------------------------------------------------------- resume()
+
+
+def test_resume_keeps_the_model_contract_blocker(tmp_path, monkeypatch):
+    """resume() never rebuilt ``_model_contract_issues``, so its clean Phase 3
+    erased the blocker and the resumed run reported complete."""
+    crashed = LLMOrchestrator(
+        llm_client=_Client(), domain_model=_cyclic_model(), output_dir=str(tmp_path),
+        enable_tracing=False, enable_checkpointing=True,
+    )
+    crashed._project_fingerprint = crashed._compute_project_fingerprint("Build a hotel API")
+    crashed._collect_model_contract_issues()
+    crashed._save_checkpoint_for_turn(1, [{"role": "user", "content": "Build"}], "Build a hotel API")
+
+    resumed = LLMOrchestrator(
+        llm_client=_Client(), domain_model=_cyclic_model(), output_dir=str(tmp_path),
+        enable_tracing=False, enable_checkpointing=True,
+    )
+    _neutralise_phase3(resumed, monkeypatch, [])
+    for name, stub in {
+        "_run_phase2": lambda instructions, extra_issues=None: None,
+        "_create_snapshot": lambda: None,
+        "_remove_snapshot": lambda: None,
+        "_save_recipe": lambda instructions, elapsed: None,
+    }.items():
+        monkeypatch.setattr(resumed, name, stub)
+    resumed.resume("Build a hotel API")
+
+    assert len(_contract_blockers(resumed)) == 1
+    assert resumed._model_contract_issues

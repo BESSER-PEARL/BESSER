@@ -120,3 +120,64 @@ def test_a_local_variable_is_not_treated_as_a_payload(tmp_path):
         "    booking = Booking()\n"
         "    return booking.anything\n"
     )) == []
+
+
+def test_pydantic_api_on_a_payload_is_not_a_missing_field(tmp_path):
+    """``model_dump`` and friends are the model's API, not schema fields."""
+    assert _app(tmp_path, (
+        "async def create_booking(payload: BookingCreate):\n"
+        "    data = payload.model_dump(exclude_unset=True)\n"
+        "    return payload.model_copy(update=data), payload.model_fields_set\n"
+    )) == []
+
+
+def test_a_data_parameter_annotated_as_an_update_schema_is_not_judged_as_create(tmp_path):
+    """The annotation names the schema; the ``_data`` name guess must not override it."""
+    schemas = _SCHEMAS + (
+        "\n"
+        "class BookingUpdate(BaseModel):\n"
+        "    status: str | None = None\n"
+    )
+    assert _app(tmp_path, (
+        "async def update_booking(booking_id: int, booking_data: BookingUpdate):\n"
+        "    return booking_data.status\n"
+        "\n"
+        "async def patch_booking(booking_data: Annotated[BookingUpdate, Body()]):\n"
+        "    return booking_data.status\n"
+        "\n"
+        "async def raw_booking(booking_data: dict = Body(...)):\n"
+        "    return booking_data.get('status')\n"
+    ), schemas) == []
+
+
+def test_a_local_named_like_a_payload_is_not_a_payload(tmp_path):
+    """The name guess applies to parameters, not to locals built in the body."""
+    assert _app(tmp_path, (
+        "async def read_booking(booking_id: int):\n"
+        "    booking_data = {'id': booking_id}\n"
+        "    return booking_data.get('id')\n"
+        "\n"
+        "async def create_booking(booking_data):\n"
+        "    booking_data = booking_data.model_dump()\n"
+        "    return booking_data.get('id')\n"
+    )) == []
+
+
+def test_an_unannotated_data_parameter_is_still_checked(tmp_path):
+    """The boundary: narrowing the guess must keep the true positive."""
+    issues = _app(tmp_path, (
+        "async def create_booking(booking_data):\n"
+        "    payload = booking_data.model_dump()\n"
+        "    return Booking(id=booking_data.id, **payload)\n"
+    ))
+
+    assert len(issues) == 1, issues
+    assert "BookingCreate does not define `id`" in issues[0]
+
+
+def test_an_injected_data_parameter_is_not_a_payload(tmp_path):
+    """``booking_data = Depends(...)`` is whatever the dependency returns."""
+    assert _app(tmp_path, (
+        "async def create_booking(booking_data=Depends(parse_booking)):\n"
+        "    return booking_data.id\n"
+    )) == []

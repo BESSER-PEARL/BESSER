@@ -43,6 +43,8 @@ verifying the recipes of recorded runs:
 """
 from __future__ import annotations
 
+import pytest
+
 from besser.BUML.metamodel.structural import (
     BinaryAssociation,
     Class,
@@ -204,6 +206,21 @@ class TestDropPresentAttributes:
         assert task in noted, "the requirement itself must survive"
         assert "already declares this attribute" in noted
         assert "focus on the requested BEHAVIOUR" in noted
+
+    @pytest.mark.parametrize("task", [
+        "Add a unique constraint on the 'maxOccupancy' attribute of the Room class "
+        "so a duplicate value is rejected with HTTP 409.",
+        "Add a 'maxOccupancy' attribute check to RoomCreate: reject values below 1 with HTTP 422.",
+        "Add an index and a case-insensitive search on the 'email' attribute of Person to GET /person.",
+        # The rule sits in the task's second sentence.
+        "Add the 'settled' attribute to Bill. Refuse a payment on a settled bill with HTTP 409.",
+    ])
+    def test_a_rule_about_a_present_attribute_is_annotated_not_dropped(self, task):
+        """Naming an existing attribute does not make its rule present: the
+        rule is the work, and dropping it pushes it to Phase 3's judge."""
+        [noted] = _drop_present_attributes([task], _hotel_model())
+        assert noted.startswith(task)
+        assert "already declares this attribute" in noted
 
     # ---- negative tests -------------------------------------------------
 

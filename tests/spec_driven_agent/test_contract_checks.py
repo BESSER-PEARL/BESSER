@@ -101,6 +101,32 @@ def test_parseint_on_id_is_advisory_when_model_also_has_int_ids():
     assert not findings[0].blocker
 
 
+def test_parseint_is_advisory_when_a_class_has_a_surrogate_int_id():
+    """Author declares no id, so it gets the server's integer `id` and
+    `parseInt(authorId)` may be right."""
+    book = Class(name="Book")
+    book.attributes = {Property(name="isbn", type=StringType, is_id=True)}
+    author = Class(name="Author")
+    author.attributes = {Property(name="name", type=StringType)}
+    contract = build_data_contract(DomainModel(name="Lib", types={book, author}))
+    assert contract.has_int_ids
+    findings = lint_file(
+        "frontend/src/pages/Authors.tsx", "const id = parseInt(authorId, 10);", contract,
+    )
+    assert [f.blocker for f in findings] == [False]
+
+
+def test_an_inherited_string_id_is_not_a_surrogate_int():
+    from besser.BUML.metamodel.structural import Generalization
+    person = Class(name="Person")
+    person.attributes = {Property(name="code", type=StringType, is_id=True)}
+    clerk = Class(name="Clerk")
+    contract = build_data_contract(DomainModel(
+        name="Staff", types={person, clerk},
+        generalizations={Generalization(general=person, specific=clerk)}))
+    assert not contract.has_int_ids
+
+
 def test_parseint_on_non_id_is_not_flagged():
     contract = build_data_contract(_string_id_model())
     findings = lint_file(
@@ -138,7 +164,11 @@ def test_fake_executed_is_blocker():
 
 
 def test_create_schema_with_server_owned_fields_is_blocker():
-    contract = build_data_contract(_string_id_model())
+    # Reservation declares no id, so its `id` is the server's surrogate. (A
+    # DECLARED `id` is client-supplied: see the scaffold test below.)
+    reservation = Class(name="Reservation")
+    reservation.attributes = {Property(name="date", type=StringType)}
+    contract = build_data_contract(DomainModel(name="Hotel", types={reservation}))
     content = (
         "class ReservationCreate(BaseModel):\n"
         "    id: str\n"
@@ -149,6 +179,54 @@ def test_create_schema_with_server_owned_fields_is_blocker():
     flagged = sorted(f.message.split("`")[1] for f in findings)
     assert flagged == ["created_at", "id"]
     assert all(f.blocker for f in findings)
+
+
+@pytest.mark.parametrize("id_type", [IntegerType, StringType])
+def test_scaffold_create_schema_with_declared_id_is_not_flagged(tmp_path, id_type):
+    """The generator puts a declared `id` in OrderCreate and its create
+    endpoint reads `order_data.id`; flagging it asks for an edit that the
+    router check then reports as a 500."""
+    order = Class(name="Order")
+    order.attributes = {
+        Property(name="id", type=id_type, is_id=True),
+        Property(name="label", type=StringType),
+    }
+    model = DomainModel(name="Shop", types={order})
+    executor = ToolExecutor(workspace=str(tmp_path), domain_model=model)
+    assert json.loads(executor.execute("generate_fastapi_backend", {}))["status"] == "ok"
+    pydantic = (tmp_path / "backend" / "pydantic_classes.py").read_text(encoding="utf-8")
+    assert f"    id: {id_type.name}  # the id" in pydantic
+    shim = types.SimpleNamespace(output_dir=str(tmp_path), domain_model=model)
+    assert LLMOrchestrator._collect_data_contract_issues(shim) == []
+
+
+def test_declared_id_exempts_only_its_own_create_schema():
+    order = Class(name="Order")
+    order.attributes = {Property(name="id", type=StringType, is_id=True)}
+    item = Class(name="OrderItem")  # surrogate id: server-owned
+    item.attributes = {Property(name="sku", type=StringType)}
+    contract = build_data_contract(DomainModel(name="Shop", types={order, item}))
+    content = (
+        "class OrderCreate(BaseModel):\n"
+        "    id: str\n"
+        "class OrderItemCreate(BaseModel):\n"
+        "    id: int\n"
+    )
+    findings = lint_file("backend/pydantic_classes.py", content, contract)
+    assert [(f.line, f.blocker) for f in findings] == [(4, True)]
+
+
+def test_create_schema_server_owned_check_reads_fields_not_text():
+    contract = build_data_contract(_string_id_model())
+    content = (
+        "class OrderItemCreate(BaseModel):\n"
+        '    """Payload for a new item.\n'
+        "    created_at: set by the server\n"
+        '    """\n'
+        "    # updated_at: never sent\n"
+        "    name: str\n"
+    )
+    assert lint_file("backend/pydantic_classes.py", content, contract) == []
 
 
 def test_create_schema_with_natural_key_is_not_flagged():
@@ -173,6 +251,21 @@ def test_int_typed_fk_param_for_string_id_class_is_blocker():
     assert all(f.blocker for f in findings)
 
 
+def test_integer_fk_to_a_table_that_only_starts_with_a_string_id_class_is_not_flagged():
+    order = Class(name="Order")
+    order.attributes = {Property(name="code", type=StringType, is_id=True)}
+    item = Class(name="OrderItem")
+    item.attributes = {Property(name="id", type=IntegerType, is_id=True)}
+    contract = build_data_contract(DomainModel(name="Shop", types={order, item}))
+    findings = lint_file(
+        "backend/sql_alchemy.py",
+        'orderitem_id = Column(Integer, ForeignKey("orderitem.id"))\n'
+        'order_id = Column(Integer, ForeignKey("order.code"))\n',
+        contract,
+    )
+    assert [(f.line, f.blocker) for f in findings] == [(2, True)]
+
+
 def test_string_fk_column_is_not_flagged():
     contract = build_data_contract(_string_id_model())
     findings = lint_file(
@@ -192,6 +285,20 @@ def test_id_int_in_entity_named_file_is_blocker():
     )
     assert len(findings) == 1
     assert findings[0].blocker
+
+
+def test_id_type_checks_skip_comments_and_docstrings():
+    contract = build_data_contract(_string_id_model())
+    content = (
+        'def get_reservation(reservation_id: str):\n'
+        '    """Was `id: int` and `guest_id: int` before the ids became strings."""\n'
+        '    # old: guest_id = Column(Integer, ForeignKey("guest.id"))\n'
+        '    return reservation_id  # reservation_id: int broke edits\n'
+        'def get_guest(id: int):\n'
+        '    pass\n'
+    )
+    findings = lint_file("backend/routers/reservation.py", content, contract)
+    assert [(f.line, f.blocker) for f in findings] == [(5, True)]
 
 
 def test_id_int_in_unrelated_file_is_not_flagged():

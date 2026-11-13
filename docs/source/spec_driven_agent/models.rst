@@ -14,7 +14,8 @@ model on the request's behalf. The free tier is gated by
 ``free_tier_available()`` / ``free_tier_model()`` and configured through the
 ``BESSER_FREE_LLM_BASE_URL``, ``BESSER_FREE_LLM_MODEL``, and
 ``BESSER_FREE_LLM_TOKEN`` environment variables (see :doc:`configuration`); the
-backend config endpoint reports it as ``free_tier: {available, model, models}``.
+backend config endpoint reports it as
+``free_tier: {available, model, models, pilot_model}``.
 
 The user pays nothing for a free-tier run, and the run card says "No cost".
 Internally, a free-tier model that draws on the deployment's provider credits
@@ -85,7 +86,8 @@ A deployment's file names only what differs from the default:
   and an optional ``price``. The model marked ``"default": true`` is what a
   run uses when the request names no model ("Recommended default" in the key
   dialog, which preselects it for ``pia`` and ``local``); without one, the
-  built-in default in the table below applies.
+  built-in default in the table below applies, and a gateway uses its first
+  model.
 - ``base_url`` makes the provider a **gateway**: its runs go to that
   OpenAI-compatible endpoint, which the server resolves, so the browser never
   holds the host. A request for a gateway carries no ``base_url`` and is not
@@ -115,9 +117,10 @@ A deployment's file names only what differs from the default:
   fallback rate, and a warning names it in the log. Add a row whenever a paid
   model joins ``BESSER_FREE_LLM_MODEL`` or ``BESSER_FREE_LLM_ALT_MODELS``: the
   fallback can be many times the real rate and stop a run early.
-- An endpoint that reports no token usage on a stream is estimated from the
-  size of the request and reply, with a warning in the log, so the cost cap
-  still counts the call. The estimate has no cache information and errs high.
+- An endpoint that reports no token usage, on a stream or on a plain call, is
+  estimated from the size of the request and reply, with a warning in the
+  log, so the cost cap still counts the call. The estimate has no cache
+  information and errs high.
 
 ``GET /besser_api/spec-driven/config`` returns the catalog's providers and
 models as ``providers`` (``id``, ``label``, ``hint``, ``key_prefix``,
@@ -144,38 +147,46 @@ The switch is sticky for the rest of the run and is surfaced to the client as a
 ``model_update`` SSE event, so the run card shows the model actually serving it
 rather than the one the run started with. Only the server-configured tiers
 (``free``, ``sponsored``) have a fallback chain; a BYOK run never switches
-models behind your back.
+models behind your back. The ``sponsored`` tier's chain is the self-hosted
+fallback endpoint alone, and a free-tier run that explicitly chose the
+fallback model has no chain: its outage is reported, not switched away from.
 
 Default models per provider
 ---------------------------
 
 The model is chosen per run. If the request doesn't specify one, the
 provider default is used: the model catalog's ``"default": true`` model when
-it marks one, otherwise the built-in default below:
+it marks one, otherwise the built-in default. The public default catalog marks
+one for ``anthropic``, ``openai`` and ``nebius``, so those are the defaults a
+stock deployment uses:
 
 .. list-table::
    :header-rows: 1
    :widths: 18 30 26 26
 
    * - Provider
-     - Default model
+     - Default model (catalog / built-in)
      - Planning model
      - Override field
    * - ``anthropic``
-     - ``claude-sonnet-5``
+     - ``claude-sonnet-5-5`` / ``claude-sonnet-5``
      - ``claude-haiku-4-5``
      - ``llm_model``
    * - ``openai``
-     - ``gpt-4o``
+     - ``gpt-6-sol`` / ``gpt-4o``
      - ``gpt-6-luna``
      - ``llm_model``
    * - ``mistral``
-     - ``mistral-large-latest``
+     - ``mistral-large-latest`` (built-in; the catalog marks none)
      - ``mistral-small-latest``
      - ``llm_model``
    * - ``nebius``
-     - ``Qwen/Qwen3-30B-A3B-Instruct-2507``
+     - ``Qwen/Qwen3-30B-A3B-Instruct-2507`` (both)
      - the main model
+     - ``llm_model``
+   * - ``pia`` / ``gateway``
+     - the catalog's default for that gateway, else its first model
+     - ``gpt-6-luna``, unless the model reads as open-weight (see below)
      - ``llm_model``
    * - ``free``
      - server-configured (``BESSER_FREE_LLM_MODEL``)
@@ -185,6 +196,9 @@ it marks one, otherwise the built-in default below:
      - server-configured (``BESSER_SPONSORED_LLM_MODEL``)
      - ``gpt-6-luna``, unless the model reads as open-weight
      - ``llm_model``
+
+``GET /besser_api/spec-driven/config`` reports the resolved defaults of the
+four BYOK providers as ``default_models``.
 
 For the free tier, ``llm_model`` may only name a model the server has
 configured — the primary, one of ``BESSER_FREE_LLM_ALT_MODELS``, or the
@@ -223,21 +237,43 @@ a request shaped for them, which the client does automatically:
        tools with reasoning on, so it cannot run the tool loop on
        ``/v1/chat/completions``. A run on it fails with a message asking for a
        tool-capable model.
-   * - ``claude-fable-5-1``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
+   * - ``claude-fable-5-1``, ``claude-fable-5-2``, ``claude-mythos-5-1``,
+       ``claude-mythos-5-2``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
      - A forced tool call (planning, gap analysis, requirements ledger,
        recovery steps) is sent as ``tool_choice: auto`` with an instruction
        naming the tool, plus ``strict: true`` when it is the only tool, and is
        asked again once if the reply skips the tool. ``thinking`` is never
        sent.
-   * - ``claude-fable-5``
+   * - ``claude-fable-5``, ``claude-mythos-5``
      - Forced tool calls keep ``tool_choice``, but without
        ``thinking: disabled``, which the model rejects.
    * - ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-5-5``, ``claude-haiku-4-5``, and the
        4.x models
      - Forced tool calls use ``tool_choice`` with thinking disabled.
+   * - ``Qwen/Qwen3-30B-A3B-Instruct-2507`` (any id containing
+       ``qwen3-30b-a3b-instruct-2507``)
+     - ``temperature=0.7`` and ``top_p=0.8``, plus ``top_k=20`` and
+       ``min_p=0`` in ``extra_body``: the values its
+       ``generation_config.json`` publishes.
+   * - ``qwen3-coder`` ids (the keyless tier, self-hosted Ollama)
+     - ``temperature=0.7`` and ``top_p=0.8`` only; no ``extra_body``, since
+       those endpoints are not verified to accept it.
 
+Rows match a lowercased substring of the model id, longest marker first.
+Every ``gpt-5`` or later model (and ``o1`` / ``o3`` / ``o4``) gets
+``max_completion_tokens`` instead of ``max_tokens``, not only the ids listed.
 No sampling parameters (``temperature``, ``top_p``, ``top_k``) are sent to any
-Anthropic or OpenAI model. A reply that a provider safety classifier stops (Anthropic's
+other model, Anthropic and OpenAI ones included.
+
+Claude models from Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 on bind each
+thinking block to the conversation that produced it, and reject a replayed
+block whose earlier messages or system prompt changed. The agent therefore
+drops every thinking block from the history it sends whenever it rewrites that
+history: at a context compaction, at a history eviction, and when a run is
+resumed (the resumed prompt is rebuilt from the workspace). Text and tool
+calls are kept.
+
+A reply that a provider safety classifier stops (Anthropic's
 ``stop_reason: "refusal"``, OpenAI's ``finish_reason: "content_filter"``) ends
 the run with that reason and its category rather than an opaque provider
 error.
@@ -264,11 +300,13 @@ The cheap **planning** call (the *gap* phase, see :doc:`how_it_works`) uses the
 small sibling model above rather than the main one, so planning never costs
 more than it needs to. Cheap routing is skipped when it would not help or would
 not work: when the main model is already on the cheap tier (a ``haiku`` model
-on Anthropic, a ``mini`` / ``nano`` / ``luna`` model on OpenAI), and — on the
-OpenAI-compatible providers — when the model reads as self-hosted or
-open-weight, whose endpoint has no such sibling. That last test is name-based
-(a ``name:size`` tag, or a known open-weight family). The ``free`` tier always
-runs its planning calls on its own model. ``nebius`` opts out explicitly:
+on Anthropic, a ``mini`` / ``nano`` / ``luna`` model on OpenAI, a ``small``
+model on Mistral), and — on the OpenAI-compatible providers — when the model
+reads as self-hosted or open-weight, whose endpoint has no such sibling. That
+last test is name-based (a ``name:size`` tag, or a known open-weight family).
+The ``free`` tier runs its planning calls on its own model unless
+``BESSER_LLM_PLANNING_MODEL`` names another, which applies to every provider.
+``nebius`` opts out explicitly:
 its default is already a small-activation MoE, and the OpenAI cheap sibling
 does not exist on that endpoint.
 

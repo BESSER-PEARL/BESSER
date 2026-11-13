@@ -232,3 +232,86 @@ def test_other_pyproject_layouts_stay_clean(tmp_path, pyproject, rel, source):
     _write(tmp_path, "pyproject.toml", pyproject)
     _write(tmp_path, rel, source)
     assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+# ----------------------------------------------------------------------
+# Imports that cannot stop the app from starting
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("source", [
+    "try:\n    import uvloop\nexcept ImportError:\n    uvloop = None\n",
+    "try:\n    import tomllib\nexcept ModuleNotFoundError:\n    import tomli as tomllib\n",
+    "try:\n    import orjson_ext\nexcept (ImportError, AttributeError):\n    orjson_ext = None\n",
+    "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from mypy_boto3_s3 import S3Client\n",
+    "import typing\nif typing.TYPE_CHECKING:\n    from mypy_boto3_s3 import S3Client\n",
+])
+def test_a_guarded_import_is_not_a_missing_module(tmp_path, source):
+    """The app runs without these: the import is optional or type-only."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_an_import_under_another_handler_is_still_reported(tmp_path):
+    """Only a handler that catches the import failure makes it optional."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", (
+        "try:\n    import nonexistent_vendor_sdk\nexcept ValueError:\n    pass\n"
+        "if TYPE_CHECKING:\n    pass\nelse:\n    import sql_alchemy\n"
+    ))
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 2, problems
+
+
+@pytest.mark.parametrize("handler", [
+    "except ImportError:\n    raise\n",
+    "except ImportError as exc:\n    raise RuntimeError('config is missing') from exc\n",
+    "except Exception:\n    logging.exception('startup failed')\n    raise\n",
+])
+def test_an_import_whose_handler_re_raises_is_still_reported(tmp_path, handler):
+    """A handler that raises again does not make the import optional: the app still dies."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", "import logging\ntry:\n    from config import settings\n" + handler)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and "'config'" in problems[0], problems
+
+
+@pytest.mark.parametrize("dist,module", [
+    ("djangorestframework-simplejwt", "rest_framework_simplejwt.tokens"),
+    ("python-socketio", "socketio"),
+    ("strawberry-graphql", "strawberry"),
+    ("PyPDF2", "PyPDF2"),
+    ("pycryptodome", "Crypto.Cipher"),
+    ("google-cloud-storage", "google.cloud.storage"),
+])
+def test_a_declared_package_imported_under_another_name_is_not_missing(tmp_path, dist, module):
+    _write(tmp_path, "requirements.txt", f"fastapi\n{dist}==1.0\n")
+    _write(tmp_path, "backend/main.py", f"import {module}\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_a_declared_package_does_not_hide_a_missing_local_module(tmp_path):
+    """``sql_alchemy`` is the app's own module, not the ``sqlalchemy`` package."""
+    _write(tmp_path, "requirements.txt", "sqlalchemy\nfastapi\nstrawberry-graphql\n")
+    _write(tmp_path, "backend/main.py", "from sql_alchemy import *\nimport strawberry_utils\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 2, problems
+
+
+@pytest.mark.parametrize("source", [
+    "import sys\nif sys.version_info >= (3, 11):\n    import tomllib\nelse:\n    import tomli as tomllib\n",
+    "import contextlib\nwith contextlib.suppress(ImportError):\n    import uvloop\n",
+])
+def test_a_version_or_suppress_guarded_import_is_not_a_missing_module(tmp_path, source):
+    """A backport behind a version check, or an import whose failure is suppressed."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_a_namespace_package_nested_without_top_level_files_resolves(tmp_path):
+    """``services/`` holds only ``billing/``: still importable as a namespace package."""
+    _write(tmp_path, "backend/services/billing/invoice.py", "x = 1\n")
+    _write(tmp_path, "backend/main.py", "from services.billing.invoice import x\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []

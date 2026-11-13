@@ -15,19 +15,25 @@ verdict lands in the recipe so the reviewer sees what was NOT built.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+import keyword
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 import re
 import time
 
-from besser.spec_driven_agent.planning.code_text import code_only
+from pygments.token import Comment
+
+from besser.spec_driven_agent.planning.code_text import _lexer_for, code_only
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
 from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
+from besser.spec_driven_agent.state.generator_output import GeneratorOutputError, load_generator_output
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
@@ -53,11 +59,15 @@ _EXTRACTION_INCOMPLETE = (
 _STATUSES = ("implemented", "partial", "missing", "unverified")
 
 # What the judge reads: the schemas and the ORM first (validators, unique
-# columns), then the routers (where rules are enforced), then the pages. A
+# columns), then the backend code the model wrote or changed (where rules are
+# enforced), then generator output it never changed, then the pages. A
 # mid-sized app compacts to ~150k chars (~38k tokens); a router with nested
 # creation is ~20k on its own, so the per-file cap must hold one.
 _DIGEST_MAX_TOTAL_CHARS = 200_000
 _DIGEST_MAX_FILE_CHARS = 24_000
+# Share of the source budget kept for non-Python source (the screens): a model's
+# generated CRUD routers alone can fill the budget and hide every UI file.
+_DIGEST_UI_SHARE = 0.3
 
 # For these kinds an "implemented" verdict must cite a line that enforces
 # something; otherwise the judge marks uniqueness or capacity rules implemented
@@ -91,11 +101,18 @@ _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
 # A judge abridges a run of code as "a ... b", lists lines as "a; b", and cites
 # two places as "x.py: a and y.py: b". Each part must still be verbatim source.
 # An ellipsis may carry the comma of the arguments it left out: "f(..., x)".
-_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;\s+|\s+and\s+([\w./\\-]+\.\w{1,5}):\s")
+_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;?\s+and\s+([\w./\\-]+\.\w{1,5}):\s|;\s+(?:and\s+)?")
+# "a ... y.py: b" switches file without an "and"; only a judged file's path counts.
+_FILE_SWITCH_RE = re.compile(r"(?<!\S)([\w./\\-]+\.\w{1,5}):\s")
+# "<Plot region={r} /> which calls ...": an explanation after a closed statement
+# or element runs to the next cited file and is not matched.
+_EXPLANATION_RE = re.compile(r"(?:(?<=[);\]])|(?<=/>))\s+(?:which|that)\s.*?(?=;?\s+and\s+[\w./\\-]+\.\w{1,5}:\s|$)", re.S)
 # A part shorter than this ("pass", "}") identifies no code; it is left out.
 _MIN_PART_QUOTE = 8
 # Evidence longer than this is cut before matching (the judge is asked for one line).
 _MAX_EVIDENCE_CHARS = 2000
+# Citations a verdict may give: behaviour that spans a few lines or files.
+_MAX_CITATIONS = 6
 # A formatted statement, or a def followed by its first body line, spans lines;
 # the judge quotes it on one. Lines a quote may span: a Kotlin/Compose call
 # puts one argument per line.
@@ -127,23 +144,31 @@ def _normalise_line(line: str) -> str:
     return _collapse(line.replace("'", '"'))
 
 
-def _citation_parts(raw: str, path: str) -> list[tuple[str, str, bool]]:
+def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:
     """(path, quote, cut) for each part of an abridged or listed citation.
 
     ``cut`` when an ellipsis right after the part marks the rest of its line
-    as left out; "and other.py: b" moves the following parts to that file.
+    as left out; "and other.py: b", or "other.py: b" naming one of ``files``,
+    moves the following parts to that file.
     """
     parts: list[tuple[str, str, bool]] = []
     position = 0
-    for match in _ABRIDGED_RE.finditer(raw):
-        quote = _evidence_quote(raw[position:match.start()])
+    raw = _EXPLANATION_RE.sub("", raw)
+    bounds = [(m.start(), m.end(), m.group(1), m.group().strip().startswith(("...", "\u2026")))
+              for m in _ABRIDGED_RE.finditer(raw)] + [(len(raw), len(raw), None, False)]
+    for start, end, next_path, cut in bounds:
+        segment, offset = raw[position:start], 0
+        for switch in _FILE_SWITCH_RE.finditer(segment) if files else ():
+            if len(_resolve_cited_path(switch.group(1), "", files, {})) == 1:
+                quote = _evidence_quote(segment[offset:switch.start()])
+                if len(quote) >= _MIN_PART_QUOTE:
+                    parts.append((path, quote, False))
+                path, offset = switch.group(1), switch.end()
+        quote = _evidence_quote(segment[offset:])
         if len(quote) >= _MIN_PART_QUOTE:
-            parts.append((path, quote, match.group().strip().startswith(("...", "\u2026"))))
-        path = match.group(1) or path
-        position = match.end()
-    quote = _evidence_quote(raw[position:])
-    if len(quote) >= _MIN_PART_QUOTE:
-        parts.append((path, quote, False))
+            parts.append((path, quote, cut))
+        path = next_path or path
+        position = end
     return parts
 
 
@@ -176,6 +201,7 @@ class _Source(NamedTuple):
     tree: ast.AST | None
     diagnostics: list[dict]
     comments: set[int]
+    bare: list[str]  # normalised lines without comments; strings kept
 
 
 def _in_code(quoted: str, source: _Source, index: int) -> bool:
@@ -194,9 +220,16 @@ def _is_complete_call(quoted: str) -> bool:
             and quoted.count("(") == quoted.count(")") and quoted.count("{") == quoted.count("}"))
 
 
-def _quote_spans(quoted: str, source: _Source, cut: bool = False):
-    """1-based (first, last) source line spans whose text is the quote."""
-    normalised = source.normalised
+def _quote_spans(quoted: str, source: _Source, cut: bool = False) -> list[tuple[int, int]]:
+    """1-based (first, last) source line spans whose text is the quote, read as
+    written or else without comments (a judge leaves out a "# noqa")."""
+    spans = list(_spans_in(quoted, source, source.normalised, cut))
+    if not spans and source.bare != source.normalised:
+        spans = list(_spans_in(quoted, source, source.bare, cut))
+    return spans
+
+
+def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):
     target = _joined_strings(quoted)
     inline = _is_complete_call(quoted) or len(_collapse(code_only(quoted, source.path))) >= _MIN_INLINE_QUOTE
     for start, first in enumerate(normalised):
@@ -218,9 +251,9 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False):
             joined += normalised[end]
             span_text = _joined_strings(joined)
             # The quote may stop inside its last line (a signature quoted without
-            # its "-> T:"), never inside an earlier one.
+            # its "-> T:", anywhere when an ellipsis marks the cut), never inside an earlier one.
             if (span_text.startswith(target) and len(target) > len(earlier.rstrip('",'))
-                    and len(span_text) - len(target) <= _MAX_UNQUOTED_TAIL):
+                    and (cut or len(span_text) - len(target) <= _MAX_UNQUOTED_TAIL)):
                 yield start + 1, end + 1
                 break
             # A string piece's closing quote, or a trailing comma, waits for what
@@ -252,9 +285,11 @@ def _evidence_quote(text: str, escapes: bool = True) -> str:
 _DIGEST_SKIP_NAMES = frozenset({"bal_stdlib.py"})
 _DIGEST_SKIP_DIRS = frozenset({
     "node_modules", "dist", "build", "__pycache__", "venv", "tests", "test",
-    "__tests__", "fixtures", "coverage", "verification",
+    "__tests__", "fixtures", "coverage", "verification", "vendor",
 })
 _ARTIFACT_ROOT_DIRS = frozenset({"reports", "logs"})
+# Third-party code copied into the app: it would spend the digest's frontend share.
+_MINIFIED_NAME_RE = re.compile(r"\.min\.[cm]?js$", re.I)
 # Every language the agent is expected to produce, because this one set feeds
 # BOTH the digest the judge reads and the citation checker. A missing language
 # gives the judge an empty digest on that stack, so every requirement comes
@@ -348,6 +383,8 @@ _SUBMIT_REQUIREMENTS_TOOL = {
         "required": ["requirements"],
     },
 }
+_EXTRACTED_KINDS = frozenset(
+    _SUBMIT_REQUIREMENTS_TOOL["input_schema"]["properties"]["requirements"]["items"]["properties"]["kind"]["enum"])
 
 # The judge call (unlike the much smaller extraction call) intermittently
 # returns nothing usable within a second - an exception or empty completion,
@@ -355,6 +392,10 @@ _SUBMIT_REQUIREMENTS_TOOL = {
 # its cost against an intermittent failure.
 _JUDGE_MAX_ATTEMPTS = 2
 _JUDGE_RETRY_BACKOFF_SECONDS = 2.0
+# Revisions on which the judge may return nothing before a run stops asking:
+# its failure is a blocker no code edit fixes, so the fix loop's edits would
+# otherwise buy a fresh full-price round every pass. Matches extraction's cap.
+JUDGE_FAILED_ROUNDS_PER_RUN = 2
 
 _JUDGE_SYSTEM_PROMPT = (
     "You audit generated application code against a numbered list of "
@@ -384,11 +425,14 @@ _JUDGE_SYSTEM_PROMPT = (
     "scaffold test is not evidence that the running app is broken; configured test "
     "execution and actual test failures are a separate verification concern.\n"
     "- implemented: the code enforces or performs the behaviour. The evidence "
-    "is the file's relative path, a colon, and ONE line copied verbatim from "
-    "that file, for example: web_app/backend/routers/booking.py: raise "
-    "HTTPException(status_code=400, detail=\"at least one room is required\") "
-    "- the line that enforces or performs it: a unique=True, a validator, an "
-    "if/raise in a router, the assignment that performs a transition. A "
+    "is a list of citations, each a file's path as listed and ONE source line "
+    "copied exactly as it appears there, for example {\"path\": "
+    "\"web_app/backend/routers/booking.py\", \"line\": \"raise "
+    "HTTPException(status_code=400, detail='at least one room is required')\"}: "
+    "the line that enforces or performs it: a unique=True, a validator, an "
+    "if/raise in a router, the assignment that performs a transition. Behaviour "
+    "spanning several lines or files gets one citation per line; explanations "
+    "go in the note, never in a citation. A "
     "column, relationship or field EXISTING is not evidence that a rule "
     "about it is enforced; a comment, docstring or TODO is not an "
     "implementation. A modeled action whose body raises HTTP 501 or "
@@ -432,17 +476,22 @@ _SUBMIT_VERDICTS_TOOL = {
                         "id": {"type": "integer"},
                         "status": {"type": "string", "enum": list(_STATUSES)},
                         "evidence": {
-                            "type": "string",
-                            "maxLength": _MAX_EVIDENCE_CHARS,
+                            "type": "array", "maxItems": _MAX_CITATIONS,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "path": {"type": "string", "maxLength": 500},
+                                    "line": {"type": "string", "maxLength": _MAX_EVIDENCE_CHARS},
+                                },
+                                "required": ["path", "line"],
+                            },
                             "description": (
-                                "The file's relative path, a colon, and one "
-                                "line copied verbatim from it - the line that "
-                                "enforces or performs the requirement, e.g. "
-                                "web_app/backend/routers/room.py: raise "
-                                "HTTPException(status_code=409, detail=...)"
+                                "One citation per source line that enforces or performs the "
+                                "requirement: the file's path as listed in the code and one "
+                                "line copied exactly from it."
                             ),
                         },
-                        "note": {"type": "string"},
+                        "note": {"type": "string", "description": "Explanation; never in a citation."},
                         "inspection_paths": {
                             "type": "array", "maxItems": 5,
                             "items": {"type": "string", "maxLength": 500},
@@ -483,7 +532,8 @@ def latest_user_message(instructions: str) -> str:
 
 
 def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
-                    use_planning_model: bool = True) -> dict | None:
+                    use_planning_model: bool = True,
+                    can_call: Callable[[], bool] | None = None) -> dict | None:
     """One forced tool call (planning model first, primary on error); the
     tool's input dict, or None when the call failed or returned nothing.
 
@@ -491,6 +541,7 @@ def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
     retry's second attempt should not repeat the same cheap-sibling call
     that just failed or came back empty; on a provider with no cheap
     sibling (``planning_model`` is already ``None``) this changes nothing.
+    ``can_call`` is asked before the primary fallback, itself a paid call.
     """
     structured = _chat_supports_kwargs(llm_client, "force_tool", "model_override")
     planning_model = (
@@ -511,6 +562,10 @@ def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
     except Exception:
         if not planning_model:
             logger.warning("Requirements ledger: %s call failed", tool["name"], exc_info=True)
+            return None
+        if can_call is not None and not can_call():
+            logger.warning("Requirements ledger: %s failed on the planning model; the primary "
+                           "fallback is not sent (stopped or budget exhausted)", tool["name"], exc_info=True)
             return None
         try:
             response = _chat(None)
@@ -560,11 +615,16 @@ def extract_requirements(instructions: str, llm_client) -> list[dict] | None:
         return None
     requirements: list[dict] = []
     for item in extracted:
-        text = str(item.get("text", "") if isinstance(item, dict) else item).strip()
-        if not text:
+        # A bare string is a requirement's text; a null or non-string text is
+        # none ("None" was judged and reported as a blocker).
+        text = item.get("text") if isinstance(item, dict) else item
+        if not isinstance(text, str) or not text.strip():
             continue
-        kind = str(item.get("kind", "")) if isinstance(item, dict) else ""
-        requirements.append({"id": len(requirements) + 1, "text": text, "kind": kind})
+        kind = item.get("kind") if isinstance(item, dict) else ""
+        # No client enforces the enum, and "verification" is the harness's own
+        # undischargeable gate: an unknown kind is no kind.
+        requirements.append({"id": len(requirements) + 1, "text": text.strip(),
+                             "kind": kind if kind in _EXTRACTED_KINDS else ""})
     # Preserve every returned item, even if a provider ignores maxItems. A full
     # response may still have omitted the specification's tail; neither slicing
     # it nor treating a saturated extraction as complete is safe.
@@ -582,20 +642,42 @@ def render_requirements(requirements: list[dict] | None) -> str:
     return "\n".join(f"R{r['id']}. {r['text']}" for r in requirements or [])
 
 
-def _digest_priority(rel: str) -> tuple[int, str]:
+def _digest_priority(rel: str, untouched: frozenset[str] = frozenset()) -> tuple[int, str]:
     if rel.endswith(("pydantic_classes.py", "sql_alchemy.py")):
         return (0, rel)
-    if "/routers/" in rel or rel.startswith("routers/"):
-        return (1, rel)
-    if rel.endswith(".py"):
-        return (2, rel)
-    if "/pages/" in f"/{rel}":
-        return (3, rel)
-    return (4, rel)
+    router = "/routers/" in rel or rel.startswith("routers/")
+    if router or rel.endswith(".py"):
+        # A CRUD router as generated holds no hand-written logic; a service module does.
+        return (3 if rel in untouched else 1 if router else 2, rel)
+    if "/pages/" in f"/{rel}" or "/components/" in f"/{rel}":
+        return (4, rel)
+    return (5, rel)
+
+
+def _untouched_generator_files(output_dir: str, files: dict[str, str]) -> frozenset[str]:
+    """The judged files still byte-identical to the stored generator output."""
+    for out_dir in sorted({rel.split("/", 1)[0] for rel in files if "/" in rel}):
+        try:
+            stored = load_generator_output(output_dir, out_dir)
+        except GeneratorOutputError:
+            continue
+        if stored is None:
+            return frozenset()
+        untouched = set()
+        for rel, content in stored.files.items():
+            try:
+                if rel in files and Path(files[rel]).read_bytes() == content:
+                    untouched.add(rel)
+            except OSError:
+                continue
+        return frozenset(untouched)
+    return frozenset()
 
 
 def _source_files(output_dir: str) -> dict[str, str]:
-    """Only application source, never run logs/recipes or an escaped symlink."""
+    """Only application source, never run logs/recipes, vendored or minified
+    code or an escaped symlink. ``public/`` stays: an Express app serves its own
+    browser code from there."""
     base = Path(output_dir).resolve()
     files: dict[str, str] = {}
     for root, dirs, names in walk_plain(base):
@@ -603,7 +685,8 @@ def _source_files(output_dir: str) -> dict[str, str]:
                    and not (Path(root) == base and d in _ARTIFACT_ROOT_DIRS)]
         for name in names:
             source = Path(root, name)
-            if name.startswith(".") or not _is_judged_source(source) or _TEST_SOURCE_NAME.search(name):
+            if (name.startswith(".") or not _is_judged_source(source) or _TEST_SOURCE_NAME.search(name)
+                    or _MINIFIED_NAME_RE.search(name)):
                 continue
             try:
                 if not source.resolve().is_relative_to(base) or not source.is_file():
@@ -612,6 +695,27 @@ def _source_files(output_dir: str) -> dict[str, str]:
                 continue
             files[source.relative_to(base).as_posix()] = str(source)
     return files
+
+
+def judged_source_fingerprint(output_dir: str) -> str:
+    """Hash of every file the judge and the citation check read: path and raw bytes.
+
+    Raw bytes, not the digest: the digest is clipped (an edit past its budget
+    still reaches the citation repair) and its comment stripping is a size
+    heuristic, so a comment-only edit re-judges.
+    """
+    fingerprint = hashlib.sha256()
+    files = _source_files(output_dir)
+    # Which files are untouched generator output orders the digest.
+    fingerprint.update(json.dumps(sorted(_untouched_generator_files(output_dir, files))).encode("utf-8"))
+    for rel, full in sorted(files.items()):
+        try:
+            content = Path(full).read_bytes()
+        except OSError:
+            content = b"<unreadable>"
+        fingerprint.update(f"{rel}\0{len(content)}\0".encode("utf-8"))
+        fingerprint.update(content)
+    return fingerprint.hexdigest()
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
@@ -650,10 +754,13 @@ def _compact(content: str) -> str:
 def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -> str:
     """Bounded source with explicit coverage gaps and optional focused excerpts.
 
-    Citation repair can prioritize a few cited files and read them beyond the
-    ordinary per-file cap, while keeping the same total prompt budget.
+    Citation repair reads the cited files beyond the ordinary per-file cap,
+    plus the schema files, and lists every other file as omitted: re-judging
+    a few requirements against the whole app cost as much as the full
+    judgment. With no resolvable focus path it falls back to the whole app.
     """
     files = _source_files(output_dir)
+    untouched = _untouched_generator_files(output_dir, files)
     focused = set()
     for path in (focus_paths or [])[:10]:
         if not isinstance(path, str):
@@ -664,11 +771,18 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
         candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
         if path and len(candidates) == 1:
             focused.add(candidates[0])
+    if focus_paths and not focused:
+        logger.warning("Requirements ledger: no cited path resolved for citation repair; "
+                       "the repair reads the whole app")
     footer_budget = min(6000, max(256, _DIGEST_MAX_TOTAL_CHARS // 10), _DIGEST_MAX_TOTAL_CHARS)
     source_budget = _DIGEST_MAX_TOTAL_CHARS - footer_budget
     entries = []
     unreadable = []
+    omitted_by_focus: list[str] = []
     for rel, full in files.items():
+        if focused and rel not in focused and _digest_priority(rel)[0] != 0:
+            omitted_by_focus.append(rel)
+            continue
         if Path(full).name in _DIGEST_SKIP_NAMES:
             unreadable.append(rel)
             continue
@@ -687,18 +801,26 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
         if truncated:
             chunk += (f"\n[DIGEST TRUNCATED: {rel}; showing {cap} of {len(content)} code characters. "
                       "Do not infer absence from omitted code.]\n")
-        entries.append(((0 if rel in focused else 1, *_digest_priority(rel)), rel, chunk, truncated))
+        entries.append(((0 if rel in focused else 1, *_digest_priority(rel, untouched)), rel, chunk, truncated))
     entries.sort(key=lambda e: e[0])
-    parts: list[str] = []
+    reserved: set[str] = set()
     total = 0
-    omitted = list(unreadable)
+    if not focused:  # pages and components first, then the rest of the non-Python source
+        ui_budget = int(source_budget * _DIGEST_UI_SHARE)
+        for key, rel, chunk, _ in entries:
+            if key[1] >= 4 and total + len(chunk) + 2 <= ui_budget:
+                reserved.add(rel)
+                total += len(chunk) + 2
+    parts: list[str] = []
+    omitted = unreadable + omitted_by_focus
     truncated_paths = []
     for _, rel, chunk, truncated in entries:
-        if total + len(chunk) + 2 > source_budget:
-            omitted.append(rel)
-            continue
+        if rel not in reserved:
+            if total + len(chunk) + 2 > source_budget:
+                omitted.append(rel)
+                continue
+            total += len(chunk) + 2
         parts.append(chunk)
-        total += len(chunk) + 2
         if truncated:
             truncated_paths.append(rel)
     footer = (
@@ -706,6 +828,8 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
         f"Files shown: {len(parts)}; truncated excerpts: {len(truncated_paths)}; "
         f"omitted/unreadable files: {len(omitted)}.\n"
         "Omitted or truncated code is unknown, not evidence of absent behavior.\n"
+        + ("This is a focused excerpt: only the cited files and the schema files are shown; "
+           "the rest of the application is omitted, not absent.\n" if omitted_by_focus else "")
         + ("Truncated files: " + ", ".join(truncated_paths) + "\n" if truncated_paths else "")
         + ("Omitted files: " + ", ".join(omitted) + "\n" if omitted else "")
     )
@@ -714,22 +838,67 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     return "\n\n".join(parts) + footer[:footer_budget]
 
 
+# The listing names requirements "R1. text"; a judge may echo "R1" or "1.".
+_VERDICT_ID_RE = re.compile(r"\s*[Rr#]?(\d+)\.?\s*")
+
+
+def _verdict_id(value) -> int | None:
+    """A verdict's requirement id, or None. ``int()`` alone rejected "R1" and
+    truncated 1.5 and True to requirement 1."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    match = _VERDICT_ID_RE.fullmatch(value) if isinstance(value, str) else None
+    return int(match.group(1)) if match else None
+
+
+def _parse_evidence(value) -> str | list[dict]:
+    """``[{"path", "line"}, ...]`` from the tool's citations; a string (a text
+    reply, or a citation sent as "path: line") keeps the older string form."""
+    if not isinstance(value, list):
+        return str(value or "").strip()
+    citations = []
+    for citation in value:
+        if isinstance(citation, str):
+            path, _, line = citation.partition(":")
+            citation = {"path": path, "line": line}
+        if isinstance(citation, dict):
+            citations.append({"path": str(citation.get("path") or "").strip(),
+                              "line": str(citation.get("line") or "").strip()})
+    return citations
+
+
+def render_evidence(evidence) -> str:
+    """A verdict's evidence as ``path: line``, citations joined by " and "; a
+    string (the older stored form) as it is."""
+    if isinstance(evidence, list):
+        return " and ".join(f"{c.get('path', '')}: {c.get('line', '')}" for c in evidence if isinstance(c, dict))
+    return str(evidence or "")
+
+
+def cited_paths(evidence) -> list[str]:
+    """The source paths a verdict's evidence names."""
+    if isinstance(evidence, list):
+        return [str(c.get("path") or "").strip() for c in evidence if isinstance(c, dict)]
+    return [str(evidence or "").split(":", 1)[0].strip()]
+
+
 def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
-                use_planning_model: bool) -> dict[int, dict]:
+                use_planning_model: bool, can_call: Callable[[], bool] | None = None) -> dict[int, dict]:
     """One judge call parsed into ``{id: verdict}``; empty when the call
     raised, came back with no tool call, or parsed to nothing usable."""
     payload = _call_with_tool(
         llm_client, _JUDGE_SYSTEM_PROMPT, judge_prompt, _SUBMIT_VERDICTS_TOOL,
-        use_planning_model=use_planning_model,
+        use_planning_model=use_planning_model, can_call=can_call,
     )
     verdicts: dict[int, dict] = {}
     for item in (payload or {}).get("verdicts") or []:
         if not isinstance(item, dict):
             continue
-        try:
-            rid = int(item.get("id"))
-        except (TypeError, ValueError):
-            continue
+        rid = _verdict_id(item.get("id"))
         if rid not in by_id:
             continue
         status = str(item.get("status", "")).lower()
@@ -738,7 +907,7 @@ def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
             "text": by_id[rid]["text"],
             "kind": by_id[rid].get("kind", ""),
             "status": status if status in _STATUSES else "unverified",
-            "evidence": str(item.get("evidence") or "").strip(),
+            "evidence": _parse_evidence(item.get("evidence")),
             "note": str(item.get("note") or "").strip(),
             "inspection_paths": [path[:500] for path in item.get("inspection_paths", [])
                                  if isinstance(path, str)][:5]
@@ -749,8 +918,13 @@ def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
 
 def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                    original_spec: str | None = None,
-                   previous_verdicts: list[dict] | None = None) -> list[dict] | None:
-    """One verdict per requirement, or None when the call failed."""
+                   previous_verdicts: list[dict] | None = None,
+                   can_call: Callable[[], bool] | None = None) -> list[dict] | None:
+    """One verdict per requirement, or None when the call failed.
+
+    ``can_call`` (the run's stop and spend check) is asked before every paid
+    call: an attempt, the retry and the primary fallback each carry the digest.
+    """
     if not requirements or not _is_real_provider(llm_client):
         return None
     application_requirements = [r for r in requirements if r.get("kind") != "verification"]
@@ -762,7 +936,7 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                  + original_request(original_spec) + "\n\n") if original_spec else ""
     requested_ids = {r["id"] for r in application_requirements}
     feedback = [{"id": item.get("id"),
-                 "rejected_evidence": str(item.get("evidence") or "")[:1500],
+                 "rejected_evidence": render_evidence(item.get("evidence"))[:1500],
                  "verification_feedback": str(item.get("note") or "")[:1500]}
                 for item in previous_verdicts or []
                 if isinstance(item, dict) and item.get("id") in requested_ids][:_MAX_REQUIREMENTS]
@@ -779,7 +953,12 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
         # empty. Bounded to _JUDGE_MAX_ATTEMPTS: every attempt is a full,
         # paid call carrying the whole digest.
         for attempt in range(_JUDGE_MAX_ATTEMPTS):
-            verdicts = _judge_once(llm_client, judge_prompt, by_id, use_planning_model=attempt == 0)
+            if can_call is not None and not can_call():
+                logger.warning("Requirements ledger: judge attempt %d/%d not sent (stopped or "
+                               "budget exhausted)", attempt + 1, _JUDGE_MAX_ATTEMPTS)
+                break
+            verdicts = _judge_once(llm_client, judge_prompt, by_id,
+                                   use_planning_model=attempt == 0, can_call=can_call)
             if verdicts or attempt + 1 >= _JUDGE_MAX_ATTEMPTS:
                 break
             logger.warning(
@@ -914,6 +1093,16 @@ def _noop_validator(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return True
 
 
+# A JSX comment is written as an expression: {/* note */}. A brace on its own
+# line ("catch (e) {\n /* ignore */\n}") opens a JS block, not a JSX comment.
+_JSX_COMMENT_RE = re.compile(r"\{[ \t]*(/\*(?:(?!\*/)[\s\S])*\*/)[ \t]*\}")
+
+
+def _blank_jsx_comment_braces(text: str) -> str:
+    """``{/* note */}`` as `` /* note */ ``: every offset and line break kept."""
+    return _JSX_COMMENT_RE.sub(lambda match: " " + match.group()[1:-1] + " ", text)
+
+
 def _comment_only_lines(source: str, suffix: str) -> set[int]:
     """Recognise comments in their source language, not by a shared prefix.
 
@@ -921,6 +1110,8 @@ def _comment_only_lines(source: str, suffix: str) -> set[int]:
     Mask C-style/SQL comments while skipping quoted strings, so interior lines
     of block comments cannot masquerade as code citations either.
     """
+    if suffix in (".js", ".jsx", ".tsx"):
+        source = _blank_jsx_comment_braces(source)
     lines = source.splitlines()
     if suffix == ".py":
         return {i for i, line in enumerate(lines, 1) if line.lstrip().startswith("#")}
@@ -988,6 +1179,19 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
     return statement, ""
 
 
+def _without_comments(text: str, filename: str) -> str:
+    """``text`` without its comments (Pygments), strings kept, every line break kept;
+    a JSX ``{/* note */}`` goes with its braces."""
+    suffix = Path(filename).suffix.lower()
+    lexer = _lexer_for(suffix)
+    if lexer is None:
+        return text
+    if suffix in (".js", ".jsx", ".tsx"):
+        text = _blank_jsx_comment_braces(text)
+    return "".join("\n" * value.count("\n") if token in Comment else value
+                   for token, value in lexer.get_tokens(text))
+
+
 def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
     """One cited file, read and prepared once per verification."""
     if candidate not in parsed:
@@ -995,7 +1199,7 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
             with open(candidate, "r", encoding="utf-8-sig", errors="ignore") as fh:
                 source = fh.read()
         except OSError:
-            parsed[candidate] = _Source(candidate, [], [], [], None, [], set())
+            parsed[candidate] = _Source(candidate, [], [], [], None, [], set(), [])
             return parsed[candidate]
         tree = None
         if candidate.endswith(".py"):
@@ -1006,10 +1210,12 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
         lines = source.splitlines()
         normalised = [_normalise_line(line) for line in lines]
         code = [_normalise_line(line) for line in code_only(source, candidate).splitlines()]
+        bare = [_normalise_line(line) for line in _without_comments(source, candidate).splitlines()]
         parsed[candidate] = _Source(
             candidate, lines, normalised, code if len(code) == len(lines) else normalised, tree,
             python_structural_diagnostics(tree, sqlite=sqlite) if tree else [],
             _comment_only_lines(source, Path(candidate).suffix.lower()),
+            bare if len(bare) == len(lines) else normalised,
         )
     return parsed[candidate]
 
@@ -1063,25 +1269,135 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     return ""
 
 
+_UNMATCHED_NOTE_CHARS = 80
+
+
+def _as_written(raw: str, fragment: str, limit: int = _UNMATCHED_NOTE_CHARS) -> str:
+    """``fragment`` (a whitespace-free quote part) as the judge wrote it in
+    ``raw``, clipped, so a re-judge can see which part to correct."""
+    kept = [i for i, char in enumerate(raw) if not char.isspace()]
+    at = "".join(raw[i] for i in kept).replace("'", '"').find(fragment) if fragment else -1
+    text = " ".join(raw[kept[at]:kept[at + len(fragment) - 1] + 1].split()) if at >= 0 else fragment
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+# "sets x", "renders a plot": a word that starts no statement, then another word.
+_PROSE_START_RE = re.compile(r"([a-z]+) +[A-Za-z_]")
+_STATEMENT_WORDS = frozenset(keyword.kwlist) | {
+    "const", "let", "var", "function", "new", "await", "async", "export", "default", "typeof",
+    "throw", "catch", "case", "switch", "yield", "delete", "void", "of", "do", "val", "fun",
+}
+# Of a quote's prose, enough to recognise it.
+_PROSE_NOTE_CHARS = 40
+
+
+def _reads_as_description(text: str) -> bool:
+    match = _PROSE_START_RE.match(text.strip())
+    return bool(match) and match.group(1) not in _STATEMENT_WORDS
+
+
+def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str) -> str:
+    """For a quote part that matched no span: the source lines it follows from
+    their start and what the file has next, or that it reads as prose; ""
+    when it follows no line."""
+    lines = source.normalised
+    best = (0, 0, 0, 0)  # characters followed, first line, line where it leaves, whole-line characters
+    for start, first in enumerate(lines):
+        if not first or not part.startswith(first[:_MIN_CUT_QUOTE]):
+            continue
+        whole, index = 0, start
+        while index < min(start + _MAX_QUOTE_LINES, len(lines)) and part.startswith(lines[index], whole):
+            whole, index = whole + len(lines[index]), index + 1
+        followed = whole + (len(os.path.commonprefix([part[whole:], lines[index]])) if index < len(lines) else 0)
+        if followed > best[0]:
+            best = (followed, start, index, whole)
+    followed, start, index, whole = best
+    if followed < _MIN_CUT_QUOTE or followed >= len(part):
+        prose = _as_written(raw, part, _PROSE_NOTE_CHARS)
+        return f"`{prose}` reads as a description, not code; put it in the note" if _reads_as_description(prose) else ""
+    if index == len(lines):
+        return ""
+    text = source.lines[index].strip()
+    next_line = f"`{text if len(text) <= _UNMATCHED_NOTE_CHARS else text[:_UNMATCHED_NOTE_CHARS - 3] + '...'}`"
+    if index == start:
+        return f"the part differs from {path} line {index + 1}: {next_line}"
+    matched = f"the part matches {path} " + (f"lines {start + 1}-{index}" if index > start + 1 else f"line {start + 1}")
+    rest = part[whole:]
+    resumes = next((k for k in range(index + 1, min(index + 4, len(lines)))
+                    if lines[k] and rest.startswith(lines[k][:_MIN_CUT_QUOTE])), None)
+    if resumes is not None:
+        skipped = f"line {index + 1}" if resumes == index + 1 else f"lines {index + 1}-{resumes}"
+        return f"{matched}, then skips {skipped}: {next_line}"
+    prose = _as_written(raw, rest, _PROSE_NOTE_CHARS)
+    if _reads_as_description(prose):
+        return f"{matched}, then `{prose}` reads as a description; put it in the note"
+    return f"{matched}, then line {index + 1} reads {next_line}"
+
+
+def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: dict,
+                     quote_cache: dict, sqlite: bool) -> tuple[list, str]:
+    """The ``(source, part, spans)`` of one ``path: quote`` citation, or why it is
+    not source: every part must be code in the file it names, one a whole line."""
+    quoted = _evidence_quote(raw_quote)
+    if not quoted:
+        return [], "the citation must identify an implemented statement, not only a decorator"
+    candidates = _resolve_cited_path(path, quoted, files, quote_cache)
+    if len(candidates) != 1:
+        return [], "the cited source path is missing, excluded or ambiguous"
+    source = _load_source(candidates[0], parsed, sqlite)
+    spans = list(_quote_spans(quoted, source))
+    literal = _evidence_quote(raw_quote, escapes=False)
+    if not spans and literal and literal != quoted:
+        # The quote may copy a source escape, e.g. "\n".join(...).
+        spans = list(_quote_spans(literal, source))
+        quoted = literal if spans else quoted
+    located = [(source, quoted, spans)]
+    unmatched, unmatched_in = quoted, (source, path)
+    if not spans:
+        located = []
+        for part_path, part, cut in _citation_parts(raw_quote, path, files):
+            homes = _resolve_cited_path(part_path, part, files, quote_cache)
+            part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
+            spans = list(_quote_spans(part, part_source, cut)) if part_source else []
+            # A part need not be a whole statement ("{ save(n); done = true }"
+            # splits at its ";"), but it must be code in that file.
+            if not spans and not (part_source and any(
+                    _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
+                located, unmatched, unmatched_in = [], part, (part_source, part_path)
+                break
+            located.append((part_source, part, spans))
+    if any(spans for _, _, spans in located):
+        return located, ""
+    where = _where_the_quote_leaves(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote) if (
+        unmatched_in[0]) else ""
+    return [], ("the quoted executable line was not found in the cited source: "
+                + (where or f"no source line matches the part `{_as_written(raw_quote, unmatched)}`"))
+
+
 def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     """Re-check every 'implemented' citation against the output tree.
 
-    The cited application source must exist (an unambiguous path suffix is
-    accepted) and contain the quoted code. An abridged or listed quote
-    ("a ... b", "a; b", "x.py: a and y.py: b") passes only when every part is
-    found in the file it names, and each part is checked on its own text, so
-    an invented part can never supply the proof. Never search a different
+    The evidence is a list of ``{"path", "line"}`` citations, or the older
+    ``path: quote`` string. The cited application source must exist (an
+    unambiguous path suffix is accepted) and contain the quoted code. Every
+    citation, and every part of an abridged or listed quote ("a ... b",
+    "a; b", "x.py: a and y.py: b"), must be found in the file it names, and one
+    found line must enforce or perform the requirement; each is checked on its
+    own text, so an invented part can never supply the proof. Never search a different
     file or the run's own recipe to rescue a bad citation. A declaration alone
     cannot prove enforcement or behaviour. Failed evidence is ``unverified``:
-    it does not prove that no implementation exists elsewhere.
+    it does not prove that no implementation exists elsewhere. A verified
+    verdict records ``cited_file_hashes`` ({path: sha256}) of the files it cites.
     """
     files = _source_files(output_dir)
+    rel_of = {full: rel for rel, full in files.items()}
     sqlite = workspace_uses_sqlite(output_dir)
     parsed: dict[str, _Source] = {}
     quote_cache: dict = {}
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
+        item.pop("cited_file_hashes", None)
         if item.get("kind") == "verification":
             item.update(status="unverified", evidence="",
                         note="requirement extraction completeness has not been established")
@@ -1090,47 +1406,48 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
         if item.get("status") != "implemented":
             checked.append(item)
             continue
-        path, _, raw_quote = (item.get("evidence") or "")[:_MAX_EVIDENCE_CHARS].partition(":")
-        quoted = _evidence_quote(raw_quote)
-        candidates = _resolve_cited_path(path, quoted, files, quote_cache)
-        reason = "the cited source path is missing, excluded or ambiguous"
-        if not quoted:
-            reason = "the citation must identify an implemented statement, not only a decorator"
-        if quoted and len(candidates) == 1:
-            source = _load_source(candidates[0], parsed, sqlite)
-            spans = list(_quote_spans(quoted, source))
-            literal = _evidence_quote(raw_quote, escapes=False)
-            if not spans and literal and literal != quoted:
-                # The quote may copy a source escape, e.g. "\n".join(...).
-                spans = list(_quote_spans(literal, source))
-                quoted = literal if spans else quoted
-            located = [(source, quoted, spans)]
-            if not located[0][2]:
-                located = []
-                for part_path, part, cut in _citation_parts(raw_quote, path):
-                    homes = _resolve_cited_path(part_path, part, files, quote_cache)
-                    part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
-                    spans = list(_quote_spans(part, part_source, cut)) if part_source else []
-                    # A part need not be a whole statement ("{ save(n); done = true }"
-                    # splits at its ";"), but it must be code in that file.
-                    if not spans and not (part_source and any(
-                            _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
-                        located = []
-                        break
-                    located.append((part_source, part, spans))
-            reason = "the quoted executable line was not found in the cited source"
-            for part_source, part, spans in located:
+        evidence = item.get("evidence")
+        structured = isinstance(evidence, list)
+        citations = [(str(c.get("path") or ""), str(c.get("line") or "")[:_MAX_EVIDENCE_CHARS])
+                     for c in evidence if isinstance(c, dict)] if structured else [
+            (evidence or "")[:_MAX_EVIDENCE_CHARS].partition(":")[::2]]
+        located, reason = [], "" if citations else "no source line is cited"
+        for index, (path, raw_quote) in enumerate(citations, 1):
+            found, failure = _locate_citation(path, raw_quote, files, parsed, quote_cache, sqlite)
+            if failure:
+                reason = f"citation {index} ({path.strip()}): {failure}" if structured else failure
+                break
+            located += [(index, path, *part) for part in found]
+        if not reason:
+            # A part found only inside a line proves no role: one whole line must.
+            reason = "no cited part is a whole source line"
+            for index, path, part_source, part, spans in located:
+                if not spans:
+                    continue
                 for first_line, lineno in spans:
                     reason = _span_failure(item, part_source, first_line, lineno, part)
                     if not reason:
                         break
                 if not reason:
                     break
+                if structured and spans:
+                    reason = f"citation {index} ({path.strip()}): {reason}"
         if reason:
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
+        else:
+            item["cited_file_hashes"] = {rel_of[full]: cited_file_hash(full) for full in sorted(
+                {part_source.path for _, _, part_source, _, _ in located})}
         checked.append(item)
     return checked
+
+
+def cited_file_hash(full_path: str) -> str:
+    """sha256 of a cited file's raw bytes ("" when unreadable)."""
+    try:
+        return hashlib.sha256(Path(full_path).read_bytes()).hexdigest()
+    except OSError:
+        return ""
 
 
 def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
@@ -1174,7 +1491,7 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         elif status == "unverified":
             issues.append(
                 f"requirement unverified: {label} — the cited evidence "
-                f"'{v.get('evidence', '')}' does not verify it{note}; inspect the actual source "
+                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; inspect the actual source "
                 "and correct the citation, implementing behaviour only if it is absent"
             )
     return issues

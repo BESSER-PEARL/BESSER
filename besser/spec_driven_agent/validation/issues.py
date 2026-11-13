@@ -16,8 +16,8 @@ class ValidationIssue:
       - ``warning``: advisory findings or checks whose outcome is unknown.
         Explicit ``validation unverified:`` warnings prevent verified
         completion but do not justify spending source-repair turns.
-      - ``style``: cosmetic / preference (unused imports, line length,
-        formatting). Never blocks a release.
+      - ``style``: a count, not a defect: the ``(+N more ... truncated)`` notes of
+        ruff and the compilers. Never blocks a release. The lint selects no cosmetic rule.
 
     The auto-fix loop (when enabled) only consumes ``blocker`` issues.
     Other findings are reported in the recipe and logs without automatic repair.
@@ -128,6 +128,31 @@ def required_check_unverified(check: str, reason: str) -> str:
     )
 
 
+# A runtime check (import smoke check, boot-and-create probe, test_api replay)
+# that did not run: no sandbox, a timeout, a harness dependency missing. Its
+# ``validation unverified:`` prefix keeps it out of the blocker-only fix loop;
+# the runtime gate keys on this prefix to keep its verdict "unverified".
+RUNTIME_CHECK_UNVERIFIED = "validation unverified: runtime check"
+_DID_NOT_RUN_NOTE_RE = _re.compile(
+    r"^validation: (?P<check>.+?) did not run \((?P<reason>.*)\) - its checks were SKIPPED", _re.S)
+
+
+def runtime_check_unverified(check: str, reason: str) -> str:
+    """A runtime check that did not run: an unknown no source edit can settle."""
+    return (
+        f"{RUNTIME_CHECK_UNVERIFIED} ({check}) did not run ({reason}) - no source edit "
+        "can settle this, so it is not sent to repair; the application is not runtime verified"
+    )
+
+
+def runtime_note_unverified(note: str) -> str:
+    """``runtime_check_unverified`` for a ``_check_did_not_run`` note."""
+    match = _DID_NOT_RUN_NOTE_RE.match(note)
+    if match is None:
+        return runtime_check_unverified("runtime probe", note.removeprefix("validation: "))
+    return runtime_check_unverified(match["check"], match["reason"])
+
+
 def required_dependency_setup(check: str, project: str) -> str:
     """An authorized, recoverable verification prerequisite, not a code defect."""
     return (
@@ -144,27 +169,14 @@ def is_completion_issue(issue: ValidationIssue) -> bool:
     return (getattr(issue, "severity", None) == "blocker"
             or str(getattr(issue, "message", "")).startswith("validation unverified:"))
 
-_RUFF_STYLE_CODES = frozenset({
-    "F401", "F841",               # genuinely cosmetic: unused import / variable
-    # F811 (redefinition) is deliberately NOT here; see the blocker branch below.
-    "E501",                       # line too long
-    "W291", "W292", "W293", "W391",  # whitespace
-    "E302", "E303", "E305", "E261", "E262", "E266",  # blank lines / comments
-    "I001",                       # import order
-    # The scaffold's own convention, not a defect. Every generated router
-    # star-imports sql_alchemy / pydantic_classes / bal_stdlib, so ruff
-    # answers F403 ("cannot detect undefined names" — a notice that ruff is
-    # blind, never a finding) and F405 ("may be undefined") in place of F821.
-    # Real undefined names behind a star import are reported separately, as
-    # `undefined name:` blockers with a proven verdict. E402 is the one import
-    # bal_stdlib places below its header.
-    "F403", "F405", "E402",
-})
 # F811 joins the undefined-name codes: a redefinition means the later name
 # silently wins — the ORM `User` shadowed by the Pydantic `User` and then
 # queried through the wrong one. In practice these hits are real defects.
 _RUFF_BLOCKER_CODES = frozenset({"F811", "F821", "F822", "F823"})
 _RUFF_LINE_RE = _re.compile(r"\b([EWFCNI]\d{2,4})\b")
+# ``ruff: (+N more issues truncated)``, ``tsc [<project>]: (+N more errors truncated)``,
+# and the same for cargo / kotlinc (see toolchain.py).
+_TRUNCATION_NOTE_RE = _re.compile(r"^(?:ruff|(?:tsc|cargo|kotlinc) \[[^\]]*\]): \(\+\d+ more ")
 
 
 def _classify_issue(message: str) -> ValidationIssue:
@@ -239,11 +251,6 @@ def _classify_issue(message: str) -> ValidationIssue:
     )):
         return ValidationIssue("blocker", text)
 
-    # The F821 ruff cannot emit under a star import; a NameError on the first
-    # request that reaches the line. See _star_import_undefined_names.
-    if lower.startswith("undefined name:"):
-        return ValidationIssue("blocker", text)
-
     # The domain model describes an aggregate no client can create. Legal UML
     # (DomainModel.validate only warns), fatal here: generating a CRUD API is
     # exactly the intent this breaks (e.g. Booking requires a ReservedRoom id
@@ -261,17 +268,16 @@ def _classify_issue(message: str) -> ValidationIssue:
     if lower.startswith(("create contract:", "action call:")):
         return ValidationIssue("blocker", text)
 
+    # A collector's "+N more ... truncated" note is a count, not a defect; it
+    # must never inflate the blocker/warning totals the fix loop gates on.
+    if _TRUNCATION_NOTE_RE.match(text):
+        return ValidationIssue("style", text)
+
     # Ruff: classify by rule code. F821 (undefined name) is a BLOCKER:
     # it means the backend imports crash on `uvicorn` even though
     # ast.parse was clean — the classic "ships green, boots dead" bug.
     if text.startswith("ruff:"):
-        # The "+N more issues truncated" note is a count, not a defect; it
-        # must never inflate the blocker/warning totals the fix loop gates on.
-        if text.startswith("ruff: (+"):
-            return ValidationIssue("style", text)
         match = _RUFF_LINE_RE.search(text)
-        if match and match.group(1) in _RUFF_STYLE_CODES:
-            return ValidationIssue("style", text)
         if match and match.group(1) in _RUFF_BLOCKER_CODES:
             return ValidationIssue("blocker", text)
         return ValidationIssue("warning", text)

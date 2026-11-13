@@ -3,9 +3,14 @@
 import ast
 import os
 import re as _re
+import warnings
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.validation.contract_checks import (
+    _INHERITED_MEMBERS, _injected_parameters,
+)
 from besser.utilities.workspace_fs import walk_plain
 
 
@@ -178,6 +183,36 @@ def _loop_payload_reads(scope) -> dict:
     return bound
 
 
+def _guessable_parameters(scope) -> set:
+    """Parameters the ``<entity>_data`` name guess may type.
+
+    Only unannotated parameters the body never rebinds: an annotation names
+    the type outright (``BookingUpdate``, ``dict``, ``Annotated[...]``), and
+    a rebound name or a local (``booking_data = {...}``) is not the request
+    payload at all; neither is a ``Depends(...)`` parameter.
+    """
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return set()
+    args = scope.args
+    unannotated = {arg.arg for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]
+                   if arg.annotation is None and arg.arg.endswith(_PAYLOAD_SUFFIX)}
+    return unannotated - _rebound_names(scope) - _injected_parameters(scope)
+
+
+def _rebound_names(scope) -> set:
+    return {node.id for node in ast.walk(scope)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
+
+
+def _is_model_api(attribute: str) -> bool:
+    """Pydantic's own members (``model_dump``...) and private names, never schema fields.
+
+    Pydantic v2 reserves the ``model_`` prefix, so no field can use it.
+    """
+    return (attribute.startswith("_") or attribute.startswith("model_")
+            or attribute in _INHERITED_MEMBERS)
+
+
 def _unguarded_payload_reads(tree: ast.AST) -> list:
     """``(variable, annotation, field, line)`` for payload attribute reads.
 
@@ -195,9 +230,12 @@ def _unguarded_payload_reads(tree: ast.AST) -> list:
     examined: set = set()
     scopes = [node for node in ast.walk(tree)
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    scopes.append(tree)
     for scope in scopes:
-        annotated = _annotated_payloads(scope)
+        rebound = _rebound_names(scope)
+        annotated = {name: annotation
+                     for name, annotation in _annotated_payloads(scope).items()
+                     if name not in rebound}
+        guessable = _guessable_parameters(scope)
         loop_reads = _loop_payload_reads(scope)
         guarded = {
             (node.args[0].id, node.args[1].value)
@@ -215,12 +253,12 @@ def _unguarded_payload_reads(tree: ast.AST) -> list:
             receiver = node.value.id
             position = (node.lineno, node.col_offset)
             annotation = annotated.get(receiver) or loop_reads.get(position)
-            if not (receiver.endswith(_PAYLOAD_SUFFIX) or annotation):
+            if not (annotation or receiver in guessable):
                 continue
             if position in examined:
                 continue
             examined.add(position)
-            if (receiver, node.attr) in guarded:
+            if (receiver, node.attr) in guarded or _is_model_api(node.attr):
                 continue
             reads.append((receiver, annotation, node.attr, node.lineno))
     return reads
@@ -262,12 +300,12 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
             continue
         for receiver, annotation, field, line in _unguarded_payload_reads(tree):
             # An annotation names the schema outright; the ``_data`` suffix
-            # only guesses it. Prefer the annotation, and fall back so
-            # unannotated handlers are still checked.
+            # only guesses it, and only for unannotated parameters.
             schema = None
-            if annotation and annotation in classes and annotation.endswith("Create"):
-                schema = annotation
-            elif receiver.endswith(_PAYLOAD_SUFFIX):
+            if annotation:
+                if annotation in classes and annotation.endswith("Create"):
+                    schema = annotation
+            else:
                 entity = receiver[:-len(_PAYLOAD_SUFFIX)]
                 schema = create_schemas.get(f"{entity.lower()}create")
             if not schema:
@@ -289,18 +327,45 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
     return problems
 
 
+def python_syntax_error(path: str, rel: str) -> str | None:
+    """``Syntax error in <rel> line N: ...`` when Python cannot load the file, else None.
+
+    Compiled from bytes so Python's own decoding applies: a UTF-8 BOM or a PEP 263
+    coding line is valid, an undecodable file is a SyntaxError, not a crash.
+    compile(), unlike ast.parse, also rejects what fails at import (``await`` in a
+    plain def, a late ``from __future__``, an unbound ``nonlocal``); it runs nothing.
+    """
+    with open(path, "rb") as handle:
+        source = handle.read()
+    try:
+        with warnings.catch_warnings():  # a SyntaxWarning is not a defect, nor an error under -W error
+            warnings.simplefilter("ignore", SyntaxWarning)
+            compile(source, rel, "exec", dont_inherit=True)
+    except SyntaxError as exc:
+        return f"Syntax error in {rel} line {exc.lineno or 1}: {exc.msg}"
+    except ValueError as exc:  # Python 3.11 raises this for a null byte
+        return f"Syntax error in {rel} line 1: {exc}"
+    return None
+
+
 def _python_files(output_dir: str) -> list[str]:
     """The app's .py files, skipping snapshots, vendored trees and BESSER's model sources."""
-    model_dir = os.path.join(output_dir, _MODEL_SOURCE_DIR)
+    model_dir = os.path.normpath(os.path.join(output_dir, _MODEL_SOURCE_DIR))
     try:
-        return [
-            os.path.join(root, name)
-            for root, dirs, files in walk_plain(output_dir)
-            for name in files
-            if name.endswith(".py")
-            if not any(part in ("node_modules", _SNAPSHOT_DIR, "__pycache__")
-                       for part in root.split(os.sep))
-            if os.path.normpath(root) != os.path.normpath(model_dir)
-        ]
+        return [os.path.join(root, name)
+                for root, files in walk_app_tree(output_dir)
+                if os.path.normpath(root) != model_dir
+                for name in files if name.endswith(".py")]
     except OSError:
         return []
+
+
+def walk_app_tree(output_dir: str):
+    """``(folder, files)`` for the workspace, minus snapshots, dependency caches and build output.
+
+    An installed node_modules or .venv is someone else's code: its files are
+    not the app's, so a defect there is nothing the model can or should fix.
+    """
+    for root, dirs, files in walk_plain(output_dir):
+        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS and not d.startswith(_SNAPSHOT_DIR)]
+        yield root, files

@@ -189,8 +189,7 @@ def clear_registry_and_orchestrators():
 async def _clear_registry():
     async with current_runtime().registry._lock:
         for entry in list(current_runtime().registry._entries.values()):
-            import shutil
-            shutil.rmtree(entry.temp_dir, ignore_errors=True)
+            runner_module._remove_run_dir(entry.temp_dir)  # and the download dir beside it
         current_runtime().registry._entries.clear()
 
 
@@ -586,7 +585,6 @@ class TestRegistrySweep:
                 # max(0, negative) == 0, so the entry is treated as age 0
                 assert age == 0.0
             finally:
-                import shutil as _sh
-                _sh.rmtree(tmp, ignore_errors=True)
+                runner_module._remove_run_dir(tmp)
 
         asyncio.run(_test())

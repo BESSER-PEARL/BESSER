@@ -135,6 +135,56 @@ def test_load_older_checkpoint_without_tasks_is_backward_compatible(tmp_path):
     assert loaded.repair_progress == {}
 
 
+def test_generator_files_round_trip(tmp_path):
+    """A create run's generator-file tags drive the scaffold guardrail and the
+    recipe's authorship split; a resume must get them back."""
+    save_checkpoint(str(tmp_path), _make_checkpoint(generator_files=["backend/main_api.py"]))
+    assert load_checkpoint(str(tmp_path)).generator_files == ["backend/main_api.py"]
+
+
+def test_older_checkpoint_generator_files(tmp_path):
+    """Before the field existed: none for a create run, the modify state's for a modify run."""
+    data = _make_checkpoint().to_dict()
+    data.pop("generator_files", None)
+    path = tmp_path / CHECKPOINT_FILENAME
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert load_checkpoint(str(tmp_path)).generator_files == []
+
+    data["modify"] = {"generator_files": ["backend/models.py"]}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert load_checkpoint(str(tmp_path)).generator_files == ["backend/models.py"]
+
+
+def test_write_evidence_round_trip_and_default(tmp_path):
+    evidence = {"successful_writes": {"app.py": "digest"}, "known_paths": ["app.py"]}
+    save_checkpoint(str(tmp_path), _make_checkpoint(write_evidence=evidence))
+    assert load_checkpoint(str(tmp_path)).write_evidence == evidence
+
+    data = _make_checkpoint().to_dict()
+    data.pop("write_evidence")
+    (tmp_path / CHECKPOINT_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+    assert load_checkpoint(str(tmp_path)).write_evidence == {}
+
+
+def test_requirements_round_trip_and_default(tmp_path):
+    """``None`` (never extracted) and ``[]`` (nothing stated) stay distinct."""
+    for requirements in ([{"id": 1, "text": "A user can log in"}], [], None):
+        save_checkpoint(str(tmp_path), _make_checkpoint(requirements=requirements))
+        assert load_checkpoint(str(tmp_path)).requirements == requirements
+
+    data = _make_checkpoint().to_dict()
+    data.pop("requirements")
+    (tmp_path / CHECKPOINT_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+    assert load_checkpoint(str(tmp_path)).requirements is None
+
+
+def test_routed_stack_round_trip_and_default(tmp_path):
+    """``""`` (a stack BESSER generates) and ``None`` (no routing answer) stay distinct."""
+    for routed_stack in ("next.js", "", None):
+        save_checkpoint(str(tmp_path), _make_checkpoint(routed_stack=routed_stack))
+        assert load_checkpoint(str(tmp_path)).routed_stack == routed_stack
+
+
 def test_load_missing_returns_none(tmp_path):
     assert load_checkpoint(str(tmp_path)) is None
 

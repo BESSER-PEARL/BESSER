@@ -13,8 +13,11 @@ Evidence-only tasks are untouched. Nothing here can judge them, so the model
 must still cite its work.
 """
 
+import threading
+
 import pytest
 
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
@@ -97,6 +100,25 @@ def test_a_refused_edit_closes_nothing(orchestrator, tmp_path):
 
     assert not closes, "verifiers ran after a refused edit"
     assert len(orchestrator.executor.open_tasks()) == 1
+
+
+def test_parallel_writes_report_one_closure_once(tmp_path):
+    """The orchestrator runs writes in a thread pool and auto-closes after each.
+
+    Three writes finishing together each saw the item open and each reported
+    closing it, so the model read one closure three times.
+    """
+    executor = ToolExecutor(workspace=str(tmp_path))
+    all_verifying = threading.Barrier(3, timeout=5)
+    executor.set_tasks([{"text": "Implement cancel", "verify": lambda: all_verifying.wait() >= 0}])
+    reports = []
+    threads = [threading.Thread(target=lambda: reports.append(executor.autoclose_verified_tasks()))
+               for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(len(report) for report in reports) == [0, 0, 1]
 
 
 def test_a_raising_verifier_leaves_the_item_open(orchestrator):

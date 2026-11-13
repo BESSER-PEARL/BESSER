@@ -97,6 +97,17 @@ class Checkpoint:
     # A modify run's own state (``ModifyRunMixin._modify_checkpoint_state``);
     # ``None`` for a create run, so a resume knows which kind it continues.
     modify: dict | None = None
+    # Files a generator wrote (``ToolExecutor._generator_files``): the scaffold
+    # guardrail and the recipe's ``source`` tags.
+    generator_files: list[str] = field(default_factory=list)
+    # What ``task_list`` evidence is checked against (``ToolExecutor.evidence_snapshot``).
+    write_evidence: dict = field(default_factory=dict)
+    # The requirements ledger (``None``: not extracted). Phase 2 and Phase 3
+    # hold the run to one list; a resume must not extract a second one.
+    requirements: list[dict] | None = None
+    # The routing answer's ``unsupported_stack`` (``None``: no routing answer);
+    # it picks the prompt's stack idioms.
+    routed_stack: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +136,10 @@ class Checkpoint:
             "locked_generators": self.locked_generators,
             "target": self.target,
             "modify": self.modify,
+            "generator_files": self.generator_files,
+            "write_evidence": self.write_evidence,
+            "requirements": self.requirements,
+            "routed_stack": self.routed_stack,
         }
 
 
@@ -359,6 +374,11 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             for item in states
         ):
             raise ValueError("Invalid repair progress states")
+        modify = data.get("modify") if isinstance(data.get("modify"), dict) else None
+        # Older checkpoints kept them in a modify run's state only.
+        generator_files = data.get("generator_files", (modify or {}).get("generator_files"))
+        if not isinstance(generator_files, list):
+            generator_files = []
         return Checkpoint(
             schema_version=data["schema_version"],
             run_id=data.get("run_id", ""),
@@ -384,7 +404,13 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             repair_progress=progress,
             locked_generators=[t for t in data.get("locked_generators") or [] if isinstance(t, str)],
             target=data.get("target"),
-            modify=data.get("modify") if isinstance(data.get("modify"), dict) else None,
+            modify=modify,
+            generator_files=[p for p in generator_files if isinstance(p, str)],
+            write_evidence=data.get("write_evidence") if isinstance(data.get("write_evidence"), dict) else {},
+            requirements=(
+                [r for r in data["requirements"] if isinstance(r, dict)]
+                if isinstance(data.get("requirements"), list) else None),
+            routed_stack=data.get("routed_stack") if isinstance(data.get("routed_stack"), str) else None,
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

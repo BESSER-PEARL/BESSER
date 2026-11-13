@@ -58,6 +58,10 @@ TERMINAL_RUN_STATUSES = frozenset(
 _NON_TERMINAL_ERROR_CODES = frozenset({"COST_CAP", "TIMEOUT", "INCOMPLETE"})
 _DEFAULT_DB_NAME = "besser_spec_driven_runs.sqlite3"
 _HEARTBEAT_SECONDS = 15.0
+# Run rows outlive their events this long: services/cleanup.py removes a run's
+# (resumable) workspace after 24 h, and a resume must continue its numbering.
+_RUN_RECORD_RETENTION_SECONDS = 24 * 3600
+_INTERRUPTED_MESSAGE = "The server restarted before this run finished."
 
 
 @dataclass(frozen=True)
@@ -103,11 +107,13 @@ class RunRecord:
         }
 
 
-@dataclass(frozen=True)
+@dataclass
 class _AbandonmentPolicy:
     grace_seconds: float
     cancel: Callable[[], None]
     resume_available: Optional[Callable[[], bool]] = None
+    #: ``time.monotonic()`` of the last ``events.json`` poll; a poller is present.
+    last_polled_at: Optional[float] = None
 
 
 def default_store_path(settings: Optional[BackendSettings] = None) -> str:
@@ -162,8 +168,18 @@ class SqliteRunEventStore:
     so a PostgreSQL implementation can replace it for a multi-instance deploy.
     """
 
-    def __init__(self, path: Optional[str] = None) -> None:
-        """Open (creating if needed) the SQLite store at ``path`` or the default path."""
+    def __init__(
+        self,
+        path: Optional[str] = None,
+        *,
+        has_checkpoint: Optional[Callable[[str], bool]] = None,
+    ) -> None:
+        """Open (creating if needed) the SQLite store at ``path`` or the default path.
+
+        Runs a previous process left unfinished are marked ``interrupted`` and
+        given a terminal frame; ``has_checkpoint(run_id)`` says whether each can
+        be resumed (``False`` for all when omitted).
+        """
         self.path = path or default_store_path()
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -245,6 +261,53 @@ class SqliteRunEventStore:
                 """,
                 (now, now),
             )
+        self._finish_interrupted_runs(has_checkpoint)
+
+    def _finish_interrupted_runs(
+        self, has_checkpoint: Optional[Callable[[str], bool]]
+    ) -> None:
+        """Give each ``interrupted`` run that lacks one a terminal ``error`` frame.
+
+        Without it a reconnecting client gets an empty stream and no outcome.
+        A run whose events were already swept is left alone.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT r.run_id, r.last_sequence, e.event_type, e.payload_json
+                  FROM spec_runs r
+                  LEFT JOIN spec_run_events e
+                    ON e.run_id = r.run_id AND e.sequence = r.last_sequence
+                 WHERE r.status = 'interrupted'
+                """
+            ).fetchall()
+        for row in rows:
+            run_id = row["run_id"]
+            if row["event_type"] is None and int(row["last_sequence"]) > 0:
+                continue  # events swept
+            if row["event_type"] == "done":
+                continue
+            if row["event_type"] == "error":
+                code = json.loads(row["payload_json"] or "{}").get("code")
+                if code not in _NON_TERMINAL_ERROR_CODES:
+                    continue
+            can_resume = False
+            if has_checkpoint is not None:
+                try:
+                    can_resume = bool(has_checkpoint(run_id))
+                except Exception:
+                    logger.exception("Could not inspect checkpoint for interrupted run %s", run_id)
+            self.append(
+                run_id,
+                format_sse(
+                    ErrorEvent(
+                        code="INTERNAL",
+                        message=_INTERRUPTED_MESSAGE,
+                        resumeAvailable=can_resume,
+                    )
+                ),
+            )
+            self.set_resume_available(run_id, can_resume)
 
     def close(self) -> None:
         """Close the SQLite connection."""
@@ -498,18 +561,32 @@ class SqliteRunEventStore:
         return events
 
     def sweep_expired(self, ttl_seconds: int) -> int:
-        """Delete finished runs idle longer than ``ttl_seconds``; return the count."""
-        cutoff = time.time() - max(1, ttl_seconds)
+        """Delete the events of finished runs idle longer than ``ttl_seconds``; return how many runs.
+
+        The small run row (with ``last_sequence``) stays until no workspace of
+        the run can still be resumed, so a later resume keeps numbering.
+        """
+        now = time.time()
+        events_cutoff = now - max(1, ttl_seconds)
+        record_cutoff = now - max(ttl_seconds, _RUN_RECORD_RETENTION_SECONDS)
         with self._lock, self._conn:
-            cursor = self._conn.execute(
-                """
-                DELETE FROM spec_runs
-                 WHERE updated_at < ?
-                   AND status NOT IN ('queued', 'running')
-                """,
-                (cutoff,),
+            expired = """
+                SELECT run_id FROM spec_runs
+                 WHERE updated_at < ? AND status NOT IN ('queued', 'running')
+            """
+            swept = self._conn.execute(
+                f"SELECT COUNT(DISTINCT run_id) FROM spec_run_events WHERE run_id IN ({expired})",
+                (events_cutoff,),
+            ).fetchone()[0]
+            self._conn.execute(
+                f"DELETE FROM spec_run_events WHERE run_id IN ({expired})",
+                (events_cutoff,),
             )
-            return max(0, cursor.rowcount)
+            self._conn.execute(
+                f"DELETE FROM spec_runs WHERE run_id IN ({expired})",
+                (record_cutoff,),
+            )
+            return int(swept)
 
     def clear(self) -> None:
         """Remove all records. Intended for isolated tests only."""
@@ -539,22 +616,31 @@ class DurableRunManager:
         source: AsyncIterator[bytes],
         *,
         resume: bool = False,
+        cancel: Optional[Callable[[], None]] = None,
         on_abandoned: Optional[Callable[[], None]] = None,
         resume_available: Optional[Callable[[], bool]] = None,
         disconnect_grace_seconds: float = 300.0,
     ) -> RunRecord:
-        """Register the run and start draining ``source`` into the store in the background."""
+        """Register the run and start draining ``source`` into the store in the background.
+
+        ``cancel`` stops the run's worker; it is called when the drain stops
+        before ``source`` ends (a store failure, shutdown), so no worker keeps
+        spending once nothing records its events.
+        """
         async with self._lock:
             existing_task = self._tasks.get(run_id)
             if existing_task is not None and not existing_task.done():
                 raise ValueError(f"Run {run_id} is already active")
             record = self.store.begin_run(run_id, resume=resume)
+            # Before the task exists: a failure here reaches the caller, which
+            # still owns the run's slot and reservation and releases them.
+            self.store.set_status(run_id, "running")
             generation = self._generations.get(run_id, 0) + 1
             self._generations[run_id] = generation
             condition = asyncio.Condition()
             self._conditions[run_id] = condition
             task = asyncio.create_task(
-                self._drive(run_id, source, condition, generation),
+                self._drive(run_id, source, condition, generation, cancel),
                 name=f"spec-driven-run-{run_id[:8]}",
             )
             self._tasks[run_id] = task
@@ -591,38 +677,50 @@ class DurableRunManager:
             name=f"spec-driven-abandon-{run_id[:8]}",
         )
 
+    def touch(self, run_id: str) -> None:
+        """Record that a client polled the run: polling counts as presence."""
+        policy = self._abandonment_policies.get(run_id)
+        if policy is not None:
+            policy.last_polled_at = time.monotonic()
+
     async def _cancel_if_still_abandoned(
         self,
         run_id: str,
         generation: int,
         grace_seconds: float,
     ) -> None:
-        try:
-            await asyncio.sleep(grace_seconds)
-        except asyncio.CancelledError:
-            return
-
+        delay = grace_seconds
         callback: Optional[Callable[[], None]] = None
-        async with self._lock:
-            if self._abandonment_tasks.get(run_id) is not asyncio.current_task():
+        while callback is None:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
                 return
-            self._abandonment_tasks.pop(run_id, None)
-            producer = self._tasks.get(run_id)
-            policy = self._abandonment_policies.get(run_id)
-            if (
-                policy is None
-                or self._generations.get(run_id) != generation
-                or producer is None
-                or producer.done()
-                or self._subscriber_counts.get(run_id, 0) > 0
-            ):
-                return
-            self._abandonment_triggered.add(run_id)
-            self.store.mark_abandonment_requested(run_id)
-            callback = policy.cancel
+            async with self._lock:
+                if self._abandonment_tasks.get(run_id) is not asyncio.current_task():
+                    return
+                producer = self._tasks.get(run_id)
+                policy = self._abandonment_policies.get(run_id)
+                if (
+                    policy is None
+                    or self._generations.get(run_id) != generation
+                    or producer is None
+                    or producer.done()
+                    or self._subscriber_counts.get(run_id, 0) > 0
+                ):
+                    self._abandonment_tasks.pop(run_id, None)
+                    return
+                # A poll within the grace period: wait out the rest of it from that poll.
+                if policy.last_polled_at is not None:
+                    since_poll = time.monotonic() - policy.last_polled_at
+                    if since_poll < grace_seconds:
+                        delay = grace_seconds - since_poll
+                        continue
+                self._abandonment_tasks.pop(run_id, None)
+                self._abandonment_triggered.add(run_id)
+                self.store.mark_abandonment_requested(run_id)
+                callback = policy.cancel
 
-        if callback is None:  # pragma: no cover - guarded under the lock
-            return
         try:
             callback()
         except Exception:
@@ -675,13 +773,13 @@ class DurableRunManager:
         source: AsyncIterator[bytes],
         condition: asyncio.Condition,
         generation: int,
+        cancel: Optional[Callable[[], None]],
     ) -> None:
         terminal_status: Optional[RunStatus] = None
         terminal_event: Optional[str] = None
         terminal_error: Optional[str] = None
-        self.store.set_status(run_id, "running")
-        await self._notify(condition)
         try:
+            await self._notify(condition)
             async for frame in source:
                 source_event_type, source_payload = _parse_frame(frame)
                 abandoned = run_id in self._abandonment_triggered
@@ -770,9 +868,11 @@ class DurableRunManager:
             terminal_status = "interrupted"
             terminal_event = "interrupted"
             terminal_error = "Backend process stopped before the run completed."
+            await self._stop_source(run_id, source, cancel)
             raise
-        except Exception:  # belt-and-braces around producer adapters
+        except Exception:  # a store failure, or belt-and-braces around producer adapters
             logger.exception("Durable producer failed for run %s", run_id)
+            await self._stop_source(run_id, source, cancel)
             message = "Internal server error"
             try:
                 self.store.append(
@@ -785,12 +885,16 @@ class DurableRunManager:
             terminal_event = "INTERNAL"
             terminal_error = message
         finally:
-            self.store.set_status(
-                run_id,
-                terminal_status or "failed",
-                terminal_event=terminal_event,
-                error=terminal_error,
-            )
+            try:
+                self.store.set_status(
+                    run_id,
+                    terminal_status or "failed",
+                    terminal_event=terminal_event,
+                    error=terminal_error,
+                )
+            except Exception:
+                # The record stays "running" until a restart marks it interrupted.
+                logger.exception("Could not record the final status of run %s", run_id)
             await self._notify(condition)
             async with self._lock:
                 if (
@@ -806,6 +910,27 @@ class DurableRunManager:
                     self._abandonment_triggered.discard(run_id)
                     if self._subscriber_counts.get(run_id, 0) == 0:
                         self._subscriber_counts.pop(run_id, None)
+
+    @staticmethod
+    async def _stop_source(
+        run_id: str,
+        source: AsyncIterator[bytes],
+        cancel: Optional[Callable[[], None]],
+    ) -> None:
+        """Stop a run whose drain ended before ``source`` did: signal its worker,
+        then close ``source``, which returns once the worker has stopped."""
+        logger.warning("Run %s ended abnormally; cancelling its worker", run_id)
+        if cancel is not None:
+            try:
+                cancel()
+            except Exception:
+                logger.exception("Could not cancel run %s", run_id)
+        aclose = getattr(source, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                logger.exception("Could not close the event source of run %s", run_id)
 
     def get_run(self, run_id: str) -> Optional[RunRecord]:
         """Return the stored run record, or None when unknown."""

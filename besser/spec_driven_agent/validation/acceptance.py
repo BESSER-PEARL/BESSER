@@ -9,7 +9,8 @@ indicate whether the entity appears in the app (not executed acceptance):
   the cell is ``None`` (unmeasured) rather than ``False``;
 * ``page``   — some frontend file is about it (name or content match);
 * ``create`` — a frontend file about it contains a POST, OR calls a
-  shared api-client helper that issues one, OR a ``<TableBlock>`` bound
+  shared api-client helper or React hook that issues one (a generic form is about the
+  entities its imported config module declares), OR a ``<TableBlock>`` bound
   to it: ``dataBinding`` naming this entity and an endpoint, plus a
   non-empty ``options.formColumns``. The GUI-model scaffold's only
   generated create path issues its POST from a shared runtime component
@@ -32,6 +33,7 @@ on. Blocker-level enforcement stays with ``contract_checks``.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from besser.utilities.workspace_fs import walk_plain
@@ -39,9 +41,16 @@ from besser.utilities.workspace_fs import walk_plain
 _FRONTEND_EXTS = (".js", ".jsx", ".ts", ".tsx")
 _SKIP_DIRS = ("node_modules", "dist", "build", "__pycache__")
 
-# A POST issued from frontend code — axios/api `.post(`, fetch with
-# method POST, or a generated api-layer helper.
-_POST_RE = re.compile(r"\.post\s*\(|method\s*:\s*['\"]POST['\"]", re.IGNORECASE)
+# A POST issued from frontend code — axios/api `.post(`, the method as an
+# argument (`request('POST', path)`), or fetch with method POST; `url` is the
+# literal path a fetch-style call names before its options.
+_POST_RE = re.compile(
+    r"\.post\s*\(|\(\s*['\"]POST['\"]\s*,"
+    r"|(?:\(\s*['\"](?P<url>[^'\"]{1,200})['\"]\s*,\s*\{[^{}]{0,200}?)?method\s*:\s*['\"]POST['\"]",
+    re.IGNORECASE)
+_FIRST_ARG_RE = re.compile(r"\s*['\"]([^'\"]{1,200})['\"]")
+# The rest of a one-expression arrow helper up to its call: `(r, b) => api`.
+_ARROW_BODY_RE = re.compile(r"\s*(?:async\s+)?\([^()]*\)\s*=>\s*[\w$.\s]*")
 
 # The GUI-model scaffold's runtime-bound create path: a <TableBlock> whose
 # dataBinding names the entity + endpoint and whose options carry at least
@@ -71,9 +80,13 @@ _HELPER_DEF_RE = re.compile(
     r"\b(?P<fn>[A-Za-z_$][\w$]*)\s*(?=\([^()]*\)\s*\{)"
     r"|(?:^|[,{;(]|\bconst\s+|\blet\s+|\bvar\s+|\bexport\s+)[ \t]*"
     r"(?P<name>[A-Za-z_$][\w$]*)\s*[:=](?![=>])"
-    r"(?=\s*(?:async\s+)?(?:function\b|\())",
+    r"(?=\s*(?:async\s+)?(?:function\b|\())"
+    # A TypeScript function declaration with a return type: `function useX(): T {`.
+    r"|\bfunction\s+(?P<typed>[A-Za-z_$][\w$]*)\s*(?=\([^()]*\)\s*:)",
     re.MULTILINE,
 )
+_RETURN_TYPE_RE = re.compile(r"\s*:")
+_ARROW_RE = re.compile(r"\s*=>")
 _NOT_A_HELPER = frozenset({
     "if", "for", "while", "switch", "catch", "function", "return", "await",
     "typeof", "new", "delete", "void", "do", "else",
@@ -83,6 +96,19 @@ _BLANKABLE_RE = re.compile(
     r"//[^\n]*|/\*[\s\S]*?\*/"
     r"|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`")
 _KEEP_NEWLINES_RE = re.compile(r"[^\n]")
+# A string compared against a value (`key === 'booking'`, `case 'booking':`).
+_COMPARED_STRING_RE = re.compile(
+    r"(?:[!=]==?|\bcase)\s*(['\"`])[^'\"`\n]*\1|(['\"`])[^'\"`\n]*\2\s*[!=]==?")
+# An identifier holding another record's id (`tagId`, `user_ids`): a reference, not a create.
+_REFERENCE_ID_RE = re.compile(r"(?<![\w$])[A-Za-z_$][\w$]*?(?:Id|ID|_id)s?(?![\w$])")
+_IF_RE = re.compile(r"\bif\s*\(")
+_BLOCK_START_RE = re.compile(r"\s*\{")
+# An error or response read (`err.message`, `e?.response.data`, `error['message']`), not a call.
+_ERROR_MEMBER = r"(?:message|error|detail|data|status|statusText|response|stack|code|name)"
+_ERROR_READ_RE = re.compile(
+    r"(?<![\w$.])(?:e|err|error|ex|exception|res|resp|response|result)"
+    r"(?:\s*\??\.\s*" + _ERROR_MEMBER + r"(?![\w$])(?!\s*\()"
+    r"|\s*(?:\?\.)?\[\s*(['\"`])" + _ERROR_MEMBER + r"\1\s*\])+")
 
 
 def _blank_literals(text: str) -> str:
@@ -101,17 +127,18 @@ def _blank_comments(text: str) -> str:
         lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()) if m.group().startswith("/") else m.group(), text)
 
 
-# A POST the file issues itself: `.post(` with its arguments, or a fetch with
-# method POST, whose target is not attributable and so counts as unnamed.
-_DIRECT_POST_RE = re.compile(r"\.post\s*\((?P<args>[^()]{0,200})", re.IGNORECASE)
-_FETCH_POST_RE = re.compile(r"method\s*:\s*['\"]POST['\"]", re.IGNORECASE)
+def _post_path(source: str, post: re.Match) -> str | None:
+    """The literal path a POST targets, or None when it is built at run time."""
+    if post.group("url"):
+        return post.group("url")
+    first = _FIRST_ARG_RE.match(source, post.end()) if post.group().endswith(("(", ",")) else None
+    return first.group(1) if first else None
 
 
 def _direct_create_calls(source: str) -> list:
     """Creates ``source`` issues itself, shaped like ``_client_create_calls``."""
     code = _blank_comments(source)
-    calls: list = [_STRING_ARG_RE.findall(m.group("args")) or None for m in _DIRECT_POST_RE.finditer(code)]
-    return calls + [None] * len(_FETCH_POST_RE.findall(code))
+    return [[path] if (path := _post_path(code, m)) else None for m in _POST_RE.finditer(code)]
 
 
 def _bracket_depth(blanked: str, start: int, end: int) -> int:
@@ -124,26 +151,126 @@ def _bracket_depth(blanked: str, start: int, end: int) -> int:
     return depth
 
 
-def _post_helpers(source: str) -> set[str]:
-    """Names in an api-client module whose own definition issues a POST.
+def _group_end(blanked: str, start: int) -> int:
+    """The index just past the bracket group that opens at ``start``."""
+    depth = 0
+    for i in range(start, len(blanked)):
+        if blanked[i] in "([{":
+            depth += 1
+        elif blanked[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return len(blanked)
+
+
+def _blank_entity_branches(code: str, forms: list[str]) -> str:
+    """Blank each `if (key === 'project') { ... }`: a shared form's branch for one entity it serves."""
+    blanked, done = _blank_literals(code), 0
+    for match in _IF_RE.finditer(blanked):
+        cond_end = _group_end(blanked, match.end() - 1)
+        body = _BLOCK_START_RE.match(blanked, cond_end)
+        if match.start() < done or not body or not any(
+                _mentions(compared.group(), forms, whole_word=True)
+                for compared in _COMPARED_STRING_RE.finditer(code, match.start(), cond_end)):
+            continue
+        done = _group_end(blanked, body.end() - 1)
+        code = code[:match.start()] + _KEEP_NEWLINES_RE.sub(" ", code[match.start():done]) + code[done:]
+    return code
+
+
+def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
+    """{helper name: the literal paths its POSTs target, or None if any is not literal}.
 
     For each POST literal, the enclosing helper is the last named callable
-    definition before it that we are still syntactically inside. Only those
-    names count as a create; `list`/`update`/`remove` next to them do not.
+    definition before it that we are still syntactically inside, or whose
+    one-expression arrow body it is. Only those names count as a create;
+    `list`/`update`/`remove` next to them do not.
     """
     blanked = _blank_literals(source)
     definitions = [
-        (match.end(), match.group("fn") or match.group("name"))
+        (match.end(), match.group("fn") or match.group("name") or match.group("typed"))
         for match in _HELPER_DEF_RE.finditer(blanked)
-        if (match.group("fn") or match.group("name")) not in _NOT_A_HELPER
+        if (match.group("fn") or match.group("name") or match.group("typed")) not in _NOT_A_HELPER
     ]
-    names = set()
+    helpers: dict[str, list[str] | None] = {}
     for post in _POST_RE.finditer(source):
         for end, name in reversed(definitions):
-            if end <= post.start() and _bracket_depth(blanked, end, post.start()) >= 1:
-                names.add(name)
+            if end <= post.start() and (_bracket_depth(blanked, end, post.start()) >= 1
+                                        or _ARROW_BODY_RE.fullmatch(blanked, end, post.start())):
+                path, known = _post_path(source, post), helpers.get(name, [])
+                helpers[name] = None if path is None or known is None else known + [path]
                 break
-    return names
+    return helpers
+
+
+def _definition_end(blanked: str, start: int) -> int:
+    """Where a definition starting at ``start`` ends: its parameters, an optional
+    return type, an optional ``=>``, then the first bracket group (its body)."""
+    params = blanked.find("(", start)
+    if params < 0:
+        return len(blanked)
+    i = _return_type_end(blanked, _group_end(blanked, params))
+    arrow = _ARROW_RE.match(blanked, i)
+    for j in range(arrow.end() if arrow else i, len(blanked)):
+        if blanked[j] in ")]}":
+            return j
+        if blanked[j] in "([{":
+            return _group_end(blanked, j)
+    return len(blanked)
+
+
+def _return_type_end(blanked: str, i: int) -> int:
+    """Past a ``: Type`` annotation at ``i``. A ``{`` right after ``:``, ``|``,
+    ``&`` or ``,`` (or inside ``<>``) is an object type; any other ``{``, or a
+    ``=>`` outside brackets, starts the body."""
+    colon = _RETURN_TYPE_RE.match(blanked, i)
+    if not colon:
+        return i
+    i, angle, previous = colon.end(), 0, ":"
+    while i < len(blanked):
+        char = blanked[i]
+        if char.isspace():
+            i += 1
+            continue
+        if char in ";)]}" or angle <= 0 and (
+                blanked.startswith("=>", i) or char == "{" and previous not in ":|&,"):
+            return i
+        if char in "([{":
+            i, previous = _group_end(blanked, i), ")"
+            continue
+        if char == "<":
+            angle += 1
+        elif char == ">" and previous != "=":
+            angle -= 1
+        i, previous = i + 1, char
+    return i
+
+
+def _hook_post_paths(source: str) -> dict[str, list[str] | None]:
+    """{React hook name: the literal paths of the POSTs inside its body, or None if any is not literal}.
+
+    A page calling ``useBookings()`` creates through whatever the hook returns
+    (``{ add }``), so the hook call is that page's create.
+    """
+    blanked = _blank_literals(source)
+    posts = list(_POST_RE.finditer(source))
+    hooks: dict[str, list[str] | None] = {}
+    for match in _HELPER_DEF_RE.finditer(blanked):
+        name = match.group("fn") or match.group("name") or match.group("typed")
+        if not re.fullmatch(r"use[A-Z][\w$]*", name):
+            continue
+        end = _definition_end(blanked, match.end())
+        for post in posts:
+            if match.end() <= post.start() < end:
+                path, known = _post_path(source, post), hooks.get(name, [])
+                hooks[name] = None if path is None or known is None else known + [path]
+    return hooks
+
+
+def _post_helpers(source: str) -> set[str]:
+    """Names in an api-client module whose own definition issues a POST."""
+    return set(_post_helper_paths(source))
 
 
 def _import_bindings(source: str):
@@ -181,14 +308,15 @@ def _resolve_import(rel: str, spec: str) -> list[str]:
 
 
 def _client_create_calls(rel: str, source: str, files: dict[str, str],
-                         helper_cache: dict[str, set[str]]) -> list:
+                         helper_cache: dict[str, dict], used_clients: set[str]) -> list:
     """Creates ``rel`` issues through an imported api-client module.
 
-    One entry per call site: its literal string arguments, or None when the
-    call names its resource through a variable (the generic
-    ``<EntityList entity={...}/>`` page). None means "a create happens here
-    but this call does not say which entity", which is exactly the evidence
-    the file-mention test already stands on.
+    One entry per call site: the helper's own literal path, else the call's
+    literal string arguments, or None when the call names its resource
+    through a variable (the generic ``<EntityList entity={...}/>`` page).
+    None means "a create happens here but this call does not say which
+    entity", which is exactly the evidence the file-mention test already
+    stands on. Each module a call resolves into is added to ``used_clients``.
 
     ``helper_cache`` is keyed by module path: one api client is imported by
     every page, so it is scanned once rather than once per importer.
@@ -199,7 +327,7 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
         if target is None or not _POST_RE.search(files[target]):
             continue
         if target not in helper_cache:
-            helper_cache[target] = _post_helpers(files[target])
+            helper_cache[target] = {**_post_helper_paths(files[target]), **_hook_post_paths(files[target])}
         helpers = helper_cache[target]
         if not helpers:
             continue
@@ -207,8 +335,10 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
             r"\b" + re.escape(binding) + r"\s*(?:\.\s*(?P<member>[\w$]+)\s*)?\("
             r"(?P<args>[^()]{0,200})")
         for call in pattern.finditer(source):
-            if (call.group("member") or binding) in helpers:
-                calls.append(_STRING_ARG_RE.findall(call.group("args")) or None)
+            name = call.group("member") or binding
+            if name in helpers:
+                calls.append(helpers[name] or _STRING_ARG_RE.findall(call.group("args")) or None)
+                used_clients.add(target)
     return calls
 
 
@@ -250,9 +380,45 @@ def _entity_forms(name: str) -> list[str]:
     return sorted(forms, key=len, reverse=True)
 
 
-def _mentions(text: str, forms: list[str]) -> bool:
-    low = text.lower()
-    return any(f in low for f in forms)
+@functools.lru_cache(maxsize=1024)
+def _forms_re(forms: tuple[str, ...], whole_word: bool) -> re.Pattern:
+    # A form must end its word: "running" is not Run, "username" is not User.
+    # A whole word also keeps `RunStatus` / `RUN_STATUS` from declaring Run.
+    alternatives = "(?:" + "|".join(map(re.escape, forms)) + ")"
+    if whole_word:
+        return re.compile(r"(?<![A-Za-z0-9_])" + alternatives + r"(?![A-Za-z0-9_])", re.IGNORECASE)
+    return re.compile(alternatives + r"(?-i:(?![a-z0-9]))", re.IGNORECASE)
+
+
+def _mentions(text: str, forms: list[str], whole_word: bool = False) -> bool:
+    return _forms_re(tuple(forms), whole_word).search(text) is not None
+
+
+def _config_declarations(source: str) -> str:
+    """The part of an entity config module that declares entities.
+
+    An entry's own key, path and label declare it. Comments, multi-word labels
+    (`'Dataset Version'`) and every list nested inside an entry (`fields: [...]`,
+    whose `ref`s name other entities) are blanked.
+    """
+    source = _BLANKABLE_RE.sub(
+        lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group())
+        if m.group().startswith("/") or re.search(r"\s", m.group()) else m.group(), source)
+    blanked = _blank_literals(source)
+    spans, depth, start, outer = [], 0, None, 0
+    for i, char in enumerate(blanked):
+        if char in "([{":
+            if char == "[" and depth >= 2 and start is None:
+                start, outer = i, depth
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if start is not None and depth == outer:
+                spans.append((start, i + 1))
+                start = None
+    for s, e in reversed(spans):
+        source = source[:s] + _KEEP_NEWLINES_RE.sub(" ", source[s:e]) + source[e:]
+    return source
 
 
 def _creates(args: list[str] | None, forms: list[str]) -> bool:
@@ -317,8 +483,24 @@ def build_acceptance_matrix(
                 continue
 
     by_path = dict(frontend_files)
-    helper_cache: dict[str, set[str]] = {}
-    create_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache) + _direct_create_calls(content)
+    helper_cache: dict[str, dict] = {}
+    used_clients: set[str] = set()
+    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients)
+                    for rel, content in frontend_files}
+    # A shared client's own POSTs count where its helpers are called, not as
+    # creates of whatever its other helpers (`getMetrics`) happen to name.
+    # A module other files call into is such a client even when none of those
+    # calls is a create; a page imported to be rendered or routed is not.
+    code = {rel: _blank_literals(content) for rel, content in frontend_files}
+    clients = used_clients | {
+        target for rel, content in frontend_files for binding, spec in _import_bindings(content)
+        for target in [next((c for c in _resolve_import(rel, spec) if c in by_path), None)]
+        if target in helper_cache
+        and not re.search(r"</|/>", code[target])  # a closing tag: renders JSX, a component
+        and re.search(r"(?<![\w$.])" + re.escape(binding) + r"\s*[.(]", code[rel])
+        and not re.search(r"<\s*" + re.escape(binding) + r"\b", code[rel])
+    }
+    create_calls = {rel: client_calls[rel] + ([] if rel in clients else _direct_create_calls(content))
                     for rel, content in frontend_files}
     # Generic pages (``EntityList entity={key}``): the create names its resource
     # through a variable and the component's code names no class of the model
@@ -326,16 +508,36 @@ def build_acceptance_matrix(
     # renders one as JSX creates that entity through it; importing the api
     # client is not rendering a page. ``LoanList`` with a variable-argument
     # create is not generic: crediting it to every entity App.jsx lists would
-    # hide their missing creates.
+    # hide their missing creates. Testing which entity it was given
+    # (`config.key === 'booking'`) is what a shared form does, so it names none,
+    # nor does the block it runs for that entity; neither does reading
+    # `err.message` when the model has a Message, nor holding a `tagId`.
     all_forms = [f for name in classes for f in _entity_forms(name)]
     generic_creators = {
         rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(_blank_comments(by_path[rel]), all_forms)
+        and not _mentions(_REFERENCE_ID_RE.sub(" ", _ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(
+            " ", _blank_entity_branches(_blank_comments(by_path[rel]), all_forms)))), all_forms)
     }
+    # A generic creator may read its entities from a config module it imports
+    # (`entities.js`); that module, not the creator's own code, declares them.
+    # An entry's nested `actions: [{ method: 'POST' }]` is data and is blanked
+    # with the other nested lists; a POST left over makes the module a client.
+    config_text = {
+        rel: " ".join(text for text in (
+            _config_declarations(by_path[target]) for target in (
+                next((c for c in _resolve_import(rel, spec) if c in by_path), None)
+                for _, spec in _import_bindings(by_path[rel]))
+            if target and not re.search(r"\bfetch\s*\(", by_path[target]))
+            if not _POST_RE.search(text))
+        for rel in generic_creators
+    }
+    # A configured creator is credited through its config alone: the page that
+    # renders it mentioning `user` (the signed-in one) declares nothing.
+    unconfigured = {rel for rel in generic_creators if not _mentions(config_text[rel], all_forms, whole_word=True)}
     renders_generic_creator = {
-        rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None) in generic_creators
+        rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None) in unconfigured
                  and re.search(r"<\s*" + re.escape(binding) + r"\b", content)
                  for binding, spec in _import_bindings(content))
         for rel, content in frontend_files
@@ -353,7 +555,8 @@ def build_acceptance_matrix(
         page = False
         create = False
         for rel, content in frontend_files:
-            about = _mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(content, forms)
+            about = (_mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(content, forms)
+                     or _mentions(config_text.get(rel, ""), forms, whole_word=True))
             if not about:
                 continue
             page = True

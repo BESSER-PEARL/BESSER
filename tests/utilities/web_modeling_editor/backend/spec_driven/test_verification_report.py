@@ -19,6 +19,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.validation.issues import (
     _check_did_not_run,
     required_check_unverified,
+    runtime_check_unverified,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
@@ -166,6 +167,24 @@ def test_a_recovered_ocl_constraint_moves_out_of_shipped_unenforced():
     assert "noOverlappingBookings" in _ids(report.verified)
     assert "noOverlappingBookings" not in _ids(report.shippedUnenforced)
     assert "guestsWithinCapacity" in _ids(report.shippedUnenforced)
+
+
+def test_structured_citations_read_as_path_and_line_like_the_older_string():
+    recipe = _hotel_recipe()
+    recipe["requirements"][0]["evidence"] = [
+        {"path": "backend/routers/booking.py", "line": "booking = Booking(**payload)"},
+        {"path": "frontend/src/Book.jsx", "line": "<BookingForm onSubmit={save} />"}]
+    recipe["requirements"][3] = _recovery_requirement(
+        _NO_DOUBLE_BOOKING, 4, status="implemented",
+        evidence=[{"path": "backend/routers/booking.py", "line": "raise HTTPException(409, 'room already booked')"}],
+    )
+    report = build_verification_report(recipe)
+
+    implemented = next(i for i in report.verified if i.id == "R1")
+    assert implemented.how.endswith("source: backend/routers/booking.py: booking = Booking(**payload) and "
+                                    "frontend/src/Book.jsx: <BookingForm onSubmit={save} />")
+    recovered = next(i for i in report.verified if i.id == "noOverlappingBookings")
+    assert recovered.how.endswith("backend/routers/booking.py: raise HTTPException(409, 'room already booked')")
 
 
 def test_a_rejected_rule_nothing_judged_still_ships_unenforced():
@@ -318,6 +337,20 @@ def test_required_check_unverified_lands_in_could_not_check():
     check = next(i for i in report.notVerified if i.kind == "check")
     assert check.what == "frontend build [.]"
     assert "node is unavailable" in check.why
+
+
+def test_a_runtime_check_that_did_not_run_lands_in_could_not_check():
+    """Pins the coupling with ``runtime_check_unverified``: these replaced the
+    ``runtime unverified:`` findings ``_UNCHECKED_PREFIXES`` used to catch."""
+    recipe = _hotel_recipe(validation_issues=[{
+        "severity": "warning",
+        "message": runtime_check_unverified("the constructibility probe", "backend: no sandbox"),
+    }])
+    report = build_verification_report(recipe)
+
+    check = next(i for i in report.notVerified if i.kind == "check")
+    assert check.what == "runtime check (the constructibility probe)"
+    assert "no sandbox" in check.why
 
 
 def test_the_synthetic_recovery_requirement_the_orchestrator_writes_is_matchable():

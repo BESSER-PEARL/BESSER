@@ -26,10 +26,13 @@ demoted to advisory findings (``blocker=False``).
 from __future__ import annotations
 
 import ast
+import io
 import os
 import re
+import tokenize
 from dataclasses import dataclass, field
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 from besser.utilities.workspace_fs import walk_plain
 
 # Model type names that serialize to a string on the wire.
@@ -95,6 +98,11 @@ class DataContract:
     # Association-end ownership; None when the model declares no usable
     # binary association, in which case the inverted-end check is a no-op.
     ends: EndOwnership | None = None
+    # class name (every class) -> names of the id attributes the model
+    # declares on it or an ancestor. The scaffold puts these in ``<X>Create`` whatever their name
+    # (``id`` included) and reads them off the payload, so they are
+    # client-supplied, not server-owned.
+    declared_keys: dict = field(default_factory=dict)
 
     @property
     def string_id_classes(self) -> list:
@@ -105,7 +113,10 @@ class DataContract:
 
     @property
     def has_int_ids(self) -> bool:
-        return any(t.lower() in _INT_TYPES for _, t in self.pk_types.values())
+        # A class with no declared id (own or inherited) gets the server's
+        # integer surrogate `id`.
+        return any(t.lower() in _INT_TYPES for _, t in self.pk_types.values()) \
+            or any(not keys for keys in self.declared_keys.values())
 
 
 def build_data_contract(domain_model) -> DataContract | None:
@@ -125,7 +136,10 @@ def build_data_contract(domain_model) -> DataContract | None:
 
     pk_types: dict = {}
     action_arity: dict = {}
+    declared_keys: dict = {}
     for cls in classes:
+        declared_keys[cls.name] = frozenset(
+            a.name for a in cls.all_attributes() if a.is_id)
         for attr in getattr(cls, "attributes", []) or []:
             if getattr(attr, "is_id", False):
                 attr_type = getattr(attr, "type", None)
@@ -150,6 +164,7 @@ def build_data_contract(domain_model) -> DataContract | None:
         pk_types=pk_types,
         action_arity=action_arity,
         ends=_build_end_ownership(domain_model, classes),
+        declared_keys=declared_keys,
     )
 
 
@@ -293,15 +308,36 @@ _POST_WITH_ID_RE = re.compile(r"(?:\.post\s*\(|method\s*:\s*['\"]POST['\"]).*\bi
 # Backend faking success for a method it never implemented.
 _FAKE_EXECUTED_RE = re.compile(r"['\"]status['\"]\s*:\s*['\"]executed['\"]")
 
-# `class FooCreate(...):` block capture for the server-owned-field scan.
-_CREATE_SCHEMA_RE = re.compile(
-    r"^class\s+\w*Create\w*\s*\(.*?\):\s*\n((?:[ \t]+.*\n?)*)",
-    re.MULTILINE,
-)
-_SERVER_OWNED_FIELD_RE = re.compile(
-    r"^[ \t]+(%s)\s*:" % "|".join(SERVER_OWNED_FIELDS),
-    re.MULTILINE,
-)
+def _server_owned_create_fields(content: str, contract: DataContract) -> list:
+    """``(line, field)`` per server-owned field a ``*Create*`` schema declares.
+
+    Reads the class body's annotated fields, so a docstring or comment that
+    mentions ``id:`` is not a field. A field the model declares as the
+    class's identifier is exempt: the scaffold itself puts it in
+    ``<X>Create`` and its create endpoint reads it off the payload.
+    """
+    if "Create" not in content:
+        return []
+    try:
+        tree = parse_source(content)
+    except (SyntaxError, ValueError):
+        return []  # a half-written file is python_source's problem, not ours
+    out: list = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or "Create" not in node.name:
+            continue
+        # OrderItemCreate -> OrderItem, not Order: the longest model class
+        # the schema name starts with.
+        stem = node.name.replace("Create", "", 1)
+        entity = max((c for c in contract.declared_keys if stem.startswith(c)),
+                     key=len, default=None)
+        exempt = contract.declared_keys.get(entity, frozenset())
+        for child in node.body:
+            if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name) \
+                    and child.target.id in SERVER_OWNED_FIELDS \
+                    and child.target.id not in exempt:
+                out.append((child.lineno, child.target.id))
+    return out
 
 
 def lint_file(rel_path: str, content: str, contract: DataContract | None) -> list:
@@ -319,6 +355,41 @@ def lint_file(rel_path: str, content: str, contract: DataContract | None) -> lis
 
 def _line_of(content: str, pos: int) -> int:
     return content.count("\n", 0, pos) + 1
+
+
+_STATEMENT_START = frozenset({tokenize.NEWLINE, tokenize.NL, tokenize.INDENT,
+                              tokenize.DEDENT, tokenize.ENCODING})
+
+
+def _without_comments_and_docstrings(source: str) -> str:
+    """``source`` with comments and statement-level strings blanked.
+
+    Line breaks are kept, so line numbers still match the original. A
+    source that does not tokenize (a half-written file) comes back as is.
+    """
+    lines = source.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line))
+    spans = []
+    previous = tokenize.ENCODING
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT or (
+                    token.type == tokenize.STRING and previous in _STATEMENT_START):
+                spans.append((starts[token.start[0] - 1] + token.start[1],
+                              starts[token.end[0] - 1] + token.end[1]))
+            if token.type not in (tokenize.COMMENT, tokenize.NL):
+                previous = token.type
+    except (tokenize.TokenError, SyntaxError):
+        return source
+    out, cursor = [], 0
+    for start, end in spans:
+        out.append(source[cursor:start])
+        out.append("\n" * source.count("\n", start, end))
+        cursor = end
+    out.append(source[cursor:])
+    return "".join(out)
 
 
 def _lint_frontend(rel: str, content: str, contract: DataContract) -> list:
@@ -377,8 +448,37 @@ _INJECTED_ANNOTATIONS = frozenset({
     "Request", "Response", "BackgroundTasks", "WebSocket", "SecurityScopes",
     "Session", "AsyncSession", "HTTPAuthorizationCredentials",
 })
+_INJECTING_CALLS = frozenset({"Depends", "Security"})
 _HTTP_VERBS = frozenset({"get", "post", "put", "patch", "delete"})
 _PATH_PARAM_RE = re.compile(r"\{([^}:]+)")
+
+
+def _is_injecting_annotation(annotation) -> bool:
+    """``Annotated[T, Depends(...)]``: FastAPI fills the parameter itself."""
+    if not (isinstance(annotation, ast.Subscript)
+            and (getattr(annotation.value, "id", None)
+                 or getattr(annotation.value, "attr", "")) == "Annotated"
+            and isinstance(annotation.slice, ast.Tuple)):
+        return False
+    return any(isinstance(meta, ast.Call)
+               and (getattr(meta.func, "id", None)
+                    or getattr(meta.func, "attr", "")) in _INJECTING_CALLS
+               for meta in annotation.slice.elts[1:])
+
+
+def _injecting_aliases(tree) -> frozenset:
+    """Module-level ``SessionDep = Annotated[Session, Depends(get_db)]`` names."""
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and _is_injecting_annotation(node.value):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                and _is_injecting_annotation(node.value):
+            names.add(node.target.id)
+        elif getattr(ast, "TypeAlias", None) and isinstance(node, ast.TypeAlias) \
+                and _is_injecting_annotation(node.value):
+            names.add(node.name.id)
+    return frozenset(names)
 
 
 def _routes_of(function) -> list:
@@ -525,8 +625,11 @@ def _absence_keys(test, bound: dict) -> list:
     return []
 
 
-def _demanded_values(function, route: str) -> list:
-    """Values this handler makes the caller supply, in source order."""
+def _demanded_values(function, route: str, injecting: frozenset = frozenset()) -> list:
+    """Values this handler makes the caller supply, in source order.
+
+    ``injecting`` holds the module's ``Annotated[..., Depends(...)]`` aliases.
+    """
     path_params = set(_PATH_PARAM_RE.findall(route))
     demanded: list = []
 
@@ -541,7 +644,8 @@ def _demanded_values(function, route: str) -> list:
             argument.annotation, "attr", "")
         if argument.arg in path_params or argument.arg in ("self", "database", "db"):
             continue
-        if annotation in _INJECTED_ANNOTATIONS:
+        if annotation in _INJECTED_ANNOTATIONS or annotation in injecting \
+                or _is_injecting_annotation(argument.annotation):
             continue
         demanded.append(argument.arg)
 
@@ -581,6 +685,7 @@ def _zero_arg_action_issues(rel: str, content: str, contract: DataContract) -> l
     except (SyntaxError, ValueError):
         return []  # a half-written file is python_source's problem, not ours
     findings: list = []
+    injecting = _injecting_aliases(tree)
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -588,7 +693,7 @@ def _zero_arg_action_issues(rel: str, content: str, contract: DataContract) -> l
             action = _modelled_action(contract, route)
             if action is None or action[2] != 0:
                 continue
-            demanded = _demanded_values(function, route)
+            demanded = _demanded_values(function, route, injecting)
             if not demanded:
                 continue
             findings.append(Finding(
@@ -880,14 +985,16 @@ def _class_scopes(tree) -> dict:
     return scopes
 
 
-def _declared_members(tree, known: frozenset, declared: dict) -> None:
+def _declared_members(tree, declared: dict) -> None:
     """Accumulate every name this module attaches to a model class.
 
     Generous on purpose: anything that plausibly puts the name on the class
     counts, because a name that resolves is not the inversion we are after.
+    Every class is recorded, not only model classes, so a model class's
+    mixin or declarative base can be resolved in :func:`_resolve_bases`.
     """
     def note(cls, name) -> None:
-        if cls in known and name:
+        if cls and name:
             declared.setdefault(cls, set()).add(str(name))
 
     def relationship_target(call):
@@ -930,6 +1037,12 @@ def _declared_members(tree, known: frozenset, declared: dict) -> None:
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
+        entry = declared.setdefault(node.name, set())
+        for base in node.bases:
+            # `orm.DeclarativeBase` is DeclarativeBase; `Generic[T]` resolves
+            # to nothing, which _resolve_bases reads as unknown members.
+            name = getattr(base, "id", None) or getattr(base, "attr", None) or "?"
+            entry.add(f"<base>{name}")
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 note(node.name, child.name)
@@ -950,12 +1063,16 @@ def _declared_members(tree, known: frozenset, declared: dict) -> None:
             elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
                 note(node.name, child.target.id)
                 note_reverse(node.name, child.value)
-        if node.name in known:
-            # A subclass gets whatever its in-app bases declare.
-            entry = declared.setdefault(node.name, set())
-            for base in node.bases:
-                if isinstance(base, ast.Name):
-                    entry.add(f"<base>{base.id}")
+
+
+# Bases defined outside the app whose public members are known: SQLAlchemy's
+# declarative base and Pydantic's BaseModel contribute only _INHERITED_MEMBERS.
+_KNOWN_EXTERNAL_BASES = frozenset({
+    "object", "Base", "DeclarativeBase", "AsyncAttrs", "BaseModel", "ABC",
+})
+# Member marker for a class with a base nothing in the app defines: that base
+# may declare any name, so no read off the class can be called undeclared.
+_UNRESOLVED_BASE = "<unresolved base>"
 
 
 def _resolve_bases(declared: dict) -> dict:
@@ -970,8 +1087,11 @@ def _resolve_bases(declared: dict) -> dict:
         for entry in own:
             if entry.startswith("<base>"):
                 base = entry[6:]
-                if base in declared and base not in seen:
-                    out |= members(base, seen | {name})
+                if base in declared:
+                    if base not in seen:
+                        out |= members(base, seen | {name})
+                elif base not in _KNOWN_EXTERNAL_BASES:
+                    out.add(_UNRESOLVED_BASE)
         if not seen:
             resolved[name] = out
         return out
@@ -979,7 +1099,7 @@ def _resolve_bases(declared: dict) -> dict:
     return {name: members(name, frozenset()) for name in declared}
 
 
-def _walk_python(app_dir: str, known: frozenset) -> tuple:
+def _walk_python(app_dir: str) -> tuple:
     """Every parsed .py in the delivered tree, plus what it declares.
 
     ``(rel, tree, source)`` per file and ``class -> member names`` across
@@ -989,8 +1109,7 @@ def _walk_python(app_dir: str, known: frozenset) -> tuple:
     parsed: list = []
     declared: dict = {}
     for root, dirs, names in walk_plain(app_dir):
-        dirs[:] = [d for d in dirs
-                   if d not in ("node_modules", "dist", "build", "__pycache__")]
+        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
         for name in sorted(names):
             if not name.endswith(".py"):
                 continue
@@ -1009,7 +1128,7 @@ def _walk_python(app_dir: str, known: frozenset) -> tuple:
                 tree = parse_source(content)
             except (SyntaxError, ValueError):
                 continue  # a half-written file is python_source's problem
-            _declared_members(tree, known, declared)
+            _declared_members(tree, declared)
             parsed.append((rel, tree, content))
     return parsed, _resolve_bases(declared)
 
@@ -1027,7 +1146,7 @@ def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> 
     known = frozenset(ends.members)
     roles = tuple(ends.owner)
 
-    files, app_members = _walk_python(app_dir, known)
+    files, app_members = _walk_python(app_dir)
     parsed = [(rel, tree) for rel, tree, content in files
               if any(role in content for role in roles)]
     if not parsed:
@@ -1125,8 +1244,6 @@ _INHERITED_MEMBERS = frozenset({
     "model_fields", "model_fields_set", "model_config", "model_extra",
     "model_rebuild", "model_json_schema",
 })
-
-_INJECTING_CALLS = frozenset({"Depends", "Security"})
 
 
 def _injected_parameters(function) -> set:
@@ -1244,17 +1361,19 @@ def collect_undeclared_attribute_issues(app_dir: str,
         return []
     ends = contract.ends
     known = frozenset(ends.members)
-    files, app_members = _walk_python(app_dir, known)
+    files, app_members = _walk_python(app_dir)
     if not files:
         return []
 
     app_modules = frozenset(
         rel.rsplit("/", 1)[-1][:-3] for rel, _tree, _content in files)
+    # A class with a base defined outside the app may have any member.
+    opaque = {cls for cls, names in app_members.items() if _UNRESOLVED_BASE in names}
 
     issues: list = []
     for rel, tree, _content in files:
         scopes = _class_scopes(tree)
-        shadowed = _shadowing_imports(tree, app_modules) & known
+        shadowed = (_shadowing_imports(tree, app_modules) & known) | opaque
         seen: set = set()
         for function in ast.walk(tree):
             if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1343,43 +1462,43 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
                 blocker=True,
             ))
 
-    for schema in _CREATE_SCHEMA_RE.finditer(content):
-        block = schema.group(1)
-        for field in _SERVER_OWNED_FIELD_RE.finditer(block):
-            findings.append(Finding(
-                path=rel,
-                line=_line_of(content, schema.start(1) + field.start()),
-                message=(
-                    f"create schema declares server-owned field "
-                    f"`{field.group(1)}` — the backend assigns it; remove "
-                    "it from the create schema and the create form"
-                ),
-                blocker=True,
-            ))
+    for line, name in _server_owned_create_fields(content, contract):
+        findings.append(Finding(
+            path=rel,
+            line=line,
+            message=(
+                f"create schema declares server-owned field "
+                f"`{name}` — the backend assigns it; remove "
+                "it from the create schema and the create form"
+            ),
+            blocker=True,
+        ))
 
     stem = rel.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    code = _without_comments_and_docstrings(content)
     for cls in contract.string_id_classes:
         c_low = cls.lower()
         # foo_id: int  — an int-typed param/field for a string-id class.
-        for m in re.finditer(rf"\b{re.escape(c_low)}_id\s*:\s*int\b", content):
+        for m in re.finditer(rf"\b{re.escape(c_low)}_id\s*:\s*int\b", code):
             findings.append(Finding(
                 path=rel,
-                line=_line_of(content, m.start()),
+                line=_line_of(code, m.start()),
                 message=(
                     f"`{m.group(0)}` — {cls}.id is a string in the model; "
                     "declare the param/field as str"
                 ),
                 blocker=True,
             ))
-        # Integer FK column pointing at a string PK.
-        for m in re.finditer(rf"ForeignKey\(\s*['\"]{re.escape(c_low)}", content):
-            line_start = content.rfind("\n", 0, m.start()) + 1
-            line_end = content.find("\n", m.start())
-            line_text = content[line_start:line_end if line_end != -1 else None]
+        # Integer FK column pointing at a string PK. The `.` ends the table
+        # name: "orderitem.id" is not a key of `order`.
+        for m in re.finditer(rf"ForeignKey\(\s*['\"]{re.escape(c_low)}\.", code):
+            line_start = code.rfind("\n", 0, m.start()) + 1
+            line_end = code.find("\n", m.start())
+            line_text = code[line_start:line_end if line_end != -1 else None]
             if "Integer" in line_text:
                 findings.append(Finding(
                     path=rel,
-                    line=_line_of(content, m.start()),
+                    line=_line_of(code, m.start()),
                     message=(
                         f"Integer ForeignKey to `{c_low}` — {cls}.id is a "
                         "string in the model; the FK column must be String"
@@ -1388,10 +1507,10 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
                 ))
         # routers/reservation.py declaring `id: int` for a string-id entity.
         if stem == c_low:
-            for m in re.finditer(r"\bid\s*:\s*int\b", content):
+            for m in re.finditer(r"\bid\s*:\s*int\b", code):
                 findings.append(Finding(
                     path=rel,
-                    line=_line_of(content, m.start()),
+                    line=_line_of(code, m.start()),
                     message=(
                         f"`id: int` — {cls}.id is a string in the model; "
                         "path params and fields for it must be str"

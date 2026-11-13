@@ -29,7 +29,7 @@ import os
 import re
 import time
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncGenerator, AsyncIterator, Optional
 
 import httpx
 from fastapi import APIRouter, File, Header, HTTPException, Path, Query, UploadFile
@@ -70,7 +70,9 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview i
 # Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _locate_run_temp_dir,
+    run_download_dir,
 )
+from besser.utilities.workspace_fs import open_plain
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
     MAX_GENERATED_CODE_BYTES,
     import_generated_code,
@@ -130,7 +132,7 @@ def _safe_attachment_filename(filename: str, fallback: str) -> str:
 
 
 async def _stream_with_slot_release(
-    inner: AsyncIterator[bytes],
+    inner: AsyncGenerator[bytes, None],
     runtime: SpecDrivenRuntime,
     run_reservation: Optional[tuple[str, asyncio.Event]] = None,
 ) -> AsyncIterator[bytes]:
@@ -206,6 +208,9 @@ async def _stream_with_slot_release(
         except Exception:
             logger.exception("Could not deliver the terminal error frame")
     finally:
+        # Closing the runner waits for its worker to stop, so the slot and the
+        # run id are free only once nothing spends on them any more.
+        await inner.aclose()
         if run_reservation is not None:
             await runtime.active_runs.release(*run_reservation)
         runtime.slots.release()
@@ -366,6 +371,7 @@ async def smart_generate(
         await runtime.durable_runs.start(
             run_id,
             source,
+            cancel=cancel_event.set,
             on_abandoned=(
                 cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
@@ -426,6 +432,8 @@ async def poll_smart_run_events(
     record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    # A poller is present: it holds off the abandonment cancel like a stream does.
+    runtime.durable_runs.touch(run_id)
 
     stored = runtime.durable_runs.store.events_after(run_id, after, limit=limit)
     events = [
@@ -619,10 +627,15 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
 
     Errors are mapped by ``handle_endpoint_errors`` (``ValueError`` -> 400).
     """
-    assembled = assemble_models_from_project(
+    # Off the event loop: a large project takes seconds, which would stall
+    # every SSE stream, heartbeat and /cancel on this process. The default
+    # pool, not the runtime's: this keyless call must not take run threads.
+    assembled = await asyncio.to_thread(
+        assemble_models_from_project,
         request.project, primary_kind_override=request.primary_kind_override,
     )
-    plan = build_preview(
+    plan = await asyncio.to_thread(
+        build_preview,
         assembled,
         instructions=request.instructions,
         max_cost_usd=request.max_cost_usd,
@@ -637,7 +650,9 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
     if request.mode == "modify" and request.base_run_id:
         base = await runtime.registry.get(request.base_run_id)
         if base is not None and base.temp_dir:
-            change = compare_with_base(base.temp_dir, assembled.domain_model)
+            change = await asyncio.to_thread(
+                compare_with_base, base.temp_dir, assembled.domain_model,
+            )
             model_change = change.to_dict() if change else None
     payload["model_change"] = model_change
     return payload
@@ -676,6 +691,9 @@ async def resume_smart_gen(
 
     if not re.fullmatch(r"[a-f0-9]{32}", run_id):
         raise HTTPException(status_code=422, detail="Invalid run_id format")
+    # Rebuilt from its parsed value: the id reaches file names, and static
+    # analysis does not read the pattern above as path validation.
+    run_id = uuid.UUID(hex=run_id).hex
 
     temp_dir = _locate_run_temp_dir(run_id)
     if temp_dir is None:
@@ -728,6 +746,7 @@ async def resume_smart_gen(
             run_id,
             source,
             resume=True,
+            cancel=cancel_event.set,
             on_abandoned=(
                 cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
@@ -813,10 +832,12 @@ async def download_smart(
             detail="Unknown or expired run ID",
         )
 
-    if not os.path.isfile(entry.file_path):
-        # Should not happen, but guard against disk-level races.
+    try:
+        # Only a regular file in the run's download dir, never through a link.
+        handle = open_plain(entry.file_path, "rb", root=run_download_dir(entry.temp_dir))
+    except OSError:
         logger.error(
-            "SmartRunRegistry had an entry for %s but file %s is missing",
+            "SmartRunRegistry had an entry for %s but file %s is missing or not a plain file",
             run_id,
             entry.file_path,
         )
@@ -832,7 +853,7 @@ async def download_smart(
     )
 
     async def _iter_file() -> AsyncIterator[bytes]:
-        with open(entry.file_path, "rb") as fh:
+        with handle as fh:
             while True:
                 chunk = fh.read(_DOWNLOAD_CHUNK_SIZE)
                 if not chunk:

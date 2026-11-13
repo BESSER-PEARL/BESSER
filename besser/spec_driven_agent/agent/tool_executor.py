@@ -16,13 +16,14 @@ import ast
 import fnmatch
 import functools
 import hashlib
-import json
 import logging
 import os
+import posixpath
 import re
 import sys
 import threading
 import weakref
+from collections import Counter
 from contextlib import nullcontext
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -35,16 +36,17 @@ from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
+from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.agent.tools import (
     INVALID_ARGUMENTS_KEY,
     get_all_tools_including_generators,
 )
 
-# Checked before dispatch, so an omitted field is a clear tool error rather
-# than a raw ``KeyError: 'content'`` from inside the handler.
-_REQUIRED_ARGS = {
-    tool["name"]: tuple(tool["input_schema"].get("required", ()))
-    for tool in get_all_tools_including_generators()
+# Every tool's input schema by name, built once. Arguments are checked against
+# it before dispatch (see _normalize_arguments), so an omitted or wrong-typed
+# field is a clear tool error rather than a raw exception from the handler.
+_INPUT_SCHEMAS = {
+    tool["name"]: tool["input_schema"] for tool in get_all_tools_including_generators()
 }
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
@@ -57,7 +59,9 @@ from besser.spec_driven_agent.execution.sandbox import (
     run_confined,
 )
 from besser.spec_driven_agent.execution.shell_session import ShellSession
-from besser.utilities.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import (
+    makedirs_plain, open_plain, open_plain_write, remove_plain, walk_plain,
+)
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
@@ -69,15 +73,17 @@ from besser.spec_driven_agent.agent.edit_apply import (
     locate_chunk,
     replace_most_similar_chunk,
     replacement_spans,
+    gutter_line,
     stray_gutter_line,
     _strip_line_numbers,
+    strip_read_display,
 )
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
     WORKSPACE_SKIP_DIRS,
 )
-from besser.spec_driven_agent.state.agent_trace import record_generated_files
+from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_generated_files
 from besser.spec_driven_agent.state.generator_output import store_written_files
 from besser.spec_driven_agent.validation import frontend_source
 
@@ -109,6 +115,116 @@ ToolExecutionStatus = Literal["ok", "error", "skipped"]
 # A task whose verifier keeps refusing is retried at most this many times;
 # unbounded retries can livelock a run until the turn cap.
 _MAX_TASK_VERIFY_ATTEMPTS = 3
+# Characters of a task's text shown when a result only needs to name the item:
+# enough to recognise it; the full text is one task_list 'list' away.
+_TASK_LABEL_CHARS = 80
+
+
+def _task_label(text: str) -> str:
+    """A task's text cut to ``_TASK_LABEL_CHARS`` at a word boundary."""
+    if len(text) <= _TASK_LABEL_CHARS:
+        return text
+    cut = text[:_TASK_LABEL_CHARS]
+    space = cut.rfind(" ")
+    if space > _TASK_LABEL_CHARS // 2:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.") + "..."
+
+
+def _task_id(value) -> int | None:
+    """A checklist id from model input (``1``, ``"1"``, ``1.0``), else None.
+
+    One rule for every place task_list takes an id, and for every integer
+    tool argument (``_coerce_argument``). A bool is an int subclass
+    but not an id; a non-integral float is not truncated; ``inf`` (JSON
+    ``1e400``) is refused rather than raising OverflowError.
+    """
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+_JSON_TYPE_NAMES = {
+    "string": "a string", "integer": "an integer", "number": "a number",
+    "boolean": "a boolean", "array": "an array", "object": "an object",
+}
+_NOT_COERCIBLE = object()
+
+
+def _json_type(value) -> str:
+    """The JSON type of a decoded argument, as the model wrote it."""
+    if value is None:
+        return "null"
+    for python_type, name in ((bool, "boolean"), (int, "integer"), (float, "number"),
+                              (str, "string"), (list, "array"), (dict, "object")):
+        if isinstance(value, python_type):
+            return _JSON_TYPE_NAMES[name]
+    return type(value).__name__
+
+
+def _coerce_argument(value, declared: str):
+    """``value`` as the declared JSON type, or ``_NOT_COERCIBLE``.
+
+    Only the unambiguous mistakes are fixed: ``"12"`` / ``12.0`` for an
+    integer (the task-id rule: no bool, no truncation, no inf/nan),
+    ``"true"`` / ``"false"`` for a boolean, and a lone value for an array.
+    Stringified arrays/objects were already decoded by the provider layer
+    (``providers/tool_input.py``). A type the check does not know passes.
+    """
+    if declared == "string":
+        return value if isinstance(value, str) else _NOT_COERCIBLE
+    if declared == "integer":
+        number = _task_id(value)
+        return _NOT_COERCIBLE if number is None else number
+    if declared == "boolean":
+        if isinstance(value, bool):
+            return value
+        word = value.strip().lower() if isinstance(value, str) else None
+        return word == "true" if word in ("true", "false") else _NOT_COERCIBLE
+    if declared == "array":
+        return value if isinstance(value, list) else [value]
+    if declared == "object":
+        return value if isinstance(value, dict) else _NOT_COERCIBLE
+    return value
+
+
+def _normalize_arguments(schema: dict, arguments: dict) -> tuple[dict, list[str]]:
+    """Arguments checked against the top-level properties of ``schema``.
+
+    Returns the coerced arguments and one problem per offending argument.
+    An explicit null for an optional property means the property is absent.
+    Nested items are left to the handlers.
+    """
+    properties = schema.get("properties") or {}
+    required = set(schema.get("required") or ())
+    normalized, problems = {}, []
+    for name, value in arguments.items():
+        spec = properties.get(name)
+        if not isinstance(spec, dict):
+            normalized[name] = value
+            continue
+        if value is None and name not in required:
+            continue
+        declared = spec.get("type")
+        if isinstance(declared, str):
+            coerced = _coerce_argument(value, declared)
+            if coerced is _NOT_COERCIBLE:
+                problems.append(
+                    f"{name} must be {_JSON_TYPE_NAMES.get(declared, declared)}, "
+                    f"got {_json_type(value)}"
+                )
+                continue
+            value = coerced
+        if "enum" in spec and value not in spec["enum"]:
+            problems.append(
+                f"{name} must be one of {', '.join(map(str, spec['enum']))}; got {str(value)[:80]!r}"
+            )
+            continue
+        normalized[name] = value
+    return normalized, problems
 
 
 @dataclass(frozen=True)
@@ -131,7 +247,7 @@ class ToolExecutionResult:
         return self.status == "ok"
 
     def to_json(self) -> str:
-        return json.dumps(self.payload, default=str)
+        return dumps_for_model(self.payload)
 
 # Default time a shell command can run (seconds); the model may ask for up to
 # MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.
@@ -208,11 +324,41 @@ _UNSEARCHED_DIRS = frozenset({
     "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
 })
 
+# Reads remembered for the unchanged-re-read stub; read_ids beyond the 128
+# kept in _read_views are invalid anyway.
+_SHOWN_READS_MAX = 128
+
+# Workspace-wide findings attached to one write, per check.
+_CROSS_FILE_FINDINGS_MAX = 10
+# Workspace paths a cross-file finding names ("backend/routers/book.py line 3",
+# "src/App.tsx:12:", "(BookCreate in backend/pydantic_classes.py)").
+_NAMED_SOURCE_PATH_RE = re.compile(r"[\w./-]+\.(?:pyi?|[cm]?[jt]sx?)\b")
+# The schema a schema-consumer mismatch names ("... but BookCreate does not define").
+_UNDEFINED_FIELD_SCHEMA_RE = re.compile(r"\bbut (\w+) does not define\b")
+
+# list_files shows at most this many files. A scaffold has ~150; an uncapped
+# listing of a stray dependency tree was 232k chars in one result.
+_LIST_FILES_MAX = 300
+# Directories named in a capped listing's "more files" line; the rest are counted.
+_LIST_FILES_MAX_DIRS = 20
+
 # Maximum file content returned by read_file (chars)
 # A generated router runs to ~35k chars; 60k covers the largest observed
 # generated file with headroom and costs ~15k tokens against an 80k
 # compaction threshold.
 MAX_FILE_READ = 60_000
+
+
+# Run records live at the workspace root: every ``.besser_*`` file or
+# directory (trace, checkpoint, attribution, recipe, command logs, probe) and
+# the Agent Trace directory. The harness writes them; the model only reads.
+_RUN_RECORD_PREFIX = ".besser_"
+
+
+def _is_run_record(rel_path: str) -> bool:
+    """True for a workspace-relative path at or under a run record."""
+    top = rel_path.replace("\\", "/").split("/", 1)[0]
+    return top.startswith(_RUN_RECORD_PREFIX) or top == TRACE_DIRNAME
 
 
 def _normalize_path_for_comparison(path: str) -> str:
@@ -404,9 +550,9 @@ def _breaks_module_import(path: str, before: str, after: str,
     def imports(source: str) -> tuple[bool, str]:
         original = None
         try:
-            with open(path, "r", encoding="utf-8") as handle:
+            with open_plain(path, "r", root=workspace, encoding="utf-8") as handle:
                 original = handle.read()
-            with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            with open_plain_write(path, "w", root=workspace, encoding="utf-8", newline="\n") as handle:
                 handle.write(source)
             result = run_confined(
                 [sys.executable, "-c", probe], workspace=workspace or folder,
@@ -422,7 +568,7 @@ def _breaks_module_import(path: str, before: str, after: str,
             return True, ""
         finally:
             if original is not None:
-                with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                with open_plain_write(path, "w", root=workspace, encoding="utf-8", newline="\n") as handle:
                     handle.write(original)
 
     was_ok, _ = imports(before)
@@ -444,21 +590,24 @@ def _breaks_module_import(path: str, before: str, after: str,
 
 def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
     """The lines of ``new`` that differ from ``old``, numbered, with
-    ``context`` lines either side."""
+    ``context`` lines either side. Separate changes (an edit and the import
+    the repair added for it) are shown as separate hunks."""
     old_lines, new_lines = old.split("\n"), new.split("\n")
-    first = 0
-    while first < min(len(old_lines), len(new_lines)) and old_lines[first] == new_lines[first]:
-        first += 1
-    tail = 0
-    while (tail < min(len(old_lines), len(new_lines)) - first
-           and old_lines[-1 - tail] == new_lines[-1 - tail]):
-        tail += 1
-    start = max(0, first - context)
-    end = min(len(new_lines), len(new_lines) - tail + context)
-    rows = [f"{i + 1:>4}| {new_lines[i]}" for i in range(start, end)]
+    matcher = SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    rows = []
+    for group in matcher.get_grouped_opcodes(context):
+        if rows:
+            rows.append("   ...|")
+        rows += [f"{i + 1:>4}| {new_lines[i]}" for i in range(group[0][3], group[-1][4])]
     if len(rows) > cap:
         rows = rows[:cap] + [f"   ...| ({len(rows) - cap} more changed lines)"]
     return "\n".join(rows)
+
+
+_GUTTER_STRIPPED_NOTE = (
+    "Your text carried read_file's 'NNN| ' line numbers; they were stripped "
+    "before writing. Send the content itself, not the numbered display."
+)
 
 
 def _gutter_refusal(field: str, stray: tuple[int, str]) -> dict:
@@ -534,10 +683,11 @@ class ToolExecutor:
         # Per generator output dir: file stamps taken just before the
         # generator ran (see _gen_dir / _track_generated_files).
         self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
-        # Per-path modify_file counts. After >= 2 targeted edits on a small
-        # generator file the write_file guardrail relaxes, so a deliberate
-        # rewrite is not bounced with "use modify_file".
-        self._modify_counts: dict[str, int] = {}
+        # Per-path targeted edit attempts (modify_file and replace_file_lines,
+        # landed or refused). Two unlock write_file on a large generator file
+        # and in a modify run - the rewrite the recovery ladder sends to after
+        # two refused edits of either kind.
+        self._edit_attempts: dict[str, int] = {}
         # Consecutive failed modify_file attempts per path. Escalates the
         # error message from "not found" to "stop retyping old_text, read the
         # file".
@@ -545,6 +695,9 @@ class ToolExecutor:
         # The old_text of the last miss per path. A byte-identical resend
         # cannot succeed.
         self._last_missed_old_text: dict[str, str] = {}
+        # A turn's tool calls run on a thread pool: hold this while iterating
+        # or evicting the shared rejection and read-view records below.
+        self._bookkeeping_lock = threading.RLock()
         # Every rejected modify_file this run, (path, old_text, new_text) ->
         # times seen, and per path the highest repeat count; no-op calls
         # (old_text == new_text) count too. Only a successful edit on the path
@@ -554,9 +707,10 @@ class ToolExecutor:
         # where anchor is old_text, or "lines N-M" for a range edit.
         self._rejected_targets: dict[tuple[str, str], int] = {}
         self._repeat_hits: dict[str, int] = {}
-        # (path, times seen) when the LAST call repeated a rejected edit, for
-        # the orchestrator's escalation; None otherwise.
-        self.last_repeat: tuple[str, int] | None = None
+        # Per path, the count when that path's latest call repeated a rejected
+        # edit, for the orchestrator's escalation (see ``last_repeat``). Kept
+        # per path: one turn's calls on other paths must not clear it.
+        self._repeat_reports: dict[str, int] = {}
         # Paths the orchestrator closed for the rest of the run -> reason.
         self._frozen_paths: dict[str, str] = {}
         # Files the model has actually SEEN this run: read, written, modified,
@@ -581,10 +735,8 @@ class ToolExecutor:
         # Reads per path, to catch a model crawling one file in tiny windows.
         self._read_counts: dict[str, int] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
+        # Consecutive refused edits per path: the edit-recovery ladder's rung.
         self._edit_recovery: dict[str, int] = {}
-        # Range-edit refusals per path; past _RANGE_EDIT_GIVE_UP the
-        # ladder stops steering this file toward replace_file_lines.
-        self._range_edit_failures: dict[str, int] = {}
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
         self.api_tester = None
         # When True (weak / free-tier models only), the deterministic Phase-1
@@ -609,6 +761,7 @@ class ToolExecutor:
         # tool; the orchestrator's end_turn gate refuses to finish while
         # items are open.
         self._tasks: list[dict] = []
+        self._autoclose_lock = threading.Lock()
         # Edit-first guardrail for MODIFY runs (set via
         # ``enable_modify_guard``). In a modify run every existing file
         # is a user's working app, so whole-file rewrites are rejected
@@ -617,6 +770,21 @@ class ToolExecutor:
         self._modify_guard = False
         # Whole-application generators refused once the scaffold exists (#666).
         self._locked_generators: frozenset[str] = frozenset()
+        # Per cross-file check: (finding, digests of the files it names) already
+        # attached to a write. See _cross_file_findings.
+        self._reported_findings: dict[str, set[tuple]] = {}
+        # (path, offset, limit) -> (content digest, read_id, start, end) of a read
+        # whose result is still in the conversation, and the requests last
+        # answered with a stub. See _read_file_once; forget_shown_results.
+        self._shown_reads: dict[tuple, tuple[str, str, int, int]] = {}
+        self._stubbed_reads: set[tuple] = set()
+
+    def forget_shown_results(self) -> None:
+        """The conversation no longer holds earlier tool results (compaction,
+        eviction, a fresh repair conversation, a resume): show them in full."""
+        self._shown_reads.clear()
+        self._stubbed_reads.clear()
+        self._reported_findings.clear()
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -726,10 +894,16 @@ class ToolExecutor:
                 passed = bool(verify())
             except Exception:
                 continue
-            if passed:
+            if not passed:
+                continue
+            # Writes finish in parallel threads and each calls this: claim
+            # the item under the lock so only one of them reports closing it.
+            with self._autoclose_lock:
+                if task.get("done") or task.get("dropped"):
+                    continue
                 task.update(done=True, verification="verified", blocked=False)
                 task.pop("blocked_reason", None)
-                closed.append({"id": task["id"], "text": task["text"][:120]})
+            closed.append({"id": task["id"], "label": _task_label(task["text"])})
         return closed
 
     def reopen_unverifiable_tasks(self) -> list[int]:
@@ -808,6 +982,28 @@ class ToolExecutor:
             })
         self._tasks = restored
 
+    def evidence_snapshot(self) -> dict:
+        """The writes and reads ``task_list`` evidence is checked against, for a checkpoint."""
+        return {
+            "successful_writes": {
+                os.path.relpath(path, self.workspace).replace("\\", "/"): digest
+                for path, digest in self._successful_writes.items()},
+            "known_paths": sorted(self._known_paths),
+        }
+
+    def restore_evidence(self, snapshot: dict) -> None:
+        """Restore :meth:`evidence_snapshot`: an edit made before a resume still counts.
+
+        A write is matched by the digest of the file it left, so a file changed
+        since then is still refused.
+        """
+        writes = snapshot.get("successful_writes")
+        if isinstance(writes, dict):
+            self._successful_writes.update({
+                os.path.normcase(os.path.join(self.workspace, rel)): digest
+                for rel, digest in writes.items() if isinstance(rel, str) and isinstance(digest, str)})
+        self._known_paths.update(p for p in snapshot.get("known_paths") or [] if isinstance(p, str))
+
     def open_tasks(self) -> list[dict]:
         """Checklist items still to do.
 
@@ -834,14 +1030,14 @@ class ToolExecutor:
             return [], "no verifier is attached; provide evidence=[{id, path, quote}] from actual successful writes, or mark blocked with a reason"
         accepted = []
         for item in evidence:
-            if not isinstance(item, dict) or item.get("id") != task_id:
+            if not isinstance(item, dict) or _task_id(item.get("id")) != task_id:
                 continue
             rel, quote = item.get("path"), item.get("quote")
             if not isinstance(rel, str) or not isinstance(quote, str) or not quote.strip() or len(quote) > 4000:
                 return [], "each evidence item requires a path and a non-empty exact quote of at most 4000 characters"
             try:
                 path = self._safe_path(rel)
-                with open(path, "r", encoding="utf-8") as source:
+                with open_plain(path, "r", root=self.workspace, encoding="utf-8") as source:
                     content = source.read()
             except (ValueError, OSError, UnicodeError):
                 return [], f"evidence path is not a readable workspace file: {rel}"
@@ -906,13 +1102,11 @@ class ToolExecutor:
         ids: list[int] = []
         bad: list = []
         for value in raw:
-            if isinstance(value, bool):      # bool is an int subclass; not an id
+            task_id = _task_id(value)
+            if task_id is None:
                 bad.append(value)
-                continue
-            try:
-                ids.append(int(value))
-            except (TypeError, ValueError):
-                bad.append(value)
+            else:
+                ids.append(task_id)
         seen, unique = set(), []
         for i in ids:                        # keep order, drop repeats
             if i not in seen:
@@ -920,21 +1114,35 @@ class ToolExecutor:
                 unique.append(i)
         return unique, bad
 
+    @staticmethod
+    def _listed_task(task: dict) -> dict:
+        """One row of action='list': full text only where the work is still owed."""
+        status = ("dropped" if task.get("dropped") else "blocked" if task.get("blocked")
+                  else "done" if task["done"] and task.get("verification") == "verified"
+                  else "implemented" if task["done"] else "open")
+        verification = task.get("verification", "unverified")
+        row: dict = {"id": task["id"]}
+        if status in ("open", "blocked"):
+            row["text"] = task["text"]
+        else:
+            row["label"] = _task_label(task["text"])
+        row["status"] = status
+        # Implied by status except for an implemented item's evidence check.
+        if verification != ("verified" if status == "done" else "unverified"):
+            row["verification"] = verification
+        if status == "open" and task.get("planning_notes"):
+            row["planning_notes"] = task["planning_notes"]
+        if task.get("dropped"):
+            row["reason"] = task["dropped"]
+        elif task.get("blocked_reason"):
+            row["reason"] = task["blocked_reason"]
+        return row
+
     def _task_list(self, args: dict) -> dict:
         action = args.get("action")
         if action == "list":
             return {
-                "tasks": [
-                    {"id": t["id"], "text": t["text"],
-                     "status": ("dropped" if t.get("dropped") else "blocked" if t.get("blocked")
-                                else "done" if t["done"] and t.get("verification") == "verified"
-                                else "implemented" if t["done"] else "open"),
-                     "verification": t.get("verification", "unverified"),
-                     **({"planning_notes": t["planning_notes"]} if t.get("planning_notes") else {}),
-                     **({"reason": t["dropped"]} if t.get("dropped") else
-                        {"reason": t["blocked_reason"]} if t.get("blocked_reason") else {})}
-                    for t in self._tasks
-                ],
+                "tasks": [self._listed_task(t) for t in self._tasks],
                 "open": len(self.open_tasks()),
                 "unverified": len(self.unverified_tasks()),
             }
@@ -987,7 +1195,7 @@ class ToolExecutor:
                 if verified:
                     t["verification"] = "verified"
                 elif reason is None:
-                    reason = f"its check still fails: {t['text']}"
+                    reason = "its check still fails"
             else:
                 evidence, reason = self._task_implementation_evidence(task_id, args)
                 if reason is None:
@@ -997,8 +1205,7 @@ class ToolExecutor:
                 if was_blocked:
                     # A later repair may make the check pass. Re-evaluate
                     # it, but do not reopen another retry budget on failure.
-                    already_blocked.append({"id": task_id, "text": t["text"],
-                                            "reason": t.get("blocked_reason", reason)})
+                    already_blocked.append({"id": task_id, "reason": t.get("blocked_reason", reason)})
                     continue
                 # Bound retries, including broken/missing verifiers.
                 t["attempts"] = int(t.get("attempts") or 0) + 1
@@ -1006,7 +1213,7 @@ class ToolExecutor:
                     # Preserve the unresolved requirement without livelock.
                     t["blocked"] = True
                     t["blocked_reason"] = reason
-                    blocked.append({"id": task_id, "text": t["text"], "reason": reason})
+                    blocked.append({"id": task_id, "reason": reason})
                 else:
                     refused.append({
                         "id": task_id,
@@ -1027,7 +1234,8 @@ class ToolExecutor:
             "verified_ids": [task_id for task_id in done if by_id[task_id].get("verification") == "verified"],
             "unverified_ids": [task_id for task_id in done if by_id[task_id].get("verification") != "verified"],
             "open_remaining": len(remaining),
-            "open_items": [{"id": r["id"], "text": r["text"]} for r in remaining],
+            # Labels, not full text: the conversation re-sends every result.
+            "open_items": [{"id": r["id"], "label": _task_label(r["text"])} for r in remaining],
         }
         if len(ids) == 1:
             result["id"] = ids[0]
@@ -1057,20 +1265,17 @@ class ToolExecutor:
             # ``_result_status`` treats an outcome as an error ONLY when the
             # payload carries an "error" key, and the loop guards, tracing
             # and "don't re-attempt" memory all depend on seeing a call that
-            # accepted nothing as one.
+            # accepted nothing as one. `advice` already says what to do next.
             parts = []
             for item in refused:
                 parts.append(
                     f"Task {item['id']} is NOT done - {item['reason']} "
-                    f"(attempt {item['attempts']} of "
-                    f"{_MAX_TASK_VERIFY_ATTEMPTS}). Do the work first, "
-                    "then mark it done."
+                    f"(attempt {item['attempts']} of {_MAX_TASK_VERIFY_ATTEMPTS})."
                 )
             for item in blocked:
                 parts.append(
                     f"Task {item['id']} is NOT done and is now BLOCKED "
-                    f"after {_MAX_TASK_VERIFY_ATTEMPTS} failed checks: "
-                    f"{item['text']}"
+                    f"after {_MAX_TASK_VERIFY_ATTEMPTS} failed checks."
                 )
             for task_id in unknown:
                 parts.append(
@@ -1101,9 +1306,9 @@ class ToolExecutor:
         The honest exit for an item the user never asked for. Without
         it the end-turn gate leaves only a false 'done'.
         """
-        task_id = args.get("id")
+        task_id = _task_id(args.get("id"))
         reason = str(args.get("reason") or "").strip()
-        if not isinstance(task_id, int) or not reason:
+        if task_id is None or not reason:
             return {"error": (
                 "action='drop' requires `id` (an integer) and a non-empty `reason` "
                 "saying why the user did not ask for it."
@@ -1289,27 +1494,25 @@ class ToolExecutor:
         )
         return f"{switch}\n{note}" if switch else note
 
-    def _repair_imports(self, rel_path: str, content: str, result: dict) -> str:
-        """Write back the same file with the forgotten import added.
+    def _repair_imports(self, rel_path: str, content: str) -> tuple[str, list[str]]:
+        """``content`` with a forgotten framework import added, and the notes
+        for the result's ``auto_imports``. Called before the write, so the
+        receipt and snippet describe what lands on disk. An ORM module that
+        stops importing kills every router that star-imports it.
 
-        Returns the content now on disk. Silent on failure: this is a
-        convenience, and Phase 3 remains the backstop.
+        Silent on failure: this is a convenience, and Phase 3 remains the
+        backstop.
         """
         try:
             from besser.spec_driven_agent.repair.import_repair import repair_missing_imports
 
             repaired, notes = repair_missing_imports(rel_path, content)
             if not notes or repaired == content:
-                return content
-            path = self._safe_path(rel_path)
-            with open(path, "w", encoding="utf-8", newline="\n") as target:
-                target.write(repaired)
-            self._successful_writes[os.path.normcase(path)] = self._content_digest(repaired)
-            result["auto_imports"] = notes
-            return repaired
+                return content, []
+            return repaired, notes
         except Exception:
             logger.debug("import repair failed on %s", rel_path, exc_info=True)
-            return content
+            return content, []
 
     def _append_write_feedback(
         self,
@@ -1317,13 +1520,7 @@ class ToolExecutor:
         rel_path: str,
         content: str,
     ) -> None:
-        """Attach bounded contract and parser feedback to a successful write.
-
-        A framework name the file never imported is repaired here first, so
-        the break cannot cascade: an ORM module that stops importing kills
-        every router that star-imports it.
-        """
-        content = self._repair_imports(rel_path, content, result)
+        """Attach bounded contract and parser feedback to a successful write."""
         warnings = self._contract_warnings(rel_path, content)
         if warnings:
             result["contract_warnings"] = warnings
@@ -1338,19 +1535,18 @@ class ToolExecutor:
                 # consumers immediately, not only at final validation.
                 from besser.spec_driven_agent.validation.python_source import _create_schema_router_mismatches
 
-                diagnostics.extend({
+                diagnostics.extend(self._cross_file_findings("project-contract", rel_path, content, [{
                     "source": "project-contract", "severity": "error",
                     "code": "schema-consumer-mismatch", "message": message,
-                } for message in _create_schema_router_mismatches(self.workspace)[:10])
+                } for message in _create_schema_router_mismatches(self.workspace)]))
         except Exception:
             diagnostics = []
         if rel_path.endswith((".py", ".js", ".jsx", ".ts", ".tsx")):
             try:
                 from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_diagnostics
 
-                diagnostics.extend(collect_frontend_schema_diagnostics(
-                    self.workspace, changed_path=rel_path, content=content,
-                )[:10])
+                diagnostics.extend(self._cross_file_findings("frontend-schema", rel_path, content,
+                    collect_frontend_schema_diagnostics(self.workspace, changed_path=rel_path, content=content)))
             except Exception:
                 # An optional cross-file check must not erase parser findings
                 # already collected for the successful write.
@@ -1361,6 +1557,46 @@ class ToolExecutor:
                 "The content was written, but diagnostics found errors. Fix them "
                 "now while this file is still in context."
             )
+            if any("in_other_files" in item for item in diagnostics):
+                result["diagnostic_message"] += (
+                    " A finding with in_other_files is fixed in the files it names; "
+                    "it is reported once, not after every write."
+                )
+
+    def _cross_file_findings(self, source: str, rel_path: str, content: str,
+                             findings: list[dict]) -> list[dict]:
+        """The workspace-wide findings worth attaching to this write.
+
+        One about the written file (it names the file, or the file declares
+        the schema it names) is always kept. Any other is kept only the first
+        time it is seen at the current content of the files it names, so an
+        unrelated write does not carry it again; a finding that goes away and
+        comes back is new again.
+        """
+        reported = self._reported_findings.setdefault(source, set())
+        present: set[tuple] = set()
+        kept: list[dict] = []
+        for finding in findings:
+            message = finding.get("message", "")
+            named = sorted(set(_NAMED_SOURCE_PATH_RE.findall(message)))
+            schema = _UNDEFINED_FIELD_SCHEMA_RE.search(message)
+            about_this_file = rel_path in named or bool(
+                schema and re.search(rf"^class {schema.group(1)}\b", content, re.MULTILINE))
+            key = (message, tuple(self._named_file_digest(path) for path in named))
+            present.add(key)
+            if about_this_file or key not in reported:
+                others = [path for path in named if path != rel_path]
+                kept.append({**finding, "in_other_files": others} if others else finding)
+        self._reported_findings[source] = present
+        return kept[:_CROSS_FILE_FINDINGS_MAX]
+
+    def _named_file_digest(self, rel_path: str) -> str:
+        """Content digest of a workspace file a finding names; "" when unreadable."""
+        try:
+            with open_plain(self._safe_path(rel_path), "r", root=self.workspace, encoding="utf-8") as handle:
+                return self._content_digest(handle.read())
+        except (OSError, ValueError, UnicodeDecodeError):
+            return ""
 
     def _require_domain_model(self, tool_name: str) -> dict | None:
         """Return an error dict if no domain model is loaded, else None.
@@ -1447,11 +1683,18 @@ class ToolExecutor:
                 f"{tool_name} was not run: its arguments must be a JSON object, "
                 f"not {type(arguments).__name__}. Resend the call."
             )})
-        missing = [name for name in _REQUIRED_ARGS.get(tool_name, ()) if name not in arguments]
+        schema = _INPUT_SCHEMAS.get(tool_name, {})
+        missing = [name for name in schema.get("required", ()) if name not in arguments]
         if missing:
             return ToolExecutionResult("error", {"error": (
                 f"{tool_name} is missing required argument(s): {', '.join(missing)}. "
                 "Nothing was done; resend the call with every required field."
+            )})
+        arguments, problems = _normalize_arguments(schema, arguments)
+        if problems:
+            return ToolExecutionResult("error", {"error": (
+                f"{tool_name} was not run: {'; '.join(problems)}. "
+                "Resend the call with these arguments corrected."
             )})
         try:
             file_tool = tool_name in {"read_file", "modify_file", "replace_file_lines", "write_file", "delete_file"}
@@ -1462,6 +1705,13 @@ class ToolExecutor:
                     arguments = {**arguments, "path": os.path.relpath(
                         self._safe_path(arguments["path"]), self.workspace,
                     ).replace("\\", "/")}
+                    if tool_name != "read_file" and _is_run_record(arguments["path"]):
+                        logger.warning("Refused %s on run record %s", tool_name, arguments["path"])
+                        return ToolExecutionResult("error", {"error": (
+                            f"{tool_name} refused: {arguments['path']} is a run record kept by "
+                            "BESSER (trace, checkpoint, attribution, logs). It can be read but "
+                            "not written, edited or deleted. Change the project's own files instead."
+                        )})
                 raw_result = handler(self, arguments)
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)
@@ -1470,8 +1720,32 @@ class ToolExecutor:
         except Exception as e:
             logger.warning("Tool %s failed: %s", tool_name, e, exc_info=True)
             return ToolExecutionResult(
-                "error", {"error": f"{tool_name} failed: {e}"}
+                "error", {"error": f"{tool_name} failed: {self._model_error_text(e)}"}
             )
+
+    def _model_error_text(self, error: Exception) -> str:
+        """``error`` as the model may see it: no absolute server path.
+
+        An OSError names its file(s) relative to the workspace, or by base
+        name when outside it; any other message loses the workspace prefix.
+        """
+        if isinstance(error, OSError) and error.strerror:
+            names = [self._model_path(name) for name in (error.filename, error.filename2) if name]
+            return ": ".join([error.strerror, ", ".join(names)]) if names else error.strerror
+        return str(error).replace(self.workspace + os.sep, "").replace(self.workspace, ".")
+
+    def _model_path(self, path) -> str:
+        """``path`` relative to the workspace, or its base name when outside it."""
+        # An OSError filename may also be bytes or an fd number.
+        path = os.fsdecode(path) if isinstance(path, (str, bytes, os.PathLike)) else str(path)
+        if os.path.isabs(path):
+            try:
+                rel = os.path.relpath(path, self.workspace)
+            except ValueError:  # different drives on Windows
+                rel = os.pardir
+            outside = rel == os.pardir or rel.startswith(os.pardir + os.sep)
+            path = os.path.basename(path) if outside else rel
+        return path.replace("\\", "/")
 
     def execute(self, tool_name: str, arguments: dict) -> str:
         """
@@ -1491,9 +1765,12 @@ class ToolExecutor:
         The one containment check for every tool path and working directory.
         ``realpath`` resolves every ``..`` and symlink before the check, so a
         ``../`` path, an absolute path elsewhere or a link pointing out of the
-        workspace is rejected. Callers open the returned resolved path, never
-        ``rel_path`` again, so a link planted after the check is not followed
-        through a re-resolution of the original name.
+        workspace is rejected. The check alone cannot stop a link swapped in
+        after it (``run_command`` can start a process that does so in a loop),
+        so callers open, write and delete the returned path only through
+        ``workspace_fs`` with ``root=self.workspace``: those never follow a
+        link at the file or at any directory below the workspace, and refuse
+        FIFOs and other special files without blocking.
         """
         full = os.path.realpath(os.path.join(self.workspace, rel_path))
         # Strip the Windows extended-path prefix (``\\?\C:\...``): realpath
@@ -1516,7 +1793,7 @@ class ToolExecutor:
     def _safe_cwd(self, rel_dir: str = ".") -> str:
         """A working directory confined by ``_safe_path``, created if missing."""
         cwd = self._safe_path(rel_dir)
-        os.makedirs(cwd, exist_ok=True)
+        makedirs_plain(cwd, root=self.workspace)
         return cwd
 
     def _resolves_inside(self, abs_path: str) -> bool:
@@ -1527,25 +1804,35 @@ class ToolExecutor:
         except ValueError:
             return False
 
-    def _list_dir(self, directory: str) -> list[dict]:
+    def _list_dir(self, directory: str, virtualenvs: list[str] | None = None) -> list[dict]:
         """List files recursively, relative to workspace.
 
         Installed dependencies and caches are pruned: a single npm install
         can put 10k node_modules paths into one listing and overflow the
-        model's context on the next turn.
+        model's context on the next turn. So is a virtualenv under any name
+        (``env/``, ``.env311/``), recognised by its ``pyvenv.cfg``; its
+        workspace-relative path is appended to ``virtualenvs`` when given.
         """
         from besser.spec_driven_agent.agent.prompt_builder import _SNAPSHOT_SKIP_DIRS
 
         files = []
         for root, dirs, filenames in walk_plain(directory):
             dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+            venvs = [d for d in dirs if os.path.isfile(os.path.join(root, d, "pyvenv.cfg"))]
+            if venvs:
+                dirs[:] = [d for d in dirs if d not in venvs]
+                if virtualenvs is not None:
+                    virtualenvs.extend(
+                        os.path.relpath(os.path.join(root, d), self.workspace).replace("\\", "/")
+                        for d in venvs
+                    )
             for f in filenames:
                 abs_path = os.path.join(root, f)
                 if not self._resolves_inside(abs_path):
                     continue
                 rel = os.path.relpath(abs_path, self.workspace)
                 try:
-                    size = os.path.getsize(abs_path)
+                    size = os.lstat(abs_path).st_size  # never a swapped-in link's target
                 except OSError:  # dangling link
                     continue
                 files.append({"path": rel.replace("\\", "/"), "size": size})
@@ -1948,24 +2235,115 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     def _list_files(self, args: dict) -> dict:
-        files = self._list_dir(self.workspace)
-        # Exclude internal files
-        files = [f for f in files if not f["path"].startswith(".besser_")]
-        return {"files": files, "total": len(files)}
+        """One ``path size`` line per file, at most ``_LIST_FILES_MAX`` of them.
+
+        Past the cap, source files are kept first and the rest are counted
+        per directory, so the model knows what exists without paying for it.
+        """
+        from besser.spec_driven_agent.agent.prompt_builder import _SYMBOL_PATTERNS
+
+        virtualenvs: list[str] = []
+        files = [f for f in self._list_dir(self.workspace, virtualenvs)
+                 if not f["path"].startswith(".besser_")]
+        shown = files
+        if len(files) > _LIST_FILES_MAX:
+            ranked = sorted(files, key=lambda f: (
+                os.path.splitext(f["path"])[1].lower() not in _SYMBOL_PATTERNS, f["path"],
+            ))
+            kept = {f["path"] for f in ranked[:_LIST_FILES_MAX]}
+            shown = [f for f in files if f["path"] in kept]
+        lines = [f"{f['path']} {f['size']}" for f in shown]
+        result: dict[str, Any] = {"total": len(files)}
+        if len(shown) < len(files):
+            cut = Counter(posixpath.dirname(f["path"]) or "." for f in files if f["path"] not in kept)
+            named = ", ".join(f"{d}/ ({n})" for d, n in cut.most_common(_LIST_FILES_MAX_DIRS))
+            more_dirs = len(cut) - _LIST_FILES_MAX_DIRS
+            lines.append(
+                f"... {len(files) - len(shown)} more files not listed, by directory: {named}"
+                + (f", and {more_dirs} more directories" if more_dirs > 0 else "")
+                + ". Use search_in_files or read_file on a path to look further."
+            )
+            result["truncated"] = True
+        result["files"] = "\n".join(lines)
+        if virtualenvs:
+            result["not_listed"] = "Python virtualenvs (installed packages): " + ", ".join(
+                f"{v}/" for v in sorted(virtualenvs))
+        return result
+
+    def _located_range(self, rel: str, path: str, content: str, start: int, end: int,
+                       why: str) -> dict | None:
+        """Lines ``start``-``end`` of ``content``, numbered, with a fresh read_id.
+
+        Saves the model a read_file turn before its range edit. ``None`` when the
+        span would not fit in one read.
+        """
+        numbered = "\n".join(
+            gutter_line(n, line)
+            for n, line in enumerate(content.split("\n")[start - 1:end], start)
+        )
+        if len(numbered) > MAX_FILE_READ:
+            return None
+        return {
+            "path": rel,
+            "read_id": self._mint_read_view(path, content, start, end),
+            "start_line": start, "end_line": end,
+            "lines": numbered,
+            "instruction": (
+                f"{why} Call replace_file_lines with this read_id and these start_line/"
+                "end_line, and new_text = their complete replacement. Do not "
+                "re-quote old_text and do not paste the 'NNN| ' prefixes."
+            ),
+        }
 
     def _mint_read_view(self, path: str, content: str, start_line: int, end_line: int) -> str:
         """Authorize a 1-based inclusive line span of ``content`` for a range edit."""
         read_id = f"{self._read_epoch}:{next(self._read_sequence)}"
-        self._read_views[read_id] = (
-            os.path.normcase(path), self._content_digest(content), start_line, end_line,
-        )
-        if len(self._read_views) > 128:
-            del self._read_views[next(iter(self._read_views))]
+        view = (os.path.normcase(path), self._content_digest(content), start_line, end_line)
+        with self._bookkeeping_lock:
+            self._read_views[read_id] = view
+            if len(self._read_views) > 128:
+                del self._read_views[next(iter(self._read_views))]
         return read_id
+
+    def _read_file_once(self, args: dict) -> dict:
+        """read_file, except for an identical re-read of unchanged content.
+
+        Same path, offset and limit, same content, and the earlier result
+        still in the conversation (until forget_shown_results): a short stub
+        instead of the text again. A recorded edit loop re-read one unchanged
+        3,167-token file 16 times. The same request right after a stub gets
+        the full text: the model insisted.
+        """
+        key = (self._rel_key(args["path"]), args.get("offset") or 0, args.get("limit"))
+        shown = self._shown_reads.get(key)
+        # A frozen path is not editable, so the stub's read_id would be no use.
+        if (shown and key not in self._stubbed_reads and shown[1] in self._read_views
+                and not self._frozen(key[0])
+                and shown[0] == self._named_file_digest(args["path"])):
+            self._stubbed_reads.add(key)
+            _, read_id, start, end = shown
+            return {
+                "unchanged": True, "read_id": read_id, "start_line": start, "end_line": end,
+                "note": (
+                    f"{key[0]} lines {start}-{end} are unchanged since read_id {read_id}, whose "
+                    "result is still in this conversation; that read_id is still valid for "
+                    "replace_file_lines. Re-reading is not needed. To get the text again "
+                    "anyway, repeat this exact call."
+                ),
+            }
+        self._stubbed_reads.discard(key)
+        result = self._read_file(args)
+        view = self._read_views.get(result.get("read_id"))
+        if view is not None:
+            self._shown_reads.pop(key, None)
+            self._shown_reads[key] = (view[1], result["read_id"], result["start_line"], result["end_line"])
+            if len(self._shown_reads) > _SHOWN_READS_MAX:
+                del self._shown_reads[next(iter(self._shown_reads))]
+        return result
 
     def _read_file(self, args: dict) -> dict:
         """
-        Read a file with optional line-based pagination, numbered ``   7| code``.
+        Read a file with optional line-based pagination, numbered ``7| code``.
 
         Supports offset (start line, 0-indexed) and limit (number of lines)
         for reading specific sections of large files without dumping
@@ -1975,7 +2353,7 @@ class ToolExecutor:
         if not os.path.isfile(path):
             return self._missing_file_result(args["path"])
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
                 content = f.read()
         except UnicodeDecodeError:
             size = os.path.getsize(path)
@@ -1995,27 +2373,42 @@ class ToolExecutor:
         if limit is not None:
             end = min(start + limit, total_lines)
 
-        # Prefix every line with its TRUE file line number, in the same format
-        # the post-edit echo uses, so a region quoted straight out of this
-        # output lands on modify_file's line-number tier instead of a miss.
+        # Prefix every line with its TRUE file line number, in the gutter
+        # modify_file's line-number tier strips, so a region quoted straight
+        # out of this output lands on that tier instead of a miss.
         selected = "\n".join(
-            f"{n:>4}| {line}"
+            gutter_line(n, line)
             for n, line in enumerate(lines[start:end], start=start + 1)
         )
 
         # Only complete, actually displayed lines are eligible for a range
         # edit. Never authorize the unseen tail of a truncated read.
         truncated = len(selected) > MAX_FILE_READ
-        if len(selected) > MAX_FILE_READ:
+        clipped = False
+        if truncated:
             boundary = selected.rfind("\n", 0, MAX_FILE_READ)
-            selected = selected[:boundary] if boundary >= 0 else ""
-            end = start + (selected.count("\n") + 1 if selected else 0)
+            if boundary >= 0:
+                selected = selected[:boundary]
+                end = start + selected.count("\n") + 1
+            else:
+                # The first line alone exceeds the cap. Show it clipped and move
+                # past it, or every read names this same offset again.
+                clipped = True
+                selected = (selected[:MAX_FILE_READ]
+                            + f" ... [line {start + 1} clipped: {len(lines[start])} chars]")
+                end = start + 1
 
         result = {"content": selected}
-        result["read_id"] = self._mint_read_view(path, content, start + 1, end)
+        # A clipped line was not seen whole, so no read_id may authorize it.
+        if not clipped:
+            result["read_id"] = self._mint_read_view(path, content, start + 1, end)
         result["start_line"] = start + 1
         result["end_line"] = end
-        if truncated:
+        if clipped:
+            result["truncated"] = True
+            result["hint"] = (f"Read continues at offset={end}. Line {end} is too long to show "
+                              "whole; change it with modify_file, not a range edit or a rewrite.")
+        elif truncated:
             result["truncated"] = True
             result["content"] += "\n... [truncated; read the next range to continue]"
             result["hint"] = f"Read continues at offset={end}; unseen lines cannot be edited with this read_id."
@@ -2025,7 +2418,8 @@ class ToolExecutor:
         seen_digest, seen = self._read_coverage.get(known, (digest, set()))
         if seen_digest != digest:
             seen = set()
-        seen.update(range(start, end))
+        if not clipped:
+            seen.update(range(start, end))
         self._read_coverage[known] = (digest, seen)
         if len(seen) >= total_lines:
             self._fully_seen.add(known)
@@ -2059,19 +2453,27 @@ class ToolExecutor:
 
         return result
 
-    # Consecutive range-edit refusals on one path before the ladder sends the
-    # model back to text matching. Measured on Qwen, modify_file lands 86-92%
-    # of edits while replace_file_lines lands 15-43%, so the ladder must not
-    # keep steering into a failing range edit.
-    _RANGE_EDIT_GIVE_UP = 3
+    def _unreadable_line(self, rel_path: str) -> tuple[int, int] | None:
+        """(line, length) of a line read_file can only show clipped, in an
+        existing file not yet seen whole. write_file cannot reproduce it."""
+        path = self._safe_path(rel_path)
+        if rel_path.strip() in self._fully_seen or not os.path.isfile(path):
+            return None
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if len(content) <= MAX_FILE_READ:
+            return None
+        return next(((n, len(line)) for n, line in enumerate(content.split("\n"), 1)
+                     if len(gutter_line(n, line)) > MAX_FILE_READ), None)
 
     def _add_edit_recovery(self, tool: str, args: dict, result: dict) -> None:
-        """Change strategy after two refusals, in every orchestration phase.
+        """Attach the edit-recovery ladder's next step to a refused edit.
 
-        The ladder runs both ways: quoting text, then a revision-bound range
-        edit, then back to quoting when the range edit is the thing failing.
-        Keep this in the typed execution path so a reworded/no-op/ambiguous
-        failure cannot escape recovery. A read does not count as a write.
+        First refusal that comes with a ``located_range``: replace_file_lines
+        on that range. From the second refused edit on a path: read the whole
+        file and write_file it back. A landed edit resets the ladder; a read
+        does not count as a write. Kept in the typed execution path so every
+        orchestration phase, and every kind of refusal, gets the same ladder.
         """
         path = args["path"].replace("\\", "/")
         if tool in {"modify_file", "replace_file_lines", "write_file", "delete_file"}:
@@ -2079,9 +2481,7 @@ class ToolExecutor:
                 self._edit_recovery.pop(path, None)
                 self._failed_modifies.pop(path, None)
                 self._last_missed_old_text.pop(path, None)
-                self._range_edit_failures.pop(path, None)
                 self._clear_rejections(path)
-                self.last_repeat = None
             elif (tool in {"modify_file", "replace_file_lines"}
                     and result.get("status") not in {"already_applied", "possible_replay"}):
                 self._edit_recovery[path] = self._edit_recovery.get(path, 0) + 1
@@ -2096,64 +2496,46 @@ class ToolExecutor:
                         path, f"lines {args.get('start_line')}-{args.get('end_line')}",
                         args.get("new_text") or "",
                     )
-                    self._range_edit_failures[path] = self._range_edit_failures.get(path, 0) + 1
-        exhausted = self._range_edit_failures.get(path, 0) >= self._RANGE_EDIT_GIVE_UP
-        # _modify_file already bracketed the target and issued a read_id for it,
-        # so steer on the FIRST miss: the span saves a re-read and a guess at
-        # line numbers.
-        located = result.get("located_range") if tool == "modify_file" else None
-        # The located-range assist is a FIRST-miss aid only. Once two edits on
-        # this path have been refused the ladder escalates to a whole-file
-        # rewrite rather than to replace_file_lines.
+        # A modify_file miss that brackets one region, or a stale range edit,
+        # already issued a read_id for the span, so steer on the FIRST refusal:
+        # it saves a re-read and a guess at line numbers. located_range carries
+        # the read_id, lines and instruction; the orchestrator reads only next_tool.
+        located = result.get("located_range")
         if located and self._edit_recovery.get(path, 0) < 2:
-            result["edit_recovery"] = {
-                "next_tool": "replace_file_lines", "path": path,
-                "read_id": located["read_id"],
-                "start_line": located["start_line"], "end_line": located["end_line"],
-                "instruction": located["instruction"],
-            }
+            result["edit_recovery"] = {"next_tool": "replace_file_lines"}
             return
-        if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
-            return
-        # Two refused edits on this path -> rewrite the whole file.
-        # NOT because write_file is more reliable (it is not): successful range
-        # edits on a drifted view overwrite neighbouring classes, so ending the
-        # ladder at replace_file_lines measurably loses scaffold code.
-        if tool in {"modify_file", "replace_file_lines", "read_file"}:
+        step = self.rewrite_step(path)
+        # Only on the refusal itself: repeating it on every later read of the
+        # path cost 11k chars in one recorded loop.
+        if step and tool in {"modify_file", "replace_file_lines"}:
+            # One instruction per result: drop the first-miss aids that point
+            # back at piecemeal edits.
+            for competing in ("located_range", "did_you_mean", "advice"):
+                result.pop(competing, None)
             result["edit_recovery"] = {
                 "next_tool": "write_file", "path": path,
-                "instruction": "Two edits on this file have been refused. Stop editing it "
-                               "piecemeal: call read_file on the WHOLE file (no offset/limit), "
-                               "then write_file the complete file back with your change "
-                               "applied. Reproduce every line you read - do not summarise, "
-                               "elide, or drop code you were not asked to change. No rejected "
+                "instruction": f"Two edits on this file have been refused. {step} No rejected "
                                "edit was applied; do not mark the requirement done.",
             }
-            return
-        if tool == "read_file" and "read_id" in result and not exhausted:
-            result["edit_recovery"] = {
-                "next_tool": "replace_file_lines", "path": path,
-                "read_id": result["read_id"],
-                "instruction": "Select the exact 1-based inclusive lines shown here and supply their complete replacement. "
-                               "Do not quote old_text again. Keep surrounding code unchanged; a read is not an implementation.",
-            }
-        elif tool in {"modify_file", "replace_file_lines"} and self._result_status(result) == "error":
-            if exhausted:
-                result["edit_recovery"] = {
-                    "next_tool": "modify_file", "path": path,
-                    "instruction": "Range edits on this file keep being refused, so stop using them here. "
-                                   "Go back to modify_file with the SMALLEST unique old_text that "
-                                   "brackets your change - one or two lines copied from the latest "
-                                   "read - instead of rewriting a whole block. No rejected edit was "
-                                   "applied; do not mark the requirement done.",
-                }
-            else:
-                result["edit_recovery"] = {
-                    "next_tool": "read_file", "path": path,
-                    "instruction": "Read the target function/block with offset/limit, then use replace_file_lines with its "
-                                   "read_id and line numbers. Stop retrying the same text replacement. "
-                                   "No rejected edit was applied; do not mark the requirement done.",
-                }
+
+    def rewrite_step(self, path: str) -> str | None:
+        """The ladder's top rung for ``path``, or ``None`` while it does not apply.
+
+        It applies from the second refused edit since the last landed one, on a
+        file that is open and has no line too long to reproduce. NOT because
+        write_file is more reliable (it is not): successful range edits on a
+        drifted view overwrite neighbouring classes, so ending the ladder at
+        replace_file_lines measurably loses scaffold code. The orchestrator's
+        reminders quote this text, so every voice names the same step.
+        """
+        path = self._rel_key(path)
+        if (self._edit_recovery.get(path, 0) < 2 or self._frozen(path)
+                or self._unreadable_line(path)):
+            return None
+        return ("Stop editing it piecemeal: call read_file on the WHOLE file (no offset/limit), "
+                "then write_file the complete file back with your change applied. Reproduce "
+                "every line you read - do not summarise, elide, or drop code you were not "
+                "asked to change.")
 
     def _replace_file_lines(self, args: dict) -> dict:
         """Replace a deliberately selected range from an unchanged, visible read.
@@ -2165,19 +2547,35 @@ class ToolExecutor:
         frozen = self._frozen(args["path"])
         if frozen:
             return frozen
+        rel_path = args["path"].replace("\\", "/")
+        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         view = self._read_views.get(args.get("read_id", ""))
         if view is None or view[0] != os.path.normcase(path):
             return {"error": "Unknown read_id for this file. Call read_file on the target region first.",
                     "rejection_kind": "unread_range"}
         if not os.path.isfile(path):
             return self._missing_file_result(args["path"])
-        with open(path, encoding="utf-8") as source:
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as source:
             before = source.read()
-        if self._content_digest(before) != view[1]:
-            return {"error": "Stale read_id: the file changed after this read. No edit applied. "
-                             "Read the region again; do not reuse old line numbers or mark the task done.",
-                    "rejection_kind": "stale_read"}
         start, end = args.get("start_line"), args.get("end_line")
+        if self._content_digest(before) != view[1]:
+            refusal = {"error": "Stale read_id: the file changed after this read. No edit applied. "
+                                "Do not reuse old line numbers or mark the task done.",
+                       "rejection_kind": "stale_read"}
+            # The requested span as it reads NOW, so no re-read turn is needed.
+            if type(start) is not int or type(end) is not int or not 1 <= start <= end:
+                start, end = view[2], view[3]
+            end = min(end, before.count("\n") + 1)
+            located = self._located_range(
+                args["path"], path, before, start, end,
+                "These are the CURRENT lines of the span you selected; the code may "
+                "have moved, so check them first.",
+            ) if start <= end else None
+            if located:
+                refusal["located_range"] = located
+            else:
+                refusal["error"] += " Read the region again."
+            return refusal
         if (type(start) is not int or type(end) is not int
                 or not view[2] <= start <= end <= view[3]):
             # read_file's ``offset`` is a 0-based skip; the numbers printed
@@ -2246,17 +2644,16 @@ class ToolExecutor:
                              + _IMPORT_BREAK_ADVICE,
                     "rejection_kind": "breaks_import",
                     "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after)}
-        with open(path, "w", encoding="utf-8", newline="\n") as target:
+        after, auto_imports = self._repair_imports(args["path"], after)
+        with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
             target.write(after)
         self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
         result = {"status": "modified", "path": args["path"], "replacements": 1,
                   "matched_by": "read_bound_range", "snippet": _changed_region(before, after)}
         if stripped_numbering:
-            result["note"] = (
-                "Your new_text carried read_file's 'NNN| ' line numbers on every "
-                "line; they were stripped before writing. Send the code itself, "
-                "not the numbered display."
-            )
+            result["note"] = _GUTTER_STRIPPED_NOTE
+        if auto_imports:
+            result["auto_imports"] = auto_imports
         self._append_write_feedback(result, args["path"], after)
         return result
 
@@ -2303,16 +2700,16 @@ class ToolExecutor:
             return frozen
 
         # read_file numbers what the model sees and Qwen pastes the gutter
-        # back. Strip it as modify_file and replace_file_lines do, or a rewrite
-        # arriving as "   1| import re" is refused as "unexpected indent at
-        # line 1" and resent unchanged (most of Qwen's write_file refusals).
-        # Safe because the guard is "most content lines carry NNN| ", which
-        # no real source file satisfies.
+        # back. Strip it, or a rewrite arriving as "   1| import re" is refused
+        # as "unexpected indent at line 1" and resent unchanged (most of Qwen's
+        # write_file refusals). Only read_file's exact display of a whole file
+        # counts: numbered data (a .psv id column) is kept, and so is a new
+        # file's "1| setup | done" table, which no read could have displayed.
         content = args.get("content")
-        if isinstance(content, str) and content:
-            unnumbered = _strip_line_numbers(content.split("\n"))
-            if unnumbered is not None:
-                args = {**args, "content": "\n".join(unnumbered)}
+        unnumbered = (strip_read_display(content.split("\n"), unpadded=os.path.isfile(path))
+                      if isinstance(content, str) else None)
+        if unnumbered is not None:
+            args = {**args, "content": "\n".join(unnumbered)}
 
         # Rewriting a file the model has not seen in full this run is a
         # rewrite from memory, which loses scaffold code.
@@ -2321,6 +2718,13 @@ class ToolExecutor:
                 f"{args['path']} exists and you have not read it this run. Call "
                 "read_file first, then modify_file for targeted changes (write_file "
                 "only if a full rewrite is really needed)."
+            )}
+        long_line = self._unreadable_line(rel_path)
+        if long_line:
+            return {"error": (
+                f"{args['path']} exists and its line {long_line[0]} ({long_line[1]} chars) is "
+                "longer than read_file can show, so a full rewrite would drop it. Edit the "
+                "file with modify_file instead."
             )}
         if os.path.isfile(path) and rel_path.strip() not in self._fully_seen:
             return {"error": (
@@ -2332,15 +2736,14 @@ class ToolExecutor:
         # Edit-first guardrail (MODIFY runs only): every existing
         # non-trivial file is part of the user's working app — reject a
         # whole-file rewrite until the model has tried at least two
-        # targeted modify_file edits on it. The rejection text teaches
-        # the model the recovery path, and the >= 2 relaxation keeps the
-        # modify-streak reminder ("switch to write_file") consistent.
+        # targeted edits on it. The >= 2 relaxation is what lets the
+        # recovery ladder's rewrite step (two refused edits) run.
         if (
             self._modify_guard
             and os.path.isfile(path)
-            and self._modify_counts.get(rel_path, 0) < 2
+            and self._edit_attempts.get(rel_path, 0) < 2
         ):
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 existing_lines = f.read().count("\n") + 1
             if existing_lines > 15:
                 return {
@@ -2361,9 +2764,9 @@ class ToolExecutor:
         # large ones keep the targeted-edit requirement until two modify_file
         # attempts have been made.
         if rel_path in self._generator_files and os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
                 existing_lines = f.read().count("\n") + 1
-            if existing_lines > 200 and self._modify_counts.get(rel_path, 0) < 2:
+            if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
                 return {
                     "error": (
                         f"'{rel_path}' was created by a BESSER generator and is large "
@@ -2374,13 +2777,13 @@ class ToolExecutor:
                 }
             # Rewrite allowed (large file, or repeated modifies already tried) — log it
             logger.info(
-                "Allowing rewrite of generated file: %s (%d lines, %d prior modifies)",
-                rel_path, existing_lines, self._modify_counts.get(rel_path, 0),
+                "Allowing rewrite of generated file: %s (%d lines, %d prior targeted edits)",
+                rel_path, existing_lines, self._edit_attempts.get(rel_path, 0),
             )
 
         before = None
         if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 before = f.read()
             broke = _new_syntax_error(rel_path, before, args["content"])
             if broke:
@@ -2410,12 +2813,18 @@ class ToolExecutor:
         stray = stray_gutter_line(args["content"], before or "", before or "")
         if stray:
             return _gutter_refusal("content", stray)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        repaired, auto_imports = self._repair_imports(rel_path, args["content"])
+        args = {**args, "content": repaired}
+        makedirs_plain(os.path.dirname(path), root=self.workspace)
+        with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
         if before != args["content"]:
             self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
+        if unnumbered is not None:
+            result["note"] = _GUTTER_STRIPPED_NOTE
+        if auto_imports:
+            result["auto_imports"] = auto_imports
         self._known_paths.add(args["path"].replace("\\", "/").strip())
         self._fully_seen.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
@@ -2440,11 +2849,7 @@ class ToolExecutor:
 
     def consecutive_modify_misses(self, path: str) -> int:
         """Failed modify_file attempts on ``path`` since its last successful edit."""
-        key = self._rel_key(path)
-        for rel_path, misses in self._failed_modifies.items():
-            if rel_path.strip() == key:
-                return misses
-        return 0
+        return self._failed_modifies.get(self._rel_key(path), 0)
 
     def repeat_rejections(self, path: str) -> int:
         """Highest number of times one already-rejected edit was sent to ``path``."""
@@ -2475,25 +2880,35 @@ class ToolExecutor:
     def _note_rejection(self, rel_path: str, old_text: str, new_text: str) -> int:
         """Record a rejected edit; return how often this exact call has now been seen."""
         key = (rel_path.strip(), old_text, new_text)
-        seen = self._rejected_edits.get(key, 0) + 1
-        self._rejected_edits[key] = seen
         target = (key[0], old_text)
-        hits = self._rejected_targets.get(target, 0) + 1
-        self._rejected_targets[target] = hits
-        reported = max(seen if seen > 1 else 0,
-                       hits if hits >= self._TARGET_REPEAT_AT else 0)
-        if reported:
-            self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), reported)
-            self.last_repeat = (key[0], reported)
+        with self._bookkeeping_lock:
+            seen = self._rejected_edits.get(key, 0) + 1
+            self._rejected_edits[key] = seen
+            hits = self._rejected_targets.get(target, 0) + 1
+            self._rejected_targets[target] = hits
+            reported = max(seen if seen > 1 else 0,
+                           hits if hits >= self._TARGET_REPEAT_AT else 0)
+            if reported:
+                self._repeat_hits[key[0]] = max(self._repeat_hits.get(key[0], 0), reported)
+                self._repeat_reports[key[0]] = reported
         return seen
+
+    @property
+    def last_repeat(self) -> tuple[str, int] | None:
+        """``(path, times seen)`` with the highest count among paths whose
+        latest call repeated a rejected edit; None when there is none."""
+        with self._bookkeeping_lock:
+            return max(self._repeat_reports.items(), key=lambda item: item[1], default=None)
 
     def _clear_rejections(self, rel_path: str) -> None:
         key_path = rel_path.strip()
-        for key in [k for k in self._rejected_edits if k[0] == key_path]:
-            del self._rejected_edits[key]
-        for key in [k for k in self._rejected_targets if k[0] == key_path]:
-            del self._rejected_targets[key]
-        self._repeat_hits.pop(key_path, None)
+        with self._bookkeeping_lock:
+            for key in [k for k in self._rejected_edits if k[0] == key_path]:
+                del self._rejected_edits[key]
+            for key in [k for k in self._rejected_targets if k[0] == key_path]:
+                del self._rejected_targets[key]
+            self._repeat_hits.pop(key_path, None)
+            self._repeat_reports.pop(key_path, None)
 
     def _modify_file(self, args: dict) -> dict:
         """Targeted search-and-replace, with a flexible apply ladder.
@@ -2512,7 +2927,8 @@ class ToolExecutor:
         if not os.path.isfile(path):
             return self._missing_file_result(args["path"])
         rel_path = args["path"].replace("\\", "/")
-        self.last_repeat = None
+        # This call is the path's latest; it reports again only if it repeats.
+        self._repeat_reports.pop(rel_path.strip(), None)
         # read() normalizes file newlines; normalize quoted text identically.
         old_text = args["old_text"].replace("\r\n", "\n")
         new_text = args["new_text"].replace("\r\n", "\n")
@@ -2520,8 +2936,8 @@ class ToolExecutor:
         if frozen:
             self._note_rejection(rel_path, old_text, new_text)
             return frozen
-        self._modify_counts[rel_path] = self._modify_counts.get(rel_path, 0) + 1
-        with open(path, "r", encoding="utf-8") as f:
+        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             content = f.read()
         replace_all = args.get("replace_all") is True
         receipt_key = (os.path.normcase(path), old_text, new_text, replace_all)
@@ -2562,9 +2978,7 @@ class ToolExecutor:
                 "error": (
                     f"modify_file has missed {self._MAX_MODIFY_MISSES} times in a row on "
                     f"{args['path']} and this exact call was already rejected, so it is "
-                    "refused. Do not send it again. A DIFFERENT edit on this file is "
-                    "still accepted: call read_file on the region and copy old_text "
-                    "verbatim from that output."
+                    "refused. Do not send it again."
                 ),
             }
         if old_text == new_text:
@@ -2783,41 +3197,21 @@ class ToolExecutor:
             # read_file -> guess a range) with one pre-filled replace_file_lines.
             # Both documented range-edit failure modes are line-number selection
             # errors, so the numbers come from here, not from the model.
-            if (span and err.get("status") != "possible_replay"
-                    and self._range_edit_failures.get(rel_path, 0) < self._RANGE_EDIT_GIVE_UP):
-                numbered = chr(10).join(
-                    f"{n:>4}| {line}"
-                    for n, line in enumerate(content.split(chr(10))[span[0] - 1:span[1]], span[0])
+            if span and err.get("status") != "possible_replay":
+                located = self._located_range(
+                    args["path"], path, content, span[0], span[1],
+                    "Your old_text brackets exactly these lines.",
                 )
-                if len(numbered) <= MAX_FILE_READ:
-                    err["located_range"] = {
-                        "path": args["path"],
-                        "read_id": self._mint_read_view(path, content, span[0], span[1]),
-                        "start_line": span[0], "end_line": span[1],
-                        "lines": numbered,
-                        "instruction": (
-                            "Your old_text brackets exactly these lines. Call "
-                            "replace_file_lines with this read_id and these start_line/"
-                            "end_line, and new_text = their complete replacement. Do not "
-                            "re-quote old_text and do not paste the 'NNN| ' prefixes."
-                        ),
-                    }
+                if located:
+                    err["located_range"] = located
             if hint and "located_range" not in err:
                 err["did_you_mean"] = (
                     "Closest lines actually in the file - copy old_text verbatim "
                     "from here:" + chr(10) + hint
                 )
-            if misses >= 2:
-                err["advice"] = (
-                    f"This is failed attempt #{misses} on {args['path']}. Call "
-                    "read_file on that region and copy old_text out of the output "
-                    "instead of retyping it."
-                )
             if misses > self._MAX_MODIFY_MISSES:
                 err["error"] = (
-                    f"modify_file has missed {misses} times in a row on {args['path']}; "
-                    "this attempt is refused as well. Call read_file on the region and "
-                    "copy old_text verbatim from that output, or move on. "
+                    f"modify_file has missed {misses} times in a row on {args['path']}. "
                     + err["error"]
                 )
             return err
@@ -2868,10 +3262,11 @@ class ToolExecutor:
                 + _changed_region(content, new_content),
             }
 
+        new_content, auto_imports = self._repair_imports(rel_path, new_content)
         # newline="\n": a text-mode write translates "\n" to os.linesep, which
         # on a Windows host re-encodes the whole file as CRLF - and the React
         # generator copies some templates verbatim out of a CRLF checkout.
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
+        with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as f:
             f.write(new_content)
         digest = self._content_digest(new_content)
         self._edit_receipts[receipt_key] = digest
@@ -2895,6 +3290,8 @@ class ToolExecutor:
             # Surfaced for telemetry and as a nudge: old_text did not match
             # byte-for-byte, so the model's copy of the file is drifting.
             result["matched_by"] = matched_by
+        if auto_imports:
+            result["auto_imports"] = auto_imports
         self._append_write_feedback(result, rel_path, new_content)
         return result
 
@@ -2906,11 +3303,11 @@ class ToolExecutor:
         advice in another refusal walks the model into a second refusal.
         """
         try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as fh:
                 existing_lines = fh.read().count("\n") + 1
         except OSError:
             existing_lines = 0
-        if existing_lines > 200 and self._modify_counts.get(rel_path, 0) < 2:
+        if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
             return (
                 "Edit it in place with modify_file; write_file on this file "
                 "unlocks only after two modify_file attempts."
@@ -2954,15 +3351,25 @@ class ToolExecutor:
                 ),
             }
         try:
-            os.remove(path)
+            remove_plain(path, root=self.workspace)
         except OSError as exc:
             return {"error": f"Failed to delete {args['path']}: {exc}"}
         return {"status": "deleted", "path": args["path"]}
 
     def _search_in_files(self, args: dict) -> dict:
         """Search for a pattern across workspace files."""
+        from besser.spec_driven_agent.agent.prompt_builder import is_bulk_file
+
         pattern = args["pattern"]
         file_glob = args.get("file_glob", "*")
+        if "/" in file_glob or "\\" in file_glob:
+            # An empty result would read as "pattern absent".
+            return {"error": (
+                f"file_glob {file_glob!r} contains a path separator, but it is matched "
+                "against file NAMES only, so it would match nothing. Use a name pattern "
+                "such as '*.tsx', or search everything and read the 'file' of each match."
+            )}
+        skipped_bulk = False
         try:
             regex = re.compile(pattern, re.IGNORECASE)
         except re.error:
@@ -2984,6 +3391,11 @@ class ToolExecutor:
             for fname in filenames:
                 if not fnmatch.fnmatch(fname, file_glob):
                     continue
+                # A lock file alone filled the 50-match budget for "react".
+                # Searched only when file_glob names it exactly.
+                if fname != file_glob and is_bulk_file(fname):
+                    skipped_bulk = True
+                    continue
                 abs_path = os.path.join(root, fname)
                 rel_path = os.path.relpath(abs_path, self.workspace).replace("\\", "/")
                 # Skip binary files and internal files. Spilled command logs
@@ -2996,7 +3408,7 @@ class ToolExecutor:
                 if not self._resolves_inside(abs_path):
                     continue
                 try:
-                    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                    with open_plain(abs_path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                         for i, line in enumerate(f, 1):
                             if regex.search(line):
                                 matches.append({
@@ -3009,7 +3421,13 @@ class ToolExecutor:
                 except (OSError, UnicodeDecodeError):
                     continue
 
-        return {"matches": matches, "total": len(matches)}
+        result = {"matches": matches, "total": len(matches)}
+        if skipped_bulk:
+            result["not_searched"] = (
+                "lock files, minified bundles, source maps and binaries; "
+                "name one exactly in file_glob to search it"
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Execution tools — the generate-test-fix loop enabler
@@ -3042,8 +3460,9 @@ class ToolExecutor:
         rel = f"{COMMAND_OUTPUT_DIR}/{self._command_log_count:03d}-{slug}.log"
         try:
             full = self._safe_path(rel)
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-            with open(full, "w", encoding="utf-8", errors="replace", newline="") as fh:
+            makedirs_plain(os.path.dirname(full), root=self.workspace)
+            with open_plain_write(full, "w", root=self.workspace, encoding="utf-8", errors="replace",
+                                  newline="") as fh:
                 fh.write(
                     f"$ {command}\n\n===== stdout =====\n{self._cap_spill(stdout)}\n"
                     f"===== stderr =====\n{self._cap_spill(stderr)}\n"
@@ -3270,7 +3689,7 @@ class ToolExecutor:
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
             return {"error": f"File not found: {args['path']}"}
-        with open(path, "r", encoding="utf-8") as f:
+        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             source = f.read()
         try:
             ast.parse(source, filename=args["path"])
@@ -3432,7 +3851,7 @@ class ToolExecutor:
         "generate_tensorflow": _gen_tensorflow,
         # Files
         "list_files": _list_files,
-        "read_file": _read_file,
+        "read_file": _read_file_once,
         "write_file": _write_file,
         "replace_file_lines": _replace_file_lines,
         "modify_file": _modify_file,

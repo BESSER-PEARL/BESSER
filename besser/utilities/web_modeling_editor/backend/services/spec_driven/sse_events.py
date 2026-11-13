@@ -281,7 +281,8 @@ class ErrorEvent(BaseSseEvent):
 
     ``INTERNAL`` errors are always sent with the literal string
     ``"Internal server error"``; tracebacks go to ``logger.exception``
-    only, never to the client.
+    only, never to the client. The one other ``INTERNAL`` message is the fixed
+    one a server restart adds to a run it interrupted, with ``resumeAvailable``.
     """
 
     event: Literal["error"] = "error"

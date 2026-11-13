@@ -38,7 +38,7 @@ from besser.utilities.provenance import (
     readme_besser_block,
 )
 from besser.utilities.secret_redaction import scrub_secret_files
-from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, open_plain_write
+from besser.utilities.workspace_fs import copy_plain_file, copytree_plain, is_plain_entry, open_plain_write
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGitHubRunRequest,
     ImportGitHubRunResponse,
@@ -181,8 +181,8 @@ async def push_run_to_github(
         )
         for _internal in CARRIED_RUN_FILES:
             _src = os.path.join(entry.temp_dir, _internal)
-            if os.path.isfile(_src) and is_plain_entry(_src):
-                shutil.copy2(_src, os.path.join(workdir, _internal))
+            if is_plain_entry(_src) and os.path.isfile(_src):
+                copy_plain_file(_src, os.path.join(workdir, _internal), root=entry.temp_dir, dst_root=workdir)
         scrubbed = _scrub_secret_env_files(workdir)
         if scrubbed:
             logger.info(

@@ -31,6 +31,7 @@ from besser.spec_driven_agent.validation.constructibility import (
     UNVERIFIED_PREFIX,
     _NetworkBlocked,
     _build_payload,
+    _choice,
     _install_network_guard,
     _is_local_host,
     _issues_from_report,
@@ -292,6 +293,19 @@ def test_an_authentication_wall_is_not_checked():
     assert issues[0].startswith(UNVERIFIED_PREFIX)
 
 
+def test_an_unverified_create_says_what_settles_it():
+    """Live, Sonnet 5.5, a login-protected 13-class app: told only to "read the
+    persisted result", the repair round saved a create-only scenario and ended
+    with 11-13 of these findings open. Only a POST read back by id retires one."""
+    unauthorized = _issues_from_report(_report(Room=_entity("unauthorized", 401)), "b")
+    dependent = _issues_from_report(_report(
+        Y={"path": "/y/", "verdict": "unresolved", "unresolved": [["x", "X"]]}), "b")
+    for [issue], path in ((unauthorized, "/x/"), (dependent, "/y/")):
+        assert f"one test_api scenario must POST {path}" in issue
+        assert f"then GET that record by its id under {path}" in issue
+        assert "not read back stays unverified" in issue
+
+
 def test_a_payload_the_probe_could_not_build_is_no_verdict():
     for verdict, status, body in (("invalid", 422, "pattern mismatch"),
                                   ("rejected", 409, "identifyingNumber must be unique"),
@@ -541,3 +555,439 @@ def test_an_abstract_entity_is_not_probed_for_construction(tmp_path):
     assert informed["backends"][0].get("skipped_abstract") == ["Person"]
     # The concrete subclass is still probed.
     assert "Patron" in (informed["backends"][0].get("entities") or {})
+
+
+# --------------------------------------------------- non-entity create bodies
+
+def test_a_create_named_body_that_is_no_orm_entity_is_not_probed(tmp_path):
+    """A ``*Create`` request model with no ORM table behind it (a newsletter
+    signup, a login form) is not an entity create. The probe used to list it,
+    never attempt it, and report ``create unverified: ... unresolved related
+    IDs: []`` - promoted to a ``runtime unverified:`` blocker that only a
+    test_api create+GET reading back a record with an id can retire, which no
+    such endpoint can satisfy."""
+    workspace = _scaffold(tmp_path)
+    main = tmp_path / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8") + (
+        "\n\nfrom pydantic import BaseModel as _SignupBase\n\n"
+        "class NewsletterSignupCreate(_SignupBase):\n    email: str\n\n"
+        "@app.post('/newsletter/signup/')\n"
+        "def newsletter_signup(payload: NewsletterSignupCreate):\n"
+        "    return {'ok': True}\n"
+    ), encoding="utf-8")
+
+    report = collect_constructibility_report(workspace)
+
+    assert report["issues"] == [], report["issues"]
+    backend = report["backends"][0]
+    assert "NewsletterSignup" not in backend["entities"]
+    assert backend.get("skipped_non_entity") == ["NewsletterSignup"]
+    # The real entities are still probed.
+    assert {"Room", "Booking"} <= set(backend["entities"])
+
+
+# --------------------------------------------------- login-protected apps
+
+_AUTH_MODULE = '''
+import secrets
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+_users: dict = {}
+_tokens: set = set()
+bearer = HTTPBearer(auto_error=False)
+router = APIRouter(prefix="/auth")
+
+
+class Credentials(BaseModel):
+    username: str
+    password: str
+{extra_field}
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    if credentials is None or credentials.credentials not in _tokens:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return credentials.credentials
+
+
+@router.post("/register", status_code=201)
+def register(data: Credentials):
+    if len(data.password) < 8:
+        raise HTTPException(status_code=422, detail="password too short")
+    _users[data.username] = data.password
+    return {"username": data.username}
+
+
+@router.post("/login")
+def login(data: Credentials):
+    if _users.get(data.username) != data.password:
+        raise HTTPException(status_code=401, detail="bad credentials")
+    token = secrets.token_urlsafe(16)
+    _tokens.add(token)
+    return {"access_token": token, "token_type": "bearer"}
+'''
+
+# Creates need a privileged account; ``{privileged}`` decides who registers as one.
+_PRIVILEGE_AUTH_MODULE = '''
+import secrets
+from typing import Literal
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+_users: dict = {"chief": {"password": "seeded-chief-pw", "privileged": True}}
+_tokens: dict = {}
+bearer = HTTPBearer(auto_error=False)
+router = APIRouter(prefix="/auth")
+
+
+class Register(BaseModel):
+    username: str
+    password: str
+{extra_field}
+
+class Login(BaseModel):
+    username: str
+    password: str
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    if credentials is None or credentials.credentials not in _tokens:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not _users[_tokens[credentials.credentials]]["privileged"]:
+        raise HTTPException(status_code=403, detail="Managers only")
+    return credentials.credentials
+
+
+@router.post("/register", status_code=201)
+def register(data: Register):
+    _users[data.username] = {"password": data.password, "privileged": {privileged}}
+    return {"username": data.username}
+
+
+@router.post("/login")
+def login(data: Login):
+    if _users.get(data.username, {}).get("password") != data.password:
+        raise HTTPException(status_code=401, detail="bad credentials")
+    token = secrets.token_urlsafe(16)
+    _tokens[token] = data.username
+    return {"access_token": token, "token_type": "bearer"}
+'''
+
+
+def _auth_scaffold(tmp_path, *, extra_field: str = "", protect: bool = True,
+                   register: str = "/register", login: str = "/login",
+                   module: str = _AUTH_MODULE, privileged: str = "True") -> str:
+    """The Room/Booking scaffold plus a register/login router; with ``protect``
+    every entity router needs the bearer token login returns."""
+    workspace = _scaffold(tmp_path)
+    backend = tmp_path / "web_app" / "backend"
+    (backend / "auth.py").write_text(
+        module.replace("{extra_field}", extra_field).replace("{privileged}", privileged)
+        .replace('"/register"', f'"{register}"').replace('"/login"', f'"{login}"'), encoding="utf-8")
+    main = backend / "main_api.py"
+    text = main.read_text(encoding="utf-8")
+    if protect:
+        text, protected = re.subn(
+            r"app\.include_router\((\w+_router)\.router\)",
+            r"app.include_router(\1.router, dependencies=[Depends(get_current_user)])", text)
+        assert protected == 2
+    main.write_text("from fastapi import Depends\nimport auth as _auth\nfrom auth import get_current_user\n"
+                    + text + "\napp.include_router(_auth.router)\n", encoding="utf-8")
+    return workspace
+
+
+def test_a_login_protected_app_is_probed_after_logging_in_through_its_own_routes(tmp_path):
+    """Live, Sonnet 5.5, a login-protected 13-class app (6 runs): the probe never
+    logged in, so all 13 creates came back ``create unverified`` (3 refused 401,
+    10 unresolved behind them) and held the requirements judge for a repair round."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path))
+    assert report["issues"] == [], report["issues"]
+    [backend] = report["backends"]
+    assert {e["verdict"] for e in backend["entities"].values()} == {"created"}  # Booking needs the Room
+    # That auth is enforced is recorded apart from the creates themselves.
+    assert backend["auth"]["anonymous_status"] == 401
+    assert backend["auth"]["source"] == "its register/login routes"
+    assert backend["auth"]["credential"] == ["Authorization"]
+
+
+def test_a_register_route_that_asks_for_a_role_is_not_guessed(tmp_path):
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, extra_field="    role: str\n"))
+    assert "source" not in report["backends"][0]["auth"]
+    assert len(report["issues"]) == 2, report["issues"]
+    assert all(i.startswith(UNVERIFIED_PREFIX) for i in report["issues"])
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "the probe could not log in" in refused and "`role`" in refused
+
+
+@pytest.mark.parametrize("field, privileged, reason", [
+    ("    is_manager: bool\n", "data.is_manager", "`is_manager` (a privilege-named field)"),
+    ("    approved: bool\n", "data.approved", "`approved` (a boolean value)"),
+    ('    account_type: Literal["organizer", "attendee"]\n', 'data.account_type == "organizer"',
+     "`account_type` (a privilege-named field)"),
+])
+def test_a_register_route_that_makes_the_account_choose_its_kind_is_not_used(tmp_path, field, privileged, reason):
+    """A required flag or enum was filled by ``_sample`` (True, the first literal), so
+    the probe registered itself a manager or organizer and reported every create verified."""
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE, privileged=privileged))
+    auth = report["backends"][0]["auth"]
+    assert "source" not in auth and reason in auth["error"], auth
+    assert len(report["issues"]) == 2, report["issues"]
+
+
+def test_a_register_route_with_free_text_fields_is_used(tmp_path):
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field="    full_name: str\n    phone: str\n", module=_PRIVILEGE_AUTH_MODULE))
+    assert report["issues"] == [], report["issues"]
+    auth = report["backends"][0]["auth"]
+    assert auth["source"] == "its register/login routes"
+    assert auth["identity"] == "a new account the probe registered"
+
+
+def test_a_403_to_the_probes_own_account_ends_the_login(tmp_path):
+    """Open registration gives ordinary accounts and only a seeded user may create:
+    the probe's own account gets 403, and the creates stay unverified."""
+    workspace = _auth_scaffold(tmp_path, module=_PRIVILEGE_AUTH_MODULE, privileged="False")
+    report = collect_constructibility_report(workspace)
+    assert "source" not in report["backends"][0]["auth"]
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "Managers only" in refused and "so the route needs a privilege" in refused, refused
+
+
+@pytest.mark.parametrize("field", ["study_group", "parole_officer", "badminton_club", "ownership_note"])
+def test_a_field_with_a_privilege_word_inside_another_word_is_free_text(field):
+    """``role``/``admin``/``owner`` were matched as substrings, so ordinary required
+    fields such as ``parole_officer`` refused registration and held every create."""
+    assert _choice(field, {"type": "string"}) is None
+
+
+@pytest.mark.parametrize("field", ["is_admin", "userRole", "account-type", "isSuperUser", "user_roles",
+                                   "groupOwner", "role"])
+def test_a_privilege_word_is_matched_as_a_whole_word_of_any_casing(field):
+    assert _choice(field, {"type": "string"}) == "a privilege-named field"
+
+
+@pytest.mark.parametrize("field", ["terms_accepted", "accept_terms", "agree_to_terms", "privacy_consent",
+                                   "newsletter", "marketing_opt_in", "remember_me", "is_adult", "ageConfirmed"])
+def test_a_required_consent_box_is_ticked(field):
+    assert _choice(field, {"type": "boolean"}) is None
+
+
+@pytest.mark.parametrize("field, schema, reason", [
+    ("is_manager", {"type": "boolean"}, "a privilege-named field"),
+    ("admin_consent", {"type": "boolean"}, "a privilege-named field"),
+    ("approved", {"type": "boolean"}, "a boolean value"),
+    ("terms", {"enum": ["yes", "no"], "type": "string"}, "one of fixed values"),
+    ("account_type", {"enum": ["organizer", "attendee"], "type": "string"}, "a privilege-named field"),
+])
+def test_every_other_boolean_enum_or_privilege_field_stays_a_choice(field, schema, reason):
+    assert _choice(field, schema) == reason
+
+
+_BOOLEAN = {"type": "boolean"}
+_INTEGER = {"type": "integer"}
+_STRING = {"type": "string"}
+
+
+@pytest.mark.parametrize("field, schema, reason", [
+    # A box is ticked only when every word of its name phrases consent.
+    ("terms_accepted", _BOOLEAN, None), ("agree_to_terms", _BOOLEAN, None), ("privacy_consent", _BOOLEAN, None),
+    ("newsletter", _BOOLEAN, None), ("marketing_opt_in", _BOOLEAN, None), ("remember_me", _BOOLEAN, None),
+    ("is_adult", _BOOLEAN, None), ("over_18", _BOOLEAN, None), ("age_confirmed", _BOOLEAN, None),
+    ("is_marketing_team", _BOOLEAN, "a boolean value"), ("newsletter_editor", _BOOLEAN, "a boolean value"),
+    ("privacy_officer", _BOOLEAN, "a boolean value"), ("adult_content_creator", _BOOLEAN, "a boolean value"),
+    ("bypass_age_check", _BOOLEAN, "a boolean value"),
+    # A number that references another record or names a rank is a choice.
+    ("group_id", _INTEGER, "a reference to another record or a rank"),
+    ("groupId", _INTEGER, "a reference to another record or a rank"),
+    ("access_level", _INTEGER, "a reference to another record or a rank"),
+    ("tier", _INTEGER, "a reference to another record or a rank"),
+    ("user_rank", {"type": "number"}, "a reference to another record or a rank"),
+    ("grade", _INTEGER, "a reference to another record or a rank"),
+    ("security_clearance", _INTEGER, "a reference to another record or a rank"),
+    ("plan", _INTEGER, "a reference to another record or a rank"),
+    ("age", _INTEGER, None), ("phone", _INTEGER, None), ("birth_year", _INTEGER, None),
+    ("study_group", _STRING, None),
+])
+def test_only_boxes_named_for_consent_and_plain_numbers_are_filled(field, schema, reason):
+    """Review probe: ``is_marketing_team`` and ``privacy_officer`` were ticked because one
+    word was a consent word, and ``group_id`` was sent as 1, joining a seeded staff group;
+    the probe passed a staff-only check and reported every create verified."""
+    assert _choice(field, schema) == reason
+
+
+@pytest.mark.parametrize("field, ticked", [
+    ("termsAndConditions", True), ("accept_terms_and_conditions", True), ("terms_of_service", True),
+    ("privacy_policy_accepted", True), ("consent_given", True), ("terms_accepted", True),
+    ("agree_to_terms", True), ("privacy_consent", True), ("marketing_opt_in", True), ("remember_me", True),
+    ("is_adult", True), ("over_18", True), ("age_confirmed", True),
+    ("is_confirmed", False), ("confirmed", False), ("accept", False), ("verified", False),
+    ("is_verified", False), ("email_verified", False), ("is_marketing_team", False),
+    ("newsletter_editor", False), ("privacy_officer", False), ("adult_content_creator", False),
+    ("bypass_age_check", False), ("is_manager", False), ("approved", False),
+    # policy/conditions/service/use qualify a document noun before them; alone they name no consent.
+    ("has_policy", False), ("has_conditions", False), ("policy", False), ("conditions", False),
+    ("use_privacy", False), ("service_policy", False), ("agreedToTermsOfUse", True),
+    ("userConsent", True), ("cookieConsent", True), ("dataProcessingConsent", True), ("acknowledgeTerms", True),
+    ("iHaveReadTheTerms", True), ("ageConfirmation", True), ("privacyPolicyAgreement", True),
+    ("termsAgreement", True), ("is18OrOlder", True), ("legalAccepted", True),
+])
+def test_a_consent_box_needs_a_consent_noun_and_only_filler_words(field, ticked):
+    """Review probes: ``termsAndConditions`` and ``consent_given`` refused registration (so no
+    login), while ``is_confirmed``, made only of filler words, was ticked; later ``has_policy``
+    and ``service_policy`` were ticked and ``userConsent`` and ``is18OrOlder`` refused."""
+    assert (_choice(field, _BOOLEAN) is None) is ticked
+
+
+@pytest.mark.parametrize("field, privileged, reason", [
+    ("    is_marketing_team: bool\n", "data.is_marketing_team", "`is_marketing_team` (a boolean value)"),
+    ("    group_id: int\n", "data.group_id == 1", "`group_id` (a reference to another record or a rank)"),
+])
+def test_a_staff_flag_or_group_named_like_consent_is_not_taken(tmp_path, field, privileged, reason):
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE, privileged=privileged))
+    auth = report["backends"][0]["auth"]
+    assert "source" not in auth and reason in auth["error"], auth
+    assert len(report["issues"]) == 2, report["issues"]
+
+
+def test_a_register_form_asking_for_consent_and_a_birth_date_is_used(tmp_path):
+    """A required date of birth was sent as tomorrow, so a past-date check refused the probe's account."""
+    module = _PRIVILEGE_AUTH_MODULE.replace("import secrets", "import datetime\nimport secrets").replace(
+        "def register(data: Register):\n",
+        "def register(data: Register):\n    if data.date_of_birth >= datetime.date.today():\n"
+        "        raise HTTPException(status_code=422, detail='date of birth must be in the past')\n")
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field="    marketing_opt_in: bool\n    date_of_birth: datetime.date\n", module=module))
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["identity"] == "a new account the probe registered"
+
+
+@pytest.mark.parametrize("field", ["    study_group: str\n", "    terms_accepted: bool\n"])
+def test_an_ordinary_register_form_is_used(tmp_path, field):
+    """A required ``study_group`` (named like a privilege by substring) or ``terms_accepted``
+    box refused registration, so every create of an app any user may write to was unverified."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE))
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["identity"] == "a new account the probe registered"
+
+
+_CSRF_AUTH_MODULE = '''
+import secrets
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel
+
+_users: dict = {}
+_sessions: dict = {}
+router = APIRouter(prefix="/auth")
+
+
+class Credentials(BaseModel):
+    username: str
+    password: str
+
+
+def get_current_user(request: Request):
+    session = _sessions.get(request.cookies.get("sid"))
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if request.headers.get("x-csrf-token") != session["csrf"]:
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+    return session["user"]
+
+
+@router.post("/register", status_code=201)
+def register(data: Credentials):
+    _users[data.username] = data.password
+    return {"username": data.username}
+
+
+@router.post("/login")
+def login(data: Credentials, response: Response):
+    if _users.get(data.username) != data.password:
+        raise HTTPException(status_code=401, detail="bad credentials")
+    sid, csrf = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+    _sessions[sid] = {"user": data.username, "csrf": csrf}
+    response.set_cookie("sid", sid)
+    return {"csrf_token": csrf}
+'''
+
+
+def test_a_csrf_protected_session_says_what_stopped_the_probe(tmp_path):
+    """The probe does not send CSRF tokens; its finding said the route needs a
+    privilege, which sent the repair after a role check that does not exist."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, module=_CSRF_AUTH_MODULE))
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "CSRF token missing or invalid" in refused, refused
+
+
+def test_a_strict_oauth2_form_login_says_what_stopped_the_probe(tmp_path):
+    """``OAuth2PasswordRequestFormStrict`` requires ``grant_type=password``, which the probe does not send."""
+    workspace = _auth_scaffold(tmp_path)
+    auth_module = tmp_path / "web_app" / "backend" / "auth.py"
+    auth_module.write_text(auth_module.read_text(encoding="utf-8").replace(
+        '@router.post("/login")\ndef login(data: Credentials):',
+        '@router.post("/token")\ndef login(data: OAuth2PasswordRequestFormStrict = Depends()):').replace(
+        "from fastapi.security import", "from fastapi.security import OAuth2PasswordRequestFormStrict,"),
+        encoding="utf-8")
+    report = collect_constructibility_report(workspace)
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "POST /auth/token answered 422" in refused and "grant_type" in refused, refused
+
+
+def test_a_templated_register_route_is_not_the_account_register(tmp_path):
+    """A room sign-up route ``/room/{room_id}/register`` was taken for the account
+    register; its 422 ended discovery before the working /auth/register."""
+    workspace = _auth_scaffold(tmp_path)
+    main = tmp_path / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8").replace(
+        "\napp.include_router(_auth.router)\n",
+        "\n@app.post('/room/{room_id}/register')\ndef room_signup(room_id: int, seat: int):\n"
+        "    return {'ok': room_id}\n\napp.include_router(_auth.router)\n"), encoding="utf-8")
+    report = collect_constructibility_report(workspace)
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["source"] == "its register/login routes"
+
+
+def test_a_failed_registration_still_tries_the_login_route(tmp_path):
+    workspace = _auth_scaffold(tmp_path)
+    auth_module = tmp_path / "web_app" / "backend" / "auth.py"
+    auth_module.write_text(auth_module.read_text(encoding="utf-8")
+                           .replace("    _users[data.username] = data.password\n",
+                                    "    raise HTTPException(status_code=403, detail='registration is closed')\n")
+                           .replace("if _users.get(data.username) != data.password:", "if not data.password:"),
+                           encoding="utf-8")
+    report = collect_constructibility_report(workspace)
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["identity"] == "the probe's own credentials, without registering"
+
+
+def test_a_login_the_routes_do_not_name_leaves_the_creates_to_test_api(tmp_path):
+    """No route is named like a register/login, so the probe does not log in; the
+    creates stay unverified for the model's own test_api scenario to prove."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, register="/accounts", login="/sessions"))
+    assert "source" not in report["backends"][0]["auth"]
+    assert len(report["issues"]) == 2, report["issues"]
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "lists no unsecured register or login route" in refused
+
+
+def test_an_app_without_auth_gets_no_login_requests(tmp_path):
+    """No 401/403, no login: an open app sees exactly the requests it saw before.
+    The app exits if anything touches /auth or posts an empty body."""
+    workspace = _auth_scaffold(tmp_path, protect=False)
+    main = tmp_path / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8") + (
+        "\n\nimport os as _os\n\n"
+        "@app.middleware('http')\n"
+        "async def _tripwire(request, call_next):\n"
+        "    if request.url.path.startswith('/auth') or request.headers.get('content-length') == '2':\n"
+        "        _os._exit(3)\n"
+        "    return await call_next(request)\n"
+    ), encoding="utf-8")
+    report = collect_constructibility_report(workspace)
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["boot"] == "ok"
+    assert "auth" not in report["backends"][0]

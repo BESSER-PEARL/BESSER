@@ -36,8 +36,9 @@ then spend — and the cost check runs *before* the next request is sent, so a
 run cannot overshoot its cap by one more billable call. A single warning is
 logged at 80% of the cost cap.
 
-Only the paid LLM calls count against the budget: the planning pass, the
-customize loop, and any Phase 3 fix turns. The deterministic scaffold, the
+Only the paid LLM calls count against the budget: generator selection, the
+planning pass, a modify run's model sync, the customize loop, requirement
+extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
 validators, and the download are free.
 
 .. _spec-driven-durable-runs:
@@ -58,7 +59,9 @@ runs survive a dropped connection:
   larger of the two cursors wins, so a stale query value can't replay
   duplicates. A resumed run drops the previous attempt's frames but keeps
   numbering from where it stopped, so a cursor from that attempt replays the
-  whole new attempt.
+  whole new attempt. A finished run's events are deleted after
+  ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``; its status record stays for 24 hours,
+  as long as its workspace can be resumed, so numbering continues after that too.
 
 .. code-block:: bash
 
@@ -71,12 +74,32 @@ runs survive a dropped connection:
 
 Losing *every* subscriber starts a grace period (default 5 minutes) before the
 producer is cooperatively stopped — which bounds unattended BYOK spend. A
-server restart marks still-running records ``interrupted``;
+client polling ``events.json`` counts as present: the run is stopped only when
+no stream is open *and* no poll arrived within the grace period. When
+the event store itself fails mid-run (a full disk, a lock held past its
+timeout), or the backend stops, the run's worker is cancelled at its next turn
+boundary, and its concurrency slot is freed only once the worker has stopped;
+the run is recorded ``failed`` (``interrupted`` on shutdown). A
+server restart marks still-running records ``interrupted`` and ends their event
+log with a terminal ``error`` frame (code ``INTERNAL``) whose ``resumeAvailable``,
+like the status record's, says whether a checkpoint is on disk;
 ``POST /besser_api/spec-driven/resume/{run_id}`` can then continue them from
 their checkpoint when the client re-supplies the request body. Resume relies on
 the checkpoint written after every tool-use turn (see :doc:`how_it_works`): it
 refuses to resume against a project whose fingerprint has changed, and seeds
 the already-spent cost so a crash-and-resume cycle cannot double the bill.
+The resumed run continues the interrupted one: the same checklist (shown again
+in its prompt), requirements, generator-file tags, routed stack and record of
+successful writes, a modify run's model change and seed-run findings, and a
+fresh model-contract check. In the recipe's history it replaces the interrupted
+attempt's entry instead of adding one.
+
+A resume that fails (a changed project, a rejected key, a provider error)
+leaves the interrupted run's workspace, checkpoint and download in place, so
+it can be resumed again with the right input until the 24-hour temp cleanup
+removes it. Likewise a run that fails or is cancelled after writing a
+checkpoint keeps its workspace, so an abandoned run that reports
+``resumeAvailable: true`` can be resumed.
 
 .. _spec-driven-modify-mode:
 

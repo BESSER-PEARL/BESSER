@@ -93,6 +93,28 @@ def test_run_bounded_returns_output_like_subprocess_run(tmp_path):
     assert result.stderr == "err\n"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="swaps the POSIX stdin descriptor")
+def test_run_bounded_does_not_hand_the_worker_stdin_to_the_child():
+    """With no ``input`` the child inherited the worker's stdin; on an open
+    pipe a command that reads stdin blocked for its whole timeout."""
+    from besser.spec_driven_agent.execution.process import run_bounded
+
+    read_end, write_end = os.pipe()
+    saved = os.dup(0)
+    os.dup2(read_end, 0)
+    try:
+        started = time.monotonic()
+        result = run_bounded([sys.executable, "-c", "input()"], timeout=TIMEOUT + MARGIN)
+        elapsed = time.monotonic() - started
+    finally:
+        os.dup2(saved, 0)
+        for fd in (saved, read_end, write_end):
+            os.close(fd)
+
+    assert "EOFError" in result.stderr, result.stderr
+    assert elapsed < TIMEOUT, f"the child waited {elapsed:.1f}s on the worker's stdin"
+
+
 def test_phase1_npm_install_honours_its_timeout(tmp_path, monkeypatch):
     """The recorded failure, end to end through the Phase 1 call site."""
     heartbeat = tmp_path / "beat"

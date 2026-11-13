@@ -119,3 +119,60 @@ def test_references_and_coincidences_are_not_a_create(tmp_path):
     Metric only a dashboard read; User only the signed-in user and a login."""
     assert _creates(tmp_path, CONFIG_APP, "Virus", "Run", "Dataset", "Metric", "User") == {
         "Virus": True, "Run": False, "Dataset": False, "Metric": False, "User": False}
+
+
+def test_create_helpers_nobody_calls_are_not_a_create(tmp_path):
+    """Every page's create call removed from a saved todo app: the client still
+    defines createTag/createItem, and its own POSTs were counted as the creates."""
+    files = {"frontend/src/api.js": METHOD_ARG_API,
+             "frontend/src/pages/TagList.jsx": TAG_PAGE.replace("api.createTag({ name })", "api.listTags()"),
+             "frontend/src/pages/TodoItemList.jsx": ITEM_PAGE.replace("api.createItem(payload)", "null")}
+    assert _creates(tmp_path, files, "Tag", "TodoItem") == {"Tag": False, "TodoItem": False}
+
+
+# The saved dashboard's client: a generic create helper over `api.post`.
+GENERIC_CLIENT_APP = {
+    "frontend/src/api.js": ("async function request(method, path, body) {\n"
+                            "  const res = await fetch(`${BASE}${path}`, { method, body: JSON.stringify(body) });\n"
+                            "  return res.json();\n}\n"
+                            "export const api = {\n  get: (path) => request('GET', path),\n"
+                            "  post: (path, body) => request('POST', path, body),\n"
+                            "  put: (path, body) => request('PUT', path, body),\n};\n"
+                            "export const listEntities = (route) => api.get(`/${route}/`)\n"
+                            "export const createEntity = (route, body) => api.post(`/${route}/`, body)\n"
+                            "export const getMetrics = () => api.get('/api/metrics')\n"),
+    "frontend/src/entities.js": ("export const ENTITIES = {\n  virus: { label: 'Viruses', fields: [] },\n"
+                                 "  metric: { label: 'Metrics', fields: [] },\n};\n"),
+    "frontend/src/pages/Dashboard.jsx": ("import { getMetrics } from '../api.js';\n"
+                                         "export default function Dashboard() { getMetrics(); }\n"),
+    "frontend/src/pages/EntityPage.jsx": ("import { ENTITIES } from '../entities.js';\n"
+                                          "import { createEntity, listEntities } from '../api.js';\n"
+                                          "export default function EntityPage({ route }) {\n"
+                                          "  const meta = ENTITIES[route];\n  listEntities(route);\n"
+                                          "  const save = () => createEntity(route, body);\n}\n"),
+    "frontend/src/App.jsx": ("import EntityPage from './pages/EntityPage.jsx';\n"
+                             "export default function App() { return <EntityPage route={key} />; }\n"),
+}
+
+
+def test_a_generic_create_helper_switched_to_put_is_not_a_create(tmp_path):
+    """The page calls createEntity, which no longer POSTs; the client's own
+    `post` helper, which nothing calls, still counted for Metric, which the
+    client names in `getMetrics`."""
+    assert _creates(tmp_path, GENERIC_CLIENT_APP, "Virus", "Metric") == {"Virus": True, "Metric": True}
+    files = dict(GENERIC_CLIENT_APP)
+    files["frontend/src/api.js"] = files["frontend/src/api.js"].replace(
+        "createEntity = (route, body) => api.post(", "createEntity = (route, body) => api.put(")
+    assert _creates(tmp_path, files, "Virus", "Metric") == {"Virus": False, "Metric": False}
+
+
+def test_a_page_routed_without_jsx_keeps_its_own_create(tmp_path):
+    """A router config imports the page as a value, never rendering `<TagList`:
+    the page is not an api client, so the POST it issues itself still counts."""
+    files = {
+        "frontend/src/pages/TagList.jsx": ("export default function TagList() {\n"
+                                           "  const save = () => fetch('/tag/', { method: 'POST', body });\n}\n"),
+        "frontend/src/router.js": ("import TagList from './pages/TagList.jsx';\n"
+                                   "export const routes = [{ path: '/tags', Component: TagList }];\n"),
+    }
+    assert _creates(tmp_path, files, "Tag") == {"Tag": True}

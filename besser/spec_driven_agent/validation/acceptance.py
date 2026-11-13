@@ -380,7 +380,17 @@ def build_acceptance_matrix(
                     for rel, content in frontend_files}
     # A shared client's own POSTs count where its helpers are called, not as
     # creates of whatever its other helpers (`getMetrics`) happen to name.
-    create_calls = {rel: client_calls[rel] + ([] if rel in used_clients else _direct_create_calls(content))
+    # A module other files call into is such a client even when none of those
+    # calls is a create; a page imported to be rendered or routed is not.
+    code = {rel: _blank_literals(content) for rel, content in frontend_files}
+    clients = used_clients | {
+        target for rel, content in frontend_files for binding, spec in _import_bindings(content)
+        for target in [next((c for c in _resolve_import(rel, spec) if c in by_path), None)]
+        if target in helper_cache
+        and re.search(r"(?<![\w$.])" + re.escape(binding) + r"\s*[.(]", code[rel])
+        and not re.search(r"<\s*" + re.escape(binding) + r"\b", code[rel])
+    }
+    create_calls = {rel: client_calls[rel] + ([] if rel in clients else _direct_create_calls(content))
                     for rel, content in frontend_files}
     # Generic pages (``EntityList entity={key}``): the create names its resource
     # through a variable and the component's code names no class of the model

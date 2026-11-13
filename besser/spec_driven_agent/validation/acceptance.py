@@ -95,6 +95,8 @@ _KEEP_NEWLINES_RE = re.compile(r"[^\n]")
 # A string compared against a value (`key === 'booking'`, `case 'booking':`).
 _COMPARED_STRING_RE = re.compile(
     r"(?:[!=]==?|\bcase)\s*(['\"`])[^'\"`\n]*\1|(['\"`])[^'\"`\n]*\2\s*[!=]==?")
+_IF_RE = re.compile(r"\bif\s*\(")
+_BLOCK_START_RE = re.compile(r"\s*\{")
 # An error or response read (`err.message`, `e?.response.data`, `error['message']`), not a call.
 _ERROR_MEMBER = r"(?:message|error|detail|data|status|statusText|response|stack|code|name)"
 _ERROR_READ_RE = re.compile(
@@ -141,6 +143,34 @@ def _bracket_depth(blanked: str, start: int, end: int) -> int:
         elif char in ")]}":
             depth -= 1
     return depth
+
+
+def _group_end(blanked: str, start: int) -> int:
+    """The index just past the bracket group that opens at ``start``."""
+    depth = 0
+    for i in range(start, len(blanked)):
+        if blanked[i] in "([{":
+            depth += 1
+        elif blanked[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return len(blanked)
+
+
+def _blank_entity_branches(code: str, forms: list[str]) -> str:
+    """Blank each `if (key === 'project') { ... }`: a shared form's branch for one entity it serves."""
+    blanked, done = _blank_literals(code), 0
+    for match in _IF_RE.finditer(blanked):
+        cond_end = _group_end(blanked, match.end() - 1)
+        body = _BLOCK_START_RE.match(blanked, cond_end)
+        if match.start() < done or not body or not any(
+                _mentions(compared.group(), forms, whole_word=True)
+                for compared in _COMPARED_STRING_RE.finditer(code, match.start(), cond_end)):
+            continue
+        done = _group_end(blanked, body.end() - 1)
+        code = code[:match.start()] + _KEEP_NEWLINES_RE.sub(" ", code[match.start():done]) + code[done:]
+    return code
 
 
 def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
@@ -447,15 +477,16 @@ def build_acceptance_matrix(
     # client is not rendering a page. ``LoanList`` with a variable-argument
     # create is not generic: crediting it to every entity App.jsx lists would
     # hide their missing creates. Testing which entity it was given
-    # (`config.key === 'booking'`) is what a shared form does, so it names none;
-    # neither does reading `err.message` when the model has a Message.
+    # (`config.key === 'booking'`) is what a shared form does, so it names none,
+    # nor does the block it runs for that entity; neither does reading
+    # `err.message` when the model has a Message.
     all_forms = [f for name in classes for f in _entity_forms(name)]
     generic_creators = {
         rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(_ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(" ", _blank_comments(by_path[rel]))),
-                          all_forms)
+        and not _mentions(_ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(
+            " ", _blank_entity_branches(_blank_comments(by_path[rel]), all_forms))), all_forms)
     }
     # A generic creator may read its entities from a config module it imports
     # (`entities.js`); that module, not the creator's own code, declares them.

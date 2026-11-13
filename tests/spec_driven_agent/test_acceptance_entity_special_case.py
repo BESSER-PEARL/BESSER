@@ -63,11 +63,11 @@ def _page(name, key):
             f"  return <EntityPage config={{ENTITIES.{key}}} mode={{mode}} />;\n}}\n")
 
 
-def _creates(tmp_path, entities=ENTITIES):
+def _creates(tmp_path, entities=ENTITIES, page=ENTITY_PAGE):
     files = {
         "frontend/src/api.js": API,
         "frontend/src/entities.js": entities,
-        "frontend/src/components/EntityPage.jsx": ENTITY_PAGE,
+        "frontend/src/components/EntityPage.jsx": page,
         "frontend/src/pages/HotelList.jsx": _page("Hotel", "hotel"),
         "frontend/src/pages/BookingList.jsx": _page("Booking", "booking"),
         "frontend/src/pages/GuestList.jsx": _page("Guest", "guest"),
@@ -90,3 +90,29 @@ def test_an_entity_the_shared_form_is_not_configured_for_has_no_create(tmp_path)
         "  guest: { key: 'guest', title: 'Guests', fields: [{ name: 'email', type: 'email' }] },\n", "").replace(
         ", 'guest']", "]")
     assert _creates(tmp_path, without_guest) == {"Hotel": True, "Booking": True, "Guest": False}
+
+
+# The branch the form runs for one entity calls a helper named after it.
+BRANCH_PAGE = ENTITY_PAGE.replace(
+    "    if (config.key === 'booking' && values.checkOut < values.checkIn) return;\n",
+    "    if (config.key === 'booking') {\n"
+    "      const nights = await api.bookingNights(values);\n"
+    "      if (nights < 1) return;\n"
+    "    }\n")
+
+
+def test_a_shared_form_whose_branch_for_one_entity_names_it_creates_them_all(tmp_path):
+    """Sonnet 5.5, 13-class wastewater app: the shared EntityList ran
+    `if (entity === 'project') { await api.projectPlants(row.id) }` on edit, so the
+    other twelve entities were reported "no frontend create path"."""
+    assert _creates(tmp_path, page=BRANCH_PAGE) == {"Hotel": True, "Booking": True, "Guest": True}
+
+
+def test_a_branch_on_something_else_still_names_the_entity(tmp_path):
+    page = BRANCH_PAGE.replace("config.key === 'booking'", "config.mode === 'wizard'")
+    assert _creates(tmp_path, page=page) == {"Hotel": False, "Booking": True, "Guest": False}
+
+
+def test_a_shared_form_with_an_entity_branch_and_no_create_creates_nothing(tmp_path):
+    page = BRANCH_PAGE.replace("await api.create(config.key, payload);", "")
+    assert _creates(tmp_path, page=page) == {"Hotel": False, "Booking": False, "Guest": False}

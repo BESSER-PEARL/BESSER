@@ -23,6 +23,8 @@ fine (they had merely run out of turns).
    ruff, and returned 500 on every database request.
 """
 
+import sys
+
 import pytest
 
 from besser.spec_driven_agent.pipeline.orchestrator import (
@@ -396,3 +398,52 @@ def test_a_secondary_that_names_a_real_table_is_not_flagged():
     assert lint_file("backend/sql_alchemy.py", _HEALTHY_SQL_ALCHEMY, contract) == []
     quoted = _HEALTHY_SQL_ALCHEMY.replace("secondary=guests", 'secondary="guests"')
     assert lint_file("backend/sql_alchemy.py", quoted, contract) == []
+
+
+# ------------------------------- compile-time errors ast.parse accepts
+
+@pytest.mark.parametrize(("source", "message"), [
+    ("import asyncio\n\n\ndef f():\n    await asyncio.sleep(1)\n", "'await' outside async function"),
+    ("import os\nfrom __future__ import annotations\n", "from __future__ imports must occur"),
+    ("from __future__ import nonsense\n", "future feature nonsense is not defined"),
+    ("def f():\n    nonlocal q\n", "no binding for nonlocal 'q' found"),
+    ("import asyncio\nawait asyncio.sleep(1)\n", "'await' outside function"),
+])
+def test_an_error_python_raises_only_on_import_is_a_syntax_error(tmp_path, source, message):
+    """ast.parse accepts these and the runtime-only lint selection has no rule for
+    them, so a module that raises SyntaxError on import was reported by nothing."""
+    from besser.spec_driven_agent.validation.python_source import python_syntax_error
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    error = python_syntax_error(str(tmp_path / "app.py"), "app.py")
+    assert error and error.startswith("Syntax error in app.py line ") and message in error, error
+
+
+@pytest.mark.parametrize("source", [
+    "def f(x):\n    match x:\n        case {'a': 1}:\n            return 1\n        case _:\n            return 0\n",
+    "try:\n    pass\nexcept* ValueError:\n    pass\n",
+    "async def f(g, a, y):\n    await g()\n    async with a:\n        pass\n    return [x async for x in y]\n",
+    '"""Module docstring."""\nfrom __future__ import annotations\n\nimport os\n',
+    "def f():\n    x = 1\n\n    def g():\n        nonlocal x\n        x += 1\n    return g\n",
+    "x = 1\nif x is 1:\n    pass\n",  # a SyntaxWarning, not an error
+    pytest.param('d = {"a": 1}\nx = f"{d["a"]}"\n', marks=pytest.mark.skipif(
+        sys.version_info < (3, 12), reason="PEP 701 f-strings need Python 3.12")),
+    pytest.param("type X = list[int]\n", marks=pytest.mark.skipif(
+        sys.version_info < (3, 12), reason="type aliases need Python 3.12")),
+])
+def test_valid_python_is_not_a_syntax_error(tmp_path, source):
+    from besser.spec_driven_agent.validation.python_source import python_syntax_error
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    assert python_syntax_error(str(tmp_path / "app.py"), "app.py") is None
+
+
+def test_the_syntax_check_runs_nothing(tmp_path):
+    from besser.spec_driven_agent.validation.python_source import python_syntax_error
+
+    marker = tmp_path / "ran.txt"
+    (tmp_path / "app.py").write_bytes(
+        b"\xef\xbb\xbfimport no_such_module_xyz\r\n"
+        + f"open({str(marker)!r}, 'w').write('ran')\r\n".encode("utf-8"))
+    assert python_syntax_error(str(tmp_path / "app.py"), "app.py") is None
+    assert not marker.exists() and "no_such_module_xyz" not in sys.modules

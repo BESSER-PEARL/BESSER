@@ -205,3 +205,33 @@ def test_only_runtime_defects_are_selected_and_app_config_is_not_read(tmp_path):
     assert len(issues) == 1, issues
     assert "F821" in issues[0] and "missing_name" in issues[0]
     assert _classify_issue(issues[0]).severity == "blocker"
+
+
+@pytest.mark.parametrize(("code", "source"), [
+    ("F901", "def f():\n    raise NotImplemented\n"),
+    ("PLE0101", "class A:\n    def __init__(self):\n        return 5\n"),
+    ("PLE0604", "x = 1\n__all__ = [x]\n"),
+    ("PLE1205", "import logging\nlogging.info('%s', 1, 2)\n"),
+    ("PLE1206", "import logging\nlogging.info('%s %s', 1)\n"),
+])
+def test_a_runtime_defect_outside_the_syntax_rules_is_reported(tmp_path, code, source):
+    """Each raises or loses the log line when it runs; narrowing the lint to
+    syntax and name rules left them reported by nothing."""
+    from besser.spec_driven_agent.validation.toolchain import _collect_ruff_issues
+
+    _write(tmp_path, "app.py", source)
+    issues, _ = _collect_ruff_issues(str(tmp_path), [], frozenset(), False)
+    assert [i for i in issues if f" {code} " in i], issues
+    assert all(_classify_issue(i).severity == "warning" for i in issues)
+
+
+def test_the_valid_forms_of_those_patterns_are_not_reported(tmp_path):
+    from besser.spec_driven_agent.validation.toolchain import _collect_ruff_issues
+
+    _write(tmp_path, "app.py", (
+        "import logging\n\n__all__ = ['A']\n\n\n"
+        "class A:\n    def __init__(self, x=None):\n        if x is None:\n            return\n"
+        "        self.x = x\n        logging.info('%s=%s %d%%', 'x', x, 5)\n\n"
+        "    def f(self):\n        raise NotImplementedError\n"
+    ))
+    assert _collect_ruff_issues(str(tmp_path), [], frozenset(), False)[0] == []

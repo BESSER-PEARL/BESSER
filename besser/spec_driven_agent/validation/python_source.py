@@ -3,6 +3,7 @@
 import ast
 import os
 import re as _re
+import warnings
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
@@ -329,13 +330,17 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
 def python_syntax_error(path: str, rel: str) -> str | None:
     """``Syntax error in <rel> line N: ...`` when Python cannot load the file, else None.
 
-    Parsed from bytes so Python's own decoding applies: a UTF-8 BOM or a PEP 263
+    Compiled from bytes so Python's own decoding applies: a UTF-8 BOM or a PEP 263
     coding line is valid, an undecodable file is a SyntaxError, not a crash.
+    compile(), unlike ast.parse, also rejects what fails at import (``await`` in a
+    plain def, a late ``from __future__``, an unbound ``nonlocal``); it runs nothing.
     """
     with open(path, "rb") as handle:
         source = handle.read()
     try:
-        ast.parse(source, filename=rel)
+        with warnings.catch_warnings():  # a SyntaxWarning is not a defect, nor an error under -W error
+            warnings.simplefilter("ignore", SyntaxWarning)
+            compile(source, rel, "exec", dont_inherit=True)
     except SyntaxError as exc:
         return f"Syntax error in {rel} line {exc.lineno or 1}: {exc.msg}"
     except ValueError as exc:  # Python 3.11 raises this for a null byte

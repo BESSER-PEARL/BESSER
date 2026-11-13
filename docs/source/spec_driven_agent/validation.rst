@@ -6,6 +6,8 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
 
 - Python syntax on every ``.py`` file, decoded as Python decodes it (a UTF-8
   BOM or a ``coding:`` line is valid; an undecodable file is a syntax error).
+  The file is compiled, not run, so an error Python raises only on import
+  (``await`` in a plain function, a late ``from __future__`` import) counts too.
   Installed dependencies and build output (``node_modules``, ``.venv``,
   ``venv``, ``dist``, ``build``) are not the app: no check, ``ruff``
   included, reads or rewrites files there.
@@ -71,7 +73,9 @@ that was already broken is never refused, so it can be repaired.
 - Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
   match no generated backend route.
 - ``ruff`` lint, limited to defects that break at runtime (syntax errors, undefined
-  names, redefinitions, repeated dict keys, invalid format strings and comparisons).
+  names, redefinitions, repeated dict keys, invalid format strings and comparisons,
+  ``raise NotImplemented``, a value returned from ``__init__``, a non-string in
+  ``__all__``, logging calls whose arguments do not match the format).
   Style rules are not run, and a ``ruff.toml`` or ``pyproject.toml`` inside the app
   is not read.
 - Optionally ``tsc --noEmit``, ``cargo check`` and ``kotlinc``, per project.

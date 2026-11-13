@@ -206,8 +206,11 @@ Feature flags
   the list, and one for each Phase 3 pass on which the application source
   the judge reads (or the request) changed, plus at most one focused
   re-judgment of unverified citations per revision; an edit to a README, a
-  dependency pin or a test reuses the last judgment, and a requirement whose
-  verified citation still verifies is not judged again. A judge that returns
+  dependency pin or a test reuses the last judgment, and a verified
+  requirement is not judged again while every file its citation names is
+  byte-identical; an edit to a cited file re-judges it, but an edit elsewhere
+  that stops the cited code from running (for example ``main.py`` no longer
+  including the cited router) does not. A judge that returns
   nothing is not asked again for the same source, and after failing on two
   revisions not again in that run. Set it to ``0`` (or ``false``) to
   turn it off; coverage of the request is then reported as

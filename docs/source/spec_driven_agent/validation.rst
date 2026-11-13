@@ -439,8 +439,13 @@ Excerpts use the file/line formats emitted by the checks. Unchanged source is no
 counted as repair progress merely because a judge's blocker count changed.
 
 Requirement judgments are cached by source/configuration revision. After an
-edit, a requirement whose verified citation still verifies on the new source
-keeps its verdict and is not judged again. A single bounded citation-repair
+edit, a verified requirement keeps its verdict without being judged again only
+while every file its citation names is byte-identical to the version it was
+verified against (a verdict with no recorded file hashes is judged again). An
+edit to a cited file re-judges it, even when the cited line survives; an edit
+to an uncited file does not, so a change elsewhere that stops the cited code
+from running (``main.py`` no longer including the cited router) keeps the
+verdict. A single bounded citation-repair
 judgment per revision, right after the judgment or on a later pass, may revisit
 only unverified entries without a code change. Evidence must name a real application source file and quote an
 executable line; traces, recipes and unrelated files cannot validate a claim.

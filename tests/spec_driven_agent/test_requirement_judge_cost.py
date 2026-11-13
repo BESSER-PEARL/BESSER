@@ -13,6 +13,7 @@ a run re-sent it without any chance of a different answer:
   validation pass, even with nothing changed: three passes, six calls.
 """
 
+import hashlib
 import logging
 
 import pytest
@@ -259,6 +260,7 @@ def test_the_spend_cap_is_checked_before_every_paid_judge_call(tmp_path, monkeyp
 # unverified with a worse citation, and the fresh judgment got no citation repair.
 UNIQUE = {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"}
 CAPACITY = {"id": 2, "text": "A room holds at most four guests", "kind": "rule"}
+MAIN_PY = "import os\nimport os\nfrom fastapi import FastAPI\n\napp = FastAPI()\n"
 ROOM_PY = "import os\nimport os\n\ndef create_room(number, taken):\n    if number in taken:\n        raise HTTPException(409)\n"
 
 
@@ -284,10 +286,11 @@ def _statuses(orch):
     return {item["id"]: item["status"] for item in orch._requirement_verdicts}
 
 
-def test_an_edit_elsewhere_keeps_a_verdict_whose_citation_still_verifies(orch, tmp_path, scripted):
+def test_an_edit_elsewhere_keeps_a_verdict_whose_cited_files_are_unchanged(orch, tmp_path, scripted):
     answers, calls = scripted
+    _write(tmp_path, "main.py", MAIN_PY)
     orch._collect_requirement_issues()
-    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", "import os\n"))
+    _write(tmp_path, "main.py", MAIN_PY.replace("import os\nimport os\n", "import os\n"))
     answers[1] = {"status": "unverified", "evidence": "", "note": "not re-checked"}  # what a re-roll would say
     orch._collect_requirement_issues()
 
@@ -295,13 +298,46 @@ def test_an_edit_elsewhere_keeps_a_verdict_whose_citation_still_verifies(orch, t
     assert _statuses(orch) == {1: "implemented", 2: "missing"}
 
     answers[2] = {"status": "implemented", "evidence": "routers/room.py: if number in taken:"}
-    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", ""))
+    _write(tmp_path, "main.py", MAIN_PY.replace("import os\nimport os\n", ""))
     orch._collect_requirement_issues()
-    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", "import sys\n"))
+    _write(tmp_path, "main.py", MAIN_PY.replace("import os\nimport os\n", "import sys\n"))
     orch._collect_requirement_issues()
 
     assert calls[2:] == [([2], False)], "with every verdict kept no call is due"
     assert _statuses(orch) == {1: "implemented", 2: "implemented"}
+
+
+def test_a_verified_verdict_records_the_hash_of_each_file_it_cites(orch, tmp_path, scripted):
+    orch._collect_requirement_issues()
+
+    digest = hashlib.sha256((tmp_path / "routers/room.py").read_bytes()).hexdigest()
+    assert orch._requirement_verdicts[0]["cited_file_hashes"] == {"routers/room.py": digest}
+    assert "cited_file_hashes" not in orch._requirement_verdicts[1]
+
+
+def test_an_edit_to_a_cited_file_judges_the_verdict_again(orch, tmp_path, scripted):
+    """The cited raise survives the edit, but no request reaches it any more."""
+    answers, calls = scripted
+    orch._collect_requirement_issues()
+    _write(tmp_path, "routers/room.py", ROOM_PY.replace(
+        "    if number in taken:\n        raise", "    if False:\n      if number in taken:\n        raise"))
+    answers[1] = {"status": "missing", "evidence": ""}
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False), ([1, 2], False)], "a verdict on an edited cited file was kept"
+    assert _statuses(orch) == {1: "missing", 2: "missing"}
+
+
+def test_a_verdict_without_recorded_file_hashes_is_judged_again(orch, tmp_path, scripted):
+    _, calls = scripted
+    _write(tmp_path, "main.py", MAIN_PY)
+    orch._collect_requirement_issues()
+    for item in orch._requirement_verdicts:
+        item.pop("cited_file_hashes", None)  # a verdict stored before hashes were recorded
+    _write(tmp_path, "main.py", MAIN_PY.replace("import os\nimport os\n", "import os\n"))
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False), ([1, 2], False)]
 
 
 def test_a_verdict_whose_cited_code_was_deleted_is_judged_again(orch, tmp_path, scripted):
@@ -349,8 +385,9 @@ def test_a_structured_citation_is_kept_across_an_edit_elsewhere(orch, tmp_path, 
     answers[1] = {"status": "implemented", "evidence": [
         {"path": "routers/room.py", "line": "if number in taken:"},
         {"path": "routers/room.py", "line": "raise HTTPException(409)"}]}
+    _write(tmp_path, "main.py", MAIN_PY)
     orch._collect_requirement_issues()
-    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", "import os\n"))
+    _write(tmp_path, "main.py", MAIN_PY.replace("import os\nimport os\n", "import os\n"))
     answers[1] = {"status": "unverified", "evidence": [], "note": "not re-checked"}
     orch._collect_requirement_issues()
 

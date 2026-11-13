@@ -3859,7 +3859,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 can_call=self._verification_call_allowed,
             ) if to_judge else []
             if verdicts is not None and kept:
-                logger.info("Requirements ledger: %d verdict(s) kept, their citations still verify; "
+                logger.info("Requirements ledger: %d verdict(s) kept, their cited files are unchanged; "
                             "%d judged again", len(kept), len(to_judge))
                 verdicts = sorted([*kept.values(), *verdicts], key=lambda item: item["id"])
         if verdicts is None:
@@ -3914,11 +3914,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
     def _requirements_still_verified(self, scope: str) -> dict[int, dict]:
-        """The last pass's verified verdicts whose citation still verifies on the
-        current source (no call): an unrelated edit must not re-roll them."""
+        """The last pass's verified verdicts whose cited files are byte-identical
+        (no call): an edit elsewhere must not re-roll them. An edit to a cited
+        file can break the behaviour while the cited line survives."""
         if scope != self._requirement_verdicts_scope:
             return {}
-        previous = [item for item in self._requirement_verdicts if item.get("status") == "implemented"]
+        previous = [item for item in self._requirement_verdicts if item.get("status") == "implemented"
+                    and item.get("cited_file_hashes") and all(
+                        _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
+                        for rel, digest in item["cited_file_hashes"].items())]
         return {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir)
                 if item["status"] == "implemented"}
 

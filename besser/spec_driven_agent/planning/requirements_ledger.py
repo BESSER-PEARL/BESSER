@@ -1386,15 +1386,18 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     own text, so an invented part can never supply the proof. Never search a different
     file or the run's own recipe to rescue a bad citation. A declaration alone
     cannot prove enforcement or behaviour. Failed evidence is ``unverified``:
-    it does not prove that no implementation exists elsewhere.
+    it does not prove that no implementation exists elsewhere. A verified
+    verdict records ``cited_file_hashes`` ({path: sha256}) of the files it cites.
     """
     files = _source_files(output_dir)
+    rel_of = {full: rel for rel, full in files.items()}
     sqlite = workspace_uses_sqlite(output_dir)
     parsed: dict[str, _Source] = {}
     quote_cache: dict = {}
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
+        item.pop("cited_file_hashes", None)
         if item.get("kind") == "verification":
             item.update(status="unverified", evidence="",
                         note="requirement extraction completeness has not been established")
@@ -1432,8 +1435,19 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
         if reason:
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
+        else:
+            item["cited_file_hashes"] = {rel_of[full]: cited_file_hash(full) for full in sorted(
+                {part_source.path for _, _, part_source, _, _ in located})}
         checked.append(item)
     return checked
+
+
+def cited_file_hash(full_path: str) -> str:
+    """sha256 of a cited file's raw bytes ("" when unreadable)."""
+    try:
+        return hashlib.sha256(Path(full_path).read_bytes()).hexdigest()
+    except OSError:
+        return ""
 
 
 def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:

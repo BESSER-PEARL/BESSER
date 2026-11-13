@@ -87,3 +87,68 @@ def test_a_generic_page_that_never_creates_proves_nothing(tmp_path):
     read_only = ENTITY_LIST.replace("await api.create(entity, form);", "await api.list(entity);")
     matrix = build_acceptance_matrix(_app(tmp_path, entity_list=read_only), _model("Person"))
     assert matrix["Person"]["create"] is False
+
+
+# Live (2026-11-13, claude-sonnet-5-5, risk-awareness app): the shared EntityPage
+# read `e.message` and `err.message`, the model had a Message class, so the form
+# was taken for Message's own page and four entities with a "+ New" route each
+# were reported as having no create path.
+CLIENT = """\
+export async function create(path, body) {
+  const res = await fetch(path, { method: 'POST', body: JSON.stringify(body) });
+  return res.json();
+}
+"""
+ENTITIES = """\
+export const ENTITIES = {
+  message: { key: 'message', path: '/message/', fields: [{ name: 'body' }] },
+  report: { key: 'report', path: '/report/', fields: [{ name: 'reason' }] },
+};
+"""
+ENTITY_PAGE = """\
+import { useState } from 'react';
+import { create } from '../api.js';
+export default function EntityPage({ entity }) {
+  const [error, setError] = useState('');
+  const [values, setValues] = useState({});
+  const submit = async (e) => {
+    e.preventDefault();
+    try { await create(entity.path, values); } catch (err) { setError(err.message); }
+  };
+  return <form onSubmit={submit}>{error && <p>{error?.message ?? error['message']}</p>}<button>Save</button></form>;
+}
+"""
+
+
+def _list_page(key):
+    return ("import EntityPage from '../components/EntityPage.jsx';\n"
+            "import { ENTITIES } from '../entities.js';\n"
+            f"export default function Page() {{ return <EntityPage entity={{ENTITIES.{key}}} />; }}\n")
+
+
+def test_a_shared_form_reading_err_message_is_still_generic(tmp_path):
+    root = _workspace(tmp_path, {
+        "frontend/src/api.js": CLIENT,
+        "frontend/src/entities.js": ENTITIES,
+        "frontend/src/components/EntityPage.jsx": ENTITY_PAGE,
+        "frontend/src/pages/MessageList.jsx": _list_page("message"),
+        "frontend/src/pages/ReportList.jsx": _list_page("report"),
+    })
+    matrix = build_acceptance_matrix(root, _model("Message", "Report"))
+    assert matrix["Message"]["create"] is True
+    assert matrix["Report"]["create"] is True
+
+
+def test_a_form_that_names_an_entity_in_its_code_is_still_that_entitys(tmp_path):
+    composer = ENTITY_PAGE.replace("await create(entity.path, values);",
+                                   "await create(entity.path, { body: message });")
+    root = _workspace(tmp_path, {
+        "frontend/src/api.js": CLIENT,
+        "frontend/src/entities.js": ENTITIES,
+        "frontend/src/components/EntityPage.jsx": composer,
+        "frontend/src/pages/MessageList.jsx": _list_page("message"),
+        "frontend/src/pages/ReportList.jsx": _list_page("report"),
+    })
+    matrix = build_acceptance_matrix(root, _model("Message", "Report"))
+    assert matrix["Message"]["create"] is True
+    assert matrix["Report"]["create"] is False

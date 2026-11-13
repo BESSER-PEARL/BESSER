@@ -95,6 +95,10 @@ _KEEP_NEWLINES_RE = re.compile(r"[^\n]")
 # A string compared against a value (`key === 'booking'`, `case 'booking':`).
 _COMPARED_STRING_RE = re.compile(
     r"(?:[!=]==?|\bcase)\s*(['\"`])[^'\"`\n]*\1|(['\"`])[^'\"`\n]*\2\s*[!=]==?")
+# A property read (`err.message`, `e?.message`, `row['message']`), not a call.
+_PROPERTY_READ_RE = re.compile(
+    r"(?:\?\.|(?<!\.)\.)\s*[A-Za-z_$][\w$]*(?![\w$])(?!\s*\()"
+    r"|(?<=[\w$)\]])\s*(?:\?\.)?\[\s*(['\"`])[^'\"`\n]*\1\s*\]")
 
 
 def _blank_literals(text: str) -> str:
@@ -404,13 +408,15 @@ def build_acceptance_matrix(
     # client is not rendering a page. ``LoanList`` with a variable-argument
     # create is not generic: crediting it to every entity App.jsx lists would
     # hide their missing creates. Testing which entity it was given
-    # (`config.key === 'booking'`) is what a shared form does, so it names none.
+    # (`config.key === 'booking'`) is what a shared form does, so it names none;
+    # neither does reading `err.message` when the model has a Message.
     all_forms = [f for name in classes for f in _entity_forms(name)]
     generic_creators = {
         rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(_COMPARED_STRING_RE.sub(" ", _blank_comments(by_path[rel])), all_forms)
+        and not _mentions(_PROPERTY_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(" ", _blank_comments(by_path[rel]))),
+                          all_forms)
     }
     # A generic creator may read its entities from a config module it imports
     # (`entities.js`); that module, not the creator's own code, declares them.

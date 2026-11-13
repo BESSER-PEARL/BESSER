@@ -17,7 +17,9 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import keyword
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -1233,13 +1235,66 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
 _UNMATCHED_NOTE_CHARS = 80
 
 
-def _as_written(raw: str, fragment: str) -> str:
+def _as_written(raw: str, fragment: str, limit: int = _UNMATCHED_NOTE_CHARS) -> str:
     """``fragment`` (a whitespace-free quote part) as the judge wrote it in
     ``raw``, clipped, so a re-judge can see which part to correct."""
     kept = [i for i, char in enumerate(raw) if not char.isspace()]
     at = "".join(raw[i] for i in kept).replace("'", '"').find(fragment) if fragment else -1
     text = " ".join(raw[kept[at]:kept[at + len(fragment) - 1] + 1].split()) if at >= 0 else fragment
-    return text if len(text) <= _UNMATCHED_NOTE_CHARS else text[:_UNMATCHED_NOTE_CHARS - 3] + "..."
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+# "sets x", "renders a plot": a word that starts no statement, then another word.
+_PROSE_START_RE = re.compile(r"([a-z]+) +[A-Za-z_]")
+_STATEMENT_WORDS = frozenset(keyword.kwlist) | {
+    "const", "let", "var", "function", "new", "await", "async", "export", "default", "typeof",
+    "throw", "catch", "case", "switch", "yield", "delete", "void", "of", "do", "val", "fun",
+}
+# Of a quote's prose, enough to recognise it.
+_PROSE_NOTE_CHARS = 40
+
+
+def _reads_as_description(text: str) -> bool:
+    match = _PROSE_START_RE.match(text.strip())
+    return bool(match) and match.group(1) not in _STATEMENT_WORDS
+
+
+def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str) -> str:
+    """For a quote part that matched no span: the source lines it follows from
+    their start and what the file has next, or that it reads as prose; ""
+    when it follows no line."""
+    lines = source.normalised
+    best = (0, 0, 0, 0)  # characters followed, first line, line where it leaves, whole-line characters
+    for start, first in enumerate(lines):
+        if not first or not part.startswith(first[:_MIN_CUT_QUOTE]):
+            continue
+        whole, index = 0, start
+        while index < min(start + _MAX_QUOTE_LINES, len(lines)) and part.startswith(lines[index], whole):
+            whole, index = whole + len(lines[index]), index + 1
+        followed = whole + (len(os.path.commonprefix([part[whole:], lines[index]])) if index < len(lines) else 0)
+        if followed > best[0]:
+            best = (followed, start, index, whole)
+    followed, start, index, whole = best
+    if followed < _MIN_CUT_QUOTE or followed >= len(part):
+        prose = _as_written(raw, part, _PROSE_NOTE_CHARS)
+        return f"`{prose}` reads as a description, not code; put it in the note" if _reads_as_description(prose) else ""
+    if index == len(lines):
+        return ""
+    text = source.lines[index].strip()
+    next_line = f"`{text if len(text) <= _UNMATCHED_NOTE_CHARS else text[:_UNMATCHED_NOTE_CHARS - 3] + '...'}`"
+    if index == start:
+        return f"the part differs from {path} line {index + 1}: {next_line}"
+    matched = f"the part matches {path} " + (f"lines {start + 1}-{index}" if index > start + 1 else f"line {start + 1}")
+    rest = part[whole:]
+    resumes = next((k for k in range(index + 1, min(index + 4, len(lines)))
+                    if lines[k] and rest.startswith(lines[k][:_MIN_CUT_QUOTE])), None)
+    if resumes is not None:
+        skipped = f"line {index + 1}" if resumes == index + 1 else f"lines {index + 1}-{resumes}"
+        return f"{matched}, then skips {skipped}: {next_line}"
+    prose = _as_written(raw, rest, _PROSE_NOTE_CHARS)
+    if _reads_as_description(prose):
+        return f"{matched}, then `{prose}` reads as a description; put it in the note"
+    return f"{matched}, then line {index + 1} reads {next_line}"
 
 
 def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
@@ -1284,7 +1339,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
                 spans = list(_quote_spans(literal, source))
                 quoted = literal if spans else quoted
             located = [(source, quoted, spans)]
-            unmatched = quoted
+            unmatched, unmatched_in = quoted, (source, path)
             if not located[0][2]:
                 located = []
                 for part_path, part, cut in _citation_parts(raw_quote, path, files):
@@ -1295,12 +1350,14 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
                     # splits at its ";"), but it must be code in that file.
                     if not spans and not (part_source and any(
                             _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
-                        located, unmatched = [], part
+                        located, unmatched, unmatched_in = [], part, (part_source, part_path)
                         break
                     located.append((part_source, part, spans))
             reason = "the quoted executable line was not found in the cited source"
             if not any(spans for _, _, spans in located):
-                reason += f": no source line matches the part `{_as_written(raw_quote, unmatched)}`"
+                where = _where_the_quote_leaves(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote) if (
+                    unmatched_in[0]) else ""
+                reason += f": {where or f'no source line matches the part `{_as_written(raw_quote, unmatched)}`'}"
             for part_source, part, spans in located:
                 for first_line, lineno in spans:
                     reason = _span_failure(item, part_source, first_line, lineno, part)

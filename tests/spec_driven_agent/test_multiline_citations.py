@@ -594,3 +594,74 @@ def test_comment_handling_never_changes_the_line_count():
         assert _comment_only_lines(text, suffix) <= set(range(1, len(lines) + 1)), name
     assert _comment_only_lines(snippets["b.jsx"], ".jsx") == {4, 5, 6, 7, 8}
     assert _comment_only_lines(BOOKINGS_JS, ".js") == {7, 12, 19}
+
+
+# Live (Sonnet 5.5): correct judgments rejected because the quote skipped one line of
+# a block, or mixed a description into the code; the note now says which.
+LUXMAP_JSX = '''export default function LuxMap({ plants, selectedPlantId }) {
+  useEffect(() => {
+    const group = L.layerGroup();
+    (plants || []).forEach((p) => {
+      const selected = p.id === selectedPlantId;
+      const marker = L.circleMarker([p.latitude, p.longitude], {
+        radius: selected ? 10 : 7,
+        fillColor: selected ? '#f43f5e' : '#4f46e5',
+      });
+      marker.bindTooltip(`${p.name} (${p.region})`);
+    });
+  }, [plants]);
+}
+'''
+RISK_PY = '''def assess(db, account):
+    db.flush()
+    _sync_flag(db.connection(), account.id)
+    db.refresh(account)
+    return account
+'''
+
+
+def _check_skipped(tmp_path, evidence, kind="ui"):
+    (tmp_path / "frontend").mkdir(exist_ok=True)
+    (tmp_path / "backend").mkdir(exist_ok=True)
+    (tmp_path / "frontend" / "LuxMap.jsx").write_text(LUXMAP_JSX, encoding="utf-8")
+    (tmp_path / "backend" / "risk_service.py").write_text(RISK_PY, encoding="utf-8")
+    return verify_evidence([_verdict(evidence, text="Flag and map the plants", kind=kind)], str(tmp_path))[0]
+
+
+def test_the_note_names_the_source_line_a_quote_skips(tmp_path):
+    evidence = ("frontend/LuxMap.jsx: (plants || []).forEach((p) => { const marker = L.circleMarker("
+                "[p.latitude, p.longitude], { radius: selected ? 10 : 7, fillColor: selected ? '#f43f5e' : '#4f46e5', });")
+    verdict = _check_skipped(tmp_path, evidence)
+    assert verdict["status"] == "unverified"
+    assert ("the part matches frontend/LuxMap.jsx line 4, then skips line 5: "
+            "`const selected = p.id === selectedPlantId;`") in verdict["note"]
+    assert len(verdict["note"]) <= 200
+
+
+def test_the_note_says_a_description_belongs_in_the_note(tmp_path):
+    evidence = ("backend/risk_service.py: _sync_flag(db.connection(), account.id) sets "
+                "SocialAccount.requiresCaution=level in CAUTION_LEVELS ('high', 'critical')")
+    note = _check_skipped(tmp_path, evidence, kind="action")["note"]
+    assert ("the part matches backend/risk_service.py line 3, then `sets SocialAccount.requiresCaution=le...` "
+            "reads as a description; put it in the note") in note
+    prose = "frontend/LuxMap.jsx: const group = L.layerGroup(); ... renders SVG plot with viral concentration over time }"
+    note = _check_skipped(tmp_path, prose)["note"]
+    assert "`renders SVG plot with viral concentra...` reads as a description, not code; put it in the note" in note
+
+
+def test_the_note_shows_the_line_a_quote_differs_from_and_never_more(tmp_path):
+    evidence = "frontend/LuxMap.jsx: marker.bindTooltip(`${p.name} (${p.region})`, { permanent: true });"
+    note = _check_skipped(tmp_path, evidence)["note"]
+    assert "the part differs from frontend/LuxMap.jsx line 10: `marker.bindTooltip(`${p.name} (${p.region})`);`" in note
+    assert "useEffect" not in note and "selectedPlantId" not in note
+    # code that follows no line keeps the generic note
+    note = _check_skipped(tmp_path, "frontend/LuxMap.jsx: map.fitBounds(group.getBounds(), { padding: [8, 8] });")["note"]
+    assert "no source line matches the part `map.fitBounds(" in note
+
+
+def test_the_explained_rejections_still_reject_and_correct_quotes_still_verify(tmp_path):
+    full = ("frontend/LuxMap.jsx: (plants || []).forEach((p) => { const selected = p.id === selectedPlantId; "
+            "const marker = L.circleMarker([p.latitude, p.longitude], {")
+    assert _check_skipped(tmp_path, full)["status"] == "implemented"
+    assert _check_skipped(tmp_path, "backend/risk_service.py: _sync_flag(db.connection(), account.id)",
+                          kind="action")["status"] == "implemented"

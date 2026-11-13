@@ -244,6 +244,44 @@ def test_a_hooks_module_that_posts_is_not_an_api_client(tmp_path):
     assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": True, "Room": True}
 
 
+_ADD_TYPE = "{ items: Booking[]; add: (b: Booking) => Promise<void> }"
+
+
+@pytest.mark.parametrize("definition", [
+    f"export const useBookings = (): {_ADD_TYPE} => {{",
+    f"export function useBookings(): {_ADD_TYPE} {{",
+])
+def test_a_typescript_hook_with_an_object_return_type_credits_its_posts(tmp_path, definition):
+    """Review probe: the return type's braces were read as the hook's body, so the
+    page calling `useBookings().add` got "no frontend create path"."""
+    files = {
+        "frontend/src/api.ts": "import axios from 'axios';\nexport const http = axios.create({ baseURL: '/api' });\n",
+        "frontend/src/hooks.ts": (
+            "import { useState } from 'react';\nimport { http } from './api';\n" + definition + "\n"
+            "  const [items, setItems] = useState<Booking[]>([]);\n"
+            "  const add = async (b: Booking) => { await http.post('/booking/', b); };\n"
+            "  return { items, add };\n}\n"),
+        "frontend/src/pages/BookingPage.tsx": (
+            "import { useBookings } from '../hooks';\nexport default function BookingPage() {\n"
+            "  const { add } = useBookings();\n"
+            "  return <form onSubmit={() => add({})}><h1>Bookings</h1></form>;\n}\n"),
+    }
+    assert _creates(tmp_path, files, "Booking") == {"Booking": True}
+
+
+def test_a_typescript_create_function_with_a_return_type_is_a_helper(tmp_path):
+    files = {
+        "frontend/src/api.ts": (
+            "import axios from 'axios';\nconst http = axios.create({ baseURL: '/api' });\n"
+            "export async function createBooking(b: Booking): Promise<Booking> {\n"
+            "  return (await http.post('/booking/', b)).data;\n}\n"),
+        "frontend/src/pages/BookingPage.tsx": (
+            "import { createBooking } from '../api';\nexport default function BookingPage() {\n"
+            "  return <form onSubmit={() => createBooking({})}><h1>Bookings</h1></form>;\n}\n"),
+    }
+    assert _creates(tmp_path, files, "Booking") == {"Booking": True}
+
+
 _HTTP = "import axios from 'axios';\nexport const http = axios.create({ baseURL: '/api' });\n"
 _HELPERS = ("export const listBookings = () => http.get('/booking/');\nexport const listRooms = () => http.get('/room/');\n"
             "export const createBooking = (b) => http.post('/booking/', b);\n"

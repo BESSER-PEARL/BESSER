@@ -80,9 +80,13 @@ _HELPER_DEF_RE = re.compile(
     r"\b(?P<fn>[A-Za-z_$][\w$]*)\s*(?=\([^()]*\)\s*\{)"
     r"|(?:^|[,{;(]|\bconst\s+|\blet\s+|\bvar\s+|\bexport\s+)[ \t]*"
     r"(?P<name>[A-Za-z_$][\w$]*)\s*[:=](?![=>])"
-    r"(?=\s*(?:async\s+)?(?:function\b|\())",
+    r"(?=\s*(?:async\s+)?(?:function\b|\())"
+    # A TypeScript function declaration with a return type: `function useX(): T {`.
+    r"|\bfunction\s+(?P<typed>[A-Za-z_$][\w$]*)\s*(?=\([^()]*\)\s*:)",
     re.MULTILINE,
 )
+_RETURN_TYPE_RE = re.compile(r"\s*:")
+_ARROW_RE = re.compile(r"\s*=>")
 _NOT_A_HELPER = frozenset({
     "if", "for", "while", "switch", "catch", "function", "return", "await",
     "typeof", "new", "delete", "void", "do", "else",
@@ -185,9 +189,9 @@ def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
     """
     blanked = _blank_literals(source)
     definitions = [
-        (match.end(), match.group("fn") or match.group("name"))
+        (match.end(), match.group("fn") or match.group("name") or match.group("typed"))
         for match in _HELPER_DEF_RE.finditer(blanked)
-        if (match.group("fn") or match.group("name")) not in _NOT_A_HELPER
+        if (match.group("fn") or match.group("name") or match.group("typed")) not in _NOT_A_HELPER
     ]
     helpers: dict[str, list[str] | None] = {}
     for post in _POST_RE.finditer(source):
@@ -201,20 +205,46 @@ def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
 
 
 def _definition_end(blanked: str, start: int) -> int:
-    """Where a definition starting at ``start`` ends: after its parameters, then its body."""
-    depth, closed = 0, 0
-    for i in range(start, len(blanked)):
-        if blanked[i] in "([{":
-            depth += 1
-        elif blanked[i] in ")]}":
-            depth -= 1
-            if depth < 0:
-                return i
-            if depth == 0:
-                closed += 1
-                if closed == 2:
-                    return i + 1
+    """Where a definition starting at ``start`` ends: its parameters, an optional
+    return type, an optional ``=>``, then the first bracket group (its body)."""
+    params = blanked.find("(", start)
+    if params < 0:
+        return len(blanked)
+    i = _return_type_end(blanked, _group_end(blanked, params))
+    arrow = _ARROW_RE.match(blanked, i)
+    for j in range(arrow.end() if arrow else i, len(blanked)):
+        if blanked[j] in ")]}":
+            return j
+        if blanked[j] in "([{":
+            return _group_end(blanked, j)
     return len(blanked)
+
+
+def _return_type_end(blanked: str, i: int) -> int:
+    """Past a ``: Type`` annotation at ``i``. A ``{`` right after ``:``, ``|``,
+    ``&`` or ``,`` (or inside ``<>``) is an object type; any other ``{``, or a
+    ``=>`` outside brackets, starts the body."""
+    colon = _RETURN_TYPE_RE.match(blanked, i)
+    if not colon:
+        return i
+    i, angle, previous = colon.end(), 0, ":"
+    while i < len(blanked):
+        char = blanked[i]
+        if char.isspace():
+            i += 1
+            continue
+        if char in ";)]}" or angle <= 0 and (
+                blanked.startswith("=>", i) or char == "{" and previous not in ":|&,"):
+            return i
+        if char in "([{":
+            i, previous = _group_end(blanked, i), ")"
+            continue
+        if char == "<":
+            angle += 1
+        elif char == ">" and previous != "=":
+            angle -= 1
+        i, previous = i + 1, char
+    return i
 
 
 def _hook_post_paths(source: str) -> dict[str, list[str] | None]:
@@ -227,7 +257,7 @@ def _hook_post_paths(source: str) -> dict[str, list[str] | None]:
     posts = list(_POST_RE.finditer(source))
     hooks: dict[str, list[str] | None] = {}
     for match in _HELPER_DEF_RE.finditer(blanked):
-        name = match.group("fn") or match.group("name")
+        name = match.group("fn") or match.group("name") or match.group("typed")
         if not re.fullmatch(r"use[A-Z][\w$]*", name):
             continue
         end = _definition_end(blanked, match.end())

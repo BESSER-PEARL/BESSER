@@ -550,6 +550,40 @@ def test_gap_sanitizer_drops_the_tasks_the_planner_labels_as_fighting_the_scaffo
     assert _drop_scaffold_conflicts([" add a borrow endpoint ", "", 3]) == ["add a borrow endpoint"]
 
 
+BACKEND_ONLY = ["backend/main_api.py", "backend/sql_alchemy.py", "docker-compose.yml"]
+WITH_FRONTEND = [*BACKEND_ONLY, "frontend/src/App.tsx"]
+
+
+def test_backend_only_scaffold_keeps_frontend_tasks_labelled_removes_scaffold():
+    """Sonnet 5.5, backend-only scaffold: the planner labelled four additive frontend
+    tasks removes_scaffold and all four were dropped; there was no frontend to remove."""
+    from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
+
+    tasks = [
+        {"task": "Implement map click handler to fetch and display chart data for the clicked plant",
+         "kind": "removes_scaffold"},
+        {"task": "Wire frontend to include auth token in API requests and handle 401 redirects",
+         "kind": "removes_scaffold"},
+    ]
+    assert _drop_scaffold_conflicts(tasks, BACKEND_ONLY) == [t["task"] for t in tasks]
+
+
+def test_backend_only_scaffold_still_drops_a_real_removal():
+    from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
+
+    tasks = [{"task": "Delete the generated backend routers", "kind": "removes_scaffold"},
+             {"task": "Port the API to Flask", "kind": "switches_framework"}]
+    assert _drop_scaffold_conflicts(tasks, BACKEND_ONLY) == []
+
+
+def test_scaffold_with_a_frontend_still_drops_removes_scaffold_tasks():
+    from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
+
+    tasks = [{"task": "Wire frontend to include auth token in API requests", "kind": "removes_scaffold"}]
+    assert _drop_scaffold_conflicts(tasks, WITH_FRONTEND) == []
+    assert _drop_scaffold_conflicts(tasks) == []  # no file list: label alone decides
+
+
 def test_planner_prompt_does_not_tell_tasks_to_follow_a_user_named_stack():
     """Phase 2 is told to keep the scaffold's stack whatever the user named;
     the planner was told every task must respect the user's framework."""

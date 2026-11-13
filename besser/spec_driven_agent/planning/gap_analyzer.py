@@ -87,8 +87,9 @@ _SUBMIT_TASKS_TOOL = {
                             "enum": list(_TASK_KINDS),
                             "description": (
                                 "change: work on top of the scaffold. removes_scaffold: "
-                                "deletes or replaces generated code wholesale (the "
-                                "frontend, the backend, the scaffold). switches_framework: "
+                                "deletes or replaces generated code wholesale, never "
+                                "adding or wiring new work, even a new frontend. "
+                                "switches_framework: "
                                 "moves the app to another framework than the scaffold's."
                             ),
                         },
@@ -230,7 +231,7 @@ def analyze_gaps_via_llm(
     tasks = _call_planner(llm_client, user_prompt)
     if tasks is None:
         return None
-    cleaned = _dedupe(_drop_scaffold_conflicts(tasks))[:_MAX_TASKS]
+    cleaned = _dedupe(_drop_scaffold_conflicts(tasks, workspace_files))[:_MAX_TASKS]
     cleaned = _drop_present_enumerations(cleaned, domain_model)
     cleaned = _drop_present_attributes(cleaned, domain_model)
     cleaned = _note_present_regex_validations(cleaned, domain_model)
@@ -379,7 +380,14 @@ def _dedupe(tasks: list) -> list:
     return kept
 
 
-def _drop_scaffold_conflicts(tasks: list) -> list[str]:
+# A scaffold without these has no frontend a task could delete.
+_FRONTEND_SOURCE = re.compile(r"(?:^|/)frontend/|\.(?:jsx|tsx|vue)$", re.IGNORECASE)
+_REMOVAL_VERB = re.compile(
+    r"\b(?:delete|remove|replace|discard|scrap|wipe|rewrite|rebuild|tear down)", re.IGNORECASE,
+)
+
+
+def _drop_scaffold_conflicts(tasks: list, workspace_files: list | None = None) -> list[str]:
     """The task texts, without the ones the planner labelled as fighting the scaffold.
 
     A planner can propose e.g. 'delete react frontend scaffold' and 'install
@@ -388,7 +396,12 @@ def _drop_scaffold_conflicts(tasks: list) -> list[str]:
     planner labels every task (``_TASK_KINDS``), so its own label drops it;
     "Add a Delete button to each row" is a change. The text fallbacks ask for
     the same objects; a task with no usable label is kept, with a warning.
+
+    When the workspace holds no frontend source, a ``removes_scaffold`` task
+    with no removal verb ("Wire the frontend to the auth token") adds work
+    rather than deleting generated code, and is kept as a change.
     """
+    no_frontend = bool(workspace_files) and not any(_FRONTEND_SOURCE.search(str(f)) for f in workspace_files)
     kept: list[str] = []
     unlabelled = 0
     for item in tasks:
@@ -399,6 +412,8 @@ def _drop_scaffold_conflicts(tasks: list) -> list[str]:
             text, kind = (item.strip() if isinstance(item, str) else ""), ""
         if not text:
             continue
+        if kind == "removes_scaffold" and no_frontend and not _REMOVAL_VERB.search(text):
+            kind = "change"
         if kind in ("removes_scaffold", "switches_framework"):
             logger.warning("Gap analyzer dropped a task the planner labelled %s: %r", kind, text[:100])
             continue

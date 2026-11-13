@@ -380,10 +380,28 @@ def _dedupe(tasks: list) -> list:
     return kept
 
 
-# A scaffold without these has no frontend a task could delete.
-_FRONTEND_SOURCE = re.compile(r"(?:^|/)frontend/|\.(?:jsx|tsx|vue)$", re.IGNORECASE)
+# A scaffold without these has no frontend a task could delete: React/Vue/Svelte
+# sources, Django templates, Flutter, and scripts or styles under a web folder.
+_FRONTEND_SOURCE = re.compile(
+    r"(?:^|/)frontend/|\.(?:jsx|tsx|vue|svelte|dart|html?)$"
+    r"|(?:^|/)(?:src|web|ui|client|static|public)/(?:.*/)?[^/]+\.(?:js|ts|css)$",
+    re.IGNORECASE,
+)
+_UI_WORK = re.compile(
+    r"\b(?:front-?end|ui\b|pages?\b|screens?\b|components?\b|maps?\b|charts?\b|buttons?\b|forms?\b|"
+    r"react|vue|leaflet|click)",
+    re.IGNORECASE,
+)
+# A task naming one of these is about the backend the scaffold has, whatever its verb.
+_BACKEND_ARTIFACT = re.compile(
+    r"\b(?:back-?end|server|routers?|routes?|models?|schemas?|endpoints?|orm|database|db|sql\w*|"
+    r"fastapi|django|flask|pydantic|migrations?|api(?!\s+(?:requests?|calls?|client)))\b",
+    re.IGNORECASE,
+)
 _REMOVAL_VERB = re.compile(
-    r"\b(?:delete|remove|replace|discard|scrap|wipe|rewrite|rebuild|tear down)", re.IGNORECASE,
+    r"\b(?:delete|remove|replace|discard|scrap|wipe|rewrite|rebuild|tear down|drop(?!\s*-?down)|swap|"
+    r"instead of|from scratch|get rid of|ditch|migrate|recreate|re-?implement|in place of)",
+    re.IGNORECASE,
 )
 
 
@@ -398,8 +416,9 @@ def _drop_scaffold_conflicts(tasks: list, workspace_files: list | None = None) -
     the same objects; a task with no usable label is kept, with a warning.
 
     When the workspace holds no frontend source, a ``removes_scaffold`` task
-    with no removal verb ("Wire the frontend to the auth token") adds work
-    rather than deleting generated code, and is kept as a change.
+    about UI work that names no backend artifact and no removal verb ("Wire
+    the frontend to the auth token") adds work rather than deleting generated
+    code, and is kept as a change.
     """
     no_frontend = bool(workspace_files) and not any(_FRONTEND_SOURCE.search(str(f)) for f in workspace_files)
     kept: list[str] = []
@@ -412,7 +431,8 @@ def _drop_scaffold_conflicts(tasks: list, workspace_files: list | None = None) -
             text, kind = (item.strip() if isinstance(item, str) else ""), ""
         if not text:
             continue
-        if kind == "removes_scaffold" and no_frontend and not _REMOVAL_VERB.search(text):
+        if (kind == "removes_scaffold" and no_frontend and _UI_WORK.search(text)
+                and not _BACKEND_ARTIFACT.search(text) and not _REMOVAL_VERB.search(text)):
             kind = "change"
         if kind in ("removes_scaffold", "switches_framework"):
             logger.warning("Gap analyzer dropped a task the planner labelled %s: %r", kind, text[:100])

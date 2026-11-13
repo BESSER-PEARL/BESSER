@@ -550,38 +550,73 @@ def test_gap_sanitizer_drops_the_tasks_the_planner_labels_as_fighting_the_scaffo
     assert _drop_scaffold_conflicts([" add a borrow endpoint ", "", 3]) == ["add a borrow endpoint"]
 
 
-BACKEND_ONLY = ["backend/main_api.py", "backend/sql_alchemy.py", "docker-compose.yml"]
+BACKEND_ONLY = ["backend/main_api.py", "backend/routers/user.py", "backend/sql_alchemy.py", "docker-compose.yml"]
 WITH_FRONTEND = [*BACKEND_ONLY, "frontend/src/App.tsx"]
+DJANGO = ["manage.py", "library/models.py", "library/views.py", "library/templates/book_list.html",
+          "library/templates/book_form.html"]
+FLUTTER = ["lib/main.dart", "lib/sql_helper.dart", "pubspec.yaml"]
+# The four tasks the planner labelled removes_scaffold in a saved run (Sonnet 5.5, p6 backend-only).
+MISLABELLED_FRONTEND_TASKS = [
+    "Create a frontend React/Vue app with a map component displaying GeoJSON (request R5: 'uses a GeoJSON file')",
+    "Build frontend map with Leaflet or similar, render treatment plant points and load GeoJSON overlay "
+    "(request R1: 'displays a map', R2, R5)",
+    "Implement map click handler to fetch and display Detection plot/chart data for clicked treatment plant "
+    "(request R4)",
+    "Wire frontend to include auth token in map/metrics API requests and handle 401 redirects to login "
+    "(notes mention 'secure access')",
+]
+DESTRUCTIVE_TASKS = [
+    "Start the backend from scratch",
+    "Use Express instead of the generated FastAPI app",
+    "Drop the generated routers",
+    "Swap SQLAlchemy for raw SQL",
+    "Get rid of the scaffold routers",
+    "Reimplement the backend without SQLAlchemy",
+    "Delete the generated backend routers",
+    "Ditch the generated Pydantic schemas",
+    "Recreate the database layer by hand",
+    "Migrate the API to Express",
+    "Write new endpoints in place of the generated ones",
+]
+
+
+def _plan(tasks: list, kind: str, files: list) -> list:
+    """The planner's tasks that survive the sanitizers, labelled ``kind``."""
+    anchor = "Add a metrics endpoint"  # keeps the list non-empty
+
+    class Planner:
+        _client = object()
+
+        def chat(self, system, messages, tools):
+            reply = {"tasks": [{"task": t, "kind": kind} for t in tasks] + [{"task": anchor, "kind": "change"}]}
+            return {"content": [{"type": "text", "text": json.dumps(reply)}]}
+
+    kept = analyze_gaps_via_llm("Dashboard with a map.", "generate_fastapi_backend", None, "inv",
+                                Planner(), workspace_files=files)
+    assert kept[-1] == anchor
+    return kept[:-1]
 
 
 def test_backend_only_scaffold_keeps_frontend_tasks_labelled_removes_scaffold():
     """Sonnet 5.5, backend-only scaffold: the planner labelled four additive frontend
     tasks removes_scaffold and all four were dropped; there was no frontend to remove."""
-    from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
-
-    tasks = [
-        {"task": "Implement map click handler to fetch and display chart data for the clicked plant",
-         "kind": "removes_scaffold"},
-        {"task": "Wire frontend to include auth token in API requests and handle 401 redirects",
-         "kind": "removes_scaffold"},
-    ]
-    assert _drop_scaffold_conflicts(tasks, BACKEND_ONLY) == [t["task"] for t in tasks]
+    assert _plan(MISLABELLED_FRONTEND_TASKS, "removes_scaffold", BACKEND_ONLY) == MISLABELLED_FRONTEND_TASKS
 
 
-def test_backend_only_scaffold_still_drops_a_real_removal():
-    from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
-
-    tasks = [{"task": "Delete the generated backend routers", "kind": "removes_scaffold"},
-             {"task": "Port the API to Flask", "kind": "switches_framework"}]
-    assert _drop_scaffold_conflicts(tasks, BACKEND_ONLY) == []
+@pytest.mark.parametrize("task", DESTRUCTIVE_TASKS)
+def test_backend_only_scaffold_still_drops_a_task_against_its_backend(task):
+    """"No frontend to delete" says nothing about the backend the scaffold does have."""
+    assert _plan([task], "removes_scaffold", BACKEND_ONLY) == []
 
 
-def test_scaffold_with_a_frontend_still_drops_removes_scaffold_tasks():
-    from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
+@pytest.mark.parametrize("files", [WITH_FRONTEND, DJANGO, FLUTTER], ids=["react", "django", "flutter"])
+def test_scaffold_with_a_frontend_still_drops_removes_scaffold_tasks(files):
+    """Django templates and Flutter sources are a frontend a task could remove."""
+    assert _plan(MISLABELLED_FRONTEND_TASKS, "removes_scaffold", files) == []
 
-    tasks = [{"task": "Wire frontend to include auth token in API requests", "kind": "removes_scaffold"}]
-    assert _drop_scaffold_conflicts(tasks, WITH_FRONTEND) == []
-    assert _drop_scaffold_conflicts(tasks) == []  # no file list: label alone decides
+
+def test_switches_framework_is_dropped_on_a_backend_only_scaffold():
+    assert _plan(["Port the API to Flask"], "switches_framework", BACKEND_ONLY) == []
 
 
 def test_planner_prompt_does_not_tell_tasks_to_follow_a_user_named_stack():

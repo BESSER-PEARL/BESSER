@@ -268,6 +268,16 @@ def _collect_ruff_issues(
                 "--output-format=concise",
                 "--no-cache",
                 "--exit-zero",
+                # Only defects that break or silently misbehave at runtime:
+                # syntax/IO (E9), format-string errors (F5), repeated dict keys
+                # and invalid comparisons (F6), misplaced statements (F7),
+                # undefined names (F82) and redefinitions (F811).
+                # Ruff's defaults add style rules that flag the scaffold's own
+                # idioms (B008 on Depends(...)). --isolated: a ruff.toml or
+                # pyproject section in the app is not read, so it cannot
+                # ignore F821 or select other rules.
+                "--isolated",
+                "--select", "E9,F5,F6,F7,F82,F811",
                 # The snapshot, the harness's own files (e.g. the runbook's
                 # .besser_probe.py) and installed dependencies are not the app.
                 # --exclude REPLACES ruff's defaults (node_modules, .venv, ...),

@@ -21,9 +21,9 @@ from besser.spec_driven_agent.validation.issues import _classify_issue
 pytestmark = pytest.mark.skipif(shutil.which("ruff") is None,
                                 reason="ruff is not installed on this host")
 
-# Unused imports (F401) are the scaffold noise; an undefined name (F821) is
-# the blocker. Both are in ruff's default rule set.
-NOISE = "import os\nimport sys\nimport json\n"
+# Phase 3 selects only runtime-defect rules, so the non-blocker noise is a
+# literal comparison with ``is`` (F632); an undefined name (F821) is the blocker.
+NOISE = 'a = 1 is "x"\nb = 1 is "y"\nc = 1 is "z"\n'
 BLOCKER = "def handler():\n    return undefined_symbol()\n"
 
 
@@ -62,7 +62,7 @@ def test_a_blocker_survives_a_workspace_full_of_style_noise(simple_library_book_
     blockers = [i for i in issues if "F821" in i]
     assert blockers, f"F821 truncated away; reported instead: {issues[:3]}"
     assert "zzz_router.py" in blockers[0]
-    # It is reported first, not buried under forty unused imports.
+    # It is reported first, not buried under forty noisy files.
     assert issues[0] == blockers[0]
 
 
@@ -184,3 +184,24 @@ def test_one_missing_import_is_one_ruff_blocker_per_name(simple_library_book_mod
         "ruff: router.py:1:11: F821 Undefined name `get_db` (+39 more uses)",
         "ruff: router.py:2:21: F821 Undefined name `Thing` (+39 more uses)",
     ]
+
+
+def test_only_runtime_defects_are_selected_and_app_config_is_not_read(tmp_path):
+    """Ruff's 400+ default rules flagged the scaffold's own idioms (B008 on
+    ``Depends(...)``, DTZ005); an app ``ruff.toml`` ignoring F821 hid the blocker."""
+    from besser.spec_driven_agent.validation.toolchain import _collect_ruff_issues
+
+    _write(tmp_path, "app.py", (
+        "from datetime import datetime\n"
+        "from fastapi import Depends\n\n\n"
+        "def get_db():\n    return 1\n\n\n"
+        "def endpoint(db=Depends(get_db)):\n"
+        "    return datetime.now(), missing_name\n"
+    ))
+    _write(tmp_path, "ruff.toml", '[lint.per-file-ignores]\n"app.py" = ["F821"]\n')
+
+    issues, _ = _collect_ruff_issues(str(tmp_path), [], frozenset(), False)
+
+    assert len(issues) == 1, issues
+    assert "F821" in issues[0] and "missing_name" in issues[0]
+    assert _classify_issue(issues[0]).severity == "blocker"

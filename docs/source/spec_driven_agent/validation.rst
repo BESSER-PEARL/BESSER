@@ -70,7 +70,10 @@ that was already broken is never refused, so it can be repaired.
   Absence of a known stub is structural evidence, not proof of business behavior.
 - Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
   match no generated backend route.
-- ``ruff`` lint.
+- ``ruff`` lint, limited to defects that break at runtime (syntax errors, undefined
+  names, redefinitions, repeated dict keys, invalid format strings and comparisons).
+  Style rules are not run, and a ``ruff.toml`` or ``pyproject.toml`` inside the app
+  is not read.
 - Optionally ``tsc --noEmit``, ``cargo check`` and ``kotlinc``, per project.
 
 Every import a generated frontend makes is resolved against the files it

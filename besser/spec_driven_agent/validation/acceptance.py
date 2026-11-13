@@ -9,7 +9,8 @@ indicate whether the entity appears in the app (not executed acceptance):
   the cell is ``None`` (unmeasured) rather than ``False``;
 * ``page``   — some frontend file is about it (name or content match);
 * ``create`` — a frontend file about it contains a POST, OR calls a
-  shared api-client helper that issues one, OR a ``<TableBlock>`` bound
+  shared api-client helper that issues one (a generic form is about the
+  entities its imported config module declares), OR a ``<TableBlock>`` bound
   to it: ``dataBinding`` naming this entity and an endpoint, plus a
   non-empty ``options.formColumns``. The GUI-model scaffold's only
   generated create path issues its POST from a shared runtime component
@@ -32,6 +33,7 @@ on. Blocker-level enforcement stays with ``contract_checks``.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from besser.utilities.workspace_fs import walk_plain
@@ -39,9 +41,16 @@ from besser.utilities.workspace_fs import walk_plain
 _FRONTEND_EXTS = (".js", ".jsx", ".ts", ".tsx")
 _SKIP_DIRS = ("node_modules", "dist", "build", "__pycache__")
 
-# A POST issued from frontend code — axios/api `.post(`, fetch with
-# method POST, or a generated api-layer helper.
-_POST_RE = re.compile(r"\.post\s*\(|method\s*:\s*['\"]POST['\"]", re.IGNORECASE)
+# A POST issued from frontend code — axios/api `.post(`, the method as an
+# argument (`request('POST', path)`), or fetch with method POST; `url` is the
+# literal path a fetch-style call names before its options.
+_POST_RE = re.compile(
+    r"\.post\s*\(|\(\s*['\"]POST['\"]\s*,"
+    r"|(?:\(\s*['\"](?P<url>[^'\"]{1,200})['\"]\s*,\s*\{[^{}]{0,200}?)?method\s*:\s*['\"]POST['\"]",
+    re.IGNORECASE)
+_FIRST_ARG_RE = re.compile(r"\s*['\"]([^'\"]{1,200})['\"]")
+# The rest of a one-expression arrow helper up to its call: `(r, b) => api`.
+_ARROW_BODY_RE = re.compile(r"\s*(?:async\s+)?\([^()]*\)\s*=>\s*[\w$.\s]*")
 
 # The GUI-model scaffold's runtime-bound create path: a <TableBlock> whose
 # dataBinding names the entity + endpoint and whose options carry at least
@@ -101,17 +110,18 @@ def _blank_comments(text: str) -> str:
         lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()) if m.group().startswith("/") else m.group(), text)
 
 
-# A POST the file issues itself: `.post(` with its arguments, or a fetch with
-# method POST, whose target is not attributable and so counts as unnamed.
-_DIRECT_POST_RE = re.compile(r"\.post\s*\((?P<args>[^()]{0,200})", re.IGNORECASE)
-_FETCH_POST_RE = re.compile(r"method\s*:\s*['\"]POST['\"]", re.IGNORECASE)
+def _post_path(source: str, post: re.Match) -> str | None:
+    """The literal path a POST targets, or None when it is built at run time."""
+    if post.group("url"):
+        return post.group("url")
+    first = _FIRST_ARG_RE.match(source, post.end()) if post.group().endswith(("(", ",")) else None
+    return first.group(1) if first else None
 
 
 def _direct_create_calls(source: str) -> list:
     """Creates ``source`` issues itself, shaped like ``_client_create_calls``."""
     code = _blank_comments(source)
-    calls: list = [_STRING_ARG_RE.findall(m.group("args")) or None for m in _DIRECT_POST_RE.finditer(code)]
-    return calls + [None] * len(_FETCH_POST_RE.findall(code))
+    return [[path] if (path := _post_path(code, m)) else None for m in _POST_RE.finditer(code)]
 
 
 def _bracket_depth(blanked: str, start: int, end: int) -> int:
@@ -124,12 +134,13 @@ def _bracket_depth(blanked: str, start: int, end: int) -> int:
     return depth
 
 
-def _post_helpers(source: str) -> set[str]:
-    """Names in an api-client module whose own definition issues a POST.
+def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
+    """{helper name: the literal paths its POSTs target, or None if any is not literal}.
 
     For each POST literal, the enclosing helper is the last named callable
-    definition before it that we are still syntactically inside. Only those
-    names count as a create; `list`/`update`/`remove` next to them do not.
+    definition before it that we are still syntactically inside, or whose
+    one-expression arrow body it is. Only those names count as a create;
+    `list`/`update`/`remove` next to them do not.
     """
     blanked = _blank_literals(source)
     definitions = [
@@ -137,13 +148,20 @@ def _post_helpers(source: str) -> set[str]:
         for match in _HELPER_DEF_RE.finditer(blanked)
         if (match.group("fn") or match.group("name")) not in _NOT_A_HELPER
     ]
-    names = set()
+    helpers: dict[str, list[str] | None] = {}
     for post in _POST_RE.finditer(source):
         for end, name in reversed(definitions):
-            if end <= post.start() and _bracket_depth(blanked, end, post.start()) >= 1:
-                names.add(name)
+            if end <= post.start() and (_bracket_depth(blanked, end, post.start()) >= 1
+                                        or _ARROW_BODY_RE.fullmatch(blanked, end, post.start())):
+                path, known = _post_path(source, post), helpers.get(name, [])
+                helpers[name] = None if path is None or known is None else known + [path]
                 break
-    return names
+    return helpers
+
+
+def _post_helpers(source: str) -> set[str]:
+    """Names in an api-client module whose own definition issues a POST."""
+    return set(_post_helper_paths(source))
 
 
 def _import_bindings(source: str):
@@ -181,14 +199,15 @@ def _resolve_import(rel: str, spec: str) -> list[str]:
 
 
 def _client_create_calls(rel: str, source: str, files: dict[str, str],
-                         helper_cache: dict[str, set[str]]) -> list:
+                         helper_cache: dict[str, dict], used_clients: set[str]) -> list:
     """Creates ``rel`` issues through an imported api-client module.
 
-    One entry per call site: its literal string arguments, or None when the
-    call names its resource through a variable (the generic
-    ``<EntityList entity={...}/>`` page). None means "a create happens here
-    but this call does not say which entity", which is exactly the evidence
-    the file-mention test already stands on.
+    One entry per call site: the helper's own literal path, else the call's
+    literal string arguments, or None when the call names its resource
+    through a variable (the generic ``<EntityList entity={...}/>`` page).
+    None means "a create happens here but this call does not say which
+    entity", which is exactly the evidence the file-mention test already
+    stands on. Each module a call resolves into is added to ``used_clients``.
 
     ``helper_cache`` is keyed by module path: one api client is imported by
     every page, so it is scanned once rather than once per importer.
@@ -199,7 +218,7 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
         if target is None or not _POST_RE.search(files[target]):
             continue
         if target not in helper_cache:
-            helper_cache[target] = _post_helpers(files[target])
+            helper_cache[target] = _post_helper_paths(files[target])
         helpers = helper_cache[target]
         if not helpers:
             continue
@@ -207,8 +226,10 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
             r"\b" + re.escape(binding) + r"\s*(?:\.\s*(?P<member>[\w$]+)\s*)?\("
             r"(?P<args>[^()]{0,200})")
         for call in pattern.finditer(source):
-            if (call.group("member") or binding) in helpers:
-                calls.append(_STRING_ARG_RE.findall(call.group("args")) or None)
+            name = call.group("member") or binding
+            if name in helpers:
+                calls.append(helpers[name] or _STRING_ARG_RE.findall(call.group("args")) or None)
+                used_clients.add(target)
     return calls
 
 
@@ -250,9 +271,45 @@ def _entity_forms(name: str) -> list[str]:
     return sorted(forms, key=len, reverse=True)
 
 
-def _mentions(text: str, forms: list[str]) -> bool:
-    low = text.lower()
-    return any(f in low for f in forms)
+@functools.lru_cache(maxsize=1024)
+def _forms_re(forms: tuple[str, ...], whole_word: bool) -> re.Pattern:
+    # A form must end its word: "running" is not Run, "username" is not User.
+    # A whole word also keeps `RunStatus` / `RUN_STATUS` from declaring Run.
+    alternatives = "(?:" + "|".join(map(re.escape, forms)) + ")"
+    if whole_word:
+        return re.compile(r"(?<![A-Za-z0-9_])" + alternatives + r"(?![A-Za-z0-9_])", re.IGNORECASE)
+    return re.compile(alternatives + r"(?-i:(?![a-z0-9]))", re.IGNORECASE)
+
+
+def _mentions(text: str, forms: list[str], whole_word: bool = False) -> bool:
+    return _forms_re(tuple(forms), whole_word).search(text) is not None
+
+
+def _config_declarations(source: str) -> str:
+    """The part of an entity config module that declares entities.
+
+    An entry's own key, path and label declare it. Comments, multi-word labels
+    (`'Dataset Version'`) and every list nested inside an entry (`fields: [...]`,
+    whose `ref`s name other entities) are blanked.
+    """
+    source = _BLANKABLE_RE.sub(
+        lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group())
+        if m.group().startswith("/") or re.search(r"\s", m.group()) else m.group(), source)
+    blanked = _blank_literals(source)
+    spans, depth, start, outer = [], 0, None, 0
+    for i, char in enumerate(blanked):
+        if char in "([{":
+            if char == "[" and depth >= 2 and start is None:
+                start, outer = i, depth
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if start is not None and depth == outer:
+                spans.append((start, i + 1))
+                start = None
+    for s, e in reversed(spans):
+        source = source[:s] + _KEEP_NEWLINES_RE.sub(" ", source[s:e]) + source[e:]
+    return source
 
 
 def _creates(args: list[str] | None, forms: list[str]) -> bool:
@@ -317,8 +374,13 @@ def build_acceptance_matrix(
                 continue
 
     by_path = dict(frontend_files)
-    helper_cache: dict[str, set[str]] = {}
-    create_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache) + _direct_create_calls(content)
+    helper_cache: dict[str, dict] = {}
+    used_clients: set[str] = set()
+    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients)
+                    for rel, content in frontend_files}
+    # A shared client's own POSTs count where its helpers are called, not as
+    # creates of whatever its other helpers (`getMetrics`) happen to name.
+    create_calls = {rel: client_calls[rel] + ([] if rel in used_clients else _direct_create_calls(content))
                     for rel, content in frontend_files}
     # Generic pages (``EntityList entity={key}``): the create names its resource
     # through a variable and the component's code names no class of the model
@@ -334,8 +396,20 @@ def build_acceptance_matrix(
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
         and not _mentions(_blank_comments(by_path[rel]), all_forms)
     }
+    # A generic creator may read its entities from a config module it imports
+    # (`entities.js`); that module, not the creator's own code, declares them.
+    config_text = {
+        rel: " ".join(_config_declarations(by_path[target]) for target in (
+            next((c for c in _resolve_import(rel, spec) if c in by_path), None)
+            for _, spec in _import_bindings(by_path[rel]))
+            if target and not _POST_RE.search(by_path[target]) and not re.search(r"\bfetch\s*\(", by_path[target]))
+        for rel in generic_creators
+    }
+    # A configured creator is credited through its config alone: the page that
+    # renders it mentioning `user` (the signed-in one) declares nothing.
+    unconfigured = {rel for rel in generic_creators if not _mentions(config_text[rel], all_forms, whole_word=True)}
     renders_generic_creator = {
-        rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None) in generic_creators
+        rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None) in unconfigured
                  and re.search(r"<\s*" + re.escape(binding) + r"\b", content)
                  for binding, spec in _import_bindings(content))
         for rel, content in frontend_files
@@ -353,7 +427,8 @@ def build_acceptance_matrix(
         page = False
         create = False
         for rel, content in frontend_files:
-            about = _mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(content, forms)
+            about = (_mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(content, forms)
+                     or _mentions(config_text.get(rel, ""), forms, whole_word=True))
             if not about:
                 continue
             page = True

@@ -691,6 +691,9 @@ async def resume_smart_gen(
 
     if not re.fullmatch(r"[a-f0-9]{32}", run_id):
         raise HTTPException(status_code=422, detail="Invalid run_id format")
+    # Rebuilt from its parsed value: the id reaches file names, and static
+    # analysis does not read the pattern above as path validation.
+    run_id = uuid.UUID(hex=run_id).hex
 
     temp_dir = _locate_run_temp_dir(run_id)
     if temp_dir is None:

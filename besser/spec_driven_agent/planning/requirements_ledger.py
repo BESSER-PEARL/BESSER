@@ -625,12 +625,12 @@ def _digest_priority(rel: str) -> tuple[int, str]:
 
 def _source_files(output_dir: str) -> dict[str, str]:
     """Only application source, never run logs/recipes, vendored or minified
-    code (a frontend's ``public/`` is copied verbatim) or an escaped symlink."""
+    code or an escaped symlink. ``public/`` stays: an Express app serves its own
+    browser code from there."""
     base = Path(output_dir).resolve()
     files: dict[str, str] = {}
     for root, dirs, names in walk_plain(base):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _DIGEST_SKIP_DIRS
-                   and not (d == "public" and Path(root, "package.json").is_file())
                    and not (Path(root) == base and d in _ARTIFACT_ROOT_DIRS)]
         for name in names:
             source = Path(root, name)

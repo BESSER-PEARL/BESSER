@@ -281,6 +281,27 @@ def test_the_judge_cache_key_ignores_vendored_code(tmp_path):
     assert ledger.judged_source_fingerprint(str(tmp_path)) != before
 
 
+def test_an_express_apps_own_public_code_is_judged(tmp_path):
+    """Review probe: an app serving public/ with express.static lost public/app.js
+    from the digest, and its citation turned 'unverified'."""
+    _write(tmp_path, "package.json", '{"name": "todo", "dependencies": {"express": "^4.19.2"}}\n')
+    _write(tmp_path, "server.js", "const app = require('express')();\napp.use(require('express').static('public'));\n")
+    line = "document.getElementById('add').addEventListener('click', async () => {"
+    _write(tmp_path, "public/app.js", f"{line}\n  await fetch('/api/todos', {{ method: 'POST' }});\n}});\n")
+    _write(tmp_path, "public/vendor/x.min.js", "!function(t){var a=1;}(this);")
+    assert set(ledger._source_files(str(tmp_path))) == {"public/app.js", "server.js"}
+    assert "### public/app.js" in ledger.build_app_digest(str(tmp_path))
+    verdict = ledger.verify_evidence([{"id": 1, "kind": "ui", "text": "The user adds a todo",
+                                       "status": "implemented", "evidence": f"public/app.js: {line}"}],
+                                     str(tmp_path))[0]
+    assert verdict["status"] == "implemented"
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "public/vendor/x.min.js", "!function(t){var b=2;}(this);")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "public/app.js", "console.log('changed');\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
 # ---------------------------------------------------------- evidence check
 
 

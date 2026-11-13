@@ -47,10 +47,10 @@ given only the symptom tends to spend its fix attempts elsewhere. The line
 feeds the fix prompt's excerpt. When the refusal is a NOT NULL violation, the
 column is named too, and the create-time-rule advice is left out.
 
-A login-protected app is logged into once, on the first 401/403, through its
-own register/login routes or the login steps of a passing ``test_api``
-scenario; never by overriding its auth dependency, which would also lift the
-role and ownership rules a real user meets.
+A login-protected app is logged into once, on the first 401/403, as an
+account the probe registers through the app's own register/login routes; never
+by overriding its auth dependency, which would also lift the role and
+ownership rules a real user meets.
 
 Runs in two halves. The parent (``collect_constructibility_report``) is
 ordinary orchestrator code; it also hands the child the modelled action list
@@ -58,8 +58,7 @@ in a JSON file, since the model is what states an action's parameters. The
 child is this same file executed by PATH as a script inside the app copy, so
 it imports only the standard library and what the app itself needs - never
 ``besser``, which is not installed where the harness interpreter runs the
-generated code (its sibling ``api_probe.py``, stdlib-only, is loaded by path
-to resolve scenario references). The child's structured record is returned alongside the
+generated code. The child's structured record is returned alongside the
 rendered findings, so a caller that wants runtime facts reads them rather
 than matching prefixes back out of prose.
 """
@@ -93,7 +92,6 @@ _ACTIONS_ENV = "BESSER_PROBE_MODEL_ACTIONS"
 # instantiate one ("Person is abstract; create a Patron or Librarian
 # instead"), so POSTing to it manufactures a blocker no repair can clear.
 _ABSTRACT_ENV = "BESSER_PROBE_ABSTRACT_ENTITIES"
-_AUTH_SCENARIOS_ENV = "BESSER_PROBE_AUTH_SCENARIOS"
 _SKIP_DIRS = frozenset({
     "node_modules", "__pycache__", ".besser_snapshot", "dist", "build", "data",
 })
@@ -110,15 +108,12 @@ _NOT_NULL_PATTERNS = (
 # Parent: locate backends, run the child, turn its report into findings
 # ---------------------------------------------------------------------------
 
-def collect_constructibility_report(output_dir: str, domain_model=None,
-                                    auth_scenarios: list | None = None) -> dict:
+def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
     """``{"issues": [...], "backends": [{"backend": rel, ...}]}``.
 
     ``backends`` carries the child's own per-entity and per-action report,
     so ``_phase3_tree_score`` can rank a tree on what the running app
     actually did instead of matching prefixes back out of the issue strings.
-    ``auth_scenarios`` (``[{"backend", "requests"}]``, passing ``test_api``
-    scenarios) is the fallback login source when the app's routes give none.
     """
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 
@@ -128,10 +123,8 @@ def collect_constructibility_report(output_dir: str, domain_model=None,
     backends: list[dict] = []
     for folder in _fastapi_backends(output_dir):
         rel = os.path.relpath(folder, output_dir).replace("\\", "/")
-        scenarios = [s["requests"] for s in auth_scenarios or ()
-                     if s.get("backend") in (None, rel) and isinstance(s.get("requests"), list)]
         report = _run_probe(folder, _safe_subprocess_env(), model_actions, abstract,
-                            workspace=output_dir, auth_scenarios=scenarios)
+                            workspace=output_dir)
         issues.extend(_issues_from_report(report, rel))
         backends.append({"backend": rel, **report})
     return {"issues": issues, "backends": backends}
@@ -223,7 +216,7 @@ def _fastapi_backends(output_dir: str) -> list[str]:
 
 def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
                abstract_entities: list[str] | None = None, *,
-               workspace: str | None = None, auth_scenarios: list | None = None) -> dict:
+               workspace: str | None = None) -> dict:
     """Execute the child, sandboxed with no network, on a scratch copy of
     ``folder`` (inside the run ``workspace``); never raises."""
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
@@ -245,14 +238,6 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
                 logger.debug("constructibility probe: modelled actions not passed", exc_info=True)
         if abstract_entities:
             env[_ABSTRACT_ENV] = ",".join(abstract_entities)
-        if auth_scenarios:
-            scenarios_path = os.path.join(work, "auth_scenarios.json")
-            try:
-                with open(scenarios_path, "w", encoding="utf-8") as fh:
-                    json.dump(auth_scenarios, fh)
-                env[_AUTH_SCENARIOS_ENV] = scenarios_path
-            except (OSError, TypeError, ValueError):
-                logger.debug("constructibility probe: login scenarios not passed", exc_info=True)
         try:
             result = run_confined(
                 [sys.executable, os.path.abspath(__file__)],
@@ -1236,8 +1221,6 @@ _LOGIN_PATH = re.compile(r"/(login|signin|sign-in|sign_in|token)/?$", re.I)
 _TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
 _PRIVILEGE_WORDS = ("role", "admin", "superuser", "staff", "permission", "scope", "privilege", "group",
                     "manager", "owner", "moderator")
-# Only headers that carry a credential are kept from a scenario's login.
-_CREDENTIAL_HEADER = re.compile(r"^(authorization|cookie|x-[\w-]*(api-?key|token|auth|session|csrf)[\w-]*)$", re.I)
 _PROBE_USERNAME = "probe_auth_user"
 _PROBE_EMAIL = "probe.auth.user@example.com"
 _PROBE_PASSWORD = "Probe-Passw0rd-2817"
@@ -1356,148 +1339,31 @@ async def _discovered_login(client, spec: dict, schemas: dict) -> tuple[dict | N
     return ({"Authorization": f"Bearer {token}"} if token else {}), "", identity
 
 
-def _api_probe_module():
-    """The sibling ``api_probe.py`` (stdlib-only), for its scenario reference resolver."""
-    import importlib.util
-
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_probe.py")
-    spec = importlib.util.spec_from_file_location("_besser_api_probe", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _login_request_index(requests: list, reference) -> int | None:
-    """Index of the first request whose credential header is taken from an earlier response."""
-    return next((index for index, request in enumerate(requests) if index and isinstance(request, dict)
-                 and any(_CREDENTIAL_HEADER.match(str(name)) and isinstance(value, str) and reference.search(value)
-                         for name, value in (request.get("headers") or {}).items())), None)
-
-
-def can_supply_login(requests: list) -> bool:
-    """True when a ``test_api`` scenario sends a credential from an earlier response."""
-    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
-
-    return isinstance(requests, list) and _login_request_index(requests, _REFERENCE) is not None
-
-
-def _privilege_in_steps(requests: list, spec: dict, schemas: dict) -> str | None:
-    """Why replaying these login steps would take a privilege, or None: the
-    rule for the probe's own account, applied to the values the scenario sends."""
-    for request in requests:
-        path = str(request.get("path", "")).split("?")[0]
-        step = f"{request.get('method')} {path}"
-        fields: dict = {}
-        for template, ops in spec.get("paths", {}).items():
-            if re.fullmatch(re.sub(r"\\\{[^/]*?\\\}", "[^/]+", re.escape(template)), path):
-                op = ops.get(str(request.get("method", "")).lower()) or {}
-                fields = _body_schema(op, schemas)[1].get("properties", {})
-        body = request.get("json")
-        pending = [(str(key), value, fields.get(key)) for key, value in body.items()] \
-            if isinstance(body, dict) else [("", body, None)]
-        while pending:
-            key, value, raw = pending.pop()
-            low = key.lower()
-            choice = _choice(key, _resolve(raw, schemas)) if raw is not None else (
-                "a privilege-named field" if any(word in low for word in _PRIVILEGE_WORDS) else None)
-            if choice:
-                return f"{step} sends `{key}`, {choice}"
-            if isinstance(value, bool):
-                return f"{step} sends the boolean `{key}`"
-            if isinstance(value, str) and "password" not in low and any(w in value.lower() for w in _PRIVILEGE_WORDS):
-                return f"{step} sends `{key}` = {value!r}, a privileged account name"
-            if isinstance(value, dict):
-                pending += [(str(k), v, None) for k, v in value.items()]
-            elif isinstance(value, list):
-                pending += [(key, v, None) for v in value]
-    return None
-
-
-async def _scenario_login(client, scenarios: list, spec: dict, schemas: dict) -> tuple[dict | None, str, str]:
-    """Replay a passing scenario up to its first request that sends a credential
-    taken from an earlier response; return those credential headers resolved."""
-    api_probe = _api_probe_module()
-    resolve = api_probe._resolve_references
-    error = "no passing test_api scenario sends a credential taken from an earlier response"
-    for requests in scenarios:
-        first = _login_request_index(requests, api_probe._REFERENCE)
-        if first is None:
-            continue
-        previous: list = []
-        try:
-            refused = _privilege_in_steps(requests[:first], spec, schemas)
-            if refused:
-                error = f"refused to replay a scenario's login: {refused}"
-                continue
-            for request in requests[:first]:
-                kwargs: dict = {}
-                if "json" in request:
-                    kwargs["json"] = resolve(request["json"], previous)
-                if request.get("headers"):
-                    kwargs["headers"] = {name: resolve(value, previous, in_header=True)
-                                         for name, value in request["headers"].items()}
-                response = await client.request(
-                    request["method"], resolve(request["path"], previous, in_path=True), **kwargs)
-                try:
-                    previous.append(response.json())
-                except ValueError:
-                    previous.append(api_probe._NO_JSON)
-            steps = ", ".join(f"{request['method']} {request['path']}" for request in requests[:first])
-            return {name: resolve(value, previous, in_header=True)
-                    for name, value in requests[first]["headers"].items() if _CREDENTIAL_HEADER.match(name)
-                    }, "", f"the account a passing scenario logs in with ({steps})"
-        except Exception as exc:
-            error = f"replaying a scenario's login failed: {type(exc).__name__}: {exc}"[:160]
-    return None, error, ""
-
-
-def _load_auth_scenarios() -> list:
-    path = os.environ.get(_AUTH_SCENARIOS_ENV)
-    if not path:
-        return []
-    try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return []
-    return [item for item in data if isinstance(item, list)] if isinstance(data, list) else []
-
-
 async def _log_in(client, spec: dict, schemas: dict, retry) -> tuple[dict, tuple | None]:
     """Log ``client`` in after ``retry``'s request was refused 401/403.
 
     A login counts only if that request then gets past the wall; the retried
     result is returned with the record. Never raises.
     """
-    sources = [("its register/login routes", lambda: _discovered_login(client, spec, schemas))]
-    scenarios = _load_auth_scenarios()
-    if scenarios:
-        sources.append(("a passing test_api scenario", lambda: _scenario_login(client, scenarios, spec, schemas)))
-    errors = []
-    for label, attempt in sources:
-        refused = False
-        try:
-            headers, error, identity = await attempt()
-            if headers is not None:
-                client.headers.update(headers)
-                retried = await retry()
-                if retried[1] not in (401, 403):
-                    return {"source": label, "identity": identity,
-                            "credential": sorted(headers) or "session cookie"}, retried
-                # 403 to a request that carried the account's credential is the answer:
-                # the route needs a privilege.
-                refused = retried[1] == 403 and bool(headers or len(client.cookies))
-                for name in headers:
-                    client.headers.pop(name, None)
-                error = (f"{identity} was refused 403, so the route needs a privilege the probe will not take"
-                         if refused else f"the refused request still answered {retried[1]} after logging in")
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"[:160]
-        client.cookies.clear()
-        errors.append(f"{label}: {error}")
-        if refused:
-            break
-    return {"error": "; ".join(errors)[:400]}, None
+    try:
+        headers, error, identity = await _discovered_login(client, spec, schemas)
+        if headers is not None:
+            client.headers.update(headers)
+            retried = await retry()
+            if retried[1] not in (401, 403):
+                return {"source": "its register/login routes", "identity": identity,
+                        "credential": sorted(headers) or "session cookie"}, retried
+            # 403 to a request that carried the account's credential is the answer:
+            # the route needs a privilege.
+            refused = retried[1] == 403 and bool(headers or len(client.cookies))
+            for name in headers:
+                client.headers.pop(name, None)
+            error = (f"{identity} was refused 403, so the route needs a privilege the probe will not take"
+                     if refused else f"the refused request still answered {retried[1]} after logging in")
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"[:160]
+    client.cookies.clear()
+    return {"error": f"its register/login routes: {error}"[:400]}, None
 
 
 def _load_model_actions() -> dict:

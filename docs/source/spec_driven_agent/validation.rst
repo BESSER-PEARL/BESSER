@@ -193,34 +193,27 @@ where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
 record to read back, so it is listed in the probe report as
 ``skipped_non_entity`` and produces no finding.
 When a request is refused with 401 or 403, the probe tries once to log in as an
-ordinary visitor could, and never overrides the app's authentication dependency:
-
-- **Its own account.** It registers and logs in through the app's unsecured
-  register/login routes (OpenAPI paths such as ``/register``, ``/login`` or an
-  OAuth2 ``tokenUrl``; a templated path such as ``/room/{room_id}/register`` is
-  not one). It fills the username, email and password, plus any other required
-  field that is plain text or a number (a name, a phone number). It does not use
-  a route that requires a boolean, an enum/``Literal``, an object or array, or a
-  field named like a privilege (role, admin, staff, manager, owner, permission,
-  scope, group, ...): those choose what kind of account it gets. If
-  registration fails, it still tries the login route.
-- **A saved scenario's login.** Otherwise it replays the steps of a passing
-  ``test_api`` scenario, from any source revision, up to the first request that
-  sends a credential header taken from an earlier response, and keeps only the
-  credential headers (``Authorization``, cookies, ``X-API-Key``-style). It does
-  not replay steps that send a privilege-named key, a boolean, a value naming a
-  privileged account (such as ``admin``), or a value the route's schema makes a
-  choice.
-- **No privileged fallback.** If the probe's own logged-in account is refused
-  with 403, it stops there: the create stays unverified, and the finding says
-  the route needs a privilege the probe will not take.
+account it registers itself, as any visitor could, and never overrides the
+app's authentication dependency. It registers and logs in through the app's
+unsecured register/login routes (OpenAPI paths such as ``/register``,
+``/login`` or an OAuth2 ``tokenUrl``; a templated path such as
+``/room/{room_id}/register`` is not one). It fills the username, email and
+password, plus any other required field that is plain text or a number (a
+name, a phone number). It does not use a route that requires a boolean, an
+enum/``Literal``, an object or array, or a field named like a privilege (role,
+admin, staff, manager, owner, permission, scope, group, ...): those choose what
+kind of account it gets. If registration fails, it still tries the login route.
+If its logged-in account is refused with 403, it stops there and the finding
+says the route needs a privilege the probe will not take.
 
 A login counts only when the refused request then gets past the 401/403. The
 report keeps the first refused request and its status under ``auth`` (evidence
-that authentication is enforced), with the login ``source`` and the
-``identity`` used. An app that never answers 401/403 receives no login
-requests. When no login works, the refused creates stay ``create unverified``
-and the finding gives the reason.
+that authentication is enforced), with the account used. An app that never
+answers 401/403 receives no login requests. When no login works, the refused
+creates stay ``create unverified`` and the finding gives the reason; a passing
+``test_api`` scenario that logs in, creates and reads back the record settles
+them, as above. Saved scenarios are never replayed to log the probe in, so its
+result depends only on the source.
 
 .. _spec-driven-model-contract:
 

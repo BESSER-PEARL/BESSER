@@ -745,42 +745,12 @@ def test_a_register_route_with_free_text_fields_is_used(tmp_path):
     assert auth["identity"] == "a new account the probe registered"
 
 
-@pytest.mark.parametrize("field, privileged, sends", [
-    ('    role: Literal["manager", "member"]\n', 'data.role == "manager"', {"role": "manager"}),
-    # Neither the key nor the value names a privilege: the route's enum schema does.
-    ('    account_type: Literal["organizer", "attendee"]\n', 'data.account_type == "organizer"',
-     {"account_type": "organizer"}),
-])
-def test_a_scenario_whose_login_takes_a_privilege_is_not_replayed(tmp_path, field, privileged, sends):
-    """The route check refused the field, and the fallback replayed a passing
-    scenario that registered with that very privilege."""
-    workspace = _auth_scaffold(tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE, privileged=privileged)
-    scenario = [
-        {"method": "POST", "path": "/auth/register",
-         "json": {"username": "boss", "password": "pw-123456", **sends}, "expected_status": 201},
-        {"method": "POST", "path": "/auth/login", "json": {"username": "boss", "password": "pw-123456"}},
-        {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{1.access_token}}"}},
-    ]
-    report = collect_constructibility_report(
-        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
-    auth = report["backends"][0]["auth"]
-    assert "source" not in auth and "refused to replay a scenario's login" in auth["error"], auth
-    assert len(report["issues"]) == 2, report["issues"]
-
-
 def test_a_403_to_the_probes_own_account_ends_the_login(tmp_path):
-    """Open registration gives ordinary accounts and only the seeded `chief` may
-    create. The probe's own account got 403, then a scenario logging in as
-    `chief` made every create verified with no finding."""
+    """Open registration gives ordinary accounts and only a seeded user may create:
+    the probe's own account gets 403, and the creates stay unverified."""
     workspace = _auth_scaffold(tmp_path, module=_PRIVILEGE_AUTH_MODULE, privileged="False")
-    scenario = [
-        {"method": "POST", "path": "/auth/login", "json": {"username": "chief", "password": "seeded-chief-pw"}},
-        {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{0.access_token}}"}},
-    ]
-    report = collect_constructibility_report(
-        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
-    auth = report["backends"][0]["auth"]
-    assert "source" not in auth and "a passing test_api scenario" not in auth["error"], auth
+    report = collect_constructibility_report(workspace)
+    assert "source" not in report["backends"][0]["auth"]
     [refused] = [i for i in report["issues"] if "requires authentication" in i]
     assert "refused 403, so the route needs a privilege the probe will not take" in refused
 
@@ -812,57 +782,14 @@ def test_a_failed_registration_still_tries_the_login_route(tmp_path):
     assert report["backends"][0]["auth"]["identity"] == "the probe's own credentials, without registering"
 
 
-def test_only_credential_headers_are_kept_from_a_scenario_login(tmp_path):
-    """Every header of the scenario's request was copied onto every later probe
-    request, so one Idempotency-Key was replayed on each create."""
-    workspace = _auth_scaffold(tmp_path, register="/accounts", login="/sessions")
-    main = tmp_path / "web_app" / "backend" / "main_api.py"
-    main.write_text(main.read_text(encoding="utf-8") + (
-        "\n\nfrom fastapi.responses import JSONResponse\n_seen_keys: set = set()\n\n"
-        "@app.middleware('http')\n"
-        "async def _idempotency(request, call_next):\n"
-        "    key = request.headers.get('idempotency-key')\n"
-        "    if key and request.method == 'POST':\n"
-        "        if key in _seen_keys:\n"
-        "            return JSONResponse({'detail': 'idempotency key reused'}, status_code=422)\n"
-        "        _seen_keys.add(key)\n"
-        "    return await call_next(request)\n"
-    ), encoding="utf-8")
-    credentials = {"username": "ana", "password": "long-enough-1"}
-    scenario = [
-        {"method": "POST", "path": "/auth/accounts", "json": credentials, "expected_status": 201},
-        {"method": "POST", "path": "/auth/sessions", "json": credentials},
-        {"method": "POST", "path": "/room/", "json": {"roomNumber": 1, "status": "AVAILABLE"},
-         "headers": {"Authorization": "Bearer {{1.access_token}}", "Idempotency-Key": "k-1",
-                     "Content-Type": "application/json"}},
-    ]
-    report = collect_constructibility_report(
-        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
-    assert report["issues"] == [], report["issues"]
-    assert report["backends"][0]["auth"]["credential"] == ["Authorization"]
-
-
-def test_a_passing_scenario_supplies_the_login_the_routes_do_not_name(tmp_path):
-    workspace = _auth_scaffold(tmp_path, register="/accounts", login="/sessions")
-    blind = collect_constructibility_report(workspace)
-    assert len(blind["issues"]) == 2, "control: no route is named like a login, so none is found"
-
-    credentials = {"username": "ana", "password": "long-enough-1"}
-    scenario = [
-        {"method": "POST", "path": "/auth/accounts", "json": credentials, "expected_status": 201},
-        {"method": "POST", "path": "/auth/sessions", "json": credentials},
-        {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{1.access_token}}"}},
-    ]
-    report = collect_constructibility_report(
-        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
-    assert report["issues"] == [], report["issues"]
-    assert report["backends"][0]["auth"]["source"] == "a passing test_api scenario"
-    assert report["backends"][0]["auth"]["identity"] == (
-        "the account a passing scenario logs in with (POST /auth/accounts, POST /auth/sessions)")
-    # A scenario recorded against another backend is not replayed here.
-    other = collect_constructibility_report(
-        workspace, auth_scenarios=[{"backend": "elsewhere/backend", "requests": scenario}])
-    assert len(other["issues"]) == 2
+def test_a_login_the_routes_do_not_name_leaves_the_creates_to_test_api(tmp_path):
+    """No route is named like a register/login, so the probe does not log in; the
+    creates stay unverified for the model's own test_api scenario to prove."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, register="/accounts", login="/sessions"))
+    assert "source" not in report["backends"][0]["auth"]
+    assert len(report["issues"]) == 2, report["issues"]
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "lists no unsecured register or login route" in refused
 
 
 def test_an_app_without_auth_gets_no_login_requests(tmp_path):
@@ -878,123 +805,7 @@ def test_an_app_without_auth_gets_no_login_requests(tmp_path):
         "        _os._exit(3)\n"
         "    return await call_next(request)\n"
     ), encoding="utf-8")
-    login = [{"method": "POST", "path": "/auth/login", "json": {}},
-             {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{0.access_token}}"}}]
-    report = collect_constructibility_report(workspace, auth_scenarios=[{"backend": None, "requests": login}])
+    report = collect_constructibility_report(workspace)
     assert report["issues"] == [], report["issues"]
     assert report["backends"][0]["boot"] == "ok"
     assert "auth" not in report["backends"][0]
-
-
-def _login_scenario(path: str) -> list:
-    return [{"method": "POST", "path": "/auth/login", "json": {"username": "ana", "password": "pw-123456"}},
-            {"method": "GET", "path": path, "headers": {"Authorization": "Bearer {{0.access_token}}"}}]
-
-
-def _passed(requests: list, revision: str, status: str = "passed") -> dict:
-    return {"scenario": {"requests": requests}, "revision": revision,
-            "report": {"status": status, "backend": "b"}}
-
-
-def test_the_orchestrator_hands_passing_login_scenarios_of_any_revision_to_the_probe(tmp_path, monkeypatch):
-    """A login does not depend on the source revision. Passing only current-revision
-    scenarios dropped the login after every edit, and the creates came back unverified."""
-    from besser.BUML.metamodel.structural import Class, DomainModel
-    from besser.spec_driven_agent.validation import constructibility
-
-    calls = []
-
-    def fake(output_dir, domain_model=None, auth_scenarios=None):
-        calls.append(auth_scenarios)
-        auth = {"source": "a passing test_api scenario"} if auth_scenarios else {"error": "no login"}
-        return {"issues": [], "backends": [{"backend": "b", "boot": "ok", "auth": auth}]}
-
-    monkeypatch.setattr(constructibility, "collect_constructibility_report", fake)
-    orch = LLMOrchestrator(
-        llm_client=_ScriptedClient(), domain_model=DomainModel(name="M", types={Class(name="A")}),
-        output_dir=str(tmp_path), enable_tracing=False, enable_checkpointing=False,
-        enable_toolchain_validation=False,
-    )
-    revision = orch._workspace_revision()
-    current, older = _login_scenario("/a/"), _login_scenario("/b/")
-    orch._api_scenarios = {
-        "named:older": _passed(older, "older"),
-        "named:ok": _passed(current, revision),
-        "named:failed": _passed(_login_scenario("/x/"), revision, status="failed"),
-        "named:no-login": _passed([{"method": "GET", "path": "/y/"}], revision),
-    }
-    orch._runtime_probe_issues()
-    assert calls == [[{"backend": "b", "requests": current}, {"backend": "b", "requests": older}]]
-    orch._runtime_probe_issues()
-    assert len(calls) == 1  # logged in: the cached result stands
-
-    orch._api_scenarios = {}
-    orch._runtime_probe_cache = None
-    orch._runtime_probe_issues()
-    assert calls[1:] == [[]]
-    # A failed login reruns only for a new scenario that could log in.
-    orch._api_scenarios = {"named:no-login": _passed([{"method": "GET", "path": "/y/"}], revision)}
-    orch._runtime_probe_issues()
-    assert len(calls) == 2
-    orch._api_scenarios["named:ok"] = _passed(current, revision)
-    orch._runtime_probe_issues()
-    assert calls[2:] == [[{"backend": "b", "requests": current}]]
-
-
-def test_an_edit_does_not_cost_the_probe_its_login_or_the_tree_its_fix(tmp_path, monkeypatch):
-    """A login-only app (a seeded user): the probe logs in only through a saved
-    scenario. With current-revision scenarios only, the edit that fixed the last
-    hard blocker dropped the login, 13 creates came back unverified, and the turn
-    budget rollback restored the older tree that still had the blocker."""
-    from besser.BUML.metamodel.structural import Class, DomainModel
-    from besser.spec_driven_agent.validation import constructibility
-
-    hard = "frontend contract: src/App.jsx line 3: form posts to /x/ which no route serves"
-    paths = [f"/e{index}/" for index in range(13)]
-
-    def fake(output_dir, domain_model=None, auth_scenarios=None):
-        verdict = "created" if auth_scenarios else "unauthorized"
-        return {"issues": [] if auth_scenarios else [
-                    f"create unverified: backend: POST {path} - autogenerated input was refused (401: ...)"
-                    for path in paths],
-                "backends": [{"backend": "backend", "boot": "ok", "action_calls": [],
-                              "entities": {path: {"verdict": verdict, "path": path} for path in paths}}]}
-
-    monkeypatch.setattr(constructibility, "collect_constructibility_report", fake)
-    monkeypatch.setattr("besser.spec_driven_agent.pipeline.orchestrator._import_smoke_issues", lambda _d: [])
-    (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "main.py").write_text("x = 1\n", encoding="utf-8")
-    orch = LLMOrchestrator(
-        llm_client=_ScriptedClient(), domain_model=DomainModel(name="M", types={Class(name="A")}),
-        output_dir=str(tmp_path), enable_tracing=False, enable_checkpointing=False,
-        auto_fix_issues=True, max_cost_usd=10.0, max_turns=120,
-    )
-    state = {"rev": 0, "hard": True, "restored": 0}
-    orch._api_scenarios["phase2"] = {
-        "scenario": {"requests": _login_scenario("/e0/")}, "revision": "rev-0",
-        "report": {"boot": "ok", "backend": "backend", "status": "passed", "responses": []}}
-
-    def collect():
-        raw = orch._apply_scenario_evidence(orch._runtime_probe_issues())
-        return [_classify_issue(item) for item in raw + ([hard] if state["hard"] else [])]
-
-    def fix(blockers, first):  # the round's edit fixes the hard blocker; the budget is then spent
-        state["rev"], state["hard"] = state["rev"] + 1, False
-        orch.tool_calls_log.append({"turn": 0, "tool": "modify_file", "input": {}, "success": True})
-        orch.total_turns = orch.max_turns
-        return 1
-
-    def restore():
-        state["restored"] += 1
-        state["rev"], state["hard"] = 0, True
-        return True
-
-    monkeypatch.setattr(orch, "_collect_validation_issues", collect)
-    monkeypatch.setattr(orch, "_invoke_phase3_fix_loop", fix)
-    monkeypatch.setattr(orch, "_create_snapshot", lambda *a, **k: True)
-    monkeypatch.setattr(orch, "_restore_snapshot", lambda *a, **k: restore())
-    monkeypatch.setattr(orch, "_workspace_revision", lambda: f"rev-{state['rev']}")
-    monkeypatch.setattr(orch, "_repair_obligations_revision", lambda: "obl-0")
-    orch._run_phase3_validation()
-    assert state["restored"] == 0
-    assert hard not in [issue.message for issue in orch._validation_issues]

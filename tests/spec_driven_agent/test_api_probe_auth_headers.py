@@ -156,3 +156,103 @@ def test_orchestrator_result_and_trace_never_carry_the_header_value(tmp_path):
     for text in (result["content"], json.dumps(shown), trace, json.dumps(orchestrator.tool_calls_log)):
         assert "literal-secret-token-value" not in text
     assert shown["requests"][0]["headers"] == {"Authorization": "[REDACTED]"}
+
+
+# Tokens the scenario never sends back: an unknown key holding a JWT, and a
+# nested refresh token. The value-only scrub could not learn either of them.
+UNSENT_TOKENS_API = MAIN_API + '''
+
+def _jwt():
+    return "eyJhbGciOiJIUzI1NiJ9." + secrets.token_urlsafe(24) + "." + secrets.token_urlsafe(32)
+
+
+ISSUED = []
+
+
+@app.post("/auth/signup")
+def signup(body: dict):
+    USERS[body["username"]] = body["password"]
+    ISSUED.append(_jwt())
+    return {"id": 1, "username": body["username"], "issued": ISSUED[-1]}
+
+
+@app.post("/auth/session")
+def session(body: dict):
+    token, refresh = _jwt(), secrets.token_urlsafe(24)
+    TOKENS[token] = body["username"]
+    ISSUED.append(token)
+    return {"data": {"session": {"access_token": token, "refresh_token": refresh}}}
+
+
+@app.get("/issued")
+def issued():
+    return ISSUED
+'''
+
+UNSENT_AUTH = {"Authorization": "Bearer {{1.data.session.access_token}}"}
+UNSENT_SCENARIO = [
+    {"method": "POST", "path": "/auth/signup", "json": {"username": "ann", "password": "pw-123456"}},
+    {"method": "POST", "path": "/auth/session", "json": {"username": "ann", "password": "pw-123456"},
+     "expected_fields": {"data.session.refresh_token": "wrong"}},
+    {"method": "POST", "path": "/note/", "json": {"title": "first"}, "headers": UNSENT_AUTH},
+    {"method": "GET", "path": "/note/{{2.id}}/", "headers": UNSENT_AUTH, "expected_fields": {"title": "first"}},
+    {"method": "GET", "path": "/issued", "expected_fields": {"0": "wrong"}},
+]
+
+
+def unsent_backend(tmp_path):
+    (tmp_path / "main_api.py").write_text(UNSENT_TOKENS_API, encoding="utf-8")
+    (tmp_path / "sql_alchemy.py").write_text("", encoding="utf-8")
+    return tmp_path
+
+
+def test_tokens_never_sent_back_are_redacted_and_references_still_authenticate(tmp_path):
+    """Sonnet p6 runs: a register response's JWT, never reused in a header, reached
+    the model and .besser_recipe.json unredacted while the login token was hidden."""
+    report = api_probe.probe_api_scenario(str(unsent_backend(tmp_path)), UNSENT_SCENARIO)
+
+    assert report["boot"] == "ok", report
+    assert [response["status"] for response in report["responses"]] == [200, 200, 200, 200, 200]
+    assert report["responses"][3]["failures"] == []
+    assert api_probe.confirmed_create_paths(report) == {"/note"}
+    assert report["responses"][0]["json"]["issued"] == "[REDACTED]"
+    assert report["responses"][1]["json"]["data"]["session"] == {
+        "access_token": "[REDACTED]", "refresh_token": "[REDACTED]"}
+    # Failure messages quote the actual value: a JWT and a credential field.
+    assert report["responses"][4]["json"] == ["[REDACTED]"] * 2
+    assert report["responses"][4]["failures"] == ["0: expected 'wrong', got '[REDACTED]'"]
+    assert report["responses"][1]["failures"] == [
+        "data.session.refresh_token: expected 'wrong', got '[REDACTED]'"]
+    assert "eyJ" not in json.dumps(report)
+
+
+def test_redaction_keeps_ordinary_fields():
+    shown = api_probe._scrub({"author": "Ann", "max_tokens": 5, "token_type": "bearer", "keywords": "a",
+                              "accessToken": "opaque-value", "user": {"password": "pw"}}, ())
+    assert shown == {"author": "Ann", "max_tokens": 5, "token_type": "bearer", "keywords": "a",
+                     "accessToken": "[REDACTED]", "user": {"password": "[REDACTED]"}}
+
+
+def test_orchestrator_result_and_saved_snapshot_never_carry_unsent_tokens(tmp_path):
+    from besser.BUML.metamodel.structural import Class, DomainModel
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent.providers.llm_client import UsageTracker
+    from besser.spec_driven_agent.state.checkpoint import api_scenario_snapshot
+
+    unsent_backend(tmp_path)
+    client = SimpleNamespace(model="mock-model", usage=UsageTracker("mock-model"))
+    orchestrator = LLMOrchestrator(
+        llm_client=client, domain_model=DomainModel(name="Probe", types={Class(name="Note")}),
+        output_dir=str(tmp_path), enable_checkpointing=False, enable_requirements_ledger=False,
+        enable_toolchain_validation=False)
+    block = SimpleNamespace(id="t1", name="test_api", input={"scenario_id": "unsent", "requests": UNSENT_SCENARIO})
+
+    result = orchestrator._execute_single_tool(block, turn=0)
+    shown = orchestrator._test_api({"action": "get", "scenario_id": "unsent"})
+    saved = api_scenario_snapshot(orchestrator._api_scenarios.values(), include_reports=True)
+
+    report = json.loads(result["content"])
+    assert [response["status"] for response in report["responses"]] == [200, 200, 200, 200, 200], report
+    for text in (result["content"], json.dumps(shown), json.dumps(saved)):
+        assert "eyJ" not in text
+        assert '"refresh_token": "[REDACTED]"' in text

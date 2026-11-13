@@ -135,7 +135,10 @@ method-override headers are refused. Cookies a response sets are kept for the
 rest of the scenario. The values of credential-bearing headers (``Authorization``
 and names containing words such as *key*, *token*, *secret* or *auth*) are
 redacted from the report, from ``action="get"`` and from the trace, as is the
-value wherever the app echoes it.
+value wherever the app echoes it. Response fields named like a credential
+(``access_token``, ``refresh_token``, ``api_key``, ``password``) and any
+JWT-shaped string are redacted too, even when no later request sends them;
+references such as ``{{1.access_token}}`` still receive the real value.
 Named scenarios are retained during the run and replayed after source changes;
 failures block completion. Correcting a mistaken test requires an explicit
 ``correction_reason``. Model-authored scenarios are supplemental checks, not an

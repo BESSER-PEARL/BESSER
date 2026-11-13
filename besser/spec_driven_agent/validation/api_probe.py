@@ -5,8 +5,8 @@ executes generated application code, just like the constructibility probe, in
 the run sandbox with no network; it is not proof of complete specification
 coverage.
 No commands, external URLs or Python expressions are accepted. Request headers
-are limited to an allow-list, and the values of sensitive ones never appear in
-the report.
+are limited to an allow-list, and the values of sensitive ones, credential
+response fields and JWT-shaped strings never appear in the report.
 The child imports no BESSER package and runs this same file as a script, so it
 masks the scenario's own secrets with ``_scrub`` rather than
 ``besser.utilities.secret_redaction``.
@@ -48,6 +48,11 @@ _DENIED_X_HEADERS = frozenset({"x-real-ip", "x-http-method-override", "x-method-
                                "x-original-url", "x-rewrite-url", "x-original-method"})
 _SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "password", "credential")
 _REDACTED = "[REDACTED]"
+# A response field holding a credential (``refresh_token``, ``accessToken``,
+# ``api_key``) and a JWT anywhere, even one never sent back in a header.
+_CREDENTIAL_KEY = re.compile(r"(?:^|[_-]|(?<=[a-z])(?=[A-Z]))"
+                             r"(?i:api[_-]?key|token|jwt|secret|password|passwd|private[_-]?key|access[_-]?key)$")
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
 _SCOPE = "Only the submitted scenario was checked; this is not complete specification verification."
 # ``boot`` values meaning the scenario never ran: the sandbox was unavailable,
 # the worker timed out, or the harness lacks a dependency (httpx). Unknowns,
@@ -119,15 +124,20 @@ def redact_scenario_headers(requests):
             for request in requests]
 
 
+def _credential_field(key, value):
+    return isinstance(key, str) and isinstance(value, str) and bool(value) and bool(_CREDENTIAL_KEY.search(key))
+
+
 def _scrub(value, secrets):
     if isinstance(value, str):
         for secret in secrets:
             value = value.replace(secret, _REDACTED)
-        return value
+        return _JWT.sub(_REDACTED, value)
     if isinstance(value, list):
         return [_scrub(item, secrets) for item in value]
     if isinstance(value, dict):
-        return {key: _scrub(item, secrets) for key, item in value.items()}
+        return {key: _REDACTED if _credential_field(key, item) else _scrub(item, secrets)
+                for key, item in value.items()}
     return value
 
 
@@ -427,8 +437,10 @@ async def _run_requests(app, requests):
                     item["status"] = response.status_code
                     try:
                         body = response.json()
-                        item["json"] = _bounded(body)
-                        item["truncated"] = len(json.dumps(body, ensure_ascii=True)) > _BODY_CHARS
+                        # References read the raw ``body``; the report keeps a redacted copy, cut after redaction.
+                        shown = _scrub(body, ())
+                        item["json"] = _bounded(shown)
+                        item["truncated"] = len(json.dumps(shown, ensure_ascii=True)) > _BODY_CHARS
                     except ValueError:
                         item["text"] = response.text[:_BODY_CHARS]
                         item["truncated"] = len(response.text) > _BODY_CHARS
@@ -440,6 +452,7 @@ async def _run_requests(app, requests):
                         try:
                             actual = _json_path(body, path)
                             if not _same_literal(actual, expected_value):
+                                actual = _REDACTED if _credential_field(path.rsplit(".", 1)[-1], actual) else actual
                                 item["failures"].append(f"{path}: expected {_bounded(expected_value)!r}, got {_bounded(actual)!r}")
                         except ValueError as exc:
                             item["failures"].append(str(exc))

@@ -7,6 +7,8 @@ create and the file making the create named no entity, so every class was
 reported "no frontend create path" although each one was creatable.
 """
 
+import pytest
+
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
 from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix
 
@@ -152,3 +154,36 @@ def test_a_form_that_names_an_entity_in_its_code_is_still_that_entitys(tmp_path)
     matrix = build_acceptance_matrix(root, _model("Message", "Report"))
     assert matrix["Message"]["create"] is True
     assert matrix["Report"]["create"] is False
+
+
+_HTTP = "import axios from 'axios';\nexport const http = axios.create({ baseURL: '/api' });\n"
+
+
+def _reserve_form(imports, target):
+    return (f"{imports}export default function ReserveForm(props) {{\n"
+            f"  return <form onSubmit={{async (e) => {{ e.preventDefault(); await http.post({target}, {{}}); }}}}>"
+            "<button>Reserve</button></form>;\n}\n")
+
+
+@pytest.mark.parametrize("files", [
+    {"api.js": _HTTP + "export const endpoints = { booking: '/booking/', room: '/room/' };\n",
+     "ReserveForm.jsx": _reserve_form("import { http, endpoints } from './api';\n", "endpoints.booking")},
+    {"api.js": _HTTP,
+     "config.js": "export const ENTITIES = { booking: { path: '/booking/' }, room: { path: '/room/' } };\n",
+     "ReserveForm.jsx": _reserve_form("import { http } from './api';\nimport { ENTITIES } from './config';\n",
+                                      "ENTITIES['booking'].path")},
+    {"api.js": _HTTP, "ReserveForm.jsx": _reserve_form("import { http } from './api';\n", "props.urls.bookings")},
+    {"api.js": _HTTP,
+     "ReserveForm.jsx": _reserve_form("import { http } from './api';\n", "props.api?.bookingPath?.()")},
+], ids=["endpoints-member", "config-bracket", "props-member", "optional-call"])
+def test_a_form_naming_its_entity_through_a_property_is_not_generic(tmp_path, files):
+    """Review probe: a booking-only form rendered on RoomPage posted to `endpoints.booking`;
+    blanking every property read took it for a generic form and hid Room's missing create."""
+    room_page = ("import ReserveForm from './ReserveForm';\n"
+                 "export default function RoomPage() { return <div><h1>Rooms</h1><ReserveForm /></div>; }\n")
+    files = {**files, "RoomPage.jsx": room_page}
+    root = _workspace(tmp_path, {f"frontend/src/{rel}": text for rel, text in files.items()})
+    matrix = build_acceptance_matrix(root, _model("Booking", "Room"))
+    assert matrix["Booking"]["create"] is True
+    assert matrix["Room"]["create"] is False
+

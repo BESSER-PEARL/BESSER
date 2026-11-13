@@ -95,10 +95,12 @@ _KEEP_NEWLINES_RE = re.compile(r"[^\n]")
 # A string compared against a value (`key === 'booking'`, `case 'booking':`).
 _COMPARED_STRING_RE = re.compile(
     r"(?:[!=]==?|\bcase)\s*(['\"`])[^'\"`\n]*\1|(['\"`])[^'\"`\n]*\2\s*[!=]==?")
-# A property read (`err.message`, `e?.message`, `row['message']`), not a call.
-_PROPERTY_READ_RE = re.compile(
-    r"(?:\?\.|(?<!\.)\.)\s*[A-Za-z_$][\w$]*(?![\w$])(?!\s*\()"
-    r"|(?<=[\w$)\]])\s*(?:\?\.)?\[\s*(['\"`])[^'\"`\n]*\1\s*\]")
+# An error or response read (`err.message`, `e?.response.data`, `error['message']`), not a call.
+_ERROR_MEMBER = r"(?:message|error|detail|data|status|statusText|response|stack|code|name)"
+_ERROR_READ_RE = re.compile(
+    r"(?<![\w$.])(?:e|err|error|ex|exception|res|resp|response|result)"
+    r"(?:\s*\??\.\s*" + _ERROR_MEMBER + r"(?![\w$])(?!\s*\()"
+    r"|\s*(?:\?\.)?\[\s*(['\"`])" + _ERROR_MEMBER + r"\1\s*\])+")
 
 
 def _blank_literals(text: str) -> str:
@@ -452,7 +454,7 @@ def build_acceptance_matrix(
         rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(_PROPERTY_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(" ", _blank_comments(by_path[rel]))),
+        and not _mentions(_ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(" ", _blank_comments(by_path[rel]))),
                           all_forms)
     }
     # A generic creator may read its entities from a config module it imports

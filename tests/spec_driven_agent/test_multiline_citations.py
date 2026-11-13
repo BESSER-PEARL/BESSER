@@ -302,3 +302,88 @@ def test_an_ellipsis_followed_by_a_comma_cuts_the_quote(tmp_path):
 def test_an_invented_field_after_an_ellipsis_and_comma_is_refused(tmp_path):
     verdict = _check_entity_kt(tmp_path, "data class TodoItemEntity(..., val ownerId: Long)")
     assert verdict["status"] == "unverified"
+
+
+# Live (2026-11-13, claude-sonnet-5-5, wastewater dashboard): the only blockers
+# left were these two correct citations of React code, both rejected.
+MAP_JSX = '''/**
+ * onSelectRegion(regionName) fires on click.
+ */
+export default function MapView({ regionsGeo, onSelectRegion }) {
+  const selectRef = useRef(onSelectRegion);
+  const layer = L.geoJSON(regionsGeo, {
+    onEachFeature: (feature, lyr) => {
+      const name = featureRegion(feature);
+      lyr.on('click', () => name && selectRef.current && selectRef.current(name));
+    },
+  }).addTo(map);
+}
+'''
+DASHBOARD_JSX = '''export default function Dashboard() {
+  return (
+    <div>
+      <MapView regionsGeo={regions} onSelectRegion={setSelected} />
+      <RegionPlot region={selected} />
+      {/* Key metrics */}
+      <section className="kpis">
+        <Kpi label="Treatment plants" value={fmt(summary?.plant_count, 0)} hint={`${fmt(summary?.plants_with_detections, 0)} with data`} />
+        <Kpi label="Viruses tracked" value={fmt(summary?.virus_count, 0)} />
+        <Kpi label="Detections" value={fmt(summary?.detection_count, 0)} hint={summary?.first_sample_date ? `${summary.first_sample_date}` : 'no samples yet'} />
+        <Kpi label="Avg. concentration" value={fmt(summary?.avg_concentration)} />
+        <Kpi
+          label="Peak concentration"
+          value={fmt(summary?.max_concentration)}
+          hint={summary?.peak_detection ? `${summary.peak_detection.virus}` : undefined}
+        />
+        <Kpi label="Latest sample" value={summary?.latest_sample_date || '-'} />
+      </section>
+    </div>
+  );
+}
+'''
+
+
+def _check_jsx(tmp_path, evidence, text="Show the plot of a clicked region", kind="action"):
+    (tmp_path / "frontend" / "src" / "components").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "frontend" / "src" / "pages").mkdir(exist_ok=True)
+    (tmp_path / "frontend" / "src" / "components" / "MapView.jsx").write_text(MAP_JSX, encoding="utf-8")
+    (tmp_path / "frontend" / "src" / "pages" / "Dashboard.jsx").write_text(DASHBOARD_JSX, encoding="utf-8")
+    return verify_evidence([_verdict(evidence, text=text, kind=kind)], str(tmp_path))[0]
+
+
+def test_two_files_after_a_semicolon_with_a_trailing_explanation_verify(tmp_path):
+    evidence = ("frontend/src/components/MapView.jsx: lyr.on('click', () => name && selectRef.current && "
+                "selectRef.current(name)); and frontend/src/pages/Dashboard.jsx: <RegionPlot region={selected} /> "
+                "which calls fetchDetectionsByRegion(region) and renders LineChart with detection data for that region")
+    verdict = _check_jsx(tmp_path, evidence)
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_a_jsx_block_cut_with_an_ellipsis_inside_its_last_line_verifies(tmp_path):
+    evidence = ('frontend/src/pages/Dashboard.jsx: <section className="kpis"> <Kpi label="Treatment plants" '
+                'value={fmt(summary?.plant_count, 0)} hint={`${fmt(summary?.plants_with_detections, 0)} with data`} /> '
+                '<Kpi label="Viruses tracked" value={fmt(summary?.virus_count, 0)} /> <Kpi label="Detections" '
+                'value={fmt(summary?.detection_count, 0)} ... <Kpi label="Avg. concentration" '
+                'value={fmt(summary?.avg_concentration)} /> <Kpi label="Peak concentration" '
+                'value={fmt(summary?.max_concentration)} ... <Kpi label="Latest sample" '
+                "value={summary?.latest_sample_date || '-'} />")
+    verdict = _check_jsx(tmp_path, evidence, text="Display key metrics on the dashboard", kind="ui")
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_jsx_citations_still_refuse_invented_misfiled_and_comment_quotes(tmp_path):
+    for evidence in (
+        # invented code, with and without a trailing explanation
+        "frontend/src/components/MapView.jsx: lyr.on('click', () => openPlot(name)) which shows the plot",
+        "frontend/src/pages/Dashboard.jsx: <RegionPlot region={selected} showChart /> which renders a chart",
+        # a real line cited from the wrong file, after a real part
+        "frontend/src/components/MapView.jsx: const selectRef = useRef(onSelectRegion); and "
+        "frontend/src/components/MapView.jsx: <RegionPlot region={selected} /> which renders the plot",
+        # a comment that only mentions the behaviour
+        "frontend/src/components/MapView.jsx: * onSelectRegion(regionName) fires on click.",
+        # a block whose cut line is not the next source line
+        'frontend/src/pages/Dashboard.jsx: <section className="kpis"> <Kpi label="Detections" value={fmt( ...',
+        # an explanation not set off from the code is still prose
+        "frontend/src/pages/Dashboard.jsx: RegionPlot which renders the detections of the selected region",
+    ):
+        assert _check_jsx(tmp_path, evidence)["status"] == "unverified", evidence

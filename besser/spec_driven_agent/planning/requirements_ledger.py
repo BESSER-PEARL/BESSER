@@ -95,7 +95,10 @@ _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
 # A judge abridges a run of code as "a ... b", lists lines as "a; b", and cites
 # two places as "x.py: a and y.py: b". Each part must still be verbatim source.
 # An ellipsis may carry the comma of the arguments it left out: "f(..., x)".
-_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;\s+|\s+and\s+([\w./\\-]+\.\w{1,5}):\s")
+_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;?\s+and\s+([\w./\\-]+\.\w{1,5}):\s|;\s+")
+# "<Plot region={r} /> which calls ...": an explanation after a closed statement
+# or element runs to the next cited file and is not matched.
+_EXPLANATION_RE = re.compile(r"(?:(?<=[);\]])|(?<=/>))\s+(?:which|that)\s.*?(?=;?\s+and\s+[\w./\\-]+\.\w{1,5}:\s|$)", re.S)
 # A part shorter than this ("pass", "}") identifies no code; it is left out.
 _MIN_PART_QUOTE = 8
 # Evidence longer than this is cut before matching (the judge is asked for one line).
@@ -139,6 +142,7 @@ def _citation_parts(raw: str, path: str) -> list[tuple[str, str, bool]]:
     """
     parts: list[tuple[str, str, bool]] = []
     position = 0
+    raw = _EXPLANATION_RE.sub("", raw)
     for match in _ABRIDGED_RE.finditer(raw):
         quote = _evidence_quote(raw[position:match.start()])
         if len(quote) >= _MIN_PART_QUOTE:
@@ -222,9 +226,9 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False):
             joined += normalised[end]
             span_text = _joined_strings(joined)
             # The quote may stop inside its last line (a signature quoted without
-            # its "-> T:"), never inside an earlier one.
+            # its "-> T:", anywhere when an ellipsis marks the cut), never inside an earlier one.
             if (span_text.startswith(target) and len(target) > len(earlier.rstrip('",'))
-                    and len(span_text) - len(target) <= _MAX_UNQUOTED_TAIL):
+                    and (cut or len(span_text) - len(target) <= _MAX_UNQUOTED_TAIL)):
                 yield start + 1, end + 1
                 break
             # A string piece's closing quote, or a trailing comma, waits for what
@@ -398,7 +402,9 @@ _JUDGE_SYSTEM_PROMPT = (
     "that file, for example: web_app/backend/routers/booking.py: raise "
     "HTTPException(status_code=400, detail=\"at least one room is required\") "
     "- the line that enforces or performs it: a unique=True, a validator, an "
-    "if/raise in a router, the assignment that performs a transition. A "
+    "if/raise in a router, the assignment that performs a transition. To cite "
+    "two files write \"a.py: line and b.jsx: line\"; explanations go in the note, "
+    "never in the evidence. A "
     "column, relationship or field EXISTING is not evidence that a rule "
     "about it is enforced; a comment, docstring or TODO is not an "
     "implementation. A modeled action whose body raises HTTP 501 or "

@@ -139,7 +139,8 @@ value wherever the app echoes it. Response fields named like a credential
 (``access_token``, ``api_key``, ``client_secret``, ``password``,
 ``password_hash``, ``passwordNew``, ``secret_answer``, ``reset_token``; not a
 page cursor such as ``next_page_token`` nor a field whose next word only
-describes one, such as ``password_changed_at`` or ``token_count``), the input a
+describes or identifies one, such as ``password_changed_at``, ``token_count``,
+``api_key_name`` or ``secret_id``), the input a
 validation error echoes for such a field, and any JWT-shaped string are
 redacted too, even when no later request sends them, including inside
 assertion failure messages and in the path, error and failures of a later

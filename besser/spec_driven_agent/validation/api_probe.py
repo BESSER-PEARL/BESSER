@@ -51,13 +51,13 @@ _REDACTED = "[REDACTED]"
 # A response field holding a credential, judged on its snake/kebab/camel words: any secret
 # word (``passwordNew``, ``password_reset_code``), ``token`` that is not a page cursor
 # (``next_page_token``), or api/access/private/secret key or auth code, unless the next word
-# only describes it (``password_changed_at``, ``token_count``).
+# only describes or identifies it (``password_changed_at``, ``token_count``, ``api_key_name``).
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 _SECRET_WORDS = frozenset({"password", "passwd", "passphrase", "secret", "jwt", "apikey", "credential",
                            "credentials", "otp"})
 _DESCRIBING_WORDS = frozenset({"changed", "updated", "created", "at", "hint", "expires", "expiry", "expiration",
                                "length", "policy", "required", "strength", "count", "type", "santa",
-                               "question", "sent"})
+                               "question", "sent", "id", "name", "prefix", "suffix", "last", "label"})
 _CURSOR_WORDS = frozenset({"page", "next", "prev", "previous", "continuation", "cursor", "sync"})
 _SECRET_PAIRS = {"key": frozenset({"api", "access", "private", "secret"}), "code": frozenset({"auth", "authorization"})}
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
@@ -334,8 +334,9 @@ def confirmed_create_paths(report: dict) -> set[str]:
             for inserted in records(created.get("json")):
                 for observed in records(read.get("json")):
                     common = set(inserted) & set(observed) - {"id"}
+                    # Two redacted values are equal whatever they hid, so they prove nothing.
                     if (_same_literal(inserted["id"], observed["id"])
-                            and any(isinstance(inserted[key], (str, int, float, bool))
+                            and any(isinstance(inserted[key], (str, int, float, bool)) and inserted[key] != _REDACTED
                                     and _same_literal(inserted[key], observed[key]) for key in common)):
                         confirmed.add(path)
     return confirmed

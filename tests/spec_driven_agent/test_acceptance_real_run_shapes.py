@@ -310,3 +310,73 @@ def test_a_typescript_client_with_generics_is_still_an_api_client(tmp_path):
             "  listTags();\n  return <ul></ul>;\n}\n"),
     }
     assert _creates(tmp_path, files, "Tag") == {"Tag": False}
+
+
+# One shared page for every entity; the config's row actions carry `method: 'POST'`.
+ACTION_CONFIG_APP = {
+    "frontend/src/api.js": ("export async function request(method, path, body) {\n"
+                            "  const res = await fetch(`${BASE}${path}`, { method, body: JSON.stringify(body) });\n"
+                            "  return res.json();\n}\n"
+                            "export const api = {\n  get: (path) => request('GET', path),\n"
+                            "  post: (path, body) => request('POST', path, body),\n"
+                            "  put: (path, body) => request('PUT', path, body),\n};\n"),
+    "frontend/src/entities.js": (
+        "export const entities = [\n"
+        "  { key: 'appuser', label: 'App Users', path: '/appuser/', labelOf: (r) => r.username,\n"
+        "    fields: [{ name: 'username', type: 'text' }] },\n"
+        "  { key: 'socialaccount', label: 'Social Accounts', path: '/socialaccount/',\n"
+        "    fields: [{ name: 'owner', type: 'ref', ref: 'appuser' }],\n"
+        "    actions: [\n"
+        "      { label: 'Assess risk', method: 'POST', path: (r) => `/socialaccount/${r.id}/assess/` },\n"
+        "    ] },\n"
+        "  { key: 'report', label: 'Reports', path: '/report/', fields: [{ name: 'reason', type: 'text' }] },\n"
+        "  { key: 'message', label: 'Messages', path: '/message/', fields: [{ name: 'content', type: 'text' }] },\n"
+        "]\n"
+        "export const entityByKey = Object.fromEntries(entities.map((e) => [e.key, e]))\n"
+        "export function refLabel(refKey, row) { return entityByKey[refKey].labelOf(row) }\n"),
+    "frontend/src/pages/EntityPage.jsx": (
+        "import { api } from '../api'\nimport { entityByKey, refLabel } from '../entities'\n"
+        "function EntityView({ entity }) {\n"
+        "  async function submit() {\n"
+        "    try {\n"
+        "      if (form.id === null) await api.post(entity.path, payload)\n"
+        "      else await api.put(`${entity.path}${form.id}/`, payload)\n"
+        "    } catch (err) { setFormError(err.message) }\n  }\n"
+        "  async function runAction(action, row) {\n"
+        "    const data = action.method === 'GET' ? await api.get(action.path(row)) : await api.post(action.path(row))\n"
+        "  }\n"
+        "  return <td>{refLabel(col.ref, row)}</td>\n}\n"
+        "export default function EntityPage() {\n"
+        "  const entity = entityByKey[key]\n  return <EntityView entity={entity} />\n}\n"),
+    "frontend/src/pages/Warnings.jsx": ("import { api } from '../api'\n"
+                                        "export default function Warnings() {\n"
+                                        "  api.get('/recommendation/active/')\n"
+                                        "  return <li>{it.message}</li>\n}\n"),
+    "frontend/src/App.jsx": ("import { entities } from './entities'\n"
+                             "import EntityPage from './pages/EntityPage.jsx'\n"
+                             "import Warnings from './pages/Warnings.jsx'\n"
+                             "export default function App() {\n"
+                             "  return <>{entities.map((e) => <a key={e.key}>{e.label}</a>)}"
+                             "<EntityPage /><Warnings /></>\n}\n"),
+}
+ACTION_CONFIG_CLASSES = ("AppUser", "SocialAccount", "Report", "Message")
+
+
+def test_a_shared_page_whose_config_holds_post_actions_creates_every_configured_entity(tmp_path):
+    """Sonnet 5.5 risk-awareness app: the config's row actions (`method: 'POST'`)
+    made it read as a client, and 8 of 9 entities were flagged with no create path."""
+    assert _creates(tmp_path, ACTION_CONFIG_APP, *ACTION_CONFIG_CLASSES) == dict.fromkeys(ACTION_CONFIG_CLASSES, True)
+
+
+def test_a_shared_page_with_post_actions_still_needs_its_creates(tmp_path):
+    files = dict(ACTION_CONFIG_APP)
+    files["frontend/src/pages/EntityPage.jsx"] = files["frontend/src/pages/EntityPage.jsx"].replace(
+        "await api.post(entity.path, payload)", "await api.put(entity.path, payload)").replace(
+        "await api.post(action.path(row))", "await api.put(action.path(row))")
+    assert _creates(tmp_path, files, *ACTION_CONFIG_CLASSES) == dict.fromkeys(ACTION_CONFIG_CLASSES, False)
+
+    files = dict(ACTION_CONFIG_APP)
+    files["frontend/src/entities.js"] = files["frontend/src/entities.js"].replace(
+        "  { key: 'report', label: 'Reports', path: '/report/', fields: [{ name: 'reason', type: 'text' }] },\n", "")
+    assert _creates(tmp_path, files, *ACTION_CONFIG_CLASSES) == {
+        "AppUser": True, "SocialAccount": True, "Report": False, "Message": True}

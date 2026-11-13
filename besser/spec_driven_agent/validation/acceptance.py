@@ -459,11 +459,15 @@ def build_acceptance_matrix(
     }
     # A generic creator may read its entities from a config module it imports
     # (`entities.js`); that module, not the creator's own code, declares them.
+    # An entry's nested `actions: [{ method: 'POST' }]` is data and is blanked
+    # with the other nested lists; a POST left over makes the module a client.
     config_text = {
-        rel: " ".join(_config_declarations(by_path[target]) for target in (
-            next((c for c in _resolve_import(rel, spec) if c in by_path), None)
-            for _, spec in _import_bindings(by_path[rel]))
-            if target and not _POST_RE.search(by_path[target]) and not re.search(r"\bfetch\s*\(", by_path[target]))
+        rel: " ".join(text for text in (
+            _config_declarations(by_path[target]) for target in (
+                next((c for c in _resolve_import(rel, spec) if c in by_path), None)
+                for _, spec in _import_bindings(by_path[rel]))
+            if target and not re.search(r"\bfetch\s*\(", by_path[target]))
+            if not _POST_RE.search(text))
         for rel in generic_creators
     }
     # A configured creator is credited through its config alone: the page that

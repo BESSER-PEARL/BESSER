@@ -627,15 +627,63 @@ def login(data: Credentials):
     return {"access_token": token, "token_type": "bearer"}
 '''
 
+# Creates need a privileged account; ``{privileged}`` decides who registers as one.
+_PRIVILEGE_AUTH_MODULE = '''
+import secrets
+from typing import Literal
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+_users: dict = {"chief": {"password": "seeded-chief-pw", "privileged": True}}
+_tokens: dict = {}
+bearer = HTTPBearer(auto_error=False)
+router = APIRouter(prefix="/auth")
+
+
+class Register(BaseModel):
+    username: str
+    password: str
+{extra_field}
+
+class Login(BaseModel):
+    username: str
+    password: str
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    if credentials is None or credentials.credentials not in _tokens:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not _users[_tokens[credentials.credentials]]["privileged"]:
+        raise HTTPException(status_code=403, detail="Managers only")
+    return credentials.credentials
+
+
+@router.post("/register", status_code=201)
+def register(data: Register):
+    _users[data.username] = {"password": data.password, "privileged": {privileged}}
+    return {"username": data.username}
+
+
+@router.post("/login")
+def login(data: Login):
+    if _users.get(data.username, {}).get("password") != data.password:
+        raise HTTPException(status_code=401, detail="bad credentials")
+    token = secrets.token_urlsafe(16)
+    _tokens[token] = data.username
+    return {"access_token": token, "token_type": "bearer"}
+'''
+
 
 def _auth_scaffold(tmp_path, *, extra_field: str = "", protect: bool = True,
-                   register: str = "/register", login: str = "/login") -> str:
+                   register: str = "/register", login: str = "/login",
+                   module: str = _AUTH_MODULE, privileged: str = "True") -> str:
     """The Room/Booking scaffold plus a register/login router; with ``protect``
     every entity router needs the bearer token login returns."""
     workspace = _scaffold(tmp_path)
     backend = tmp_path / "web_app" / "backend"
     (backend / "auth.py").write_text(
-        _AUTH_MODULE.replace("{extra_field}", extra_field)
+        module.replace("{extra_field}", extra_field).replace("{privileged}", privileged)
         .replace('"/register"', f'"{register}"').replace('"/login"', f'"{login}"'), encoding="utf-8")
     main = backend / "main_api.py"
     text = main.read_text(encoding="utf-8")
@@ -672,6 +720,128 @@ def test_a_register_route_that_asks_for_a_role_is_not_guessed(tmp_path):
     assert "the probe could not log in" in refused and "`role`" in refused
 
 
+@pytest.mark.parametrize("field, privileged, reason", [
+    ("    is_manager: bool\n", "data.is_manager", "`is_manager` (a privilege-named field)"),
+    ("    approved: bool\n", "data.approved", "`approved` (a boolean value)"),
+    ('    account_type: Literal["organizer", "attendee"]\n', 'data.account_type == "organizer"',
+     "`account_type` (one of fixed values)"),
+])
+def test_a_register_route_that_makes_the_account_choose_its_kind_is_not_used(tmp_path, field, privileged, reason):
+    """A required flag or enum was filled by ``_sample`` (True, the first literal), so
+    the probe registered itself a manager or organizer and reported every create verified."""
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE, privileged=privileged))
+    auth = report["backends"][0]["auth"]
+    assert "source" not in auth and reason in auth["error"], auth
+    assert len(report["issues"]) == 2, report["issues"]
+
+
+def test_a_register_route_with_free_text_fields_is_used(tmp_path):
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field="    full_name: str\n    phone: str\n", module=_PRIVILEGE_AUTH_MODULE))
+    assert report["issues"] == [], report["issues"]
+    auth = report["backends"][0]["auth"]
+    assert auth["source"] == "its register/login routes"
+    assert auth["identity"] == "a new account the probe registered"
+
+
+@pytest.mark.parametrize("field, privileged, sends", [
+    ('    role: Literal["manager", "member"]\n', 'data.role == "manager"', {"role": "manager"}),
+    # Neither the key nor the value names a privilege: the route's enum schema does.
+    ('    account_type: Literal["organizer", "attendee"]\n', 'data.account_type == "organizer"',
+     {"account_type": "organizer"}),
+])
+def test_a_scenario_whose_login_takes_a_privilege_is_not_replayed(tmp_path, field, privileged, sends):
+    """The route check refused the field, and the fallback replayed a passing
+    scenario that registered with that very privilege."""
+    workspace = _auth_scaffold(tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE, privileged=privileged)
+    scenario = [
+        {"method": "POST", "path": "/auth/register",
+         "json": {"username": "boss", "password": "pw-123456", **sends}, "expected_status": 201},
+        {"method": "POST", "path": "/auth/login", "json": {"username": "boss", "password": "pw-123456"}},
+        {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{1.access_token}}"}},
+    ]
+    report = collect_constructibility_report(
+        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
+    auth = report["backends"][0]["auth"]
+    assert "source" not in auth and "refused to replay a scenario's login" in auth["error"], auth
+    assert len(report["issues"]) == 2, report["issues"]
+
+
+def test_a_403_to_the_probes_own_account_ends_the_login(tmp_path):
+    """Open registration gives ordinary accounts and only the seeded `chief` may
+    create. The probe's own account got 403, then a scenario logging in as
+    `chief` made every create verified with no finding."""
+    workspace = _auth_scaffold(tmp_path, module=_PRIVILEGE_AUTH_MODULE, privileged="False")
+    scenario = [
+        {"method": "POST", "path": "/auth/login", "json": {"username": "chief", "password": "seeded-chief-pw"}},
+        {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{0.access_token}}"}},
+    ]
+    report = collect_constructibility_report(
+        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
+    auth = report["backends"][0]["auth"]
+    assert "source" not in auth and "a passing test_api scenario" not in auth["error"], auth
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "refused 403, so the route needs a privilege the probe will not take" in refused
+
+
+def test_a_templated_register_route_is_not_the_account_register(tmp_path):
+    """A room sign-up route ``/room/{room_id}/register`` was taken for the account
+    register; its 422 ended discovery before the working /auth/register."""
+    workspace = _auth_scaffold(tmp_path)
+    main = tmp_path / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8").replace(
+        "\napp.include_router(_auth.router)\n",
+        "\n@app.post('/room/{room_id}/register')\ndef room_signup(room_id: int, seat: int):\n"
+        "    return {'ok': room_id}\n\napp.include_router(_auth.router)\n"), encoding="utf-8")
+    report = collect_constructibility_report(workspace)
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["source"] == "its register/login routes"
+
+
+def test_a_failed_registration_still_tries_the_login_route(tmp_path):
+    workspace = _auth_scaffold(tmp_path)
+    auth_module = tmp_path / "web_app" / "backend" / "auth.py"
+    auth_module.write_text(auth_module.read_text(encoding="utf-8")
+                           .replace("    _users[data.username] = data.password\n",
+                                    "    raise HTTPException(status_code=403, detail='registration is closed')\n")
+                           .replace("if _users.get(data.username) != data.password:", "if not data.password:"),
+                           encoding="utf-8")
+    report = collect_constructibility_report(workspace)
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["identity"] == "the probe's own credentials, without registering"
+
+
+def test_only_credential_headers_are_kept_from_a_scenario_login(tmp_path):
+    """Every header of the scenario's request was copied onto every later probe
+    request, so one Idempotency-Key was replayed on each create."""
+    workspace = _auth_scaffold(tmp_path, register="/accounts", login="/sessions")
+    main = tmp_path / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8") + (
+        "\n\nfrom fastapi.responses import JSONResponse\n_seen_keys: set = set()\n\n"
+        "@app.middleware('http')\n"
+        "async def _idempotency(request, call_next):\n"
+        "    key = request.headers.get('idempotency-key')\n"
+        "    if key and request.method == 'POST':\n"
+        "        if key in _seen_keys:\n"
+        "            return JSONResponse({'detail': 'idempotency key reused'}, status_code=422)\n"
+        "        _seen_keys.add(key)\n"
+        "    return await call_next(request)\n"
+    ), encoding="utf-8")
+    credentials = {"username": "ana", "password": "long-enough-1"}
+    scenario = [
+        {"method": "POST", "path": "/auth/accounts", "json": credentials, "expected_status": 201},
+        {"method": "POST", "path": "/auth/sessions", "json": credentials},
+        {"method": "POST", "path": "/room/", "json": {"roomNumber": 1, "status": "AVAILABLE"},
+         "headers": {"Authorization": "Bearer {{1.access_token}}", "Idempotency-Key": "k-1",
+                     "Content-Type": "application/json"}},
+    ]
+    report = collect_constructibility_report(
+        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["credential"] == ["Authorization"]
+
+
 def test_a_passing_scenario_supplies_the_login_the_routes_do_not_name(tmp_path):
     workspace = _auth_scaffold(tmp_path, register="/accounts", login="/sessions")
     blind = collect_constructibility_report(workspace)
@@ -687,6 +857,8 @@ def test_a_passing_scenario_supplies_the_login_the_routes_do_not_name(tmp_path):
         workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
     assert report["issues"] == [], report["issues"]
     assert report["backends"][0]["auth"]["source"] == "a passing test_api scenario"
+    assert report["backends"][0]["auth"]["identity"] == (
+        "the account a passing scenario logs in with (POST /auth/accounts, POST /auth/sessions)")
     # A scenario recorded against another backend is not replayed here.
     other = collect_constructibility_report(
         workspace, auth_scenarios=[{"backend": "elsewhere/backend", "requests": scenario}])

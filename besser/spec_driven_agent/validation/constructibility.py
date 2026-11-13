@@ -1234,19 +1234,21 @@ async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasse
 _REGISTER_PATH = re.compile(r"/(register|signup|sign-up|sign_up)/?$", re.I)
 _LOGIN_PATH = re.compile(r"/(login|signin|sign-in|sign_in|token)/?$", re.I)
 _TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
-# A required field or literal naming one of these is refused, never guessed.
-_PRIVILEGE_WORDS = ("role", "admin", "superuser", "staff", "permission", "scope", "privilege", "group")
+_PRIVILEGE_WORDS = ("role", "admin", "superuser", "staff", "permission", "scope", "privilege", "group",
+                    "manager", "owner", "moderator")
+# Only headers that carry a credential are kept from a scenario's login.
+_CREDENTIAL_HEADER = re.compile(r"^(authorization|cookie|x-[\w-]*(api-?key|token|auth|session|csrf)[\w-]*)$", re.I)
 _PROBE_USERNAME = "probe_auth_user"
 _PROBE_EMAIL = "probe.auth.user@example.com"
 _PROBE_PASSWORD = "Probe-Passw0rd-2817"
 
 
 def _auth_routes(spec: dict) -> dict:
-    """Unsecured POST register/login routes; an OAuth2 ``tokenUrl`` wins for login."""
+    """Unsecured, untemplated POST register/login routes; an OAuth2 ``tokenUrl`` wins for login."""
     found: dict = {}
     for path, ops in spec.get("paths", {}).items():
         op = ops.get("post")
-        if not op or op.get("security"):
+        if not op or op.get("security") or "{" in path:
             continue
         if _REGISTER_PATH.search(path):
             found.setdefault("register", (path, op))
@@ -1260,8 +1262,8 @@ def _auth_routes(spec: dict) -> dict:
     return found
 
 
-def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
-    """``(httpx body keyword, body)`` for a register/login route, or ``(None, why)``."""
+def _body_schema(op: dict, schemas: dict) -> tuple[str | None, dict]:
+    """``(httpx body keyword, resolved body schema)``, or ``(None, {})`` without a JSON or form body."""
     content = (op.get("requestBody") or {}).get("content") or {}
     if "application/json" in content:
         kind, media = "json", content["application/json"]
@@ -1269,21 +1271,44 @@ def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
         kind = "data"
         media = content.get("application/x-www-form-urlencoded") or content["multipart/form-data"]
     else:
+        return None, {}
+    return kind, _resolve(media.get("schema") or {}, schemas)
+
+
+def _choice(field: str, schema: dict) -> str | None:
+    """Why a value for ``field`` would choose what kind of account the probe gets, or None.
+
+    Only plain text or numbers under a name that is no privilege are free input; a
+    boolean, an enum/Literal, an object/array or a privilege-named field is a choice.
+    """
+    if any(word in field.lower() for word in _PRIVILEGE_WORDS):
+        return "a privilege-named field"
+    if "enum" in schema or "const" in schema:
+        return "one of fixed values"
+    if schema.get("type") not in ("string", "integer", "number"):
+        return f"a {schema.get('type') or 'untyped'} value"
+    return None
+
+
+def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
+    """``(httpx body keyword, body)`` for a register/login route, or ``(None, why)``."""
+    kind, schema = _body_schema(op, schemas)
+    if kind is None:
         return None, "no JSON or form request body"
-    schema = _resolve(media.get("schema") or {}, schemas)
     body: dict = {}
     for field, raw in schema.get("properties", {}).items():
         resolved, low = _resolve(raw, schemas), field.lower()
-        if "password" in low:
+        choice = _choice(field, resolved)
+        if choice:
+            if field in schema.get("required", []):
+                return None, f"it requires `{field}` ({choice}), a choice the probe does not make for its account"
+        elif "password" in low:
             body[field] = _PROBE_PASSWORD
         elif "email" in low or resolved.get("format") == "email":
             body[field] = _PROBE_EMAIL
         elif low in ("username", "user_name", "login", "name"):
             body[field] = _PROBE_USERNAME
         elif field in schema.get("required", []):
-            words = [low, *(str(literal).lower() for literal in resolved.get("enum", []))]
-            if any(word in text for word in _PRIVILEGE_WORDS for text in words):
-                return None, f"it requires `{field}`, a privilege the probe does not choose for itself"
             body[field] = _sample(field, resolved, 1, entity="probeauth")
     return kind, body
 
@@ -1297,30 +1322,38 @@ def _find_token(body) -> str | None:
     return None
 
 
-async def _discovered_login(client, spec: dict, schemas: dict) -> tuple[dict | None, str]:
-    """Register (when offered) and log in a probe account; ``(headers, error)``.
+async def _discovered_login(client, spec: dict, schemas: dict) -> tuple[dict | None, str, str]:
+    """Register (when offered) and log in a probe account; ``(headers, error, identity)``.
 
-    Empty headers mean a session cookie, which the client's jar carries.
+    Empty headers mean a session cookie, which the client's jar carries. A
+    failed registration still tries the login route.
     """
     routes = _auth_routes(spec)
     if not routes:
-        return None, "the OpenAPI document lists no unsecured register or login route"
-    token = None
+        return None, "the OpenAPI document lists no unsecured register or login route", ""
+    token, errors, done = None, [], set()
     for step in ("register", "login"):
         if step not in routes:
             continue
         path, op = routes[step]
         kind, body = _credential_body(op, schemas)
         if kind is None:
-            return None, f"POST {path}: {body}"
+            errors.append(f"POST {path}: {body}")
+            continue
         response = await client.post(path, **{kind: body})
         if not 200 <= response.status_code < 300:
-            return None, f"POST {path} answered {response.status_code}: {response.text[:120]}"
+            errors.append(f"POST {path} answered {response.status_code}: {response.text[:120]}")
+            continue
+        done.add(step)
         try:
             token = _find_token(response.json()) or token
         except ValueError:
             pass
-    return ({"Authorization": f"Bearer {token}"} if token else {}), ""
+    if ("login" if "login" in routes else "register") not in done:
+        return None, "; ".join(errors), ""
+    identity = ("a new account the probe registered" if "register" in done
+                else "the probe's own credentials, without registering")
+    return ({"Authorization": f"Bearer {token}"} if token else {}), "", identity
 
 
 def _api_probe_module():
@@ -1334,20 +1367,61 @@ def _api_probe_module():
     return module
 
 
-async def _scenario_login(client, scenarios: list) -> tuple[dict | None, str]:
-    """Replay a passing scenario up to its first request whose headers
-    reference an earlier response, and return those headers resolved."""
+def _login_request_index(requests: list, reference) -> int | None:
+    """Index of the first request whose credential header is taken from an earlier response."""
+    return next((index for index, request in enumerate(requests) if index and isinstance(request, dict)
+                 and any(_CREDENTIAL_HEADER.match(str(name)) and isinstance(value, str) and reference.search(value)
+                         for name, value in (request.get("headers") or {}).items())), None)
+
+
+def _privilege_in_steps(requests: list, spec: dict, schemas: dict) -> str | None:
+    """Why replaying these login steps would take a privilege, or None: the
+    rule for the probe's own account, applied to the values the scenario sends."""
+    for request in requests:
+        path = str(request.get("path", "")).split("?")[0]
+        step = f"{request.get('method')} {path}"
+        fields: dict = {}
+        for template, ops in spec.get("paths", {}).items():
+            if re.fullmatch(re.sub(r"\\\{[^/]*?\\\}", "[^/]+", re.escape(template)), path):
+                op = ops.get(str(request.get("method", "")).lower()) or {}
+                fields = _body_schema(op, schemas)[1].get("properties", {})
+        body = request.get("json")
+        pending = [(str(key), value, fields.get(key)) for key, value in body.items()] \
+            if isinstance(body, dict) else [("", body, None)]
+        while pending:
+            key, value, raw = pending.pop()
+            low = key.lower()
+            choice = _choice(key, _resolve(raw, schemas)) if raw is not None else (
+                "a privilege-named field" if any(word in low for word in _PRIVILEGE_WORDS) else None)
+            if choice:
+                return f"{step} sends `{key}`, {choice}"
+            if isinstance(value, bool):
+                return f"{step} sends the boolean `{key}`"
+            if isinstance(value, str) and "password" not in low and any(w in value.lower() for w in _PRIVILEGE_WORDS):
+                return f"{step} sends `{key}` = {value!r}, a privileged account name"
+            if isinstance(value, dict):
+                pending += [(str(k), v, None) for k, v in value.items()]
+            elif isinstance(value, list):
+                pending += [(key, v, None) for v in value]
+    return None
+
+
+async def _scenario_login(client, scenarios: list, spec: dict, schemas: dict) -> tuple[dict | None, str, str]:
+    """Replay a passing scenario up to its first request that sends a credential
+    taken from an earlier response; return those credential headers resolved."""
     api_probe = _api_probe_module()
     resolve = api_probe._resolve_references
     error = "no passing test_api scenario sends a credential taken from an earlier response"
     for requests in scenarios:
-        first = next((index for index, request in enumerate(requests)
-                      if any(isinstance(value, str) and api_probe._REFERENCE.search(value)
-                             for value in (request.get("headers") or {}).values())), None)
-        if not first:
+        first = _login_request_index(requests, api_probe._REFERENCE)
+        if first is None:
             continue
         previous: list = []
         try:
+            refused = _privilege_in_steps(requests[:first], spec, schemas)
+            if refused:
+                error = f"refused to replay a scenario's login: {refused}"
+                continue
             for request in requests[:first]:
                 kwargs: dict = {}
                 if "json" in request:
@@ -1361,11 +1435,13 @@ async def _scenario_login(client, scenarios: list) -> tuple[dict | None, str]:
                     previous.append(response.json())
                 except ValueError:
                     previous.append(api_probe._NO_JSON)
+            steps = ", ".join(f"{request['method']} {request['path']}" for request in requests[:first])
             return {name: resolve(value, previous, in_header=True)
-                    for name, value in requests[first]["headers"].items()}, ""
+                    for name, value in requests[first]["headers"].items() if _CREDENTIAL_HEADER.match(name)
+                    }, "", f"the account a passing scenario logs in with ({steps})"
         except Exception as exc:
             error = f"replaying a scenario's login failed: {type(exc).__name__}: {exc}"[:160]
-    return None, error
+    return None, error, ""
 
 
 def _load_auth_scenarios() -> list:
@@ -1389,23 +1465,31 @@ async def _log_in(client, spec: dict, schemas: dict, retry) -> tuple[dict, tuple
     sources = [("its register/login routes", lambda: _discovered_login(client, spec, schemas))]
     scenarios = _load_auth_scenarios()
     if scenarios:
-        sources.append(("a passing test_api scenario", lambda: _scenario_login(client, scenarios)))
+        sources.append(("a passing test_api scenario", lambda: _scenario_login(client, scenarios, spec, schemas)))
     errors = []
     for label, attempt in sources:
+        refused = False
         try:
-            headers, error = await attempt()
+            headers, error, identity = await attempt()
             if headers is not None:
                 client.headers.update(headers)
                 retried = await retry()
                 if retried[1] not in (401, 403):
-                    return {"source": label, "credential": sorted(headers) or "session cookie"}, retried
-                error = f"the refused request still answered {retried[1]} after logging in"
+                    return {"source": label, "identity": identity,
+                            "credential": sorted(headers) or "session cookie"}, retried
+                # 403 to a request that carried the account's credential is the answer:
+                # the route needs a privilege.
+                refused = retried[1] == 403 and bool(headers or len(client.cookies))
                 for name in headers:
                     client.headers.pop(name, None)
+                error = (f"{identity} was refused 403, so the route needs a privilege the probe will not take"
+                         if refused else f"the refused request still answered {retried[1]} after logging in")
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"[:160]
         client.cookies.clear()
         errors.append(f"{label}: {error}")
+        if refused:
+            break
     return {"error": "; ".join(errors)[:400]}, None
 
 

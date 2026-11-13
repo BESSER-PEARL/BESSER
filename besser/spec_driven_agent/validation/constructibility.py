@@ -1223,13 +1223,17 @@ _TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
 _PRIVILEGE_WORDS = frozenset({"role", "admin", "administrator", "superuser", "staff", "permission", "scope",
                               "privilege", "manager", "owner", "moderator", "accounttype", "usertype"})
 # A required box every visitor must tick to register (terms, consent, age) grants nothing,
-# so the probe ticks one naming at least one consent noun (or "over <number>") with every other
-# word a filler or a number; any other boolean is a choice.
-_CONSENT_NOUNS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "newsletter", "marketing",
-                            "remember", "adult", "age", "policy", "conditions"})
+# so the probe ticks one naming at least one consent noun (or an age: "over 18", "18 or older") with
+# every other word a filler, a number or a qualifier that follows a document noun ("privacy policy",
+# "terms of use"); any other boolean is a choice.
+_CONSENT_DOCUMENTS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "cookie", "cookies", "legal"})
+_CONSENT_NOUNS = _CONSENT_DOCUMENTS | {"newsletter", "marketing", "remember", "adult", "age"}
+_CONSENT_QUALIFIERS = frozenset({"policy", "conditions", "service", "use"})
 _CONSENT_FILLERS = frozenset({"is", "has", "i", "accept", "accepted", "accepts", "agree", "agreed", "agrees", "to",
                               "the", "of", "and", "opt", "in", "confirm", "confirmed", "me", "over", "read",
-                              "given", "use", "service", "signup"})
+                              "given", "signup", "user", "data", "processing", "acknowledge", "acknowledged",
+                              "agreement", "confirmation", "have", "or", "older"})
+_AGE_RE = re.compile(r"\bover \d+\b|\b\d+ or older\b")
 # A required number naming a rank picks the account's standing, like a reference to another record.
 _RANK_WORDS = frozenset({"level", "tier", "rank", "grade", "clearance", "plan"})
 _PROBE_USERNAME = "probe_auth_user"
@@ -1276,10 +1280,14 @@ def _name_tokens(field: str) -> list[str]:
 
 def _is_consent(tokens: list[str]) -> bool:
     """Whether a boolean's name words state consent, an age or "remember me" and nothing else."""
-    if not all(t in _CONSENT_NOUNS or t in _CONSENT_FILLERS or t.isdigit() for t in tokens):
+    def qualifies(k: int) -> bool:  # follows a document noun, directly or across "of"/"and"
+        before = tokens[k - 2] if k > 1 and tokens[k - 1] in ("of", "and") else tokens[k - 1] if k else ""
+        return before in _CONSENT_DOCUMENTS
+
+    if not all(t in _CONSENT_NOUNS or t in _CONSENT_FILLERS or t.isdigit()
+               or t in _CONSENT_QUALIFIERS and qualifies(k) for k, t in enumerate(tokens)):
         return False
-    return any(t in _CONSENT_NOUNS for t in tokens) or any(
-        a == "over" and b.isdigit() for a, b in zip(tokens, tokens[1:]))
+    return any(t in _CONSENT_NOUNS for t in tokens) or bool(_AGE_RE.search(" ".join(tokens)))
 
 
 def _choice(field: str, schema: dict) -> str | None:

@@ -827,10 +827,17 @@ def test_only_boxes_named_for_consent_and_plain_numbers_are_filled(field, schema
     ("is_verified", False), ("email_verified", False), ("is_marketing_team", False),
     ("newsletter_editor", False), ("privacy_officer", False), ("adult_content_creator", False),
     ("bypass_age_check", False), ("is_manager", False), ("approved", False),
+    # policy/conditions/service/use qualify a document noun before them; alone they name no consent.
+    ("has_policy", False), ("has_conditions", False), ("policy", False), ("conditions", False),
+    ("use_privacy", False), ("service_policy", False), ("agreedToTermsOfUse", True),
+    ("userConsent", True), ("cookieConsent", True), ("dataProcessingConsent", True), ("acknowledgeTerms", True),
+    ("iHaveReadTheTerms", True), ("ageConfirmation", True), ("privacyPolicyAgreement", True),
+    ("termsAgreement", True), ("is18OrOlder", True), ("legalAccepted", True),
 ])
 def test_a_consent_box_needs_a_consent_noun_and_only_filler_words(field, ticked):
-    """Review probe: ``termsAndConditions`` and ``consent_given`` refused registration (so no
-    login), while ``is_confirmed``, made only of filler words, was ticked."""
+    """Review probes: ``termsAndConditions`` and ``consent_given`` refused registration (so no
+    login), while ``is_confirmed``, made only of filler words, was ticked; later ``has_policy``
+    and ``service_policy`` were ticked and ``userConsent`` and ``is18OrOlder`` refused."""
     assert (_choice(field, _BOOLEAN) is None) is ticked
 
 

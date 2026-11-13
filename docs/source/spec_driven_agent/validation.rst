@@ -201,13 +201,20 @@ unsecured register/login routes (OpenAPI paths such as ``/register``,
 password, plus any other required field that is plain text or a number (a
 name, a phone number, an age, a study group; a date of birth gets a past
 date), and ticks a required consent box: a boolean whose name contains at
-least one of the words terms, tos, eula, consent, privacy, gdpr, newsletter,
-marketing, remember, adult, age, policy or conditions (or "over" and a
-number), and whose other words are only numbers and the words is, has, i,
-accept(ed/s), agree(d/s), to, the, of, and, opt, in, confirm(ed), me, over,
-read, given, use, service, signup (``terms_accepted``,
-``termsAndConditions``, ``consent_given``, ``over_18``; not ``is_confirmed``,
-``privacy_officer`` or ``bypass_age_check``). It does not use a route that
+least one of the words terms, tos, eula, consent, privacy, gdpr, cookie(s),
+legal, newsletter, marketing, remember, adult or age (or an age: "over" and
+a number, or a number and "or older"), and whose other words are only
+numbers, the words is, has, i, accept(ed/s), agree(d/s), to, the, of, and,
+opt, in, confirm(ed), me, over, read, given, signup, user, data, processing,
+acknowledge(d), agreement, confirmation, have, or, older, and the words
+policy, conditions, service or use right after terms, tos, eula, consent,
+privacy, gdpr, cookie(s) or legal (or after "of"/"and" following one)
+(``terms_accepted``, ``termsAndConditions``, ``terms_of_service``,
+``privacyPolicyAgreement``, ``consent_given``, ``over_18``,
+``is18OrOlder``; not ``is_confirmed``, ``has_policy``, ``use_privacy``,
+``privacy_officer`` or ``bypass_age_check``). A staff flag named by a
+consent word alone, such as ``is_marketing`` or ``newsletter``, is ticked
+too. It does not use a route that
 requires any other boolean, an enum/``Literal``, an object or array, a number
 that references another record or names a rank (a name ending in ``_id`` or
 ``Id``, or with the word level, tier, rank, grade, clearance or plan, such as

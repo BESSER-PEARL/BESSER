@@ -92,6 +92,9 @@ _BLANKABLE_RE = re.compile(
     r"//[^\n]*|/\*[\s\S]*?\*/"
     r"|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`")
 _KEEP_NEWLINES_RE = re.compile(r"[^\n]")
+# A string compared against a value (`key === 'booking'`, `case 'booking':`).
+_COMPARED_STRING_RE = re.compile(
+    r"(?:[!=]==?|\bcase)\s*(['\"`])[^'\"`\n]*\1|(['\"`])[^'\"`\n]*\2\s*[!=]==?")
 
 
 def _blank_literals(text: str) -> str:
@@ -398,13 +401,14 @@ def build_acceptance_matrix(
     # renders one as JSX creates that entity through it; importing the api
     # client is not rendering a page. ``LoanList`` with a variable-argument
     # create is not generic: crediting it to every entity App.jsx lists would
-    # hide their missing creates.
+    # hide their missing creates. Testing which entity it was given
+    # (`config.key === 'booking'`) is what a shared form does, so it names none.
     all_forms = [f for name in classes for f in _entity_forms(name)]
     generic_creators = {
         rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(_blank_comments(by_path[rel]), all_forms)
+        and not _mentions(_COMPARED_STRING_RE.sub(" ", _blank_comments(by_path[rel])), all_forms)
     }
     # A generic creator may read its entities from a config module it imports
     # (`entities.js`); that module, not the creator's own code, declares them.

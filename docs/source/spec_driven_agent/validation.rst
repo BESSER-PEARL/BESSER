@@ -199,11 +199,18 @@ unsecured register/login routes (OpenAPI paths such as ``/register``,
 ``/login`` or an OAuth2 ``tokenUrl``; a templated path such as
 ``/room/{room_id}/register`` is not one). It fills the username, email and
 password, plus any other required field that is plain text or a number (a
-name, a phone number, a study group), and ticks a required consent box (a
-boolean named for terms, consent, privacy, a newsletter, marketing, "remember
-me" or an age confirmation). It does not use a route that requires any other
-boolean, an enum/``Literal``, an object or array, or a field named like a
-privilege: a field whose name contains the whole word role, admin, superuser,
+name, a phone number, an age, a study group; a date of birth gets a past
+date), and ticks a required consent box: a boolean whose name is made only of
+the words terms, tos, eula, consent, privacy, gdpr, newsletter, marketing,
+remember, adult or age, numbers, and the words is, has, i, accept(ed/s),
+agree(d/s), to, the, opt, in, confirm(ed), me, over, of, and, read
+(``terms_accepted``, ``marketing_opt_in``, ``over_18``; not
+``privacy_officer`` or ``bypass_age_check``). It does not use a route that
+requires any other boolean, an enum/``Literal``, an object or array, a number
+that references another record or names a rank (a name ending in ``_id`` or
+``Id``, or with the word level, tier, rank, grade, clearance or plan, such as
+``group_id`` or ``access_level``), or a field named like a privilege: a field
+whose name contains the whole word role, admin, administrator, superuser,
 staff, permission, scope, privilege, manager, owner or moderator, or the words
 account type or user type, in snake_case, camelCase or kebab-case (``is_admin``,
 ``userRole``, ``account-type``; not ``parole_officer``). Those choose what kind

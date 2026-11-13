@@ -786,6 +786,62 @@ def test_every_other_boolean_enum_or_privilege_field_stays_a_choice(field, schem
     assert _choice(field, schema) == reason
 
 
+_BOOLEAN = {"type": "boolean"}
+_INTEGER = {"type": "integer"}
+_STRING = {"type": "string"}
+
+
+@pytest.mark.parametrize("field, schema, reason", [
+    # A box is ticked only when every word of its name phrases consent.
+    ("terms_accepted", _BOOLEAN, None), ("agree_to_terms", _BOOLEAN, None), ("privacy_consent", _BOOLEAN, None),
+    ("newsletter", _BOOLEAN, None), ("marketing_opt_in", _BOOLEAN, None), ("remember_me", _BOOLEAN, None),
+    ("is_adult", _BOOLEAN, None), ("over_18", _BOOLEAN, None), ("age_confirmed", _BOOLEAN, None),
+    ("is_marketing_team", _BOOLEAN, "a boolean value"), ("newsletter_editor", _BOOLEAN, "a boolean value"),
+    ("privacy_officer", _BOOLEAN, "a boolean value"), ("adult_content_creator", _BOOLEAN, "a boolean value"),
+    ("bypass_age_check", _BOOLEAN, "a boolean value"),
+    # A number that references another record or names a rank is a choice.
+    ("group_id", _INTEGER, "a reference to another record or a rank"),
+    ("groupId", _INTEGER, "a reference to another record or a rank"),
+    ("access_level", _INTEGER, "a reference to another record or a rank"),
+    ("tier", _INTEGER, "a reference to another record or a rank"),
+    ("user_rank", {"type": "number"}, "a reference to another record or a rank"),
+    ("grade", _INTEGER, "a reference to another record or a rank"),
+    ("security_clearance", _INTEGER, "a reference to another record or a rank"),
+    ("plan", _INTEGER, "a reference to another record or a rank"),
+    ("age", _INTEGER, None), ("phone", _INTEGER, None), ("birth_year", _INTEGER, None),
+    ("study_group", _STRING, None),
+])
+def test_only_boxes_named_for_consent_and_plain_numbers_are_filled(field, schema, reason):
+    """Review probe: ``is_marketing_team`` and ``privacy_officer`` were ticked because one
+    word was a consent word, and ``group_id`` was sent as 1, joining a seeded staff group;
+    the probe passed a staff-only check and reported every create verified."""
+    assert _choice(field, schema) == reason
+
+
+@pytest.mark.parametrize("field, privileged, reason", [
+    ("    is_marketing_team: bool\n", "data.is_marketing_team", "`is_marketing_team` (a boolean value)"),
+    ("    group_id: int\n", "data.group_id == 1", "`group_id` (a reference to another record or a rank)"),
+])
+def test_a_staff_flag_or_group_named_like_consent_is_not_taken(tmp_path, field, privileged, reason):
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE, privileged=privileged))
+    auth = report["backends"][0]["auth"]
+    assert "source" not in auth and reason in auth["error"], auth
+    assert len(report["issues"]) == 2, report["issues"]
+
+
+def test_a_register_form_asking_for_consent_and_a_birth_date_is_used(tmp_path):
+    """A required date of birth was sent as tomorrow, so a past-date check refused the probe's account."""
+    module = _PRIVILEGE_AUTH_MODULE.replace("import secrets", "import datetime\nimport secrets").replace(
+        "def register(data: Register):\n",
+        "def register(data: Register):\n    if data.date_of_birth >= datetime.date.today():\n"
+        "        raise HTTPException(status_code=422, detail='date of birth must be in the past')\n")
+    report = collect_constructibility_report(_auth_scaffold(
+        tmp_path, extra_field="    marketing_opt_in: bool\n    date_of_birth: datetime.date\n", module=module))
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["identity"] == "a new account the probe registered"
+
+
 @pytest.mark.parametrize("field", ["    study_group: str\n", "    terms_accepted: bool\n"])
 def test_an_ordinary_register_form_is_used(tmp_path, field):
     """A required ``study_group`` (named like a privilege by substring) or ``terms_accepted``

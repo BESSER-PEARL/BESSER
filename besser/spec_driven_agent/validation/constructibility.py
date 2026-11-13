@@ -1223,9 +1223,13 @@ _TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
 _PRIVILEGE_WORDS = frozenset({"role", "admin", "administrator", "superuser", "staff", "permission", "scope",
                               "privilege", "manager", "owner", "moderator", "accounttype", "usertype"})
 # A required box every visitor must tick to register (terms, consent, age) grants nothing,
-# so the probe ticks it; any other required boolean may choose the kind of account.
+# so the probe ticks one named only by these words (and numbers); any other boolean is a choice.
 _CONSENT_WORDS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "newsletter", "marketing",
-                            "remember", "adult", "age"})
+                            "remember", "adult", "age",
+                            "is", "has", "i", "accept", "accepted", "accepts", "agree", "agreed", "agrees", "to",
+                            "the", "opt", "in", "confirm", "confirmed", "me", "over", "of", "and", "read"})
+# A required number naming a rank picks the account's standing, like a reference to another record.
+_RANK_WORDS = frozenset({"level", "tier", "rank", "grade", "clearance", "plan"})
 _PROBE_USERNAME = "probe_auth_user"
 _PROBE_EMAIL = "probe.auth.user@example.com"
 _PROBE_PASSWORD = "Probe-Passw0rd-2817"
@@ -1263,22 +1267,30 @@ def _body_schema(op: dict, schemas: dict) -> tuple[str | None, dict]:
     return kind, _resolve(media.get("schema") or {}, schemas)
 
 
+def _name_tokens(field: str) -> list[str]:
+    """The lowercase words of a snake_case, camelCase or kebab-case name."""
+    return [t.lower() for t in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", field)]
+
+
 def _choice(field: str, schema: dict) -> str | None:
     """Why a value for ``field`` would choose what kind of account the probe gets, or None.
 
-    Only plain text or numbers under a name that is no privilege, and consent boxes,
-    are free input; another boolean, an enum/Literal, an object/array or a
-    privilege-named field is a choice.
+    Only plain text or numbers under a name that is no privilege, reference or
+    rank, and consent boxes, are free input; another boolean, an enum/Literal,
+    an object/array or a privilege-named field is a choice.
     """
-    tokens = [t.lower() for t in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", field)]
+    tokens = _name_tokens(field)
     words = {*tokens, *(a + b for a, b in zip(tokens, tokens[1:]))}
     words |= {word[:-1] for word in words if word.endswith("s")}
     if words & _PRIVILEGE_WORDS:
         return "a privilege-named field"
     if "enum" in schema or "const" in schema:
         return "one of fixed values"
-    if schema.get("type") == "boolean" and words & _CONSENT_WORDS:
+    if schema.get("type") == "boolean" and tokens and all(t in _CONSENT_WORDS or t.isdigit() for t in tokens):
         return None
+    if schema.get("type") in ("integer", "number") and (
+            (len(tokens) > 1 and tokens[-1] == "id") or words & _RANK_WORDS):
+        return "a reference to another record or a rank"
     if schema.get("type") not in ("string", "integer", "number"):
         return f"a {schema.get('type') or 'untyped'} value"
     return None
@@ -1303,7 +1315,9 @@ def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
         elif low in ("username", "user_name", "login", "name"):
             body[field] = _PROBE_USERNAME
         elif field in schema.get("required", []):
-            body[field] = _sample(field, resolved, 1, entity="probeauth")
+            # A birth date lies about 33 years back; any other date tomorrow.
+            past = "birth" in low or "dob" in _name_tokens(field)
+            body[field] = _sample(field, resolved, -12_000 if past else 1, entity="probeauth")
     return kind, body
 
 

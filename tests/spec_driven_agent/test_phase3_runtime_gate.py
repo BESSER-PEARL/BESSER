@@ -224,7 +224,7 @@ def test_an_entity_that_cannot_be_created_outranks_lint_volume(orch):
 def _probe_recorder(monkeypatch, orchestrator, findings=()):
     calls = {"n": 0}
 
-    def fake_probe(output_dir, domain_model=None):
+    def fake_probe(output_dir, domain_model=None, auth_scenarios=None):
         calls["n"] += 1
         return {"issues": list(findings), "backends": []}
 

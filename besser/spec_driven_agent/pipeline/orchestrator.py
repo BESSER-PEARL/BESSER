@@ -548,8 +548,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Source revision the verdict above was computed for. A verdict from an
         # older tree is not evidence about the one being shipped.
         self._runtime_verdict_revision: str | None = None
-        # (source revision, findings) for the boot probe; see _runtime_probe_issues.
-        self._runtime_probe_cache: tuple[str, list[str]] | None = None
+        # (source revision, findings, scenarios a failed login used) for the boot
+        # probe; see _runtime_probe_issues.
+        self._runtime_probe_cache: tuple[str, list[str], list | None] | None = None
         self._previous_errors: list[str] = []  # track errors to avoid re-attempting
         # Last model name observed on the client. The provider's outage
         # fallback (``OpenAIProvider._activate_fallback``) can swap the
@@ -2870,9 +2871,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         source did not. ``_validate_app`` already caches its own call this way.
         """
         revision = self._workspace_revision()
+        # Passing current scenarios: the probe's fallback way to log in.
+        auth_scenarios = [{"backend": record["report"].get("backend"),
+                           "requests": record["scenario"]["requests"]}
+                          for record in self._api_scenarios.values()
+                          if record["revision"] == revision and record["report"].get("status") == "passed"]
         cached = getattr(self, "_runtime_probe_cache", None)
-        if cached and cached[0] == revision:
+        # A probe that could not log in reruns once new scenarios could supply the login.
+        if cached and cached[0] == revision and cached[2] in (None, auth_scenarios):
             return list(cached[1])
+        login_failed = False
         issues: list[str] = []
         mapper_issues = _import_smoke_issues(self.output_dir)
         issues.extend(mapper_issues)
@@ -2881,7 +2889,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 from besser.spec_driven_agent.validation.constructibility import (
                     collect_constructibility_report,
                 )
-                probe = collect_constructibility_report(self.output_dir, self.domain_model)
+                probe = collect_constructibility_report(self.output_dir, self.domain_model,
+                                                        auth_scenarios=auth_scenarios)
+                login_failed = any((backend.get("auth") or {}).get("error") for backend in probe["backends"])
                 issues.extend(probe["issues"])
                 # The runtime facts themselves, not just their rendering - see
                 # _phase3_tree_score.
@@ -2895,7 +2905,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # refuses verified completion, never a blocker that buys repair rounds.
         issues = [runtime_note_unverified(item) if item.startswith("validation:") else item
                   for item in issues]
-        self._runtime_probe_cache = (revision, list(issues))
+        self._runtime_probe_cache = (revision, list(issues), auth_scenarios if login_failed else None)
         return issues
 
     def _apply_scenario_evidence(self, raw: list[str]) -> list[str]:

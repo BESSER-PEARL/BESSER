@@ -583,3 +583,176 @@ def test_a_create_named_body_that_is_no_orm_entity_is_not_probed(tmp_path):
     assert backend.get("skipped_non_entity") == ["NewsletterSignup"]
     # The real entities are still probed.
     assert {"Room", "Booking"} <= set(backend["entities"])
+
+
+# --------------------------------------------------- login-protected apps
+
+_AUTH_MODULE = '''
+import secrets
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+_users: dict = {}
+_tokens: set = set()
+bearer = HTTPBearer(auto_error=False)
+router = APIRouter(prefix="/auth")
+
+
+class Credentials(BaseModel):
+    username: str
+    password: str
+{extra_field}
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    if credentials is None or credentials.credentials not in _tokens:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return credentials.credentials
+
+
+@router.post("/register", status_code=201)
+def register(data: Credentials):
+    if len(data.password) < 8:
+        raise HTTPException(status_code=422, detail="password too short")
+    _users[data.username] = data.password
+    return {"username": data.username}
+
+
+@router.post("/login")
+def login(data: Credentials):
+    if _users.get(data.username) != data.password:
+        raise HTTPException(status_code=401, detail="bad credentials")
+    token = secrets.token_urlsafe(16)
+    _tokens.add(token)
+    return {"access_token": token, "token_type": "bearer"}
+'''
+
+
+def _auth_scaffold(tmp_path, *, extra_field: str = "", protect: bool = True,
+                   register: str = "/register", login: str = "/login") -> str:
+    """The Room/Booking scaffold plus a register/login router; with ``protect``
+    every entity router needs the bearer token login returns."""
+    workspace = _scaffold(tmp_path)
+    backend = tmp_path / "web_app" / "backend"
+    (backend / "auth.py").write_text(
+        _AUTH_MODULE.replace("{extra_field}", extra_field)
+        .replace('"/register"', f'"{register}"').replace('"/login"', f'"{login}"'), encoding="utf-8")
+    main = backend / "main_api.py"
+    text = main.read_text(encoding="utf-8")
+    if protect:
+        text, protected = re.subn(
+            r"app\.include_router\((\w+_router)\.router\)",
+            r"app.include_router(\1.router, dependencies=[Depends(get_current_user)])", text)
+        assert protected == 2
+    main.write_text("from fastapi import Depends\nimport auth as _auth\nfrom auth import get_current_user\n"
+                    + text + "\napp.include_router(_auth.router)\n", encoding="utf-8")
+    return workspace
+
+
+def test_a_login_protected_app_is_probed_after_logging_in_through_its_own_routes(tmp_path):
+    """Live, Sonnet 5.5, a login-protected 13-class app (6 runs): the probe never
+    logged in, so all 13 creates came back ``create unverified`` (3 refused 401,
+    10 unresolved behind them) and held the requirements judge for a repair round."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path))
+    assert report["issues"] == [], report["issues"]
+    [backend] = report["backends"]
+    assert {e["verdict"] for e in backend["entities"].values()} == {"created"}  # Booking needs the Room
+    # That auth is enforced is recorded apart from the creates themselves.
+    assert backend["auth"]["anonymous_status"] == 401
+    assert backend["auth"]["source"] == "its register/login routes"
+    assert backend["auth"]["credential"] == ["Authorization"]
+
+
+def test_a_register_route_that_asks_for_a_role_is_not_guessed(tmp_path):
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, extra_field="    role: str\n"))
+    assert "source" not in report["backends"][0]["auth"]
+    assert len(report["issues"]) == 2, report["issues"]
+    assert all(i.startswith(UNVERIFIED_PREFIX) for i in report["issues"])
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "the probe could not log in" in refused and "`role`" in refused
+
+
+def test_a_passing_scenario_supplies_the_login_the_routes_do_not_name(tmp_path):
+    workspace = _auth_scaffold(tmp_path, register="/accounts", login="/sessions")
+    blind = collect_constructibility_report(workspace)
+    assert len(blind["issues"]) == 2, "control: no route is named like a login, so none is found"
+
+    credentials = {"username": "ana", "password": "long-enough-1"}
+    scenario = [
+        {"method": "POST", "path": "/auth/accounts", "json": credentials, "expected_status": 201},
+        {"method": "POST", "path": "/auth/sessions", "json": credentials},
+        {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{1.access_token}}"}},
+    ]
+    report = collect_constructibility_report(
+        workspace, auth_scenarios=[{"backend": "web_app/backend", "requests": scenario}])
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["source"] == "a passing test_api scenario"
+    # A scenario recorded against another backend is not replayed here.
+    other = collect_constructibility_report(
+        workspace, auth_scenarios=[{"backend": "elsewhere/backend", "requests": scenario}])
+    assert len(other["issues"]) == 2
+
+
+def test_an_app_without_auth_gets_no_login_requests(tmp_path):
+    """No 401/403, no login: an open app sees exactly the requests it saw before.
+    The app exits if anything touches /auth or posts an empty body."""
+    workspace = _auth_scaffold(tmp_path, protect=False)
+    main = tmp_path / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8") + (
+        "\n\nimport os as _os\n\n"
+        "@app.middleware('http')\n"
+        "async def _tripwire(request, call_next):\n"
+        "    if request.url.path.startswith('/auth') or request.headers.get('content-length') == '2':\n"
+        "        _os._exit(3)\n"
+        "    return await call_next(request)\n"
+    ), encoding="utf-8")
+    login = [{"method": "POST", "path": "/auth/login", "json": {}},
+             {"method": "GET", "path": "/room/", "headers": {"Authorization": "Bearer {{0.access_token}}"}}]
+    report = collect_constructibility_report(workspace, auth_scenarios=[{"backend": None, "requests": login}])
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["boot"] == "ok"
+    assert "auth" not in report["backends"][0]
+
+
+def test_the_orchestrator_hands_passing_current_scenarios_to_the_probe(tmp_path, monkeypatch):
+    """And reruns a probe that could not log in once such a scenario exists."""
+    from besser.BUML.metamodel.structural import Class, DomainModel
+    from besser.spec_driven_agent.validation import constructibility
+
+    calls = []
+
+    def fake(output_dir, domain_model=None, auth_scenarios=None):
+        calls.append(auth_scenarios)
+        auth = {"source": "a passing test_api scenario"} if auth_scenarios else {"error": "no login"}
+        return {"issues": [], "backends": [{"backend": "b", "boot": "ok", "auth": auth}]}
+
+    monkeypatch.setattr(constructibility, "collect_constructibility_report", fake)
+    orch = LLMOrchestrator(
+        llm_client=_ScriptedClient(), domain_model=DomainModel(name="M", types={Class(name="A")}),
+        output_dir=str(tmp_path), enable_tracing=False, enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+    revision = orch._workspace_revision()
+    requests = [{"method": "GET", "path": "/a/"}]
+    orch._api_scenarios = {
+        "named:ok": {"scenario": {"requests": requests}, "revision": revision,
+                     "report": {"status": "passed", "backend": "b"}},
+        "named:failed": {"scenario": {"requests": [{"method": "GET", "path": "/x/"}]},
+                         "revision": revision, "report": {"status": "failed", "backend": "b"}},
+        "named:stale": {"scenario": {"requests": [{"method": "GET", "path": "/y/"}]},
+                        "revision": "older", "report": {"status": "passed", "backend": "b"}},
+    }
+    orch._runtime_probe_issues()
+    assert calls == [[{"backend": "b", "requests": requests}]]
+    orch._runtime_probe_issues()
+    assert len(calls) == 1  # logged in: the cached result stands
+
+    orch._api_scenarios = {}
+    orch._runtime_probe_cache = None
+    orch._runtime_probe_issues()
+    orch._runtime_probe_issues()
+    assert calls[1:] == [[]]  # could not log in, and nothing new to log in with
+    orch._api_scenarios = {"named:ok": {"scenario": {"requests": requests}, "revision": revision,
+                                        "report": {"status": "passed", "backend": "b"}}}
+    orch._runtime_probe_issues()
+    assert calls[2:] == [[{"backend": "b", "requests": requests}]]

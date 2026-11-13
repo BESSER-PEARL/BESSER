@@ -47,13 +47,19 @@ given only the symptom tends to spend its fix attempts elsewhere. The line
 feeds the fix prompt's excerpt. When the refusal is a NOT NULL violation, the
 column is named too, and the create-time-rule advice is left out.
 
+A login-protected app is logged into once, on the first 401/403, through its
+own register/login routes or the login steps of a passing ``test_api``
+scenario; never by overriding its auth dependency, which would also lift the
+role and ownership rules a real user meets.
+
 Runs in two halves. The parent (``collect_constructibility_report``) is
 ordinary orchestrator code; it also hands the child the modelled action list
 in a JSON file, since the model is what states an action's parameters. The
 child is this same file executed by PATH as a script inside the app copy, so
 it imports only the standard library and what the app itself needs - never
 ``besser``, which is not installed where the harness interpreter runs the
-generated code. The child's structured record is returned alongside the
+generated code (its sibling ``api_probe.py``, stdlib-only, is loaded by path
+to resolve scenario references). The child's structured record is returned alongside the
 rendered findings, so a caller that wants runtime facts reads them rather
 than matching prefixes back out of prose.
 """
@@ -87,6 +93,7 @@ _ACTIONS_ENV = "BESSER_PROBE_MODEL_ACTIONS"
 # instantiate one ("Person is abstract; create a Patron or Librarian
 # instead"), so POSTing to it manufactures a blocker no repair can clear.
 _ABSTRACT_ENV = "BESSER_PROBE_ABSTRACT_ENTITIES"
+_AUTH_SCENARIOS_ENV = "BESSER_PROBE_AUTH_SCENARIOS"
 _SKIP_DIRS = frozenset({
     "node_modules", "__pycache__", ".besser_snapshot", "dist", "build", "data",
 })
@@ -103,12 +110,15 @@ _NOT_NULL_PATTERNS = (
 # Parent: locate backends, run the child, turn its report into findings
 # ---------------------------------------------------------------------------
 
-def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
+def collect_constructibility_report(output_dir: str, domain_model=None,
+                                    auth_scenarios: list | None = None) -> dict:
     """``{"issues": [...], "backends": [{"backend": rel, ...}]}``.
 
     ``backends`` carries the child's own per-entity and per-action report,
     so ``_phase3_tree_score`` can rank a tree on what the running app
     actually did instead of matching prefixes back out of the issue strings.
+    ``auth_scenarios`` (``[{"backend", "requests"}]``, passing ``test_api``
+    scenarios) is the fallback login source when the app's routes give none.
     """
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 
@@ -118,8 +128,10 @@ def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
     backends: list[dict] = []
     for folder in _fastapi_backends(output_dir):
         rel = os.path.relpath(folder, output_dir).replace("\\", "/")
+        scenarios = [s["requests"] for s in auth_scenarios or ()
+                     if s.get("backend") in (None, rel) and isinstance(s.get("requests"), list)]
         report = _run_probe(folder, _safe_subprocess_env(), model_actions, abstract,
-                            workspace=output_dir)
+                            workspace=output_dir, auth_scenarios=scenarios)
         issues.extend(_issues_from_report(report, rel))
         backends.append({"backend": rel, **report})
     return {"issues": issues, "backends": backends}
@@ -211,7 +223,7 @@ def _fastapi_backends(output_dir: str) -> list[str]:
 
 def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
                abstract_entities: list[str] | None = None, *,
-               workspace: str | None = None) -> dict:
+               workspace: str | None = None, auth_scenarios: list | None = None) -> dict:
     """Execute the child, sandboxed with no network, on a scratch copy of
     ``folder`` (inside the run ``workspace``); never raises."""
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
@@ -233,6 +245,14 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
                 logger.debug("constructibility probe: modelled actions not passed", exc_info=True)
         if abstract_entities:
             env[_ABSTRACT_ENV] = ",".join(abstract_entities)
+        if auth_scenarios:
+            scenarios_path = os.path.join(work, "auth_scenarios.json")
+            try:
+                with open(scenarios_path, "w", encoding="utf-8") as fh:
+                    json.dump(auth_scenarios, fh)
+                env[_AUTH_SCENARIOS_ENV] = scenarios_path
+            except (OSError, TypeError, ValueError):
+                logger.debug("constructibility probe: login scenarios not passed", exc_info=True)
         try:
             result = run_confined(
                 [sys.executable, os.path.abspath(__file__)],
@@ -309,6 +329,11 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                           f"attempted input: {payload}")
                 if attempt.get("outcome") == "unauthorized":
                     reason += "; this endpoint requires authentication"
+                    login = report.get("auth") or {}
+                    if login.get("source"):
+                        reason += f" and still refused the probe after it logged in through {login['source']}"
+                    elif login.get("error"):
+                        reason += f", and the probe could not log in ({login['error']})"
             else:
                 unresolved = entry.get("unresolved") or []
                 reason = ("no request could be constructed; unresolved related IDs: "
@@ -1202,6 +1227,188 @@ async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasse
     return reports, calls, ordinal
 
 
+# ---------------------------------------------------------------------------
+# Logging in: only through the app's own routes, as any visitor could
+# ---------------------------------------------------------------------------
+
+_REGISTER_PATH = re.compile(r"/(register|signup|sign-up|sign_up)/?$", re.I)
+_LOGIN_PATH = re.compile(r"/(login|signin|sign-in|sign_in|token)/?$", re.I)
+_TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
+# A required field or literal naming one of these is refused, never guessed.
+_PRIVILEGE_WORDS = ("role", "admin", "superuser", "staff", "permission", "scope", "privilege", "group")
+_PROBE_USERNAME = "probe_auth_user"
+_PROBE_EMAIL = "probe.auth.user@example.com"
+_PROBE_PASSWORD = "Probe-Passw0rd-2817"
+
+
+def _auth_routes(spec: dict) -> dict:
+    """Unsecured POST register/login routes; an OAuth2 ``tokenUrl`` wins for login."""
+    found: dict = {}
+    for path, ops in spec.get("paths", {}).items():
+        op = ops.get("post")
+        if not op or op.get("security"):
+            continue
+        if _REGISTER_PATH.search(path):
+            found.setdefault("register", (path, op))
+        elif _LOGIN_PATH.search(path):
+            found.setdefault("login", (path, op))
+    for scheme in (spec.get("components", {}).get("securitySchemes") or {}).values():
+        token_url = ((scheme.get("flows") or {}).get("password") or {}).get("tokenUrl")
+        op = (spec.get("paths", {}).get("/" + str(token_url or "").lstrip("/")) or {}).get("post")
+        if token_url and op:
+            found["login"] = ("/" + token_url.lstrip("/"), op)
+    return found
+
+
+def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
+    """``(httpx body keyword, body)`` for a register/login route, or ``(None, why)``."""
+    content = (op.get("requestBody") or {}).get("content") or {}
+    if "application/json" in content:
+        kind, media = "json", content["application/json"]
+    elif "application/x-www-form-urlencoded" in content or "multipart/form-data" in content:
+        kind = "data"
+        media = content.get("application/x-www-form-urlencoded") or content["multipart/form-data"]
+    else:
+        return None, "no JSON or form request body"
+    schema = _resolve(media.get("schema") or {}, schemas)
+    body: dict = {}
+    for field, raw in schema.get("properties", {}).items():
+        resolved, low = _resolve(raw, schemas), field.lower()
+        if "password" in low:
+            body[field] = _PROBE_PASSWORD
+        elif "email" in low or resolved.get("format") == "email":
+            body[field] = _PROBE_EMAIL
+        elif low in ("username", "user_name", "login", "name"):
+            body[field] = _PROBE_USERNAME
+        elif field in schema.get("required", []):
+            words = [low, *(str(literal).lower() for literal in resolved.get("enum", []))]
+            if any(word in text for word in _PRIVILEGE_WORDS for text in words):
+                return None, f"it requires `{field}`, a privilege the probe does not choose for itself"
+            body[field] = _sample(field, resolved, 1, entity="probeauth")
+    return kind, body
+
+
+def _find_token(body) -> str | None:
+    for value in (body, *(body.values() if isinstance(body, dict) else ())):
+        if isinstance(value, dict):
+            token = next((value[k] for k in _TOKEN_KEYS if isinstance(value.get(k), str) and value[k]), None)
+            if token:
+                return token
+    return None
+
+
+async def _discovered_login(client, spec: dict, schemas: dict) -> tuple[dict | None, str]:
+    """Register (when offered) and log in a probe account; ``(headers, error)``.
+
+    Empty headers mean a session cookie, which the client's jar carries.
+    """
+    routes = _auth_routes(spec)
+    if not routes:
+        return None, "the OpenAPI document lists no unsecured register or login route"
+    token = None
+    for step in ("register", "login"):
+        if step not in routes:
+            continue
+        path, op = routes[step]
+        kind, body = _credential_body(op, schemas)
+        if kind is None:
+            return None, f"POST {path}: {body}"
+        response = await client.post(path, **{kind: body})
+        if not 200 <= response.status_code < 300:
+            return None, f"POST {path} answered {response.status_code}: {response.text[:120]}"
+        try:
+            token = _find_token(response.json()) or token
+        except ValueError:
+            pass
+    return ({"Authorization": f"Bearer {token}"} if token else {}), ""
+
+
+def _api_probe_module():
+    """The sibling ``api_probe.py`` (stdlib-only), for its scenario reference resolver."""
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_probe.py")
+    spec = importlib.util.spec_from_file_location("_besser_api_probe", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+async def _scenario_login(client, scenarios: list) -> tuple[dict | None, str]:
+    """Replay a passing scenario up to its first request whose headers
+    reference an earlier response, and return those headers resolved."""
+    api_probe = _api_probe_module()
+    resolve = api_probe._resolve_references
+    error = "no passing test_api scenario sends a credential taken from an earlier response"
+    for requests in scenarios:
+        first = next((index for index, request in enumerate(requests)
+                      if any(isinstance(value, str) and api_probe._REFERENCE.search(value)
+                             for value in (request.get("headers") or {}).values())), None)
+        if not first:
+            continue
+        previous: list = []
+        try:
+            for request in requests[:first]:
+                kwargs: dict = {}
+                if "json" in request:
+                    kwargs["json"] = resolve(request["json"], previous)
+                if request.get("headers"):
+                    kwargs["headers"] = {name: resolve(value, previous, in_header=True)
+                                         for name, value in request["headers"].items()}
+                response = await client.request(
+                    request["method"], resolve(request["path"], previous, in_path=True), **kwargs)
+                try:
+                    previous.append(response.json())
+                except ValueError:
+                    previous.append(api_probe._NO_JSON)
+            return {name: resolve(value, previous, in_header=True)
+                    for name, value in requests[first]["headers"].items()}, ""
+        except Exception as exc:
+            error = f"replaying a scenario's login failed: {type(exc).__name__}: {exc}"[:160]
+    return None, error
+
+
+def _load_auth_scenarios() -> list:
+    path = os.environ.get(_AUTH_SCENARIOS_ENV)
+    if not path:
+        return []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    return [item for item in data if isinstance(item, list)] if isinstance(data, list) else []
+
+
+async def _log_in(client, spec: dict, schemas: dict, retry) -> tuple[dict, tuple | None]:
+    """Log ``client`` in after ``retry``'s request was refused 401/403.
+
+    A login counts only if that request then gets past the wall; the retried
+    result is returned with the record. Never raises.
+    """
+    sources = [("its register/login routes", lambda: _discovered_login(client, spec, schemas))]
+    scenarios = _load_auth_scenarios()
+    if scenarios:
+        sources.append(("a passing test_api scenario", lambda: _scenario_login(client, scenarios)))
+    errors = []
+    for label, attempt in sources:
+        try:
+            headers, error = await attempt()
+            if headers is not None:
+                client.headers.update(headers)
+                retried = await retry()
+                if retried[1] not in (401, 403):
+                    return {"source": label, "credential": sorted(headers) or "session cookie"}, retried
+                error = f"the refused request still answered {retried[1]} after logging in"
+                for name in headers:
+                    client.headers.pop(name, None)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"[:160]
+        client.cookies.clear()
+        errors.append(f"{label}: {error}")
+    return {"error": "; ".join(errors)[:400]}, None
+
+
 def _load_model_actions() -> dict:
     """The modelled action list the parent wrote out, if it had a model."""
     path = os.environ.get(_ACTIONS_ENV)
@@ -1330,14 +1537,24 @@ def _probe_cwd() -> dict:
         pending = dict(creates)
         ordinal = 0
         transport = httpx.ASGITransport(app=app)
+        auth: dict = {}
         async with httpx.AsyncClient(transport=transport, base_url="http://probe") as client:
-            async def request(path, payload, variant):
+            async def post(path, payload):
                 try:
                     response = await client.post(path, json=payload)
-                    status, text = response.status_code, response.text or ""
+                    return response, response.status_code, response.text or ""
                 except Exception as exc:
-                    response, status = None, "EXC"
-                    text = f"{type(exc).__name__}: {exc}"
+                    return None, "EXC", f"{type(exc).__name__}: {exc}"
+
+            async def request(path, payload, variant):
+                response, status, text = await post(path, payload)
+                if status in (401, 403) and not auth:
+                    # Kept apart from the create's result: evidence that auth is enforced.
+                    auth.update(refused=f"POST {path}", anonymous_status=status)
+                    record, retried = await _log_in(client, spec, schemas, lambda: post(path, payload))
+                    auth.update(record)
+                    if retried is not None:
+                        response, status, text = retried
                 attempt = {
                     "variant": " ".join(str(v) for v in variant),
                     "status": status, "outcome": _outcome(status),
@@ -1447,18 +1664,22 @@ def _probe_cwd() -> dict:
             actions, action_calls, _ordinal = await _probe_actions(
                 app, spec, request, read_state, schemas, orm, subclasses, unique_fields,
                 creates, entities, ids, ordinal, _load_model_actions())
-        return {"entities": entities, "actions": actions, "action_calls": action_calls}
+        return {"entities": entities, "actions": actions, "action_calls": action_calls,
+                "auth": auth}
 
     try:
         result = asyncio.run(run())
     except Exception as exc:
         return {"boot": "probe_error", "error": f"{type(exc).__name__}: {exc}"[:300]}
-    return {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
-            "action_calls": result["action_calls"],
-            # Named so a reader can tell "not probed because the model says
-            # it is abstract" from "probed and passed".
-            "skipped_abstract": sorted(set(skipped_abstract)),
-            "skipped_non_entity": sorted(set(skipped_non_entity))}
+    report = {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
+              "action_calls": result["action_calls"],
+              # Named so a reader can tell "not probed because the model says
+              # it is abstract" from "probed and passed".
+              "skipped_abstract": sorted(set(skipped_abstract)),
+              "skipped_non_entity": sorted(set(skipped_non_entity))}
+    if result["auth"]:
+        report["auth"] = result["auth"]
+    return report
 
 
 if __name__ == "__main__":

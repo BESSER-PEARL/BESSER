@@ -188,6 +188,17 @@ where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
 ``*Create`` body with no table behind it (a signup or login form) persists no
 record to read back, so it is listed in the probe report as
 ``skipped_non_entity`` and produces no finding.
+When a request is refused with 401 or 403, the probe logs in once through the
+app's own unsecured register/login routes (OpenAPI paths such as ``/register``,
+``/login`` or an OAuth2 ``tokenUrl``), filling only the username, email and
+password fields. If those routes are not found, it replays the login steps of a
+passing current-revision ``test_api`` scenario. It never chooses a role, admin
+or permission field for its account, and never overrides the app's
+authentication dependency. A login counts only when the refused request then
+gets past the 401/403. The report keeps the first refused request and its status
+under ``auth`` (evidence that authentication is enforced). An app that never
+answers 401/403 receives no login requests. When no login works, the refused
+creates stay ``create unverified`` and the finding gives the reason.
 
 .. _spec-driven-model-contract:
 

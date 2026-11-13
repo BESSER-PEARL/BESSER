@@ -2870,14 +2870,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         of wall clock per run for an answer that cannot have changed while the
         source did not. ``_validate_app`` already caches its own call this way.
         """
+        from besser.spec_driven_agent.validation.constructibility import can_supply_login
+
         revision = self._workspace_revision()
-        # Passing current scenarios: the probe's fallback way to log in.
+        # The probe's fallback way to log in: passing scenarios that log in, of any
+        # revision (a login does not depend on the source), current revision first.
         auth_scenarios = [{"backend": record["report"].get("backend"),
                            "requests": record["scenario"]["requests"]}
-                          for record in self._api_scenarios.values()
-                          if record["revision"] == revision and record["report"].get("status") == "passed"]
+                          for record in sorted(self._api_scenarios.values(),
+                                               key=lambda record: record["revision"] != revision)
+                          if record["report"].get("status") == "passed"
+                          and can_supply_login(record["scenario"]["requests"])]
         cached = getattr(self, "_runtime_probe_cache", None)
-        # A probe that could not log in reruns once new scenarios could supply the login.
+        # A probe that could not log in reruns once a new scenario could supply the login.
         if cached and cached[0] == revision and cached[2] in (None, auth_scenarios):
             return list(cached[1])
         login_failed = False

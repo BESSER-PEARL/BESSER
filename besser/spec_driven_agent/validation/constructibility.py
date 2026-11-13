@@ -1374,6 +1374,13 @@ def _login_request_index(requests: list, reference) -> int | None:
                          for name, value in (request.get("headers") or {}).items())), None)
 
 
+def can_supply_login(requests: list) -> bool:
+    """True when a ``test_api`` scenario sends a credential from an earlier response."""
+    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
+
+    return isinstance(requests, list) and _login_request_index(requests, _REFERENCE) is not None
+
+
 def _privilege_in_steps(requests: list, spec: dict, schemas: dict) -> str | None:
     """Why replaying these login steps would take a privilege, or None: the
     rule for the probe's own account, applied to the values the scenario sends."""

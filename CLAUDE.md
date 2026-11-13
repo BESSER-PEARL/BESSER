@@ -171,7 +171,8 @@ Invariants and rules:
   `tests/spec_driven_agent/test_added_generator_tools.py` asserts every generator tool has both.
 - **New validator findings need a stable message prefix** classified in `_classify_issue` — the classifier
   keys on prefixes, not on which validator produced them. Severities: `blocker` (drives the auto-fix loop),
-  `warning` (recorded), `style` (cosmetic ruff rules, recorded). Full table: `validation.rst`.
+  `warning` (recorded), `style` (truncation-count notes, recorded; the lint selects no cosmetic rule).
+  Full table: `validation.rst`.
 - **Runtime gate**: every Phase 3 exit, including budget exhaustion, runs a gate — a run cannot report
   complete while the delivered app cannot boot or create a record.
 - **Client-visible contract**: request = `backend/models/spec_driven.py` (API key is a `SecretStr`, caps clamped

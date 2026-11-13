@@ -321,8 +321,8 @@ class Phase3RepairMixin:
             self._phase3_exit_reason = "auto-fix disabled"
             return
 
-        # Auto-fix only consumes BLOCKER issues. Style warnings (unused
-        # imports, line length) and soft warnings (tsc type hints) are
+        # Auto-fix only consumes BLOCKER issues. Style notes (truncation
+        # counts) and soft warnings (tsc type hints) are
         # left as-is; they don't justify burning LLM turns.
         if not blockers_before:
             self._phase3_exit_reason = "no blocker-class issues"

@@ -51,15 +51,6 @@ def test_the_existing_blockers_are_unchanged(code):
     assert issue.severity == "blocker"
 
 
-@pytest.mark.parametrize("code,name", [
-    ("F401", "unused import"), ("F841", "unused variable"), ("E501", "long line"),
-])
-def test_genuinely_cosmetic_codes_stay_style(code, name):
-    """Promoting these would make the fix loop chase whitespace."""
-    issue = _classify_issue(f"ruff: app/x.py:1:1: {code} something about {name}")
-    assert issue.severity == "style"
-
-
 # ------------------------------------------- missing modules are blockers
 
 

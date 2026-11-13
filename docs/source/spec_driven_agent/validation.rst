@@ -321,11 +321,9 @@ Findings are classified into three severities:
        ``cargo [``, ``kotlinc [`` and ``frontend build [``. These drive the
        auto-fix loop.
    * - ``style``
-     - Cosmetic ``ruff`` rules: ``F401`` / ``F841`` (unused import or
-       variable), ``E501``, whitespace, blank lines, import order,
-       ``F403`` / ``F405`` / ``E402`` (the scaffold's star imports); the
-       ``(+N more ... truncated)`` notes of ``ruff``, ``tsc``, ``cargo`` and
-       ``kotlinc``, which are counts, not defects.
+     - The ``(+N more ... truncated)`` notes of ``ruff``, ``tsc``, ``cargo``
+       and ``kotlinc``, which are counts, not defects. The lint selects no
+       cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
        now), ``form field type:``, the model-derived acceptance matrix,

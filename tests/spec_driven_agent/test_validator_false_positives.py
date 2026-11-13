@@ -444,26 +444,6 @@ def test_an_undefined_name_on_a_reachable_line_is_still_a_blocker():
 # ---------------------------------------------------------------------------
 
 
-def test_star_import_ruff_codes_are_cosmetic_not_warnings():
-    """32,036 F405 findings on the 74 working apps; 4 named a real risk.
-
-    Every generated router star-imports ``sql_alchemy`` / ``pydantic_classes``
-    / ``bal_stdlib``, so ruff answers F403 ("cannot detect undefined names")
-    and F405 ("may be undefined") instead of F821. Resolving each F405 name
-    against what those modules actually export cleared 32,032 of them. The
-    four that did not resolve are precisely what ``undefined name:`` already
-    reports as a blocker with a proven verdict, so F405 adds no signal and
-    was the bulk of the warning stream.
-    """
-    for line in (
-        "ruff: backend/routers/book.py:5:1: F403 `from sql_alchemy import *` used",
-        "ruff: backend/routers/book.py:9:12: F405 `Book` may be undefined, "
-        "or defined from star imports",
-        "ruff: backend/bal_stdlib.py:68:1: E402 Module level import not at top of file",
-    ):
-        assert _classify_issue(line).severity == "style", line
-
-
 def test_the_undefined_name_ruff_codes_are_still_blockers():
     for line in (
         "ruff: backend/routers/book.py:9:12: F821 Undefined name `Book`",

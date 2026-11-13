@@ -77,13 +77,6 @@ class TestClassifier:
         issue = _classify_issue("tsc says something off-format")
         assert issue.severity == "warning"
 
-    def test_ruff_style_is_style(self) -> None:
-        """Sanity: unrelated classifications still work — we didn't
-        accidentally upgrade a style hint to a blocker.
-        """
-        issue = _classify_issue("ruff: foo.py:1:1: F401 'os' imported but unused")
-        assert issue.severity == "style"
-
 
 # ---------------------------------------------------------------------------
 # Toolchain collector: real tsc invocation on a deliberate type error

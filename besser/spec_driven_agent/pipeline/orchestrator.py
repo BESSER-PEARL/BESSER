@@ -177,7 +177,6 @@ from besser.spec_driven_agent.validation.issues import (
     required_dependency_setup as required_dependency_setup,
     runtime_check_unverified,
     runtime_note_unverified,
-    _RUFF_STYLE_CODES as _RUFF_STYLE_CODES,
     _RUFF_BLOCKER_CODES as _RUFF_BLOCKER_CODES,
     _RUFF_LINE_RE as _RUFF_LINE_RE,
 )

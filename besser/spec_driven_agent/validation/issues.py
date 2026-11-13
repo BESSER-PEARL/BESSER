@@ -16,8 +16,8 @@ class ValidationIssue:
       - ``warning``: advisory findings or checks whose outcome is unknown.
         Explicit ``validation unverified:`` warnings prevent verified
         completion but do not justify spending source-repair turns.
-      - ``style``: cosmetic / preference (unused imports, line length,
-        formatting). Never blocks a release.
+      - ``style``: a count, not a defect: the ``(+N more ... truncated)`` notes of
+        ruff and the compilers. Never blocks a release. The lint selects no cosmetic rule.
 
     The auto-fix loop (when enabled) only consumes ``blocker`` issues.
     Other findings are reported in the recipe and logs without automatic repair.
@@ -169,22 +169,6 @@ def is_completion_issue(issue: ValidationIssue) -> bool:
     return (getattr(issue, "severity", None) == "blocker"
             or str(getattr(issue, "message", "")).startswith("validation unverified:"))
 
-_RUFF_STYLE_CODES = frozenset({
-    "F401", "F841",               # genuinely cosmetic: unused import / variable
-    # F811 (redefinition) is deliberately NOT here; see the blocker branch below.
-    "E501",                       # line too long
-    "W291", "W292", "W293", "W391",  # whitespace
-    "E302", "E303", "E305", "E261", "E262", "E266",  # blank lines / comments
-    "I001",                       # import order
-    # The scaffold's own convention, not a defect. Every generated router
-    # star-imports sql_alchemy / pydantic_classes / bal_stdlib, so ruff
-    # answers F403 ("cannot detect undefined names" — a notice that ruff is
-    # blind, never a finding) and F405 ("may be undefined") in place of F821.
-    # Real undefined names behind a star import are reported separately, as
-    # `python contract:` blockers with a proven verdict. E402 is the one import
-    # bal_stdlib places below its header.
-    "F403", "F405", "E402",
-})
 # F811 joins the undefined-name codes: a redefinition means the later name
 # silently wins — the ORM `User` shadowed by the Pydantic `User` and then
 # queried through the wrong one. In practice these hits are real defects.
@@ -294,8 +278,6 @@ def _classify_issue(message: str) -> ValidationIssue:
     # ast.parse was clean — the classic "ships green, boots dead" bug.
     if text.startswith("ruff:"):
         match = _RUFF_LINE_RE.search(text)
-        if match and match.group(1) in _RUFF_STYLE_CODES:
-            return ValidationIssue("style", text)
         if match and match.group(1) in _RUFF_BLOCKER_CODES:
             return ValidationIssue("blocker", text)
         return ValidationIssue("warning", text)

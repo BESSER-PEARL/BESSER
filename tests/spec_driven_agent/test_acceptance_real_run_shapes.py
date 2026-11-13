@@ -176,3 +176,63 @@ def test_a_page_routed_without_jsx_keeps_its_own_create(tmp_path):
                                    "export const routes = [{ path: '/tags', Component: TagList }];\n"),
     }
     assert _creates(tmp_path, files, "Tag") == {"Tag": True}
+
+
+def test_a_context_provider_that_posts_is_not_an_api_client(tmp_path):
+    """Pages call `useData()` from a provider that renders JSX and issues the POSTs;
+    treating every called-into module as an api client dropped those creates."""
+    files = {
+        "frontend/src/data/DataContext.jsx": (
+            "import { createContext, useContext } from 'react';\nconst Ctx = createContext(null);\n"
+            "export function DataProvider({ children }) {\n"
+            "  const createBooking = (b) => fetch('/booking/', { method: 'POST', body: JSON.stringify(b) });\n"
+            "  const createRoom = (r) => fetch('/room/', { method: 'POST', body: JSON.stringify(r) });\n"
+            "  return <Ctx.Provider value={{ createBooking, createRoom }}>{children}</Ctx.Provider>;\n}\n"
+            "export const useData = () => useContext(Ctx);\n"),
+        "frontend/src/pages/BookingPage.jsx": (
+            "import { useData } from '../data/DataContext';\nexport default function BookingPage() {\n"
+            "  const { createBooking } = useData();\n"
+            "  return <form onSubmit={() => createBooking({})}><h1>Bookings</h1></form>;\n}\n"),
+        "frontend/src/pages/RoomPage.jsx": (
+            "import { useData } from '../data/DataContext';\nexport default function RoomPage() {\n"
+            "  const { createRoom } = useData();\n"
+            "  return <form onSubmit={() => createRoom({})}><h1>Rooms</h1></form>;\n}\n"),
+    }
+    assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": True, "Room": True}
+
+
+def test_a_page_that_posts_and_exports_a_helper_keeps_its_own_create(tmp_path):
+    """Another file reads the page's field list and label helper; the page is
+    still a component, so the POST it issues itself counts."""
+    files = {
+        "frontend/src/pages/BookingPage.jsx": (
+            "export const BOOKING_FIELDS = ['guest', 'checkIn'];\nexport default function BookingPage() {\n"
+            "  const save = (b) => fetch('/booking/', { method: 'POST', body: JSON.stringify(b) });\n"
+            "  return <form onSubmit={() => save({})}><h1>Bookings</h1></form>;\n}\n"),
+        "frontend/src/pages/RoomPage.jsx": (
+            "export function roomLabel(r) { return `Room ${r.number}`; }\nexport default function RoomPage() {\n"
+            "  const save = (r) => fetch('/room/', { method: 'POST', body: JSON.stringify(r) });\n"
+            "  return <Form onSubmit={() => save({})} />;\n}\n"),
+        "frontend/src/pages/Summary.jsx": (
+            "import { BOOKING_FIELDS } from './BookingPage';\nimport { roomLabel } from './RoomPage';\n"
+            "export default function Summary({ rooms }) {\n"
+            "  return <div>{BOOKING_FIELDS.join(', ')} {rooms.map((r) => roomLabel(r))}</div>;\n}\n"),
+    }
+    assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": True, "Room": True}
+
+
+def test_a_typescript_client_with_generics_is_still_an_api_client(tmp_path):
+    """`request<T>` and `Promise<Tag>` are type arguments, not JSX: with no page
+    calling createTag, the client's own POST is not Tag's create."""
+    files = {
+        "frontend/src/api.ts": (
+            "async function request<T>(method: string, path: string, body?: unknown): Promise<T> {\n"
+            "  const res = await fetch(path, { method, body: JSON.stringify(body) });\n"
+            "  return res.json() as Promise<T>;\n}\n"
+            "export const listTags = (): Promise<Tag> => request<Tag>('GET', '/tag/');\n"
+            "export const createTag = (b: Tag) => request<Tag>('POST', '/tag/', b);\n"),
+        "frontend/src/pages/TagList.tsx": (
+            "import { listTags } from '../api';\nexport default function TagList() {\n"
+            "  listTags();\n  return <ul></ul>;\n}\n"),
+    }
+    assert _creates(tmp_path, files, "Tag") == {"Tag": False}

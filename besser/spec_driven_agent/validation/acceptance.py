@@ -390,6 +390,7 @@ def build_acceptance_matrix(
         target for rel, content in frontend_files for binding, spec in _import_bindings(content)
         for target in [next((c for c in _resolve_import(rel, spec) if c in by_path), None)]
         if target in helper_cache
+        and not re.search(r"</|/>", code[target])  # a closing tag: renders JSX, a component
         and re.search(r"(?<![\w$.])" + re.escape(binding) + r"\s*[.(]", code[rel])
         and not re.search(r"<\s*" + re.escape(binding) + r"\b", code[rel])
     }

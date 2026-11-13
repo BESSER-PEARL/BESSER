@@ -233,6 +233,106 @@ def test_redaction_keeps_ordinary_fields():
                      "accessToken": "[REDACTED]", "user": {"password": "[REDACTED]"}}
 
 
+@pytest.mark.parametrize("name, redacted", [
+    *[(name, True) for name in (
+        "password", "Password", "new_password", "password_hash", "passwordHash", "hashed_password",
+        "passwordConfirm", "password_confirmation", "passwd", "passphrase", "secret", "client_secret",
+        "secretKey", "jwt", "jwt_value", "access_token", "refresh_token", "accessToken", "id_token",
+        "csrf_token", "token", "Token", "api_key", "apiKey", "APIKey", "x-api-key", "apikey",
+        "access_key", "private_key", "credentials")],
+    *[(name, False) for name in (
+        "token_type", "tokenType", "token_count", "max_tokens", "next_page_token", "nextPageToken",
+        "page_token", "continuation_token", "cursor", "expires_in", "secretary", "author", "keywords",
+        "key", "monkey", "username", "email", "passage")],
+])
+def test_credential_field_names(name, redacted):
+    """password_hash and passwordConfirm were shown and next_page_token hidden."""
+    assert api_probe._credential_field(name, "value-1") is redacted
+
+
+def _run_in_process(app, requests):
+    import asyncio
+    return asyncio.run(api_probe._run_requests(app, requests))
+
+
+def test_a_failed_nested_assertion_does_not_quote_an_opaque_token():
+    """A failure message quoted a nested dict raw, so a non-JWT access_token reached the report."""
+    from fastapi import FastAPI
+
+    opaque = "s3ss-9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+    app = FastAPI()
+
+    @app.post("/auth/login")
+    def login():
+        return {"auth": {"access_token": opaque, "token_type": "bearer"}}
+
+    report = _run_in_process(app, [
+        {"method": "POST", "path": "/auth/login", "expected_fields": {"auth": {"token_type": "bearer"}}},
+        {"method": "POST", "path": "/auth/login", "expected_fields": {"auth.access_token": opaque}},
+    ])
+
+    assert opaque not in json.dumps(report)
+    assert report["responses"][0]["failures"] == [
+        "auth: expected {'token_type': 'bearer'}, got {'access_token': '[REDACTED]', 'token_type': 'bearer'}"]
+    assert report["responses"][1]["failures"] == []
+
+
+def test_a_validation_error_does_not_echo_a_submitted_password():
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+
+    class Signup(BaseModel):
+        username: str = Field(min_length=3)
+        password: str = Field(min_length=8)
+
+    app = FastAPI()
+
+    @app.post("/signup")
+    def signup(body: Signup):
+        return {"username": body.username}
+
+    report = _run_in_process(app, [{"method": "POST", "path": "/signup",
+                                    "json": {"username": "an", "password": "pw4Qz"},
+                                    "expected_status": 422}])
+
+    errors = {tuple(error["loc"]): error for error in report["responses"][0]["json"]["detail"]}
+    assert "pw4Qz" not in json.dumps(report)
+    assert errors["body", "password"]["input"] == "[REDACTED]"
+    assert "at least 8 characters" in errors["body", "password"]["msg"]
+    assert errors["body", "username"]["input"] == "an", "a non-credential field's error stays readable"
+
+
+def test_a_redacted_field_still_confirms_a_create_and_references_read_the_raw_value():
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    keys = {}
+
+    @app.post("/vault/")
+    def create():
+        keys[1] = "vk-123456789"
+        return {"id": 1, "secretKey": keys[1]}
+
+    @app.get("/vault/{item_id}")
+    def read(item_id: int):
+        return {"id": item_id, "secretKey": keys[item_id]}
+
+    @app.get("/vault/by-key/{key}")
+    def by_key(key: str):
+        return {"found": key == keys[1]}
+
+    report = _run_in_process(app, [
+        {"method": "POST", "path": "/vault/"},
+        {"method": "GET", "path": "/vault/{{0.id}}"},
+        {"method": "GET", "path": "/vault/by-key/{{0.secretKey}}", "expected_fields": {"found": True}},
+    ])
+
+    assert report["responses"][0]["json"] == {"id": 1, "secretKey": "[REDACTED]"}
+    assert api_probe.confirmed_create_paths(report) == {"/vault"}
+    assert report["status"] == "passed", report
+    assert "vk-123456789" not in json.dumps(report), "the key interpolated into a path is shown too"
+
+
 def test_orchestrator_result_and_saved_snapshot_never_carry_unsent_tokens(tmp_path):
     from besser.BUML.metamodel.structural import Class, DomainModel
     from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator

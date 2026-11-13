@@ -1196,3 +1196,40 @@ def test_an_extracted_kind_outside_the_schema_is_dropped(kind):
     client = _ToolClient([{"requirements": [{"text": "Titles are unique", "kind": kind}]}])
 
     assert ledger.extract_requirements(INSTRUCTIONS, client)[0]["kind"] == ""
+
+
+_ROLE_MODELS = """from pydantic import BaseModel
+
+
+class User(BaseModel):
+    nickname: str = ""
+    email: str
+    # TODO: reject a duplicate email on registration
+"""
+_ROLE_ROUTER = """def delete_user(db, user_id):
+    raise HTTPException(status_code=501, detail="Not implemented")
+"""
+
+
+@pytest.mark.parametrize("kind, text, evidence", [
+    ("uniqueness", "A user's email must be unique", "app/models.py: nickname: str; email: str"),
+    ("uniqueness", "A user's email must be unique",
+     "app/models.py: nickname: str; # TODO: reject a duplicate email on registration"),
+    ("uniqueness", "A user's email must be unique",
+     [{"path": "app/models.py", "line": "nickname: str; email: str"}]),
+    ("action", "An admin can delete a user",
+     [{"path": "app/router.py",
+       "line": 'raise HTTPException(; raise HTTPException(status_code=501, detail="Not implemented")'}]),
+])
+def test_a_fragment_cited_first_does_not_skip_the_role_check(tmp_path, kind, text, evidence):
+    """A part matched only inside a line came first, the loop stopped there, and a
+    declaration, a comment or a 501 stub behind it passed as the implementation."""
+    from besser.spec_driven_agent.planning.requirements_ledger import verify_evidence
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "models.py").write_text(_ROLE_MODELS, encoding="utf-8")
+    (tmp_path / "app" / "router.py").write_text(_ROLE_ROUTER, encoding="utf-8")
+    [verdict] = verify_evidence([{"id": 1, "kind": kind, "text": text, "status": "implemented",
+                                  "evidence": evidence}], str(tmp_path))
+    assert verdict["status"] == "unverified"
+

@@ -1416,7 +1416,11 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
                 break
             located += [(index, path, *part) for part in found]
         if not reason:
+            # A part found only inside a line proves no role: one whole line must.
+            reason = "no cited part is a whole source line"
             for index, path, part_source, part, spans in located:
+                if not spans:
+                    continue
                 for first_line, lineno in spans:
                     reason = _span_failure(item, part_source, first_line, lineno, part)
                     if not reason:

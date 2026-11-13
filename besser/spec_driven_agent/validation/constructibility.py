@@ -1223,11 +1223,13 @@ _TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
 _PRIVILEGE_WORDS = frozenset({"role", "admin", "administrator", "superuser", "staff", "permission", "scope",
                               "privilege", "manager", "owner", "moderator", "accounttype", "usertype"})
 # A required box every visitor must tick to register (terms, consent, age) grants nothing,
-# so the probe ticks one named only by these words (and numbers); any other boolean is a choice.
-_CONSENT_WORDS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "newsletter", "marketing",
-                            "remember", "adult", "age",
-                            "is", "has", "i", "accept", "accepted", "accepts", "agree", "agreed", "agrees", "to",
-                            "the", "opt", "in", "confirm", "confirmed", "me", "over", "of", "and", "read"})
+# so the probe ticks one naming at least one consent noun (or "over <number>") with every other
+# word a filler or a number; any other boolean is a choice.
+_CONSENT_NOUNS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "newsletter", "marketing",
+                            "remember", "adult", "age", "policy", "conditions"})
+_CONSENT_FILLERS = frozenset({"is", "has", "i", "accept", "accepted", "accepts", "agree", "agreed", "agrees", "to",
+                              "the", "of", "and", "opt", "in", "confirm", "confirmed", "me", "over", "read",
+                              "given", "use", "service", "signup"})
 # A required number naming a rank picks the account's standing, like a reference to another record.
 _RANK_WORDS = frozenset({"level", "tier", "rank", "grade", "clearance", "plan"})
 _PROBE_USERNAME = "probe_auth_user"
@@ -1272,6 +1274,14 @@ def _name_tokens(field: str) -> list[str]:
     return [t.lower() for t in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", field)]
 
 
+def _is_consent(tokens: list[str]) -> bool:
+    """Whether a boolean's name words state consent, an age or "remember me" and nothing else."""
+    if not all(t in _CONSENT_NOUNS or t in _CONSENT_FILLERS or t.isdigit() for t in tokens):
+        return False
+    return any(t in _CONSENT_NOUNS for t in tokens) or any(
+        a == "over" and b.isdigit() for a, b in zip(tokens, tokens[1:]))
+
+
 def _choice(field: str, schema: dict) -> str | None:
     """Why a value for ``field`` would choose what kind of account the probe gets, or None.
 
@@ -1286,7 +1296,7 @@ def _choice(field: str, schema: dict) -> str | None:
         return "a privilege-named field"
     if "enum" in schema or "const" in schema:
         return "one of fixed values"
-    if schema.get("type") == "boolean" and tokens and all(t in _CONSENT_WORDS or t.isdigit() for t in tokens):
+    if schema.get("type") == "boolean" and _is_consent(tokens):
         return None
     if schema.get("type") in ("integer", "number") and (
             (len(tokens) > 1 and tokens[-1] == "id") or words & _RANK_WORDS):

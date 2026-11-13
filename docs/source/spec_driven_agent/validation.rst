@@ -200,11 +200,13 @@ unsecured register/login routes (OpenAPI paths such as ``/register``,
 ``/room/{room_id}/register`` is not one). It fills the username, email and
 password, plus any other required field that is plain text or a number (a
 name, a phone number, an age, a study group; a date of birth gets a past
-date), and ticks a required consent box: a boolean whose name is made only of
-the words terms, tos, eula, consent, privacy, gdpr, newsletter, marketing,
-remember, adult or age, numbers, and the words is, has, i, accept(ed/s),
-agree(d/s), to, the, opt, in, confirm(ed), me, over, of, and, read
-(``terms_accepted``, ``marketing_opt_in``, ``over_18``; not
+date), and ticks a required consent box: a boolean whose name contains at
+least one of the words terms, tos, eula, consent, privacy, gdpr, newsletter,
+marketing, remember, adult, age, policy or conditions (or "over" and a
+number), and whose other words are only numbers and the words is, has, i,
+accept(ed/s), agree(d/s), to, the, of, and, opt, in, confirm(ed), me, over,
+read, given, use, service, signup (``terms_accepted``,
+``termsAndConditions``, ``consent_given``, ``over_18``; not ``is_confirmed``,
 ``privacy_officer`` or ``bypass_age_check``). It does not use a route that
 requires any other boolean, an enum/``Literal``, an object or array, a number
 that references another record or names a rank (a name ending in ``_id`` or

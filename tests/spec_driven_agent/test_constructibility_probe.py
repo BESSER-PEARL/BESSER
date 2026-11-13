@@ -818,6 +818,22 @@ def test_only_boxes_named_for_consent_and_plain_numbers_are_filled(field, schema
     assert _choice(field, schema) == reason
 
 
+@pytest.mark.parametrize("field, ticked", [
+    ("termsAndConditions", True), ("accept_terms_and_conditions", True), ("terms_of_service", True),
+    ("privacy_policy_accepted", True), ("consent_given", True), ("terms_accepted", True),
+    ("agree_to_terms", True), ("privacy_consent", True), ("marketing_opt_in", True), ("remember_me", True),
+    ("is_adult", True), ("over_18", True), ("age_confirmed", True),
+    ("is_confirmed", False), ("confirmed", False), ("accept", False), ("verified", False),
+    ("is_verified", False), ("email_verified", False), ("is_marketing_team", False),
+    ("newsletter_editor", False), ("privacy_officer", False), ("adult_content_creator", False),
+    ("bypass_age_check", False), ("is_manager", False), ("approved", False),
+])
+def test_a_consent_box_needs_a_consent_noun_and_only_filler_words(field, ticked):
+    """Review probe: ``termsAndConditions`` and ``consent_given`` refused registration (so no
+    login), while ``is_confirmed``, made only of filler words, was ticked."""
+    assert (_choice(field, _BOOLEAN) is None) is ticked
+
+
 @pytest.mark.parametrize("field, privileged, reason", [
     ("    is_marketing_team: bool\n", "data.is_marketing_team", "`is_marketing_team` (a boolean value)"),
     ("    group_id: int\n", "data.group_id == 1", "`group_id` (a reference to another record or a rank)"),

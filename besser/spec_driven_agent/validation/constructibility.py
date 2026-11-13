@@ -1219,8 +1219,13 @@ async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasse
 _REGISTER_PATH = re.compile(r"/(register|signup|sign-up|sign_up)/?$", re.I)
 _LOGIN_PATH = re.compile(r"/(login|signin|sign-in|sign_in|token)/?$", re.I)
 _TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
-_PRIVILEGE_WORDS = ("role", "admin", "superuser", "staff", "permission", "scope", "privilege", "group",
-                    "manager", "owner", "moderator")
+# Whole words of a field name (adjacent pairs joined: ``isSuperUser``, ``account_type``).
+_PRIVILEGE_WORDS = frozenset({"role", "admin", "administrator", "superuser", "staff", "permission", "scope",
+                              "privilege", "manager", "owner", "moderator", "accounttype", "usertype"})
+# A required box every visitor must tick to register (terms, consent, age) grants nothing,
+# so the probe ticks it; any other required boolean may choose the kind of account.
+_CONSENT_WORDS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "newsletter", "marketing",
+                            "remember", "adult", "age"})
 _PROBE_USERNAME = "probe_auth_user"
 _PROBE_EMAIL = "probe.auth.user@example.com"
 _PROBE_PASSWORD = "Probe-Passw0rd-2817"
@@ -1261,13 +1266,19 @@ def _body_schema(op: dict, schemas: dict) -> tuple[str | None, dict]:
 def _choice(field: str, schema: dict) -> str | None:
     """Why a value for ``field`` would choose what kind of account the probe gets, or None.
 
-    Only plain text or numbers under a name that is no privilege are free input; a
-    boolean, an enum/Literal, an object/array or a privilege-named field is a choice.
+    Only plain text or numbers under a name that is no privilege, and consent boxes,
+    are free input; another boolean, an enum/Literal, an object/array or a
+    privilege-named field is a choice.
     """
-    if any(word in field.lower() for word in _PRIVILEGE_WORDS):
+    tokens = [t.lower() for t in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", field)]
+    words = {*tokens, *(a + b for a, b in zip(tokens, tokens[1:]))}
+    words |= {word[:-1] for word in words if word.endswith("s")}
+    if words & _PRIVILEGE_WORDS:
         return "a privilege-named field"
     if "enum" in schema or "const" in schema:
         return "one of fixed values"
+    if schema.get("type") == "boolean" and words & _CONSENT_WORDS:
+        return None
     if schema.get("type") not in ("string", "integer", "number"):
         return f"a {schema.get('type') or 'untyped'} value"
     return None
@@ -1353,13 +1364,14 @@ async def _log_in(client, spec: dict, schemas: dict, retry) -> tuple[dict, tuple
             if retried[1] not in (401, 403):
                 return {"source": "its register/login routes", "identity": identity,
                         "credential": sorted(headers) or "session cookie"}, retried
-            # 403 to a request that carried the account's credential is the answer:
-            # the route needs a privilege.
+            # 403 to a request that carried the account's credential: the route needs a
+            # privilege or a step (such as a CSRF token) the probe does not take.
             refused = retried[1] == 403 and bool(headers or len(client.cookies))
             for name in headers:
                 client.headers.pop(name, None)
-            error = (f"{identity} was refused 403, so the route needs a privilege the probe will not take"
-                     if refused else f"the refused request still answered {retried[1]} after logging in")
+            error = (f"{identity} was refused 403 ({retried[2][:120]}), so the route needs a privilege "
+                     "or a step, such as a CSRF token, the probe does not take" if refused else
+                     f"the refused request still answered {retried[1]} after logging in ({retried[2][:120]})")
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"[:160]
     client.cookies.clear()

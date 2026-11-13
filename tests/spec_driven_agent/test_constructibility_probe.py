@@ -31,6 +31,7 @@ from besser.spec_driven_agent.validation.constructibility import (
     UNVERIFIED_PREFIX,
     _NetworkBlocked,
     _build_payload,
+    _choice,
     _install_network_guard,
     _is_local_host,
     _issues_from_report,
@@ -724,7 +725,7 @@ def test_a_register_route_that_asks_for_a_role_is_not_guessed(tmp_path):
     ("    is_manager: bool\n", "data.is_manager", "`is_manager` (a privilege-named field)"),
     ("    approved: bool\n", "data.approved", "`approved` (a boolean value)"),
     ('    account_type: Literal["organizer", "attendee"]\n', 'data.account_type == "organizer"',
-     "`account_type` (one of fixed values)"),
+     "`account_type` (a privilege-named field)"),
 ])
 def test_a_register_route_that_makes_the_account_choose_its_kind_is_not_used(tmp_path, field, privileged, reason):
     """A required flag or enum was filled by ``_sample`` (True, the first literal), so
@@ -752,7 +753,109 @@ def test_a_403_to_the_probes_own_account_ends_the_login(tmp_path):
     report = collect_constructibility_report(workspace)
     assert "source" not in report["backends"][0]["auth"]
     [refused] = [i for i in report["issues"] if "requires authentication" in i]
-    assert "refused 403, so the route needs a privilege the probe will not take" in refused
+    assert "Managers only" in refused and "so the route needs a privilege" in refused, refused
+
+
+@pytest.mark.parametrize("field", ["study_group", "parole_officer", "badminton_club", "ownership_note"])
+def test_a_field_with_a_privilege_word_inside_another_word_is_free_text(field):
+    """``role``/``admin``/``owner`` were matched as substrings, so ordinary required
+    fields such as ``parole_officer`` refused registration and held every create."""
+    assert _choice(field, {"type": "string"}) is None
+
+
+@pytest.mark.parametrize("field", ["is_admin", "userRole", "account-type", "isSuperUser", "user_roles",
+                                   "groupOwner", "role"])
+def test_a_privilege_word_is_matched_as_a_whole_word_of_any_casing(field):
+    assert _choice(field, {"type": "string"}) == "a privilege-named field"
+
+
+@pytest.mark.parametrize("field", ["terms_accepted", "accept_terms", "agree_to_terms", "privacy_consent",
+                                   "newsletter", "marketing_opt_in", "remember_me", "is_adult", "ageConfirmed"])
+def test_a_required_consent_box_is_ticked(field):
+    assert _choice(field, {"type": "boolean"}) is None
+
+
+@pytest.mark.parametrize("field, schema, reason", [
+    ("is_manager", {"type": "boolean"}, "a privilege-named field"),
+    ("admin_consent", {"type": "boolean"}, "a privilege-named field"),
+    ("approved", {"type": "boolean"}, "a boolean value"),
+    ("terms", {"enum": ["yes", "no"], "type": "string"}, "one of fixed values"),
+    ("account_type", {"enum": ["organizer", "attendee"], "type": "string"}, "a privilege-named field"),
+])
+def test_every_other_boolean_enum_or_privilege_field_stays_a_choice(field, schema, reason):
+    assert _choice(field, schema) == reason
+
+
+@pytest.mark.parametrize("field", ["    study_group: str\n", "    terms_accepted: bool\n"])
+def test_an_ordinary_register_form_is_used(tmp_path, field):
+    """A required ``study_group`` (named like a privilege by substring) or ``terms_accepted``
+    box refused registration, so every create of an app any user may write to was unverified."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, extra_field=field, module=_PRIVILEGE_AUTH_MODULE))
+    assert report["issues"] == [], report["issues"]
+    assert report["backends"][0]["auth"]["identity"] == "a new account the probe registered"
+
+
+_CSRF_AUTH_MODULE = '''
+import secrets
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel
+
+_users: dict = {}
+_sessions: dict = {}
+router = APIRouter(prefix="/auth")
+
+
+class Credentials(BaseModel):
+    username: str
+    password: str
+
+
+def get_current_user(request: Request):
+    session = _sessions.get(request.cookies.get("sid"))
+    if session is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if request.headers.get("x-csrf-token") != session["csrf"]:
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+    return session["user"]
+
+
+@router.post("/register", status_code=201)
+def register(data: Credentials):
+    _users[data.username] = data.password
+    return {"username": data.username}
+
+
+@router.post("/login")
+def login(data: Credentials, response: Response):
+    if _users.get(data.username) != data.password:
+        raise HTTPException(status_code=401, detail="bad credentials")
+    sid, csrf = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+    _sessions[sid] = {"user": data.username, "csrf": csrf}
+    response.set_cookie("sid", sid)
+    return {"csrf_token": csrf}
+'''
+
+
+def test_a_csrf_protected_session_says_what_stopped_the_probe(tmp_path):
+    """The probe does not send CSRF tokens; its finding said the route needs a
+    privilege, which sent the repair after a role check that does not exist."""
+    report = collect_constructibility_report(_auth_scaffold(tmp_path, module=_CSRF_AUTH_MODULE))
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "CSRF token missing or invalid" in refused, refused
+
+
+def test_a_strict_oauth2_form_login_says_what_stopped_the_probe(tmp_path):
+    """``OAuth2PasswordRequestFormStrict`` requires ``grant_type=password``, which the probe does not send."""
+    workspace = _auth_scaffold(tmp_path)
+    auth_module = tmp_path / "web_app" / "backend" / "auth.py"
+    auth_module.write_text(auth_module.read_text(encoding="utf-8").replace(
+        '@router.post("/login")\ndef login(data: Credentials):',
+        '@router.post("/token")\ndef login(data: OAuth2PasswordRequestFormStrict = Depends()):').replace(
+        "from fastapi.security import", "from fastapi.security import OAuth2PasswordRequestFormStrict,"),
+        encoding="utf-8")
+    report = collect_constructibility_report(workspace)
+    [refused] = [i for i in report["issues"] if "requires authentication" in i]
+    assert "POST /auth/token answered 422" in refused and "grant_type" in refused, refused
 
 
 def test_a_templated_register_route_is_not_the_account_register(tmp_path):

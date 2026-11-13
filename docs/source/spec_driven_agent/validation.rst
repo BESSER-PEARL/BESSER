@@ -199,12 +199,20 @@ unsecured register/login routes (OpenAPI paths such as ``/register``,
 ``/login`` or an OAuth2 ``tokenUrl``; a templated path such as
 ``/room/{room_id}/register`` is not one). It fills the username, email and
 password, plus any other required field that is plain text or a number (a
-name, a phone number). It does not use a route that requires a boolean, an
-enum/``Literal``, an object or array, or a field named like a privilege (role,
-admin, staff, manager, owner, permission, scope, group, ...): those choose what
-kind of account it gets. If registration fails, it still tries the login route.
-If its logged-in account is refused with 403, it stops there and the finding
-says the route needs a privilege the probe will not take.
+name, a phone number, a study group), and ticks a required consent box (a
+boolean named for terms, consent, privacy, a newsletter, marketing, "remember
+me" or an age confirmation). It does not use a route that requires any other
+boolean, an enum/``Literal``, an object or array, or a field named like a
+privilege: a field whose name contains the whole word role, admin, superuser,
+staff, permission, scope, privilege, manager, owner or moderator, or the words
+account type or user type, in snake_case, camelCase or kebab-case (``is_admin``,
+``userRole``, ``account-type``; not ``parole_officer``). Those choose what kind
+of account it gets. If registration fails, it still tries the login route. If
+its logged-in account is still refused, it stops there and the finding quotes
+the app's answer: a 403 means the route needs a privilege or a step the probe
+does not take, such as a CSRF token. A login form that needs a fixed value,
+such as ``OAuth2PasswordRequestFormStrict``'s ``grant_type=password``, is not
+filled; the finding quotes the 422.
 
 A login counts only when the refused request then gets past the 401/403. The
 report keeps the first refused request and its status under ``auth`` (evidence

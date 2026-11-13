@@ -527,3 +527,70 @@ def test_the_judge_is_told_to_cite_lines_as_separate_parts():
     from besser.spec_driven_agent.planning.requirements_ledger import _JUDGE_SYSTEM_PROMPT
     assert "never join separate lines" in _JUDGE_SYSTEM_PROMPT
     assert 'separate "file: line" parts joined by " and "' in _JUDGE_SYSTEM_PROMPT
+
+
+# Live (saved Sonnet runs): an empty catch body "{\n  /* ignore */\n}" in 12 of 554
+# judged JS files was read as a JSX comment and lost two line breaks, so every later
+# comment line was recorded two lines too early.
+BOOKINGS_JS = '''import api from './api';
+
+export async function loadBookings() {
+  try {
+    return await api.get('/bookings');
+  } catch (e) {
+    /* offline: keep the cached list */
+  }
+}
+
+export async function removeBooking(id, user) {
+  // if (!user.isAdmin) throw new Error('Only admins can delete bookings');
+  return api.delete(`/bookings/${id}`);
+}
+
+export function checkStock(qty, stock) {
+  if (qty > stock) throw new Error('Not enough stock');
+  const left = stock - qty;
+  // stock is re-read on every call
+  return true;
+}
+'''
+
+
+def _check_bookings(tmp_path, evidence, text, kind="rule"):
+    (tmp_path / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "frontend" / "src" / "bookings.js").write_text(BOOKINGS_JS, encoding="utf-8")
+    return verify_evidence([_verdict(evidence, text=text, kind=kind)], str(tmp_path))[0]
+
+
+def test_a_commented_out_check_after_an_empty_catch_body_is_refused(tmp_path):
+    verdict = _check_bookings(
+        tmp_path, "frontend/src/bookings.js: // if (!user.isAdmin) throw new Error('Only admins can delete bookings');",
+        "Only admins can delete bookings")
+    assert verdict["status"] == "unverified"
+    assert "comment" in verdict["note"]
+
+
+def test_a_real_check_after_an_empty_catch_body_verifies(tmp_path):
+    verdict = _check_bookings(
+        tmp_path, "frontend/src/bookings.js: if (qty > stock) throw new Error('Not enough stock');",
+        "An order larger than the stock is refused")
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_comment_handling_never_changes_the_line_count():
+    from besser.spec_driven_agent.planning.requirements_ledger import _comment_only_lines, _without_comments
+    snippets = {
+        "a.js": BOOKINGS_JS,
+        "b.jsx": "function A() {\n  return (\n    <div>\n      {/* note */}\n      {/*\n        <Old />\n      */}\n"
+                 "      { /* spaced */ }\n    </div>\n  );\n}\n",
+        "c.tsx": "try {\n  run();\n} catch {\n\n  /* a */\n\n}\nconst x = { /* empty */ };\n",
+        "d.py": "def f():\n    # note\n    try:\n        pass\n    except Exception:\n        pass  # ignore\n",
+        "e.js": "const s = '{ /* not a comment */ }';\n/* a\n b */\nfoo();",
+    }
+    for name, text in snippets.items():
+        lines = text.splitlines()
+        assert len(_without_comments(text, name).splitlines()) == len(lines), name
+        suffix = name[name.rfind("."):]
+        assert _comment_only_lines(text, suffix) <= set(range(1, len(lines) + 1)), name
+    assert _comment_only_lines(snippets["b.jsx"], ".jsx") == {4, 5, 6, 7, 8}
+    assert _comment_only_lines(BOOKINGS_JS, ".js") == {7, 12, 19}

@@ -1054,8 +1054,14 @@ def _noop_validator(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return True
 
 
-# A JSX comment is written as an expression: {/* note */}.
-_JSX_COMMENT_RE = re.compile(r"\{\s*(/\*(?:(?!\*/)[\s\S])*\*/)\s*\}")
+# A JSX comment is written as an expression: {/* note */}. A brace on its own
+# line ("catch (e) {\n /* ignore */\n}") opens a JS block, not a JSX comment.
+_JSX_COMMENT_RE = re.compile(r"\{[ \t]*(/\*(?:(?!\*/)[\s\S])*\*/)[ \t]*\}")
+
+
+def _blank_jsx_comment_braces(text: str) -> str:
+    """``{/* note */}`` as `` /* note */ ``: every offset and line break kept."""
+    return _JSX_COMMENT_RE.sub(lambda match: " " + match.group()[1:-1] + " ", text)
 
 
 def _comment_only_lines(source: str, suffix: str) -> set[int]:
@@ -1066,7 +1072,7 @@ def _comment_only_lines(source: str, suffix: str) -> set[int]:
     of block comments cannot masquerade as code citations either.
     """
     if suffix in (".js", ".jsx", ".tsx"):
-        source = _JSX_COMMENT_RE.sub(r"\1", source)
+        source = _blank_jsx_comment_braces(source)
     lines = source.splitlines()
     if suffix == ".py":
         return {i for i, line in enumerate(lines, 1) if line.lstrip().startswith("#")}
@@ -1142,7 +1148,7 @@ def _without_comments(text: str, filename: str) -> str:
     if lexer is None:
         return text
     if suffix in (".js", ".jsx", ".tsx"):
-        text = _JSX_COMMENT_RE.sub(r"\1", text)
+        text = _blank_jsx_comment_braces(text)
     return "".join("\n" * value.count("\n") if token in Comment else value
                    for token, value in lexer.get_tokens(text))
 

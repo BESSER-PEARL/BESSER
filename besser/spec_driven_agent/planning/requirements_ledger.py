@@ -31,6 +31,7 @@ from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
 from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
+from besser.spec_driven_agent.state.generator_output import GeneratorOutputError, load_generator_output
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
@@ -56,7 +57,8 @@ _EXTRACTION_INCOMPLETE = (
 _STATUSES = ("implemented", "partial", "missing", "unverified")
 
 # What the judge reads: the schemas and the ORM first (validators, unique
-# columns), then the routers (where rules are enforced), then the pages. A
+# columns), then the backend code the model wrote or changed (where rules are
+# enforced), then generator output it never changed, then the pages. A
 # mid-sized app compacts to ~150k chars (~38k tokens); a router with nested
 # creation is ~20k on its own, so the per-file cap must hold one.
 _DIGEST_MAX_TOTAL_CHARS = 200_000
@@ -630,16 +632,36 @@ def render_requirements(requirements: list[dict] | None) -> str:
     return "\n".join(f"R{r['id']}. {r['text']}" for r in requirements or [])
 
 
-def _digest_priority(rel: str) -> tuple[int, str]:
+def _digest_priority(rel: str, untouched: frozenset[str] = frozenset()) -> tuple[int, str]:
     if rel.endswith(("pydantic_classes.py", "sql_alchemy.py")):
         return (0, rel)
-    if "/routers/" in rel or rel.startswith("routers/"):
-        return (1, rel)
-    if rel.endswith(".py"):
-        return (2, rel)
+    router = "/routers/" in rel or rel.startswith("routers/")
+    if router or rel.endswith(".py"):
+        # A CRUD router as generated holds no hand-written logic; a service module does.
+        return (3 if rel in untouched else 1 if router else 2, rel)
     if "/pages/" in f"/{rel}" or "/components/" in f"/{rel}":
-        return (3, rel)
-    return (4, rel)
+        return (4, rel)
+    return (5, rel)
+
+
+def _untouched_generator_files(output_dir: str, files: dict[str, str]) -> frozenset[str]:
+    """The judged files still byte-identical to the stored generator output."""
+    for out_dir in sorted({rel.split("/", 1)[0] for rel in files if "/" in rel}):
+        try:
+            stored = load_generator_output(output_dir, out_dir)
+        except GeneratorOutputError:
+            continue
+        if stored is None:
+            return frozenset()
+        untouched = set()
+        for rel, content in stored.files.items():
+            try:
+                if rel in files and Path(files[rel]).read_bytes() == content:
+                    untouched.add(rel)
+            except OSError:
+                continue
+        return frozenset(untouched)
+    return frozenset()
 
 
 def _source_files(output_dir: str) -> dict[str, str]:
@@ -673,7 +695,10 @@ def judged_source_fingerprint(output_dir: str) -> str:
     heuristic, so a comment-only edit re-judges.
     """
     fingerprint = hashlib.sha256()
-    for rel, full in sorted(_source_files(output_dir).items()):
+    files = _source_files(output_dir)
+    # Which files are untouched generator output orders the digest.
+    fingerprint.update(json.dumps(sorted(_untouched_generator_files(output_dir, files))).encode("utf-8"))
+    for rel, full in sorted(files.items()):
         try:
             content = Path(full).read_bytes()
         except OSError:
@@ -725,6 +750,7 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     judgment. With no resolvable focus path it falls back to the whole app.
     """
     files = _source_files(output_dir)
+    untouched = _untouched_generator_files(output_dir, files)
     focused = set()
     for path in (focus_paths or [])[:10]:
         if not isinstance(path, str):
@@ -765,14 +791,14 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
         if truncated:
             chunk += (f"\n[DIGEST TRUNCATED: {rel}; showing {cap} of {len(content)} code characters. "
                       "Do not infer absence from omitted code.]\n")
-        entries.append(((0 if rel in focused else 1, *_digest_priority(rel)), rel, chunk, truncated))
+        entries.append(((0 if rel in focused else 1, *_digest_priority(rel, untouched)), rel, chunk, truncated))
     entries.sort(key=lambda e: e[0])
     reserved: set[str] = set()
     total = 0
     if not focused:  # pages and components first, then the rest of the non-Python source
         ui_budget = int(source_budget * _DIGEST_UI_SHARE)
         for key, rel, chunk, _ in entries:
-            if key[1] >= 3 and total + len(chunk) + 2 <= ui_budget:
+            if key[1] >= 4 and total + len(chunk) + 2 <= ui_budget:
                 reserved.add(rel)
                 total += len(chunk) + 2
     parts: list[str] = []

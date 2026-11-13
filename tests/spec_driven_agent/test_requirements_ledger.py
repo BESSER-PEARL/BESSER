@@ -21,6 +21,7 @@ from besser.BUML.metamodel.structural import (
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
+from besser.spec_driven_agent.state.generator_output import store_generator_output
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run_0c537a4e")
 
@@ -249,6 +250,52 @@ def test_the_judge_cache_key_follows_an_edit_to_a_judged_frontend_file(tmp_path)
     assert ledger.judged_source_fingerprint(str(tmp_path)) == before
     _write(tmp_path, "frontend/src/components/MapView.jsx", "const layer = L.geoJSON(geojson);\n")
     assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
+_DETECT = "    unwanted = [m for m in messages if m.isUnwanted]\n"
+
+
+def _generated_backend(root, *, stored_routers=10):
+    """Generated CRUD routers over the budget, one router and one engine module the model wrote."""
+    _write(root, "backend/pydantic_classes.py", "class MessageCreate(BaseModel):\n    body: str\n" * 10)
+    _write(root, "backend/sql_alchemy.py", "class Message(Base):\n    body = Column(String)\n" * 10)
+    generated = {}
+    for i in range(10):
+        rel = f"backend/routers/entity{i:02}.py"
+        generated[rel] = f"@router.get('/entity{i}/')\ndef read_{i}(): return []\n".encode() * 50
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(generated[rel])
+    generated["backend/routers/riskassessment.py"] = b"@router.get('/riskassessment/')\ndef read(): return []\n"
+    _write(root, "backend/routers/riskassessment.py",
+           "@router.post('/riskassessment/{account_id}/assess/')\ndef assess(account_id): return score(account_id)\n" * 20)
+    _write(root, "backend/risk_engine.py", f"def detect_signals(messages):\n{_DETECT}    return unwanted\n" * 20)
+    stored = dict(list(generated.items())[:stored_routers]) | {
+        "backend/routers/riskassessment.py": generated["backend/routers/riskassessment.py"]}
+    store_generator_output(str(root), "backend", stored, "8.0.0")
+
+
+def test_hand_written_backend_code_is_judged_before_untouched_generated_routers(tmp_path, monkeypatch):
+    """Sonnet 5.5, risk-awareness app: the generated CRUD routers filled the digest and
+    risk_engine.py, the only module implementing five requirements, was omitted."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _generated_backend(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### backend/risk_engine.py" in digest and _DETECT.strip() in digest
+    assert "/assess/" in digest
+    assert "Truncated files:" not in digest
+    omitted = digest.split("Omitted files: ", 1)[1].split("\n", 1)[0].split(", ")
+    assert omitted and all(rel.startswith("backend/routers/entity") for rel in omitted)
+    assert digest.index("### backend/sql_alchemy.py") < digest.index("### backend/risk_engine.py")
+    assert len(digest) <= 20_000 and digest == ledger.build_app_digest(str(tmp_path))
+
+
+def test_the_judge_cache_key_follows_which_files_are_untouched_generator_output(tmp_path, monkeypatch):
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _generated_backend(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path)), ledger.build_app_digest(str(tmp_path))
+    _generated_backend(tmp_path, stored_routers=5)  # same source, a different store
+    after = ledger.judged_source_fingerprint(str(tmp_path)), ledger.build_app_digest(str(tmp_path))
+    assert after[1] != before[1] and after[0] != before[0]
 
 
 def _vendored_frontend(root):

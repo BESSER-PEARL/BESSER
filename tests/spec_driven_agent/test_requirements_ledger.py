@@ -196,6 +196,61 @@ def test_the_digest_reads_schemas_then_routers_and_skips_the_stdlib(tmp_path, mo
     assert "omitted/unreadable files: 2" in bounded
 
 
+_MAP_CLICK = "lyr.on('click', () => onSelect(feature.properties.name));"
+
+
+def _dashboard_app(root, components=1, component_chars=900):
+    """A 13-entity backend whose CRUD routers alone exceed the budget, plus a React dashboard."""
+    _write(root, "backend/pydantic_classes.py", "class PlantCreate(BaseModel):\n    name: str\n" * 20)
+    _write(root, "backend/sql_alchemy.py", "class Plant(Base):\n    name = Column(String)\n" * 20)
+    for i in range(13):
+        _write(root, f"backend/routers/entity{i:02}.py", f"@router.get('/entity{i}/')\ndef read_{i}(): return []\n" * 60)
+    for i in range(40):  # helper modules: Python ranks ahead of the frontend and fills any gap
+        _write(root, f"backend/services/helper{i:02}.py", f"def helper_{i}(): return {i}\n" * 8)
+    _write(root, "frontend/src/pages/Dashboard.jsx", "<MapView geojson={geojson} onSelect={setRegion} />\n" * 10)
+    _write(root, "frontend/src/components/MapView.jsx", f"const layer = L.geoJSON(geojson);\n{_MAP_CLICK}\n" * 5)
+    for i in range(components):
+        _write(root, f"frontend/src/components/Panel{i:02}.jsx", "x" * component_chars + "\n")
+
+
+def test_a_ui_requirement_is_judged_with_the_frontend_in_view(tmp_path, monkeypatch):
+    """Sonnet 5.5, 13-class wastewater dashboard: the generated routers filled the
+    budget, every frontend component was omitted and all UI requirements ended unverified."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _dashboard_app(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### frontend/src/components/MapView.jsx" in digest
+    assert _MAP_CLICK in digest
+    assert "### frontend/src/pages/Dashboard.jsx" in digest
+    assert digest.index("### backend/pydantic_classes.py") < digest.index("### backend/routers/entity00.py")
+    assert len(digest) <= 20_000
+
+
+def test_the_frontend_share_of_the_digest_is_capped(tmp_path, monkeypatch):
+    """A large frontend gets its share; the schemas and routers keep the rest of the budget."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _dashboard_app(tmp_path, components=40)
+    digest = ledger.build_app_digest(str(tmp_path))
+    shown = digest.split("\n\n## Digest coverage")[0].split("### ")
+    backend = sum(len(chunk) for chunk in shown if chunk.startswith("backend/"))
+    router = next(len(chunk) for chunk in shown if chunk.startswith("backend/routers/entity00.py"))
+    assert "### frontend/src/components/MapView.jsx" in digest
+    assert "### backend/sql_alchemy.py" in digest and "### backend/pydantic_classes.py" in digest
+    # 18_000 = the source budget once the footer's 10% is set aside
+    assert backend + router > (1 - ledger._DIGEST_UI_SHARE) * 18_000
+    assert "omitted/unreadable files: 0" not in digest and len(digest) <= 20_000
+
+
+def test_the_judge_cache_key_follows_an_edit_to_a_judged_frontend_file(tmp_path):
+    _dashboard_app(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "README.md", "# Wastewater dashboard\n")
+    _write(tmp_path, "frontend/package.json", '{"name": "dashboard"}\n')
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "frontend/src/components/MapView.jsx", "const layer = L.geoJSON(geojson);\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
 # ---------------------------------------------------------- evidence check
 
 

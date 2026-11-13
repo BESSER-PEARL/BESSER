@@ -59,6 +59,9 @@ _STATUSES = ("implemented", "partial", "missing", "unverified")
 # creation is ~20k on its own, so the per-file cap must hold one.
 _DIGEST_MAX_TOTAL_CHARS = 200_000
 _DIGEST_MAX_FILE_CHARS = 24_000
+# Share of the source budget kept for non-Python source (the screens): a model's
+# generated CRUD routers alone can fill the budget and hide every UI file.
+_DIGEST_UI_SHARE = 0.3
 
 # For these kinds an "implemented" verdict must cite a line that enforces
 # something; otherwise the judge marks uniqueness or capacity rules implemented
@@ -607,7 +610,7 @@ def _digest_priority(rel: str) -> tuple[int, str]:
         return (1, rel)
     if rel.endswith(".py"):
         return (2, rel)
-    if "/pages/" in f"/{rel}":
+    if "/pages/" in f"/{rel}" or "/components/" in f"/{rel}":
         return (3, rel)
     return (4, rel)
 
@@ -734,16 +737,24 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
                       "Do not infer absence from omitted code.]\n")
         entries.append(((0 if rel in focused else 1, *_digest_priority(rel)), rel, chunk, truncated))
     entries.sort(key=lambda e: e[0])
-    parts: list[str] = []
+    reserved: set[str] = set()
     total = 0
+    if not focused:  # pages and components first, then the rest of the non-Python source
+        ui_budget = int(source_budget * _DIGEST_UI_SHARE)
+        for key, rel, chunk, _ in entries:
+            if key[1] >= 3 and total + len(chunk) + 2 <= ui_budget:
+                reserved.add(rel)
+                total += len(chunk) + 2
+    parts: list[str] = []
     omitted = unreadable + omitted_by_focus
     truncated_paths = []
     for _, rel, chunk, truncated in entries:
-        if total + len(chunk) + 2 > source_budget:
-            omitted.append(rel)
-            continue
+        if rel not in reserved:
+            if total + len(chunk) + 2 > source_budget:
+                omitted.append(rel)
+                continue
+            total += len(chunk) + 2
         parts.append(chunk)
-        total += len(chunk) + 2
         if truncated:
             truncated_paths.append(rel)
     footer = (

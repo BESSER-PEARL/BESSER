@@ -657,6 +657,31 @@ def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):
     assert orch._collect_requirement_issues() == []
 
 
+CREATE_UNVERIFIED = ("runtime unverified: create unverified: backend: POST /dataset/ - status 401; "
+                     "a guessed request being refused does not prove this endpoint is broken.")
+
+
+@pytest.mark.parametrize("execution_issues, judged", [
+    ([CREATE_UNVERIFIED], True),
+    (["runtime unverified: action unverified: backend: POST /plant/1/close - state not constructible"], True),
+    ([CREATE_UNVERIFIED, "application startup: backend: ImportError: no module named x"], False),
+    (["create contract: backend: POST /dataset/ - status 500"], False),
+])
+def test_only_an_observed_failure_defers_the_requirements_judge(
+        simple_model, tmp_path, monkeypatch, execution_issues, judged):
+    """Sonnet 5.5, login-protected 13-class app: every guessed POST got 401, so
+    the judge was deferred on 7 of 8 runs and no requirement was ever judged."""
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path))
+    monkeypatch.setattr(orch, "_collect_execution_issues", lambda: list(execution_issues))
+    calls = []
+    monkeypatch.setattr(orch, "_collect_requirement_issues", lambda: calls.append(1) or [])
+
+    messages = [i.message for i in orch._collect_validation_issues()]
+
+    assert bool(calls) is judged
+    assert any("judgment deferred" in m for m in messages) is not judged
+
+
 def _run_phase3_with(orch, passes, monkeypatch):
     """Drive the Phase 3 loop with scripted validation passes and record
     whether the pre-Phase-3 snapshot was restored."""

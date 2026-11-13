@@ -170,6 +170,7 @@ from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _check_did_not_run,
     _classify_issue,
+    _hard_blockers,
     dependency_check_issue,
     is_completion_issue,
     required_check_unverified,
@@ -3263,7 +3264,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 f"{self._requirement_extraction_attempts} extraction attempt(s) on "
                 f"{getattr(self.client, 'model', 'this model')} returned nothing",
             ))
-        if not self.enable_requirements_ledger or not any(_classify_issue(s).severity == "blocker" for s in execution_issues):
+        # Only an observed failure defers the judge; an unverified create or
+        # action (e.g. a guessed POST refused by login) says nothing about the app.
+        if not self.enable_requirements_ledger or not _hard_blockers(
+                [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
             raw_issues.extend(self._collect_requirement_issues())
         else:
             raw_issues.append("validation: business-requirement judgment deferred until startup/data-entry blockers are fixed")

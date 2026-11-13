@@ -196,7 +196,11 @@ Feature flags
   request into a numbered list of atomic requirements once per run (only
   behaviour the request states; a vague request yields few or none), show that
   list to Phase 2, and have every Phase 3 pass judge each requirement against
-  the generated code. A requirement the code does not implement becomes a
+  the generated code (a pass whose execution checks found a defect, such as
+  an app that does not start or a create that fails, skips the judgment
+  until it is fixed; a create the probe could not verify, such as one
+  refused by a login, does not). A
+  requirement the code does not implement becomes a
   ``requirement:`` blocker for the auto-fix loop, and every verdict is written
   to the recipe. It costs extra calls to the planning model: one to extract
   the list, and one for each Phase 3 pass on which the application source

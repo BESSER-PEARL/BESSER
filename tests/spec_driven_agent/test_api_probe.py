@@ -84,6 +84,20 @@ def test_real_sequence_references_and_failed_business_assertion_are_not_false_su
     assert source_hashes(tmp_path) == before
 
 
+def test_a_missing_json_path_names_the_record_wrapped_one_level_down():
+    """Sonnet 5.5: POST /treatmentplant/ answered {"treatmentplant": {"id": 1, ...}}, the
+    scenario read 'id' and was told only that it was not present."""
+    with pytest.raises(ValueError, match=r"^JSON path 'id' was not present; did you mean 'dataset\.id'\?$"):
+        api_probe._json_path({"dataset": {"id": 5, "name": "a"}, "versions_ids": []}, "id")
+    with pytest.raises(ValueError, match=r"did you mean 'a\.id' or 'b\.id' or 'c\.id'\?$"):
+        api_probe._json_path({k: {"id": 1} for k in "abcd"}, "id")
+    with pytest.raises(ValueError, match=r"^JSON path 'id' was not present$"):
+        api_probe._json_path({"page": {"items": [{"id": 1}]}}, "id")
+    with pytest.raises(ValueError, match=r"did you mean 'plant\.id'"):
+        api_probe._resolve_references("{{0.id}}", [{"plant": {"id": 1}}])
+    assert api_probe._json_path({"dataset": {"id": 5}}, "dataset.id") == 5
+
+
 def test_invalid_requests_and_external_paths_never_launch_a_child(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox_mod, "run_confined", lambda *a, **k: pytest.fail("invalid input launched a child"))
     invalid = [[], [{"method": "GET", "path": "/"}] * 21,

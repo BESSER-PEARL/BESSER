@@ -33,6 +33,7 @@ _MAX_INPUT_BYTES = 64_000
 _BODY_CHARS = 2000
 _MAX_REPORTED_FAILURES = 5
 _NO_JSON = object()
+_MISSING = object()
 _REFERENCE = re.compile(r"\{\{(\d+)(?:\.([^{}]+))?\}\}")
 _MAX_HEADERS = 10
 _HEADER_VALUE_CHARS = 4096
@@ -158,7 +159,7 @@ def _validate_requests(requests):
     return requests
 
 
-def _json_path(body, path):
+def _walk(body, path):
     current = body
     for part in path.split(".") if path else []:
         if isinstance(current, dict) and part in current:
@@ -166,7 +167,19 @@ def _json_path(body, path):
         elif isinstance(current, list) and part.isdecimal() and int(part) < len(current):
             current = current[int(part)]
         else:
-            raise ValueError(f"JSON path {path!r} was not present")
+            return _MISSING
+    return current
+
+
+def _json_path(body, path):
+    current = _walk(body, path)
+    if current is _MISSING:
+        # Name the path one level down: APIs often wrap a record as {"dataset": {"id": 1}}.
+        wrapped = [f"{key}.{path}" for key, child in body.items()
+                   if "." not in key and isinstance(child, dict) and _walk(child, path) is not _MISSING
+                   ] if isinstance(body, dict) else []
+        hint = f"; did you mean {' or '.join(map(repr, wrapped[:3]))}?" if wrapped else ""
+        raise ValueError(f"JSON path {path!r} was not present{hint}")
     return current
 
 

@@ -9,7 +9,7 @@ indicate whether the entity appears in the app (not executed acceptance):
   the cell is ``None`` (unmeasured) rather than ``False``;
 * ``page``   — some frontend file is about it (name or content match);
 * ``create`` — a frontend file about it contains a POST, OR calls a
-  shared api-client helper that issues one (a generic form is about the
+  shared api-client helper or React hook that issues one (a generic form is about the
   entities its imported config module declares), OR a ``<TableBlock>`` bound
   to it: ``dataBinding`` naming this entity and an endpoint, plus a
   non-empty ``options.formColumns``. The GUI-model scaffold's only
@@ -166,6 +166,44 @@ def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
     return helpers
 
 
+def _definition_end(blanked: str, start: int) -> int:
+    """Where a definition starting at ``start`` ends: after its parameters, then its body."""
+    depth, closed = 0, 0
+    for i in range(start, len(blanked)):
+        if blanked[i] in "([{":
+            depth += 1
+        elif blanked[i] in ")]}":
+            depth -= 1
+            if depth < 0:
+                return i
+            if depth == 0:
+                closed += 1
+                if closed == 2:
+                    return i + 1
+    return len(blanked)
+
+
+def _hook_post_paths(source: str) -> dict[str, list[str] | None]:
+    """{React hook name: the literal paths of the POSTs inside its body, or None if any is not literal}.
+
+    A page calling ``useBookings()`` creates through whatever the hook returns
+    (``{ add }``), so the hook call is that page's create.
+    """
+    blanked = _blank_literals(source)
+    posts = list(_POST_RE.finditer(source))
+    hooks: dict[str, list[str] | None] = {}
+    for match in _HELPER_DEF_RE.finditer(blanked):
+        name = match.group("fn") or match.group("name")
+        if not re.fullmatch(r"use[A-Z][\w$]*", name):
+            continue
+        end = _definition_end(blanked, match.end())
+        for post in posts:
+            if match.end() <= post.start() < end:
+                path, known = _post_path(source, post), hooks.get(name, [])
+                hooks[name] = None if path is None or known is None else known + [path]
+    return hooks
+
+
 def _post_helpers(source: str) -> set[str]:
     """Names in an api-client module whose own definition issues a POST."""
     return set(_post_helper_paths(source))
@@ -225,7 +263,7 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
         if target is None or not _POST_RE.search(files[target]):
             continue
         if target not in helper_cache:
-            helper_cache[target] = _post_helper_paths(files[target])
+            helper_cache[target] = {**_post_helper_paths(files[target]), **_hook_post_paths(files[target])}
         helpers = helper_cache[target]
         if not helpers:
             continue
@@ -395,7 +433,6 @@ def build_acceptance_matrix(
         for target in [next((c for c in _resolve_import(rel, spec) if c in by_path), None)]
         if target in helper_cache
         and not re.search(r"</|/>", code[target])  # a closing tag: renders JSX, a component
-        and not re.search(r"(?<![\w$.])use[A-Z]\w*\s*[(=]", code[target])  # defines or calls hooks
         and re.search(r"(?<![\w$.])" + re.escape(binding) + r"\s*[.(]", code[rel])
         and not re.search(r"<\s*" + re.escape(binding) + r"\b", code[rel])
     }

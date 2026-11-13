@@ -7,6 +7,8 @@ did so through coincidences such as "running" (Run) or "username" (User).
 """
 import os
 
+import pytest
+
 from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix
 
 
@@ -239,6 +241,57 @@ def test_a_hooks_module_that_posts_is_not_an_api_client(tmp_path):
             "  const { add } = useRooms();\n"
             "  return <form onSubmit={() => add({})}><h1>Rooms</h1></form>;\n}\n"),
     }
+    assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": True, "Room": True}
+
+
+_HTTP = "import axios from 'axios';\nexport const http = axios.create({ baseURL: '/api' });\n"
+_HELPERS = ("export const listBookings = () => http.get('/booking/');\nexport const listRooms = () => http.get('/room/');\n"
+            "export const createBooking = (b) => http.post('/booking/', b);\n"
+            "export const createRoom = (r) => http.post('/room/', r);\n")
+_LIST_PAGES = {
+    "frontend/src/pages/BookingPage.jsx": (
+        "import { listBookings } from '../api';\n"
+        "export default function BookingPage() { listBookings(); return <h1>Bookings</h1>; }\n"),
+    "frontend/src/pages/RoomPage.jsx": (
+        "import { listRooms } from '../api';\n"
+        "export default function RoomPage() { listRooms(); return <h1>Rooms</h1>; }\n"),
+}
+
+
+@pytest.mark.parametrize("extra", [
+    "import { useContext, createContext } from 'react';\nexport const AuthCtx = createContext(null);\n"
+    "export const useAuth = () => useContext(AuthCtx);\n",
+    "const useMock = import.meta.env.VITE_USE_MOCK === 'true';\n",
+])
+def test_an_api_client_holding_a_hook_still_needs_its_creates_called(tmp_path, extra):
+    """Review probe: an api client that also held `useAuth` or a `useMock` flag counted
+    its own POSTs as creates, so pages that only list reported every entity creatable."""
+    files = {"frontend/src/api.js": _HTTP + extra + _HELPERS, **_LIST_PAGES}
+    assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": False, "Room": False}
+
+
+def test_an_uncalled_create_hook_is_no_create(tmp_path):
+    """Review probe: pages used only the list hooks of a react-query module; its unused
+    `useCreateBooking`/`useCreateRoom` mutations counted as both creates."""
+    hooks = ("import { useQuery, useMutation } from '@tanstack/react-query';\nimport { http } from './api';\n"
+             "export const useBookings = () => useQuery({ queryKey: ['b'], queryFn: () => http.get('/booking/') });\n"
+             "export const useRooms = () => useQuery({ queryKey: ['r'], queryFn: () => http.get('/room/') });\n"
+             "export const useCreateBooking = () => useMutation({ mutationFn: (b) => http.post('/booking/', b) });\n"
+             "export const useCreateRoom = () => useMutation({ mutationFn: (r) => http.post('/room/', r) });\n")
+    pages = {
+        "frontend/src/pages/BookingPage.jsx": (
+            "import { useBookings } from '../hooks';\n"
+            "export default function BookingPage() { const q = useBookings(); return <h1>Bookings</h1>; }\n"),
+        "frontend/src/pages/RoomPage.jsx": (
+            "import { useRooms } from '../hooks';\n"
+            "export default function RoomPage() { const q = useRooms(); return <h1>Rooms</h1>; }\n"),
+    }
+    files = {"frontend/src/api.js": _HTTP, "frontend/src/hooks.js": hooks, **pages}
+    assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": False, "Room": False}
+    for rel, name in (("BookingPage", "Booking"), ("RoomPage", "Room")):
+        files[f"frontend/src/pages/{rel}.jsx"] = (
+            f"import {{ useCreate{name} }} from '../hooks';\nexport default function {rel}() {{\n"
+            f"  const m = useCreate{name}();\n  return <form onSubmit={{() => m.mutate({{}})}}><h1>{name}s</h1></form>;\n}}\n")
     assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": True, "Room": True}
 
 

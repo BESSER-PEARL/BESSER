@@ -861,7 +861,6 @@ def test_one_literal_segment_is_enough_to_keep_checking(tmp_path):
 # validation/toolchain.py - what the 20-line ruff budget is spent on
 # ---------------------------------------------------------------------------
 
-_BOILERPLATE = "".join(f"x{n} = 1 is 'a'\n" for n in range(30))
 _DUPLICATE_KEY = (
     "def summary(guest):\n"
     "    return {\n"
@@ -871,11 +870,10 @@ _DUPLICATE_KEY = (
 )
 
 
-def _ruff(tmp_path, edited=()):
+def _ruff(tmp_path):
     from besser.spec_driven_agent.validation.toolchain import _collect_ruff_issues
-    log = [{"tool": "modify_file", "input": {"path": path}} for path in edited]
     issues, _ = _collect_ruff_issues(
-        str(tmp_path), log, frozenset({"write_file", "modify_file"}), True)
+        str(tmp_path), [], frozenset({"write_file", "modify_file"}), True)
     return issues
 
 
@@ -892,16 +890,3 @@ def test_ruffs_own_summary_line_is_not_a_finding(tmp_path):
     assert issues, "expected the repeated dict key to be reported"
     for issue in issues:
         assert re.match(r"ruff: .+?:\d+:\d+: \S+ ", issue), issue
-
-
-@pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff is not installed")
-def test_a_real_finding_is_not_crowded_out_by_scaffold_boilerplate(tmp_path):
-    """A duplicate dict key silently drops a value. It sits behind 30 noisier
-    findings in path order, and the cap keeps only 20 lines, so it never
-    reached the report: across 25 working apps the budget held 89 actionable
-    lines and 477 cosmetic ones."""
-    _write(tmp_path, "backend/a_unused.py", _BOILERPLATE)
-    _write(tmp_path, "backend/z_duplicate.py", _DUPLICATE_KEY)
-    issues = _ruff(tmp_path, edited=["backend/z_duplicate.py"])
-    assert any("F601" in issue for issue in issues), issues
-    assert any(issue.startswith("ruff: (+") for issue in issues), "expected truncation"

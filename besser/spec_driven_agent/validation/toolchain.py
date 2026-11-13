@@ -29,7 +29,6 @@ from besser.spec_driven_agent.validation.issues import (
     required_dependency_setup,
     _RUFF_BLOCKER_CODES,
     _RUFF_LINE_RE,
-    _RUFF_STYLE_CODES,
 )
 from besser.utilities.workspace_fs import is_plain_file, open_plain_write, walk_plain
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
@@ -319,27 +318,19 @@ def _collect_ruff_issues(
         return [], warned_missing
     # ruff sorts by path, so a plain head-of-output cap keeps the same
     # scaffold files and drops a real F821 late in the alphabet. Keep every
-    # blocker-code line, then actionable lines, then cosmetic ones (generated
-    # routers star-import, so F403/F405/E402 alone would fill the budget);
-    # within each tier, files the LLM edited this run come first.
+    # blocker-code line, then the rest with files the LLM edited this run first.
     touched = _llm_edited_paths(output_dir, tool_calls_log, write_tools)
     blockers = []
-    edited, rest = [], []                  # actionable
-    edited_cosmetic, rest_cosmetic = [], []
+    edited, rest = [], []
     for line in lines:
         match = _RUFF_LINE_RE.search(line)
         code = match.group(1) if match else None
-        was_edited = _ruff_line_path(line, output_dir) in touched
         if code in _RUFF_BLOCKER_CODES:
             blockers.append(line)
-        elif code in _RUFF_STYLE_CODES:
-            (edited_cosmetic if was_edited else rest_cosmetic).append(line)
         else:
-            (edited if was_edited else rest).append(line)
-    # Severity first, then whether the agent touched the file - the
-    # edited-before-scaffold preference still holds inside each tier.
+            (edited if _ruff_line_path(line, output_dir) in touched else rest).append(line)
     blockers = _collapse_repeated_names(blockers, _RUFF_REPEATED_NAME_RE)
-    ordered = blockers + edited + rest + edited_cosmetic + rest_cosmetic
+    ordered = blockers + edited + rest
     kept = ordered[:max(_RUFF_MAX_REPORTED, len(blockers))]
     issues = [f"ruff: {line}" for line in kept]
     if len(ordered) > len(kept):

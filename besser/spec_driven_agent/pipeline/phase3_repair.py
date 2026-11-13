@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from collections import Counter
@@ -39,6 +40,7 @@ from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_
 from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
+    _PHASE3_CREATE_EVIDENCE_REMINDER,
     _PHASE3_FIX_TURNS,
     _PHASE3_NO_EDIT_REMINDER,
     _PHASE3_NO_PROGRESS_ROUNDS,
@@ -62,6 +64,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
+from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 from besser.spec_driven_agent.validation.issues import (
     RUNTIME_CHECK_UNVERIFIED,
     ValidationIssue,
@@ -86,6 +89,8 @@ _FIX_PROMPT_MAX_BLOCKERS = 30
 # The tail survives the cut: a traceback ends with the error itself.
 _FIX_PROMPT_BLOCKER_CHARS = 1_200
 _FIX_PROMPT_BLOCKER_TAIL_CHARS = 300
+# Same shape ``_apply_scenario_evidence`` matches: (backend, path).
+_CREATE_UNVERIFIED = re.compile(r"create unverified: (.+?): POST (\S+) -")
 
 
 def clip_finding(text: str) -> str:
@@ -580,7 +585,13 @@ class Phase3RepairMixin:
             # purpose: fixing one import legitimately exposes the errors behind
             # it, and 11 -> 45 -> 40 -> 35 is a repair converging, not a stall.
             # Oscillation is the best-tree snapshot's problem, not this guard's.
-            if score_after >= prev_score:
+            # A round that only added evidence and left a strict subset of the
+            # blockers neither counts nor resets: the score keys on probe facts
+            # evidence cannot move, and the shrinking set bounds such rounds.
+            retired_by_evidence = (
+                obligations_changed and not source_changed
+                and {i.message for i in blockers_after} < {i.message for i in current_blockers})
+            if score_after >= prev_score and not retired_by_evidence:
                 plateau_streak += 1
                 if plateau_streak >= _PHASE3_PLATEAU_ROUNDS:
                     logger.warning(
@@ -590,7 +601,7 @@ class Phase3RepairMixin:
                     )
                     exit_reason = "plateau"
                     break
-            else:
+            elif score_after < prev_score:
                 plateau_streak = 0
 
             # Progress this round: reset the stall counter and keep going.
@@ -1090,6 +1101,7 @@ class Phase3RepairMixin:
 
         edits = 0                 # successful write-tool calls this attempt
         nudged = False            # the one re-prompt an edit-less attempt gets
+        unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
         force_next: str | None = None
         turn_cap = _PHASE3_FIX_TURNS
@@ -1156,6 +1168,19 @@ class Phase3RepairMixin:
             if self._phase3_stop_requested(check_turn_budget=False):
                 return edits
             if response["stop_reason"] == "end_turn":
+                # Listed creates still unread get another test_api turn, for as
+                # long as the previous reminder confirmed at least one of them.
+                unconfirmed = self._unconfirmed_creates(blockers) if verification_only else set()
+                if unconfirmed and (unconfirmed_at_reminder is None
+                                    or unconfirmed < unconfirmed_at_reminder):
+                    unconfirmed_at_reminder, force_next = unconfirmed, "test_api"
+                    turn_cap = max(turn_cap, turn + 1)
+                    if response["content"]:
+                        messages.append({"role": "assistant", "content": response["content"]})
+                    paths = ", ".join(f"POST {path}" for _, path in sorted(unconfirmed))
+                    messages.append({"role": "user", "content": [{
+                        "type": "text", "text": _PHASE3_CREATE_EVIDENCE_REMINDER.format(paths=paths)}]})
+                    continue
                 if edits or nudged or verification_only:
                     return edits
                 # Ended in prose with nothing written. Say so once, force the
@@ -1212,6 +1237,17 @@ class Phase3RepairMixin:
                 return edits
             if self._may_save_phase3_checkpoint():
                 self._save_phase3_checkpoint()
+
+    def _unconfirmed_creates(self, blockers: list[ValidationIssue]) -> set[tuple[str, str]]:
+        """Listed ``create unverified`` (backend, path) pairs no current scenario read back."""
+        revision = self._workspace_revision()
+        confirmed = {(record["report"].get("backend"), path)
+                     for record in self._api_scenarios.values()
+                     if record["revision"] == revision
+                     for path in confirmed_create_paths(record["report"])}
+        listed = (_CREATE_UNVERIFIED.search(issue.message) for issue in blockers)
+        return {(match.group(1), match.group(2)) for match in listed
+                if match and (match.group(1), match.group(2).rstrip("/")) not in confirmed}
 
     def _may_save_phase3_checkpoint(self) -> bool:
         """Whether a repair checkpoint may be written now.

@@ -222,6 +222,16 @@ _PHASE3_NO_EDIT_REMINDER = (
     "excerpt), or write_file if the file has to be rewritten. Then keep going "
     "until every blocker is fixed.</system-reminder>"
 )
+# Sent when a verification-only attempt stops with listed creates not yet read back.
+_PHASE3_CREATE_EVIDENCE_REMINDER = (
+    "<system-reminder>These listed creates still have no read-back: {paths}. "
+    "Each is settled only by a test_api scenario that POSTs it and then, in that "
+    "same scenario, GETs the record by its id under the same path. A scenario "
+    "holds at most 20 requests, so split the endpoints across several scenarios, "
+    "each logging in first where the API requires it and creating the parents it "
+    "needs. No source edit is needed for these; your next call must be test_api."
+    "</system-reminder>"
+)
 
 # Consecutive no-progress rounds tolerated before the repair loop ends.
 #

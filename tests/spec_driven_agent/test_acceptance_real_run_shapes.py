@@ -221,6 +221,27 @@ def test_a_page_that_posts_and_exports_a_helper_keeps_its_own_create(tmp_path):
     assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": True, "Room": True}
 
 
+def test_a_hooks_module_that_posts_is_not_an_api_client(tmp_path):
+    """Pages call `useBookings().add` from a hooks module that renders nothing and
+    issues the POSTs; taking it for an api client dropped both creates."""
+    files = {
+        "frontend/src/api.js": "import axios from 'axios';\nexport const http = axios.create({ baseURL: '/api' });\n",
+        "frontend/src/hooks.js": (
+            "import { http } from './api';\n"
+            "export function useBookings() { return { add: (b) => http.post('/booking/', b) }; }\n"
+            "export function useRooms() { return { add: (r) => http.post('/room/', r) }; }\n"),
+        "frontend/src/pages/BookingPage.jsx": (
+            "import { useBookings } from '../hooks';\nexport default function BookingPage() {\n"
+            "  const { add } = useBookings();\n"
+            "  return <form onSubmit={() => add({})}><h1>Bookings</h1></form>;\n}\n"),
+        "frontend/src/pages/RoomPage.jsx": (
+            "import { useRooms } from '../hooks';\nexport default function RoomPage() {\n"
+            "  const { add } = useRooms();\n"
+            "  return <form onSubmit={() => add({})}><h1>Rooms</h1></form>;\n}\n"),
+    }
+    assert _creates(tmp_path, files, "Booking", "Room") == {"Booking": True, "Room": True}
+
+
 def test_a_typescript_client_with_generics_is_still_an_api_client(tmp_path):
     """`request<T>` and `Promise<Tag>` are type arguments, not JSX: with no page
     calling createTag, the client's own POST is not Tag's create."""

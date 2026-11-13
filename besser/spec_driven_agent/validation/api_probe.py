@@ -48,14 +48,16 @@ _DENIED_X_HEADERS = frozenset({"x-real-ip", "x-http-method-override", "x-method-
                                "x-original-url", "x-rewrite-url", "x-original-method"})
 _SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "password", "credential")
 _REDACTED = "[REDACTED]"
-# A response field holding a credential, judged on its snake/kebab/camel words: they
-# end in a secret word, possibly followed by a word for its value (``password_hash``,
-# ``passwordConfirm``), a ``token`` that is not a page cursor (``next_page_token``), or an
-# api/access/private/secret key or auth code. ``password_changed_at`` only describes one.
+# A response field holding a credential, judged on its snake/kebab/camel words: any secret
+# word (``passwordNew``, ``password_reset_code``), ``token`` that is not a page cursor
+# (``next_page_token``), or api/access/private/secret key or auth code, unless the next word
+# only describes it (``password_changed_at``, ``token_count``).
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 _SECRET_WORDS = frozenset({"password", "passwd", "passphrase", "secret", "jwt", "apikey", "credential",
                            "credentials", "otp"})
-_VALUE_WORDS = frozenset({"hash", "confirm", "confirmation", "value"})
+_DESCRIBING_WORDS = frozenset({"changed", "updated", "created", "at", "hint", "expires", "expiry", "expiration",
+                               "length", "policy", "required", "strength", "count", "type", "santa",
+                               "question", "sent"})
 _CURSOR_WORDS = frozenset({"page", "next", "prev", "previous", "continuation", "cursor", "sync"})
 _SECRET_PAIRS = {"key": frozenset({"api", "access", "private", "secret"}), "code": frozenset({"auth", "authorization"})}
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
@@ -132,15 +134,13 @@ def redact_scenario_headers(requests):
 
 def _credential_key(key):
     words = [word.lower() for word in _KEY_WORDS.findall(key)] if isinstance(key, str) else []
-    if len(words) > 1 and words[-1] in _VALUE_WORDS:
-        words = words[:-1]
-    if not words:
-        return False
-    if words[-1] in _SECRET_WORDS:
-        return True
-    if words[-1] == "token":
-        return not _CURSOR_WORDS.intersection(words[:-1])
-    return len(words) > 1 and words[-2] in _SECRET_PAIRS.get(words[-1], ())
+    for index, word in enumerate(words):
+        secret = (word in _SECRET_WORDS
+                  or (word == "token" and not _CURSOR_WORDS.intersection(words[:index]))
+                  or (index > 0 and words[index - 1] in _SECRET_PAIRS.get(word, ())))
+        if secret and (index + 1 == len(words) or words[index + 1] not in _DESCRIBING_WORDS):
+            return True
+    return False
 
 
 def _credential_field(key, value):

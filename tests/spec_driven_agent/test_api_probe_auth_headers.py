@@ -240,19 +240,40 @@ def test_redaction_keeps_ordinary_fields():
         "secretKey", "jwt", "jwt_value", "access_token", "refresh_token", "accessToken", "id_token",
         "csrf_token", "token", "Token", "api_key", "apiKey", "APIKey", "x-api-key", "apikey",
         "access_key", "private_key", "credentials", "secret_key", "token_hash", "otp", "auth_code",
-        "authorization_code")],
+        "authorization_code", "passwordNew", "password_plain", "secret_answer", "password_reset_code",
+        "reset_token")],
     *[(name, False) for name in (
         "token_type", "tokenType", "token_count", "max_tokens", "next_page_token", "nextPageToken",
-        "page_token", "continuation_token", "cursor", "expires_in", "secretary", "author", "keywords",
-        "key", "monkey", "username", "email", "passage", "password_changed_at", "credential_type",
-        "secret_santa", "passwordHint", "password_expires", "credentials_count", "password_policy",
-        "password_length", "secret_question", "jwt_expires_in", "otp_sent_at", "code", "country_code",
-        "session_id", "value")],
+        "page_token", "continuation_token", "cursor_token", "sync_token", "cursor", "expires_in", "secretary",
+        "author", "keywords", "key", "monkey", "username", "email", "passage", "password_changed_at",
+        "credential_type", "secret_santa", "passwordHint", "password_expires", "credentials_count",
+        "password_policy", "password_length", "secret_question", "jwt_expires_in", "otp_sent_at", "code",
+        "country_code", "session_id", "value")],
 ])
 def test_credential_field_names(name, redacted):
     """password_hash and passwordConfirm were shown and next_page_token hidden; a word
-    after the credential word (password_changed_at, passwordHint) hid ordinary fields."""
+    after the credential word (password_changed_at, passwordHint) hid ordinary fields;
+    then a secret word followed by another (passwordNew, secret_answer) was shown."""
     assert api_probe._credential_field(name, "value-1") is redacted
+
+
+def test_a_new_password_echoed_by_a_validation_error_is_hidden():
+    """Review probe: a 422 for ``passwordNew`` echoed the submitted password in ``input``."""
+    from fastapi import FastAPI
+    from pydantic import BaseModel, Field
+
+    class Change(BaseModel):
+        passwordNew: str = Field(min_length=12)
+
+    app = FastAPI()
+
+    @app.post("/me/password")
+    def change(body: Change):
+        return {"ok": True}
+
+    report = _run_in_process(app, [{"method": "POST", "path": "/me/password",
+                                    "json": {"passwordNew": "tooShort1"}, "expected_status": 200}])
+    assert "tooShort1" not in json.dumps(report)
 
 
 def _run_in_process(app, requests):

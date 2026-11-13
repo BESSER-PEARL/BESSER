@@ -21,7 +21,8 @@ from besser.BUML.metamodel.structural import (
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
-from besser.spec_driven_agent.state.generator_output import store_generator_output
+from besser.spec_driven_agent.state.generator_output import (
+    GENERATOR_OUTPUT_FILENAME, GeneratorOutputError, load_generator_output, store_generator_output)
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run_0c537a4e")
 
@@ -296,6 +297,21 @@ def test_the_judge_cache_key_follows_which_files_are_untouched_generator_output(
     _generated_backend(tmp_path, stored_routers=5)  # same source, a different store
     after = ledger.judged_source_fingerprint(str(tmp_path)), ledger.build_app_digest(str(tmp_path))
     assert after[1] != before[1] and after[0] != before[0]
+
+
+def test_a_store_with_a_lone_surrogate_is_read_as_no_store(tmp_path):
+    """Review probe: a stored file "\\udc80" (the store can come from an imported
+    repository) raised UnicodeEncodeError and aborted the whole validation."""
+    _generated_backend(tmp_path)
+    store = tmp_path / GENERATOR_OUTPUT_FILENAME
+    data = json.loads(store.read_text(encoding="utf-8"))
+    data["files"]["backend/routers/entity00.py"] = "\udc80"
+    store.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(GeneratorOutputError):
+        load_generator_output(str(tmp_path), "backend")
+    assert ledger._untouched_generator_files(str(tmp_path), ledger._source_files(str(tmp_path))) == frozenset()
+    assert ledger.judged_source_fingerprint(str(tmp_path)) and "### backend/risk_engine.py" in ledger.build_app_digest(
+        str(tmp_path))
 
 
 def _vendored_frontend(root):

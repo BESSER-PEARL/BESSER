@@ -169,6 +169,24 @@ def test_a_recovered_ocl_constraint_moves_out_of_shipped_unenforced():
     assert "guestsWithinCapacity" in _ids(report.shippedUnenforced)
 
 
+def test_structured_citations_read_as_path_and_line_like_the_older_string():
+    recipe = _hotel_recipe()
+    recipe["requirements"][0]["evidence"] = [
+        {"path": "backend/routers/booking.py", "line": "booking = Booking(**payload)"},
+        {"path": "frontend/src/Book.jsx", "line": "<BookingForm onSubmit={save} />"}]
+    recipe["requirements"][3] = _recovery_requirement(
+        _NO_DOUBLE_BOOKING, 4, status="implemented",
+        evidence=[{"path": "backend/routers/booking.py", "line": "raise HTTPException(409, 'room already booked')"}],
+    )
+    report = build_verification_report(recipe)
+
+    implemented = next(i for i in report.verified if i.id == "R1")
+    assert implemented.how.endswith("source: backend/routers/booking.py: booking = Booking(**payload) and "
+                                    "frontend/src/Book.jsx: <BookingForm onSubmit={save} />")
+    recovered = next(i for i in report.verified if i.id == "noOverlappingBookings")
+    assert recovered.how.endswith("backend/routers/booking.py: raise HTTPException(409, 'room already booked')")
+
+
 def test_a_rejected_rule_nothing_judged_still_ships_unenforced():
     recipe = _hotel_recipe(requirements=[])
     report = build_verification_report(recipe)

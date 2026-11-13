@@ -3884,8 +3884,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # code edits. Rejudge only unknown entries once per revision; never
             # reroll missing/verified judgments on unchanged source.
             self._requirement_evidence_retries.add(cache_key)
-            focus_paths = [str(item.get("evidence", "")).split(":", 1)[0].strip()
-                           for item in self._requirement_verdicts if item["id"] in unknown_ids]
+            focus_paths = [path for item in self._requirement_verdicts if item["id"] in unknown_ids
+                           for path in _requirements_ledger.cited_paths(item.get("evidence"))]
             focus_paths = [path for item in self._requirement_verdicts
                            if item["id"] in unknown_ids
                            for path in item.get("inspection_paths", [])] + focus_paths

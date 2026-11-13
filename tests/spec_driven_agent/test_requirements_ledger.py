@@ -1069,6 +1069,59 @@ def test_verdicts_sent_as_a_json_string_are_still_judged():
     assert [v["status"] for v in verdicts] == ["implemented", "missing"]
 
 
+# Live (Sonnet 5.5, 47 runs): the dominant false blocker was a correct verdict whose
+# free-text evidence mixed prose into, or stitched lines in, the quote.
+_CITATIONS = [{"path": "x.py", "line": "return a"}, {"path": "y.jsx", "line": "<Plot data={d} />"}]
+
+
+def test_the_judge_cites_lines_as_path_and_line_objects():
+    evidence = ledger._SUBMIT_VERDICTS_TOOL["input_schema"]["properties"]["verdicts"]["items"]["properties"]["evidence"]
+    assert evidence["type"] == "array" and evidence["items"]["required"] == ["path", "line"]
+    reqs = [{"id": 1, "text": "a", "kind": ""}, {"id": 2, "text": "b", "kind": ""}]
+    client = _ToolClient([{"verdicts": [
+        {"id": 1, "status": "implemented", "evidence": _CITATIONS, "note": "renders the plot"},
+        # Sonnet 5 sends some arrays as JSON strings; a citation as "path: line" is read too.
+        {"id": 2, "status": "implemented", "evidence": json.dumps(_CITATIONS[:1] + ["y.jsx: <Plot data={d} />"])},
+    ]}])
+    verdicts = ledger.judge_coverage(reqs, "### x.py\nreturn a", client)
+    assert verdicts[0]["evidence"] == _CITATIONS and verdicts[0]["note"] == "renders the plot"
+    assert verdicts[1]["evidence"] == _CITATIONS
+
+
+class _TextClient:
+    """A provider without forced tools: it answers in prose holding JSON."""
+
+    model = "text-model"
+
+    def __init__(self, text):
+        self.usage = UsageTracker("text-model")
+        self._client = object()
+        self.text = text
+
+    def chat(self, system, messages, tools):
+        return {"stop_reason": "end_turn", "content": [type("B", (), {"type": "text", "text": self.text})()]}
+
+
+def test_a_text_reply_with_string_evidence_keeps_the_string_form():
+    reply = 'Verdicts: {"verdicts": [{"id": 1, "status": "implemented", "evidence": "x.py: return a"}]}'
+    verdicts = ledger.judge_coverage([{"id": 1, "text": "a", "kind": ""}], "### x.py\nreturn a", _TextClient(reply))
+    assert verdicts[0]["evidence"] == "x.py: return a"
+
+
+def test_old_and_new_evidence_render_the_same_way_in_issues_and_judge_feedback():
+    old = {"id": 1, "text": "a", "kind": "rule", "status": "unverified", "note": "n",
+           "evidence": "x.py: return a and y.jsx: <Plot data={d} />"}
+    new = dict(old, id=2, text="b", evidence=_CITATIONS)
+    issues = ledger.ledger_issues([old, new])
+    assert all("'x.py: return a and y.jsx: <Plot data={d} />'" in issue for issue in issues), issues
+    assert ledger.cited_paths(new["evidence"]) == ["x.py", "y.jsx"]
+    assert ledger.cited_paths(old["evidence"]) == ["x.py"]
+
+    client = _ToolClient([{"verdicts": [{"id": 2, "status": "missing"}]}])
+    ledger.judge_coverage([{"id": 2, "text": "b", "kind": "rule"}], "", client, previous_verdicts=[new])
+    assert '"rejected_evidence": "x.py: return a and y.jsx: <Plot data={d} />"' in client.calls[0][1]
+
+
 def test_judge_digest_lists_or_includes_init_py(tmp_path):
     """The digest skipped every ``__init__.py`` and ``database.py`` without
     saying so, so a Flask app factory in ``__init__.py`` was invisible to the

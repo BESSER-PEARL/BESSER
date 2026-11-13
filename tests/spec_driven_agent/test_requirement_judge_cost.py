@@ -342,3 +342,32 @@ def test_the_citation_repair_is_not_sent_after_a_stop(orch, scripted):
     orch._collect_requirement_issues()
 
     assert calls == [([1, 2], False)]
+
+
+def test_a_structured_citation_is_kept_across_an_edit_elsewhere(orch, tmp_path, scripted):
+    answers, calls = scripted
+    answers[1] = {"status": "implemented", "evidence": [
+        {"path": "routers/room.py", "line": "if number in taken:"},
+        {"path": "routers/room.py", "line": "raise HTTPException(409)"}]}
+    orch._collect_requirement_issues()
+    _write(tmp_path, "routers/room.py", ROOM_PY.replace("import os\nimport os\n", "import os\n"))
+    answers[1] = {"status": "unverified", "evidence": [], "note": "not re-checked"}
+    orch._collect_requirement_issues()
+
+    assert calls == [([1, 2], False), ([2], False)]
+    assert _statuses(orch) == {1: "implemented", 2: "missing"}
+
+
+def test_the_citation_repair_reads_every_file_a_structured_citation_names(orch, tmp_path, scripted, monkeypatch):
+    answers, _ = scripted
+    _write(tmp_path, "routers/guest.py", "def add_guest():\n    return 1\n")
+    answers[1] = {"status": "implemented", "evidence": [
+        {"path": "routers/room.py", "line": "if number in taken:"},
+        {"path": "routers/guest.py", "line": "raise HTTPException(409, 'taken')"}]}
+    focused = []
+    digest = ledger.build_app_digest
+    monkeypatch.setattr(ledger, "build_app_digest",
+                        lambda out, focus_paths=None: focused.append(focus_paths) or digest(out, focus_paths=focus_paths))
+    orch._collect_requirement_issues()
+
+    assert focused[-1] == ["routers/room.py", "routers/guest.py"]

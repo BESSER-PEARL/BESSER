@@ -282,7 +282,13 @@ Findings are classified into three severities:
        atomic requirements once and each is judged against the generated
        code, with every "implemented" citation re-checked by the harness;
        only behaviour the request states is listed, so a vague request
-       yields few requirements or none. A citation is code copied from the
+       yields few requirements or none. The judge cites a list of
+       ``{"path", "line"}`` objects, one per source line, and explains in a
+       separate note; every citation must be found in the file it names
+       and at least one found line must enforce or perform the
+       requirement (evidence stored by older versions as one
+       ``path: quote`` string is still read and checked the same way).
+       A citation is code copied from the
        cited file: a whole line, a statement spread over up to 25 lines, a
        complete call of at least 12 characters or a run of at least 30 from
        inside a line (never from its strings or comment), or the start of a

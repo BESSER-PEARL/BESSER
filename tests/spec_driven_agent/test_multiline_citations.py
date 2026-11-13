@@ -525,8 +525,8 @@ def test_the_named_part_is_clipped(tmp_path):
 
 def test_the_judge_is_told_to_cite_lines_as_separate_parts():
     from besser.spec_driven_agent.planning.requirements_ledger import _JUDGE_SYSTEM_PROMPT
-    assert "never join separate lines" in _JUDGE_SYSTEM_PROMPT
-    assert 'separate "file: line" parts joined by " and "' in _JUDGE_SYSTEM_PROMPT
+    assert "gets one citation per line" in _JUDGE_SYSTEM_PROMPT
+    assert "explanations go in the note, never in a citation" in _JUDGE_SYSTEM_PROMPT
 
 
 # Live (saved Sonnet runs): an empty catch body "{\n  /* ignore */\n}" in 12 of 554
@@ -665,3 +665,81 @@ def test_the_explained_rejections_still_reject_and_correct_quotes_still_verify(t
     assert _check_skipped(tmp_path, full)["status"] == "implemented"
     assert _check_skipped(tmp_path, "backend/risk_service.py: _sync_flag(db.connection(), account.id)",
                           kind="action")["status"] == "implemented"
+
+
+# ------------------------------------------------- structured {path, line} citations
+
+
+# Live (2026-11-13, claude-sonnet-5-5, risk-awareness app): the judge stitched
+# three separate lines into one quote; the code was there, the blocker stayed.
+SIGNALS_PY = '''AGGRESSIVE_KIND_KEYWORDS = ("aggress", "threat", "insult")
+SPAM_PATTERN_KEYWORDS = ("spam", "bulk", "burst")
+NEGATIVE_SENTIMENT = -0.3        # sentiment below this counts as a negative interaction
+NEGATIVE_INTERACTION_THRESHOLD = 3
+TEMPLATE = "raise ValueError(\\"too many negative interactions for this account\\")"
+
+
+def detect(outgoing, found):
+    # if len(unwanted) >= UNWANTED_MESSAGE_THRESHOLD:
+    negative = [i for i in outgoing if i.sentiment is not None and i.sentiment < NEGATIVE_SENTIMENT]
+    if len(negative) >= NEGATIVE_INTERACTION_THRESHOLD:
+        found.append({"signalType": "EXCESSIVE_NEGATIVE_INTERACTIONS", "severity": len(negative)})
+'''
+RISK = "backend/routers/risk.py"
+NEGATIVE = "negative = [i for i in outgoing if i.sentiment is not None and i.sentiment < NEGATIVE_SENTIMENT]"
+THRESHOLD = "if len(negative) >= NEGATIVE_INTERACTION_THRESHOLD:"
+
+
+def _check_risk(tmp_path, evidence, text="Excessive negative interactions are a signal for risk assessment"):
+    (tmp_path / "backend" / "routers").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "backend" / "routers" / "risk.py").write_text(SIGNALS_PY, encoding="utf-8")
+    (tmp_path / "backend" / "seed.py").write_text("PLANTS = []\n", encoding="utf-8")
+    return verify_evidence([_verdict(evidence, text=text, kind="rule")], str(tmp_path))[0]
+
+
+def test_lines_stitched_in_a_string_fail_and_verify_as_separate_citations(tmp_path):
+    stitched = f"{RISK}: NEGATIVE_SENTIMENT = -0.3 and {NEGATIVE} and {THRESHOLD}"
+    assert _check_risk(tmp_path, stitched)["status"] == "unverified"
+
+    citations = [{"path": RISK, "line": "NEGATIVE_SENTIMENT = -0.3"},
+                 {"path": RISK, "line": NEGATIVE}, {"path": RISK, "line": THRESHOLD}]
+    verdict = _check_risk(tmp_path, citations)
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_a_structured_citation_still_refuses_what_a_string_refuses(tmp_path):
+    real = {"path": RISK, "line": THRESHOLD}
+    for bad in (
+        {"path": RISK, "line": "if len(negative) > MAX_NEGATIVE:"},                     # invented
+        {"path": "backend/seed.py", "line": NEGATIVE},                                  # another file
+        {"path": "backend/routers/missing.py", "line": NEGATIVE},                       # no such file
+        {"path": RISK, "line": "if len(unwanted) >= UNWANTED_MESSAGE_THRESHOLD:"},       # comment text
+        {"path": RISK, "line": 'raise ValueError("too many negative interactions for this account")'},  # a string
+    ):
+        verdict = _check_risk(tmp_path, [real, bad])
+        assert verdict["status"] == "unverified", bad
+        assert f"citation 2 ({bad['path']})" in verdict["note"], verdict["note"]
+
+
+def test_a_comment_line_or_no_citation_proves_nothing(tmp_path):
+    comment = [{"path": RISK, "line": "# if len(unwanted) >= UNWANTED_MESSAGE_THRESHOLD:"}]
+    verdict = _check_risk(tmp_path, comment)
+    assert verdict["status"] == "unverified" and "is a comment" in verdict["note"]
+    assert _check_risk(tmp_path, [])["status"] == "unverified"
+
+
+def test_one_enforcing_citation_is_enough_and_a_declaration_alone_is_not(tmp_path):
+    rule = "An account with at least three negative interactions is flagged"
+    declaration = {"path": RISK, "line": "NEGATIVE_INTERACTION_THRESHOLD = 3"}
+    assert _check_risk(tmp_path, [declaration, {"path": RISK, "line": THRESHOLD}], text=rule)["status"] == "implemented"
+    verdict = _check_risk(tmp_path, [declaration], text=rule)
+    assert verdict["status"] == "unverified"
+    assert f"citation 1 ({RISK}): the cited line declares data" in verdict["note"]
+
+
+def test_a_failed_citation_is_named_with_where_it_leaves_the_source(tmp_path):
+    skipped = 'AGGRESSIVE_KIND_KEYWORDS = ("aggress", "threat", "insult") NEGATIVE_SENTIMENT = -0.3'
+    verdict = _check_risk(tmp_path, [{"path": RISK, "line": THRESHOLD}, {"path": RISK, "line": skipped}])
+    assert verdict["status"] == "unverified"
+    assert (f"citation 2 ({RISK}): the quoted executable line was not found in the cited source: "
+            f"the part matches {RISK} line 1, then skips line 2") in verdict["note"], verdict["note"]

@@ -111,6 +111,8 @@ _EXPLANATION_RE = re.compile(r"(?:(?<=[);\]])|(?<=/>))\s+(?:which|that)\s.*?(?=;
 _MIN_PART_QUOTE = 8
 # Evidence longer than this is cut before matching (the judge is asked for one line).
 _MAX_EVIDENCE_CHARS = 2000
+# Citations a verdict may give: behaviour that spans a few lines or files.
+_MAX_CITATIONS = 6
 # A formatted statement, or a def followed by its first body line, spans lines;
 # the judge quotes it on one. Lines a quote may span: a Kotlin/Compose call
 # puts one argument per line.
@@ -423,15 +425,14 @@ _JUDGE_SYSTEM_PROMPT = (
     "scaffold test is not evidence that the running app is broken; configured test "
     "execution and actual test failures are a separate verification concern.\n"
     "- implemented: the code enforces or performs the behaviour. The evidence "
-    "is the file's relative path, a colon, and ONE line copied verbatim from "
-    "that file, for example: web_app/backend/routers/booking.py: raise "
-    "HTTPException(status_code=400, detail=\"at least one room is required\") "
-    "- the line that enforces or performs it: a unique=True, a validator, an "
-    "if/raise in a router, the assignment that performs a transition. To cite "
-    "two files write \"a.py: line and b.jsx: line\"; explanations go in the note, "
-    "never in the evidence. Quote each source line exactly as written: never "
-    "join separate lines or put \"...\" inside a JSX element; cite several lines "
-    "as separate \"file: line\" parts joined by \" and \". A "
+    "is a list of citations, each a file's path as listed and ONE source line "
+    "copied exactly as it appears there, for example {\"path\": "
+    "\"web_app/backend/routers/booking.py\", \"line\": \"raise "
+    "HTTPException(status_code=400, detail='at least one room is required')\"}: "
+    "the line that enforces or performs it: a unique=True, a validator, an "
+    "if/raise in a router, the assignment that performs a transition. Behaviour "
+    "spanning several lines or files gets one citation per line; explanations "
+    "go in the note, never in a citation. A "
     "column, relationship or field EXISTING is not evidence that a rule "
     "about it is enforced; a comment, docstring or TODO is not an "
     "implementation. A modeled action whose body raises HTTP 501 or "
@@ -475,17 +476,22 @@ _SUBMIT_VERDICTS_TOOL = {
                         "id": {"type": "integer"},
                         "status": {"type": "string", "enum": list(_STATUSES)},
                         "evidence": {
-                            "type": "string",
-                            "maxLength": _MAX_EVIDENCE_CHARS,
+                            "type": "array", "maxItems": _MAX_CITATIONS,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "path": {"type": "string", "maxLength": 500},
+                                    "line": {"type": "string", "maxLength": _MAX_EVIDENCE_CHARS},
+                                },
+                                "required": ["path", "line"],
+                            },
                             "description": (
-                                "The file's relative path, a colon, and one "
-                                "line copied verbatim from it - the line that "
-                                "enforces or performs the requirement, e.g. "
-                                "web_app/backend/routers/room.py: raise "
-                                "HTTPException(status_code=409, detail=...)"
+                                "One citation per source line that enforces or performs the "
+                                "requirement: the file's path as listed in the code and one "
+                                "line copied exactly from it."
                             ),
                         },
-                        "note": {"type": "string"},
+                        "note": {"type": "string", "description": "Explanation; never in a citation."},
                         "inspection_paths": {
                             "type": "array", "maxItems": 5,
                             "items": {"type": "string", "maxLength": 500},
@@ -849,6 +855,37 @@ def _verdict_id(value) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _parse_evidence(value) -> str | list[dict]:
+    """``[{"path", "line"}, ...]`` from the tool's citations; a string (a text
+    reply, or a citation sent as "path: line") keeps the older string form."""
+    if not isinstance(value, list):
+        return str(value or "").strip()
+    citations = []
+    for citation in value:
+        if isinstance(citation, str):
+            path, _, line = citation.partition(":")
+            citation = {"path": path, "line": line}
+        if isinstance(citation, dict):
+            citations.append({"path": str(citation.get("path") or "").strip(),
+                              "line": str(citation.get("line") or "").strip()})
+    return citations
+
+
+def render_evidence(evidence) -> str:
+    """A verdict's evidence as ``path: line``, citations joined by " and "; a
+    string (the older stored form) as it is."""
+    if isinstance(evidence, list):
+        return " and ".join(f"{c.get('path', '')}: {c.get('line', '')}" for c in evidence if isinstance(c, dict))
+    return str(evidence or "")
+
+
+def cited_paths(evidence) -> list[str]:
+    """The source paths a verdict's evidence names."""
+    if isinstance(evidence, list):
+        return [str(c.get("path") or "").strip() for c in evidence if isinstance(c, dict)]
+    return [str(evidence or "").split(":", 1)[0].strip()]
+
+
 def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
                 use_planning_model: bool, can_call: Callable[[], bool] | None = None) -> dict[int, dict]:
     """One judge call parsed into ``{id: verdict}``; empty when the call
@@ -870,7 +907,7 @@ def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
             "text": by_id[rid]["text"],
             "kind": by_id[rid].get("kind", ""),
             "status": status if status in _STATUSES else "unverified",
-            "evidence": str(item.get("evidence") or "").strip(),
+            "evidence": _parse_evidence(item.get("evidence")),
             "note": str(item.get("note") or "").strip(),
             "inspection_paths": [path[:500] for path in item.get("inspection_paths", [])
                                  if isinstance(path, str)][:5]
@@ -899,7 +936,7 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                  + original_request(original_spec) + "\n\n") if original_spec else ""
     requested_ids = {r["id"] for r in application_requirements}
     feedback = [{"id": item.get("id"),
-                 "rejected_evidence": str(item.get("evidence") or "")[:1500],
+                 "rejected_evidence": render_evidence(item.get("evidence"))[:1500],
                  "verification_feedback": str(item.get("note") or "")[:1500]}
                 for item in previous_verdicts or []
                 if isinstance(item, dict) and item.get("id") in requested_ids][:_MAX_REQUIREMENTS]
@@ -1297,14 +1334,56 @@ def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str) -> 
     return f"{matched}, then line {index + 1} reads {next_line}"
 
 
+def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: dict,
+                     quote_cache: dict, sqlite: bool) -> tuple[list, str]:
+    """The ``(source, part, spans)`` of one ``path: quote`` citation, or why it is
+    not source: every part must be code in the file it names, one a whole line."""
+    quoted = _evidence_quote(raw_quote)
+    if not quoted:
+        return [], "the citation must identify an implemented statement, not only a decorator"
+    candidates = _resolve_cited_path(path, quoted, files, quote_cache)
+    if len(candidates) != 1:
+        return [], "the cited source path is missing, excluded or ambiguous"
+    source = _load_source(candidates[0], parsed, sqlite)
+    spans = list(_quote_spans(quoted, source))
+    literal = _evidence_quote(raw_quote, escapes=False)
+    if not spans and literal and literal != quoted:
+        # The quote may copy a source escape, e.g. "\n".join(...).
+        spans = list(_quote_spans(literal, source))
+        quoted = literal if spans else quoted
+    located = [(source, quoted, spans)]
+    unmatched, unmatched_in = quoted, (source, path)
+    if not spans:
+        located = []
+        for part_path, part, cut in _citation_parts(raw_quote, path, files):
+            homes = _resolve_cited_path(part_path, part, files, quote_cache)
+            part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
+            spans = list(_quote_spans(part, part_source, cut)) if part_source else []
+            # A part need not be a whole statement ("{ save(n); done = true }"
+            # splits at its ";"), but it must be code in that file.
+            if not spans and not (part_source and any(
+                    _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
+                located, unmatched, unmatched_in = [], part, (part_source, part_path)
+                break
+            located.append((part_source, part, spans))
+    if any(spans for _, _, spans in located):
+        return located, ""
+    where = _where_the_quote_leaves(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote) if (
+        unmatched_in[0]) else ""
+    return [], ("the quoted executable line was not found in the cited source: "
+                + (where or f"no source line matches the part `{_as_written(raw_quote, unmatched)}`"))
+
+
 def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     """Re-check every 'implemented' citation against the output tree.
 
-    The cited application source must exist (an unambiguous path suffix is
-    accepted) and contain the quoted code. An abridged or listed quote
-    ("a ... b", "a; b", "x.py: a and y.py: b") passes only when every part is
-    found in the file it names, and each part is checked on its own text, so
-    an invented part can never supply the proof. Never search a different
+    The evidence is a list of ``{"path", "line"}`` citations, or the older
+    ``path: quote`` string. The cited application source must exist (an
+    unambiguous path suffix is accepted) and contain the quoted code. Every
+    citation, and every part of an abridged or listed quote ("a ... b",
+    "a; b", "x.py: a and y.py: b"), must be found in the file it names, and one
+    found line must enforce or perform the requirement; each is checked on its
+    own text, so an invented part can never supply the proof. Never search a different
     file or the run's own recipe to rescue a bad citation. A declaration alone
     cannot prove enforcement or behaviour. Failed evidence is ``unverified``:
     it does not prove that no implementation exists elsewhere.
@@ -1324,47 +1403,28 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
         if item.get("status") != "implemented":
             checked.append(item)
             continue
-        path, _, raw_quote = (item.get("evidence") or "")[:_MAX_EVIDENCE_CHARS].partition(":")
-        quoted = _evidence_quote(raw_quote)
-        candidates = _resolve_cited_path(path, quoted, files, quote_cache)
-        reason = "the cited source path is missing, excluded or ambiguous"
-        if not quoted:
-            reason = "the citation must identify an implemented statement, not only a decorator"
-        if quoted and len(candidates) == 1:
-            source = _load_source(candidates[0], parsed, sqlite)
-            spans = list(_quote_spans(quoted, source))
-            literal = _evidence_quote(raw_quote, escapes=False)
-            if not spans and literal and literal != quoted:
-                # The quote may copy a source escape, e.g. "\n".join(...).
-                spans = list(_quote_spans(literal, source))
-                quoted = literal if spans else quoted
-            located = [(source, quoted, spans)]
-            unmatched, unmatched_in = quoted, (source, path)
-            if not located[0][2]:
-                located = []
-                for part_path, part, cut in _citation_parts(raw_quote, path, files):
-                    homes = _resolve_cited_path(part_path, part, files, quote_cache)
-                    part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
-                    spans = list(_quote_spans(part, part_source, cut)) if part_source else []
-                    # A part need not be a whole statement ("{ save(n); done = true }"
-                    # splits at its ";"), but it must be code in that file.
-                    if not spans and not (part_source and any(
-                            _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
-                        located, unmatched, unmatched_in = [], part, (part_source, part_path)
-                        break
-                    located.append((part_source, part, spans))
-            reason = "the quoted executable line was not found in the cited source"
-            if not any(spans for _, _, spans in located):
-                where = _where_the_quote_leaves(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote) if (
-                    unmatched_in[0]) else ""
-                reason += f": {where or f'no source line matches the part `{_as_written(raw_quote, unmatched)}`'}"
-            for part_source, part, spans in located:
+        evidence = item.get("evidence")
+        structured = isinstance(evidence, list)
+        citations = [(str(c.get("path") or ""), str(c.get("line") or "")[:_MAX_EVIDENCE_CHARS])
+                     for c in evidence if isinstance(c, dict)] if structured else [
+            (evidence or "")[:_MAX_EVIDENCE_CHARS].partition(":")[::2]]
+        located, reason = [], "" if citations else "no source line is cited"
+        for index, (path, raw_quote) in enumerate(citations, 1):
+            found, failure = _locate_citation(path, raw_quote, files, parsed, quote_cache, sqlite)
+            if failure:
+                reason = f"citation {index} ({path.strip()}): {failure}" if structured else failure
+                break
+            located += [(index, path, *part) for part in found]
+        if not reason:
+            for index, path, part_source, part, spans in located:
                 for first_line, lineno in spans:
                     reason = _span_failure(item, part_source, first_line, lineno, part)
                     if not reason:
                         break
                 if not reason:
                     break
+                if structured and spans:
+                    reason = f"citation {index} ({path.strip()}): {reason}"
         if reason:
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
@@ -1413,7 +1473,7 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         elif status == "unverified":
             issues.append(
                 f"requirement unverified: {label} — the cited evidence "
-                f"'{v.get('evidence', '')}' does not verify it{note}; inspect the actual source "
+                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; inspect the actual source "
                 "and correct the citation, implementing behaviour only if it is absent"
             )
     return issues

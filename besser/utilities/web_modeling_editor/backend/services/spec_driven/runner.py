@@ -58,6 +58,7 @@ from besser.spec_driven_agent.providers.llm_client import (
 from besser.llm.catalog import load_model_catalog
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
+from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
@@ -457,7 +458,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             verified.append(_item(
                 "ocl_constraint", label, what,
                 how="rejected by the OCL converter, then recovered in code: "
-                    + str(verdict.get("evidence") or "no citation"),
+                    + (render_evidence(verdict.get("evidence")) or "no citation"),
             ))
             continue
         if is_dropped_by_model_change(issue):
@@ -495,7 +496,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             verified.append(_item(
                 "requirement", ident, what,
                 how="implementation cited and re-checked against the delivered "
-                    f"source: {verdict.get('evidence') or 'no citation'}",
+                    f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}",
             ))
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"

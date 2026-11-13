@@ -72,12 +72,15 @@ def test_supabase_download_keeps_the_migration_filename(tmp_path, monkeypatch):
         "title": "Library",
         "generator": "supabase",
         "model": {
+            "version": "4.0.0",
             "type": "ClassDiagram",
-            "elements": {
-                "c1": {"type": "Class", "name": "Book", "attributes": ["a1"], "methods": []},
-                "a1": {"type": "Attribute", "name": "+ title: str"},
-            },
-            "relationships": {},
+            "nodes": [{
+                "id": "c1", "type": "class", "position": {"x": 0, "y": 0}, "width": 160, "height": 70,
+                "data": {"name": "Book", "methods": [], "attributes": [
+                    {"id": "a1", "name": "title", "attributeType": "str", "visibility": "public"},
+                ]},
+            }],
+            "edges": [],
         },
     }
 

@@ -73,8 +73,8 @@ def test_project_with_component_and_deployment_round_trips(tmp_path):
     assert len(component) == 1
     assert component[0]["model"]["type"] == "ComponentDiagram"
     component_names = {
-        el["name"] for el in component[0]["model"]["elements"].values()
-        if el.get("type") == "Component"
+        node["data"]["name"] for node in component[0]["model"]["nodes"]
+        if node["type"] == "component"
     }
     assert component_names == {"Api", "Worker"}
 
@@ -82,12 +82,12 @@ def test_project_with_component_and_deployment_round_trips(tmp_path):
     assert len(deployment) == 1
     assert deployment[0]["model"]["type"] == "DeploymentDiagram"
     assert any(
-        el.get("name") == "Server" for el in deployment[0]["model"]["elements"].values()
+        node["data"].get("name") == "Server" for node in deployment[0]["model"]["nodes"]
     )
 
     class_names = {
-        el["name"] for el in diagrams["ClassDiagram"][0]["model"]["elements"].values()
-        if el.get("type") == "Class"
+        node["data"]["name"] for node in diagrams["ClassDiagram"][0]["model"]["nodes"]
+        if node["type"] == "class"
     }
     assert class_names == {"Book"}
 
@@ -104,7 +104,7 @@ def test_project_without_component_or_deployment_gets_placeholders(tmp_path):
         placeholder = imported["diagrams"][diagram_type][0]
         assert placeholder["title"] == DIAGRAM_DEFAULT_TITLES[diagram_type]
         assert placeholder["model"]["type"] == diagram_type
-        assert placeholder["model"]["elements"] == {}
+        assert placeholder["model"]["nodes"] == []
 
 
 def test_single_diagram_fallback_uses_same_slots(tmp_path):

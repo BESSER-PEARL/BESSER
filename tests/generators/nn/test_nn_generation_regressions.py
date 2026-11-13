@@ -10,11 +10,13 @@ import pytest
 
 from besser.BUML.metamodel.nn import (
     NN,
+    Conv2D,
     FlattenLayer,
     LinearLayer,
     PoolingLayer,
     TensorOp,
 )
+from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 from besser.generators.nn.tf.tf_code_generator import TFGenerator
 from besser.generators.nn.tf.utils_tf import get_tensorop_syntax
 
@@ -110,3 +112,28 @@ def test_tf_pad_rejects_untranslatable_shapes():
                   input_var="x")
     with pytest.raises(ValueError, match="pad_amount"):
         get_tensorop_syntax(op, {}, in_var="x")
+
+
+@pytest.mark.parametrize("generator_cls, file_name", [
+    (PytorchGenerator, "pytorch_nn_sequential.py"),
+    (TFGenerator, "tf_nn_sequential.py"),
+])
+def test_sequential_generation_with_a_sub_network(tmp_path, generator_cls, file_name):
+    """AlexNet-style ``features`` block: a sub-NN's details are a dict, so
+    reading ``details[1]`` as its output variable raised KeyError (HTTP 500)."""
+    features: NN = NN(name="features")
+    features.add_layer(Conv2D(name="c1", kernel_dim=[3, 3], in_channels=3, out_channels=8,
+                              actv_func="relu"))
+    features.add_layer(PoolingLayer(name="p1", pooling_type="max", dimension="2D",
+                                    kernel_dim=[2, 2]))
+    nn_model: NN = NN(name="alex")
+    nn_model.add_sub_nn(features)
+    nn_model.add_layer(FlattenLayer(name="f1"))
+    nn_model.add_layer(LinearLayer(name="l1", in_features=8, out_features=2))
+
+    out_dir = str(tmp_path / "seq")
+    generator_cls(model=nn_model, output_dir=out_dir, generation_type="sequential").generate()
+    with open(os.path.join(out_dir, file_name), encoding="utf-8") as f:
+        code = f.read()
+    compile(code, file_name, "exec")
+    assert "features" in code

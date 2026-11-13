@@ -10,8 +10,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 def signature(model: DomainModel) -> dict:
     """What the round trip must keep: classes (with their metadata URI), attributes, enumerations, associations.
 
-    The class descriptions are compared by ``test_class_descriptions_survive_the_editor``: the editor
-    converters currently append a copy of each description on every round trip.
+    The class descriptions are compared by ``test_class_descriptions_survive_the_editor``.
     """
     classes = {
         t.name: (sorted((a.name, a.type.name, bool(a.is_id), bool(a.is_optional)) for a in t.attributes),

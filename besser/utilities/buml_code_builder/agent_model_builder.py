@@ -198,26 +198,27 @@ def _write_body(f, state_var: str, state_name: str, body: Body, fallback: bool) 
     suffix = "_fallback" if fallback else ""
     body_var = f"{state_var}{suffix}_body"
     body_name = f"{_escape_python_string(state_name)}{suffix}_body"
-    custom_action = next((a for a in body.actions if isinstance(a, CustomCodeAction)), None)
-    if custom_action is not None:
-        # CustomCodeAction is always a singleton in a custom body; its function is
-        # emitted before the Body is created.
-        f.write(f"{custom_action.to_code()}\n")
-        function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', custom_action.code)
-        function_name = (
-            function_match.group(1) if function_match
-            else f"custom_action_{safe_var_name(custom_action.name)}"
-        )
-        action_var = f"CustomCodeAction_{state_var}{suffix}"
-        f.write(f"{action_var} = CustomCodeAction(callable={function_name})\n")
-        f.write(f"{body_var} = Body('{body_name}')\n")
-        f.write(f"{body_var}.add_action({action_var})\n")
-    else:
-        f.write(f"{body_var} = Body('{body_name}')\n")
-        for action in body.actions:
+    # Code actions' functions and action objects come before the Body; the
+    # actions are then added in their order, mixed with the other replies.
+    action_exprs = []
+    for index, action in enumerate(body.actions):
+        if isinstance(action, CustomCodeAction):
+            f.write(f"{action.to_code()}\n")
+            function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
+            function_name = (
+                function_match.group(1) if function_match
+                else f"custom_action_{safe_var_name(action.name)}"
+            )
+            action_var = f"CustomCodeAction_{state_var}{suffix}" + (f"_{index}" if index else "")
+            f.write(f"{action_var} = CustomCodeAction(callable={function_name})\n")
+            action_exprs.append(action_var)
+        else:
             expr = _action_expr(action)
             if expr is not None:
-                f.write(f"{body_var}.add_action({expr})\n")
+                action_exprs.append(expr)
+    f.write(f"{body_var} = Body('{body_name}')\n")
+    for expr in action_exprs:
+        f.write(f"{body_var}.add_action({expr})\n")
     f.write("\n")
     setter = "set_fallback_body" if fallback else "set_body"
     f.write(f"{state_var}.{setter}({body_var})\n")
@@ -650,5 +651,12 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                     f.write(f"{state_var}.go_to({dest_var})\n")
 
                 f.write("\n")
+
+        # The web editor's a2a: tags, parsed (see a2a_tags.annotate_agent_with_a2a);
+        # the Docker Compose generator reads them from the agent.
+        a2a = getattr(model, "_a2a", None)
+        if a2a:
+            f.write("# A2A WIRING\n")
+            f.write(f"{model_var_name}._a2a = {a2a!r}\n\n")
 
     logger.info("Agent model saved to %s", file_path)

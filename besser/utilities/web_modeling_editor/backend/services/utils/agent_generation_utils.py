@@ -24,6 +24,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     OUTPUT_DIR_NAME,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
+from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+    ensure_not_legacy_payload,
+)
 AgentZipGenerator = Callable[[Any, Optional[Dict[str, Any]]], Tuple[io.BytesIO, str]]
 
 
@@ -142,9 +145,16 @@ def normalize_personalization_mapping(
                 ),
             )
 
+        ensure_not_legacy_payload(
+            user_profile_payload, "UserDiagram", f"personalizationMapping[{index}].user_profile",
+        )
+        agent_model_json = entry.get('agent_model')
+        ensure_not_legacy_payload(
+            agent_model_json, "AgentDiagram", f"personalizationMapping[{index}].agent_model",
+        )
+
         simplified_profile = profile_generator_fn(user_profile_payload)
 
-        agent_model_json = entry.get('agent_model')
         agent_model_buml = None
         if isinstance(agent_model_json, dict):
             mapping_payload = dict(json_data)
@@ -422,6 +432,16 @@ def handle_personalized_agent(
     return zip_buffer, file_name
 
 
+def agent_diagram_without_states(model: Any) -> bool:
+    """True for an agent diagram that defines components (intents, LLMs, ...)
+    but no states: unlike an empty placeholder, it cannot become an agent."""
+    return isinstance(model, dict) and not model.get("nodes") and bool(model.get("components"))
+
+
+def agent_without_states_message(title: Any) -> str:
+    return f"Agent diagram '{title or 'Agent'}' has no states: add at least one state to generate the agent."
+
+
 def collect_agents_from_diagrams(
     agent_diagrams: List[Any],
     default_config: Any = None,
@@ -460,9 +480,13 @@ def collect_agents_from_diagrams(
         model = entry_dict.get("model")
         if not model:
             continue
-        # The deploy endpoint additionally required a non-empty ``elements`` map;
-        # treat that as the unified contract so both paths reject blank diagrams.
-        if isinstance(model, dict) and not model.get("elements"):
+        # The deploy endpoint additionally required a non-empty ``nodes`` list;
+        # treat that as the unified contract so both paths skip blank diagrams.
+        if agent_diagram_without_states(model):
+            # One agent still being drawn must not block the other diagrams of the project.
+            logger.warning("Skipping agent diagram '%s': it has no states.", entry_dict.get("title") or "Agent")
+            continue
+        if isinstance(model, dict) and not model.get("nodes"):
             continue
         agent_model = process_agent_diagram(entry_dict)
         if agent_model is None:

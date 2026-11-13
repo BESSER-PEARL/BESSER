@@ -265,20 +265,18 @@ class TestJsonToBumlProjectWireUp:
                     "id": "comp-diag",
                     "title": "Component Diagram",
                     "model": {
-                        "version": "3.0.0",
+                        "version": "4.0.0",
                         "type": "ComponentDiagram",
-                        "size": {"width": 800, "height": 600},
-                        "elements": {
-                            "c1": {
-                                "id": "c1", "name": "Frontend",
-                                "type": "Component", "owner": None,
-                                "bounds": {
-                                    "x": 0, "y": 0, "width": 160, "height": 100,
-                                },
+                        "nodes": [{
+                            "id": "c1", "type": "component",
+                            "position": {"x": 0, "y": 0},
+                            "width": 160, "height": 100,
+                            "data": {
+                                "name": "Frontend", "stereotype": "",
+                                "isComponentHeaderShown": True,
                             },
-                        },
-                        "relationships": {},
-                        "interactive": {"elements": {}, "relationships": {}},
+                        }],
+                        "edges": [],
                         "assessments": {},
                     },
                 }],
@@ -286,34 +284,29 @@ class TestJsonToBumlProjectWireUp:
                     "id": "dep-diag",
                     "title": "Deployment Diagram",
                     "model": {
-                        "version": "3.0.0",
+                        "version": "4.0.0",
                         "type": "DeploymentDiagram",
-                        "size": {"width": 800, "height": 600},
-                        "elements": {
-                            "a1": {
-                                "id": "a1",
-                                "name": "Orphan",
-                                "type": "DeploymentArtifact",
-                                "owner": None,
-                                "bounds": {
-                                    "x": 0, "y": 0, "width": 160, "height": 40,
+                        "nodes": [
+                            {
+                                "id": "a1", "type": "deploymentArtifact",
+                                "position": {"x": 0, "y": 0},
+                                "width": 160, "height": 40,
+                                "data": {
+                                    "name": "Orphan",
+                                    "manifests": ["bogus-component"],
                                 },
-                                "manifests": ["bogus-component"],
                             },
-                            "dc1": {
-                                "id": "dc1",
-                                "name": "Frontend",
-                                "type": "DeploymentComponent",
-                                "owner": None,
-                                "bounds": {
-                                    "x": 0, "y": 80, "width": 160, "height": 100,
+                            {
+                                "id": "dc1", "type": "deploymentComponent",
+                                "position": {"x": 0, "y": 80},
+                                "width": 160, "height": 100,
+                                "data": {
+                                    "name": "Frontend", "stereotype": "component",
+                                    "isComponentHeaderShown": True,
                                 },
-                                "stereotype": "component",
-                                "displayStereotype": True,
                             },
-                        },
-                        "relationships": {},
-                        "interactive": {"elements": {}, "relationships": {}},
+                        ],
+                        "edges": [],
                         "assessments": {},
                     },
                 }],

@@ -125,16 +125,16 @@ def test_links_get_their_own_association_whatever_the_order(object, model, tmp_p
     code_file = tmp_path / "library_objects.py"
     object_model_to_code(object, str(code_file))
     domain_json = class_buml_to_json(model)
-    rels = list(domain_json["relationships"].items())
-    domain_json["relationships"] = dict(reversed(rels) if reverse else rels)
+    if reverse:
+        domain_json["edges"] = list(reversed(domain_json["edges"]))
     result = object_buml_to_json(code_file.read_text(), domain_json)
 
     names = object_names(result)
-    assoc_name = {rid: r.get("name") for rid, r in domain_json["relationships"].items()}
+    assoc_name = {edge["id"]: edge["data"].get("name") for edge in domain_json["edges"]}
     by_link = {
-        f"{names[r['source']['element']]} -{r['name']}-> {names[r['target']['element']]}":
-            assoc_name.get(r["associationId"])
-        for r in result["relationships"].values() if r["type"] == "ObjectLink"
+        f"{names[e['source']]} -{e['data']['name']}-> {names[e['target']]}":
+            assoc_name.get(e["data"]["associationId"])
+        for e in result["edges"] if e["type"] == "ObjectLink"
     }
     assert by_link["central -books-> ficciones"] == "books"
     assert by_link["antologia -authors-> casares"] == "books_1"

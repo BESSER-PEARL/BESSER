@@ -1,0 +1,136 @@
+{
+  "id": "smoke-project-1",
+  "type": "project",
+  "name": "smoke_webapp",
+  "description": "Minimal v4 ProjectInput fixture exercising WebApp generation (ClassDiagram + GUINoCodeDiagram).",
+  "createdAt": "2026-05-08T00:00:00Z",
+  "currentDiagramType": "ClassDiagram",
+  "currentDiagramIndices": {
+    "ClassDiagram": 0,
+    "GUINoCodeDiagram": 0
+  },
+  "diagrams": {
+    "ClassDiagram": [
+      {
+        "id": "cd-1",
+        "title": "Library",
+        "model": {
+          "version": "4.0.0",
+          "id": "cd-1",
+          "title": "Library",
+          "type": "ClassDiagram",
+          "size": {"width": 1200, "height": 800},
+          "nodes": [
+            {
+              "id": "n-book",
+              "type": "class",
+              "position": {"x": 0, "y": 0},
+              "width": 200,
+              "height": 140,
+              "measured": {"width": 200, "height": 140},
+              "data": {
+                "name": "Book",
+                "stereotype": null,
+                "attributes": [
+                  {"id": "n-book-a-title", "name": "title", "attributeType": "str", "visibility": "public", "isOptional": false, "isId": true, "isExternalId": false, "isDerived": false},
+                  {"id": "n-book-a-pages", "name": "pages", "attributeType": "int", "visibility": "public", "isOptional": false, "isId": false, "isExternalId": false, "isDerived": false}
+                ],
+                "methods": []
+              }
+            },
+            {
+              "id": "n-author",
+              "type": "class",
+              "position": {"x": 400, "y": 0},
+              "width": 200,
+              "height": 120,
+              "measured": {"width": 200, "height": 120},
+              "data": {
+                "name": "Author",
+                "stereotype": null,
+                "attributes": [
+                  {"id": "n-author-a-name", "name": "name", "attributeType": "str", "visibility": "public", "isOptional": false, "isId": true, "isExternalId": false, "isDerived": false}
+                ],
+                "methods": []
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e-book-author",
+              "source": "n-book",
+              "target": "n-author",
+              "type": "ClassBidirectional",
+              "sourceHandle": "Right",
+              "targetHandle": "Left",
+              "data": {
+                "name": "wrote",
+                "sourceRole": "book",
+                "sourceMultiplicity": "1..*",
+                "targetRole": "author",
+                "targetMultiplicity": "1..1",
+                "points": []
+              }
+            }
+          ],
+          "interactive": {"elements": {}, "relationships": {}},
+          "assessments": {}
+        }
+      }
+    ],
+    "GUINoCodeDiagram": [
+      {
+        "id": "gui-1",
+        "title": "LibraryUI",
+        "references": {"ClassDiagram": "cd-1"},
+        "model": {
+          "title": "LibraryUI",
+          "type": "GUINoCodeDiagram",
+          "pages": [
+            {
+              "id": "page-home",
+              "name": "Home",
+              "attributes": {"screen-size": "Medium"},
+              "frames": [
+                {
+                  "component": {
+                    "type": "wrapper",
+                    "tagName": "body",
+                    "components": [
+                      {
+                        "type": "text",
+                        "tagName": "h1",
+                        "attributes": {"id": "title-heading", "name": "title-heading"},
+                        "components": [
+                          {"type": "textnode", "content": "Library"}
+                        ]
+                      },
+                      {
+                        "type": "button",
+                        "tagName": "button",
+                        "attributes": {
+                          "id": "create-book-btn",
+                          "name": "create-book-btn",
+                          "action-button-type": "create",
+                          "entity-class-id": "n-book"
+                        },
+                        "components": [
+                          {"type": "textnode", "content": "Add Book"}
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "styles": []
+        }
+      }
+    ]
+  },
+  "settings": {
+    "generator": "web_app",
+    "config": {}
+  }
+}

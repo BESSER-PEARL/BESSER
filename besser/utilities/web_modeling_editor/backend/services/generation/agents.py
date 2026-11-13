@@ -29,6 +29,8 @@ from besser.utilities.web_modeling_editor.backend.services.generation.downloads 
     agent_zip_output,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    agent_diagram_without_states,
+    agent_without_states_message,
     extract_openai_api_key,
     handle_configuration_variants,
     handle_multi_language_generation,
@@ -155,6 +157,8 @@ def generate_agent_files(
 
 async def generate_agent_output(json_data: dict) -> GeneratedOutput:
     """Generate an agent diagram's ZIP, dispatching on its config (languages, variations, ...)."""
+    if agent_diagram_without_states(json_data.get('model')):
+        raise ValidationError(agent_without_states_message(json_data.get('title')))
     config = json_data.get('config', {})
     config_yaml: Optional[str] = json_data.get('configYaml') if isinstance(json_data.get('configYaml'), str) else None
     sanitized_config_log = (

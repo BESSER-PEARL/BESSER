@@ -12,7 +12,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
     process_object_diagram,
 )
 
-EMPTY = {"elements": {}, "relationships": {}}
+EMPTY = {"version": "4.0.0", "nodes": [], "edges": []}
 
 
 @pytest.mark.parametrize("process", [

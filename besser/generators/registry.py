@@ -466,7 +466,8 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         output_type="file",
         file_extension=".bpmn",
         requires_class_diagram=False,
-        required_diagram_type="BPMNDiagram",
+        # Project bucket key ("BPMN"); the model inside has type "BPMNDiagram".
+        required_diagram_type="BPMN",
         download_filename="bpmn_diagram.bpmn",
         agent_tool=AgentTool(
             name="generate_bpmn",

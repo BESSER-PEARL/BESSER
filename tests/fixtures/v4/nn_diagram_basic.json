@@ -1,0 +1,66 @@
+{
+  "title": "TinyMLP",
+  "model": {
+    "version": "4.0.0",
+    "id": "nn-1",
+    "title": "TinyMLP",
+    "type": "NNDiagram",
+    "size": {"width": 1500, "height": 800},
+    "nodes": [
+      {
+        "id": "n-container",
+        "type": "NNContainer",
+        "position": {"x": 0, "y": 0},
+        "width": 600, "height": 600,
+        "measured": {"width": 600, "height": 600},
+        "data": {"name": "TinyMLP"}
+      },
+      {
+        "id": "n-l1",
+        "type": "LinearLayer",
+        "position": {"x": 50, "y": 100},
+        "width": 200, "height": 120,
+        "measured": {"width": 200, "height": 120},
+        "parentId": "n-container",
+        "data": {
+          "name": "fc1",
+          "attributes": {
+            "name": "fc1",
+            "in_features": "784",
+            "out_features": "128",
+            "actv_func": "relu"
+          }
+        }
+      },
+      {
+        "id": "n-l2",
+        "type": "LinearLayer",
+        "position": {"x": 300, "y": 100},
+        "width": 200, "height": 120,
+        "measured": {"width": 200, "height": 120},
+        "parentId": "n-container",
+        "data": {
+          "name": "fc2",
+          "attributes": {
+            "name": "fc2",
+            "in_features": "128",
+            "out_features": "10"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e-l1-l2",
+        "source": "n-l1",
+        "target": "n-l2",
+        "type": "NNNext",
+        "sourceHandle": "Right",
+        "targetHandle": "Left",
+        "data": {"points": []}
+      }
+    ],
+    "interactive": {"elements": {}, "relationships": {}},
+    "assessments": {}
+  }
+}

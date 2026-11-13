@@ -91,7 +91,7 @@ def test_import_from_a_preset_provider(fake_fetch):
     data = resp.json()
     assert data["diagramType"] == "ClassDiagram" and data["model"]["type"] == "ClassDiagram"
     assert data["title"] == "MyModel"
-    names = {e["name"] for e in data["model"]["elements"].values() if e.get("type") in ("Class", "Enumeration")}
+    names = {n["data"]["name"] for n in data["model"]["nodes"] if n.get("type") == "class"}
     assert {"Observation", "Freq", "Product"} <= names
     assert fake_fetch == [("eurostat", "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1", None,
                            "DF_TEST", "latest", True)]

@@ -1,10 +1,15 @@
 """Element timestamps survive the class-diagram converters (GitHub issue #152).
 
-``class_buml_to_json`` writes an optional ISO 8601 ``timestamp`` on every
-element, relationship, association end and on the diagram model itself, when
-that timestamp is explicit; ``process_class_diagram`` reads it back, and falls
-back to the creation time when it is absent or malformed. Defaulted
-timestamps are never written, so timestamp-less input converts identically.
+``class_buml_to_json`` writes an optional ISO 8601 timestamp on every element,
+relationship, association end and on the diagram model itself, when that
+timestamp is explicit; ``process_class_diagram`` reads it back, and falls back
+to the creation time when it is absent or malformed. Defaulted timestamps are
+never written, so timestamp-less input converts identically.
+
+v4 locations: ``model.timestamp``, ``node.data.timestamp`` (classes,
+enumerations, OCL constraint nodes), ``timestamp`` on attribute / method /
+literal rows, ``edge.data.timestamp`` (associations, generalizations) and
+``edge.data.sourceTimestamp`` / ``targetTimestamp`` (association ends).
 """
 import copy
 from datetime import datetime, timedelta, timezone
@@ -27,90 +32,90 @@ from tests.utilities.buml_code_builder.test_domain_model_builder_timestamps impo
     _timestamps,
 )
 
-_BOUNDS = {"x": 0, "y": 0, "width": 160, "height": 100}
-
-
 def _iso(second: int) -> str:
     return f"2024-05-06T07:08:{second:02d}.000042"
 
 
+def _node(node_id, name, second, stereotype=None, attributes=(), methods=()):
+    return {"id": node_id, "type": "class", "position": {"x": 0, "y": 0},
+            "width": 160, "height": 100,
+            "data": {"name": name, "stereotype": stereotype, "attributes": list(attributes),
+                     "methods": list(methods), "timestamp": _iso(second)}}
+
+
+def _row(row_id, name, second, attribute_type="str"):
+    return {"id": row_id, "name": name, "visibility": "public",
+            "attributeType": attribute_type, "timestamp": _iso(second)}
+
+
+def _association(edge_id, name, source, target, ends, second):
+    (source_role, source_mult, source_second), (target_role, target_mult, target_second) = ends
+    return {"id": edge_id, "type": "ClassBidirectional", "source": source, "target": target,
+            "data": {"name": name, "timestamp": _iso(second),
+                     "sourceRole": source_role, "sourceMultiplicity": source_mult,
+                     "sourceTimestamp": _iso(source_second),
+                     "targetRole": target_role, "targetMultiplicity": target_mult,
+                     "targetTimestamp": _iso(target_second), "points": []}}
+
+
 def _diagram() -> dict:
-    """A class diagram whose every element carries a distinct timestamp."""
-    def member(member_id, owner, name, second, **extra):
-        return {"id": member_id, "name": name, "type": extra.pop("type", "ClassAttribute"),
-                "owner": owner, "bounds": _BOUNDS, "timestamp": _iso(second), **extra}
-
-    attr = {"visibility": "public", "attributeType": "str"}
-    elements = {
-        "status": {"id": "status", "name": "Status", "type": "Enumeration", "owner": None,
-                   "bounds": _BOUNDS, "attributes": ["open", "closed"], "methods": [],
-                   "timestamp": _iso(1)},
-        "open": member("open", "status", "OPEN", 2),
-        "closed": member("closed", "status", "CLOSED", 3),
-        "library": {"id": "library", "name": "Library", "type": "Class", "owner": None,
-                    "bounds": _BOUNDS, "attributes": ["lib-name"], "methods": ["renew"],
-                    "timestamp": _iso(4)},
-        "lib-name": member("lib-name", "library", "name", 5, **attr),
-        "renew": member("renew", "library", "+ renew(days: int): str", 6, type="ClassMethod"),
-        "book": {"id": "book", "name": "Book", "type": "AbstractClass", "owner": None,
-                 "bounds": _BOUNDS, "attributes": ["book-status"], "methods": [],
-                 "timestamp": _iso(7)},
-        "book-status": member("book-status", "book", "status", 8,
-                              visibility="public", attributeType="Status"),
-        "novel": {"id": "novel", "name": "Novel", "type": "Class", "owner": None,
-                  "bounds": _BOUNDS, "attributes": [], "methods": [], "timestamp": _iso(9)},
-        "loan": {"id": "loan", "name": "Loan", "type": "Class", "owner": None,
-                 "bounds": _BOUNDS, "attributes": [], "methods": [], "timestamp": _iso(10)},
-        "ocl": {"id": "ocl", "name": "", "type": "ClassOCLConstraint", "owner": None,
-                "bounds": _BOUNDS, "timestamp": _iso(11),
-                "constraint": "context Library inv named: self.name <> ''"},
-    }
-
-    def end(element, role, multiplicity, second):
-        return {"element": element, "role": role, "multiplicity": multiplicity,
-                "timestamp": _iso(second)}
-
-    relationships = {
-        "holds": {"id": "holds", "name": "Library_Book", "type": "ClassBidirectional",
-                  "timestamp": _iso(12),
-                  "source": end("library", "library", "1", 13),
-                  "target": end("book", "books", "0..*", 14)},
-        "lends": {"id": "lends", "name": "Library_Novel", "type": "ClassBidirectional",
-                  "timestamp": _iso(15),
-                  "source": end("library", "lender", "1", 16),
-                  "target": end("novel", "novels", "0..*", 17)},
-        "inherits": {"id": "inherits", "type": "ClassInheritance", "timestamp": _iso(18),
-                     "source": {"element": "novel"}, "target": {"element": "book"}},
-        "loan-link": {"id": "loan-link", "type": "ClassLinkRel",
-                      "source": {"element": "lends"}, "target": {"element": "loan"}},
-    }
+    """A v4 class diagram whose every element carries a distinct timestamp."""
+    renew = {"id": "renew", "name": "renew", "visibility": "public", "returnType": "str",
+             "attributeType": "str", "timestamp": _iso(6),
+             "parameters": [{"id": "renew-days", "name": "days", "parameterType": "int"}]}
+    nodes = [
+        _node("status", "Status", 1, "Enumeration",
+              attributes=[_row("open", "OPEN", 2), _row("closed", "CLOSED", 3)]),
+        _node("library", "Library", 4, attributes=[_row("lib-name", "name", 5)], methods=[renew]),
+        _node("book", "Book", 7, "Abstract", attributes=[_row("book-status", "status", 8, "Status")]),
+        _node("novel", "Novel", 9),
+        _node("loan", "Loan", 10),
+        {"id": "ocl", "type": "ClassOCLConstraint", "position": {"x": 0, "y": 0},
+         "width": 160, "height": 100,
+         "data": {"name": "", "timestamp": _iso(11),
+                  "expression": "context Library inv named: self.name <> ''"}},
+    ]
+    edges = [
+        _association("holds", "Library_Book", "library", "book",
+                     (("library", "1", 13), ("books", "0..*", 14)), 12),
+        _association("lends", "Library_Novel", "library", "novel",
+                     (("lender", "1", 16), ("novels", "0..*", 17)), 15),
+        {"id": "inherits", "type": "ClassInheritance", "source": "novel", "target": "book",
+         "data": {"timestamp": _iso(18), "points": []}},
+        {"id": "loan-link", "type": "ClassLinkRel", "source": "lends", "target": "loan",
+         "data": {"points": []}},
+    ]
     return {"title": "Lending", "model": {
-        "type": "ClassDiagram", "timestamp": _iso(19),
-        "elements": elements, "relationships": relationships,
+        "version": "4.0.0", "type": "ClassDiagram", "timestamp": _iso(19),
+        "nodes": nodes, "edges": edges,
     }}
 
 
+def _node_by_id(diagram: dict, node_id: str) -> dict:
+    return next(n for n in diagram["model"]["nodes"] if n["id"] == node_id)
+
+
 def _json_timestamps(model_json: dict) -> dict:
-    """Map a name-based key (element ids are regenerated) to each JSON timestamp."""
-    elements = model_json["elements"]
+    """Map a name-based key (node and row ids are regenerated) to each JSON timestamp."""
+    names = {n["id"]: n["data"].get("name") for n in model_json["nodes"]}
     found = {("model",): model_json.get("timestamp")}
-    for element in elements.values():
-        if element["type"] in ("ClassAttribute", "ClassMethod"):
-            owner = elements[element["owner"]]["name"]
-            key = (element["type"], owner, element["name"])
-        elif element["type"] == "ClassOCLConstraint":
-            key = (element["type"], element["constraint"])
-        else:
-            key = (element["type"], element["name"])
-        found[key] = element.get("timestamp")
-    for rel in model_json["relationships"].values():
-        if rel["type"] == "ClassInheritance":
-            specific = elements[rel["source"]["element"]]["name"]
-            found[(rel["type"], specific)] = rel.get("timestamp")
-        elif rel.get("name"):
-            found[(rel["type"], rel["name"])] = rel.get("timestamp")
+    for node in model_json["nodes"]:
+        data = node["data"]
+        if node["type"] == "ClassOCLConstraint":
+            found[(node["type"], data["expression"])] = data.get("timestamp")
+            continue
+        found[(node["type"], data["name"])] = data.get("timestamp")
+        for kind in ("attributes", "methods"):
+            for row in data.get(kind) or []:
+                found[(kind, data["name"], row["name"])] = row.get("timestamp")
+    for edge in model_json["edges"]:
+        data = edge["data"]
+        if edge["type"] == "ClassInheritance":
+            found[(edge["type"], names[edge["source"]])] = data.get("timestamp")
+        elif data.get("name"):
+            found[(edge["type"], data["name"])] = data.get("timestamp")
             for side in ("source", "target"):
-                found[("end", rel["name"], rel[side]["role"])] = rel[side].get("timestamp")
+                found[("end", data["name"], data[f"{side}Role"])] = data.get(f"{side}Timestamp")
     return found
 
 
@@ -138,8 +143,8 @@ def test_json_buml_json_preserves_timestamps():
     exported = class_buml_to_json(process_class_diagram(diagram))
     stamps = _json_timestamps(exported)
     expected = _json_timestamps(diagram["model"])
-    # The fixture uses the export's own naming (bare attribute names, full
-    # method signatures), so every key lines up.
+    # The fixture uses the export's own naming (bare attribute and method
+    # names), so every key lines up.
     assert stamps == expected
     assert all(value is not None for value in stamps.values())
 
@@ -156,12 +161,7 @@ def test_buml_json_buml_preserves_timestamps():
 
 
 def test_missing_timestamps_fall_back_to_creation_time():
-    diagram = _diagram()
-    for item in [diagram["model"], *diagram["model"]["elements"].values()]:
-        item.pop("timestamp", None)
-    for rel in diagram["model"]["relationships"].values():
-        for item in (rel, rel["source"], rel["target"]):
-            item.pop("timestamp", None)
+    diagram = _without_timestamps(_diagram())
     before = datetime.now()
     model = process_class_diagram(diagram)
     assert all(stamp >= before for stamp in _timestamps(model).values())
@@ -170,7 +170,7 @@ def test_missing_timestamps_fall_back_to_creation_time():
 @pytest.mark.parametrize("bad", ["not a date", "", "2024-13-45T99:99:99", 12345, None, ["x"]])
 def test_malformed_timestamp_falls_back_to_creation_time(bad):
     diagram = copy.deepcopy(_diagram())
-    diagram["model"]["elements"]["library"]["timestamp"] = bad
+    _node_by_id(diagram, "library")["data"]["timestamp"] = bad
     before = datetime.now()
     model = process_class_diagram(diagram)
     assert model.get_class_by_name("Library").timestamp >= before
@@ -183,7 +183,7 @@ def test_timezone_aware_timestamp_becomes_naive_utc():
     It is normalised to UTC, never to the server's local time."""
     diagram = _diagram()
     aware = datetime(2024, 5, 6, 7, 8, 9, tzinfo=timezone(timedelta(hours=2)))
-    diagram["model"]["elements"]["library"]["timestamp"] = aware.isoformat()
+    _node_by_id(diagram, "library")["data"]["timestamp"] = aware.isoformat()
     model = process_class_diagram(diagram)
     stamp = model.get_class_by_name("Library").timestamp
     assert stamp.tzinfo is None
@@ -234,19 +234,23 @@ def test_timestamp_helpers():
 def test_exported_model_and_elements_carry_iso_strings():
     exported = class_buml_to_json(_build_model())
     assert exported["timestamp"] == "2024-03-01T09:30:21.123456"
-    classes = [e for e in exported["elements"].values() if e["type"] in ("Class", "AbstractClass")]
-    assert classes and all(isinstance(e["timestamp"], str) for e in classes)
-    constraint_boxes = [e for e in exported["elements"].values() if e["type"] == "ClassOCLConstraint"]
-    assert [e["timestamp"] for e in constraint_boxes] == ["2024-03-01T09:30:20.123456"]
+    classes = [n["data"] for n in exported["nodes"]
+               if n["type"] == "class" and n["data"].get("stereotype") != "Enumeration"]
+    assert classes and all(isinstance(c["timestamp"], str) for c in classes)
+    constraint_boxes = [n["data"] for n in exported["nodes"] if n["type"] == "ClassOCLConstraint"]
+    assert [c["timestamp"] for c in constraint_boxes] == ["2024-03-01T09:30:20.123456"]
 
 
 def _without_timestamps(diagram: dict) -> dict:
     diagram = copy.deepcopy(diagram)
-    for item in [diagram["model"], *diagram["model"]["elements"].values()]:
-        item.pop("timestamp", None)
-    for rel in diagram["model"]["relationships"].values():
-        for item in (rel, rel["source"], rel["target"]):
-            item.pop("timestamp", None)
+    diagram["model"].pop("timestamp", None)
+    for node in diagram["model"]["nodes"]:
+        node["data"].pop("timestamp", None)
+        for row in node["data"].get("attributes", []) + node["data"].get("methods", []):
+            row.pop("timestamp", None)
+    for edge in diagram["model"]["edges"]:
+        for key in ("timestamp", "sourceTimestamp", "targetTimestamp"):
+            edge["data"].pop(key, None)
     return diagram
 
 

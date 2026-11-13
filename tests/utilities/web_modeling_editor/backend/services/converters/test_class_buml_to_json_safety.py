@@ -20,6 +20,15 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 
 
+def _attribute_rows(diagram_json):
+    """Every attribute row on every v4 ``class`` node."""
+    return [
+        row
+        for node in diagram_json["nodes"] if node.get("type") == "class"
+        for row in (node.get("data") or {}).get("attributes") or []
+    ]
+
+
 def test_enum_literal_default_value_is_json_serialisable():
     """An EnumerationLiteral default must be coerced to its name, not stored raw."""
     low = EnumerationLiteral(name="LOW")
@@ -32,9 +41,9 @@ def test_enum_literal_default_value_is_json_serialisable():
     diagram_json = class_buml_to_json(model)
 
     default_value = next(
-        e["defaultValue"]
-        for e in diagram_json["elements"].values()
-        if e.get("name") == "level" and "defaultValue" in e
+        row["defaultValue"]
+        for row in _attribute_rows(diagram_json)
+        if row.get("name") == "level" and "defaultValue" in row
     )
     assert default_value == "LOW"
     # The whole payload (as POSTed to the render service) must serialise.
@@ -49,9 +58,9 @@ def test_primitive_default_value_is_preserved():
 
     diagram_json = class_buml_to_json(model)
     default_value = next(
-        e["defaultValue"]
-        for e in diagram_json["elements"].values()
-        if e.get("name") == "name" and "defaultValue" in e
+        row["defaultValue"]
+        for row in _attribute_rows(diagram_json)
+        if row.get("name") == "name" and "defaultValue" in row
     )
     assert default_value == "anon"
 

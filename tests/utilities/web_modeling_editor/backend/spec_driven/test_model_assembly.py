@@ -11,81 +11,68 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 )
 
 
+# v4 wire shape ({nodes, edges}) — see docs/source/migrations/uml-v4-shape.md.
 CLASS_DIAGRAM_MODEL = {
+    "version": "4.0.0",
     "type": "ClassDiagram",
-    "elements": {
-        "class-1": {
-            "type": "Class",
-            "name": "Author",
-            "attributes": ["attr-1"],
-            "methods": [],
-        },
-        "attr-1": {
-            "type": "Attribute",
-            "name": "+ name: str",
-        },
-        "class-2": {
-            "type": "Class",
-            "name": "Book",
-            "attributes": ["attr-2"],
-            "methods": [],
-        },
-        "attr-2": {
-            "type": "Attribute",
-            "name": "+ title: str",
-        },
-    },
-    "relationships": {
-        "rel-1": {
-            "type": "ClassBidirectional",
-            "source": {
-                "element": "class-1",
-                "multiplicity": "1..*",
-                "role": "authors",
-            },
-            "target": {
-                "element": "class-2",
-                "multiplicity": "0..*",
-                "role": "books",
+    "nodes": [
+        {
+            "id": "class-1", "type": "class",
+            "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+            "data": {
+                "name": "Author",
+                "attributes": [{"id": "attr-1", "name": "name", "attributeType": "str", "visibility": "public"}],
+                "methods": [],
             },
         },
-    },
+        {
+            "id": "class-2", "type": "class",
+            "position": {"x": 300, "y": 0}, "width": 160, "height": 100,
+            "data": {
+                "name": "Book",
+                "attributes": [{"id": "attr-2", "name": "title", "attributeType": "str", "visibility": "public"}],
+                "methods": [],
+            },
+        },
+    ],
+    "edges": [
+        {
+            "id": "rel-1", "type": "ClassBidirectional",
+            "source": "class-1", "target": "class-2",
+            "sourceHandle": "Right", "targetHandle": "Left",
+            "data": {
+                "sourceMultiplicity": "1..*", "sourceRole": "authors",
+                "targetMultiplicity": "0..*", "targetRole": "books",
+                "points": [],
+            },
+        },
+    ],
 }
 
 BPMN_DIAGRAM_MODEL = {
-    "version": "3.0.0",
+    "version": "4.0.0",
     "type": "BPMNDiagram",
     "size": {"width": 1400, "height": 700},
-    "elements": {
-        "start": {
-            "id": "start", "name": "Start", "type": "BPMNStartEvent",
-            "owner": None, "eventType": "default",
-            "bounds": {"x": 100, "y": 100, "width": 50, "height": 50},
+    "nodes": [
+        {
+            "id": "start", "type": "bpmnStartEvent",
+            "position": {"x": 100, "y": 100}, "width": 50, "height": 50,
+            "data": {"name": "Start", "eventType": "default"},
         },
-        "review": {
-            "id": "review", "name": "Review", "type": "BPMNTask",
-            "owner": None, "taskType": "user", "marker": "none",
-            "bounds": {"x": 250, "y": 100, "width": 110, "height": 60},
+        {
+            "id": "review", "type": "bpmnTask",
+            "position": {"x": 250, "y": 100}, "width": 110, "height": 60,
+            "data": {"name": "Review", "taskType": "user", "marker": "none"},
         },
-    },
-    "relationships": {
-        "flow": {
-            "id": "flow", "name": "", "type": "BPMNFlow", "owner": None,
-            "bounds": {"x": 0, "y": 0, "width": 100, "height": 1},
-            "path": [{"x": 0, "y": 0}, {"x": 100, "y": 0}],
-            "source": {
-                "element": "start", "direction": "Right",
-                "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
-            },
-            "target": {
-                "element": "review", "direction": "Left",
-                "bounds": {"x": 100, "y": 0, "width": 0, "height": 0},
-            },
-            "isManuallyLayouted": False,
-            "flowType": "sequence",
-            "isDefault": False,
+    ],
+    "edges": [
+        {
+            "id": "flow", "type": "BPMNSequenceFlow",
+            "source": "start", "target": "review",
+            "sourceHandle": "Right", "targetHandle": "Left",
+            "data": {"name": "", "points": [], "isManuallyLayouted": False},
         },
-    },
+    ],
     "interactive": {"elements": {}, "relationships": {}},
     "assessments": {},
 }
@@ -162,8 +149,8 @@ class TestAssembleModels:
                 "title": "Primary",
                 "model": {
                     "type": diagram_type,
-                    "elements": {},
-                    "relationships": {},
+                    "nodes": [],
+                    "edges": [],
                 },
             }],
         })
@@ -185,7 +172,7 @@ class TestAssembleModels:
                 {
                     "id": "ad1",
                     "title": "Agent",
-                    "model": {"type": "AgentDiagram", "elements": {}, "relationships": {}},
+                    "model": {"type": "AgentDiagram", "nodes": [], "edges": []},
                 }
             ]
         })

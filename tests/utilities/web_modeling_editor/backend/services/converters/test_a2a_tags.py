@@ -88,41 +88,48 @@ class _FakeAgent:
         self.name = name
 
 
+def _node(node_id, node_type, **data):
+    return {"id": node_id, "type": node_type, "position": {"x": 0, "y": 0},
+            "width": 160, "height": 80, "data": data}
+
+
+def _edge(edge_id, edge_type, source, target, **data):
+    data.setdefault("points", [])
+    return {"id": edge_id, "type": edge_type, "source": source, "target": target,
+            "sourceHandle": "right", "targetHandle": "left", "data": data}
+
+
 def _tagged_diagram_json():
-    """A minimal AgentDiagram JSON shaped like the frozen wire contract:
-    an AgentState carrying two a2a:out lines on `description`, and a
-    when_intent_matched transition carrying a2a:in on its `name`."""
+    """A minimal v4 AgentDiagram JSON shaped like the frozen wire contract:
+    an AgentState carrying two a2a:out lines on `data.description`, and a
+    when_intent_matched transition carrying a2a:in on its `data.name`."""
     return {
         "id": "diagram-coder",
         "model": {
-            "elements": {
-                "s-init": {"type": "StateInitialNode", "name": ""},
-                "s-greet": {"type": "AgentState", "name": "greeting"},
-                "s-write": {
-                    "type": "AgentState",
-                    "name": "write_code",
-                    "description": (
+            "version": "4.0.0",
+            "type": "AgentDiagram",
+            "nodes": [
+                _node("s-init", "StateInitialNode", name=""),
+                _node("s-greet", "AgentState", name="greeting"),
+                _node(
+                    "s-write", "AgentState",
+                    name="write_code",
+                    description=(
                         "a2a:out;peer=AgentReviewer;ref=rev-uuid;flow=flow-09;order=2;kind=supervises\n"
                         "a2a:out;peer=AgentTester;ref=test-uuid;flow=flow-09;order=1;kind=delegates"
                     ),
-                },
-            },
-            "relationships": {
-                "t-init": {
-                    "type": "AgentStateTransitionInit",
-                    "name": "",
-                    "source": {"element": "s-init"},
-                    "target": {"element": "s-greet"},
-                },
-                "t-in": {
-                    "type": "AgentStateTransition",
-                    "name": "a2a:in;peer=AgentSupervisor;ref=sup-uuid;flow=flow-09;kind=delegates",
-                    "source": {"element": "s-greet"},
-                    "target": {"element": "s-write"},
-                    "predefined": {"predefinedType": "when_intent_matched",
-                                   "intentName": "recv_AgentSupervisor_task"},
-                },
-            },
+                ),
+            ],
+            "edges": [
+                _edge("t-init", "AgentStateTransitionInit", "s-init", "s-greet", name=""),
+                _edge(
+                    "t-in", "AgentStateTransition", "s-greet", "s-write",
+                    name="a2a:in;peer=AgentSupervisor;ref=sup-uuid;flow=flow-09;kind=delegates",
+                    transitionType="predefined",
+                    predefined={"predefinedType": "when_intent_matched",
+                                "intentName": "recv_AgentSupervisor_task"},
+                ),
+            ],
         },
     }
 
@@ -150,14 +157,14 @@ def test_annotate_legacy_diagram_sets_no_attribute():
     legacy = {
         "id": "d",
         "model": {
-            "elements": {
-                "s1": {"type": "AgentState", "name": "idle"},
-            },
-            "relationships": {
-                "t1": {"type": "AgentStateTransition", "name": "",
-                       "source": {"element": "s1"}, "target": {"element": "s1"},
-                       "predefined": {"predefinedType": "auto", "conditionValue": ""}},
-            },
+            "version": "4.0.0",
+            "type": "AgentDiagram",
+            "nodes": [_node("s1", "AgentState", name="idle")],
+            "edges": [
+                _edge("t1", "AgentStateTransition", "s1", "s1", name="",
+                      transitionType="predefined",
+                      predefined={"predefinedType": "auto", "conditionValue": ""}),
+            ],
         },
     }
     agent = annotate_agent_with_a2a(_FakeAgent(), legacy)
@@ -181,8 +188,9 @@ def test_annotate_over_real_converter_keeps_intent_and_states():
 
     json_data = _tagged_diagram_json()
     # Build the intents the transition references, so the converter resolves them.
-    json_data["model"]["elements"]["i-recv"] = {
-        "type": "AgentIntent", "name": "recv_AgentSupervisor_task", "bodies": [],
+    json_data["model"]["components"] = {
+        "i-recv": {"id": "i-recv", "type": "AgentIntent",
+                   "name": "recv_AgentSupervisor_task", "bodies": []},
     }
     # Point the transition's intent at the real intent element name.
     agent = process_agent_diagram(json_data)
@@ -194,3 +202,41 @@ def test_annotate_over_real_converter_keeps_intent_and_states():
     assert {"greeting", "write_code"} <= state_names
     assert any(i.name == "recv_AgentSupervisor_task" for i in agent.intents)
     assert agent._a2a["inbound"][0]["intent"] == "recv_AgentSupervisor_task"
+
+
+# ---------------------------------------------------------------------------
+# project .py round trip — the tags are written to B-UML and read back
+# ---------------------------------------------------------------------------
+
+def test_a2a_tags_survive_a_project_buml_round_trip(tmp_path, monkeypatch):
+    from besser.utilities.buml_code_builder.project_builder import project_to_code
+    from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+        project_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.project_converter import (
+        json_to_buml_project,
+    )
+    monkeypatch.chdir(tmp_path)
+    json_data = _tagged_diagram_json()
+    json_data["model"]["components"] = {
+        "i-recv": {"id": "i-recv", "type": "AgentIntent",
+                   "name": "recv_AgentSupervisor_task", "bodies": []},
+    }
+    project = {"id": "p", "type": "Project", "name": "Swarm", "createdAt": "2026-01-01T00:00:00Z",
+               "diagrams": {"AgentDiagram": [{"id": "diagram-coder", "title": "AgentCoder",
+                                              "model": json_data["model"]}]}}
+    out = tmp_path / "project.py"
+    project_to_code(json_to_buml_project(ProjectInput(**project)), str(out))
+    [entry] = project_to_json(out.read_text(encoding="utf-8"))["diagrams"]["AgentDiagram"]
+
+    expected = annotate_agent_with_a2a(_FakeAgent(), json_data)._a2a
+    assert annotate_agent_with_a2a(_FakeAgent(), entry)._a2a == expected
+    # The editor reads the tags from the state description and the transition name.
+    states = {n["data"]["name"]: n["data"] for n in entry["model"]["nodes"] if n["type"] == "AgentState"}
+    assert states["write_code"]["description"].splitlines() == [
+        "a2a:out;peer=AgentTester;ref=test-uuid;flow=flow-09;order=1;kind=delegates",
+        "a2a:out;peer=AgentReviewer;ref=rev-uuid;flow=flow-09;order=2;kind=supervises",
+    ]
+    [tagged] = [e for e in entry["model"]["edges"] if e["data"].get("name", "").startswith("a2a:")]
+    assert tagged["data"]["name"] == "a2a:in;peer=AgentSupervisor;ref=sup-uuid;flow=flow-09;kind=delegates"

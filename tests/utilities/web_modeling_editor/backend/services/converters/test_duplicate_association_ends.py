@@ -22,21 +22,27 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 
 
 def _class(cid, name):
-    return {"id": cid, "name": name, "type": "Class", "owner": None,
-            "attributes": [], "methods": []}
+    """A v4 ``class`` node."""
+    return {"id": cid, "type": "class",
+            "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+            "data": {"name": name, "stereotype": None, "attributes": [], "methods": []}}
 
 
 def _rel(rid, src_id, src_role, tgt_id, tgt_role, mult="0..*"):
+    """A v4 ``ClassBidirectional`` edge (roles live on ``edge.data``)."""
     return {
-        "id": rid, "name": rid, "type": "ClassBidirectional",
-        "source": {"element": src_id, "multiplicity": mult, "role": src_role},
-        "target": {"element": tgt_id, "multiplicity": mult, "role": tgt_role},
+        "id": rid, "type": "ClassBidirectional", "source": src_id, "target": tgt_id,
+        "data": {"name": rid,
+                 "sourceRole": src_role, "sourceMultiplicity": mult,
+                 "targetRole": tgt_role, "targetMultiplicity": mult,
+                 "points": []},
     }
 
 
 def _diagram(elements, relationships):
-    return {"title": "Model", "model": {"elements": elements,
-                                        "relationships": relationships}}
+    return {"title": "Model", "model": {"version": "4.0.0", "type": "ClassDiagram",
+                                        "nodes": list(elements.values()),
+                                        "edges": list(relationships.values())}}
 
 
 def _assert_end_names_unique_per_class(domain_model):
@@ -54,7 +60,7 @@ def test_two_links_same_role_on_one_class_does_not_crash():
     deterministically suffixed."""
     elements = {"loan": _class("loan", "Loan"), "member": _class("member", "Member")}
     relationships = {
-        # target.role is the Member end, owned by the source class (Loan).
+        # targetRole is the Member end, owned by the source class (Loan).
         "r1": _rel("r1", "loan", "borrower", "member", "member"),
         "r2": _rel("r2", "loan", "returner", "member", "member"),
     }

@@ -253,7 +253,7 @@
       "file_extension": ".bpmn",
       "category": "business_process",
       "requires_class_diagram": false,
-      "required_diagram_type": "BPMNDiagram",
+      "required_diagram_type": "BPMN",
       "download_filename": "bpmn_diagram.bpmn",
       "keep_generated_filename": false,
       "needs_beyond_one_diagram": null

@@ -80,12 +80,16 @@ def test_generate_output_endpoint_returns_400_for_code_shaped_name(monkeypatch, 
         "title": "Library",
         "generator": "sql",
         "model": {
+            "version": "4.0.0",
             "type": "ClassDiagram",
-            "elements": {
-                "enum-1": {"type": "Enumeration", "name": "Status", "attributes": ["lit-1"], "methods": []},
-                "lit-1": {"type": "ClassAttribute", "name": CODE_SHAPED_NAME},
-            },
-            "relationships": {},
+            "nodes": [{
+                "id": "enum-1", "type": "class", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                "data": {
+                    "name": "Status", "stereotype": "Enumeration",
+                    "attributes": [{"id": "lit-1", "name": CODE_SHAPED_NAME}], "methods": [],
+                },
+            }],
+            "edges": [],
         },
     }
 

@@ -121,6 +121,8 @@ class TestBAFGeneratorReasoning:
         with open(tools_path, "r", encoding="utf-8") as f:
             tools_code = f.read()
         assert "def ping" in tools_code
+        # Tools are loaded from tools.py, never registered inline.
+        assert "agent.new_tool(" not in agent_code
 
     def test_emits_skill_registration(self, reasoning_agent_model, tmp_path):
         agent_path = _generate(reasoning_agent_model, str(tmp_path))
@@ -135,6 +137,10 @@ class TestBAFGeneratorReasoning:
         with open(skill_file, "r", encoding="utf-8") as f:
             skill_content = f.read()
         assert "Always greet the user by name when introduced." in skill_content
+        # Skills are not registered inline: no ``new_skill(..., content=...)``
+        # call (BAF's new_skill takes the text as positional ``source``).
+        assert "agent.new_skill(" not in agent_code
+        assert "content=" not in agent_code
 
     def test_emits_workspace_registration(self, reasoning_agent_model, tmp_path):
         path = _generate(reasoning_agent_model, str(tmp_path))
@@ -178,6 +184,8 @@ class TestBAFGeneratorReasoning:
         assert "from baf.library.state import new_reasoning_state" not in code
         assert "agent.load_tools(" not in code
         assert "agent.load_skills(" not in code
+        assert "agent.new_tool(" not in code
+        assert "agent.new_skill(" not in code
         assert "agent.new_workspace(" not in code
 
     def test_test_mode_still_generates_reasoning_assets(self, reasoning_agent_model, tmp_path):

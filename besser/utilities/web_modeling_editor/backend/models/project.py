@@ -31,6 +31,12 @@ class ProjectInput(BaseModel):
                     else:
                         normalized[key] = value
                 data["diagrams"] = normalized
+                # Lazy import, as in DiagramInput. The bucket key decides which
+                # models are UML, so this catches what the per-diagram check cannot.
+                from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+                    ensure_project_not_legacy,
+                )
+                ensure_project_not_legacy(normalized)
         return data
 
     def get_active_diagram(self, diagram_type: str) -> Optional[DiagramInput]:

@@ -16,20 +16,35 @@ def _object_diagram(title, constraint=INVARIANT):
     return {
         "title": "Books",
         "model": {
+            "version": "4.0.0",
             "type": "ObjectDiagram",
-            "elements": {
-                "o1": {"type": "ObjectName", "name": "b1", "classId": "c1", "className": "Book",
-                       "attributes": ["oa1"], "methods": []},
-                "oa1": {"type": "ObjectAttribute", "name": f"+ title: str = {title}", "owner": "o1"},
-            },
-            "relationships": {},
-            "referenceDiagramData": {
-                "elements": {
-                    "c1": {"type": "Class", "name": "Book", "attributes": ["a1"], "methods": []},
-                    "a1": {"type": "ClassAttribute", "name": "+ title: str", "owner": "c1"},
-                    "k1": {"type": "ClassOCLConstraint", "constraint": constraint},
+            "nodes": [{
+                "id": "o1", "type": "objectName", "position": {"x": 0, "y": 0}, "width": 200, "height": 100,
+                "data": {
+                    "name": "b1", "classId": "c1", "className": "Book", "methods": [],
+                    "attributes": [{"id": "oa1", "name": "title", "attributeType": "str", "value": title}],
                 },
-                "relationships": {},
+            }],
+            "edges": [],
+            "referenceDiagramData": {
+                "version": "4.0.0",
+                "type": "ClassDiagram",
+                "nodes": [
+                    {
+                        "id": "c1", "type": "class", "position": {"x": 0, "y": 0}, "width": 200, "height": 100,
+                        "data": {
+                            "name": "Book", "methods": [],
+                            "attributes": [
+                                {"id": "a1", "name": "title", "attributeType": "str", "visibility": "public"},
+                            ],
+                        },
+                    },
+                    {
+                        "id": "k1", "type": "ClassOCLConstraint", "position": {"x": 0, "y": 200},
+                        "width": 200, "height": 80, "data": {"name": "", "expression": constraint},
+                    },
+                ],
+                "edges": [],
             },
         },
     }

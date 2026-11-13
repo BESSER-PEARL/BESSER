@@ -34,33 +34,30 @@ CLASS_DIAGRAM_LOGGER = (
 def _two_class_diagram(src_name, tgt_name, src_role, tgt_role,
                        src_mult="0..*", tgt_mult="0..*"):
     """A minimal bidirectional association ``src -> tgt`` with the given role
-    names/multiplicities, in the JSON shape the visual editor POSTs."""
+    names/multiplicities, in the v4 JSON shape the visual editor POSTs."""
     return {
         "title": "Model",
         "model": {
-            "elements": {
-                "cls-src": {
-                    "id": "cls-src", "name": src_name, "type": "Class",
-                    "owner": None, "attributes": [], "methods": [],
-                },
-                "cls-tgt": {
-                    "id": "cls-tgt", "name": tgt_name, "type": "Class",
-                    "owner": None, "attributes": [], "methods": [],
-                },
-            },
-            "relationships": {
-                "rel": {
-                    "id": "rel", "name": "assoc", "type": "ClassBidirectional",
-                    "source": {
-                        "element": "cls-src", "multiplicity": src_mult,
-                        "role": src_role,
-                    },
-                    "target": {
-                        "element": "cls-tgt", "multiplicity": tgt_mult,
-                        "role": tgt_role,
-                    },
-                },
-            },
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                {"id": "cls-src", "type": "class",
+                 "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                 "data": {"name": src_name, "stereotype": None,
+                          "attributes": [], "methods": []}},
+                {"id": "cls-tgt", "type": "class",
+                 "position": {"x": 300, "y": 0}, "width": 160, "height": 100,
+                 "data": {"name": tgt_name, "stereotype": None,
+                          "attributes": [], "methods": []}},
+            ],
+            "edges": [
+                {"id": "rel", "type": "ClassBidirectional",
+                 "source": "cls-src", "target": "cls-tgt",
+                 "data": {"name": "assoc",
+                          "sourceRole": src_role, "sourceMultiplicity": src_mult,
+                          "targetRole": tgt_role, "targetMultiplicity": tgt_mult,
+                          "points": []}},
+            ],
         },
     }
 

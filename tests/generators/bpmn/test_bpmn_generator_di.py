@@ -243,38 +243,36 @@ class TestEdgeWaypoints:
 def _assistant_style_json(n_tasks=9):
     """A start event, ``n_tasks`` sequential tasks each fed by a data object, and an
     end event -- with the placeholder flow geometry the modeling assistant emits."""
-    elements, relationships = {}, {}
+    nodes, edges = [], []
 
-    def node(elem_id, type_, name, x, y, w, h, **extra):
-        elements[elem_id] = {"id": elem_id, "name": name, "type": type_, "owner": None,
-                             "bounds": _bounds(x, y, w, h), **extra}
+    def node(node_id, type_, name, x, y, w, h, **extra):
+        nodes.append({"id": node_id, "type": type_, "position": {"x": x, "y": y},
+                      "width": w, "height": h, "data": {"name": name, **extra}})
 
-    def rel(rel_id, source, target, flow_type):
-        relationships[rel_id] = {
-            "id": rel_id, "name": "", "type": "BPMNFlow", "owner": None,
-            "bounds": _bounds(0, 0, 100, 1), "path": [{"x": 0, "y": 0}, {"x": 100, "y": 0}],
-            "source": {"element": source, "direction": "Right"},
-            "target": {"element": target, "direction": "Left"},
-            "isManuallyLayouted": False, "flowType": flow_type, "isDefault": False,
-        }
+    def edge(edge_id, source, target, edge_type):
+        edges.append({
+            "id": edge_id, "type": edge_type, "source": source, "target": target,
+            "sourceHandle": "Right", "targetHandle": "Left",
+            "data": {"name": "", "points": [{"x": 0, "y": 0}, {"x": 100, "y": 0}],
+                     "isManuallyLayouted": False},
+        })
 
-    node("start", "BPMNStartEvent", "Cell production started", -1000, 10, 40, 40,
+    node("start", "bpmnStartEvent", "Cell production started", -1000, 10, 40, 40,
          eventType="default")
     previous = "start"
     for i in range(n_tasks):
-        node(f"t{i}", "BPMNTask", f"Step {i + 1}", -780 + i * 220, 0, 140, 60,
+        node(f"t{i}", "bpmnTask", f"Step {i + 1}", -780 + i * 220, 0, 140, 60,
              taskType="default", marker="none")
-        node(f"d{i}", "BPMNDataObject", f"Input {i + 1}", -730 + i * 220, 120, 40, 50)
-        rel(f"f{i}", previous, f"t{i}", "sequence")
-        rel(f"a{i}", f"d{i}", f"t{i}", "data association")
+        node(f"d{i}", "bpmnDataObject", f"Input {i + 1}", -730 + i * 220, 120, 40, 50)
+        edge(f"f{i}", previous, f"t{i}", "BPMNSequenceFlow")
+        edge(f"a{i}", f"d{i}", f"t{i}", "BPMNDataAssociationFlow")
         previous = f"t{i}"
-    node("end", "BPMNEndEvent", "Cell ready", -780 + n_tasks * 220, 10, 40, 40,
+    node("end", "bpmnEndEvent", "Cell ready", -780 + n_tasks * 220, 10, 40, 40,
          eventType="default")
-    rel("f_end", previous, "end", "sequence")
+    edge("f_end", previous, "end", "BPMNSequenceFlow")
     return {"title": "Cell production", "model": {
-        "version": "3.0.0", "type": "BPMNDiagram", "size": {"width": 2400, "height": 400},
-        "elements": elements, "relationships": relationships,
-        "interactive": {"elements": {}, "relationships": {}}, "assessments": {}}}
+        "version": "4.0.0", "type": "BPMNDiagram", "nodes": nodes, "edges": edges,
+        "assessments": {}}}
 
 
 def test_issue_627_export_is_connected_and_keeps_data_objects(tmp_path):

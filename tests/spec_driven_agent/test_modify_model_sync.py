@@ -112,9 +112,10 @@ def _source_export() -> dict:
                     "id": "cd1",
                     "title": "Library",
                     "model": {
+                        "version": "4.0.0",
                         "type": "ClassDiagram",
-                        "elements": {},
-                        "relationships": {},
+                        "nodes": [],
+                        "edges": [],
                     },
                 }
             ]
@@ -222,9 +223,9 @@ def test_new_class_applied_and_slotted_into_export(tmp_path):
     # class_buml_to_json reflects the new class.
     serialized = class_buml_to_json(orch.domain_model)
     class_element_names = {
-        e.get("name")
-        for e in serialized["elements"].values()
-        if e.get("type") == "Class"
+        (n.get("data") or {}).get("name")
+        for n in serialized["nodes"]
+        if n.get("type") == "class"
     }
     assert "User" in class_element_names
     assert "Book" in class_element_names
@@ -236,9 +237,9 @@ def test_new_class_applied_and_slotted_into_export(tmp_path):
         orch._updated_project_export["diagrams"]["ClassDiagram"][0]["model"]
     )
     exported_names = {
-        e.get("name")
-        for e in entry_model["elements"].values()
-        if e.get("type") == "Class"
+        (n.get("data") or {}).get("name")
+        for n in entry_model["nodes"]
+        if n.get("type") == "class"
     }
     assert "User" in exported_names
 
@@ -371,17 +372,15 @@ def test_model_sync_keeps_existing_element_ids(tmp_path):
         get_element_by_id,
     )
 
-    bounds = {"x": 0, "y": 0, "width": 160, "height": 100}
     class_model = {
+        "version": "4.0.0",
         "type": "ClassDiagram",
-        "elements": {
-            "cls-book": {"id": "cls-book", "name": "Book", "type": "Class", "owner": None,
-                         "bounds": bounds, "attributes": ["attr-title"], "methods": []},
-            "attr-title": {"id": "attr-title", "name": "title", "type": "ClassAttribute",
-                           "owner": "cls-book", "bounds": bounds,
-                           "visibility": "public", "attributeType": "str"},
-        },
-        "relationships": {},
+        "nodes": [{
+            "id": "cls-book", "type": "class", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+            "data": {"name": "Book", "methods": [], "attributes": [
+                {"id": "attr-title", "name": "title", "visibility": "public", "attributeType": "str"}]},
+        }],
+        "edges": [],
     }
     export = _source_export()
     export["diagrams"]["ClassDiagram"][0]["model"] = class_model
@@ -401,12 +400,13 @@ def test_model_sync_keeps_existing_element_ids(tmp_path):
     orch._derive_and_apply_model_deltas("add users")
 
     updated = orch._updated_project_export["diagrams"]["ClassDiagram"][0]["model"]
-    assert updated["elements"]["cls-book"]["name"] == "Book"
-    assert updated["elements"]["attr-title"]["owner"] == "cls-book"
+    book = next(n for n in updated["nodes"] if n["id"] == "cls-book")
+    assert book["data"]["name"] == "Book"
+    assert [row["id"] for row in book["data"]["attributes"]] == ["attr-title"]
     gui_ref = orch._updated_project_export["diagrams"]["GUINoCodeDiagram"][0]["model"][
         "pages"][0]["frames"][0]["component"]["components"][0]["attributes"]["data-source"]
     assert get_element_by_id(updated, gui_ref)["name"] == "Book"
-    user_ids = [k for k, e in updated["elements"].items() if e.get("name") == "User"]
+    user_ids = [n["id"] for n in updated["nodes"] if n["data"].get("name") == "User"]
     assert len(user_ids) == 1 and user_ids[0] not in ("cls-book", "attr-title")
 
 

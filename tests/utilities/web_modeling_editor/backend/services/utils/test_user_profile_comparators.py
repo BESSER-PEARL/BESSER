@@ -17,17 +17,22 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 )
 
 
-def _senior_diagram(criterion: str, operator: str) -> dict:
-    """A User linked to a Personal_Information box carrying one criterion, as the editor saves it."""
-    return {"id": "d", "title": "Senior", "type": "UserDiagram", "model": {"type": "UserDiagram", "elements": {
-        "u": {"id": "u", "name": "user", "type": "UserModelName", "className": "User", "attributes": [],
-              "bounds": {"x": 0, "y": 0, "width": 200, "height": 60}},
-        "p": {"id": "p", "name": "info", "type": "UserModelName", "className": "Personal_Information",
-              "attributes": ["a"], "bounds": {"x": 300, "y": 0, "width": 200, "height": 60}},
-        "a": {"id": "a", "name": criterion, "type": "UserModelAttribute", "owner": "p",
-              "attributeOperator": operator, "bounds": {"x": 300, "y": 30, "width": 200, "height": 30}},
-    }, "relationships": {"l": {"id": "l", "type": "ObjectLink", "name": "",
-                               "source": {"element": "u"}, "target": {"element": "p"}}}}}
+def _senior_diagram(criterion: str, operator: str, value=None) -> dict:
+    """A User linked to a Personal_Information box carrying one criterion, as the editor saves it.
+
+    ``value=None`` keeps the comparator embedded in the row name ("age > 65", as
+    migrated projects and templates carry it); otherwise the row has a bare name
+    plus a separate ``value``, as the v4 editor writes it.
+    """
+    row = {"id": "a", "name": criterion, "attributeOperator": operator}
+    if value is not None:
+        row["value"] = value
+    return {"id": "d", "title": "Senior", "type": "UserDiagram", "model": {"type": "UserDiagram", "nodes": [
+        {"id": "u", "type": "UserModelName", "position": {"x": 0, "y": 0}, "width": 200, "height": 60,
+         "data": {"name": "user", "className": "User", "attributes": []}},
+        {"id": "p", "type": "UserModelName", "position": {"x": 300, "y": 0}, "width": 200, "height": 60,
+         "data": {"name": "info", "className": "Personal_Information", "attributes": [row]}},
+    ], "edges": [{"id": "l", "type": "UserModelLink", "source": "u", "target": "p", "data": {"name": ""}}]}}
 
 
 @pytest.mark.parametrize("criterion, operator, expected", [
@@ -41,6 +46,25 @@ def _senior_diagram(criterion: str, operator: str) -> dict:
 def test_profile_document_keeps_the_comparator(criterion, operator, expected):
     document = generate_user_profile_document(_senior_diagram(criterion, operator))
     assert document["model"]["Personal_Information"]["age"] == expected
+
+
+@pytest.mark.parametrize("operator, value, expected", [
+    (">", "65", "> 65"),
+    ("<", "18", "< 18"),
+    ("==", "30", 30),
+])
+def test_profile_document_keeps_the_comparator_of_a_split_row(operator, value, expected):
+    document = generate_user_profile_document(_senior_diagram("age", operator, value))
+    assert document["model"]["Personal_Information"]["age"] == expected
+
+
+def test_bare_v4_model_as_the_editor_sends_it():
+    """The editor sends the profile's bare model, which in v4 carries its own
+    hyphenated ``id`` and an empty ``title``; neither may become the object model name."""
+    model = {**_senior_diagram("age < 18", "<")["model"], "id": "converted-diagram-1781220606361", "title": ""}
+    document = generate_user_profile_document(model)
+    assert document["name"] == "UserProfile"
+    assert document["model"]["Personal_Information"]["age"] == "< 18"
 
 
 def test_generated_agent_shows_the_comparator(tmp_path):

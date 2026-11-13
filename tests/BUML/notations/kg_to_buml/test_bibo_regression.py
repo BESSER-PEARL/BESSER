@@ -663,9 +663,7 @@ def test_model_round_trips_through_the_editor(result):
     )
 
     diagram = class_buml_to_json(result.domain_model)
-    elements = diagram["elements"]
-    elements = list(elements.values()) if isinstance(elements, dict) else elements
-    blocks = [e["constraint"] for e in elements if e["type"] == "ClassOCLConstraint"]
+    blocks = [n["data"]["expression"] for n in diagram["nodes"] if n["type"] == "ClassOCLConstraint"]
     assert len(blocks) == len(result.domain_model.constraints)
 
     unreadable = []

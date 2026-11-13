@@ -75,8 +75,7 @@ def test_class_diagram_with_all_accepts(client, kg_payload: dict):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["diagramType"] == "ClassDiagram"
-    elements = body["model"]["elements"]
-    class_names = {e["name"] for e in elements.values() if e.get("type") == "Class"}
+    class_names = {n["data"]["name"] for n in body["model"]["nodes"] if n["type"] == "class"}
     # Person and Pet survive; Thing exists because :likes was attached to it.
     assert "Person" in class_names
     assert "Pet" in class_names
@@ -95,8 +94,7 @@ def test_class_diagram_with_skip_drops_property(client, kg_payload: dict):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    relationships = body["model"]["relationships"]
-    rel_names = {r.get("name") for r in relationships.values()}
+    rel_names = {e["data"].get("name") for e in body["model"]["edges"]}
     assert "likes" not in rel_names
 
 

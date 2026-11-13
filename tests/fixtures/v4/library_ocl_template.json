@@ -1,0 +1,700 @@
+{
+  "version": "4.0.0",
+  "id": "converted-diagram-1778241725877",
+  "title": "",
+  "type": "ClassDiagram",
+  "nodes": [
+    {
+      "id": "class_oho5ergc3_mjikkmod",
+      "width": 270,
+      "height": 250,
+      "type": "class",
+      "position": {
+        "x": 570,
+        "y": 200
+      },
+      "data": {
+        "name": "Book",
+        "methods": [
+          {
+            "id": "method_rb01uirsh_mjikkmod",
+            "name": "+ decrease_stock(qty: int)",
+            "visibility": "public",
+            "attributeType": "int): any",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          }
+        ],
+        "attributes": [
+          {
+            "id": "attr_a87fqdtdi_mjikkmod",
+            "name": "title",
+            "visibility": "public",
+            "attributeType": "str",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "attr_v6ve12d44_mjikkmod",
+            "name": "pages",
+            "visibility": "public",
+            "attributeType": "int",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "attr_edi3c3l8k_mjikkmod",
+            "name": "stock",
+            "visibility": "public",
+            "attributeType": "int",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "attr_mczftcqfb_mjikkmod",
+            "name": "price",
+            "visibility": "public",
+            "attributeType": "float",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "attr_785suq5yn_mjikkmod",
+            "name": "release",
+            "visibility": "public",
+            "attributeType": "date",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "attr_urp7jb0c0_mjikkmod",
+            "name": "genre",
+            "visibility": "public",
+            "attributeType": "Genre",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          }
+        ]
+      },
+      "measured": {
+        "width": 270
+      }
+    },
+    {
+      "id": "class_06blhjj3h_mjikkmod",
+      "width": 350,
+      "height": 190,
+      "type": "class",
+      "position": {
+        "x": 731.0000406901042,
+        "y": 584.6666564941406
+      },
+      "data": {
+        "name": "Library",
+        "methods": [
+          {
+            "id": "35ef5329-889b-40f0-89ce-9836936fd8a9",
+            "name": "+ cheapest_book_by(author:Author): str",
+            "visibility": "public",
+            "attributeType": "str",
+            "code": "def cheapest_book_by(author:Author) -> str {\n    cheapest:Book = null;\n\tprice = 1000000000.0;\n\tfor(book in this.books){\n        if(book.authors.contains(author)\n\t\t\t&& book.price <= price){\n            cheapest = book;\n\t\t\tprice = book.price;\n\t\t}\n    }\n\treturn cheapest.title;\n}",
+            "implementationType": "bal",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          }
+        ],
+        "attributes": [
+          {
+            "id": "attr_eryfh37kl_mjikkmod",
+            "name": "name",
+            "visibility": "public",
+            "attributeType": "str",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "f9608e0e-745d-4113-85ad-cd06b1900c09",
+            "name": "web_page",
+            "visibility": "public",
+            "attributeType": "str",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "4391886d-13b5-4fa0-9894-09f1894af27f",
+            "name": "address",
+            "visibility": "public",
+            "attributeType": "str",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "a487fd85-dec0-47b9-bd37-71ff92026963",
+            "name": "telephone",
+            "visibility": "public",
+            "attributeType": "str",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          }
+        ]
+      },
+      "measured": {
+        "width": 350,
+        "height": 190
+      }
+    },
+    {
+      "id": "class_d3f0di6lb_mjikkmoe",
+      "width": 220,
+      "height": 100,
+      "type": "class",
+      "position": {
+        "x": 1020,
+        "y": 275
+      },
+      "data": {
+        "name": "Author",
+        "methods": [],
+        "attributes": [
+          {
+            "id": "attr_p3zqpt65k_mjikkmoe",
+            "name": "name",
+            "visibility": "public",
+            "attributeType": "str",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          },
+          {
+            "id": "4321afe8-8ec2-48da-a0ec-b2ce9ccaf1db",
+            "name": "birth",
+            "visibility": "public",
+            "attributeType": "date",
+            "code": "",
+            "implementationType": "none",
+            "isOptional": false,
+            "isDerived": false,
+            "isId": false,
+            "isExternalId": false
+          }
+        ]
+      },
+      "measured": {
+        "width": 220,
+        "height": 100
+      }
+    },
+    {
+      "id": "50ffa27f-f8a9-438b-b81b-174266f39952",
+      "width": 160,
+      "height": 350,
+      "type": "class",
+      "position": {
+        "x": 1204,
+        "y": 456
+      },
+      "data": {
+        "name": "Genre",
+        "methods": [],
+        "attributes": [
+          {
+            "id": "bfadf7ef-e6a4-43e3-b267-672be745c9c7",
+            "name": "Poetry",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "15d10eca-11e8-4894-8b27-d815dbc62596",
+            "name": "Thriller",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "55346119-1f08-48c5-9629-b5223ea766e0",
+            "name": "History",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "67e73142-470c-4795-8864-96f08365ce49",
+            "name": "Technology",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "4ba07b68-1fd2-40fc-ad63-05766965aaad",
+            "name": "Romance",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "52114e47-c8c1-404a-847c-0b877de007e0",
+            "name": "Horror",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "65937dfa-011b-425e-a292-7d66dff5cd36",
+            "name": "Adventure",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "994869fb-9b98-450f-add4-a2ee88a15c7f",
+            "name": "Philosophy",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "45fa6842-da64-4878-b875-c536f06f1d50",
+            "name": "Cookbooks",
+            "visibility": "public",
+            "attributeType": "str"
+          },
+          {
+            "id": "6d81aaec-327a-42b9-89db-a17e54bb7b5a",
+            "name": "Fantasy",
+            "visibility": "public",
+            "attributeType": "str"
+          }
+        ],
+        "stereotype": "Enumeration"
+      },
+      "measured": {
+        "width": 160,
+        "height": 350
+      }
+    },
+    {
+      "id": "ocl-example-00",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 40,
+        "y": 180
+      },
+      "data": {
+        "name": "",
+        "expression": "context Book inv book_positive_pages: self.pages > 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-01",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 40,
+        "y": 280
+      },
+      "data": {
+        "name": "",
+        "expression": "context Book inv book_nonneg_stock: self.stock >= 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-02",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 40,
+        "y": 380
+      },
+      "data": {
+        "name": "",
+        "expression": "context Book inv book_nonneg_price: self.price >= 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-03",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 40,
+        "y": 80
+      },
+      "data": {
+        "name": "",
+        "expression": "context Book inv book_has_title: self.title.size() > 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-04",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 975,
+        "y": 840
+      },
+      "data": {
+        "name": "",
+        "expression": "context Library inv library_named: self.name.size() > 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-05",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 635,
+        "y": 840
+      },
+      "data": {
+        "name": "",
+        "expression": "context Library inv library_has_books: self.books->size() > 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-06",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 1025,
+        "y": 145
+      },
+      "data": {
+        "name": "",
+        "expression": "context Author inv author_named: self.name.size() > 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-07",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 40,
+        "y": 580
+      },
+      "data": {
+        "name": "",
+        "expression": "context Book::decrease_stock(qty: int) pre: qty > 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-08",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 40,
+        "y": 480
+      },
+      "data": {
+        "name": "",
+        "expression": "context Book::decrease_stock(qty: int) pre: self.stock >= qty",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-09",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 40,
+        "y": 685
+      },
+      "data": {
+        "name": "",
+        "expression": "context Book::decrease_stock(qty: int) post: self.stock >= 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    },
+    {
+      "id": "ocl-example-10",
+      "width": 210,
+      "height": 90,
+      "type": "ClassOCLConstraint",
+      "position": {
+        "x": 800,
+        "y": 940
+      },
+      "data": {
+        "name": "",
+        "expression": "context Library::cheapest_book_by(author: Author) pre: self.books->size() > 0",
+        "description": ""
+      },
+      "measured": {
+        "width": 210,
+        "height": 90
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "rel_z26fdxrdq_mjikkmoe",
+      "source": "class_06blhjj3h_mjikkmod",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassBidirectional",
+      "sourceHandle": "top",
+      "targetHandle": "bottom",
+      "data": {
+        "label": "books",
+        "name": "books",
+        "sourceMultiplicity": "1..*",
+        "targetMultiplicity": "*",
+        "sourceRole": "library",
+        "targetRole": "books",
+        "isManuallyLayouted": false,
+        "messages": [],
+        "points": []
+      }
+    },
+    {
+      "id": "rel_0ys2qxzq1_mjikkmoe",
+      "source": "class_d3f0di6lb_mjikkmoe",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassBidirectional",
+      "sourceHandle": "left",
+      "targetHandle": "right",
+      "data": {
+        "label": "books",
+        "name": "books",
+        "sourceMultiplicity": "1..*",
+        "targetMultiplicity": "*",
+        "sourceRole": "authors",
+        "targetRole": "books",
+        "isManuallyLayouted": false,
+        "messages": [],
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-00",
+      "source": "ocl-example-00",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "right",
+      "targetHandle": "left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-01",
+      "source": "ocl-example-01",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "right",
+      "targetHandle": "left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-02",
+      "source": "ocl-example-02",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "right",
+      "targetHandle": "left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-03",
+      "source": "ocl-example-03",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "right",
+      "targetHandle": "left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-04",
+      "source": "ocl-example-04",
+      "target": "class_06blhjj3h_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "top",
+      "targetHandle": "bottom-right",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-05",
+      "source": "ocl-example-05",
+      "target": "class_06blhjj3h_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "top",
+      "targetHandle": "bottom-left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-06",
+      "source": "ocl-example-06",
+      "target": "class_d3f0di6lb_mjikkmoe",
+      "type": "ClassOCLLink",
+      "sourceHandle": "bottom",
+      "targetHandle": "top",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-07",
+      "source": "ocl-example-07",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "right",
+      "targetHandle": "left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-08",
+      "source": "ocl-example-08",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "right",
+      "targetHandle": "left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-09",
+      "source": "ocl-example-09",
+      "target": "class_oho5ergc3_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "right",
+      "targetHandle": "left",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    },
+    {
+      "id": "ocl-link-10",
+      "source": "ocl-example-10",
+      "target": "class_06blhjj3h_mjikkmod",
+      "type": "ClassOCLLink",
+      "sourceHandle": "top",
+      "targetHandle": "bottom",
+      "data": {
+        "label": "",
+        "points": []
+      }
+    }
+  ],
+  "assessments": {}
+}

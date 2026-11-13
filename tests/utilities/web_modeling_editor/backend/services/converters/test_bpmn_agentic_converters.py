@@ -40,54 +40,75 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import Con
 
 
 # ---------------------------------------------------------------------------
-# Fixture helpers (mirror test_bpmn_converters.py _envelope / _node / _flow)
+# Fixture helpers: v4 wire shape (flat nodes / edges, containment via parentId,
+# agentic fields in node.data). Fixtures are id-keyed dicts of v4 nodes / edges
+# so tests can look entries up by id.
 # ---------------------------------------------------------------------------
 
-def _envelope(elements, relationships, title="Test BPMN"):
+def _envelope(nodes_by_id, edges_by_id, title="Test BPMN"):
     return {
         "title": title,
         "model": {
-            "version": "3.0.0",
+            "version": "4.0.0",
             "type": "BPMNDiagram",
             "size": {"width": 1400, "height": 700},
-            "elements": elements,
-            "relationships": relationships,
+            "nodes": list(nodes_by_id.values()),
+            "edges": list(edges_by_id.values()),
             "interactive": {"elements": {}, "relationships": {}},
             "assessments": {},
         },
     }
 
 
-def _node(elem_id, type_, name, owner=None, **extra):
-    base = {
-        "id": elem_id,
-        "name": name,
+def _node(node_id, type_, name, parent=None, **data):
+    node = {
+        "id": node_id,
         "type": type_,
-        "owner": owner,
-        "bounds": {"x": 100, "y": 100, "width": 110, "height": 60},
+        "position": {"x": 100, "y": 100},
+        "width": 110,
+        "height": 60,
+        "measured": {"width": 110, "height": 60},
+        "data": {"name": name, **data},
     }
-    base.update(extra)
-    return base
+    if parent is not None:
+        node["parentId"] = parent
+    return node
 
 
-def _flow(rel_id, source_id, target_id, flow_type="sequence", name="", **extra):
-    base = {
-        "id": rel_id,
-        "name": name,
-        "type": "BPMNFlow",
-        "owner": None,
-        "bounds": {"x": 0, "y": 0, "width": 100, "height": 1},
-        "path": [{"x": 0, "y": 0}, {"x": 100, "y": 0}],
-        "source": {"element": source_id, "direction": "Right",
-                   "bounds": {"x": 0, "y": 0, "width": 0, "height": 0}},
-        "target": {"element": target_id, "direction": "Left",
-                   "bounds": {"x": 100, "y": 0, "width": 0, "height": 0}},
-        "isManuallyLayouted": False,
-        "flowType": flow_type,
-        "isDefault": False,
+_EDGE_TYPE_FOR_FLOW = {
+    "sequence": "BPMNSequenceFlow",
+    "message": "BPMNMessageFlow",
+    "association": "BPMNAssociationFlow",
+    "data association": "BPMNDataAssociationFlow",
+}
+
+
+def _flow(edge_id, source_id, target_id, flow_type="sequence", name="", **data):
+    """A v4 BPMN edge with the data fields the editor's BPMN edge serialises."""
+    return {
+        "id": edge_id,
+        "source": source_id,
+        "target": target_id,
+        "type": _EDGE_TYPE_FOR_FLOW[flow_type],
+        "sourceHandle": "right",
+        "targetHandle": "left",
+        "data": {
+            "name": name,
+            "label": name,
+            "points": [{"x": 0, "y": 0}, {"x": 100, "y": 0}],
+            "isManuallyLayouted": False,
+            **data,
+        },
     }
-    base.update(extra)
-    return base
+
+
+def _node_data(out, node_type=None):
+    """``data`` of every emitted node (of ``node_type`` when given), in emission order."""
+    return [n["data"] for n in out["nodes"] if node_type is None or n["type"] == node_type]
+
+
+def _node_data_by_id(out):
+    return {n["id"]: n["data"] for n in out["nodes"]}
 
 
 def _process_with_node(node):
@@ -105,7 +126,7 @@ def test_I1_import_agentic_task():
     """I-1: BPMNTask with isAgentic=true imports as AgenticTask."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Review", taskType="user", marker="none",
+            "t1", "bpmnTask", "Review", taskType="user", marker="none",
             isAgentic=True, reflectionMode="cross", trustScore=85,
         ),
     }
@@ -121,7 +142,7 @@ def test_I2_import_non_agentic_task_discards_seaa_fields():
     """I-2: isAgentic=false with SEAA fields set in JSON imports as base Task."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Plain", taskType="default", marker="none",
+            "t1", "bpmnTask", "Plain", taskType="default", marker="none",
             isAgentic=False, reflectionMode="self", trustScore=99,
         ),
     }
@@ -135,7 +156,7 @@ def test_I3_import_agentic_task_clamps_trust_score_high():
     """I-3: trustScore=150 clamps to 100 on import (WME-tolerant bridge)."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Review", taskType="default", marker="none",
+            "t1", "bpmnTask", "Review", taskType="default", marker="none",
             isAgentic=True, reflectionMode="none", trustScore=150,
         ),
     }
@@ -148,7 +169,7 @@ def test_I3b_import_agentic_task_clamps_trust_score_negative():
     """trustScore=-5 clamps to 0 on import."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Review", taskType="default", marker="none",
+            "t1", "bpmnTask", "Review", taskType="default", marker="none",
             isAgentic=True, reflectionMode="none", trustScore=-5,
         ),
     }
@@ -161,7 +182,7 @@ def test_I4_import_agentic_task_unknown_reflection_raises():
     """I-4: Unknown reflectionMode raises ConversionError."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Review", taskType="default", marker="none",
+            "t1", "bpmnTask", "Review", taskType="default", marker="none",
             isAgentic=True, reflectionMode="bogus", trustScore=0,
         ),
     }
@@ -174,7 +195,7 @@ def test_I5_import_agentic_task_collaboration_mode_silently_ignored():
     task still imports as AgenticTask, no error raised."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Review", taskType="default", marker="none",
+            "t1", "bpmnTask", "Review", taskType="default", marker="none",
             isAgentic=True, reflectionMode="cross", trustScore=50,
             collaborationMode="competition",
         ),
@@ -190,7 +211,7 @@ def test_I6_import_agentic_gateway_diverging():
     """I-6: Diverging gateway imports correctly; collaborationMode+mergingStrategy silently ignored."""
     elements = {
         "g1": _node(
-            "g1", "BPMNGateway", "Fork", gatewayType="parallel",
+            "g1", "bpmnGateway", "Fork", gatewayType="parallel",
             isAgentic=True, gatewayRole="diverging",
             collaborationMode="voting", mergingStrategy="majority", trustScore=85,
         ),
@@ -206,7 +227,7 @@ def test_I7_import_agentic_gateway_merging():
     """I-7: Full agentic-merging gateway; mergingStrategy silently ignored."""
     elements = {
         "g1": _node(
-            "g1", "BPMNGateway", "Vote", gatewayType="parallel",
+            "g1", "bpmnGateway", "Vote", gatewayType="parallel",
             isAgentic=True, gatewayRole="merging",
             collaborationMode="voting", mergingStrategy="absolute-majority", trustScore=70,
         ),
@@ -221,7 +242,7 @@ def test_I8_import_agentic_gateway_rejects_exclusive():
     """I-8: isAgentic=true on gatewayType=exclusive raises ConversionError (paper §4.3)."""
     elements = {
         "g1": _node(
-            "g1", "BPMNGateway", "X", gatewayType="exclusive",
+            "g1", "bpmnGateway", "X", gatewayType="exclusive",
             isAgentic=True, gatewayRole="diverging", trustScore=0,
         ),
     }
@@ -233,7 +254,7 @@ def test_I9_import_agentic_gateway_unknown_collaboration_mode_silently_ignored()
     """I-9: Unknown collaborationMode is silently ignored."""
     elements = {
         "g1": _node(
-            "g1", "BPMNGateway", "Vote", gatewayType="parallel",
+            "g1", "bpmnGateway", "Vote", gatewayType="parallel",
             isAgentic=True, gatewayRole="merging",
             collaborationMode="bogus", mergingStrategy="majority", trustScore=0,
         ),
@@ -249,7 +270,7 @@ def test_I10_import_agentic_gateway_illegal_strategy_silently_ignored():
     """I-10: An illegal mergingStrategy is silently ignored."""
     elements = {
         "g1": _node(
-            "g1", "BPMNGateway", "Vote", gatewayType="parallel",
+            "g1", "bpmnGateway", "Vote", gatewayType="parallel",
             isAgentic=True, gatewayRole="merging",
             collaborationMode="voting", mergingStrategy="fastest", trustScore=0,
         ),
@@ -263,9 +284,9 @@ def test_I10_import_agentic_gateway_illegal_strategy_silently_ignored():
 def test_I11_import_agentic_lane():
     """I-11: BPMNSwimlane with isAgentic=true imports as AgenticLane."""
     elements = {
-        "p1": _node("p1", "BPMNPool", "Pool"),
+        "p1": _node("p1", "bpmnPool", "Pool"),
         "l1": _node(
-            "l1", "BPMNSwimlane", "Reviewer", owner="p1",
+            "l1", "bpmnSwimlane", "Reviewer", parent="p1",
             isAgentic=True, role="supervision", trustScore=85,
         ),
     }
@@ -280,9 +301,9 @@ def test_I11_import_agentic_lane():
 def test_I12_import_non_agentic_lane():
     """I-12: isAgentic=false on swimlane imports as base Lane."""
     elements = {
-        "p1": _node("p1", "BPMNPool", "Pool"),
+        "p1": _node("p1", "bpmnPool", "Pool"),
         "l1": _node(
-            "l1", "BPMNSwimlane", "Reviewer", owner="p1",
+            "l1", "bpmnSwimlane", "Reviewer", parent="p1",
             isAgentic=False, role="worker", trustScore=0,
         ),
     }
@@ -294,14 +315,14 @@ def test_I12_import_non_agentic_lane():
 
 
 def test_I13_import_message_flow_agentic_downgraded_to_base():
-    """I-13: BPMNFlow with isAgentic=true is silently downgraded to base MessageFlow
+    """I-13: A message flow with isAgentic=true is silently downgraded to base MessageFlow
     (AgenticMessageFlow was removed)."""
     elements = {
-        "p1": _node("p1", "BPMNPool", "P1"),
-        "p2": _node("p2", "BPMNPool", "P2"),
-        "t1": _node("t1", "BPMNTask", "T1", owner="p1",
+        "p1": _node("p1", "bpmnPool", "P1"),
+        "p2": _node("p2", "bpmnPool", "P2"),
+        "t1": _node("t1", "bpmnTask", "T1", parent="p1",
                     taskType="default", marker="none"),
-        "t2": _node("t2", "BPMNTask", "T2", owner="p2",
+        "t2": _node("t2", "bpmnTask", "T2", parent="p2",
                     taskType="default", marker="none"),
     }
     rels = {
@@ -316,17 +337,18 @@ def test_I13_import_message_flow_agentic_downgraded_to_base():
 
 
 def test_I15_roundtrip_pool_to_pool_message_flow():
-    """R-R1: pool-to-pool message flow round-trips JSON -> BUML -> JSON (flowType=message)."""
+    """R-R1: pool-to-pool message flow round-trips JSON -> BUML -> JSON (BPMNMessageFlow)."""
     elements = {
-        "p1": _node("p1", "BPMNPool", "P1"),
-        "p2": _node("p2", "BPMNPool", "P2"),
+        "p1": _node("p1", "bpmnPool", "P1"),
+        "p2": _node("p2", "bpmnPool", "P2"),
     }
     rels = {
         "f1": _flow("f1", "p1", "p2", flow_type="message", isAgentic=False),
     }
     out = bpmn_object_to_json(process_bpmn_diagram(_envelope(elements, rels)))
-    [rel] = out["relationships"].values()
-    assert rel["flowType"] == "message"
+    [edge] = out["edges"]
+    assert edge["type"] == "BPMNMessageFlow"
+    assert (edge["source"], edge["target"]) == ("p1", "p2")
 
 
 # ===========================================================================
@@ -338,7 +360,7 @@ def test_E1_export_agentic_task():
     task = AgenticTask(name="Review", task_type=TaskType.USER,
                        reflection_mode=ReflectionMode.CROSS, trust_score=85)
     out = _process_with_node(task)
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert entry["isAgentic"] is True
     assert entry["reflectionMode"] == "cross"
     assert entry["trustScore"] == 85
@@ -351,7 +373,7 @@ def test_E2_export_non_agentic_task_emits_wme_defaults():
     """E-2: Base Task exports with isAgentic=false + WME-default SEAA fields."""
     task = Task(name="Plain", task_type=TaskType.DEFAULT)
     out = _process_with_node(task)
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert entry["isAgentic"] is False
     assert entry["reflectionMode"] == "none"
     assert entry["trustScore"] == 0
@@ -367,7 +389,7 @@ def test_E3_export_agentic_gateway_merging():
         trust_score=75,
     )
     out = _process_with_node(gw)
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert entry["isAgentic"] is True
     assert entry["gatewayRole"] == "merging"
     assert entry["trustScore"] == 75
@@ -384,7 +406,7 @@ def test_E4_export_agentic_gateway_diverging():
         trust_score=85,
     )
     out = _process_with_node(gw)
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert entry["isAgentic"] is True
     assert entry["gatewayRole"] == "diverging"
     assert entry["trustScore"] == 85
@@ -397,7 +419,7 @@ def test_E5_export_non_agentic_gateway_emits_wme_defaults():
     """E-5: Base Gateway exports with isAgentic=false + WME defaults."""
     gw = Gateway(name="Plain", gateway_type=GatewayType.EXCLUSIVE)
     out = _process_with_node(gw)
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert entry["isAgentic"] is False
     assert entry["gatewayRole"] == "diverging"
     assert entry["trustScore"] == 0
@@ -420,7 +442,7 @@ def _agentic_merging_gateway_elements(extra):
     tolerance (they are silently ignored on import).
     """
     return {
-        "g1": _node("g1", "BPMNGateway", "Vote", gatewayType="parallel",
+        "g1": _node("g1", "bpmnGateway", "Vote", gatewayType="parallel",
                     isAgentic=True, gatewayRole="merging",
                     collaborationMode="role", mergingStrategy="leader-driven",
                     trustScore=75, **extra),
@@ -459,7 +481,7 @@ def test_Rb_c4_export_agentic_gateway_with_governance_emits_field():
                         gateway_role=GatewayRole.MERGING,
                         governance_dsl=_GOV_DSL)
     out = _process_with_node(gw)
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert entry["governanceDsl"] == _GOV_DSL
 
 
@@ -468,14 +490,14 @@ def test_Rb_c5_export_agentic_gateway_without_governance_omits_field():
     gw = AgenticGateway(name="Vote", gateway_type=GatewayType.PARALLEL,
                         gateway_role=GatewayRole.MERGING)
     out = _process_with_node(gw)
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert "governanceDsl" not in entry
 
 
 def test_Rb_c6_export_non_agentic_gateway_no_governance():
     """a base Gateway never carries governanceDsl."""
     out = _process_with_node(Gateway(name="Plain", gateway_type=GatewayType.EXCLUSIVE))
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert "governanceDsl" not in entry
 
 
@@ -486,7 +508,7 @@ def test_Rb_c7_roundtrip_agentic_gateway_governance_preserved():
             _envelope(_agentic_merging_gateway_elements({"governanceDsl": _GOV_DSL}), {})
         )
     )
-    gw_entry = next(e for e in out["elements"].values() if e["type"] == "BPMNGateway")
+    gw_entry = _node_data(out, "bpmnGateway")[0]
     assert gw_entry["governanceDsl"] == _GOV_DSL
 
 
@@ -505,8 +527,7 @@ def test_E6_export_agentic_lane():
     """E-6: AgenticLane exports with isAgentic=true and SEAA fields."""
     out = _wrap_lane(AgenticLane(name="Reviewer", role=AgentRole.SUPERVISION,
                                  trust_score=90))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert lane_entry["isAgentic"] is True
     assert lane_entry["role"] == "supervision"
     assert lane_entry["trustScore"] == 90
@@ -515,15 +536,14 @@ def test_E6_export_agentic_lane():
 def test_E7_export_non_agentic_lane():
     """E-7: Base Lane exports with isAgentic=false + WME defaults."""
     out = _wrap_lane(Lane(name="Reviewer"))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert lane_entry["isAgentic"] is False
     assert lane_entry["role"] == "solution"
     assert lane_entry["trustScore"] == 0
 
 
 def test_E8_export_message_flow_carries_no_agentic_fields():
-    """E-8: A flow exports only the fields the editor's BPMNFlow serialises."""
+    """E-8: A flow exports only the fields the editor's BPMN edge serialises."""
     t1 = Task(name="T1")
     t2 = Task(name="T2")
     p1 = Process(name="P1", flow_nodes={t1})
@@ -537,11 +557,11 @@ def test_E8_export_message_flow_carries_no_agentic_fields():
                                     message_flows={mf}),
     )
     out = bpmn_object_to_json(model)
-    [rel] = out["relationships"].values()
-    assert "isAgentic" not in rel
-    assert "trustScore" not in rel
-    assert "collaborationMode" not in rel
-    assert "mergingStrategy" not in rel
+    [edge] = out["edges"]
+    assert edge["type"] == "BPMNMessageFlow"
+    for key in ("isAgentic", "trustScore", "collaborationMode", "mergingStrategy"):
+        assert key not in edge
+        assert key not in edge["data"]
 
 
 # ===========================================================================
@@ -552,13 +572,13 @@ def test_R1_roundtrip_agentic_task():
     """R-1: Agentic task JSON -> BUML -> JSON preserves SEAA fields."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Review", taskType="user", marker="none",
+            "t1", "bpmnTask", "Review", taskType="user", marker="none",
             isAgentic=True, reflectionMode="cross", trustScore=85,
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     out = bpmn_object_to_json(model)
-    [entry] = (e for e in out["elements"].values() if e["type"] == "BPMNTask")
+    [entry] = _node_data(out, "bpmnTask")
     assert entry["isAgentic"] is True
     assert entry["reflectionMode"] == "cross"
     assert entry["trustScore"] == 85
@@ -569,7 +589,7 @@ def test_R2_roundtrip_agentic_gateway_merging():
     """R-2: Full agentic merging gateway round-trips lossless."""
     elements = {
         "g1": _node(
-            "g1", "BPMNGateway", "Vote", gatewayType="inclusive",
+            "g1", "bpmnGateway", "Vote", gatewayType="inclusive",
             isAgentic=True, gatewayRole="merging",
             collaborationMode="competition", mergingStrategy="most-complete",
             trustScore=60,
@@ -577,7 +597,7 @@ def test_R2_roundtrip_agentic_gateway_merging():
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     out = bpmn_object_to_json(model)
-    [entry] = (e for e in out["elements"].values() if e["type"] == "BPMNGateway")
+    [entry] = _node_data(out, "bpmnGateway")
     assert entry["isAgentic"] is True
     assert entry["gatewayType"] == "inclusive"
     assert entry["gatewayRole"] == "merging"
@@ -591,14 +611,14 @@ def test_R3_roundtrip_agentic_gateway_diverging():
     """R-3: Diverging gateway round-trips correctly."""
     elements = {
         "g1": _node(
-            "g1", "BPMNGateway", "Fork", gatewayType="parallel",
+            "g1", "bpmnGateway", "Fork", gatewayType="parallel",
             isAgentic=True, gatewayRole="diverging",
             collaborationMode="role", mergingStrategy="majority", trustScore=50,
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     out = bpmn_object_to_json(model)
-    [entry] = (e for e in out["elements"].values() if e["type"] == "BPMNGateway")
+    [entry] = _node_data(out, "bpmnGateway")
     assert entry["gatewayRole"] == "diverging"
     assert entry["trustScore"] == 50
 
@@ -606,16 +626,15 @@ def test_R3_roundtrip_agentic_gateway_diverging():
 def test_R4_roundtrip_agentic_lane():
     """R-4: Agentic lane round-trips lossless (canonical value)."""
     elements = {
-        "p1": _node("p1", "BPMNPool", "Pool"),
+        "p1": _node("p1", "bpmnPool", "Pool"),
         "l1": _node(
-            "l1", "BPMNSwimlane", "Reviewer", owner="p1",
+            "l1", "bpmnSwimlane", "Reviewer", parent="p1",
             isAgentic=True, role="supervision", trustScore=95,
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     out = bpmn_object_to_json(model)
-    [lane_entry] = (e for e in out["elements"].values()
-                    if e["type"] == "BPMNSwimlane")
+    [lane_entry] = _node_data(out, "bpmnSwimlane")
     assert lane_entry["isAgentic"] is True
     assert lane_entry["role"] == "supervision"
     assert lane_entry["trustScore"] == 95
@@ -625,21 +644,21 @@ def test_R5_roundtrip_mixed_diagram():
     """R-5: Mixed agentic + non-agentic elements round-trip correctly."""
     elements = {
         "t1": _node(
-            "t1", "BPMNTask", "Plain", taskType="default", marker="none",
+            "t1", "bpmnTask", "Plain", taskType="default", marker="none",
             isAgentic=False,
         ),
         "t2": _node(
-            "t2", "BPMNTask", "Agent", taskType="user", marker="none",
+            "t2", "bpmnTask", "Agent", taskType="user", marker="none",
             isAgentic=True, reflectionMode="self", trustScore=50,
         ),
         "g1": _node(
-            "g1", "BPMNGateway", "PlainGw", gatewayType="exclusive",
+            "g1", "bpmnGateway", "PlainGw", gatewayType="exclusive",
             isAgentic=False,
         ),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
     out = bpmn_object_to_json(model)
-    by_name = {e["name"]: e for e in out["elements"].values()}
+    by_name = {d["name"]: d for d in _node_data(out)}
     assert by_name["Plain"]["isAgentic"] is False
     assert by_name["Agent"]["isAgentic"] is True
     assert by_name["Agent"]["reflectionMode"] == "self"
@@ -657,8 +676,8 @@ _REF = "3f0a1c2d-4e5b-4f6a-9012-3456789abcde"
 def _lane_elements(extra):
     """Pool + one agentic swimlane carrying the given extra fields."""
     return {
-        "p1": _node("p1", "BPMNPool", "Pool"),
-        "l1": _node("l1", "BPMNSwimlane", "AgentReviewer", owner="p1",
+        "p1": _node("p1", "bpmnPool", "Pool"),
+        "l1": _node("l1", "bpmnSwimlane", "AgentReviewer", parent="p1",
                     isAgentic=True, role="supervision", trustScore=90, **extra),
     }
 
@@ -692,8 +711,7 @@ def test_S1_c4_export_agentic_lane_with_ref_emits_field():
     """an AgenticLane with a ref emits agentDiagramRef in the JSON entry."""
     out = _wrap_lane(AgenticLane(name="AgentReviewer", role=AgentRole.SUPERVISION,
                                  trust_score=90, agent_diagram_ref=_REF))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert lane_entry["agentDiagramRef"] == _REF
 
 
@@ -701,30 +719,26 @@ def test_S1_c5_export_agentic_lane_without_ref_omits_field():
     """an AgenticLane with no ref omits agentDiagramRef entirely."""
     out = _wrap_lane(AgenticLane(name="AgentReviewer", role=AgentRole.SUPERVISION,
                                  trust_score=90))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert "agentDiagramRef" not in lane_entry
 
 
 def test_S1_c6_export_non_agentic_lane_no_ref():
     """a base Lane never carries agentDiagramRef."""
     out = _wrap_lane(Lane(name="Plain"))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert "agentDiagramRef" not in lane_entry
 
 
 def test_S1_c7_roundtrip_agentic_lane_with_ref():
     """JSON → BUML → JSON preserves agentDiagramRef; task does NOT pick it up."""
     elements = _lane_elements({"agentDiagramRef": _REF})
-    elements["t1"] = _node("t1", "BPMNTask", "Review", owner="l1",
+    elements["t1"] = _node("t1", "bpmnTask", "Review", parent="l1",
                            taskType="user", marker="none",
                            isAgentic=True, reflectionMode="cross", trustScore=80)
     out = bpmn_object_to_json(process_bpmn_diagram(_envelope(elements, {})))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
-    task_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNTask")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
+    task_entry = _node_data(out, "bpmnTask")[0]
     assert lane_entry["agentDiagramRef"] == _REF
     assert "agentDiagramRef" not in task_entry
 
@@ -740,8 +754,7 @@ def test_3c_roundtrip_agentic_lane_multiplicity():
     [lane] = participant.process.lanes
     assert lane.swarm_size == 4
     out = bpmn_object_to_json(model)
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert lane_entry["multiplicity"] == 4
 
 
@@ -762,10 +775,9 @@ def test_3c_import_agentic_lane_zero_multiplicity_clamps_to_one():
 
 
 def test_3c_export_non_agentic_lane_carries_default_multiplicity():
-    """a base Lane emits multiplicity=1 from _WME_LANE_DEFAULTS."""
+    """a base Lane emits multiplicity=1 from _LANE_AGENTIC_DEFAULTS."""
     out = _wrap_lane(Lane(name="Plain"))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert lane_entry["multiplicity"] == 1
 
 
@@ -784,8 +796,8 @@ def test_3c_export_non_agentic_lane_carries_default_multiplicity():
 def test_role_canonical_values_import(role_str, expected):
     """All four canonical role strings import to the correct AgentRole member."""
     elements = {
-        "p1": _node("p1", "BPMNPool", "Pool"),
-        "l1": _node("l1", "BPMNSwimlane", "L", owner="p1",
+        "p1": _node("p1", "bpmnPool", "Pool"),
+        "l1": _node("l1", "bpmnSwimlane", "L", parent="p1",
                     isAgentic=True, role=role_str, trustScore=0),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
@@ -802,8 +814,7 @@ def test_role_canonical_values_import(role_str, expected):
 def test_role_canonical_values_export(role_str, expected):
     """All four canonical AgentRole members export to the correct string."""
     out = _wrap_lane(AgenticLane(name="L", role=expected, trust_score=0))
-    lane_entry = next(e for e in out["elements"].values()
-                      if e["type"] == "BPMNSwimlane")
+    lane_entry = _node_data(out, "bpmnSwimlane")[0]
     assert lane_entry["role"] == role_str
 
 
@@ -814,8 +825,8 @@ def test_role_canonical_values_export(role_str, expected):
 def test_role_legacy_alias_import(legacy, canonical):
     """Legacy role strings (worker/manager) are silently promoted to canonical values."""
     elements = {
-        "p1": _node("p1", "BPMNPool", "Pool"),
-        "l1": _node("l1", "BPMNSwimlane", "L", owner="p1",
+        "p1": _node("p1", "bpmnPool", "Pool"),
+        "l1": _node("l1", "bpmnSwimlane", "L", parent="p1",
                     isAgentic=True, role=legacy, trustScore=0),
     }
     model = process_bpmn_diagram(_envelope(elements, {}))
@@ -827,8 +838,8 @@ def test_role_invalid_raises_conversion_error():
     """An unrecognised role string raises ConversionError on import."""
     from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
     elements = {
-        "p1": _node("p1", "BPMNPool", "Pool"),
-        "l1": _node("l1", "BPMNSwimlane", "L", owner="p1",
+        "p1": _node("p1", "bpmnPool", "Pool"),
+        "l1": _node("l1", "bpmnSwimlane", "L", parent="p1",
                     isAgentic=True, role="coder", trustScore=0),
     }
     with pytest.raises(ConversionError, match="Unknown role 'coder'"):
@@ -845,7 +856,7 @@ def _agentic_task_elements(extra):
     Legacy collaborationMode field included to verify tolerance (silently ignored).
     """
     return {
-        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
+        "t1": _node("t1", "bpmnTask", "Review", taskType="user", marker="none",
                     isAgentic=True, reflectionMode="cross", trustScore=80,
                     collaborationMode="voting", **extra),
     }
@@ -877,21 +888,21 @@ def test_Ra_c4_export_agentic_task_with_ref_emits_field():
     """an AgenticTask with a ref emits agentDiagramRef in the JSON entry."""
     out = _process_with_node(AgenticTask(name="Review", task_type=TaskType.USER,
                                          agent_diagram_ref=_REF))
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert entry["agentDiagramRef"] == _REF
 
 
 def test_Ra_c5_export_agentic_task_without_ref_omits_field():
     """an AgenticTask with no ref omits agentDiagramRef entirely."""
     out = _process_with_node(AgenticTask(name="Review", task_type=TaskType.USER))
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert "agentDiagramRef" not in entry
 
 
 def test_Ra_c6_export_non_agentic_task_no_ref():
     """a base Task never carries agentDiagramRef."""
     out = _process_with_node(Task(name="Plain", task_type=TaskType.DEFAULT))
-    [entry] = out["elements"].values()
+    [entry] = _node_data(out)
     assert "agentDiagramRef" not in entry
 
 
@@ -900,7 +911,7 @@ def test_Ra_c7_roundtrip_agentic_task_with_ref():
     out = bpmn_object_to_json(
         process_bpmn_diagram(_envelope(_agentic_task_elements({"agentDiagramRef": _REF}), {}))
     )
-    task_entry = next(e for e in out["elements"].values() if e["type"] == "BPMNTask")
+    task_entry = _node_data(out, "bpmnTask")[0]
     assert task_entry["agentDiagramRef"] == _REF
 
 
@@ -911,7 +922,7 @@ def test_Ra_c7_roundtrip_agentic_task_with_ref():
 def test_S2_collaboration_mode_silently_ignored():
     """collaborationMode in the JSON is silently ignored — task imports OK."""
     elements = {
-        "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none",
+        "t1": _node("t1", "bpmnTask", "Review", taskType="user", marker="none",
                     isAgentic=True, reflectionMode="cross", trustScore=80,
                     collaborationMode="debate"),
     }
@@ -930,23 +941,26 @@ _AGENTIC_FIELDS = ("isAgentic", "reflectionMode", "trustScore", "agentDiagramRef
 def test_R5_agentic_process_round_trips_every_agentic_field():
     """JSON -> BUML -> JSON keeps every agentic field and adds none to flows."""
     elements = {
-        "pool": _node("pool", "BPMNPool", "Swarm"),
-        "lane-c": _node("lane-c", "BPMNSwimlane", "Coder", owner="pool", isAgentic=True,
+        "pool": _node("pool", "bpmnPool", "Swarm"),
+        "lane-c": _node("lane-c", "bpmnSwimlane", "Coder", parent="pool", isAgentic=True,
                         role="solution", trustScore=60, multiplicity=2, agentDiagramRef="agent-c"),
-        "lane-r": _node("lane-r", "BPMNSwimlane", "Reviewer", owner="pool", isAgentic=True,
+        "lane-r": _node("lane-r", "bpmnSwimlane", "Reviewer", parent="pool", isAgentic=True,
                         role="supervision", trustScore=90, multiplicity=1, agentDiagramRef="agent-r"),
-        "task": _node("task", "BPMNTask", "Draft", owner="lane-c", taskType="default", marker="none",
+        "task": _node("task", "bpmnTask", "Draft", parent="lane-c", taskType="default", marker="none",
                       isAgentic=True, reflectionMode="cross", trustScore=70,
                       agentDiagramRef="agent-c", reflectionReviewerLaneId="lane-r"),
-        "gw": _node("gw", "BPMNGateway", "Merge", owner="lane-r", gatewayType="parallel",
+        "gw": _node("gw", "bpmnGateway", "Merge", parent="lane-r", gatewayType="parallel",
                     isAgentic=True, gatewayRole="merging", trustScore=50,
                     governanceDsl="MajorityPolicy p { }"),
     }
     relationships = {"f1": _flow("f1", "task", "gw")}
     out = bpmn_object_to_json(process_bpmn_diagram(_envelope(elements, relationships)))
+    emitted_data = _node_data_by_id(out)
     for elem_id, original in elements.items():
-        expected = {k: original[k] for k in _AGENTIC_FIELDS if k in original}
-        emitted = {k: out["elements"][elem_id][k] for k in _AGENTIC_FIELDS
-                   if k in out["elements"][elem_id]}
+        expected = {k: original["data"][k] for k in _AGENTIC_FIELDS if k in original["data"]}
+        emitted = {k: emitted_data[elem_id][k] for k in _AGENTIC_FIELDS
+                   if k in emitted_data[elem_id]}
         assert emitted == expected, elem_id
-    assert set(out["relationships"]["f1"]) == set(relationships["f1"])
+    [edge] = out["edges"]
+    assert set(edge) == set(relationships["f1"])
+    assert set(edge["data"]) == set(relationships["f1"]["data"])

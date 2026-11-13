@@ -60,12 +60,12 @@ def test_class_endpoint_returns_class_diagram(client, kg_payload: dict):
     body = response.json()
     assert body["diagramType"] == "ClassDiagram"
     assert body["model"]["type"] == "ClassDiagram"
-    elements = body["model"]["elements"]
-    relationships = body["model"]["relationships"]
-    types = {e["type"] for e in elements.values()}
-    assert "Class" in types
-    assert "ClassAttribute" in types
-    rel_types = {r["type"] for r in relationships.values()}
+    nodes = body["model"]["nodes"]
+    edges = body["model"]["edges"]
+    classes = [n for n in nodes if n["type"] == "class"]
+    assert classes
+    assert any(n["data"]["attributes"] for n in classes)
+    rel_types = {e["type"] for e in edges}
     # Plain associations are emitted as ClassBidirectional; navigability is
     # carried by the explicit per-end "navigable" flags rather than by the
     # relationship type. A plain owl:ObjectProperty is navigable
@@ -73,10 +73,10 @@ def test_class_endpoint_returns_class_diagram(client, kg_payload: dict):
     # becomes navigable when (and only when) owl:inverseOf names it.
     assert "ClassBidirectional" in rel_types   # worksFor association
     assert "ClassInheritance" in rel_types     # Employee → Person
-    assoc = next(r for r in relationships.values() if r["type"] == "ClassBidirectional")
-    assert [assoc["source"]["navigable"], assoc["target"]["navigable"]].count(True) == 1
-    assert assoc["target"]["role"] == "worksFor"
-    assert assoc["target"]["navigable"] is True
+    assoc = next(e["data"] for e in edges if e["type"] == "ClassBidirectional")
+    assert [assoc["sourceNavigable"], assoc["targetNavigable"]].count(True) == 1
+    assert assoc["targetRole"] == "worksFor"
+    assert assoc["targetNavigable"] is True
 
 
 def test_endpoints_reject_non_kg_payload(client):
@@ -133,8 +133,6 @@ def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client):
     response = client.post("/besser_api/kg/to-class-diagram", json=payload)
     assert response.status_code == 200, response.text
     body = response.json()
-    elements = body["model"]["elements"]
-    types = {e["type"] for e in elements.values()}
-    assert "ClassOCLConstraint" in types
-    ocl_texts = [e["constraint"] for e in elements.values() if e["type"] == "ClassOCLConstraint"]
+    ocl_texts = [n["data"]["expression"] for n in body["model"]["nodes"] if n["type"] == "ClassOCLConstraint"]
+    assert ocl_texts
     assert any("self.name" in c for c in ocl_texts)

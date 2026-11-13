@@ -47,7 +47,7 @@ optional — unspecified fields fall back to the defaults defined in
                 "font": "sans",
                 "lineSpacing": 1.8,
                 "alignment": "left",
-                "color": "var(--apollon-primary-contrast)",
+                "color": "var(--besser-primary-contrast)",
                 "contrast": "high",
             },
             "voiceStyle": {"gender": "female", "speed": 1.0},

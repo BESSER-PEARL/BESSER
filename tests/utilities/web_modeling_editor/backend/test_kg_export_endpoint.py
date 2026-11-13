@@ -77,9 +77,9 @@ def test_export_kg_rejects_non_kg_payload(client):
         "title": "NotKG",
         "model": {
             "type": "ClassDiagram",
-            "version": "1.0.0",
-            "elements": {},
-            "relationships": {},
+            "version": "4.0.0",
+            "nodes": [],
+            "edges": [],
         },
     }
     resp = client.post("/besser_api/kg/export/ttl", json=class_payload)

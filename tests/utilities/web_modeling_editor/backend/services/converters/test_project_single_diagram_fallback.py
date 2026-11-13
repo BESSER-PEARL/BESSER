@@ -6,6 +6,10 @@ GUI, or NN model) and does not wrap it in a ``Project(...)`` with a
 ``models=[...]`` declaration should still be importable through the Project
 Import flow — the converter wraps it into a one-diagram project rather than
 failing with ``No models defined in 'models=[...]'``.
+
+The diagram models inside the project envelope follow the v4 wire shape
+(``{version: "4.0.0", nodes, edges}``); GUI models keep their bespoke
+``{pages}`` shape.
 """
 
 from pathlib import Path
@@ -44,6 +48,14 @@ supplement_model = DomainModel(
 '''
 
 
+def _class_names(model: dict) -> set:
+    return {
+        node["data"]["name"]
+        for node in model["nodes"]
+        if node.get("type") == "class"
+    }
+
+
 def test_detects_class_diagram_from_plain_domain_model():
     assert _detect_single_diagram_type(SUPPLEMENT_CLASS_MODEL) == "ClassDiagram"
 
@@ -73,20 +85,20 @@ def test_project_to_json_wraps_single_class_diagram():
         assert isinstance(diagrams[diagram_type], list)
         assert len(diagrams[diagram_type]) == 1
 
-    # The class diagram is actually populated with the User and Item classes.
-    class_entry = diagrams["ClassDiagram"][0]
-    elements = class_entry["model"]["elements"]
-    class_names = {el["name"] for el in elements.values() if el.get("type") == "Class"}
-    assert class_names == {"User", "Item"}
+    # The class diagram is actually populated with the User and Item classes,
+    # emitted in the canonical v4 wire shape.
+    class_model = diagrams["ClassDiagram"][0]["model"]
+    assert class_model["version"] == "4.0.0"
+    assert _class_names(class_model) == {"User", "Item"}
 
-    # The other diagrams are empty placeholders (no elements / no pages).
+    # The other diagrams are empty v4 placeholders (no nodes / no edges).
     for other_type in (
         "ObjectDiagram", "AgentDiagram", "StateMachineDiagram",
         "QuantumCircuitDiagram", "NNDiagram",
     ):
         other_model = diagrams[other_type][0]["model"]
-        assert other_model.get("elements") == {}
-        assert other_model.get("relationships") == {}
+        assert other_model.get("nodes") == []
+        assert other_model.get("edges") == []
 
     gui_model = diagrams["GUINoCodeDiagram"][0]["model"]
     assert gui_model.get("pages") == []
@@ -150,14 +162,11 @@ def test_project_to_json_handles_missing_section_headers():
     assert project["owner"] == "Tester"
     assert project["description"] == "A small library project."
 
-    class_entry = project["diagrams"]["ClassDiagram"][0]
-    elements = class_entry["model"]["elements"]
-    relationships = class_entry["model"]["relationships"]
-
-    class_names = {el["name"] for el in elements.values() if el.get("type") == "Class"}
-    assert class_names == {"Book", "Author"}
-    # The BinaryAssociation should round-trip into the relationships map.
-    assert len(relationships) == 1
+    class_model = project["diagrams"]["ClassDiagram"][0]["model"]
+    assert class_model["version"] == "4.0.0"
+    assert _class_names(class_model) == {"Book", "Author"}
+    # The BinaryAssociation should round-trip into the v4 edges list.
+    assert len(class_model["edges"]) == 1
 
 
 ECORE_PROJECT = (Path(__file__).parent / "data" / "ecore_algorithme_project.py").read_text(encoding="utf-8")
@@ -190,8 +199,11 @@ NO_NAVIGABLE_END = _edit(
 
 def _class_diagram(project):
     model = project["diagrams"]["ClassDiagram"][0]["model"]
-    names = {el["name"] for el in model["elements"].values() if el.get("type") in ("Class", "AbstractClass")}
-    return names, model["relationships"]
+    names = {
+        node["data"]["name"] for node in model["nodes"]
+        if node.get("type") == "class" and (node["data"].get("stereotype") or "").lower() != "enumeration"
+    }
+    return names, model["edges"]
 
 
 def test_an_ecore_converter_project_imports_with_its_compositions_repaired():
@@ -204,7 +216,7 @@ def test_an_ecore_converter_project_imports_with_its_compositions_repaired():
     names, relationships = _class_diagram(project)
     assert names == {"PortSortie", "Port", "Documentation", "AlgorithmeElement", "Algorithme",
                      "PortEntree", "Ressource"}
-    assert sorted(r["type"] for r in relationships.values()) == [
+    assert sorted(r["type"] for r in relationships) == [
         "ClassBidirectional", "ClassComposition", "ClassComposition",
         "ClassInheritance", "ClassInheritance", "ClassInheritance", "ClassInheritance",
     ]
@@ -237,7 +249,7 @@ def test_a_composition_with_a_non_navigable_owner_end_is_repaired_and_reported()
     names, relationships = _class_diagram(project_to_json(NON_NAVIGABLE_OWNER, warnings))
 
     assert names == {"Book", "Author"}
-    [relationship] = relationships.values()
+    [relationship] = relationships
     assert relationship["type"] == "ClassComposition"
     assert warnings == [
         "Association 'book_author': the non-composite end 'book' (Book) of a composition must be "
@@ -290,6 +302,5 @@ def test_project_to_json_handles_main_guard():
 
     project = project_to_json(content_with_main_guard)
     assert project["currentDiagramType"] == "ClassDiagram"
-    elements = project["diagrams"]["ClassDiagram"][0]["model"]["elements"]
-    class_names = {el["name"] for el in elements.values() if el.get("type") == "Class"}
-    assert class_names == {"User", "Item"}
+    class_model = project["diagrams"]["ClassDiagram"][0]["model"]
+    assert _class_names(class_model) == {"User", "Item"}

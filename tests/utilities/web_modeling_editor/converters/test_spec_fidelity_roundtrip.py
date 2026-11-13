@@ -57,96 +57,112 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 # "The first literal" is a decision the user made when they typed the list.
 LITERAL_ORDER = ["SCHEDULED", "CONFIRMED", "CANCELLED"]
 
+def _node(node_id: str, node_type: str, data: dict[str, Any], x: int = 0) -> dict[str, Any]:
+    return {"id": node_id, "type": node_type,
+            "position": {"x": x, "y": 0}, "width": 160, "height": 100, "data": data}
+
+
+def _edge(edge_id: str, edge_type: str, source: str, target: str, **data: Any) -> dict[str, Any]:
+    return {"id": edge_id, "type": edge_type, "source": source, "target": target,
+            "data": {"points": [], **data}}
+
+
+# v4 wire shape (``{nodes, edges}``), see docs/source/migrations/uml-v4-shape.md.
 DIAGRAM: dict[str, Any] = {
     "title": "Hotel",
     "model": {
-        "elements": {
-            "e1": {"id": "e1", "type": "Enumeration", "name": "BookingStatus",
-                   "attributes": ["l1", "l2", "l3"], "methods": []},
-            "l1": {"id": "l1", "type": "ClassAttribute", "name": "SCHEDULED", "owner": "e1"},
-            "l2": {"id": "l2", "type": "ClassAttribute", "name": "CONFIRMED", "owner": "e1"},
-            "l3": {"id": "l3", "type": "ClassAttribute", "name": "CANCELLED", "owner": "e1"},
+        "version": "4.0.0",
+        "type": "ClassDiagram",
+        "nodes": [
+            _node("e1", "class", {
+                "name": "BookingStatus", "stereotype": "Enumeration", "methods": [],
+                "attributes": [
+                    {"id": "l1", "name": "SCHEDULED"},
+                    {"id": "l2", "name": "CONFIRMED"},
+                    {"id": "l3", "name": "CANCELLED"},
+                ],
+            }),
 
             # Abstract class, with description + URI metadata.
-            "c0": {"id": "c0", "type": "AbstractClass", "name": "Person",
-                   "description": "Anyone the hotel holds a record for",
-                   "uri": "https://schema.org/Person",
-                   "attributes": ["a0"], "methods": []},
-            "a0": {"id": "a0", "type": "ClassAttribute", "name": "fullName",
-                   "visibility": "public", "attributeType": "str", "owner": "c0"},
+            _node("c0", "class", {
+                "name": "Person", "stereotype": "Abstract",
+                "description": "Anyone the hotel holds a record for",
+                "uri": "https://schema.org/Person",
+                "attributes": [
+                    {"id": "a0", "name": "fullName", "visibility": "public", "attributeType": "str"},
+                ],
+                "methods": [],
+            }),
 
             # Concrete child: visibility, optional, default, natural identifier.
-            "c1": {"id": "c1", "type": "Class", "name": "Guest",
-                   "attributes": ["a1", "a2"], "methods": []},
-            "a1": {"id": "a1", "type": "ClassAttribute", "name": "email",
-                   "visibility": "private", "attributeType": "str",
-                   "isExternalId": True, "owner": "c1"},
-            "a2": {"id": "a2", "type": "ClassAttribute", "name": "loyaltyPoints",
-                   "visibility": "public", "attributeType": "int",
-                   "defaultValue": "0", "isOptional": True, "owner": "c1"},
+            _node("c1", "class", {
+                "name": "Guest", "stereotype": None, "methods": [],
+                "attributes": [
+                    {"id": "a1", "name": "email", "visibility": "private",
+                     "attributeType": "str", "isExternalId": True},
+                    {"id": "a2", "name": "loyaltyPoints", "visibility": "public",
+                     "attributeType": "int", "defaultValue": "0", "isOptional": True},
+                ],
+            }),
 
             # Declared id, enum-typed attribute, derived attribute, and three
             # method shapes: zero-argument, parameterised, defaulted parameter.
-            "c2": {"id": "c2", "type": "Class", "name": "Booking",
-                   "attributes": ["a3", "a4", "a6"], "methods": ["m1", "m2"]},
-            "a3": {"id": "a3", "type": "ClassAttribute", "name": "reference",
-                   "visibility": "public", "attributeType": "str",
-                   "isId": True, "owner": "c2"},
-            "a4": {"id": "a4", "type": "ClassAttribute", "name": "status",
-                   "visibility": "public", "attributeType": "BookingStatus",
-                   "owner": "c2"},
-            "a6": {"id": "a6", "type": "ClassAttribute", "name": "totalPrice",
-                   "visibility": "public", "attributeType": "float",
-                   "isDerived": True, "owner": "c2"},
-            # Bare name + separate return-type property (the editor's newer shape).
-            "m1": {"id": "m1", "type": "ClassMethod", "name": "cancel()",
-                   "attributeType": "bool", "owner": "c2"},
-            # Legacy signature shape, private, one required and one defaulted arg.
-            "m2": {"id": "m2", "type": "ClassMethod",
-                   "name": "- addGuest(guest: Guest, nights: int = 1): bool",
-                   "owner": "c2"},
+            _node("c2", "class", {
+                "name": "Booking", "stereotype": None,
+                "attributes": [
+                    {"id": "a3", "name": "reference", "visibility": "public",
+                     "attributeType": "str", "isId": True},
+                    {"id": "a4", "name": "status", "visibility": "public",
+                     "attributeType": "BookingStatus"},
+                    {"id": "a6", "name": "totalPrice", "visibility": "public",
+                     "attributeType": "float", "isDerived": True},
+                ],
+                "methods": [
+                    # Bare name + separate return-type property (the editor's newer shape).
+                    {"id": "m1", "name": "cancel()", "attributeType": "bool"},
+                    # Legacy signature shape, private, one required and one defaulted arg.
+                    {"id": "m2", "name": "- addGuest(guest: Guest, nights: int = 1): bool"},
+                ],
+            }),
 
-            "c3": {"id": "c3", "type": "Class", "name": "Room",
-                   "attributes": ["a5"], "methods": []},
-            "a5": {"id": "a5", "type": "ClassAttribute", "name": "roomNumber",
-                   "visibility": "public", "attributeType": "str",
-                   "isExternalId": True, "owner": "c3"},
+            _node("c3", "class", {
+                "name": "Room", "stereotype": None, "methods": [],
+                "attributes": [
+                    {"id": "a5", "name": "roomNumber", "visibility": "public",
+                     "attributeType": "str", "isExternalId": True},
+                ],
+            }),
 
-            "o1": {"id": "o1", "type": "ClassOCLConstraint",
-                   "name": "referenceIsSet",
-                   "constraint": "context Booking inv referenceIsSet: self.reference <> ''"},
+            _node("o1", "ClassOCLConstraint", {
+                "name": "referenceIsSet",
+                "expression": "context Booking inv referenceIsSet: self.reference <> ''",
+            }),
 
             # Two comment boxes. A linked one becomes the class's description;
             # an unlinked one becomes the model's. Both are prose the user
             # typed and the editor keeps across a save.
-            "k1": {"id": "k1", "type": "Comments",
-                   "name": "All prices are in EUR, VAT included."},
-            "k2": {"id": "k2", "type": "Comments",
-                   "name": "A stay is never shorter than one night."},
-        },
-        "relationships": {
+            _node("k1", "comment", {"name": "All prices are in EUR, VAT included."}),
+            _node("k2", "comment", {"name": "A stay is never shorter than one night."}),
+        ],
+        "edges": [
             # Both ends named. Read by hand: the end typed Guest is reached
             # FROM a Booking, so `guest` is a property of Booking; the end
             # typed Booking is reached from a Guest, so `bookings` is a
             # property of Guest.
-            "r1": {"id": "r1", "type": "ClassBidirectional", "name": "bookingsFor",
-                   "source": {"element": "c1", "multiplicity": "1", "role": "guest"},
-                   "target": {"element": "c2", "multiplicity": "0..*", "role": "bookings"}},
+            _edge("r1", "ClassBidirectional", "c1", "c2", name="bookingsFor",
+                  sourceMultiplicity="1", sourceRole="guest",
+                  targetMultiplicity="0..*", targetRole="bookings"),
             # Composition, no explicit roles: both ends fall back to the
             # lowercased name of the class at that end.
-            "r2": {"id": "r2", "type": "ClassComposition", "name": "occupies",
-                   "source": {"element": "c2", "multiplicity": "0..*"},
-                   "target": {"element": "c3", "multiplicity": "1..*"}},
-            "r3": {"id": "r3", "type": "ClassInheritance",
-                   "source": {"element": "c1"}, "target": {"element": "c0"}},
-            "r5": {"id": "r5", "type": "Link",
-                   "source": {"element": "k2"}, "target": {"element": "c2"}},
-            # Unidirectional: the source end is not navigable.
-            "r4": {"id": "r4", "type": "ClassUnidirectional", "name": "handledBy",
-                   "source": {"element": "c2", "multiplicity": "0..*",
-                              "role": "bookingsHandled"},
-                   "target": {"element": "c0", "multiplicity": "1", "role": "handler"}},
-        },
+            _edge("r2", "ClassComposition", "c2", "c3", name="occupies",
+                  sourceMultiplicity="0..*", targetMultiplicity="1..*"),
+            _edge("r3", "ClassInheritance", "c1", "c0"),
+            _edge("r5", "CommentLink", "k2", "c2"),
+            # One-way association: the source end is not navigable.
+            _edge("r4", "ClassBidirectional", "c2", "c0", name="handledBy",
+                  sourceMultiplicity="0..*", sourceRole="bookingsHandled", sourceNavigable=False,
+                  targetMultiplicity="1", targetRole="handler", targetNavigable=True),
+        ],
     },
 }
 
@@ -377,11 +393,13 @@ def test_literal_order_also_survives_back_to_editor_json():
     agree with it, or a save/reload would renumber the user's literals.
     """
     model = process_class_diagram(DIAGRAM)
-    elements = class_buml_to_json(model)["elements"]
+    nodes = class_buml_to_json(model)["nodes"]
 
-    enum_id = next(k for k, v in elements.items()
-                   if v.get("type") == "Enumeration" and v["name"] == "BookingStatus")
-    literals = [elements[lid]["name"] for lid in elements[enum_id]["attributes"]]
+    enum_node = next(n for n in nodes
+                     if n.get("type") == "class"
+                     and (n["data"].get("stereotype") or "").lower() == "enumeration"
+                     and n["data"]["name"] == "BookingStatus")
+    literals = [row["name"] for row in enum_node["data"]["attributes"]]
     assert literals == LITERAL_ORDER
 
 

@@ -187,3 +187,74 @@ def test_a_form_naming_its_entity_through_a_property_is_not_generic(tmp_path, fi
     assert matrix["Booking"]["create"] is True
     assert matrix["Room"]["create"] is False
 
+
+
+# Live (2026-11-13, claude-sonnet-5-5, expense tracker): the shared EntityForm, routed at
+# `/<slug>/new` for every config entry, named its checkbox handler's argument `tagId`, so
+# it was read as Tag's own form and five entities were reported "no frontend create path".
+REF_CONFIG = """\
+export const ENTITIES = {
+  expense: { resource: 'expense', slug: 'expenses', label: 'Expense',
+             fields: [{ key: 'category', type: 'ref', ref: 'category' }, { key: 'tags', type: 'multiref', ref: 'tag' }] },
+  category: { resource: 'category', slug: 'categories', label: 'Category', fields: [{ key: 'name' }] },
+  tag: { resource: 'tag', slug: 'tags', label: 'Tag', fields: [{ key: 'name' }] },
+};
+"""
+REF_CLIENT = """\
+async function request(method, path, body) {
+  const res = await fetch(path, { method, body: JSON.stringify(body) });
+  return res.json();
+}
+export const api = { create: (resource, payload) => request('POST', `/${resource}/`, payload) };
+"""
+REF_FORM = """\
+import { useState } from 'react';
+import { api } from '../api.js';
+import { ENTITIES } from '../entities.js';
+export default function EntityForm({ config }) {
+  const [values, setValues] = useState({});
+  const toggleMulti = (key, tagId) => setValues((v) => ({ ...v, [key]: [...(v[key] || []), tagId] }));
+  const onSubmit = async (e) => { e.preventDefault(); await api.create(config.resource, values); };
+  return <form onSubmit={onSubmit}>{config.label}<input onChange={() => toggleMulti(config.resource, 1)} /></form>;
+}
+"""
+REF_APP = """\
+import { Route, Routes } from 'react-router-dom';
+import { ENTITIES } from './entities.js';
+import EntityForm from './components/EntityForm.jsx';
+export default function App() {
+  return <Routes>{Object.values(ENTITIES).map((cfg) =>
+    <Route key={cfg.slug} path={`/${cfg.slug}/new`} element={<EntityForm config={cfg} />} />)}</Routes>;
+}
+"""
+
+
+def _ref_creates(tmp_path, form=REF_FORM, config=REF_CONFIG):
+    root = _workspace(tmp_path, {
+        "frontend/src/api.js": REF_CLIENT,
+        "frontend/src/entities.js": config,
+        "frontend/src/components/EntityForm.jsx": form,
+        "frontend/src/App.jsx": REF_APP,
+    })
+    matrix = build_acceptance_matrix(root, _model("Expense", "Category", "Tag"))
+    return {name: matrix[name]["create"] for name in ("Expense", "Category", "Tag")}
+
+
+def test_a_shared_form_holding_a_record_id_named_after_an_entity_creates_them_all(tmp_path):
+    assert _ref_creates(tmp_path) == {"Expense": True, "Category": True, "Tag": True}
+
+
+def test_a_shared_form_with_a_variable_named_after_an_entity_is_still_that_entitys(tmp_path):
+    form = REF_FORM.replace("tagId", "tag")
+    assert _ref_creates(tmp_path, form=form) == {"Expense": False, "Category": False, "Tag": True}
+
+
+def test_a_shared_form_holding_a_record_id_still_needs_its_create(tmp_path):
+    form = REF_FORM.replace("await api.create(config.resource, values);", "")
+    assert _ref_creates(tmp_path, form=form) == {"Expense": False, "Category": False, "Tag": False}
+
+
+def test_an_entity_the_config_omits_has_no_create_through_a_form_holding_an_id(tmp_path):
+    config = REF_CONFIG.replace(
+        "  category: { resource: 'category', slug: 'categories', label: 'Category', fields: [{ key: 'name' }] },\n", "")
+    assert _ref_creates(tmp_path, config=config) == {"Expense": True, "Category": False, "Tag": True}

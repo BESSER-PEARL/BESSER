@@ -95,6 +95,8 @@ _KEEP_NEWLINES_RE = re.compile(r"[^\n]")
 # A string compared against a value (`key === 'booking'`, `case 'booking':`).
 _COMPARED_STRING_RE = re.compile(
     r"(?:[!=]==?|\bcase)\s*(['\"`])[^'\"`\n]*\1|(['\"`])[^'\"`\n]*\2\s*[!=]==?")
+# An identifier holding another record's id (`tagId`, `user_ids`): a reference, not a create.
+_REFERENCE_ID_RE = re.compile(r"(?<![\w$])[A-Za-z_$][\w$]*?(?:Id|ID|_id)s?(?![\w$])")
 _IF_RE = re.compile(r"\bif\s*\(")
 _BLOCK_START_RE = re.compile(r"\s*\{")
 # An error or response read (`err.message`, `e?.response.data`, `error['message']`), not a call.
@@ -479,14 +481,14 @@ def build_acceptance_matrix(
     # hide their missing creates. Testing which entity it was given
     # (`config.key === 'booking'`) is what a shared form does, so it names none,
     # nor does the block it runs for that entity; neither does reading
-    # `err.message` when the model has a Message.
+    # `err.message` when the model has a Message, nor holding a `tagId`.
     all_forms = [f for name in classes for f in _entity_forms(name)]
     generic_creators = {
         rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(_ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(
-            " ", _blank_entity_branches(_blank_comments(by_path[rel]), all_forms))), all_forms)
+        and not _mentions(_REFERENCE_ID_RE.sub(" ", _ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(
+            " ", _blank_entity_branches(_blank_comments(by_path[rel]), all_forms)))), all_forms)
     }
     # A generic creator may read its entities from a config module it imports
     # (`entities.js`); that module, not the creator's own code, declares them.

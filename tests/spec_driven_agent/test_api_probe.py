@@ -89,13 +89,29 @@ def test_a_missing_json_path_names_the_record_wrapped_one_level_down():
     scenario read 'id' and was told only that it was not present."""
     with pytest.raises(ValueError, match=r"^JSON path 'id' was not present; did you mean 'dataset\.id'\?$"):
         api_probe._json_path({"dataset": {"id": 5, "name": "a"}, "versions_ids": []}, "id")
-    with pytest.raises(ValueError, match=r"did you mean 'a\.id' or 'b\.id' or 'c\.id'\?$"):
-        api_probe._json_path({k: {"id": 1} for k in "abcd"}, "id")
-    with pytest.raises(ValueError, match=r"^JSON path 'id' was not present$"):
+    with pytest.raises(ValueError, match=r"^JSON path 'id' was not present; the top-level keys are 'page'$"):
         api_probe._json_path({"page": {"items": [{"id": 1}]}}, "id")
     with pytest.raises(ValueError, match=r"did you mean 'plant\.id'"):
         api_probe._resolve_references("{{0.id}}", [{"plant": {"id": 1}}])
     assert api_probe._json_path({"dataset": {"id": 5}}, "dataset.id") == 5
+
+
+@pytest.mark.parametrize("body, message", [
+    # The request id, not the record: a guess would point at 'meta.id'.
+    ({"meta": {"id": "req-7"}, "data": [{"id": 1}]}, "; the top-level keys are 'meta', 'data'"),
+    ({k: {"id": 1} for k in "abcd"}, "; the top-level keys are 'a', 'b', 'c', 'd'"),
+    ({"items": [{"id": 1}], "total": 1}, "; the top-level keys are 'items', 'total'"),
+    ([{"id": 1}], "; the body is a list of 1 item(s), so index one, e.g. '0.id'"),
+    ([], "; the body is a list of 0 item(s)"),
+])
+def test_a_missing_json_path_does_not_guess_between_wrappers(body, message):
+    with pytest.raises(ValueError) as caught:
+        api_probe._json_path(body, "id")
+    assert str(caught.value) == "JSON path 'id' was not present" + message
+
+
+def test_the_list_hint_is_a_path_references_accept():
+    assert api_probe._resolve_references("{{0.0.id}}", [[{"id": 7}]]) == 7
 
 
 def test_invalid_requests_and_external_paths_never_launch_a_child(tmp_path, monkeypatch):

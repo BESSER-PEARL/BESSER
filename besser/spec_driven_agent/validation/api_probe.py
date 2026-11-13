@@ -208,14 +208,30 @@ def _walk(body, path):
     return current
 
 
+def _holds(value, path):
+    if isinstance(value, list):
+        return any(isinstance(item, dict) and _walk(item, path) is not _MISSING for item in value)
+    return _walk(value, path) is not _MISSING
+
+
 def _json_path(body, path):
     current = _walk(body, path)
     if current is _MISSING:
-        # Name the path one level down: APIs often wrap a record as {"dataset": {"id": 1}}.
-        wrapped = [f"{key}.{path}" for key, child in body.items()
-                   if "." not in key and isinstance(child, dict) and _walk(child, path) is not _MISSING
-                   ] if isinstance(body, dict) else []
-        hint = f"; did you mean {' or '.join(map(repr, wrapped[:3]))}?" if wrapped else ""
+        hint = ""
+        if isinstance(body, dict) and body:
+            # Guess only the one wrapper holding the path, as in {"dataset": {"id": 1}};
+            # with {"meta": {"id": ...}, "data": [...]} a guess could name the wrong id.
+            holders = [key for key, child in body.items()
+                       if isinstance(child, (dict, list)) and _holds(child, path)]
+            if len(holders) == 1 and isinstance(body[holders[0]], dict) and "." not in holders[0]:
+                hint = f"; did you mean {holders[0] + '.' + path!r}?"
+            else:
+                keys = ", ".join(map(repr, list(body)[:10])) + (", ..." if len(body) > 10 else "")
+                hint = f"; the top-level keys are {keys}"
+        elif isinstance(body, list):
+            hint = f"; the body is a list of {len(body)} item(s)"
+            if body and not path.split(".")[0].isdecimal():
+                hint += f", so index one, e.g. {'0.' + path!r}"
         raise ValueError(f"JSON path {path!r} was not present{hint}")
     return current
 

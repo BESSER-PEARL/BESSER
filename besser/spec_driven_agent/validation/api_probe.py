@@ -48,13 +48,16 @@ _DENIED_X_HEADERS = frozenset({"x-real-ip", "x-http-method-override", "x-method-
                                "x-original-url", "x-rewrite-url", "x-original-method"})
 _SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "password", "credential")
 _REDACTED = "[REDACTED]"
-# A response field holding a credential, judged on its snake/kebab/camel words:
-# any password/secret word (``password_hash``, ``passwordConfirm``), a final
-# ``token`` that is not a page cursor (``next_page_token``), or an api/access/private key.
+# A response field holding a credential, judged on its snake/kebab/camel words: they
+# end in a secret word, possibly followed by a word for its value (``password_hash``,
+# ``passwordConfirm``), a ``token`` that is not a page cursor (``next_page_token``), or an
+# api/access/private/secret key or auth code. ``password_changed_at`` only describes one.
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
-_SECRET_WORDS = frozenset({"password", "passwd", "passphrase", "secret", "jwt", "apikey", "credential", "credentials"})
+_SECRET_WORDS = frozenset({"password", "passwd", "passphrase", "secret", "jwt", "apikey", "credential",
+                           "credentials", "otp"})
+_VALUE_WORDS = frozenset({"hash", "confirm", "confirmation", "value"})
 _CURSOR_WORDS = frozenset({"page", "next", "prev", "previous", "continuation", "cursor", "sync"})
-_KEY_QUALIFIERS = frozenset({"api", "access", "private"})
+_SECRET_PAIRS = {"key": frozenset({"api", "access", "private", "secret"}), "code": frozenset({"auth", "authorization"})}
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
 _SCOPE = "Only the submitted scenario was checked; this is not complete specification verification."
 # ``boot`` values meaning the scenario never ran: the sandbox was unavailable,
@@ -129,26 +132,34 @@ def redact_scenario_headers(requests):
 
 def _credential_key(key):
     words = [word.lower() for word in _KEY_WORDS.findall(key)] if isinstance(key, str) else []
+    if len(words) > 1 and words[-1] in _VALUE_WORDS:
+        words = words[:-1]
     if not words:
         return False
-    if _SECRET_WORDS.intersection(words):
+    if words[-1] in _SECRET_WORDS:
         return True
     if words[-1] == "token":
         return not _CURSOR_WORDS.intersection(words[:-1])
-    return words[-1] == "key" and len(words) > 1 and words[-2] in _KEY_QUALIFIERS
+    return len(words) > 1 and words[-2] in _SECRET_PAIRS.get(words[-1], ())
 
 
 def _credential_field(key, value):
     return isinstance(value, str) and bool(value) and _credential_key(key)
 
 
-def _credential_values(value):
-    if isinstance(value, list):
-        return {secret for item in value for secret in _credential_values(item)}
-    if isinstance(value, dict):
-        return {secret for key, item in value.items()
-                for secret in ({item} if _credential_field(key, item) and len(item) >= 8 else _credential_values(item))}
-    return set()
+def _credential_reference(match):
+    return _credential_key((match.group(2) or "").rsplit(".", 1)[-1])
+
+
+def _sent_credentials(request, previous):
+    """Credential-named response values ``request`` sends back by reference, e.g. /reset/{{1.reset_token}}."""
+    sent = set()
+    for match in _REFERENCE.finditer(json.dumps([request.get(key) for key in ("path", "headers", "json")])):
+        if _credential_reference(match) and int(match.group(1)) < len(previous):
+            value = _walk(previous[int(match.group(1))], match.group(2))
+            if isinstance(value, str) and len(value) >= 8:
+                sent.add(value)
+    return sent
 
 
 def _scrub(value, secrets):
@@ -236,7 +247,7 @@ def _json_path(body, path):
     return current
 
 
-def _resolve_references(value, previous, *, in_path=False, in_header=False):
+def _resolve_references(value, previous, *, in_path=False, in_header=False, redact=False):
     if isinstance(value, dict):
         return {key: _resolve_references(item, previous) for key, item in value.items()}
     if isinstance(value, list):
@@ -255,6 +266,8 @@ def _resolve_references(value, previous, *, in_path=False, in_header=False):
         return copy.deepcopy(resolve(match))
 
     def substitute(match):
+        if redact and _credential_reference(match):
+            return _REDACTED
         replacement = resolve(match)
         if isinstance(replacement, (dict, list)):
             raise ValueError("embedded references must resolve to scalar values")
@@ -449,7 +462,7 @@ async def _run_requests(app, requests):
                 body = _NO_JSON
                 try:
                     path = _local_path(_resolve_references(request["path"], previous, in_path=True))
-                    item["path"] = path
+                    item["path"] = _resolve_references(request["path"], previous, in_path=True, redact=True)
                     kwargs = {"json": _resolve_references(request["json"], previous)} if "json" in request else {}
                     if request.get("headers"):
                         headers = {}
@@ -480,8 +493,6 @@ async def _run_requests(app, requests):
                     item["status"] = response.status_code
                     try:
                         body = response.json()
-                        # A later path or body may carry it by reference, e.g. /reset/{{1.reset_token}}.
-                        secrets.update(_credential_values(body))
                         # References read the raw ``body``; the report keeps a redacted copy, cut after redaction.
                         shown = _scrub(body, ())
                         item["json"] = _bounded(shown)
@@ -505,6 +516,11 @@ async def _run_requests(app, requests):
                             item["failures"].append(str(exc))
                 except Exception as exc:
                     item["failures"].append(f"{type(exc).__name__}: {exc}"[:1000])
+                # An error or failure of this request may quote a credential it sent back.
+                sent = sorted(_sent_credentials(request, previous), key=len, reverse=True)
+                item["failures"] = _scrub(item["failures"], sent)
+                if "error" in item:
+                    item["error"]["message"] = _scrub(item["error"]["message"], sent)
                 previous.append(body)
                 count = len(item["failures"])
                 item["failure_count"] = count

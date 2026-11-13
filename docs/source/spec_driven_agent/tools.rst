@@ -137,11 +137,14 @@ and names containing words such as *key*, *token*, *secret* or *auth*) are
 redacted from the report, from ``action="get"`` and from the trace, as is the
 value wherever the app echoes it. Response fields named like a credential
 (``access_token``, ``api_key``, ``client_secret``, ``password``,
-``password_hash``; not a page cursor such as ``next_page_token``), the input a
+``password_hash``; not a page cursor such as ``next_page_token`` nor a field
+that only describes one, such as ``password_changed_at``), the input a
 validation error echoes for such a field, and any JWT-shaped string are
 redacted too, even when no later request sends them, including inside
-assertion failure messages and wherever a later request path carries them;
-references such as ``{{1.access_token}}`` still receive the real value.
+assertion failure messages and in the path, error and failures of a later
+request that sends such a field back by reference; other fields that happen to
+hold the same value are shown. References such as ``{{1.access_token}}`` still
+receive the real value.
 Named scenarios are retained during the run and replayed after source changes;
 failures block completion. Correcting a mistaken test requires an explicit
 ``correction_reason``. Model-authored scenarios are supplemental checks, not an

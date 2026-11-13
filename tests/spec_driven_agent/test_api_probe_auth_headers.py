@@ -239,14 +239,19 @@ def test_redaction_keeps_ordinary_fields():
         "passwordConfirm", "password_confirmation", "passwd", "passphrase", "secret", "client_secret",
         "secretKey", "jwt", "jwt_value", "access_token", "refresh_token", "accessToken", "id_token",
         "csrf_token", "token", "Token", "api_key", "apiKey", "APIKey", "x-api-key", "apikey",
-        "access_key", "private_key", "credentials")],
+        "access_key", "private_key", "credentials", "secret_key", "token_hash", "otp", "auth_code",
+        "authorization_code")],
     *[(name, False) for name in (
         "token_type", "tokenType", "token_count", "max_tokens", "next_page_token", "nextPageToken",
         "page_token", "continuation_token", "cursor", "expires_in", "secretary", "author", "keywords",
-        "key", "monkey", "username", "email", "passage")],
+        "key", "monkey", "username", "email", "passage", "password_changed_at", "credential_type",
+        "secret_santa", "passwordHint", "password_expires", "credentials_count", "password_policy",
+        "password_length", "secret_question", "jwt_expires_in", "otp_sent_at", "code", "country_code",
+        "session_id", "value")],
 ])
 def test_credential_field_names(name, redacted):
-    """password_hash and passwordConfirm were shown and next_page_token hidden."""
+    """password_hash and passwordConfirm were shown and next_page_token hidden; a word
+    after the credential word (password_changed_at, passwordHint) hid ordinary fields."""
     assert api_probe._credential_field(name, "value-1") is redacted
 
 
@@ -356,3 +361,74 @@ def test_orchestrator_result_and_saved_snapshot_never_carry_unsent_tokens(tmp_pa
     for text in (result["content"], json.dumps(shown), json.dumps(saved)):
         assert "eyJ" not in text
         assert '"refresh_token": "[REDACTED]"' in text
+
+
+def test_a_value_equal_to_a_credential_field_is_shown_elsewhere():
+    """A credential value from a response was blanked by substring everywhere: created_at
+    was hidden because it equalled password_changed_at, itself taken for a credential."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    stamp = "2026-11-13T10:00:00"
+
+    @app.post("/user/")
+    def create():
+        return {"id": 1, "created_at": stamp, "password_changed_at": stamp, "password_hash": "x" * 12 + stamp}
+
+    @app.get("/user/{user_id}")
+    def read(user_id: int):
+        return {"id": user_id, "created_at": stamp}
+
+    report = _run_in_process(app, [{"method": "POST", "path": "/user/"},
+                                   {"method": "GET", "path": "/user/{{0.id}}"}])
+
+    assert report["responses"][0]["json"] == {"id": 1, "created_at": stamp, "password_changed_at": stamp,
+                                              "password_hash": "[REDACTED]"}
+    assert report["responses"][1]["json"] == {"id": 1, "created_at": stamp}
+
+
+def test_a_records_own_id_is_never_blanked():
+    """A Session record whose session_token equals its id showed id and path as [REDACTED]."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    sid = "6f1c2a9e-3b7d-4c55-9e0a-2d8f7b1c4e63"
+
+    @app.post("/session/")
+    def create():
+        return {"id": sid, "session_token": sid, "label": "kiosk"}
+
+    @app.get("/session/{session_id}")
+    def read(session_id: str):
+        return {"id": session_id, "session_token": sid, "label": "kiosk"}
+
+    report = _run_in_process(app, [{"method": "POST", "path": "/session/"},
+                                   {"method": "GET", "path": "/session/{{0.id}}"}])
+
+    assert report["responses"][1]["path"] == f"/session/{sid}"
+    assert [r["json"]["id"] for r in report["responses"]] == [sid, sid]
+    assert report["responses"][0]["json"]["session_token"] == "[REDACTED]"
+    assert api_probe.confirmed_create_paths(report) == {"/session"}
+
+
+def test_a_credential_sent_back_is_hidden_in_that_requests_path_and_error():
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    token = "rst-0a9b8c7d6e5f4a3b"
+
+    @app.post("/reset/")
+    def issue():
+        return {"id": 7, "reset_token": token}
+
+    @app.get("/reset/{value}")
+    def redeem(value: str):
+        raise KeyError(value)
+
+    report = _run_in_process(app, [{"method": "POST", "path": "/reset/"},
+                                   {"method": "GET", "path": "/reset/{{0.reset_token}}?id={{0.id}}"}])
+
+    redeem = report["responses"][1]
+    assert redeem["path"] == "/reset/[REDACTED]?id=7"
+    assert redeem["error"]["type"] == "KeyError"
+    assert token not in json.dumps(report)

@@ -196,14 +196,40 @@ def test_a_verification_round_that_stops_early_is_told_which_creates_are_unread(
     assert _main_py(tmp_path) == "x = 1\n"
 
 
-def test_a_round_with_a_code_defect_gets_no_create_evidence_reminder(tmp_path):
+def test_a_round_with_a_code_defect_is_nudged_to_edit_before_the_create_reminder(tmp_path):
+    """An edit after the read-backs would leave them stale, so the edit comes
+    first; a reminder that confirms nothing ends the attempt."""
     client = _StructuredClient(_prose)
     orch = _build(tmp_path, client)
 
     orch._invoke_phase3_fix_loop([BLOCKER, _unverified_create("a")], is_first_attempt=True)
 
-    assert [force for force, _ in client.calls] == [None, "modify_file", None]
-    assert not any("no read-back" in text for _, seen in client.calls for text in seen)
+    assert _main_py(tmp_path) == "x = 2\n"
+    assert [force for force, _ in client.calls] == [None, "modify_file", None, "test_api"]
+    assert [any("no read-back" in text for text in seen) for _, seen in client.calls] == [
+        False, False, False, True]
+
+
+def test_a_requirement_finding_does_not_switch_off_the_create_reminder(tmp_path):
+    """A judge ``requirement:`` finding next to unverified creates made the
+    round not verification-only, so the reminder never fired: the attempt
+    forced modify_file and ended with every create unread."""
+    def reply(n):
+        if n == 4:   # the forced test_api turn, after the edit
+            for path in ("a", "b"):
+                orch._api_scenarios[path] = _read_back(orch, path)
+        return _prose(n)
+
+    client = _StructuredClient(reply)
+    orch = _build(tmp_path, client)
+    requirement = ValidationIssue("blocker", "requirement: R3 - the dashboard must show a weekly trend")
+    creates = [_unverified_create(p) for p in ("a", "b")]
+
+    orch._invoke_phase3_fix_loop([requirement, *creates], is_first_attempt=True)
+
+    assert [force for force, _ in client.calls] == [None, "modify_file", None, "test_api"]
+    assert _main_py(tmp_path) == "x = 2\n"
+    assert orch._unconfirmed_creates(creates) == set(), "read-backs must be current after the edit"
 
 
 def test_validate_app_does_not_ask_for_one_scenario_covering_every_create(tmp_path):

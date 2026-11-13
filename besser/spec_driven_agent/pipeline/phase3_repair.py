@@ -1168,9 +1168,11 @@ class Phase3RepairMixin:
             if self._phase3_stop_requested(check_turn_budget=False):
                 return edits
             if response["stop_reason"] == "end_turn":
-                # Listed creates still unread get another test_api turn, for as
-                # long as the previous reminder confirmed at least one of them.
-                unconfirmed = self._unconfirmed_creates(blockers) if verification_only else set()
+                # An owed edit is nudged first: one made after the read-backs
+                # would leave them stale. Then listed creates still unread get
+                # a test_api turn while each reminder confirms at least one.
+                owes_edit = not (edits or nudged or verification_only)
+                unconfirmed = set() if owes_edit else self._unconfirmed_creates(blockers)
                 if unconfirmed and (unconfirmed_at_reminder is None
                                     or unconfirmed < unconfirmed_at_reminder):
                     unconfirmed_at_reminder, force_next = unconfirmed, "test_api"
@@ -1181,7 +1183,7 @@ class Phase3RepairMixin:
                     messages.append({"role": "user", "content": [{
                         "type": "text", "text": _PHASE3_CREATE_EVIDENCE_REMINDER.format(paths=paths)}]})
                     continue
-                if edits or nudged or verification_only:
+                if not owes_edit:
                     return edits
                 # Ended in prose with nothing written. Say so once, force the
                 # edit where tool_choice is honoured, and let the reminder

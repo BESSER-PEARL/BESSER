@@ -593,3 +593,29 @@ def test_validate_reports_a_default_that_is_no_literal_of_its_enumeration(besser
     assert run.returncode == 1
     assert ("error: Attribute 'genre' of class 'Book' has the default 'ESSAY', which is not a literal of its "
             "enumeration 'Genre' (NOVEL, POEM).") in run.stdout
+
+
+def test_a_method_without_code_says_what_its_route_answers(besser, model):
+    plain = besser("model", "-f", model, "add-method", "Book", "lend() -> bool", output=None)
+    # Before: "added Book.lend()", and a run read the generated router to learn that the route answers 501.
+    assert plain.stdout == (
+        "library.py: added Book.lend() without code: a generated backend answers 501 on POST "
+        "/book/{book_id}/methods/lend/ until it has some (--code 'def lend(self, ...): ...', run on the object and "
+        "saved)\n")
+    coded = besser("model", "-f", model, "add-method", "Book", "archive()", "--code", "def archive(self): pass",
+                   output=None)
+    assert coded.stdout == "library.py: added Book.archive()\n"
+
+
+def test_a_constraint_says_whether_a_generated_backend_enforces_it(besser, model):
+    # Before: "added constraint ..." only, and a run wrote a test to see whether its rule gave 422.
+    enforced = besser("model", "-f", model, "add-constraint", "Book", "self.pages >= 0", output=None)
+    assert enforced.stdout.endswith("on Book; a generated backend enforces it (422 on create and update)\n")
+    other = besser("model", "-f", model, "add-constraint", "Book", "self.title <> self.title.toUpper()", output=None)
+    assert other.stdout.endswith("a generated backend does not enforce this one: write the rule in extensions.py\n")
+
+
+def test_an_operation_typed_as_a_command_is_run_as_one(besser, model):
+    # Before: "invalid choice: 'add-attribute'" with the list of commands, and one more call.
+    run = besser("add-attribute", "Book", "isbn:str", "-f", model, output=None)
+    assert run.returncode == 0 and run.stdout == "library.py: added Book.isbn:str\n", run.stderr

@@ -1216,7 +1216,11 @@ def add_method(editor: ModelEditor, class_name: str, signature: str, code: str |
         found = model.get_class_by_name(class_name)
         return None if found and name in {m.name for m in found.methods} else f"{class_name} has no method {name}"
 
-    return Edited(editor.finish(), f"added {class_name}.{name}()", check)
+    # Without code the generated route answers 501: a session found that out by reading the generated router.
+    key = class_name.lower()
+    bare = ("" if code else f" without code: a generated backend answers 501 on POST /{key}/{{{key}_id}}/methods/{name}/ "
+            f"until it has some (--code 'def {name}(self, ...): ...', run on the object and saved)")
+    return Edited(editor.finish(), f"added {class_name}.{name}(){bare}", check)
 
 
 def add_constraint(editor: ModelEditor, class_name: str, expression: str, name: str | None) -> Edited:
@@ -1239,7 +1243,21 @@ def add_constraint(editor: ModelEditor, class_name: str, expression: str, name: 
     def check(model: DomainModel) -> str | None:
         return None if any(c.name == name for c in model.constraints) else f"no constraint {name}"
 
-    return Edited(editor.finish(), f"added constraint {name} on {class_name}", check)
+    enforced = _backend_enforces(editor.model, cls, name, expression)
+    said = {True: "; a generated backend enforces it (422 on create and update)",
+            False: "; a generated backend does not enforce this one: write the rule in extensions.py"}.get(enforced, "")
+    return Edited(editor.finish(), f"added constraint {name} on {class_name}{said}", check)
+
+
+def _backend_enforces(model: DomainModel, cls: Class, name: str, expression: str) -> bool | None:
+    """Whether the backend generators turn the invariant into a check, by their own rule; None when that
+    cannot be told. Without it a session wrote a test to find out."""
+    try:
+        from besser.generators.pydantic_classes.ocl_utils import parse_ocl_constraint
+        parsed = parse_ocl_constraint(Constraint(name=name, context=cls, expression=expression, language="OCL"), model)
+    except Exception:  # the generators' parser is not this command's to fail on
+        return None
+    return bool(parsed) and not parsed.get("skipped")
 
 
 def _rename_model(editor: ModelEditor, model: Any, new_name: str) -> Edited:
@@ -1397,17 +1415,19 @@ def _relabel_columns(editor: ModelEditor, attribute: Property, old: str, new: st
     writes them (in the table's list, ``table.columns.append(...)``, ``[...] + [...]``, a variable);
     returns what changed, for the summary. A column the file does not write with the attribute's
     variable keeps its label, and a warning names its table."""
-    old_label, new_label = _label(old), _label(new)
+    old_labels, new_label = {_label(old), _joined_label(old)}, _label(new)
+    old_label = _label(old)
     relabelled, left = [], []
     for table in _tables_inheriting(editor, attribute.owner):
-        shown = sum(_columns_of(column, attribute) and column.label == old_label for column in table.columns)
+        shown = sum(_columns_of(column, attribute) and column.label in old_labels for column in table.columns)
         if not shown:
             continue
         found = 0
         for call in _column_calls(editor, table):
             label, *shows = (_argument(call, name, index) for index, name in enumerate(_COLUMN_ARGUMENTS[_callee(call)]))
             if any(isinstance(node, ast.Name) and editor.namespace.get(node.id) is attribute for node in shows) \
-                    and isinstance(label, ast.Constant) and label.value == old_label:
+                    and isinstance(label, ast.Constant) and label.value in old_labels:
+                old_label = label.value
                 editor.src.replace(editor.src.start(label), editor.src.end(label),
                                    _string_code(editor.src.segment(label), old_label, new_label))
                 found += 1
@@ -2367,7 +2387,15 @@ def _bound_class(table: Table) -> Any:
 
 
 def _label(name: str) -> str:
-    """A column's label derived from its attribute's name: ``due_date`` -> ``Due date``."""
+    """A column's label derived from its attribute's name, as words: ``due_date`` -> ``Due date``,
+    ``workEmail`` -> ``Work email`` (an acronym stays: ``vatID`` -> ``Vat ID``)."""
+    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", name.replace("_", " ")).split()
+    words = [word if word.isupper() and len(word) > 1 else word.lower() for word in words]
+    return " ".join(words)[:1].upper() + " ".join(words)[1:] if words else name
+
+
+def _joined_label(name: str) -> str:
+    """The label earlier versions derived (``workEmail`` -> ``WorkEmail``): a file written by them holds it."""
     return (name[:1].upper() + name[1:]).replace("_", " ")
 
 

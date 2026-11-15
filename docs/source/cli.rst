@@ -744,16 +744,21 @@ name one of each).
        ``[1]``, ``[0..1]``, ``[*]``, ``[1..*]`` or ``[n..m]``. ``--composite``
        makes the first end the whole.
    * - ``add-method CLASS 'name(param:type, ...) -> type' [--code CODE]``
-     - A method; ``--code`` is its Python code, which the ``backend`` runs.
+     - A method; ``--code`` is its Python code, which the ``backend`` runs on
+       the object and saves. Without ``--code`` the line says that the route of
+       the method answers 501 until it has code.
    * - ``add-constraint CLASS EXPRESSION [--name NAME]``
      - An OCL invariant on the class (``context ... inv`` is added when the
        expression does not start with it), named ``<class>_rule_<n>`` without
        ``--name``. It must parse against the model
-       (see :ref:`OCL constraints <cli-ocl>`).
+       (see :ref:`OCL constraints <cli-ocl>`). The line says whether a
+       generated backend enforces it (422 on create and update), by the
+       generators' own rule, or leaves the rule to ``extensions.py``.
    * - ``add-screen CLASS [--title TITLE] [--route /PATH] [--rows N]``
      - A screen of the file's GUI model (``--use`` names one when there are
        several) that shows a table of the class: a column per attribute,
-       inherited ones first, labelled after it, with pagination and the buttons that add, edit and
+       inherited ones first, labelled after it in words (``workEmail``: "Work
+       email"), with pagination and the buttons that add, edit and
        delete an object. The screen is named after ``TITLE`` (default: the
        plural of the class, ``Publishers``, ``Shelves``, ``People``; a name
        already plural or uncountable, ``News``, is kept), which is also its heading, and
@@ -951,6 +956,8 @@ report.
 
 The file is written only when the new text loads, holds every change and has
 no validation error the old text did not have; one line says what changed.
+An operation typed as a command (``besser add-menu``) is run as
+``besser model add-menu``: no command has the name of an operation.
 After a ``rename`` or a ``remove``, a warning prints each hand-written line
 that still uses the old name, with its file and line number (code files outside
 the generated ones, such as ``extensions.py`` and your tests; at most 20

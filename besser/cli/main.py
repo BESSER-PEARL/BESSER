@@ -732,6 +732,11 @@ def _verbosity(args: argparse.Namespace) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     """Run ``besser`` with ``argv`` (default: the process arguments) and return its exit status."""
     argv = sys.argv[1:] if argv is None else list(argv)
+    # An operation of 'besser model' typed as a command (besser add-menu) is run as one: refusing it cost a
+    # session a call, and no command has the name of an operation.
+    first = next((index for index, word in enumerate(argv) if not word.startswith("-")), None)
+    if first is not None and argv[first] in OPERATIONS:
+        argv.insert(first, "model")
     parser = build_parser()
     as_json = "--json" in argv
     set_verbosity(NORMAL)

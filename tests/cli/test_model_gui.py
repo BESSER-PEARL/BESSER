@@ -798,3 +798,22 @@ def test_add_class_takes_the_options_of_its_screen(starter, change, besser):
     # An option of the screen asks for the screen.
     assert "added screen PriceTags titled 'Price tags' at /pricetags" in change(
         "add-class", "Tag", "label:str", "--title", "Price tags")
+
+
+def test_a_column_is_labelled_in_words(starter, change, app):
+    # Before: "WorkEmail", and a run asked for "Work email" patched model.py with sed.
+    change("add-attribute", "Author", "workEmail:str")
+    pages, _, _ = app()
+    assert '"label": "Work email"' in pages["Authors"] and "WorkEmail" not in pages["Authors"]
+    assert change("rename", "Author.workEmail", "homePhone").endswith(
+        "column Work email -> Home phone in table author_table")
+
+
+def test_a_label_an_earlier_version_derived_follows_a_rename(starter, change):
+    # A file written before labels were words holds "WorkEmail": the column still follows its attribute.
+    change("add-attribute", "Author", "workEmail:str")
+    text = starter.read_text(encoding="utf-8")
+    assert 'label="Work email"' in text
+    starter.write_text(text.replace('label="Work email"', 'label="WorkEmail"'), encoding="utf-8")
+    assert change("rename", "Author.workEmail", "homePhone").endswith(
+        "column WorkEmail -> Home phone in table author_table")

@@ -51,7 +51,8 @@ Types: `str int float bool date datetime time`, or an enumeration's name.
   association end as `Book.authors` or `book_authors.authors`, the model itself (`rename Library Shop`)
 - `besser model remove Contact.phone` (a class goes with its associations). `rename` and `remove` print
   each line of your own code that still uses the name: change those, no need to search first.
-- `besser model add-method Deal "discount(rate:float) -> float"`, `add-constraint Deal "self.amount >= 0"`
+- `besser model add-method Deal "discount(rate:float) -> float" --code "def discount(self, rate): ..."`
+  (run on the object and saved; without `--code` its route answers 501), `add-constraint Deal "self.amount >= 0"`
 - In place: `set-attribute Book.pages :int?=0` (`=` drops the default; none on a date or time),
   `set-multiplicity Book.authors "[*]"`, `set-abstract Party true`, `remove-parent Customer Party`
 - Several changes in one call: `besser model batch - <<'EOF'` with one change per line; a line can use

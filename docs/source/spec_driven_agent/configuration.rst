@@ -241,9 +241,9 @@ Context and token budgets
   window is unknown. Models with a known window (from the model catalogs of
   the free and sponsored tiers, or the built-in table of hosted frontier
   models) get an
-  adaptive threshold derived from that window instead: 80% of the window
-  minus a reserve for the reply (the run's output-token ceiling, at least
-  16,000). Setting this variable
+  adaptive threshold derived from that window instead: 80% of what is left
+  of the window after a reserve for the reply (the run's output-token
+  ceiling, at least 16,000). Setting this variable
   also caps the adaptive value, so lowering it to cut cost applies to every
   model, not only unknown ones. Floored at 8,000.
 - ``BESSER_LLM_MAX_COMPACT_THRESHOLD`` (``200000``) -- Ceiling on the adaptive

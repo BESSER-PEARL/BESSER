@@ -49,9 +49,11 @@ that was already broken is never refused, so it can be repaired.
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup. Imports the app starts
   without are not checked: inside a ``try`` that handles ``ImportError``, and
-  under ``if TYPE_CHECKING:``. A package declared in the app's manifest
-  satisfies its import name, matched case-insensitively and, for names that
-  differ (``python-socketio`` / ``socketio``), by name prefix.
+  under ``if TYPE_CHECKING:``. Under a catch-all handler (``except Exception``)
+  an unresolved import is a warning, ``possibly missing module:``. A package
+  declared in the app's manifest satisfies its import name, matched
+  case-insensitively and, for names that differ (``python-socketio`` /
+  ``socketio``), by name prefix, unless the app ships a module of that name.
 - Frontend contract — high-precision correctness defects that leave the UI
   visibly broken: a router with no home route (blank on load), or a form whose
   submit handler is a no-op (cannot save).
@@ -183,15 +185,22 @@ continues to state that frontend build verification is pending.
 Generated create probes use distinct fixture values and native association-link
 payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
 that every valid request fails. An unresolved create probe can be discharged by
-a passing current-revision ``test_api`` scenario that creates through the exact
-endpoint and reads back the identifiable record. Health responses, an isolated
+a current-revision ``test_api`` scenario on the same backend in which the app
+booted and a successful ``POST`` to the exact endpoint is followed by a
+successful ``GET`` of that path (or a path under it) returning the same record:
+the same ``id`` and at least one other equal, unredacted scalar field. The
+scenario as a whole need not pass; a failing negative check in it does not
+discard a create that was read back. Health responses, an isolated
 200, stale results, and evidence from a different route/backend do not qualify.
 Observed server crashes remain failures even if another scenario passes.
 The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
 where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
-``*Create`` body with no table behind it (a signup or login form) persists no
-record to read back, so it is listed in the probe report as
-``skipped_non_entity`` and produces no finding.
+``*Create`` body whose handler writes no table (a signup or login form) persists
+no record to read back, so it is listed in the probe report as
+``skipped_non_entity`` and produces no finding. When the handler writes one
+table under another name (``NoteCreate`` stored as ``NoteRow``) the create is
+probed as that table; when it writes several, it is reported as
+``create unverified:``.
 When a request is refused with 401 or 403, the probe tries once to log in as an
 account it registers itself, as any visitor could, and never overrides the
 app's authentication dependency. It registers and logs in through the app's
@@ -234,7 +243,7 @@ A login counts only when the refused request then gets past the 401/403. The
 report keeps the first refused request and its status under ``auth`` (evidence
 that authentication is enforced), with the account used. An app that never
 answers 401/403 receives no login requests. When no login works, the refused
-creates stay ``create unverified`` and the finding gives the reason; a passing
+creates stay ``create unverified`` and the finding gives the reason; a
 ``test_api`` scenario that logs in, creates and reads back the record settles
 them, as above. Saved scenarios are never replayed to log the probe in, so its
 result depends only on the source.

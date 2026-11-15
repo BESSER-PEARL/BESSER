@@ -124,6 +124,7 @@ examples:
   besser model add-class Tag label:str --screen (a class and its page)
   besser model add-menu                         (a menu with a link to every page, on every page)
   besser model add-column Invoice customer.name --label Customer   (a column of a related object)
+  besser model order-columns Invoice number customer.name          (these columns first in its tables)
   besser model add-page Overview --route /home --main              (a page for cards and charts)
   besser model add-card Overview "Paid" sum:Invoice.total --where "paid == true"
   besser model add-chart Overview "Invoices by status" count:Invoice --by status
@@ -145,6 +146,9 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("--parent",), {"metavar": "CLASS", "help": "the class it specializes"}),
         (("--abstract",), {"action": "store_true", "help": "an abstract class"}),
         (("--screen",), {"action": "store_true", "help": "and a screen with a table of it (see add-screen)"}),
+        (("--title",), {"help": "the screen's title (asks for the screen)"}),
+        (("--route",), {"metavar": "/PATH", "help": "the screen's address (asks for the screen)"}),
+        (("--rows",), {"metavar": "N", "type": int, "help": "rows its table shows a page (asks for the screen)"}),
     ],
     "add-attribute": [
         (("class_name",), {"metavar": "CLASS", "help": "the class"}),
@@ -176,6 +180,7 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("class_name",), {"metavar": "CLASS", "help": "the class the screen's table shows"}),
         (("--title",), {"help": "the screen's title (default: the plural of the class name)"}),
         (("--route",), {"metavar": "/PATH", "help": "the page's address (default: the title's words, in lower case)"}),
+        (("--rows",), {"metavar": "N", "type": int, "help": "rows the table shows a page (default: 5)"}),
     ],
     "add-page": [
         (("title",), {"help": "the page's title, also its heading"}),
@@ -189,6 +194,12 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
                                                          "its class: account.name (or an attribute of the class "
                                                          "itself)"}),
         (("--label",), {"help": "the column's label (default: the end's name)"}),
+    ],
+    "order-columns": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class whose tables are reordered"}),
+        (("columns",), {"metavar": "COLUMN", "nargs": "+",
+                        "help": "the columns that come first, in this order: an attribute, or end.attribute for a "
+                                "related object's column; the other columns follow as they were"}),
     ],
     "add-card": [
         (("screen",), {"help": "the screen: its name, title or route"}),

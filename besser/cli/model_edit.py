@@ -1020,7 +1020,10 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
 
 
 def add_class(editor: ModelEditor, name: str, attributes: Sequence[str], parent: str | None,
-              abstract: bool, screen: bool) -> Edited:
+              abstract: bool, screen: bool, title: str | None = None, route: str | None = None,
+              rows: int | None = None) -> Edited:
+    # An option of the screen asks for the screen: refusing it cost a session its whole batch.
+    screen = screen or title is not None or route is not None or rows is not None
     if editor.model.get_type_by_name(name) is not None:
         raise EditError(f"{editor.model.name} has a type named '{name}' already")
     parent_class = editor.find_type(parent, Class) if parent else None
@@ -1047,7 +1050,7 @@ def add_class(editor: ModelEditor, name: str, attributes: Sequence[str], parent:
     if not screen:
         return edited
     # The screen is added to the text with the class, as 'add-screen' would add it next.
-    with_screen = add_screen(ModelEditor(editor.path, edited.text, editor.use), name, None)
+    with_screen = add_screen(ModelEditor(editor.path, edited.text, editor.use), name, title, route, rows)
     return Edited(with_screen.text, f"{edited.summary}; {with_screen.summary}", check, with_screen.warnings,
                   gui_check=with_screen.gui_check)
 
@@ -1239,7 +1242,37 @@ def add_constraint(editor: ModelEditor, class_name: str, expression: str, name: 
     return Edited(editor.finish(), f"added constraint {name} on {class_name}", check)
 
 
+def _rename_model(editor: ModelEditor, model: Any, new_name: str) -> Edited:
+    """Rename the domain model or the GUI model itself: the name its constructor is given."""
+    old_name, kind = model.name, type(model)
+    call = editor.call_of(model)
+    name_node = _name_argument(call) if call is not None else None
+    if name_node is None:
+        raise EditError(f"cannot find where the model {old_name} is named in {editor.path.name}; edit it by hand")
+    editor.src.replace(editor.src.start(name_node), editor.src.end(name_node), _q(new_name))
+    follows = " (the API's title and the database file follow it)" if model is editor.model else ""
+
+    def gui_check(guis: list[Any]) -> str | None:
+        return None if any(gui.name == new_name for gui in guis) else f"no GUI model named {new_name}"
+
+    return Edited(editor.finish(), f"renamed the model {old_name} to {new_name}{follows}",
+                  (lambda checked: None if checked.name == new_name else f"the model is named {checked.name}")
+                  if kind is DomainModel else (lambda checked: None),
+                  editor.warnings, gui_check=None if kind is DomainModel else gui_check)
+
+
 def rename(editor: ModelEditor, path: str, new_name: str, keep_pages: bool = False) -> Edited:
+    if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
+        raise EditError(f"'{new_name}' is not a name (letters, digits, _)")
+    # A model by its own name, when no element of it has that name: the starter's 'Library' becomes the
+    # application's name, which the API's title and the database file take.
+    models = [editor.model, *editor.gui_models()]
+    named = [model for model in models if model.name == path]
+    if named and "." not in path:
+        try:
+            editor.resolve(path)
+        except EditError:
+            return _rename_model(editor, named[0], new_name)
     element = editor.resolve(path)
     old_name = element.name
     if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
@@ -2637,7 +2670,10 @@ def _has_screen(screen_name: str) -> Callable[[list[Any]], str | None]:
     return gui_check
 
 
-def add_screen(editor: ModelEditor, class_name: str, title: str | None, route: str | None = None) -> Edited:
+def add_screen(editor: ModelEditor, class_name: str, title: str | None, route: str | None = None,
+               rows: int | None = None) -> Edited:
+    if rows is not None and rows < 1:
+        raise EditError(f"--rows {rows}: a table shows at least 1 row a page")
     cls = editor.find_type(class_name, Class)
     for screen in _screens(_gui_model(editor)):
         if any(isinstance(element, Table) and _bound_class(element) is cls for element in _contents(screen)):
@@ -2661,7 +2697,8 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None, route: s
     code = (
         f"{table} = {editor._gui('Table')}(\n"
         f"    name={_q(table)}, component_id={_q(table)}, title={_q(title)},\n"
-        f"    action_buttons=True, show_pagination=True, columns=[\n{columns}    ],\n)\n"
+        f"    action_buttons=True, show_pagination=True,{f' rows_per_page={rows},' if rows else ''} "
+        f"columns=[\n{columns}    ],\n)\n"
         f"{table}.data_binding = {editor._gui('DataBinding')}(domain_concept={editor.type_code(class_name)})\n"
         + _content_code(editor, content, title, [_heading_code(editor, heading, title), table])
         + _screen_code(editor, screen_var, screen_name, title, route, not screens, [*shown, content])
@@ -2669,8 +2706,10 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None, route: s
     )
     editor.src.insert_before(anchor, code, separate=True)
     editor.add_to_literal(literal, screen_var)
-    summary = (f"added screen {screen_name} at {route} (table of {class_name}: "
-               f"{', '.join(a.name for a in attributes)}; {reached})")
+    # The title when it is not the name: 'Deal lines' is the screen DealLines, and the answer must show it took.
+    titled = "" if title == screen_name else f" titled '{title}'"
+    summary = (f"added screen {screen_name}{titled} at {route} (table of {class_name}: "
+               f"{', '.join(a.name for a in attributes)}{f'; {rows} rows a page' if rows else ''}; {reached})")
 
     def gui_check(guis: list[Any]) -> str | None:
         shown = [screen for gui in guis for screen in _screens(gui) if screen.name == screen_name and any(
@@ -2855,6 +2894,56 @@ def add_column(editor: ModelEditor, class_name: str, path: str, label: str | Non
 
     return Edited(editor.finish(), f"added column {label} ({path}) to table {', '.join(t.name for t in tables)}",
                   lambda model: None, editor.warnings, gui_check=gui_check)
+
+
+def _column_key(column: Any) -> str:
+    """A column as the commands name it: its attribute, or ``end.attribute`` of a related object."""
+    field_ = getattr(column, "field", None)
+    if field_ is None:
+        return str(getattr(column, "label", ""))
+    path = column.path if isinstance(column, LookupColumn) else None
+    return f"{path.name}.{field_.name}" if path is not None else field_.name
+
+
+def order_columns(editor: ModelEditor, class_name: str, columns: Sequence[str]) -> Edited:
+    """Put the named columns first, in the order given, in every table of the class; the others follow in
+    the order they had. Only the places of the list's items change: each keeps the code that writes it."""
+    cls = editor.find_type(class_name, Class)
+    tables = editor.tables_of(cls)
+    if not tables:
+        raise EditError(f"no table of {class_name}: add its screen first (besser model add-screen {class_name})")
+    if len(set(columns)) != len(columns):
+        raise EditError(f"a column is named twice: {' '.join(columns)}")
+    ordered: dict[str, list[str]] = {}
+    for table in tables:
+        items = _column_items(editor, table)
+        if items is None:
+            raise EditError(f"table {table.name} does not write its columns as one list in {editor.path.name}: "
+                            "reorder them there by hand")
+        keys = [_column_key(column) for column, _, _ in items]
+        unknown = [name for name in columns if name not in keys]
+        if unknown:
+            raise EditError(f"table {table.name} has no column {', '.join(unknown)} (it has: {', '.join(keys)}; a "
+                            f"related object's column is end.attribute)")
+        order = [*columns, *(key for key in keys if key not in columns)]
+        ordered[table.name] = order
+        texts = {key: editor.src.segment(item) for key, (_, item, _) in zip(keys, items)}
+        for key, (_, item, _), new in zip(keys, items, order):
+            if key != new:
+                editor.src.replace(editor.src.start(item), editor.src.end(item), texts[new])
+
+    def gui_check(guis: list[Any]) -> str | None:
+        for gui in guis:
+            for screen in _screens(gui):
+                for table in _contents(screen):
+                    if isinstance(table, Table) and table.name in ordered:
+                        got = [_column_key(column) for column in table.columns]
+                        if got != ordered[table.name]:
+                            return f"table {table.name} has its columns as {', '.join(got)}"
+        return None
+
+    summary = "; ".join(f"columns of table {name}: {', '.join(order)}" for name, order in ordered.items())
+    return Edited(editor.finish(), summary, lambda model: None, editor.warnings, gui_check=gui_check)
 
 
 # ── cards and charts: one number, or one per value of an attribute ──────────
@@ -3236,18 +3325,22 @@ def _remove_gui_element(editor: ModelEditor, element: Any, drops: dict[int, tupl
 
 # Operation name -> what it does, the arguments it takes (for help and batch lines) and its function.
 OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
-    "add-class": ("add a class: NAME [ATTRIBUTE...] [--parent CLASS] [--abstract] [--screen]", add_class),
+    "add-class": ("add a class: NAME [ATTRIBUTE...] [--parent CLASS] [--abstract] [--screen [--title TITLE] "
+                  "[--route /PATH] [--rows N]]", add_class),
     "add-attribute": ("add attributes to a class: CLASS ATTRIBUTE... [--derived]", add_attribute),
     "add-parent": ("make a class specialize another (a generalization): CLASS PARENT", add_parent),
     "add-association": ("add an association: NAME END END [--composite]", add_association),
     "add-method": ("add a method: CLASS 'name(param:type, ...) -> type' [--code CODE]", add_method),
     "add-constraint": ("add an OCL invariant: CLASS EXPRESSION [--name NAME]", add_constraint),
-    "add-screen": ("add a screen with a table of a class to the GUI model: CLASS [--title TITLE] [--route /PATH]",
+    "add-screen": ("add a screen with a table of a class to the GUI model: CLASS [--title TITLE] [--route /PATH] "
+                   "[--rows N]",
                    add_screen),
     "add-page": ("add a screen with a heading, for cards and charts: TITLE [--route /PATH] [--main]", add_page),
     "add-menu": ("add a menu with a link to every screen, on every screen", add_menu),
     "add-column": ("add a table column showing an attribute of a related object: CLASS END.ATTRIBUTE [--label LABEL]",
                    add_column),
+    "order-columns": ("put columns first in the tables of a class, in the order given: CLASS COLUMN...",
+                      order_columns),
     "add-card": ("add a metric card to a screen: SCREEN TITLE sum:CLASS.ATTRIBUTE|count:CLASS [--where CONDITION]",
                  add_card),
     "add-link": ("add a link to a screen: SCREEN LABEL URL", add_link),

@@ -750,7 +750,7 @@ name one of each).
        expression does not start with it), named ``<class>_rule_<n>`` without
        ``--name``. It must parse against the model
        (see :ref:`OCL constraints <cli-ocl>`).
-   * - ``add-screen CLASS [--title TITLE] [--route /PATH]``
+   * - ``add-screen CLASS [--title TITLE] [--route /PATH] [--rows N]``
      - A screen of the file's GUI model (``--use`` names one when there are
        several) that shows a table of the class: a column per attribute,
        inherited ones first, labelled after it, with pagination and the buttons that add, edit and
@@ -758,8 +758,11 @@ name one of each).
        plural of the class, ``Publishers``, ``Shelves``, ``People``; a name
        already plural or uncountable, ``News``, is kept), which is also its heading, and
        goes in the first module. Its address is ``--route`` (default: the
-       name in lower case, ``/publishers``). It joins the menu ``add-menu``
+       name in lower case, ``/publishers``). ``--rows`` sets the rows the table
+       shows a page (5 without it). It joins the menu ``add-menu``
        made and shows it; without a menu, a button on the main page opens it.
+       The line names the title when it is not the screen's name
+       (``added screen DealLines titled 'Deal lines'``).
        Refused when the file has
        no GUI model, the class has no attribute (own or inherited), a screen shows it already, or
        a screen has its route or name but for case (the app's routes ignore case) or
@@ -787,6 +790,11 @@ name one of each).
        when they are removed. With an attribute of the class itself
        (``add-column Invoice total``) it adds that column where a table lacks
        it, and says "no change" where ``add-attribute`` added it already.
+   * - ``order-columns CLASS COLUMN...``
+     - Puts the columns named first, in that order, in every table of the
+       class; the other columns follow in the order they had. A column is
+       named as ``add-column`` takes it: an attribute, or ``end.attribute``
+       for a related object's. Only the places of the list's items change.
    * - ``add-link SCREEN LABEL URL``
      - A link on a screen: a route of the application (``/invoices``) or an
        ``http(s)://`` address; a route of the backend needs its whole address.
@@ -810,7 +818,10 @@ name one of each).
        is an attribute's default, or that a
        constraint compares to, is not removed.
    * - ``rename PATH NEW_NAME [--keep-pages]``
-     - Renames a class, enumeration, association or constraint (``Name``), an
+     - Renames the domain model or the GUI model itself by its name, when no
+       element has that name (``rename Library Shop``: the API's title and
+       the database file follow the domain model's name). Otherwise it
+       renames a class, enumeration, association or constraint (``Name``), an
        attribute, method or association end (``Class.member``; an end also
        as ``association.end``) or a literal (``Enumeration.LITERAL``). A
        variable that spells the old name is renamed with it, and the OCL
@@ -940,9 +951,13 @@ report.
 
 The file is written only when the new text loads, holds every change and has
 no validation error the old text did not have; one line says what changed.
-After a ``rename`` or a ``remove``, a warning lists the hand-written files and
-lines that still use the old name (code files outside the generated ones, such
-as ``extensions.py`` and your tests), so that nobody has to search for them.
+After a ``rename`` or a ``remove``, a warning prints each hand-written line
+that still uses the old name, with its file and line number (code files outside
+the generated ones, such as ``extensions.py`` and your tests; at most 20
+lines), so that nobody has to search for them or print them.
+When a build changes the tables of a backend and an SQLite file of the app is
+still beside it (``data/*.db``), a warning names the file: the generated app
+creates missing tables and never alters one, so it would answer 500 on it.
 In Git Bash on Windows, a route typed as ``/overview`` reaches the command
 rewritten as a Windows path; the command reads it as typed.
 Otherwise nothing is written: exit status 2 when a change does not apply

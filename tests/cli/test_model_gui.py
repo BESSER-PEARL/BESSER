@@ -152,7 +152,8 @@ def test_batch_adds_a_class_its_association_and_its_screen(starter, change, app)
         "add-class Review stars:int\n"
         "add-association book_reviews reviews:Review[*] book:Book[1]\n"
         "add-screen Review --title 'Book reviews'\n"))
-    assert line.endswith("added screen BookReviews at /bookreviews (table of Review: stars; button on Authors)")
+    assert line.endswith("added screen BookReviews titled 'Book reviews' at /bookreviews "
+                         "(table of Review: stars; button on Authors)")
     pages, _, _ = app()
     assert _columns(pages["BookReviews"]) == ["Stars"]
 
@@ -652,10 +653,16 @@ def test_a_rename_or_removal_names_the_hand_written_code_left_behind(starter, be
     # Before: nothing was said, and the agent searched the project for the old name (three calls in one run).
     renamed = besser("model", "rename", "Book", "Volume")
     assert renamed.returncode == 0
-    assert ("warning: hand-written code still names Book: tests/test_mine.py:2; "
-            "web_app/backend/extensions.py:1,5\n") == renamed.stderr
+    # Before the lines were printed: only "tests/test_mine.py:2; web_app/backend/extensions.py:1,5", and the
+    # next call printed those lines to see what to change (four sessions of two runs).
+    assert renamed.stderr == (
+        "warning: hand-written code still names Book, on these lines:\n"
+        "  tests/test_mine.py:2: assert client.get('/book/').status_code == 200\n"
+        "  web_app/backend/extensions.py:1: from sql_alchemy import Book\n"
+        "  web_app/backend/extensions.py:5: app.get('/book/count2/')(lambda: Book.pages)\n")
     removed = besser("model", "remove", "Volume.pages")
-    assert "hand-written code still names Volume.pages: web_app/backend/extensions.py:5" in removed.stderr
+    assert ("hand-written code still names Volume.pages, on these lines:\n"
+            "  web_app/backend/extensions.py:5: app.get('/book/count2/')(lambda: Book.pages)\n") in removed.stderr
 
 
 
@@ -748,3 +755,46 @@ def test_an_attribute_is_added_to_a_class_whose_table_a_function_builds(write, b
                                    '    FieldColumn(label="Priority", field=Deal_priority),\n'))
     pages, _, _ = app()
     assert _columns(pages["Deals"]) == ["Title", "Amount", "Priority"]
+
+def test_columns_are_put_in_the_order_asked(starter, change, besser, app):
+    # Before: no command placed a column, and two runs patched model.py with a script to put one first.
+    assert change("add-attribute", "Book", "isbn:str").endswith("column added to table book_table")
+    assert change("order-columns", "Book", "isbn", "pages") == (
+        "model.py: columns of table book_table: isbn, pages, title")
+    pages, _, _ = app()
+    places = [pages["Books"].index(f'"field": "{name}"') for name in ("isbn", "pages", "title")]
+    assert places == sorted(places)
+    refused = besser("model", "order-columns", "Book", "nope")
+    assert refused.returncode == 2 and "has no column nope (it has: isbn, pages, title;" in refused.stderr
+
+
+def test_a_screen_takes_its_rows_a_page_and_its_answer_says_its_title(starter, change, app):
+    change("add-class", "DealLine", "quantity:int")
+    # Before: "added screen DealLines at /deallines", which left a run unsure its title was taken; and no
+    # option set the rows, so a run rewrote rowsPerPage in every generated page.
+    line = change("add-screen", "DealLine", "--title", "Deal lines", "--rows", "10")
+    assert line.startswith("model.py: added screen DealLines titled 'Deal lines' at /deallines "
+                           "(table of DealLine: quantity; 10 rows a page;")
+    pages, _, _ = app()
+    assert '"rowsPerPage": 10' in pages["DealLines"] and '"rowsPerPage": 5' in pages["Books"]
+
+
+def test_the_model_itself_is_renamed_by_its_name(starter, change, besser):
+    # Before: rename took only the elements of a model, so every application built from the starter kept the
+    # names Library and LibraryApp, and its API was titled "Library API".
+    assert change("rename", "Library", "Shop") == (
+        "model.py: renamed the model Library to Shop (the API's title and the database file follow it)")
+    assert change("rename", "LibraryApp", "ShopApp") == "model.py: renamed the model LibraryApp to ShopApp"
+    info = besser("info", "model.py").stdout
+    assert "(DomainModel 'Shop')" in info and "(GUIModel 'ShopApp')" in info
+
+
+def test_add_class_takes_the_options_of_its_screen(starter, change, besser):
+    # Before: "unrecognized arguments: --title Services --route /services", and the batch the line was in
+    # was lost with it (a run did the whole batch again).
+    line = change("batch", "-", stdin="add-class Service name:str --screen --title Services --route /svc --rows 10\n"
+                                      "add-column Book title\n")
+    assert "added screen Services at /svc (table of Service: name; 10 rows a page;" in line
+    # An option of the screen asks for the screen.
+    assert "added screen PriceTags titled 'Price tags' at /pricetags" in change(
+        "add-class", "Tag", "label:str", "--title", "Price tags")

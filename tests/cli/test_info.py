@@ -91,7 +91,8 @@ def test_each_screen_says_the_class_and_the_columns_of_its_tables(besser):
     assert besser("init", "--kind", "gui").returncode == 0
     run = besser("info", "model.py")
 
-    assert run.stdout.splitlines()[-4:-1] == [
+    # (the last two lines: how to replace the starter, and the generators)
+    assert run.stdout.splitlines()[-5:-2] == [
         "    modules: library_module",
         "    screen Authors (main page), /Authors: Author table author_table (name, email); buttons to Books",
         "    screen Books, /Books: Book table book_table (title, pages)",
@@ -268,3 +269,21 @@ def test_a_large_model_is_summarised_by_its_names(besser, tmp_path):
     # A model of ordinary size is printed in full, as before.
     assert besser("model", "batch", "-", stdin="remove Thing20\nremove Thing19\n").returncode == 0
     assert "class Thing7: code:str, label:str" in besser("info", "model.py").stdout
+
+def test_a_screen_asked_for_as_a_class_is_called_a_screen(besser):
+    assert besser("init", "--kind", "gui").returncode == 0
+    run = besser("info", "model.py", "--class", "Books")
+    # Before: "model.py has no class named 'Books' (it has: Author, Book)", and the next call searched for it.
+    assert run.returncode == 1
+    assert "'Books' is a screen (/Books), not a class: 'besser info model.py' lists what each screen shows" in run.stderr
+
+
+def test_info_says_how_to_replace_a_starter_nobody_changed(besser):
+    assert besser("init", "--kind", "gui").returncode == 0
+    # Before: nothing, and three runs read model.py and this summary to learn which classes to remove.
+    hint = ("This is the starter of 'besser init': to replace it, start your 'besser model batch' with remove Book, "
+            "remove Author (their associations and pages go with them); 'rename Library NAME' names the model "
+            "after your application.")
+    assert hint in besser("info", "model.py", output=None).stdout
+    assert besser("model", "batch", "-", stdin="remove Book\nremove Author\nrename Library Shop\n").returncode == 0
+    assert "starter" not in besser("info", "model.py", output=None).stdout

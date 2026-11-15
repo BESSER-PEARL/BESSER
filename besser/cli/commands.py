@@ -73,6 +73,7 @@ from besser.generators.runner import (
     regenerate_generator,
     run_generator,
 )
+from besser.utilities import sort_by_timestamp
 from besser.utilities.provenance import get_besser_version
 from besser.utilities.three_way_merge import merge_available
 
@@ -374,6 +375,26 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
 # ── info ────────────────────────────────────────────────────────────────────
 
 
+def _starter_hint(model_path: str, loaded: LoadedModels) -> str | None:
+    """A line for a model file still as ``besser new`` or ``besser init`` wrote it: how to make it one's own.
+    Without it a session read the file, then its summary, to learn which classes to remove."""
+    path = Path(model_path)
+    try:
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not any(text == starter_source(kind, path.name).replace("\r\n", "\n") for kind in STARTERS):
+        return None
+    domains = loaded.of_kind("domain")
+    classes = [cls.name for domain in domains for cls in sort_by_timestamp(domain.model.get_classes())]
+    if not classes:
+        return None
+    name = domains[0].model.name
+    named = "" if name in classes else f"; 'rename {name} NAME' names the model after your application"
+    return (f"This is the starter of 'besser init': to replace it, start your 'besser model batch' with "
+            f"{', '.join(f'remove {cls}' for cls in classes)} (their associations and pages go with them){named}.")
+
+
 def info(model_path: str, class_name: str | None = None, everything: bool = False) -> Result:
     """Summarise the models of the file and name the generators that can run on it; or, with
     ``class_name``, describe that class of its domain models. A file with a large domain model (more
@@ -410,6 +431,9 @@ def info(model_path: str, class_name: str | None = None, everything: bool = Fals
     if overview:
         lines.append(f"A large model: names only. 'besser info {loaded.path} --class X' shows a class in full with "
                      f"its page; --all shows everything.")
+    hint = _starter_hint(model_path, loaded)
+    if hint:
+        lines.append(hint)
     runnable = [spec.id for spec in GENERATORS if all(loaded.of_kind(kind) for kind in spec.models)]
     generators_line = (f"Generators that read {'these models' if len(models) > 1 else 'this model'}: "
                        f"{', '.join(runnable) or 'none'}")
@@ -426,6 +450,12 @@ def _class_info(loaded: LoadedModels, class_name: str, data: dict[str, Any]) -> 
     found = [(model, cls) for model, cls in found if cls is not None]
     if not found:
         known = sorted({cls.name for model in loaded.of_kind("domain") for cls in model.model.get_classes()})
+        # A screen asked for as a class: say what it is and where it is described.
+        screens = [screen for gui in loaded.of_kind("gui") for module in gui.model.modules for screen in module.screens
+                   if class_name in (screen.name, screen.description, getattr(screen, "route_path", None))]
+        if screens:
+            return failure("info", f"'{class_name}' is a screen ({screens[0].route_path or screens[0].name}), not a "
+                                   f"class: 'besser info {loaded.path}' lists what each screen shows", EXIT_FAILED, data)
         return failure("info", f"{loaded.path} has no class named '{class_name}' (it has: {', '.join(known) or 'none'})",
                        EXIT_FAILED, data)
     entries = [{"model": model.name, **describe_class(model.model, cls)} for model, cls in found]
@@ -1380,6 +1410,8 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
             f"{_CONFLICT_MARKERS}, then run {rerun} again"
             for path in lists["conflicted"]
         ]
+    if not dry_run:
+        warnings.extend(_stale_databases(lists["written"] + lists["merged"]))
     files = [] if dry_run else sorted(lists["written"] + lists["merged"] + lists["conflicted"])
     lines = _regeneration_text(spec, model_path, output_dir, lists, adopt, dry_run)
     return Result(
@@ -1388,6 +1420,20 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
         # The files merged or in conflict are named by the warnings and errors; a dry run is read for its list.
         brief="" if dry_run else lines[0].rstrip(":"),
     )
+
+
+def _stale_databases(changed: Sequence[str]) -> list[str]:
+    """A warning per SQLite file left beside a backend whose tables just changed. The generated app creates
+    missing tables and never alters one, so on that file it answers 500 "Database operation failed", which
+    says nothing of the cause; the tests use a database of their own and stay green."""
+    warnings = []
+    for path in changed:
+        if Path(path).name == "sql_alchemy.py":
+            stale = sorted(file.as_posix() for file in Path(path).parent.glob("data/*.db"))
+            if stale:
+                warnings.append(f"the tables changed and {', '.join(stale)} still has the earlier ones: delete it "
+                                "before you start the backend (it would answer 500)")
+    return warnings
 
 
 def _regeneration_text(spec: GeneratorSpec, model_path: str, output_dir: str, lists: dict[str, list[str]],
@@ -2032,7 +2078,7 @@ def _read_model_text(path: Path) -> str:
 # Hand-written code is searched in files of these kinds, outside these folders.
 _CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".jsx")
 _SKIPPED_FOLDERS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".pytest_cache"}
-_MAX_LEFT_BEHIND = 8
+_MAX_LEFT_BEHIND = 20
 
 
 def _left_behind(model_path: Path, operations: Sequence[Operation]) -> list[str]:
@@ -2065,14 +2111,19 @@ def _left_behind(model_path: Path, operations: Sequence[Operation]) -> list[str]
             if file.resolve() in generated or file.resolve() == model_path.resolve():
                 continue
             with contextlib.suppress(OSError, UnicodeDecodeError):
-                lines = [str(number) for number, line in enumerate(file.read_text(encoding="utf-8").splitlines(), 1)
-                         if pattern.search(line)]
-                if lines:
-                    found.append(f"{file.relative_to(root).as_posix()}:{','.join(lines[:12])}")
+                found += [f"{file.relative_to(root).as_posix()}:{number}: {_cut(line.strip())}"
+                          for number, line in enumerate(file.read_text(encoding="utf-8").splitlines(), 1)
+                          if pattern.search(line)]
         if found:
-            more = f" and {len(found) - _MAX_LEFT_BEHIND} more files" if len(found) > _MAX_LEFT_BEHIND else ""
-            warnings.append(f"hand-written code still names {path}: {'; '.join(found[:_MAX_LEFT_BEHIND])}{more}")
+            # The lines themselves: with only their numbers, the next thing done was to print them.
+            more = [f"and {len(found) - _MAX_LEFT_BEHIND} more lines"] if len(found) > _MAX_LEFT_BEHIND else []
+            warnings.append("\n  ".join([f"hand-written code still names {path}, on these lines:",
+                                         *found[:_MAX_LEFT_BEHIND], *more]))
     return warnings
+
+
+def _cut(line: str, width: int = 140) -> str:
+    return line if len(line) <= width else line[:width - 3] + "..."
 
 
 def model(operations: Sequence[Operation], model_path: str | None = None, use: Sequence[str] = ()) -> Result:

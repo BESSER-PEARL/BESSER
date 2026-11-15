@@ -184,12 +184,21 @@ def test_init_keeps_a_model_and_a_configuration_that_exist(besser, write, tmp_pa
     assert (tmp_path / "model.py").read_text() == "mine = 1\n"
 
 
+def _project_guide(text: str, backend: str) -> str:
+    """The guide as a project reads it: its own paths where ``text`` names the file and the database."""
+    text = text.replace("`extensions.py` beside `main_api.py`", f"`{backend}/extensions.py`")
+    text = text.replace("`extensions.py`", f"`{backend}/extensions.py`")
+    return text.replace("(`data/*.db` there)", f"(`{backend}/data/*.db`)")
+
+
 def test_guide_prints_the_rules_in_little_space(besser):
     run = besser("guide", output=None)
 
     assert run.stdout == GUIDE
     # Re-read on every turn of every session, so it stays small.
-    assert len(GUIDE.encode("utf-8")) < 4200 and len(GUIDE.splitlines()) <= 60
+    # (Raised from 4200 bytes and 60 lines for the lines two audited runs showed sessions paying for: the
+    # lines rename and remove print, a test's shape, an enumeration in extensions.py, the stale database.)
+    assert len(GUIDE.encode("utf-8")) < 4800 and len(GUIDE.splitlines()) <= 62
 
 
 def test_the_guide_has_the_lines_on_pages_only_in_a_project_that_builds_a_gui(besser, tmp_path):
@@ -198,12 +207,15 @@ def test_the_guide_has_the_lines_on_pages_only_in_a_project_that_builds_a_gui(be
 
     # The project's own file for hand-written backend code is named by its path. Before: "extensions.py
     # beside main_api.py", and a small model wrote it in the project folder, where nothing loads it.
-    guide = guide_text(gui=True).replace("`extensions.py` beside `main_api.py`", "`web_app/backend/extensions.py`")
+    guide = _project_guide(guide_text(gui=True), "web_app/backend")
     assert "`web_app/backend/extensions.py`, with" in guide
+    # ... and so are its other mentions and the database beside it (sessions looked for both).
+    assert "set it in `web_app/backend/extensions.py`" in guide and "(`web_app/backend/data/*.db`)" in guide
+    assert "`extensions.py`" not in guide and "data/*.db` there" not in guide
     assert run.stdout == guide and GUI_GUIDE in run.stdout and "add-screen" not in GUIDE
     assert guide in (tmp_path / "AGENTS.md").read_text()
     # What a project with a web_app output pays for them, besides the guide's budget above.
-    assert len(GUI_GUIDE.encode("utf-8")) < 1600 and len(GUI_GUIDE.splitlines()) <= 17
+    assert len(GUI_GUIDE.encode("utf-8")) < 1750 and len(GUI_GUIDE.splitlines()) <= 20
 
 
 # What the guide says the generated backend answers, as tests that use the guide's own conftest.py.
@@ -242,7 +254,7 @@ def test_the_guides_test_fixture_runs_and_its_answers_hold_on_a_generated_backen
     guide = besser("guide", output=None).stdout
     plain = guide_text(tests=False, uniform_responses=False)
     # The guide of a project names the extension file by its path there.
-    assert guide == plain.replace("`extensions.py` beside `main_api.py`", "`backend/extensions.py`") != GUIDE
+    assert guide == _project_guide(plain, "backend") != GUIDE
     assert 'read it as `body.get("x", body)`' in guide and "generated tests" not in guide
     write("tests/conftest.py", guide.split("```python\n")[1].split("```")[0])
     write("tests/test_answers.py", GUIDE_ANSWERS_TEST)
@@ -265,8 +277,7 @@ def test_a_build_keeps_the_guide_in_agents_md_in_step_with_the_options(besser, w
     run = besser("build", "--json")
 
     agents = (tmp_path / "AGENTS.md").read_text()
-    expected = guide_text(tests=False, uniform_responses=False).replace(
-        "`extensions.py` beside `main_api.py`", "`backend/extensions.py`")
+    expected = _project_guide(guide_text(tests=False, uniform_responses=False), "backend")
     assert expected in agents and GUIDE not in agents
     assert "updated AGENTS.md: the guide follows the outputs of besser.toml" in run.json["notes"]
     assert besser("guide", output=None).stdout in agents
@@ -279,8 +290,8 @@ def test_the_guide_of_a_new_project_is_the_short_one(besser, tmp_path):
 
     guide = besser("guide", output=None).stdout
 
-    # GUIDE, with the project's file for hand-written backend code named by its path.
-    assert guide == GUIDE.replace("`extensions.py` beside `main_api.py`", "`backend/extensions.py`")
+    # GUIDE, with the project's file for hand-written backend code and its database named by their paths.
+    assert guide == _project_guide(GUIDE, "backend")
     assert guide in (tmp_path / "AGENTS.md").read_text()
     assert "`GET /x/{x_id}/`, `POST` and `PUT` answer" in guide and "```python" not in guide
     assert "generated tests of every" in guide and "body.get" not in guide
@@ -583,3 +594,19 @@ def test_the_guides_test_fixture_runs_in_a_gui_project_without_generated_tests(b
     run = besser("apply", output=None)
 
     assert run.returncode == 0 and "tests: 1 passed" in run.stdout, run.stdout + run.stderr
+
+def test_apply_says_when_the_database_of_the_app_has_the_earlier_tables(besser, write, tmp_path):
+    """The generated app never alters a table: on its database of before a model change it answers 500, and
+    nothing said why (two runs looked for the cause, then for the file)."""
+    pytest.importorskip("fastapi.testclient")
+    besser("init")
+    assert besser("apply", output=None).returncode == 0
+    write("backend/data/Library.db", "an SQLite file the app wrote")
+    assert besser("model", "add-attribute", "Book", "isbn:str?").returncode == 0
+
+    changed = besser("apply", output=None)
+
+    assert changed.returncode == 0, changed.stdout + changed.stderr
+    assert ("warning: backend: the tables changed and backend/data/Library.db still has the earlier ones: delete "
+            "it before you start the backend (it would answer 500)") in changed.stderr
+    assert "still has the earlier ones" not in besser("apply", output=None).stderr  # nothing changed since

@@ -48,12 +48,14 @@ Types: `str int float bool date datetime time`, or an enumeration's name.
 - `besser model add-association invoice_contact invoices:Invoice[*] contact:Contact[1]`
 - `besser model set-enum Stage LEAD WON LOST` (sets all its literals)
 - `besser model rename Customer Account`, `rename Contact.mail email`, `rename Stage.WON CLOSED`, an
-  association end as `Book.authors` or `book_authors.authors`
-- `besser model remove Contact.phone` (a class goes with its associations)
+  association end as `Book.authors` or `book_authors.authors`, the model itself (`rename Library Shop`)
+- `besser model remove Contact.phone` (a class goes with its associations). `rename` and `remove` print
+  each line of your own code that still uses the name: change those, no need to search first.
 - `besser model add-method Deal "discount(rate:float) -> float"`, `add-constraint Deal "self.amount >= 0"`
 - In place: `set-attribute Book.pages :int?=0` (`=` drops the default; none on a date or time),
   `set-multiplicity Book.authors "[*]"`, `set-abstract Party true`, `remove-parent Customer Party`
-- Several changes in one call: `besser model batch - <<'EOF'` with one change per line.
+- Several changes in one call: `besser model batch - <<'EOF'` with one change per line; a line can use
+  what an earlier line adds.
 Never patch `model.py` with a script; edit it by hand only where a command says so.
 
 Then one command, `besser apply`: it validates, builds every output keeping your edits, runs `test` of
@@ -64,12 +66,16 @@ Hand-written code never goes in a generated file; a build never overwrites it:
 - Backend routes, middleware and startup hooks: `extensions.py` beside `main_api.py`, with
   `setup(app)` (added after the generated routes) or `before_routers(app)` (routes that win over them). It
   imports `from database import get_db`, `from sql_alchemy import X` (`db.get(X, id)`; an association end
-  is a relationship of its name, a to-one end also a column `<end>_id`), `from pydantic_classes import XCreate`.
+  is a relationship of its name, a to-one end also a column `<end>_id`; an enumeration attribute holds a
+  Python `Enum` named like the enumeration: `x.stage.name == "WON"`), `from pydantic_classes import
+  XCreate`. A rule on a class: a `before_insert` and `before_update` listener that raises
+  `HTTPException(422, ...)`.
 - Other code lives outside the generated folders. A model `.py` file only builds the model; a GUI model
   goes in the same file as its domain model.
 - Check behaviour with tests, not by reading the output: `besser apply` runs the generated tests of every
-  class's routes; write tests only for your own code, in `tests/`, with the `client` fixture (a TestClient,
-  an empty database per test).
+  class's routes and yours; write tests only for your own code, in `tests/`, with the `client` fixture (a
+  TestClient on an empty database, no import needed): `def test_x(client): assert
+  client.post("/x/", json={...}).status_code == 200`.
 
 The `backend` API per class `X` (`x`: its name in lower case): `POST /x/`, `GET /x/`,
 `GET|PUT|DELETE /x/{x_id}/`, a `Method` as `POST /x/{x_id}/methods/<name>/`, and more (`besser info`).
@@ -80,7 +86,7 @@ empty); an unknown id is 400 (404 in a list). An object is `{attributes, "id", "
 per to-many end: `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. OCL
 constraints are enforced (422) only if they compare an attribute with a number or use `matches('regex')`;
 write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`); it never alters a
-table: after a model change delete its SQLite file (`data/*.db`) first.
+table: after a model change delete its SQLite file (`data/*.db` there) before running it, or it answers 500.
 """
 
 # The GUI lines go after the model commands, before the line that starts with this.
@@ -89,11 +95,14 @@ _GUI_GUIDE_BEFORE = "Then one command, `besser apply`"
 # every other project would pay for them in each session's context.
 GUI_GUIDE = """\
 Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend/`):
-- `besser model add-screen Invoice [--title Bills] [--route /bills]`: a page with a table of the class (add,
-  edit, delete), at `/invoices` by default; `add-class ... --screen` adds a class with its page.
+- `besser model add-screen Invoice [--title Bills] [--route /bills] [--rows 10]`: a page with a table of the
+  class (add, edit, delete; 5 rows a page by default), at `/invoices` by default; `add-class ... --screen`
+  adds a class with its page (same options).
 - `add-menu`: a menu linking every page, on every page; new pages join it (without one they get a button on
   the main page). `add-column Invoice customer.name [--label Customer]`: a column of the object a to-one end
-  leads to. `add-link Invoices "Export" http://localhost:8000/invoice/export/`: a link on a page.
+  leads to (the class's own attributes are columns already). `order-columns Invoice number customer.name`:
+  these columns first. `add-link Invoices "Export" http://localhost:8000/invoice/export/`: a link on a
+  page, written as given.
 - `add-page "Sales overview" [--route /home] [--main]`: a page headed "Sales overview", for `add-card /home "Paid" sum:Invoice.total
   [--where "paid == true and total > 0"]` (also `avg min max median`, `count:Invoice`) and `add-chart /home
   "By status" count:Invoice --by status [--kind line|pie]`.
@@ -102,7 +111,8 @@ Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend
   takes it along. `besser info` lists each page's route, table, cards and charts.
 - Anything else on a page (a computed line, your own component): edit the page's file,
   `<dir>/frontend/src/pages/<Screen>.tsx`, the one generated file to open (the backend's address there:
-  `import.meta.env.VITE_API_URL`); `besser apply` merges later model changes into your edit.
+  `import.meta.env.VITE_API_URL || "http://localhost:8000"`); `besser apply` merges later model changes
+  into your edit.
 
 """
 
@@ -111,8 +121,9 @@ Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend
 # and POST and PUT answer what GET does (option ``uniform_responses``). A project whose backend output has
 # one of them off reads these lines in place of GUIDE's.
 _TESTS_GUIDE = '''- Check behaviour with tests, not by reading the output: `besser apply` runs the generated tests of every
-  class's routes; write tests only for your own code, in `tests/`, with the `client` fixture (a TestClient,
-  an empty database per test).
+  class's routes and yours; write tests only for your own code, in `tests/`, with the `client` fixture (a
+  TestClient on an empty database, no import needed): `def test_x(client): assert
+  client.post("/x/", json={...}).status_code == 200`.
 '''
 _NO_TESTS_GUIDE = '''- Check behaviour with tests, not by reading the output: set `test = "python -m pytest -q"` in `besser.toml`
   and give the tests a `client` fixture in `tests/conftest.py` (`backend`: the output's `dir`; of a
@@ -130,14 +141,14 @@ _UNIFORM_GUIDE = '''`GET /x/` answers a list of them. `GET /x/{x_id}/`, `POST` a
 per to-many end: `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. OCL
 constraints are enforced (422) only if they compare an attribute with a number or use `matches('regex')`;
 write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`); it never alters a
-table: after a model change delete its SQLite file (`data/*.db`) first.
+table: after a model change delete its SQLite file (`data/*.db` there) before running it, or it answers 500.
 '''
 _NOT_UNIFORM_GUIDE = '''`GET /x/` answers a list of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end:
 `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. `POST` and `PUT` answer
 the same if `X` has a to-many end, else the bare object: read it as `body.get("x", body)`. OCL constraints
 are enforced (422) only if they compare an attribute with a number or use `matches('regex')`; write other
 rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`); it never alters a
-table: after a model change delete its SQLite file (`data/*.db`) first.
+table: after a model change delete its SQLite file (`data/*.db` there) before running it, or it answers 500.
 '''
 
 
@@ -173,6 +184,11 @@ def guide_for(generated: "Sequence[GeneratedDir]") -> str:
     files = sorted({f"{output.path}/{output.extension_file}" for output in generated if output.extension_file})
     if len(files) == 1:
         text = text.replace(_EXTENSION_FILE, f"`{files[0]}`", 1)
+        # ... and wherever else the guide names it or the database beside it: 'in its folder' sent sessions
+        # looking for both.
+        folder = files[0].rsplit("/", 1)[0]
+        text = text.replace("`extensions.py`", f"`{files[0]}`")
+        text = text.replace("(`data/*.db` there)", f"(`{folder}/data/*.db`)")
     return text
 
 

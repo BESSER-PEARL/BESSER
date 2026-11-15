@@ -207,15 +207,17 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "model": {"type": "string"},
         "models": {"type": "array", "description": "per model: name, kind, type, model_name, current, counts, "
                                                    "elements; a domain model's classes (attributes with name, "
-                                                   "type, optional, default), enumerations, associations, "
+                                                   "type, optional, default, derived), enumerations, associations, "
                                                    "constraints and backend_endpoints (per class, 'METHOD /path/'); a GUI "
                                                    "model's screens (name, route, main, tables with name, class "
-                                                   "and columns, and opens: the screens its buttons open)"},
+                                                   "and columns, cards, charts, links, menu, and opens: the screens "
+                                                   "its buttons open)"},
         "generators": {**_STRINGS, "description": "the ids of the generators that can run on the file"},
         "classes": {"type": "array", "description": "with --class: per domain model holding it, the class's "
                                                     "model, name, is_abstract, parents, attributes, "
                                                     "inherited_attributes, methods, ends, inherited_ends, constraints, "
-                                                    "backend_endpoints and backend_code"},
+                                                    "backend_endpoints, backend_code and pages (the screens with a "
+                                                    "table of the class)"},
     },
     "model": {
         "model": {"type": "string", "description": "the .py model file changed"},

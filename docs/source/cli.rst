@@ -1590,8 +1590,8 @@ Each command adds its own:
        ``classes``: per domain model holding it, the class's ``model``,
        ``name``, ``is_abstract``, ``parents``, ``attributes``,
        ``inherited_attributes``, ``methods``, ``ends``, ``inherited_ends``,
-       ``constraints``,
-       ``backend_endpoints`` and ``backend_code``.
+       ``constraints``, ``backend_endpoints``, ``backend_code`` and ``pages``
+       (the screens with a table of the class).
    * - ``model``
      - ``model``, the file, and ``changes``: what each operation did (empty
        when nothing was written).

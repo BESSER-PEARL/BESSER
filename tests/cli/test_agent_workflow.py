@@ -240,7 +240,9 @@ def test_the_guides_test_fixture_runs_and_its_answers_hold_on_a_generated_backen
                          '[output.backend]\ngenerator = "backend"\ndir = "backend"\n')
     # With both options off the project reads the guide's other lines: a fixture to write, two answer shapes.
     guide = besser("guide", output=None).stdout
-    assert guide == guide_text(tests=False, uniform_responses=False) != GUIDE
+    plain = guide_text(tests=False, uniform_responses=False)
+    # The guide of a project names the extension file by its path there.
+    assert guide == plain.replace("`extensions.py` beside `main_api.py`", "`backend/extensions.py`") != GUIDE
     assert 'read it as `body.get("x", body)`' in guide and "generated tests" not in guide
     write("tests/conftest.py", guide.split("```python\n")[1].split("```")[0])
     write("tests/test_answers.py", GUIDE_ANSWERS_TEST)

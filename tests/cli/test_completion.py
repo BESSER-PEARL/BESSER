@@ -224,4 +224,6 @@ def test_fish_completes(besser, tmp_path, line, expected):
     run = subprocess.run(["fish", "--no-config", "-c", "source $argv[1]; complete -C $argv[2]", str(script), line],
                          cwd=tmp_path, capture_output=True, text=True, check=False, timeout=60)
     assert run.returncode == 0, run.stderr
-    assert _offered(run.stdout) == expected
+    # fish 4 adds its own fuzzy matches to the list (--json and --verbose for --s): keep what the word starts.
+    word = line.rsplit(" ", 1)[-1]
+    assert [offer for offer in _offered(run.stdout) if offer.startswith(word)] == expected

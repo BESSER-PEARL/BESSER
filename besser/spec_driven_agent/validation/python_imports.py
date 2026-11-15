@@ -211,38 +211,53 @@ def _declared_dependency_roots(output_dir: str) -> set[str]:
 
 
 
-def _is_declared(root: str, declared: set[str]) -> bool:
+def _is_declared(root: str, declared: set[str], whole_name: bool = False) -> bool:
     """Whether import ``root`` plausibly belongs to a declared distribution.
 
     Case-insensitive (``PyPDF2`` declares ``pypdf2``). A distribution whose
     import name is not in ``_DIST_TO_IMPORT_ROOT`` is matched by its name, or
     the name without a ``_DIST_NAME_PREFIXES`` prefix, starting with the root
     at a word boundary: ``strawberry-graphql`` provides ``strawberry``, but
-    ``sqlalchemy`` never provides an app's own ``sql_alchemy``.
+    ``sqlalchemy`` never provides an app's own ``sql_alchemy``. ``whole_name``
+    drops the word-boundary prefix match.
     """
     root = root.lower()
     for name in declared:
         name = name.lower()
         for candidate in {name, *(name.removeprefix(p) for p in _DIST_NAME_PREFIXES)}:
-            if candidate == root or candidate.startswith(root + "_"):
+            if candidate == root or not whole_name and candidate.startswith(root + "_"):
                 return True
     return False
 
 
-_IMPORT_FAILURES = frozenset({"ImportError", "ModuleNotFoundError", "Exception", "BaseException"})
+_IMPORT_FAILURES = frozenset({"ImportError", "ModuleNotFoundError"})
+# Catch an import failure along with everything else: around a module the app
+# does not ship, more often a hidden defect than an optional import.
+_BROAD_FAILURES = frozenset({"Exception", "BaseException"})
+_OPTIONAL, _BROAD = "optional", "broad"
 
 
-def _catches_import_failure(handler: _ast.ExceptHandler) -> bool:
-    """Whether ``handler`` absorbs an import failure; one that ends by raising
+def _exception_names(nodes: list[_ast.expr]) -> set[str]:
+    return {node.id if isinstance(node, _ast.Name) else node.attr
+            for node in nodes if isinstance(node, (_ast.Name, _ast.Attribute))}
+
+
+def _failure_kind(names: set[str]) -> str | None:
+    """``_OPTIONAL`` for an import-failure handler, ``_BROAD`` for a catch-all, else None."""
+    if names & _IMPORT_FAILURES:
+        return _OPTIONAL
+    return _BROAD if names & _BROAD_FAILURES else None
+
+
+def _handler_kind(handler: _ast.ExceptHandler) -> str | None:
+    """How ``handler`` absorbs an import failure; one that ends by raising
     again (``raise``, ``raise RuntimeError(...) from exc``) lets the app die."""
     if handler.body and isinstance(handler.body[-1], _ast.Raise):
-        return False
+        return None
     if handler.type is None:
-        return True
+        return _BROAD
     types = handler.type.elts if isinstance(handler.type, _ast.Tuple) else [handler.type]
-    return any(isinstance(t, (_ast.Name, _ast.Attribute))
-               and (t.id if isinstance(t, _ast.Name) else t.attr) in _IMPORT_FAILURES
-               for t in types)
+    return _failure_kind(_exception_names(types))
 
 
 def _is_type_checking(test: _ast.expr) -> bool:
@@ -256,42 +271,46 @@ def _is_version_check(test: _ast.expr) -> bool:
                for n in _ast.walk(test))
 
 
-def _suppresses_import_failure(node: _ast.With) -> bool:
-    """``with suppress(ImportError):`` / ``with contextlib.suppress(...)``."""
-    return any(
-        isinstance(call, _ast.Call)
-        and isinstance(call.func, (_ast.Name, _ast.Attribute))
-        and (call.func.id if isinstance(call.func, _ast.Name) else call.func.attr) == "suppress"
-        and any(isinstance(arg, (_ast.Name, _ast.Attribute))
-                and (arg.id if isinstance(arg, _ast.Name) else arg.attr) in _IMPORT_FAILURES
-                for arg in call.args)
-        for call in (item.context_expr for item in node.items))
+def _suppress_kind(node: _ast.With) -> str | None:
+    """How ``with suppress(ImportError):`` / ``with contextlib.suppress(...)`` absorbs an import failure."""
+    kinds = {_failure_kind(_exception_names(call.args))
+             for call in (item.context_expr for item in node.items)
+             if isinstance(call, _ast.Call) and isinstance(call.func, (_ast.Name, _ast.Attribute))
+             and (call.func.id if isinstance(call.func, _ast.Name) else call.func.attr) == "suppress"}
+    return _OPTIONAL if _OPTIONAL in kinds else _BROAD if _BROAD in kinds else None
 
 
-def _required_import_roots(node: _ast.AST) -> list[str]:
-    """Roots of the absolute imports the app needs in order to start.
+def _required_import_roots(node: _ast.AST, broad: bool = False) -> list[tuple[str, bool]]:
+    """``(root, broad)`` for the absolute imports the app needs in order to start.
 
     Skipped, because the app starts without them: imports inside a ``try``
     that handles the import failure (and the fallback in its handler) or a
     ``with suppress(ImportError)``, ``if TYPE_CHECKING:`` imports, which never
     run, and both branches of a ``sys.version_info`` check (a backport).
+    ``broad`` marks an import under a handler that catches every exception.
     """
     if isinstance(node, _ast.ImportFrom):
-        return [node.module.split(".")[0]] if node.module and not node.level else []
+        return [(node.module.split(".")[0], broad)] if node.module and not node.level else []
     if isinstance(node, _ast.Import):
-        return [alias.name.split(".")[0] for alias in node.names]
-    if isinstance(node, (_ast.Try, _ast.TryStar)) and any(
-            _catches_import_failure(h) for h in node.handlers):
-        children = [*node.orelse, *node.finalbody]
+        return [(alias.name.split(".")[0], broad) for alias in node.names]
+    guarded: list[_ast.AST] = []
+    if isinstance(node, (_ast.Try, _ast.TryStar)):
+        kinds = {_handler_kind(h) for h in node.handlers}
+        if _OPTIONAL in kinds or _BROAD in kinds:
+            children = [*node.orelse, *node.finalbody]
+            guarded = [] if _OPTIONAL in kinds else node.body
+        else:
+            children = list(_ast.iter_child_nodes(node))
     elif isinstance(node, _ast.If) and _is_type_checking(node.test):
         children = node.orelse
     elif isinstance(node, _ast.If) and _is_version_check(node.test):
         children = []
-    elif isinstance(node, _ast.With) and _suppresses_import_failure(node):
-        children = []
+    elif isinstance(node, _ast.With) and (kind := _suppress_kind(node)):
+        children, guarded = [], [] if kind == _OPTIONAL else node.body
     else:
         children = list(_ast.iter_child_nodes(node))
-    return [root for child in children for root in _required_import_roots(child)]
+    return ([root for child in children for root in _required_import_roots(child, broad)]
+            + [root for child in guarded for root in _required_import_roots(child, True)])
 
 
 def _unresolvable_local_imports(output_dir: str) -> list[str]:
@@ -336,6 +355,9 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
             directory = parent
 
     declared = _declared_dependency_roots(output_dir)
+    # A module or package the app itself ships somewhere is local: a declared
+    # ``auth-lib`` does not provide the app's own ``auth``.
+    shipped = {name for names in provided.values() for name in names}
 
     problems: list[str] = []
     for path in py_files:
@@ -358,17 +380,28 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
                 break
             probe = parent
 
-        roots = _required_import_roots(tree)
+        # A root is only broadly guarded when every import of it is.
+        roots: dict[str, bool] = {}
+        for root_name, broad in _required_import_roots(tree):
+            roots[root_name] = roots.get(root_name, True) and broad
 
         rel = os.path.relpath(path, output_dir).replace("\\", "/")
-        for root_name in sorted(set(roots)):
+        for root_name, broad in sorted(roots.items()):
             if (root_name in _EXTERNAL_IMPORT_ROOTS
                     or root_name in _STDLIB_ROOTS
                     or root_name in reachable
-                    or _is_declared(root_name, declared)):
+                    or _is_declared(root_name, declared, whole_name=root_name in shipped)):
                 continue
             if any(os.path.basename(d) == root_name and os.path.dirname(d) ==
                    os.path.dirname(path) for d in package_dirs):
+                continue
+            if broad:
+                problems.append(
+                    f"possibly missing module: {rel} imports '{root_name}', which the app "
+                    f"does not provide where it is used, under a handler that catches every "
+                    f"exception - if it is the app's own module, the import always fails and "
+                    f"the handler hides it"
+                )
                 continue
             problems.append(
                 f"missing module: {rel} imports '{root_name}', which the app "

@@ -53,6 +53,15 @@ def _page(name):
     return f"export default function {name}List() {{ return <h1>{name}s</h1>; }}\n"
 
 
+def _screen(tmp_path, name):
+    """A page for ``name`` and an App that routes "/" to it."""
+    _write(tmp_path, f"frontend/src/pages/{name}List.jsx", _page(name))
+    _write(tmp_path, "frontend/src/App.jsx",
+           f"import {{ Routes, Route }} from 'react-router-dom';\nimport {name}List from './pages/{name}List';\n"
+           f"export default function App() {{\n"
+           f"  return <Routes><Route path=\"/\" element={{<{name}List />}} /></Routes>;\n}}\n")
+
+
 def test_item_names_the_routed_classes_and_lets_the_request_scope_the_screens(tmp_path):
     text = _task(_orch(tmp_path))["text"]
     assert ("Build a screen for each class with backend routes (Author, Book, Library) unless the request "
@@ -66,14 +75,14 @@ def test_first_file_does_not_close_the_item_one_entity_screen_does(tmp_path):
     _write(tmp_path, "frontend/index.html", "<title>Library</title><div id=root></div>")
     assert orch.executor.autoclose_verified_tasks() == []
     assert orch.executor._task_list({"action": "done", "id": 1})["status"] == "refused"
-    _write(tmp_path, "frontend/src/pages/BookList.jsx", _page("Book"))
+    _screen(tmp_path, "Book")
     assert [item["id"] for item in orch.executor.autoclose_verified_tasks()] == [1]
 
 
 def test_a_class_left_out_is_a_warning_not_a_refusal(tmp_path):
     orch = _orch(tmp_path)
     task = _task(orch)
-    _write(tmp_path, "frontend/src/pages/BookList.jsx", _page("Book"))
+    _screen(tmp_path, "Book")
     assert task["verify"]()
     assert orch._routed_entity_pages() == {"Author": False, "Book": True, "Library": False}
     warnings = orch._acceptance_matrix_issues()
@@ -120,5 +129,5 @@ def test_resume_reattaches_the_verifier_to_an_older_item_text(tmp_path, monkeypa
     resumed.resume(INSTRUCTIONS)
     task = resumed.executor._tasks[0]
     assert task["verify"] is not None and not task["verify"]()
-    _write(tmp_path, "frontend/src/pages/AuthorList.jsx", _page("Author"))
+    _screen(tmp_path, "Author")
     assert task["verify"]()

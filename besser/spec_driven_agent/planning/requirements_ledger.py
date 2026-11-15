@@ -766,6 +766,17 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     a few requirements against the whole app cost as much as the full
     judgment. With no resolvable focus path it falls back to the whole app.
     """
+    return build_app_digest_and_gaps(output_dir, focus_paths=focus_paths)[0]
+
+
+def build_app_digest_and_gaps(output_dir: str, *,
+                              focus_paths: list[str] | None = None) -> tuple[str, frozenset[str]]:
+    """:func:`build_app_digest`, and the source files it left out or cut for the budget.
+
+    The gaps are what the judge could not read in full: a verdict about them is
+    not a fair one. Files never shown (``_DIGEST_SKIP_NAMES``) and the files a
+    focused digest leaves out on purpose are not gaps.
+    """
     files = _source_files(output_dir)
     untouched = _untouched_generator_files(output_dir, files)
     focused = set()
@@ -823,10 +834,12 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     parts: list[str] = []
     omitted = unreadable + omitted_by_focus
     truncated_paths = []
+    over_budget = []
     for _, rel, chunk, truncated in entries:
         if rel not in reserved:
             if total + len(chunk) + 2 > source_budget:
                 omitted.append(rel)
+                over_budget.append(rel)
                 continue
             total += len(chunk) + 2
         parts.append(chunk)
@@ -844,7 +857,25 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     )
     if len(footer) > footer_budget:
         footer = footer[:max(0, footer_budget - 42)] + "\n[Coverage path listing also truncated.]\n"
-    return "\n\n".join(parts) + footer[:footer_budget]
+    return "\n\n".join(parts) + footer[:footer_budget], frozenset(over_budget + truncated_paths)
+
+
+def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
+    """The digest gaps a verdict's inspection paths, citations or note name.
+
+    A gap counts when its path appears in the note, when a named path is it or a
+    suffix of it (``risk_service.py`` for ``backend/risk_service.py``), or when its
+    file name appears in the note and no other gap has that name.
+    """
+    named = [path.strip().replace("\\", "/").removeprefix("./")
+             for path in [*verdict.get("inspection_paths", []), *cited_paths(verdict.get("evidence"))]
+             if isinstance(path, str) and path.strip()]
+    note = str(verdict.get("note") or "")
+    names = [Path(rel).name for rel in gaps]
+    return [rel for rel in sorted(gaps)
+            if rel in note or any(rel == path or rel.endswith("/" + path) for path in named)
+            or (names.count(Path(rel).name) == 1
+                and re.search(r"(?<![\w.-])" + re.escape(Path(rel).name) + r"(?![\w-])", note))]
 
 
 # The listing names requirements "R1. text"; a judge may echo "R1" or "1.".

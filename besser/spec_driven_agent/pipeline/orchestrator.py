@@ -3615,11 +3615,35 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 task["verify"] = verify
 
     def _frontend_has_entity_screen(self) -> bool:
-        """Frontend files exist and at least one routed class has a page (all, if none is routed)."""
+        """Frontend files exist, at least one routed class has a page, and the app
+        renders a route that can serve home (files alone, if no class is routed).
+
+        The route check: an ``entities.js`` naming every class marks each one as a
+        page in the matrix, before any screen exists (r10-p81, r11-p81).
+        """
         if not self._has_frontend_files():
             return False
         pages = self._routed_entity_pages()
-        return not pages or any(pages.values())
+        return not pages or (any(pages.values()) and self._frontend_route_serves_home())
+
+    def _frontend_route_serves_home(self) -> bool:
+        """``frontend_contract``'s home-route signal: a route that is an index, "/" or computed."""
+        from besser.spec_driven_agent.validation.frontend_contract import _CodeFiles, _route_may_serve_home
+
+        files = []
+        for root, names in walk_app_tree(self.output_dir):
+            for name in names:
+                if not name.endswith((".js", ".jsx", ".ts", ".tsx")):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    if os.path.getsize(path) > _FRONTEND_SOURCE_MAX_BYTES:
+                        continue
+                    with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                        files.append((os.path.relpath(path, self.output_dir).replace("\\", "/"), handle.read()))
+                except OSError:
+                    continue
+        return bool(_route_may_serve_home(_CodeFiles(files)))
 
     def _deterministic_gap_tasks(self) -> list[str]:
         """Checklist items the harness ADDS regardless of the planner.
@@ -3942,7 +3966,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         requirements = self._requirements_to_judge()
         if not requirements:
             return []
-        digest = _requirements_ledger.build_app_digest(self.output_dir)
+        digest, digest_gaps = _requirements_ledger.build_app_digest_and_gaps(self.output_dir)
         cache_key = self._requirement_cache_key(requirements)
         imports = self._import_index(cache_key)
         scope = json.dumps([requirements, self._instructions], sort_keys=True)
@@ -3988,20 +4012,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts = _requirements_ledger.verify_evidence(
             verdicts, self.output_dir, imports,
         )
+        # A partial/missing verdict about a file the digest left out or cut was
+        # not judged on the code; it joins the focused round with that file shown.
+        unseen = {item["id"]: _requirements_ledger.named_digest_gaps(item, digest_gaps)
+                  for item in self._requirement_verdicts if item["status"] in ("partial", "missing")}
+        unseen = {rid: paths for rid, paths in unseen.items() if paths}
         unknown_ids = {item["id"] for item in self._requirement_verdicts
-                       if item["status"] == "unverified"}
+                       if item["status"] == "unverified"} | set(unseen)
         if (unknown_ids and cache_key not in self._requirement_evidence_retries
                 and len(self._requirement_judge_failures) < _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN
                 and self._verification_call_allowed()):
-            # Bad citations need a bounded way to recover without gratuitous
-            # code edits. Rejudge only unknown entries once per revision; never
-            # reroll missing/verified judgments on unchanged source.
+            # Bad citations and unseen files need a bounded way to recover without
+            # gratuitous code edits. Rejudge only those entries once per revision;
+            # never reroll other missing/verified judgments on unchanged source.
             self._requirement_evidence_retries.add(cache_key)
             focus_paths = [path for item in self._requirement_verdicts if item["id"] in unknown_ids
                            for path in _requirements_ledger.cited_paths(item.get("evidence"))]
-            focus_paths = [path for item in self._requirement_verdicts
-                           if item["id"] in unknown_ids
-                           for path in item.get("inspection_paths", [])] + focus_paths
+            focus_paths = [path for paths in unseen.values() for path in paths] + [
+                path for item in self._requirement_verdicts
+                if item["id"] in unknown_ids for path in item.get("inspection_paths", [])] + focus_paths
             focused_digest = _requirements_ledger.build_app_digest(
                 self.output_dir, focus_paths=focus_paths,
             )
@@ -5122,6 +5151,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 # ======================================================================
 
 
+
+# Frontend source larger than this is a bundle, not a screen (frontend_contract's cap).
+_FRONTEND_SOURCE_MAX_BYTES = 1_000_000
 
 # validate_app's marker for a static frontend warning: reported, never refused.
 _ADVISORY_PREFIX = "advisory, not a blocker: "

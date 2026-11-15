@@ -101,4 +101,5 @@ def test_other_errors_drop_the_workspace_prefix(executor, monkeypatch):
     def failing(self, args):
         raise RuntimeError(f"cannot build {self.workspace}{os.sep}src{os.sep}app.ts")
     monkeypatch.setitem(ToolExecutor._handlers, "list_files", failing)
-    assert _run(executor, "list_files", {})["error"] == "list_files failed: cannot build src/app.ts"
+    error = _run(executor, "list_files", {})["error"]
+    assert error.replace(os.sep, "/") == "list_files failed: cannot build src/app.ts"

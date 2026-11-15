@@ -16,7 +16,9 @@ from tests.spec_driven_agent.prompt_budget import FIXTURES, breakdown, phase2_re
 HEADROOM = 0.06
 
 # Characters measured when the budget was pinned. Raise one only on purpose,
-# saying in the commit what the extra prefix buys.
+# saying in the commit what the extra prefix buys. Re-measure with
+# `python -m tests.spec_driven_agent.prompt_budget` from the repo root: it
+# prints chars per fixture, section and tool.
 BASELINES = {
     "shelf": {"system_chars": 22_485, "tools_chars": 14_689},
     "conference": {"system_chars": 42_953, "tools_chars": 14_689},

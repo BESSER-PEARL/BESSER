@@ -178,7 +178,7 @@ def test_the_registered_download_survives_the_workspace_changing(workspace):
     run_dir = os.path.join(str(workspace), f"{runner_module.LLM_TEMP_DIR_PREFIX}{RUN_ID}_abcd1234")
     os.makedirs(run_dir)
     out = os.path.join(run_dir, "out.bin")
-    with open(out, "w", encoding="utf-8") as fh:
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("hi\n")
     secret = os.path.join(str(workspace), "environ")
     with open(secret, "w", encoding="utf-8") as fh:

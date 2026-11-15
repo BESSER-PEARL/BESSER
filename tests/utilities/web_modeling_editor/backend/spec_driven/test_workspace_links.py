@@ -165,6 +165,7 @@ def test_packaging_never_writes_or_reads_through_a_planted_link(tmp_path):
         assert sorted(n for n in archive.namelist() if not n.startswith((".", "BESSER"))) == ["app.py", "main.py"]
 
 
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs os.O_NOFOLLOW (not available on Windows)")
 def test_a_file_swapped_for_a_link_after_the_walk_never_reaches_the_zip(tmp_path, monkeypatch):
     # The run's shell outlives Phase 3, so a background job can swap a file
     # for a link between the walk that listed it and the ZIP writer reading it.
@@ -205,7 +206,8 @@ def test_a_file_dated_outside_the_zip_range_does_not_fail_the_packaging(tmp_path
     workspace = tmp_path / "besser_llm_ws"
     workspace.mkdir()
     (workspace / "main.py").write_text("print('hi')\n", encoding="utf-8")
-    (workspace / "app.py").write_text("app = 1\n", encoding="utf-8")
+    with open(workspace / "app.py", "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("app = 1\n")
     import datetime
     stamp = datetime.datetime(year, 6, 1).timestamp()
     os.utime(workspace / "app.py", (stamp, stamp))

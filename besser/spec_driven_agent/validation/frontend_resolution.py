@@ -29,10 +29,11 @@ import json
 import os
 import re
 from functools import lru_cache
+from typing import NamedTuple
 
 from pygments.lexer import Lexer
 from pygments.lexers import JavascriptLexer, get_lexer_for_filename
-from pygments.token import Comment
+from pygments.token import Comment, String, _TokenType
 from pygments.util import ClassNotFound
 
 _EXCLUDED_DIRS = {"node_modules", ".git", ".venv", "venv", "__pycache__",
@@ -46,9 +47,21 @@ _TS_SOURCE_FOR = {".js": (".ts", ".tsx"), ".jsx": (".ts", ".tsx"), ".mjs": (".mt
 
 # from/import/require/dynamic-import specifiers; one followed by "+" is only
 # the prefix of a path built at runtime (``import('./pages/' + name)``).
+# Fallback only: it also matches inside strings and JSX text (see _token_specs).
 _SPEC_RE = re.compile(
     r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)"""
     r"""(['"])([^'"\n]+)\1(?!\s*\+)""")
+# Tokens allowed between a statement-start import/export and its ``from``,
+# besides quoted names (``import { "a-b" as ab }``).
+_CLAUSE_PUNCTUATION = {"{", "}", ",", "*"}
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*\Z")
+# A quoted JS string cannot hold a raw line break; one that does means the lexer
+# opened a string at an apostrophe in JSX text and read code as string content.
+_RAW_LINE_BREAK = re.compile(r"(?<!\\)\n")
+# Import statements inside template-literal text: the lexer opened a template at
+# a lone backtick in JSX text and read the code after it as template content.
+_SWALLOWED_IMPORT = re.compile(
+    r"""\n\s*(?:import|export)\b[^\n]*\bfrom\s*['"]|\n\s*import\s*['"]|\b(?:import|require)\s*\(\s*['"]""")
 
 _NODE_BUILTINS = {
     "assert", "buffer", "child_process", "cluster", "console", "constants",
@@ -72,33 +85,116 @@ def _lexer_for(suffix: str) -> Lexer:
         return JavascriptLexer(stripnl=False, ensurenl=False)
 
 
-def _strip_comments(text: str, filename: str) -> str:
-    """``text`` without its comments, keeping every line break.
+def _tokens(text: str, filename: str) -> list[tuple[_TokenType, str]]:
+    return list(_lexer_for(os.path.splitext(filename)[1].lower()).get_tokens(text))
+
+
+def _without_comments(tokens: list[tuple[_TokenType, str]]) -> str:
+    """The lexed text without its comments, keeping every line break.
 
     Lexed rather than matched: a ``//`` or ``/*`` inside a string, template
     or regex literal (``"/api/*"``, `` `${base}//v1` ``) is not a comment.
     """
-    lexer = _lexer_for(os.path.splitext(filename)[1].lower())
     out: list[str] = []
-    for token, value in lexer.get_tokens(text):
+    for token, value in tokens:
         # JSX text such as "See https://x.io" lexes as a comment from "//".
         is_url = token in Comment.Single and out and out[-1].endswith(":")
         out.append("\n" * value.count("\n") if token in Comment and not is_url else value)
     return "".join(out)
 
 
+def _strip_comments(text: str, filename: str) -> str:
+    """``text`` without its comments, keeping every line break."""
+    return _without_comments(_tokens(text, filename))
+
+
+def _token_specs(tokens: list[tuple[_TokenType, str]]) -> tuple[str, ...] | None:
+    """Import specifiers: whole quoted strings in import position only.
+
+    ``import '<s>'`` and ``import|export <clause> from '<s>'`` at a statement
+    start, ``import('<s>')`` and ``require('<s>')``. A ``from`` or ``import``
+    inside a string, template or JSX text is not one. None when the lexer lost
+    track of the strings, so the caller falls back to ``_SPEC_RE``.
+    """
+    values: list[str] = []
+    quoted: list[bool] = []
+    starts_line: list[bool] = []
+    line_break = True
+    backticks = 0
+    for token, value in tokens:
+        if token in Comment or not value.strip():
+            line_break = line_break or "\n" in value
+            continue
+        is_quoted = token in String.Single or token in String.Double
+        if is_quoted and _RAW_LINE_BREAK.search(value):
+            return None
+        if token in String.Backtick:
+            if value == "`":
+                backticks += 1
+            elif _SWALLOWED_IMPORT.search(value):
+                return None
+        values.append(value)
+        quoted.append(is_quoted and len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0])
+        starts_line.append(line_break)
+        line_break = False
+    if backticks % 2:  # a template literal left open to the end of the file
+        return None
+
+    def statement_start(index: int) -> bool:
+        return starts_line[index] or values[index - 1] in (";", "}")
+
+    specs: list[str] = []
+    for i in range(1, len(values)):
+        value = values[i]
+        if not quoted[i] or len(value) < 3:
+            continue
+        if i + 1 < len(values) and values[i + 1].startswith("+"):
+            continue  # the prefix of a path built at runtime
+        before = values[i - 1]
+        if before == "import":
+            found = statement_start(i - 1)
+        elif before == "(":
+            found = i >= 2 and values[i - 2] in ("import", "require")
+        elif before == "from":
+            j = i - 2
+            while j >= 0 and values[j] not in ("import", "export") and (
+                    values[j] in _CLAUSE_PUNCTUATION or quoted[j] or _IDENTIFIER.match(values[j])):
+                j -= 1
+            found = j >= 0 and values[j] in ("import", "export") and statement_start(j)
+        else:
+            found = False
+        if found:
+            specs.append(value[1:-1])
+    return tuple(specs)
+
+
+class _LexedSource(NamedTuple):
+    code: str  # the source without its comments
+    specs: tuple[str, ...]  # its import specifiers, as written
+
+
 @lru_cache(maxsize=512)
-def _stripped_file(path: str, mtime_ns: int, size: int) -> str:
-    return _strip_comments(_read(path), os.path.basename(path))
+def _lexed_file(path: str, mtime_ns: int, size: int) -> _LexedSource:
+    tokens = _tokens(_read(path), os.path.basename(path))
+    code = _without_comments(tokens)
+    specs = _token_specs(tokens)
+    if specs is None:
+        specs = tuple(match.group(2) for match in _SPEC_RE.finditer(code))
+    return _LexedSource(code, specs)
+
+
+def _lexed_source(path: str) -> _LexedSource:
+    """A source file lexed once per file version."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return _LexedSource("", ())
+    return _lexed_file(path, stat.st_mtime_ns, stat.st_size)
 
 
 def _stripped_source(path: str) -> str:
     """A source file without its comments, lexed once per file version."""
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return ""
-    return _stripped_file(path, stat.st_mtime_ns, stat.st_size)
+    return _lexed_source(path).code
 
 
 def _walk(root: str):
@@ -292,10 +388,10 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 if not name.endswith(_SOURCE_EXT) or name.endswith(".d.ts"):
                     continue
                 path = os.path.join(folder, name)
-                source = _stripped_source(path)
+                source, specs = _lexed_source(path)
                 rel_file = os.path.relpath(path, project_dir).replace("\\", "/")
 
-                for _, written in _SPEC_RE.findall(source):
+                for written in specs:
                     # Vite drops a query suffix (?react, ?raw, ?url, ...) before resolving.
                     spec = written.split("?", 1)[0]
                     if spec.startswith("."):

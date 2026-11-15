@@ -88,7 +88,9 @@ configuration. A relative import that resolves to no file, and a ``.jsx`` /
 ``.tsx`` file containing JSX in a project that imports no React and configures
 no automatic JSX runtime, are blockers: both leave a blank page in the browser.
 The JSX rule reports one finding per project, naming the files, since one
-config line fixes them all.
+config line fixes them all. Import specifiers are read from code tokens, so
+the word ``import`` or ``from`` inside a string literal or JSX text is not
+an import.
 An undeclared package is reported as a warning, because a bundler can still
 satisfy it. The JSX rule matters even where build verification is enabled:
 ``React is not defined`` is a runtime error in a bundle that builds cleanly, so
@@ -314,7 +316,14 @@ Findings are classified into three severities:
        and each part is checked on its own text, so an invented part cannot
        supply the proof. An explanation after a closed statement or element
        ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
-       another file's code leaves the requirement unverified. With a class model and an agent model, the list also holds
+       another file's code leaves the requirement unverified. A Python
+       quote that matches no line is also located by syntax tree, so a
+       formatter's wrapping parentheses, adjacent string literals merged or
+       split, and a statement quoted on one line still match. A quoted
+       decorator is located but proves nothing alone; quoted with a ``def``,
+       it must be on that definition. A line quoted from the wrong file is
+       rejected, and the note names the file it is in. Every citation of a
+       verdict must be found. With a class model and an agent model, the list also holds
        one requirement built from the models: every intent that creates,
        lists or changes the model's records reads or writes them through the
        app's code (its models, database, API or a helper), while a greeting
@@ -451,6 +460,10 @@ whose blockers are all syntax, import, lint, compiler or dependency errors. The
 prompt lists at most 30 blockers in repair order, counts the rest by kind, cuts a
 message over 1,200 characters with a marker, and names a requirement already in
 the ledger by its id. Validation still records and reports every blocker.
+A fix attempt is skipped when every remaining blocker is a requirement whose
+cited code exists but whose citation is malformed and already had its
+citation-repair round: no edit can change it. A citation of code that exists
+nowhere keeps its attempt.
 Excerpts use the file/line formats emitted by the checks. Unchanged source is not
 counted as repair progress merely because a judge's blocker count changed.
 

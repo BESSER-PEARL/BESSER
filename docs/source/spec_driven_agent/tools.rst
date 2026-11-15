@@ -119,6 +119,10 @@ Application checks during editing
 after a coherent edit. It lists at most 40 findings, most urgent first, and
 counts the rest (``remaining_issue_count``); a finding longer than 1,200
 characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
+Once the app has frontend files, it also reports the static frontend checks
+(contract, import resolution, create forms) and, without a GUI model, the
+acceptance-matrix findings; a warning among them is marked
+``advisory, not a blocker``.
 
 ``test_api`` executes up to 20 declarative requests against a disposable copy of
 one generated FastAPI backend and a fresh SQLite database. Requests share state
@@ -150,7 +154,10 @@ hold the same value are shown. References such as ``{{1.access_token}}`` still
 receive the real value.
 Named scenarios are retained during the run and replayed after source changes;
 failures block completion. Correcting a mistaken test requires an explicit
-``correction_reason``. Model-authored scenarios are supplemental checks, not an
+``correction_reason``. A correction that removes a request which passed in the
+scenario's last run (same method and route no longer present) is refused: such
+checks stay in the corrected scenario or go under their own ``scenario_id``.
+Model-authored scenarios are supplemental checks, not an
 independent proof of specification coverage.
 
 Use ``test_api(action="list")`` to discover retained workflows and

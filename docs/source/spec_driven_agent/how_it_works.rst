@@ -121,7 +121,9 @@ The three phases
    backend-only, and in a modify run a bare "app" names the existing project
    rather than asking for a UI. Such a request also puts "build the frontend"
    on the checklist, and Phase 3 reports a blocker if the output ends with no
-   frontend files. A new project with both a class model and an agent model
+   frontend files. With no GUI model, the item names the classes that have
+   backend routes, says that a narrower UI scope in the request wins, and
+   closes only once a routed app with at least one entity screen exists. A new project with both a class model and an agent model
    gets a checklist item to connect them: the agent's intents about the
    model's records must read and write them, not answer with canned text.
    The item also keeps Phase 2 from being skipped, and the agent may drop it
@@ -131,7 +133,11 @@ The three phases
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime
-   verification runbook (see :ref:`spec-driven-shell-tools`). The shell is
+   verification runbook (see :ref:`spec-driven-shell-tools`). For a scaffold
+   from the FastAPI backend generator, the endpoint manifest in the system
+   prompt states what create, update and get-by-id return. The relationship
+   mutation coverage block is left out only when the requirements ledger is
+   known to be empty and the model has no constraint. The shell is
    one session for the whole run, like a terminal: ``cd`` and exported
    variables carry over between commands, and on Linux, where the run has a
    sandbox, a server started in one command answers requests in the next,
@@ -260,7 +266,9 @@ reading a trace and wondering why a run did what it did.
        ``end_turn`` with open items is sent back with the list, twice — four
        times when an open item carries a machine check. Some items are verified
        before they are accepted (the "build the frontend" item checks that
-       frontend files exist); an item whose check fails three times is recorded
+       frontend files exist). Ending the turn also runs ``validate_app``; a
+       blocker from its static frontend checks is sent back to the model once
+       before Phase 2 ends. An item whose check fails three times is recorded
        as *blocked* and stops holding the gate, so a task the model cannot
        satisfy can no longer livelock the run. An item the user did not ask
        for is closed honestly with ``task_list(action='drop', id=N,

@@ -137,7 +137,8 @@ and names containing words such as *key*, *token*, *secret* or *auth*) are
 redacted from the report, from ``action="get"`` and from the trace, as is the
 value wherever the app echoes it. Response fields named like a credential
 (``access_token``, ``api_key``, ``client_secret``, ``password``,
-``password_hash``, ``passwordNew``, ``secret_answer``, ``reset_token``; not a
+``password_hash``, ``passwordNew``, ``secret_answer``, ``reset_token``, a
+non-numeric ``session_id``, ``reset_code``, nested ``tokens.access``; not a
 page cursor such as ``next_page_token`` nor a field whose next word only
 describes or identifies one, such as ``password_changed_at``, ``token_count``,
 ``api_key_name`` or ``secret_id``), the input a
@@ -243,6 +244,10 @@ read the failures and fix them — and they are the single largest capability
 difference between a run with them and a run without. They are also arbitrary
 code execution on the host that serves generation, so who is allowed to switch them on is a
 deployment decision, never a per-request one.
+
+A command cannot change the run's own records: ``.besser_checkpoint.json`` and
+``.besser_recipe.json`` are restored after each command if it rewrote, deleted
+or planted them, and the result says so under ``run_records_restored``.
 
 Before it installs, ``install_dependencies`` pins the known-incompatible
 dependency pairs described in :doc:`validation` into the working directory's

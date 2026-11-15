@@ -20,6 +20,7 @@ import logging
 import os
 import posixpath
 import re
+import stat
 import sys
 import threading
 import weakref
@@ -28,7 +29,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from itertools import count
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, NamedTuple
 from uuid import uuid4
 
 from besser.BUML.metamodel.structural import DomainModel
@@ -41,13 +42,6 @@ from besser.spec_driven_agent.agent.tools import (
     INVALID_ARGUMENTS_KEY,
     get_all_tools_including_generators,
 )
-
-# Every tool's input schema by name, built once. Arguments are checked against
-# it before dispatch (see _normalize_arguments), so an omitted or wrong-typed
-# field is a clear tool error rather than a raw exception from the handler.
-_INPUT_SCHEMAS = {
-    tool["name"]: tool["input_schema"] for tool in get_all_tools_including_generators()
-}
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
     _safe_subprocess_env,
@@ -60,22 +54,22 @@ from besser.spec_driven_agent.execution.sandbox import (
 )
 from besser.spec_driven_agent.execution.shell_session import ShellSession
 from besser.utilities.workspace_fs import (
-    makedirs_plain, open_plain, open_plain_write, remove_plain, walk_plain,
+    makedirs_plain, open_plain, open_plain_write, remove_plain, walk_plain, write_atomic_plain_bytes,
 )
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
+    _strip_line_numbers,
     describe_escape_mismatch,
     elided_lines,
     find_elision,
     find_similar_lines,
+    gutter_line,
     locate_anchored_span,
     locate_chunk,
     replace_most_similar_chunk,
     replacement_spans,
-    gutter_line,
     stray_gutter_line,
-    _strip_line_numbers,
     strip_read_display,
 )
 from besser.spec_driven_agent.pipeline.constants import (
@@ -83,11 +77,20 @@ from besser.spec_driven_agent.pipeline.constants import (
     REGENERABLE_GENERATORS,
     WORKSPACE_SKIP_DIRS,
 )
+from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_generated_files
+from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.spec_driven_agent.state.generator_output import store_written_files
 from besser.spec_driven_agent.validation import frontend_source
 
 logger = logging.getLogger(__name__)
+
+# Every tool's input schema by name, built once. Arguments are checked against
+# it before dispatch (see _normalize_arguments), so an omitted or wrong-typed
+# field is a clear tool error rather than a raw exception from the handler.
+_INPUT_SCHEMAS = {
+    tool["name"]: tool["input_schema"] for tool in get_all_tools_including_generators()
+}
 
 _REGENERABLE_OUTPUT_DIRS = frozenset(_APPLICATION_OUTPUT_DIRS[name] for name in REGENERABLE_GENERATORS)
 
@@ -361,6 +364,25 @@ def _is_run_record(rel_path: str) -> bool:
     return top.startswith(_RUN_RECORD_PREFIX) or top == TRACE_DIRNAME
 
 
+# Run records a shell command must leave as they were: replayed on resume, and
+# written only between tool batches, so any change during a command is the
+# command's. The trace, attribution and probe files are written while commands
+# run (other tool calls, the probe itself) and cannot be restored this way.
+_COMMAND_GUARDED_RECORDS = (CHECKPOINT_FILENAME, RECIPE_FILENAME)
+# Above this a record is judged by its stat and never copied: a command could
+# plant a file of any size there. A long run's checkpoint passes 30 MB.
+_GUARDED_RECORD_MAX_BYTES = 64 * 1024 * 1024
+# A guarded name holding a link, directory or special file: no loader reads it.
+_NOT_A_FILE = "not a regular file"
+
+
+class _LargeRecord(NamedTuple):
+    """A guarded record over ``_GUARDED_RECORD_MAX_BYTES``: compared by stat only."""
+
+    size: int
+    mtime_ns: int
+
+
 def _normalize_path_for_comparison(path: str) -> str:
     """Strip the Windows ``\\\\?\\`` extended-path prefix.
 
@@ -588,17 +610,66 @@ def _breaks_module_import(path: str, before: str, after: str,
     return None if now_ok else (reason or "the module no longer imports")
 
 
+# Above this (old x new lines between the common head and tail) a whole line
+# diff is too slow: 25M cells took ~0.25 s, 400M (20,000 lines) ~4 s. Each end
+# of such a region is then diffed within _CHANGED_REGION_END_WINDOW lines.
+_CHANGED_REGION_DIFF_MAX_CELLS = 30_000_000
+_CHANGED_REGION_END_WINDOW = 200
+
+
+def _first_hunk_length(old_part: list[str], new_part: list[str], context: int) -> int:
+    """Leading lines of ``new_part`` through its first run of changes plus ``context``:
+    all of it when no unchanged run longer than ``2 * context`` ends that run."""
+    end = 0
+    for tag, _i1, _i2, j1, j2 in SequenceMatcher(None, old_part, new_part, autojunk=False).get_opcodes():
+        if tag != "equal":
+            end = j2
+        elif j1 and j2 - j1 > 2 * context:
+            return min(end + context, len(new_part))
+    return len(new_part)
+
+
 def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
     """The lines of ``new`` that differ from ``old``, numbered, with
     ``context`` lines either side. Separate changes (an edit and the import
-    the repair added for it) are shown as separate hunks."""
+    the repair added for it) are shown as separate hunks. A region too large
+    to diff shows the change at each end whole and marks the lines between
+    as not compared."""
     old_lines, new_lines = old.split("\n"), new.split("\n")
-    matcher = SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    # The common head and tail are unchanged: diff only what lies between.
+    shorter = min(len(old_lines), len(new_lines))
+    head = 0
+    while head < shorter and old_lines[head] == new_lines[head]:
+        head += 1
+    tail = 0
+    while tail < shorter - head and old_lines[-1 - tail] == new_lines[-1 - tail]:
+        tail += 1
+    start = max(0, head - context)
+    old_end = len(old_lines) - max(0, tail - context)
+    new_end = len(new_lines) - max(0, tail - context)
+    gap = "   ...|"
+    if (old_end - start) * (new_end - start) > _CHANGED_REGION_DIFF_MAX_CELLS:
+        window = _CHANGED_REGION_END_WINDOW
+        first_end = start + _first_hunk_length(
+            old_lines[start:start + window], new_lines[start:start + window], context)
+        last_start = new_end - _first_hunk_length(
+            old_lines[max(start, old_end - window):old_end][::-1],
+            new_lines[max(start, new_end - window):new_end][::-1], context)
+        if last_start <= first_end:
+            spans = [(start, new_end)]
+        else:
+            spans = [(start, first_end), (last_start, new_end)]
+            gap = f"   ...| (lines {first_end + 1}-{last_start} not compared)"
+    else:
+        matcher = SequenceMatcher(None, old_lines[start:old_end], new_lines[start:new_end], autojunk=False)
+        spans = [(start + group[0][3], start + group[-1][4]) for group in matcher.get_grouped_opcodes(context)]
     rows = []
-    for group in matcher.get_grouped_opcodes(context):
+    for first, last in spans:
+        if first >= last:
+            continue
         if rows:
-            rows.append("   ...|")
-        rows += [f"{i + 1:>4}| {new_lines[i]}" for i in range(group[0][3], group[-1][4])]
+            rows.append(gap)
+        rows += [f"{i + 1:>4}| {new_lines[i]}" for i in range(first, last)]
     if len(rows) > cap:
         rows = rows[:cap] + [f"   ...| ({len(rows) - cap} more changed lines)"]
     return "\n".join(rows)
@@ -2335,10 +2406,11 @@ class ToolExecutor:
         result = self._read_file(args)
         view = self._read_views.get(result.get("read_id"))
         if view is not None:
-            self._shown_reads.pop(key, None)
-            self._shown_reads[key] = (view[1], result["read_id"], result["start_line"], result["end_line"])
-            if len(self._shown_reads) > _SHOWN_READS_MAX:
-                del self._shown_reads[next(iter(self._shown_reads))]
+            with self._bookkeeping_lock:
+                self._shown_reads.pop(key, None)
+                self._shown_reads[key] = (view[1], result["read_id"], result["start_line"], result["end_line"])
+                if len(self._shown_reads) > _SHOWN_READS_MAX:
+                    del self._shown_reads[next(iter(self._shown_reads))]
         return result
 
     def _read_file(self, args: dict) -> dict:
@@ -2386,7 +2458,8 @@ class ToolExecutor:
         truncated = len(selected) > MAX_FILE_READ
         clipped = False
         if truncated:
-            boundary = selected.rfind("\n", 0, MAX_FILE_READ)
+            # A break AT the cap keeps a line of exactly MAX_FILE_READ, as _unreadable_line does.
+            boundary = selected.rfind("\n", 0, MAX_FILE_READ + 1)
             if boundary >= 0:
                 selected = selected[:boundary]
                 end = start + selected.count("\n") + 1
@@ -3523,6 +3596,7 @@ class ToolExecutor:
             }
 
         logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
+        records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
         try:
             # Fail closed: a command that cannot be confined is not run.
             # Falling back to an unconfined shell would silently restore both
@@ -3539,9 +3613,24 @@ class ToolExecutor:
             }
         except Exception as e:
             logger.exception("run_command failed")
+            self._restore_guarded_records(records)
             return {"error": f"Failed to run command: {e}"}
 
         extra: dict = {}
+        restored, not_restored = self._restore_guarded_records(records)
+        if restored:
+            extra["run_records_restored"] = restored
+            extra["run_records_note"] = (
+                f"This command changed {', '.join(restored)}, a run record kept by BESSER. "
+                "It was put back as it was. Do not write, move or delete .besser_* files."
+            )
+        if not_restored:
+            extra["run_records_not_restored"] = sorted(not_restored)
+            extra["run_records_not_restored_note"] = (
+                "This command changed run records kept by BESSER that could not be put back: "
+                + "; ".join(f"{name} ({why})" for name, why in sorted(not_restored.items()))
+                + ". Undo what the command did to them and do not write, move or delete .besser_* files."
+            )
         cwd = self._shell.relative_cwd()
         if cwd != ".":
             extra["cwd"] = cwd
@@ -3595,6 +3684,61 @@ class ToolExecutor:
                 "is run-internal and is not part of the generated project."
             )
         return payload
+
+    def _guarded_record(self, name: str) -> "bytes | _LargeRecord | str | None":
+        """Run record ``name`` as a command must leave it: its bytes, its stat when over
+        ``_GUARDED_RECORD_MAX_BYTES``, ``_NOT_A_FILE``, or None when absent."""
+        path = os.path.join(self.workspace, name)
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return _NOT_A_FILE
+        if not stat.S_ISREG(info.st_mode):
+            return _NOT_A_FILE
+        if info.st_size > _GUARDED_RECORD_MAX_BYTES:
+            return _LargeRecord(info.st_size, info.st_mtime_ns)
+        try:
+            with open_plain(path, "rb", root=self.workspace) as handle:
+                content = handle.read(_GUARDED_RECORD_MAX_BYTES + 1)
+        except OSError:
+            return _NOT_A_FILE
+        if len(content) > _GUARDED_RECORD_MAX_BYTES:  # grew after the stat
+            return _LargeRecord(len(content), info.st_mtime_ns)
+        return content
+
+    def _restore_guarded_records(
+        self, before: "dict[str, bytes | _LargeRecord | str | None]",
+    ) -> tuple[list[str], dict[str, str]]:
+        """Put back each record that differs from ``before``.
+
+        Returns the names restored and, per record that could not be, why.
+        A name that held no regular file before has nothing to put back.
+        """
+        restored: list[str] = []
+        failed: dict[str, str] = {}
+        for name, state in before.items():
+            if state == _NOT_A_FILE or self._guarded_record(name) == state:
+                continue
+            if isinstance(state, _LargeRecord):
+                failed[name] = (f"it was over {_GUARDED_RECORD_MAX_BYTES >> 20} MB before the command, "
+                                "so no copy was kept")
+                continue
+            path = os.path.join(self.workspace, name)
+            try:
+                if state is None:
+                    remove_plain(path, root=self.workspace)
+                else:
+                    write_atomic_plain_bytes(path, state, root=self.workspace)
+            except OSError as exc:
+                # A planted directory stays: there is no link-safe tree removal.
+                failed[name] = exc.strerror or type(exc).__name__
+                logger.warning("run_command changed run record %s; not restored: %s", name, exc)
+                continue
+            logger.warning("run_command changed run record %s; restored", name)
+            restored.append(name)
+        return restored, failed
 
     def _install_dependencies(self, args: dict) -> dict:
         """

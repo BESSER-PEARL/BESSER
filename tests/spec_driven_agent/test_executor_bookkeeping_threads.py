@@ -12,8 +12,8 @@ import threading
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 # How long the interleaved call may take; it blocks for all of it once the
-# bookkeeping is locked.
-_WAIT = 0.5
+# bookkeeping is locked. Generous so a loaded machine cannot fail the join.
+_WAIT = 3.0
 
 
 def _interleave(call):
@@ -63,7 +63,8 @@ def test_clearing_rejections_while_another_call_records_one(tmp_path):
     ex._clear_rejections("a.py")
 
     for worker in ex._rejected_edits.workers:
-        worker.join()
+        worker.join(_WAIT)
+        assert not worker.is_alive()
     assert set(ex._rejected_edits) == {("c.py", "old", "new"), ("b.py", "x", "y")}
 
 
@@ -77,7 +78,8 @@ def test_two_reads_evicting_the_oldest_view_at_once(tmp_path):
     ex._mint_read_view(str(tmp_path / "c.py"), "z", 1, 1)
 
     for worker in ex._read_views.workers:
-        worker.join()
+        worker.join(_WAIT)
+        assert not worker.is_alive()
     assert len(ex._read_views) == 128
 
 

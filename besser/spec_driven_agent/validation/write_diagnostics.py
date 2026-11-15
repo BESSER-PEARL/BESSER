@@ -23,6 +23,7 @@ import tomllib
 from typing import Any
 
 from besser.spec_driven_agent.validation import frontend_source
+from besser.spec_driven_agent.validation.issues import _check_did_not_run
 from besser.spec_driven_agent.parsed_source import parse_source
 from besser.utilities.workspace_fs import is_plain_file, open_plain, walk_plain
 
@@ -1005,6 +1006,19 @@ def _star_import_attribute_misuse(
             line=node.lineno,
         ))
     return findings
+
+
+def undefined_name_check_skipped() -> list[str]:
+    """The release gate's SKIPPED note when pyflakes is missing, else ``[]``.
+
+    Without pyflakes ``_python_diagnostics`` judges no undefined names, so the
+    gate's empty result would read as a clean pass.
+    """
+    try:
+        importlib.import_module("pyflakes.checker")
+    except ImportError:
+        return [_check_did_not_run("the undefined-name check", "pyflakes is not installed")]
+    return []
 
 
 def _python_diagnostics(

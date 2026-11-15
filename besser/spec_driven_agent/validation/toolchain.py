@@ -260,6 +260,7 @@ def _collect_ruff_issues(
             "the Python undefined-name/import checks",
         )], warned_missing
 
+    output_dir = os.path.abspath(output_dir)  # the cwd is pinned to it below
     try:
         result = subprocess.run(
             [
@@ -277,8 +278,10 @@ def _collect_ruff_issues(
                 # Ruff's defaults add style rules that flag the scaffold's own
                 # idioms (B008 on Depends(...)). --isolated: a ruff.toml or
                 # pyproject section in the app is not read, so it cannot
-                # ignore F821 or select other rules.
+                # ignore F821 or select other rules. --ignore-noqa: nor can a
+                # noqa comment in the generated code.
                 "--isolated",
+                "--ignore-noqa",
                 "--select", "E9,F5,F6,F7,F82,F811,F901,PLE0101,PLE0604,PLE1205,PLE1206",
                 # The snapshot, the harness's own files (e.g. the runbook's
                 # .besser_probe.py) and installed dependencies are not the app.

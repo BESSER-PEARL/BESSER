@@ -2720,7 +2720,10 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None, route: s
     cls = editor.find_type(class_name, Class)
     for screen in _screens(_gui_model(editor)):
         if any(isinstance(element, Table) and _bound_class(element) is cls for element in _contents(screen)):
-            raise EditError(f"screen {screen.name} shows {class_name} already")
+            if rows is not None and title is None and route is None:
+                return _set_rows(editor, cls, rows)  # the page is there: --rows alone changes it
+            raise EditError(f"screen {screen.name} shows {class_name} already"
+                            + (" (--rows alone changes the rows of its table)" if rows is not None else ""))
     lineage = _lineage(cls)
     attributes = [attribute for owner in lineage for attribute in sort_by_timestamp(owner.attributes)]
     if not attributes:
@@ -2761,6 +2764,32 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None, route: s
         return None if shown else f"no screen {screen_name} showing {class_name}"
 
     return Edited(editor.finish(), summary, lambda model: None, editor.warnings, gui_check=gui_check)
+
+
+def _set_rows(editor: ModelEditor, cls: Class, rows: int) -> Edited:
+    """Set the rows a page of the tables of ``cls``: the argument of each Table, changed or added. A
+    session that thought of the rows after its screens were made set them with sed."""
+    names = []
+    for table in editor.tables_of(cls):
+        call = editor.call_of(table)
+        if call is None or not call.keywords:
+            raise EditError(f"cannot find where table {table.name} is written in {editor.path.name}: set its "
+                            f"rows_per_page there by hand")
+        given = next((keyword_ for keyword_ in call.keywords if keyword_.arg == "rows_per_page"), None)
+        if given is not None:
+            editor.src.replace(editor.src.start(given.value), editor.src.end(given.value), str(rows))
+        else:  # before the columns, where add-screen writes it
+            before = next((keyword_ for keyword_ in call.keywords if keyword_.arg == "columns"), call.keywords[-1])
+            editor.src.replace(editor.src.start(before), editor.src.start(before), f"rows_per_page={rows}, ")
+        names.append(table.name)
+
+    def gui_check(guis: list[Any]) -> str | None:
+        wrong = [table.name for gui in guis for screen in _screens(gui) for table in _contents(screen)
+                 if isinstance(table, Table) and table.name in names and table.rows_per_page != rows]
+        return f"table {', '.join(wrong)} does not show {rows} rows a page" if wrong else None
+
+    return Edited(editor.finish(), f"table {', '.join(names)} now shows {rows} rows a page",
+                  lambda model: None, editor.warnings, gui_check=gui_check)
 
 
 def add_page(editor: ModelEditor, title: str, route: str | None, main: bool) -> Edited:

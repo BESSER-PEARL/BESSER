@@ -817,3 +817,14 @@ def test_a_label_an_earlier_version_derived_follows_a_rename(starter, change):
     starter.write_text(text.replace('label="Work email"', 'label="WorkEmail"'), encoding="utf-8")
     assert change("rename", "Author.workEmail", "homePhone").endswith(
         "column WorkEmail -> Home phone in table author_table")
+
+
+def test_rows_alone_change_the_table_of_a_screen_that_exists(starter, change, besser, app):
+    # Before: "screen Books shows Book already", and a run that thought of the rows after making its screens
+    # set them with sed in model.py.
+    assert change("add-screen", "Book", "--rows", "10") == "model.py: table book_table now shows 10 rows a page"
+    assert change("add-screen", "Book", "--rows", "25") == "model.py: table book_table now shows 25 rows a page"
+    pages, _, _ = app()
+    assert '"rowsPerPage": 25' in pages["Books"] and '"rowsPerPage": 5' in pages["Authors"]
+    refused = besser("model", "add-screen", "Book", "--title", "Novels", "--rows", "10")
+    assert refused.returncode == 2 and "screen Books shows Book already (--rows alone changes" in refused.stderr

@@ -764,7 +764,8 @@ name one of each).
        already plural or uncountable, ``News``, is kept), which is also its heading, and
        goes in the first module. Its address is ``--route`` (default: the
        name in lower case, ``/publishers``). ``--rows`` sets the rows the table
-       shows a page (5 without it). It joins the menu ``add-menu``
+       shows a page (5 without it); given alone for a class that has its
+       screen, it changes the rows of that table. It joins the menu ``add-menu``
        made and shows it; without a menu, a button on the main page opens it.
        The line names the title when it is not the screen's name
        (``added screen DealLines titled 'Deal lines'``).

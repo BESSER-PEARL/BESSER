@@ -97,8 +97,8 @@ _GUI_GUIDE_BEFORE = "Then one command, `besser apply`"
 GUI_GUIDE = """\
 Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend/`):
 - `besser model add-screen Invoice [--title Bills] [--route /bills] [--rows 10]`: a page with a table of the
-  class (add, edit, delete; 5 rows a page by default), at `/invoices` by default; `add-class ... --screen`
-  adds a class with its page (same options).
+  class (add, edit, delete; 5 rows a page, `--rows` alone changes a page that exists), at `/invoices` by
+  default; `add-class ... --screen` adds a class with its page (same options).
 - `add-menu`: a menu linking every page, on every page; new pages join it (without one they get a button on
   the main page). `add-column Invoice customer.name [--label Customer]`: a column of the object a to-one end
   leads to (the class's own attributes are columns already). `order-columns Invoice number customer.name`:

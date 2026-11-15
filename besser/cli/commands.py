@@ -57,7 +57,14 @@ from besser.cli.output import (
 from besser.cli.model_edit import EditError, Edited, Operation, pick_domain_model, run_operation
 from besser.cli.ocl_check import OclOutcome, OclUnavailable, check_ocl, load_checker, parse_problems
 from besser.cli.starters import DEFAULT_KIND, STARTERS, starter_source
-from besser.cli.summary import class_lines, describe_class, describe_model, summary_lines
+from besser.cli.summary import (
+    OVERVIEW_OVER,
+    class_lines,
+    class_pages,
+    describe_class,
+    describe_model,
+    summary_lines,
+)
 from besser.generators import regeneration
 from besser.generators.registry import GENERATORS, GeneratorSpec, get_generator
 from besser.generators.runner import (
@@ -367,9 +374,10 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
 # ── info ────────────────────────────────────────────────────────────────────
 
 
-def info(model_path: str, class_name: str | None = None) -> Result:
+def info(model_path: str, class_name: str | None = None, everything: bool = False) -> Result:
     """Summarise the models of the file and name the generators that can run on it; or, with
-    ``class_name``, describe that class of its domain models."""
+    ``class_name``, describe that class of its domain models. A file with a large domain model (more
+    than ``OVERVIEW_OVER`` classes) gets an overview, the names only, unless ``everything``."""
     data: dict[str, Any] = {"model": model_path}
     try:
         loaded = load_models(model_path)
@@ -387,6 +395,8 @@ def info(model_path: str, class_name: str | None = None) -> Result:
     current = {id(marked.model) for marked in loaded.current.values()}
     models = []
     lines = [f"{loaded.path}: {plural(len(loaded.models), 'model')}"]
+    overview = not everything and any(len(model.model.get_classes()) > OVERVIEW_OVER
+                                      for model in loaded.of_kind("domain"))
     for model in loaded.models:
         is_current = id(model) in current
         try:
@@ -396,7 +406,10 @@ def info(model_path: str, class_name: str | None = None) -> Result:
                      "current": is_current, "counts": {}}
             warnings.append(f"{model.name}: cannot be summarised: {type(exc).__name__}: {exc}")
         models.append(entry)
-        lines.extend(summary_lines(entry))
+        lines.extend(summary_lines(entry, overview))
+    if overview:
+        lines.append(f"A large model: names only. 'besser info {loaded.path} --class X' shows a class in full with "
+                     f"its page; --all shows everything.")
     runnable = [spec.id for spec in GENERATORS if all(loaded.of_kind(kind) for kind in spec.models)]
     generators_line = (f"Generators that read {'these models' if len(models) > 1 else 'this model'}: "
                        f"{', '.join(runnable) or 'none'}")
@@ -416,6 +429,8 @@ def _class_info(loaded: LoadedModels, class_name: str, data: dict[str, Any]) -> 
         return failure("info", f"{loaded.path} has no class named '{class_name}' (it has: {', '.join(known) or 'none'})",
                        EXIT_FAILED, data)
     entries = [{"model": model.name, **describe_class(model.model, cls)} for model, cls in found]
+    for entry in entries:  # and where the class shows: the screens with a table of it
+        entry["pages"] = [page for gui in loaded.of_kind("gui") for page in class_pages(gui.model, entry["name"])]
     lines = []
     for entry in entries:
         if len(entries) > 1:
@@ -1896,7 +1911,9 @@ def _run_tests(argv: list[str], cwd: Path, timeout: float) -> tuple[int | None, 
     """
     group: dict[str, Any] = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                              else {"start_new_session": True})
-    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    # Wide lines: pytest cuts each line of its summary, cause included, at the terminal's width (80 in a pipe).
+    env = {**os.environ, "COLUMNS": os.environ.get("COLUMNS", "200")}
+    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=env,
                                stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", **group)
     try:
         stdout, stderr = process.communicate(timeout=timeout)
@@ -2012,6 +2029,52 @@ def _read_model_text(path: Path) -> str:
         raise _Stopped(failure("model", f"{path}: cannot be read as UTF-8 text: {exc}")) from exc
 
 
+# Hand-written code is searched in files of these kinds, outside these folders.
+_CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".jsx")
+_SKIPPED_FOLDERS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".pytest_cache"}
+_MAX_LEFT_BEHIND = 8
+
+
+def _left_behind(model_path: Path, operations: Sequence[Operation]) -> list[str]:
+    """One warning per rename or removal whose old name hand-written code still uses: the files and lines,
+    so that nobody has to search for them. Generated files (those a ``.besser_generated.json`` records)
+    and the model file are not hand-written code."""
+    names = []
+    for operation in operations:
+        if operation.name in ("rename", "remove"):
+            path = str(operation.args["path"])
+            names.append((path, path.rsplit(".", 1)[-1], "." not in path))
+    if not names:
+        return []
+    root = model_path.resolve().parent
+    generated: set[Path] = set()
+    files: list[Path] = []
+    for folder, folders, entries in os.walk(root):
+        folders[:] = [name for name in folders if name not in _SKIPPED_FOLDERS]
+        if regeneration.RECORD_FILENAME in entries:
+            with contextlib.suppress(OSError, ValueError):
+                record = json.loads(Path(folder, regeneration.RECORD_FILENAME).read_text(encoding="utf-8"))
+                generated.update(Path(folder, rel).resolve() for rel in record.get("files", {}))
+        files += [Path(folder, name) for name in entries if name.endswith(_CODE_SUFFIXES)]
+    warnings = []
+    for path, name, is_type in names:
+        # A class also by its backend route (/contact/); any element by its name as a word.
+        pattern = re.compile(rf"\b{re.escape(name)}\b" + (rf"|/{re.escape(name.lower())}/" if is_type else ""))
+        found = []
+        for file in sorted(files):
+            if file.resolve() in generated or file.resolve() == model_path.resolve():
+                continue
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                lines = [str(number) for number, line in enumerate(file.read_text(encoding="utf-8").splitlines(), 1)
+                         if pattern.search(line)]
+                if lines:
+                    found.append(f"{file.relative_to(root).as_posix()}:{','.join(lines[:12])}")
+        if found:
+            more = f" and {len(found) - _MAX_LEFT_BEHIND} more files" if len(found) > _MAX_LEFT_BEHIND else ""
+            warnings.append(f"hand-written code still names {path}: {'; '.join(found[:_MAX_LEFT_BEHIND])}{more}")
+    return warnings
+
+
 def model(operations: Sequence[Operation], model_path: str | None = None, use: Sequence[str] = ()) -> Result:
     """Make ``operations`` on the domain model of a ``.py`` model file, and write it if the result is valid.
 
@@ -2063,6 +2126,7 @@ def model(operations: Sequence[Operation], model_path: str | None = None, use: S
                       errors=[*new_errors, f"{path} not changed: the change makes the model invalid"])
     path.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
     warnings = [warning for edited in edits for warning in edited.warnings]
+    warnings += _left_behind(path, operations)
     warnings += [f"still invalid: {error}" for error in after["errors"]]
     line = f"{path}: {'; '.join(edited.summary for edited in edits)}"
     return Result(command="model", files=[path.as_posix()], data=data, warnings=warnings, text=line, brief=line)

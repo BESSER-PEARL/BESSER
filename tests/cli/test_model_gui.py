@@ -4,6 +4,7 @@ Each change is checked where it shows: the file loads and validates, and the Rea
 generator writes from it hold the new page or column, and no longer the removed one.
 """
 
+import os
 import re
 
 import pytest
@@ -87,12 +88,12 @@ def _columns(page: str) -> list[str]:
 def test_add_class_with_screen_makes_a_page_the_main_page_opens(starter, change, app):
     line = change("add-class", "Publisher", "name:str", "country:str", "--screen")
     assert line == ("model.py: added class Publisher with 2 attributes; added screen Publishers "
-                    "(table of Publisher: name, country; button on Authors)")
+                    "at /publishers (table of Publisher: name, country; button on Authors)")
     pages, routes, _ = app()
     assert _columns(pages["Publishers"]) == ["Name", "Country"]
     assert '"actionButtons": true' in pages["Publishers"]  # add, edit and delete
-    assert '<Route path="/Publishers"' in routes
-    assert 'navigate("/Publishers")' in pages["Authors"]
+    assert '<Route path="/publishers"' in routes
+    assert 'navigate("/publishers")' in pages["Authors"]
     # The starter's style: a variable per attribute, which the columns refer to.
     assert 'publisher = Class(name="Publisher", attributes={publisher_name, publisher_country})' in starter.read_text()
 
@@ -143,7 +144,7 @@ def test_a_loan_of_one_book_and_one_member_with_its_page(starter, change, app):
     pages, routes, _ = app()
     assert _columns(pages["Loans"]) == ["Due"]
     assert '"entity": "Book"' in pages["Loans"] and '"entity": "Member"' in pages["Loans"]  # the form picks them
-    assert 'navigate("/Loans")' in pages["Authors"] and '<Route path="/Members"' in routes
+    assert 'navigate("/loans")' in pages["Authors"] and '<Route path="/members"' in routes
 
 
 def test_batch_adds_a_class_its_association_and_its_screen(starter, change, app):
@@ -151,7 +152,7 @@ def test_batch_adds_a_class_its_association_and_its_screen(starter, change, app)
         "add-class Review stars:int\n"
         "add-association book_reviews reviews:Review[*] book:Book[1]\n"
         "add-screen Review --title 'Book reviews'\n"))
-    assert line.endswith("added screen BookReviews (table of Review: stars; button on Authors)")
+    assert line.endswith("added screen BookReviews at /bookreviews (table of Review: stars; button on Authors)")
     pages, _, _ = app()
     assert _columns(pages["BookReviews"]) == ["Stars"]
 
@@ -172,7 +173,7 @@ def test_remove_a_class_removes_its_screen_and_the_buttons_to_it(starter, change
 def test_a_page_is_titled_with_the_plural_of_its_class(starter, change, class_name, title):
     # Before: Persons, Shelfs, Newses, Categorieses.
     line = change("add-class", class_name, "code:str", "--screen")
-    assert f"added screen {title} (table of {class_name}: code;" in line
+    assert f"added screen {title} at /{title.lower()} (table of {class_name}: code;" in line
     assert f'description="Go to the {title.lower()}", label="{title}"' in starter.read_text()
 
 
@@ -200,10 +201,10 @@ def test_a_subclass_page_shows_and_follows_its_inherited_attributes(starter, cha
     change("add-class", "Person", "name:str")
     # Before: the table of Student: school, without the name it inherits.
     assert change("add-class", "Student", "school:str", "--parent", "Person", "--screen").endswith(
-        "added screen Students (table of Student: name, school; button on Authors)")
+        "added screen Students at /students (table of Student: name, school; button on Authors)")
     # Before: refused, "Teacher has no attribute for its table to show".
     assert change("add-class", "Teacher", "--parent", "Person", "--screen").endswith(
-        "added screen Teachers (table of Teacher: name; button on Authors)")
+        "added screen Teachers at /teachers (table of Teacher: name; button on Authors)")
     assert change("add-attribute", "Person", "email:str?") == (
         "model.py: added Person.email:str?; column added to table student_table, teacher_table")
     assert change("rename", "Person.email", "mail").endswith("; column Email -> Mail in table student_table, "
@@ -233,7 +234,7 @@ def test_removing_the_main_page_makes_another_the_main_page_with_its_buttons(sta
     pages, routes, _ = app()
     assert sorted(pages) == ["Books", "Publishers"]
     assert '<Route path="/" element={<Navigate to="/Books" replace />} />' in routes
-    assert 'navigate("/Publishers")' in pages["Books"]
+    assert 'navigate("/publishers")' in pages["Books"]
 
 
 # The main page shows a class's table; the other screens are written inside their modules.
@@ -258,7 +259,7 @@ def test_the_new_main_page_written_inline_gets_its_flag_and_buttons(write, besse
     assert re.search(r'Screen\(name="Archive", description="Archive", view_elements=\{to_orders\},\s+is_main_page=True\)',
                      (tmp_path / "model.py").read_text())
     pages, routes, _ = app()
-    assert '<Navigate to="/Archive" replace />' in routes and 'navigate("/Orders")' in pages["Archive"]
+    assert '<Navigate to="/Archive" replace />' in routes and 'navigate("/orders")' in pages["Archive"]
 
 
 def test_add_screen_is_refused_when_it_cannot_be_made(besser, write, starter):
@@ -327,11 +328,11 @@ def test_a_column_appended_or_added_to_a_list_is_relabelled_too(write, besser, c
 def test_a_screen_goes_in_the_first_module_and_the_main_page_inline_gets_its_button(write, change, app, tmp_path):
     write("model.py", HAND_WRITTEN)
     line = change("add-class", "Order", "number:str", "--screen")
-    assert line.endswith("added screen Orders (table of Order: number; button on Home)")
+    assert line.endswith("added screen Orders at /orders (table of Order: number; button on Home)")
     text = (tmp_path / "model.py").read_text()
     assert "admin = Module(name=\"admin\", screens={Screen(" in text and "order_screen})" in text
     pages, routes, _ = app()
-    assert _columns(pages["Orders"]) == ["Number"] and 'navigate("/Orders")' in pages["Home"]
+    assert _columns(pages["Orders"]) == ["Number"] and 'navigate("/orders")' in pages["Home"]
 
 
 def test_a_table_whose_columns_are_not_one_list_gets_its_column_appended(write, change, app, tmp_path):
@@ -356,7 +357,7 @@ def test_use_names_the_gui_model_a_screen_goes_in(starter, besser, change, app):
     assert refused.returncode == 2 and "name one with --use (library_gui, admin_gui)" in refused.stderr
     # What the message says to do: before, "model.py has no domain model named admin_gui".
     line = change("--use", "admin_gui", "add-screen", "Book", "--title", "Catalog")
-    assert line == "model.py: added screen Catalog (table of Book: title, pages; button on Start)"
+    assert line == "model.py: added screen Catalog at /catalog (table of Book: title, pages; button on Start)"
     assert besser("validate", "model.py").returncode == 0
 
 
@@ -374,7 +375,7 @@ def test_a_screen_whose_route_differs_only_in_case_is_refused(besser, starter, c
     assert renamed.stderr == ("warning: screen Boxes keeps its titles, as do its heading, tables and the buttons "
                               "that open it: BOOKs would be the route or page file of screen Books (they ignore case)\n")
     pages, routes, _ = app()
-    assert '<Route path="/Boxes"' in routes and "/BOOKS" not in routes
+    assert '<Route path="/boxes"' in routes and "/BOOKS" not in routes
     assert 'title="Boxes"' in pages["Boxes"] and '{"Boxes"}' in pages["Boxes"] and "BOOKs" not in pages["Boxes"]
     assert '"Boxes"' in pages["Authors"] and "BOOKs" not in pages["Authors"]  # the button that opens it
     assert "GUI titles Authors -> AUTHORs" in change("rename", "Author", "AUTHOR")  # its own route, but for case
@@ -383,8 +384,8 @@ def test_a_screen_whose_route_differs_only_in_case_is_refused(besser, starter, c
 def test_a_screen_whose_page_file_differs_only_in_case_is_refused(besser, starter, change, app):
     # The React generator names a page file after its title in PascalCase with inner words lowercased:
     # OrderLines -> Orderlines.tsx, Order_lines -> OrderLines.tsx, one file on macOS or Windows.
-    assert change("add-class", "OrderLine", "x:str", "--screen").endswith("added screen OrderLines "
-                                                                         "(table of OrderLine: x; button on Authors)")
+    assert change("add-class", "OrderLine", "x:str", "--screen").endswith(
+        "added screen OrderLines at /orderlines (table of OrderLine: x; button on Authors)")
     assert change("add-class", "Item", "y:str").startswith("model.py: added class Item")
     refused = besser("model", "add-screen", "Item", "--title", "Order_lines")
     # Before: added, and the app had pages/Orderlines.tsx and pages/OrderLines.tsx.
@@ -397,3 +398,347 @@ def test_a_screen_whose_page_file_differs_only_in_case_is_refused(besser, starte
                                         "OrderLines") in renamed.stderr
     pages, _, _ = app()
     assert sorted(pages) == ["Authors", "Books", "Orderlines"]
+
+
+# ── routes, a menu, columns of related objects, cards and charts ────────────
+#
+# Why: a coding agent given an ordinary specification (pages at fixed routes, a menu on every page, a
+# dashboard, the name of a related object in a table) had only add-screen. In two measured runs it left
+# the model: once it wrote the GUI part of model.py by hand, after which add-attribute was refused
+# ("cannot find where 'deal_table' is written in model.py; edit it by hand"); once it wrote a whole
+# React frontend, and the model no longer drove the pages.
+
+
+def _links(page: str) -> list[tuple[str, str]]:
+    """The links of a page's menu: (address, label)."""
+    return re.findall(r'<a href="([^"]*)">\{"([^"]*)"\}</a>', page)
+
+
+def test_a_new_screen_is_at_its_title_in_lower_case_or_at_the_route_asked_for(starter, change, besser, app):
+    assert change("add-class", "Publisher", "name:str", "--screen").endswith(
+        "added screen Publishers at /publishers (table of Publisher: name; button on Authors)")
+    assert change("add-class", "Shelf", "code:str").startswith("model.py: added class Shelf")
+    assert "added screen Shelves at /library/shelves" in change("add-screen", "Shelf", "--route", "/library/shelves")
+    _, routes, _ = app()
+    assert '<Route path="/publishers"' in routes and '<Route path="/library/shelves"' in routes
+
+    assert change("add-class", "Tag", "label:str").startswith("model.py: added class Tag")
+    taken = besser("model", "add-screen", "Tag", "--route", "/PUBLISHERS")
+    assert taken.returncode == 2
+    assert "screen Publishers of LibraryApp is at /publishers already: give another --route" in taken.stderr
+    bad = besser("model", "add-screen", "Tag", "--route", "tags")
+    assert bad.returncode == 2 and "'tags' is not a route: write /name or /group/name" in bad.stderr
+
+
+def test_a_menu_links_every_page_from_every_page_and_follows_the_screens(starter, change, besser, app):
+    # The menu replaces the starter's button to Books: beside it, the button was a second navigation.
+    assert change("add-menu") == "model.py: added menu menu to Authors, Books; it replaces the button to Books"
+    pages, _, _ = app()
+    assert "to_books" not in pages["Authors"]
+    for page in ("Authors", "Books"):
+        assert _links(pages[page]) == [("/Authors", "Authors"), ("/Books", "Books")]
+        # Before: the generator compared the menu's order with the None of the other elements and crashed.
+        assert pages[page].index('<nav id="menu"') < pages[page].index(f'id="{page.lower()[:-1]}_heading"')
+
+    # A new page joins the menu and shows it; it needs no button on the main page.
+    line = change("add-class", "Publisher", "name:str", "--screen")
+    assert line.endswith("added screen Publishers at /publishers (table of Publisher: name; in menu menu)")
+    pages, _, _ = app()
+    assert all(("/publishers", "Publishers") in _links(page) for page in pages.values())
+    assert "to_publishers" not in pages["Authors"]
+
+    # A renamed class's page is renamed in the menu too, and a removed one leaves it.
+    assert "GUI titles Publishers -> Editors" in change("rename", "Publisher", "Editor")
+    pages, routes, _ = app()
+    assert ("/editors", "Editors") in _links(pages["Authors"]) and '<Route path="/editors"' in routes
+    removed = change("remove", "Editor")
+    assert "screen Editors" in removed
+    pages, _, _ = app()
+    assert sorted(pages) == ["Authors", "Books"]
+    assert _links(pages["Books"]) == [("/Authors", "Authors"), ("/Books", "Books")]
+
+    assert change("add-menu") == "model.py: menu menu links the screens of LibraryApp already (no change)"
+
+
+def test_a_menu_added_before_the_pages_is_on_each_of_them(starter, change, app):
+    change("remove", "Book")
+    change("remove", "Author")
+    assert change("add-menu") == "model.py: added menu menu (no screen yet: each new one joins it)"
+    assert change("add-class", "Company", "name:str", "--screen").endswith(
+        "added screen Companies at /companies (table of Company: name; the main page, in menu menu)")
+    assert change("add-class", "Deal", "title:str", "--screen").endswith("in menu menu)")
+    pages, _, _ = app()
+    assert _links(pages["Companies"]) == _links(pages["Deals"]) == [("/companies", "Companies"), ("/deals", "Deals")]
+
+
+def test_a_column_shows_an_attribute_of_the_related_object(starter, change, besser, app):
+    change("add-class", "Publisher", "name:str", "city:str", "--screen")
+    change("add-association", "book_publisher", "books:Book[*]", "publisher:Publisher[0..1]")
+    assert change("add-column", "Book", "publisher.name") == (
+        "model.py: added column Publisher (publisher.name) to table book_table")
+    assert change("add-column", "Book", "publisher.city", "--label", "Published in") == (
+        "model.py: added column Published in (publisher.city) to table book_table")
+    pages, _, _ = app()
+    assert _columns(pages["Books"]) == ["Title", "Pages", "Publisher", "Published in"]
+    assert re.search(r'"label": "Publisher",\s*"column_type": "lookup"', pages["Books"])
+    info = besser("info", "model.py").stdout
+    assert "Book table book_table (title, pages, publisher.name, publisher.city)" in info
+
+    for arguments, said in [
+        (("Book", "publisher.name"), "no table of Book to add the column to: publisher.name is a column already"),
+        (("Book", "authors.name"), "Book.authors is [1..*]: a column shows one object"),
+        (("Book", "publisher.country"), "Publisher has no attribute 'country' (its attributes: city, name)"),
+        (("Book", "nothing"), "'nothing' is not end.attribute of Book"),
+    ]:
+        refused = besser("model", "add-column", *arguments)
+        assert refused.returncode == 2 and said in refused.stderr, refused.stderr
+    # The removed attribute's column goes with it, as a table's own columns do.
+    assert "its column from table book_table" in change("remove", "Publisher.city")
+    pages, _, _ = app()
+    assert _columns(pages["Books"]) == ["Title", "Pages", "Publisher"]
+
+
+def test_a_page_with_cards_and_a_chart(starter, change, besser, app):
+    change("set-enum", "Genre", "NOVEL", "ESSAY")
+    change("add-attribute", "Book", "genre:Genre", "price:float", "lent:bool")
+    assert change("add-menu").startswith("model.py: added menu menu")
+    assert change("add-page", "Library overview", "--route", "/overview", "--main") == (
+        "model.py: added page LibraryOverview at /overview (the main page, in menu menu)")
+    # The screen is named by its name, its title or its route.
+    assert change("add-card", "LibraryOverview", "Books", "count:Book") == (
+        "model.py: added card 'Books' to screen LibraryOverview (count of Book)")
+    assert change("add-card", "library overview", "Novels value", "sum:Book.price",
+                  "--where", "genre = NOVEL and lent == false") == (
+        "model.py: added card 'Novels value' to screen LibraryOverview "
+        "(sum of Book.price where genre == 'NOVEL' and lent == false)")
+    assert change("add-chart", "/overview", "Pages by genre", "sum:Book.pages", "--by", "genre") == (
+        "model.py: added bar chart 'Pages by genre' to screen LibraryOverview (sum of Book.pages by genre)")
+    assert "added pie chart 'Books by genre'" in change("add-chart", "/overview", "Books by genre", "count:Book",
+                                                         "--by", "genre", "--kind", "pie")
+    pages, routes, _ = app()
+    page = pages["LibraryOverview"]
+    assert '<Route path="/overview"' in routes and '<Navigate to="/overview" replace />' in routes
+    # In the order they were added, after the menu and the heading.
+    order = [page.index(text) for text in ('<nav id="menu"', 'id="library_overview_heading"', 'id="books"',
+                                           'id="novels_value"', 'id="pages_by_genre"', 'id="books_by_genre"')]
+    assert order == sorted(order)
+    assert '"filter_expression": "genre == \'NOVEL\' and lent == false"' in page
+    assert re.search(r'"label_field": "genre",\s*"data_field": "pages",\s*"aggregation": "sum"', page)
+    assert 'chartType="pie-chart"' in page and '"showTrend": false' in page
+    info = besser("info", "model.py").stdout
+    assert ("    screen LibraryOverview (main page), /overview: card 'Books' (count:Book); card 'Novels value' "
+            "(sum:Book.price where genre == 'NOVEL' and lent == false); bar chart 'Pages by genre' "
+            "(sum:Book.pages by genre); pie chart 'Books by genre' (count:Book by genre); menu\n") in info
+    assert "    screen Authors, /Authors:" in info  # no longer the main page
+
+
+@pytest.mark.parametrize("arguments, said", [
+    (("Books", "T", "total:Book.pages"), "'total:Book.pages' is not a value: write sum:Class.attribute"),
+    (("Books", "T", "sum:Book"), "'sum:Book': sum is of an attribute, as sum:Book.attribute"),
+    (("Books", "T", "sum:Book.title"), "Book.title is str: sum is of an int or float attribute"),
+    (("Nowhere", "T", "count:Book"), "LibraryApp has no screen 'Nowhere' (its screens: Authors (/Authors), "
+                                     "Books (/Books)); 'besser model add-page' adds one"),
+    # The generated pages would drop these conditions without a word, and show the unfiltered number.
+    (("Books", "T", "count:Book", "--where", "pages > 100 or pages < 10"), "the pages cannot read 'or'"),
+    (("Books", "T", "count:Book", "--where", "pages > many"), "pages is a number, 'many' is not"),
+    (("Books", "T", "count:Book", "--where", "weight > 1"), "'weight > 1' is not a condition on Book"),
+    (("Books", "T", "count:Book", "--where", "pages"), "'pages' is not a condition on Book"),
+])
+def test_a_card_that_cannot_work_is_refused(starter, besser, arguments, said):
+    before = starter.read_text(encoding="utf-8")
+    refused = besser("model", "add-card", *arguments)
+    assert refused.returncode == 2 and said in refused.stderr, refused.stderr
+    assert starter.read_text(encoding="utf-8") == before
+
+
+def test_a_renamed_class_moves_its_page_unless_told_to_keep_it(starter, change, app):
+    change("add-menu")
+    change("add-class", "Contact", "name:str", "--screen")
+    # Why: "rename the entity, the page keeps its route and title" is an ordinary request, and there was
+    # no way to say so: the page moved to /people and the old address opened the main page.
+    assert change("rename", "Contact", "Person", "--keep-pages") == (
+        "model.py: renamed Contact to Person (variable contact -> person)")
+    pages, routes, _ = app()
+    assert '<Route path="/contacts"' in routes and 'title="Contacts"' in pages["Contacts"]
+    assert ("/contacts", "Contacts") in _links(pages["Authors"])
+    assert '"entity": "Person"' in pages["Contacts"]
+
+    # Without it the page follows its class, route included, and the line says how to keep it.
+    change("add-class", "Order", "number:str", "--screen")
+    line = change("rename", "Order", "Purchase")
+    assert line.endswith("GUI titles Orders -> Purchases, route /orders -> /purchases (--keep-pages keeps them)")
+    pages, routes, _ = app()
+    assert '<Route path="/purchases"' in routes and ("/purchases", "Purchases") in _links(pages["Contacts"])
+
+
+def test_a_link_on_a_page(starter, change, besser, app):
+    assert change("add-link", "Books", "Export CSV", "http://localhost:8000/book/export/csv/") == (
+        "model.py: added link 'Export CSV' to screen Books (http://localhost:8000/book/export/csv/)")
+    pages, _, _ = app()
+    assert re.search(r'<a id="export_csv"[^>]*href="http://localhost:8000/book/export/csv/"', pages["Books"])
+    for arguments, said in [(("Books", "Export CSV", "/x"), "screen Books has a link 'Export CSV' already"),
+                            (("Books", "Other", "book/export"), "'book/export' is not an address")]:
+        refused = besser("model", "add-link", *arguments)
+        assert refused.returncode == 2 and said in refused.stderr, refused.stderr
+
+
+# ── what a measured run still paid for (ten sessions read call by call) ─────
+
+
+def test_a_derived_attribute_is_the_servers_to_compute(starter, change, besser, write, tmp_path):
+    # Why: "fullName is computed by the server, clients never send it". Without --derived the generated
+    # test sent fullName and expected it back, and the agent wrote a middleware to get round it.
+    assert change("add-attribute", "Author", "fullName:str", "--derived") == (
+        "model.py: added Author.fullName:str (derived); column added to table author_table")
+    assert "is_derived=True" in (tmp_path / "model.py").read_text(encoding="utf-8")
+    assert "class Author: name:str, email:str, fullName:str (derived)" in besser("info", "model.py").stdout
+    assert besser("apply").returncode == 0
+    write("web_app/backend/extensions.py", '''
+        from sqlalchemy import event
+        from sql_alchemy import Author
+
+
+        @event.listens_for(Author, "before_insert")
+        @event.listens_for(Author, "before_update")
+        def full_name(mapper, connection, target):
+            target.fullName = f"{target.name} <{target.email}>"
+
+
+        def setup(app):
+            pass
+    ''')
+    write("tests/test_full_name.py", '''
+        def test_full_name(client):
+            made = client.post("/author/", json={"name": "Ada", "email": "a@x", "fullName": "ignored"}).json()
+            made = made.get("author", made)
+            assert made["fullName"] == "Ada <a@x>"
+            assert client.put(f"/author/{made['id']}/", json={"name": "Bo", "email": "b@x"}).status_code == 200
+            got = client.get(f"/author/{made['id']}/").json()
+            assert got.get("author", got)["fullName"] == "Bo <b@x>"
+    ''')
+    applied = besser("apply", output=None)
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert "fullName" not in (tmp_path / "web_app/backend/tests/test_generated_api.py").read_text(encoding="utf-8")
+
+
+def test_a_line_that_changes_nothing_does_not_undo_its_batch(starter, change, besser):
+    change("add-menu")
+    # Before: "menu menu links the screens already" was an error, and the lines before it in the batch were lost.
+    line = change("batch", "-", stdin="add-class Shelf code:str --screen\nadd-menu\nadd-column Shelf code\n")
+    assert line.endswith("menu menu links the screens of LibraryApp already (no change); "
+                         "Shelf.code is a column of its table already (no change)")
+    assert "screen Shelves" in besser("info", "model.py").stdout
+
+
+def test_a_link_shows_in_info_and_follows_its_class(starter, change, besser):
+    change("add-link", "Books", "Export CSV", "http://localhost:8000/book/export/csv/")
+    assert "link 'Export CSV' (http://localhost:8000/book/export/csv/)" in besser("info", "model.py").stdout
+    # Before: the link kept /book/ after the class and its routes were renamed, and info did not show it.
+    assert "; link Export CSV now to /volume/" in change("rename", "Book", "Volume")
+    assert "link 'Export CSV' (http://localhost:8000/volume/export/csv/)" in besser("info", "model.py").stdout
+
+
+def test_a_rename_or_removal_names_the_hand_written_code_left_behind(starter, besser, write):
+    assert besser("apply").returncode == 0  # the generated files are recorded: they are not hand-written
+    write("web_app/backend/extensions.py", "from sql_alchemy import Book\n\n\ndef setup(app):\n"
+                                           "    app.get('/book/count2/')(lambda: Book.pages)\n")
+    write("tests/test_mine.py", "def test_it(client):\n    assert client.get('/book/').status_code == 200\n")
+    # Before: nothing was said, and the agent searched the project for the old name (three calls in one run).
+    renamed = besser("model", "rename", "Book", "Volume")
+    assert renamed.returncode == 0
+    assert ("warning: hand-written code still names Book: tests/test_mine.py:2; "
+            "web_app/backend/extensions.py:1,5\n") == renamed.stderr
+    removed = besser("model", "remove", "Volume.pages")
+    assert "hand-written code still names Volume.pages: web_app/backend/extensions.py:5" in removed.stderr
+
+
+
+@pytest.mark.skipif(os.name != "nt", reason="an MSYS shell rewrites arguments on Windows only")
+def test_a_route_rewritten_by_git_bash_is_read_as_typed(starter, change, monkeypatch):
+    # Git Bash turns the argument /overview into C:/Program Files/Git/overview, and /a/home into A:/home.
+    # Before: "'C:/Program Files/Git/overview' is not a route", so the agent set MSYS_NO_PATHCONV and retried.
+    monkeypatch.setenv("MSYSTEM", "MINGW64")
+    monkeypatch.setenv("EXEPATH", "C:\\Program Files\\Git\\bin")
+    assert change("add-page", "Overview", "--route", "C:/Program Files/Git/overview") == (
+        "model.py: added page Overview at /overview (button on Authors)")
+    assert "to screen Overview" in change("add-card", "C:/Program Files/Git/overview", "Books", "count:Book")
+    assert "added page Home at /a/home" in change("add-page", "Home", "--route", "A:/home")
+
+
+def test_the_pages_the_commands_write_look_finished(starter, change, app):
+    # Why: beside an application an LLM wrote by hand for the same request, the generated one looked raw: a
+    # bare row of links, a title in plain text, cards one under the other with the chart between them. The
+    # generated React app ships Tailwind, so the look is classes on the model's elements.
+    change("add-menu")
+    change("add-class", "Loan", "amount:float", "days:int", "--screen")
+    change("add-page", "Library overview", "--route", "/overview", "--main")
+    change("add-chart", "/overview", "Loans by days", "sum:Loan.amount", "--by", "days")
+    change("add-card", "/overview", "Lent", "sum:Loan.amount")  # after the chart, and still above it
+    change("add-card", "/overview", "Loans", "count:Loan")
+    change("add-link", "Loans", "Export", "http://localhost:8000/loan/export/")
+    pages, _, _ = app()
+    overview, loans = pages["LibraryOverview"], pages["Loans"]
+    assert '<nav id="menu" className="bg-slate-900 ' in overview
+    assert '<div id="library_overview_page" className="max-w-5xl mx-auto ' in overview
+    assert '<h1 id="library_overview_heading" className="text-2xl font-bold ' in overview
+    assert '<div id="library_overview_cards" className="grid grid-cols-1 md:grid-cols-3 ' in overview
+    assert 'id="loans_by_days" className="bg-white rounded-xl shadow ' in overview
+    order = [overview.index(text) for text in ('<nav id="menu"', 'id="library_overview_heading"',
+                                               'id="library_overview_cards"', 'id="lent"', 'id="loans"',
+                                               'id="loans_by_days"')]
+    assert order == sorted(order)
+    assert '<h1 id="loan_heading" className="text-2xl font-bold ' in loans
+    assert loans.index('id="loan_heading"') < loans.index('id="export"') < loans.index('id="loan_table"')
+    # The model changes keep working on such a page: its table still follows its class.
+    assert "column added to table loan_table" in change("add-attribute", "Loan", "returned:bool")
+    assert "GUI titles Loans -> Lendings, route /loans -> /lendings" in change("rename", "Loan", "Lending")
+    pages, _, _ = app()
+    assert '<h1 id="loan_heading" className="text-2xl font-bold text-slate-900 mb-4">{"Lendings"}</h1>' in pages["Lendings"]
+
+
+# A GUI written the way a coding agent wrote it in a measured run: one function builds every screen.
+BUILT_BY_A_FUNCTION = '''\
+from besser.BUML.metamodel.gui import DataBinding, FieldColumn, GUIModel, Module, Screen, Table
+from besser.BUML.metamodel.structural import Class, DomainModel, FloatType, Property, StringType
+
+Deal_title = Property(name="title", type=StringType)
+Deal_amount = Property(name="amount", type=FloatType)
+Deal = Class(name="Deal", attributes={Deal_title, Deal_amount})
+crm = DomainModel(name="Crm", types={Deal})
+
+
+def entity_screen(key, title, cls, columns):
+    table = Table(name=f"{key}_table", title=title, columns=columns)
+    table.data_binding = DataBinding(domain_concept=cls)
+    return Screen(name=title, description=title, is_main_page=True, view_elements={table})
+
+
+deal_screen = entity_screen("deal", "Deals", Deal, [
+    FieldColumn(label="Title", field=Deal_title),
+    FieldColumn(label="Amount", field=Deal_amount),
+])
+crm_gui = GUIModel(name="CrmApp", package="crm", versionCode="1", versionName="1.0", description="A CRM",
+                   modules={Module(name="main", screens={deal_screen})})
+'''
+
+
+def test_an_attribute_is_added_to_a_class_whose_table_a_function_builds(write, besser, app, tmp_path):
+    write("model.py", BUILT_BY_A_FUNCTION)
+    added = besser("model", "add-attribute", "Deal", "priority:str?")
+    # Before: refused whole, "cannot find where 'deal_table' is written in model.py; edit it by hand", so
+    # the agent wrote the attribute by hand too.
+    assert added.returncode == 0, added.stderr
+    assert added.stdout == "model.py: added Deal.priority:str?\n"
+    assert added.stderr == (
+        "warning: table deal_table got no column for priority: model.py does not write its columns where a "
+        'command can add to them; add FieldColumn(label="Priority", field=Deal_priority) by hand\n')
+    pages, _, _ = app()
+    assert _columns(pages["Deals"]) == ["Title", "Amount"]
+    # The code of the warning is what works where the columns are written.
+    text = (tmp_path / "model.py").read_text(encoding="utf-8")
+    assert "Deal_priority = Property(" in text
+    write("model.py", text.replace('    FieldColumn(label="Amount", field=Deal_amount),\n',
+                                   '    FieldColumn(label="Amount", field=Deal_amount),\n'
+                                   '    FieldColumn(label="Priority", field=Deal_priority),\n'))
+    pages, _, _ = app()
+    assert _columns(pages["Deals"]) == ["Title", "Amount", "Priority"]

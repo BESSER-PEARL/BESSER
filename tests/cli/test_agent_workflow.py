@@ -189,17 +189,21 @@ def test_guide_prints_the_rules_in_little_space(besser):
 
     assert run.stdout == GUIDE
     # Re-read on every turn of every session, so it stays small.
-    assert len(GUIDE.encode("utf-8")) < 4000 and len(GUIDE.splitlines()) <= 60
+    assert len(GUIDE.encode("utf-8")) < 4200 and len(GUIDE.splitlines()) <= 60
 
 
 def test_the_guide_has_the_lines_on_pages_only_in_a_project_that_builds_a_gui(besser, tmp_path):
     assert besser("init", "--kind", "gui").returncode == 0
     run = besser("guide", output=None)
 
-    assert run.stdout == guide_text(gui=True) and GUI_GUIDE in run.stdout and "add-screen" not in GUIDE
-    assert guide_text(gui=True) in (tmp_path / "AGENTS.md").read_text()
+    # The project's own file for hand-written backend code is named by its path. Before: "extensions.py
+    # beside main_api.py", and a small model wrote it in the project folder, where nothing loads it.
+    guide = guide_text(gui=True).replace("`extensions.py` beside `main_api.py`", "`web_app/backend/extensions.py`")
+    assert "`web_app/backend/extensions.py`, with" in guide
+    assert run.stdout == guide and GUI_GUIDE in run.stdout and "add-screen" not in GUIDE
+    assert guide in (tmp_path / "AGENTS.md").read_text()
     # What a project with a web_app output pays for them, besides the guide's budget above.
-    assert len(GUI_GUIDE.encode("utf-8")) < 600 and len(GUI_GUIDE.splitlines()) <= 7
+    assert len(GUI_GUIDE.encode("utf-8")) < 1600 and len(GUI_GUIDE.splitlines()) <= 17
 
 
 # What the guide says the generated backend answers, as tests that use the guide's own conftest.py.
@@ -259,7 +263,9 @@ def test_a_build_keeps_the_guide_in_agents_md_in_step_with_the_options(besser, w
     run = besser("build", "--json")
 
     agents = (tmp_path / "AGENTS.md").read_text()
-    assert guide_text(tests=False, uniform_responses=False) in agents and GUIDE not in agents
+    expected = guide_text(tests=False, uniform_responses=False).replace(
+        "`extensions.py` beside `main_api.py`", "`backend/extensions.py`")
+    assert expected in agents and GUIDE not in agents
     assert "updated AGENTS.md: the guide follows the outputs of besser.toml" in run.json["notes"]
     assert besser("guide", output=None).stdout in agents
 
@@ -271,7 +277,9 @@ def test_the_guide_of_a_new_project_is_the_short_one(besser, tmp_path):
 
     guide = besser("guide", output=None).stdout
 
-    assert guide == GUIDE and guide in (tmp_path / "AGENTS.md").read_text()
+    # GUIDE, with the project's file for hand-written backend code named by its path.
+    assert guide == GUIDE.replace("`extensions.py` beside `main_api.py`", "`backend/extensions.py`")
+    assert guide in (tmp_path / "AGENTS.md").read_text()
     assert "`GET /x/{x_id}/`, `POST` and `PUT` answer" in guide and "```python" not in guide
     assert "generated tests of every" in guide and "body.get" not in guide
 
@@ -530,7 +538,7 @@ def test_info_shows_optional_attributes_defaults_constraints_and_routes(besser, 
     assert "constraint positive on Product: self.price > 0" in text
     assert "backend routes per class X: POST|GET /x/, GET|PUT|DELETE /x/{x_id}/" in text
     assert product["backend_endpoints"]["Product"][2] == "GET /product/{product_id}/"
-    assert code == {"name": "code", "type": "str", "optional": True, "default": "X"}
+    assert code == {"name": "code", "type": "str", "optional": True, "default": "X", "derived": False}
 
 
 @needs_pygit2

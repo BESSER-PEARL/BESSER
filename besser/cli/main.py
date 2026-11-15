@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shlex
 import sys
 import traceback
@@ -121,6 +122,11 @@ examples:
   besser model remove Contact.phone
   besser model add-screen Invoice --title Bills (a page with a table of the class, in the GUI model)
   besser model add-class Tag label:str --screen (a class and its page)
+  besser model add-menu                         (a menu with a link to every page, on every page)
+  besser model add-column Invoice customer.name --label Customer   (a column of a related object)
+  besser model add-page Overview --route /home --main              (a page for cards and charts)
+  besser model add-card Overview "Paid" sum:Invoice.total --where "paid == true"
+  besser model add-chart Overview "Invoices by status" count:Invoice --by status
   besser model batch - <<'EOF'                  (several changes, one write)
   besser model set-attribute Book.pages :int?=0 (type, ? and default in place; = drops the default)
   besser model set-multiplicity book_authors.authors "[*]"   (also Class.end)
@@ -143,6 +149,8 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
     "add-attribute": [
         (("class_name",), {"metavar": "CLASS", "help": "the class"}),
         (("attributes",), {"nargs": "+", "metavar": "ATTRIBUTE", "help": "name:type, name:type? or name:type=default"}),
+        (("--derived",), {"action": "store_true", "help": "computed by the server: clients never send them (your "
+                                                          "code sets them)"}),
     ],
     "add-parent": [
         (("class_name",), {"metavar": "CLASS", "help": "the class"}),
@@ -167,6 +175,43 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
     "add-screen": [
         (("class_name",), {"metavar": "CLASS", "help": "the class the screen's table shows"}),
         (("--title",), {"help": "the screen's title (default: the plural of the class name)"}),
+        (("--route",), {"metavar": "/PATH", "help": "the page's address (default: the title's words, in lower case)"}),
+    ],
+    "add-page": [
+        (("title",), {"help": "the page's title, also its heading"}),
+        (("--route",), {"metavar": "/PATH", "help": "the page's address (default: the title's words, in lower case)"}),
+        (("--main",), {"action": "store_true", "help": "make it the main page, the one the application opens on"}),
+    ],
+    "add-menu": [],
+    "add-column": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class whose tables get the column"}),
+        (("path",), {"metavar": "END.ATTRIBUTE", "help": "an association end to one object, then an attribute of "
+                                                         "its class: account.name (or an attribute of the class "
+                                                         "itself)"}),
+        (("--label",), {"help": "the column's label (default: the end's name)"}),
+    ],
+    "add-card": [
+        (("screen",), {"help": "the screen: its name, title or route"}),
+        (("title",), {"help": "the card's title"}),
+        (("value",), {"help": "sum:Class.attribute (also avg, min, max, median) or count:Class"}),
+        (("--where",), {"metavar": "CONDITION", "help": "only the objects where attribute == value (also != > >= < "
+                                                        "<=), several joined by 'and'"}),
+    ],
+    "add-link": [
+        (("screen",), {"help": "the screen: its name, title or route"}),
+        (("label",), {"help": "the link's text"}),
+        (("url",), {"metavar": "URL", "help": "/route of the application, or http(s)://... (a route of the backend "
+                                              "needs its whole address)"}),
+    ],
+    "add-chart": [
+        (("screen",), {"help": "the screen: its name, title or route"}),
+        (("title",), {"help": "the chart's title"}),
+        (("value",), {"help": "sum:Class.attribute (also avg, min, max, median) or count:Class"}),
+        (("--by",), {"required": True, "metavar": "ATTRIBUTE", "help": "the attribute of the class with one bar, "
+                                                                      "point or slice per value"}),
+        (("--kind",), {"choices": ["bar", "line", "pie"], "default": "bar", "help": "the chart (default: bar)"}),
+        (("--where",), {"metavar": "CONDITION", "help": "only the objects where attribute == value (also != > >= < "
+                                                        "<=), several joined by 'and'"}),
     ],
     "set-enum": [
         (("name",), {"help": "the enumeration (created if missing)"}),
@@ -175,6 +220,9 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
     "rename": [
         (("path",), {"help": _MODEL_PATH_HELP}),
         (("new_name",), {"metavar": "NEW_NAME", "help": "the new name"}),
+        (("--keep-pages",), {"action": "store_true", "help": "the pages keep their titles, column labels and "
+                                                             "routes (default: those derived from the old name "
+                                                             "follow)"}),
     ],
     "remove": [
         (("path",), {"help": _MODEL_PATH_HELP}),
@@ -361,7 +409,10 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument("model", help=_MODEL_HELP)
     info.add_argument("--class", dest="class_name", metavar="CLASS",
                       help="describe one class in full: members, inherited attributes, association ends, "
-                           "constraints, and the backend's routes and code names for it")
+                           "constraints, the backend's routes and code names for it, and its page")
+    info.add_argument("--all", dest="everything", action="store_true",
+                      help="print a large model in full (by default one with more than 20 classes is "
+                           "summarised by its names)")
 
     add_command(
         "generators", "list the generators and their options",
@@ -553,7 +604,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
     if args.command == "validate":
         return commands.validate(args.model, strict=args.strict, exec_py=args.exec_py, ocl=args.ocl)
     if args.command == "info":
-        return commands.info(args.model, args.class_name)
+        return commands.info(args.model, args.class_name, args.everything)
     if args.command == "generators":
         return commands.generators()
     if args.command == "generate":
@@ -583,10 +634,29 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
     return failure("", f"a command is required\n\n{parser.format_usage().strip()} (see '{PROG} --help')")
 
 
+def _route_argument(value: object) -> object:
+    """A route as it was typed, when an MSYS shell (Git Bash on Windows) rewrote it on the way: it turns an
+    argument that starts with ``/`` into a Windows path (``/dashboard`` -> ``C:/Program Files/Git/dashboard``,
+    ``/a/home`` -> ``A:/home``). No route is a Windows path, so the rewrite is undone."""
+    if os.name != "nt" or not os.environ.get("MSYSTEM") or not isinstance(value, str):
+        return value
+    text = value.replace("\\", "/")
+    root = os.path.dirname(os.environ.get("EXEPATH", "").rstrip("\\/")).replace("\\", "/")
+    for prefix in filter(None, (root, re.sub(r"/(usr|mingw64|mingw32)$", "", root))):
+        if text.lower().startswith(prefix.lower() + "/"):
+            return text[len(prefix):]
+    drive = re.fullmatch(r"([A-Za-z]):(/.*)", text)
+    return f"/{drive[1].lower()}{drive[2]}" if drive else value
+
+
 def _model_operation(args: argparse.Namespace) -> Operation:
     """The operation ``args`` (parsed by an operation's parser) names."""
     names = [argument[0].lstrip("-").replace("-", "_") for argument, _ in _MODEL_OPERATION_ARGUMENTS[args.operation]]
-    return Operation(args.operation, {name: getattr(args, name) for name in names})
+    values = {name: getattr(args, name) for name in names}
+    for name in ("route", "screen"):  # a screen is named by its route too
+        if name in values:
+            values[name] = _route_argument(values[name])
+    return Operation(args.operation, values)
 
 
 # The options of an operation's parser that are the whole batch's (an operation line's would be ignored).

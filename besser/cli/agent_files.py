@@ -32,15 +32,19 @@ Each output `dir` of `besser.toml` is generated from the B-UML model by `besser`
 
 Read:
 - `besser info model.py`: the whole model (`name:type`, `?` optional, `=default`,
-  associations as `role:Class[multiplicity]`, constraints); `--class X`: one class. Not `model.py`.
+  associations as `role:Class[multiplicity]`, constraints); `--class X`: one class and its page (a large
+  model prints names only: use it). Not `model.py`.
 - Never open, grep or edit generated code or `.besser_generated.json` (`.ignore` hides them), BESSER's docs,
   sources or `--help`.
 
-Change the model with `besser model` (one line back; it writes only a valid model).
+Change the model with `besser model`: one line back says what changed (no need to read the model again);
+it writes only a valid model.
 Types: `str int float bool date datetime time`, or an enumeration's name.
 - `besser model add-class Invoice number:str total:float paid:bool=false [--parent Document]`,
   `add-parent Invoice Document`
-- `besser model add-attribute Contact source:str? score:int=0 stage:Stage=LEAD`
+- `besser model add-attribute Contact source:str? score:int=0 stage:Stage=LEAD`; with `--derived`: computed
+  by the server, never sent by clients (set it in `extensions.py`: `@event.listens_for(Contact,
+  "before_insert")` and `"before_update"`, `def f(mapper, connection, target)`)
 - `besser model add-association invoice_contact invoices:Invoice[*] contact:Contact[1]`
 - `besser model set-enum Stage LEAD WON LOST` (sets all its literals)
 - `besser model rename Customer Account`, `rename Contact.mail email`, `rename Stage.WON CLOSED`, an
@@ -75,7 +79,8 @@ empty); an unknown id is 400 (404 in a list). An object is `{attributes, "id", "
 `GET /x/` answers a list of them. `GET /x/{x_id}/`, `POST` and `PUT` answer `{"x": object}` plus the ids
 per to-many end: `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. OCL
 constraints are enforced (422) only if they compare an attribute with a number or use `matches('regex')`;
-write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
+write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`); it never alters a
+table: after a model change delete its SQLite file (`data/*.db`) first.
 """
 
 # The GUI lines go after the model commands, before the line that starts with this.
@@ -83,12 +88,21 @@ _GUI_GUIDE_BEFORE = "Then one command, `besser apply`"
 # The guide's lines on the GUI model, only in a project with an output that reads one (``web_app``):
 # every other project would pay for them in each session's context.
 GUI_GUIDE = """\
-Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend/`, no hand-written file):
-- `besser model add-screen Invoice [--title Bills]`: a page with a table of the class (add, edit, delete),
-  opened by a button on the main page; `add-class ... --screen` adds a class with its page.
+Pages come from the GUI model in `model.py` (`web_app`: React in `<dir>/frontend/`):
+- `besser model add-screen Invoice [--title Bills] [--route /bills]`: a page with a table of the class (add,
+  edit, delete), at `/invoices` by default; `add-class ... --screen` adds a class with its page.
+- `add-menu`: a menu linking every page, on every page; new pages join it (without one they get a button on
+  the main page). `add-column Invoice customer.name [--label Customer]`: a column of the object a to-one end
+  leads to. `add-link Invoices "Export" http://localhost:8000/invoice/export/`: a link on a page.
+- `add-page "Sales overview" [--route /home] [--main]`: a page headed "Sales overview", for `add-card /home "Paid" sum:Invoice.total
+  [--where "paid == true and total > 0"]` (also `avg min max median`, `count:Invoice`) and `add-chart /home
+  "By status" count:Invoice --by status [--kind line|pie]`.
 - Tables follow their class and its parents: attributes added, renamed or removed are columns too; a renamed
-  class renames the page titled after it, a removed one takes it along (if it was the main page, the first
-  page left becomes it). `besser info` lists each page's table.
+  class renames the page titled after it and its route (not with `rename A B --keep-pages`), a removed one
+  takes it along. `besser info` lists each page's route, table, cards and charts.
+- Anything else on a page (a computed line, your own component): edit the page's file,
+  `<dir>/frontend/src/pages/<Screen>.tsx`, the one generated file to open (the backend's address there:
+  `import.meta.env.VITE_API_URL`); `besser apply` merges later model changes into your edit.
 
 """
 
@@ -115,14 +129,20 @@ _NO_TESTS_GUIDE = '''- Check behaviour with tests, not by reading the output: se
 _UNIFORM_GUIDE = '''`GET /x/` answers a list of them. `GET /x/{x_id}/`, `POST` and `PUT` answer `{"x": object}` plus the ids
 per to-many end: `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. OCL
 constraints are enforced (422) only if they compare an attribute with a number or use `matches('regex')`;
-write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
+write other rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`); it never alters a
+table: after a model change delete its SQLite file (`data/*.db`) first.
 '''
 _NOT_UNIFORM_GUIDE = '''`GET /x/` answers a list of them. `GET /x/{x_id}/` answers `{"x": object}` plus the ids per to-many end:
 `"<end>_ids"` for one-to-many, `"<other class>_ids"` (lower case) for many-to-many. `POST` and `PUT` answer
 the same if `X` has a to-many end, else the bare object: read it as `body.get("x", body)`. OCL constraints
 are enforced (422) only if they compare an attribute with a number or use `matches('regex')`; write other
-rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`).
+rules in `extensions.py`. Run `python main_api.py` in its folder (`PORT`, `DATABASE_URL`); it never alters a
+table: after a model change delete its SQLite file (`data/*.db`) first.
 '''
+
+
+# How GUIDE names the file for hand-written backend code of a project it does not know.
+_EXTENSION_FILE = "`extensions.py` beside `main_api.py`"
 
 
 def guide_text(gui: bool = False, tests: bool = True, uniform_responses: bool = True) -> str:
@@ -143,11 +163,17 @@ def guide_text(gui: bool = False, tests: bool = True, uniform_responses: bool = 
 def guide_for(generated: "Sequence[GeneratedDir]") -> str:
     """The guide of a project with the outputs ``generated``: an option counts as on unless an output that
     has it leaves it off."""
-    return guide_text(
+    text = guide_text(
         gui=any(output.reads_gui for output in generated),
         tests=all(output.generates_tests is not False for output in generated),
         uniform_responses=all(output.uniform_responses is not False for output in generated),
     )
+    # The file for hand-written backend code by its path, when the project has one: "beside main_api.py"
+    # left a small model writing it in the project folder, where nothing loads it.
+    files = sorted({f"{output.path}/{output.extension_file}" for output in generated if output.extension_file})
+    if len(files) == 1:
+        text = text.replace(_EXTENSION_FILE, f"`{files[0]}`", 1)
+    return text
 
 
 @dataclass(frozen=True)

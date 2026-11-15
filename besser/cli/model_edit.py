@@ -39,7 +39,18 @@ from typing import Any, Callable, Iterable, Sequence
 from antlr4 import InputStream
 
 from besser.BUML.metamodel import structural as structural_metamodel
-from besser.BUML.metamodel.gui import Button, LookupColumn, Screen, Table, Text
+from besser.BUML.metamodel.gui import (
+    Button,
+    Chart,
+    Link,
+    LookupColumn,
+    Menu,
+    MetricCard,
+    Screen,
+    Table,
+    Text,
+    ViewContainer,
+)
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
     Association,
@@ -78,7 +89,7 @@ _OCL_PROBE = "besser_renamed_member_"
 _ADDERS = {
     "attributes": "add_attribute", "methods": "add_method", "literals": "add_literal", "types": "add_type",
     "associations": "add_association", "generalizations": "add_generalization", "constraints": "add_constraint",
-    "columns": "columns.append",
+    "columns": "columns.append", "view_elements": "view_elements.add",
 }
 
 _ATTRIBUTE = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*)(?P<optional>\?)?(?:\s*=\s*(?P<default>.*))?$")
@@ -684,14 +695,18 @@ class ModelEditor:
     def gui_models(self) -> list[Any]:
         return [loaded.model for loaded in self.loaded.of_kind("gui")]
 
-    def tables_of(self, cls: Class) -> list[Table]:
-        """The tables of the file bound to ``cls``: on the screens of its GUI models, or held by a variable."""
+    def tables(self) -> list[Table]:
+        """The tables of the file: on the screens of its GUI models, or held by a variable."""
         found: dict[int, Table] = {}
         candidates = [element for gui in self.gui_models() for screen in _screens(gui) for element in _contents(screen)]
         for element in [*candidates, *self.namespace.values()]:
-            if isinstance(element, Table) and _bound_class(element) is cls:
+            if isinstance(element, Table):
                 found.setdefault(id(element), element)
         return sorted(found.values(), key=lambda table: table.name)
+
+    def tables_of(self, cls: Class) -> list[Table]:
+        """The tables of the file bound to ``cls``."""
+        return [table for table in self.tables() if _bound_class(table) is cls]
 
     def type_code(self, name: str, kinds: tuple[type, ...] = (Class, Enumeration)) -> str:
         """How the file refers to the type ``name``: a primitive's constant or the variable of a class or
@@ -712,9 +727,10 @@ class ModelEditor:
             raise EditError(f"'{name}' has no variable in {self.path.name} to refer to it by; give it one")
         return var
 
-    def property_code(self, owner: str, spec: str, existing: Iterable[str]) -> tuple[str, str, str]:
+    def property_code(self, owner: str, spec: str, existing: Iterable[str],
+                      derived: bool = False) -> tuple[str, str, str]:
         """The ``Property(...)`` of an attribute spec of the class ``owner``, its name, and the spec as
-        ``besser info`` prints it."""
+        ``besser info`` prints it. ``derived``: the server computes it, so clients never send it."""
         name, type_name, optional, default = parse_attribute(spec)
         if name in existing:
             raise EditError(f"'{name}' exists already; rename or remove it first")
@@ -725,8 +741,10 @@ class ModelEditor:
             code += ", is_optional=True"
         if default is not None:
             code += f", default_value={self.default_code(type_name, default.strip())}"
+        if derived:
+            code += ", is_derived=True"
         shown = f"{name}:{type_name}{'?' if optional else ''}" + (f"={default.strip()}" if default is not None else "")
-        return code + ")", name, shown
+        return code + ")", name, shown + (" (derived)" if derived else "")
 
     def refuse_class_type(self, owner: str, name: str, type_name: str, optional: bool, first: str = "") -> None:
         """Refuse a class as the type of the attribute ``name`` of ``owner``, with the association to add
@@ -968,7 +986,7 @@ def _attribute_var_base(editor: ModelEditor, cls: Class, name: str) -> str:
     return f"{prefix}{name}"
 
 
-def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str]) -> Edited:
+def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str], derived: bool = False) -> Edited:
     cls = editor.find_type(class_name, Class)
     existing = [attribute.name for attribute in cls.all_attributes()] + [end.name for end in cls.association_ends()]
     shown = []
@@ -981,7 +999,7 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
     before = min(anchors, key=lambda statement: statement.lineno) if tables and anchors else None
     added = []
     for spec in attributes:
-        code, name, text = editor.property_code(class_name, spec, existing)
+        code, name, text = editor.property_code(class_name, spec, existing, derived)
         existing.append(name)
         shown.append(text)
         added.append((name, editor.add(
@@ -998,7 +1016,7 @@ def add_attribute(editor: ModelEditor, class_name: str, attributes: Sequence[str
     summary = f"added {class_name}.{', '.join(shown)}"
     if columns:
         summary += f"; column{'s' if len(added) > 1 else ''} added to table {', '.join(columns)}"
-    return Edited(editor.finish(), summary, check)
+    return Edited(editor.finish(), summary, check, editor.warnings)
 
 
 def add_class(editor: ModelEditor, name: str, attributes: Sequence[str], parent: str | None,
@@ -1030,7 +1048,8 @@ def add_class(editor: ModelEditor, name: str, attributes: Sequence[str], parent:
         return edited
     # The screen is added to the text with the class, as 'add-screen' would add it next.
     with_screen = add_screen(ModelEditor(editor.path, edited.text, editor.use), name, None)
-    return Edited(with_screen.text, f"{edited.summary}; {with_screen.summary}", check, gui_check=with_screen.gui_check)
+    return Edited(with_screen.text, f"{edited.summary}; {with_screen.summary}", check, with_screen.warnings,
+                  gui_check=with_screen.gui_check)
 
 
 def add_parent(editor: ModelEditor, class_name: str, parent: str) -> Edited:
@@ -1050,7 +1069,7 @@ def add_parent(editor: ModelEditor, class_name: str, parent: str) -> Edited:
         found = model.get_class_by_name(class_name)
         return None if found and parent in {p.name for p in found.parents()} else f"{class_name} is not a {parent}"
 
-    return Edited(editor.finish(), f"made {class_name} a {parent}{columns}", check)
+    return Edited(editor.finish(), f"made {class_name} a {parent}{columns}", check, editor.warnings)
 
 
 def set_enum(editor: ModelEditor, name: str, literals: Sequence[str]) -> Edited:
@@ -1220,7 +1239,7 @@ def add_constraint(editor: ModelEditor, class_name: str, expression: str, name: 
     return Edited(editor.finish(), f"added constraint {name} on {class_name}", check)
 
 
-def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
+def rename(editor: ModelEditor, path: str, new_name: str, keep_pages: bool = False) -> Edited:
     element = editor.resolve(path)
     old_name = element.name
     if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
@@ -1247,7 +1266,10 @@ def rename(editor: ModelEditor, path: str, new_name: str) -> Edited:
         quoted = _rename_literal_texts(editor, element, new_name)
     new_path = f"{path.rsplit('.', 1)[0]}.{new_name}" if "." in path else new_name
     summary = f"renamed {path} to {new_path}" + (f" (variable {var} -> {new_var})" if new_var else "") + quoted
-    summary += _rename_in_gui(editor, element, old_name, new_name)
+    if not keep_pages:
+        summary += _rename_in_gui(editor, element, old_name, new_name)
+    if isinstance(element, Class):
+        summary += _relink(editor, old_name, new_name)
     if isinstance(element, Class):
         summary += _ends_named_after(editor, element, old_name, new_name)
 
@@ -1277,6 +1299,7 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
     renamed[f"Go to the {_plural(old).lower()}"] = f"Go to the {_plural(new).lower()}"
     tables = editor.tables_of(element)
     changes = []
+    routes: list[tuple[str, str]] = []
     # A screen's derived titles change together or not at all: its name (the page's route), heading,
     # tables and the buttons that open it, so that one page never shows two names.
     kept: list[Any] = []
@@ -1287,7 +1310,12 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
             if not any(table in contents for table in tables):
                 continue
             new_name = renamed.get(screen.name, screen.name)
-            clash = _clashing_screen(screens, new_name, renamed.get(screen.description, screen.description), screen)
+            # A route derived from the name follows it: the default (/Name), or as add-screen writes it (/name).
+            written = {f"/{screen.name.lower()}": f"/{new_name.lower()}"}
+            new_route = f"/{new_name}" if screen.route_path == f"/{screen.name}" else \
+                written.get(screen.route_path, screen.route_path)
+            clash = _clashing_screen(screens, new_name, renamed.get(screen.description, screen.description), screen,
+                                     route=new_route)
             if clash is not None:
                 kept += [table for table in tables if table in contents]
                 editor.warnings.append(f"screen {screen.name} keeps its titles, as do its heading, tables and the "
@@ -1296,6 +1324,13 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
                 continue
             changes += _replace_strings(editor, editor.call_of(screen), ("name", "component_id", "description"),
                                         renamed)
+            _replace_strings(editor, editor.call_of(screen), ("route_path",), written)
+            if new_route != screen.route_path:
+                routes.append((screen.route_path, new_route))
+            for _, _, items in _menus(editor):
+                for _, item in _menu_items_to(items, screen.route_path):
+                    changes += _replace_strings(editor, item, ("label",), renamed)
+                    _replace_strings(editor, item, ("url",), {screen.route_path: new_route})
             for heading in contents:
                 if isinstance(heading, Text):
                     changes += _replace_strings(editor, editor.call_of(heading), ("content",), renamed)
@@ -1308,7 +1343,20 @@ def _rename_in_gui(editor: ModelEditor, element: Any, old: str, new: str) -> str
             changes += _replace_strings(editor, editor.call_of(table), ("title",), renamed)
     titles = sorted({f"{old_title} -> {new_title}" for old_title, new_title in changes
                      if old_title in _derived_titles(old)})
-    return f"; GUI titles {', '.join(titles)}" if titles else ""
+    moved = f", route {', '.join(f'{old_route} -> {new_route}' for old_route, new_route in routes)}" if routes else ""
+    return f"; GUI titles {', '.join(titles)}{moved} (--keep-pages keeps them)" if titles or routes else ""
+
+
+def _relink(editor: ModelEditor, old: str, new: str) -> str:
+    """Point the links to the backend routes of a renamed class (``/old/...``) at its new ones; returns
+    what changed, for the summary."""
+    old_part, new_part = f"/{old.lower()}/", f"/{new.lower()}/"
+    moved = []
+    for link in {id(e): e for gui in editor.gui_models() for screen in _screens(gui) for e in _contents(screen)
+                 if isinstance(e, Link) and old_part in (e.url or "")}.values():
+        if _replace_strings(editor, editor.call_of(link), ("url",), {link.url: link.url.replace(old_part, new_part)}):
+            moved.append(link.label or link.name)
+    return f"; link {', '.join(sorted(moved))} now to {new_part}" if moved else ""
 
 
 def _relabel_columns(editor: ModelEditor, attribute: Property, old: str, new: str) -> str:
@@ -2175,11 +2223,15 @@ def remove(editor: ModelEditor, path: str) -> Edited:
     gui_removed = _gui_removals(editor, element) if isinstance(element, Class) else []
     for gui_element in gui_removed:
         _remove_gui_element(editor, gui_element, drops, removed_vars)
+    for screen in (item for item in gui_removed if isinstance(item, Screen)):
+        for _, _, items in _menus(editor):
+            for index, _ in _menu_items_to(items, screen.route_path):
+                drops.setdefault(id(items), (items, set()))[1].add(index)
     main_pages = _new_main_pages(editor, gui_removed, removed_vars)
     removed_properties = [item for item in [*outer, *members] if isinstance(item, Property)]
     column_tables = []
-    for table in sorted({id(t): t for item in removed_properties if isinstance(item.owner, Class)
-                         for t in _tables_inheriting(editor, item.owner)}.values(), key=lambda t: t.name):
+    # Any table may show them: a column of another class's table follows an end to the attribute.
+    for table in editor.tables():
         if table in gui_removed:
             continue
         located = _column_items(editor, table)
@@ -2369,17 +2421,17 @@ def _gui_model(editor: ModelEditor) -> Any:
 
 
 def _clashing_screen(screens: Sequence[Screen], name: str, description: str | None,
-                     besides: Screen | None = None) -> Screen | None:
+                     besides: Screen | None = None, route: str | None = None) -> Screen | None:
     """The screen of ``screens`` (other than ``besides``) that a screen named ``name`` with ``description``
-    would collide with in the generated app: the same route but for case (routes ignore case, so one
-    would open the other), or the same page file but for case (one overwrites the other on a
-    case-insensitive file system, as macOS's and Windows' are)."""
-    def keys(screen_name: str, screen_description: str | None) -> set[tuple[str, str]]:
-        return {("route", screen_name.lower()), ("file", _page_file(screen_name, screen_description).lower())}
+    (at ``route``; default: ``/name``) would collide with in the generated app: the same route but for
+    case (routes ignore case, so one would open the other), or the same page file but for case (one
+    overwrites the other on a case-insensitive file system, as macOS's and Windows' are)."""
+    def keys(screen_route: str, screen_name: str, screen_description: str | None) -> set[tuple[str, str]]:
+        return {("route", screen_route.lower()), ("file", _page_file(screen_name, screen_description).lower())}
 
-    new = keys(name, description)
-    return next((other for other in screens if other is not besides and keys(other.name, other.description) & new),
-                None)
+    new = keys(route or f"/{name}", name, description)
+    return next((other for other in screens if other is not besides
+                 and keys(other.route_path, other.name, other.description) & new), None)
 
 
 def _page_file(name: str, description: str | None) -> str:
@@ -2391,11 +2443,203 @@ def _page_file(name: str, description: str | None) -> str:
     return PageBuilderMixin._to_pascal_case(description or name.replace("_", " ").strip())
 
 
-def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edited:
-    cls = editor.find_type(class_name, Class)
+_ROUTE = re.compile(r"^(/[A-Za-z0-9][\w-]*)+$")
+
+
+def _screen_name(title: str) -> str:
+    """A screen's name from its title: the title's words joined (Book reviews -> BookReviews)."""
+    name = "".join(word[:1].upper() + word[1:] for word in re.split(r"\W+", title))
+    if not name:
+        raise EditError(f"'{title}' is no title: give it letters or digits")
+    return name
+
+
+def _new_screen(editor: ModelEditor, title: str, route: str | None) -> tuple[Any, list[Screen], str, str, ast.AST]:
+    """What a new screen titled ``title`` needs: the GUI model, its screens, the new screen's name and
+    route (the one asked for, or its name in lower case), and the literal that lists the screens."""
     gui = _gui_model(editor)
     screens = _screens(gui)
-    for screen in screens:
+    name = _screen_name(title)
+    route = route or f"/{name.lower()}"
+    if not _ROUTE.match(route):
+        raise EditError(f"'{route}' is not a route: write /name or /group/name (letters, digits, - and _)")
+    clash = _clashing_screen(screens, name, title, route=route)
+    if clash is not None and clash.name.lower() != name.lower() and clash.route_path.lower() == route.lower():
+        raise EditError(f"screen {clash.name} of {gui.name} is at {clash.route_path} already: give another --route")
+    if clash is not None:
+        raise EditError(f"{gui.name} has a screen named '{clash.name}' already: give another --title")
+    module = min(gui.modules, key=lambda m: m.name, default=None)
+    literal = editor.collection(module, "screens") if module is not None else None
+    if literal is None:
+        raise EditError(f"cannot find where the screens of {gui.name} are written in {editor.path.name}; "
+                        "edit it by hand")
+    return gui, screens, name, route, literal
+
+
+def _arguments(first: str, parts: Sequence[str]) -> str:
+    """``parts`` as arguments, a comma after each, on as many lines as they need: the first starts with
+    ``first``, the others are aligned under what follows it."""
+    lines: list[str] = []
+    current: list[str] = []
+    for part in parts:
+        if current and len(first) + len(", ".join([*current, part])) + 1 > _MAX_LINE:
+            lines.append(", ".join(current) + ",")
+            current = []
+        current.append(part)
+    lines.append(", ".join(current) + ",")
+    return first + f"\n{' ' * len(first)}".join(lines)
+
+
+# How the pages the screen commands write look: utility classes of Tailwind, which the generated React
+# application ships, set on the elements. A page then has a navigation bar, a centred column, a heading,
+# cards side by side and a panel round a chart, with no hand-written CSS and nothing new in a generator.
+_MENU_CLASSES = ("bg-slate-900", "px-6", "py-3", "text-sm", "font-medium", "[&_a]:text-slate-200",
+                 "[&_a:hover]:text-white")
+_PAGE_CLASSES = ("max-w-5xl", "mx-auto", "px-6", "py-6")
+_HEADING_CLASSES = ("text-2xl", "font-bold", "text-slate-900", "mb-4")
+_CARDS_CLASSES = ("grid", "grid-cols-1", "md:grid-cols-3", "gap-4", "mb-4")
+_PANEL_CLASSES = ("bg-white", "rounded-xl", "shadow", "p-4", "mb-4")
+_LINK_CLASSES = ("inline-block", "mb-4", "text-blue-700", "underline")
+
+
+def _classes(names: Sequence[str]) -> str:
+    return f"css_classes=[{', '.join(_q(name) for name in names)}]"
+
+
+def _heading_code(editor: ModelEditor, var: str, title: str) -> str:
+    """A page's heading, as an item of its content (written 8 columns in). Ordered first, so that what is
+    added to the page later follows it."""
+    text = _arguments(f"{' ' * 8}{editor._gui('Text')}(", [
+        f"name={_q(var)}", f"component_id={_q(var)}", f"content={_q(title)}", 'tag_name="h1"',
+        _classes(_HEADING_CLASSES), "display_order=1"])
+    return text.strip()[:-1] + ")"
+
+
+def _content_code(editor: ModelEditor, var: str, title: str, elements: Sequence[str]) -> str:
+    """The container that holds a screen's content under its menu: a centred column."""
+    items = "".join(f"        {element},\n" for element in elements)
+    return (f"{var} = {editor._gui('ViewContainer')}(\n"
+            f"    name={_q(var)}, component_id={_q(var)}, description={_q(title)}, display_order=1,\n"
+            f"    {_classes(_PAGE_CLASSES)},\n"
+            f"    view_elements={{\n{items}    }},\n)\n")
+
+
+def _content_of(screen: Screen) -> Any:
+    """Where what is added to a screen goes: the container the screen commands write under the menu (the
+    screen's only plain container), or the screen itself when it has none (a page written otherwise)."""
+    boxes = [element for element in screen.view_elements if type(element) is ViewContainer]
+    return boxes[0] if len(boxes) == 1 else screen
+
+
+def _next_order(container: Any) -> int:
+    """The order of an element added after those ``container`` shows in an order (those without one come
+    last on the page)."""
+    return int(max((element.display_order for element in container.view_elements
+                    if getattr(element, "display_order", None) is not None), default=0)) + 1
+
+
+def _screen_code(editor: ModelEditor, var: str, name: str, title: str, route: str, main: bool,
+                 elements: Sequence[str]) -> str:
+    items = "".join(f"        {element},\n" for element in elements)
+    arguments = [f"name={_q(name)}", f"component_id={_q(name)}", f"description={_q(title)}",
+                 f"route_path={_q(route)}", *(["is_main_page=True"] if main else [])]
+    return (f"{var} = {editor._gui('Screen')}(\n{_arguments('    ', arguments)}\n"
+            f"    view_elements={{\n{items}    }},\n)\n")
+
+
+def _menus(editor: ModelEditor) -> list[tuple[Menu, str, ast.AST]]:
+    """The menus a command can keep in step with the screens, each with its variable and the literal of
+    its items: those held by a variable, whose items the file writes as one set or list."""
+    menus = {id(value): value for value in editor.namespace.values() if isinstance(value, Menu)}
+    found = []
+    for menu in sorted(menus.values(), key=lambda menu: menu.name):
+        var, literal = editor.var_of(menu), editor.collection(menu, "menuItems")
+        if var is not None and literal is not None:
+            found.append((menu, var, literal))
+    return found
+
+
+def _navigation_menus(editor: ModelEditor, screens: Sequence[Screen]) -> list[tuple[Menu, str, ast.AST]]:
+    """The menus (see ``_menus``) shown on every one of ``screens``: a new screen joins them."""
+    return [found for found in _menus(editor) if all(found[0] in _contents(screen) for screen in screens)]
+
+
+def _menu_items_to(literal: ast.AST, route: str) -> list[tuple[int, ast.Call]]:
+    """The items of a menu's literal that link to ``route``, with their index."""
+    found = []
+    for index, item in enumerate(_items(literal)):
+        url = _argument(item, "url", 1) if _callee(item) == "MenuItem" else None
+        if isinstance(url, ast.Constant) and url.value == route:
+            found.append((index, item))
+    return found
+
+
+def _link_screen(editor: ModelEditor, screens: Sequence[Screen], anchor: ast.stmt, screen_var: str,
+                 screen_name: str, title: str, route: str, main: bool) -> tuple[list[str], str, str]:
+    """Make a new screen (the variable ``screen_var``, defined before ``anchor``) reachable: an item in
+    each navigation menu, which it shows too; without a menu, a button on the main page (on the new
+    screen to the others, when it becomes the main page). Returns the view elements the screen gets,
+    the code that follows its definition, and how it is reached, for the summary."""
+    current = next((screen for screen in screens if screen.is_main_page), screens[0] if screens else None)
+    if main and current is not None and current.is_main_page:
+        _unmake_main_page(editor, current)
+    said = "the main page" if main or current is None else ""
+    menus = [(menu, var, items) for menu, var, items in _navigation_menus(editor, screens)
+             if editor.src.start(editor.src.assignment(var)) < editor.src.start(anchor)]
+    if menus:
+        for _, _, items in menus:
+            item = f"{editor._gui('MenuItem')}(label={_q(title)}, url={_q(route)})"
+            if _items(items):
+                editor.add_to_literal(items, item)
+            else:  # one item a line from the first on
+                editor.src.replace(editor.src.start(items), editor.src.end(items), f"{{\n        {item},\n    }}")
+        said += f"{', ' if said else ''}in menu {', '.join(menu.name for menu, _, _ in menus)}"
+        return [var for _, var, _ in menus], "", said
+    if current is None:
+        return [], "", said
+    if not main:
+        button = editor.free_name(f"to_{_snake(screen_name)}")
+        return [], _navigation_button(editor, current, anchor, button, screen_var, screen_name, title), \
+            f"button on {current.name}"
+    code, opened = "", []
+    for target in screens:
+        target_var = editor.var_of(target)
+        if target_var is None or editor.src.start(editor.src.assignment(target_var)) > editor.src.start(anchor):
+            editor.warnings.append(f"no button on {screen_name} opens screen {target.name}: it has no variable "
+                                   "above the screens' list to refer to it by; add the button by hand")
+            continue
+        button = editor.free_name(f"{_snake(screen_name)}_to_{_snake(target.name)}")
+        code += _button_code(editor, button, target_var, target.name, target.description or target.name)
+        code += f"{screen_var}.view_elements.add({button})\n"
+        opened.append(target.name)
+    return [], code, said + (f", with a button to {', '.join(opened)}" if opened else "")
+
+
+def _unmake_main_page(editor: ModelEditor, screen: Screen) -> None:
+    """Plan ``is_main_page=False`` on ``screen``, where the file makes it the main page."""
+    call = editor.call_of(screen)
+    flag = next((keyword_ for keyword_ in call.keywords if keyword_.arg == "is_main_page"), None) \
+        if call is not None else None
+    var = editor.var_of(screen)
+    statements = [statement for statement in (editor.src.attribute_statements(var, "is_main_page") if var else [])
+                  if isinstance(statement, ast.Assign)]
+    value = statements[-1].value if statements else flag.value if flag is not None else None
+    if value is None:
+        raise EditError(f"cannot find where screen {screen.name} is made the main page in {editor.path.name}; "
+                        "edit it by hand")
+    editor.src.replace(editor.src.start(value), editor.src.end(value), "False")
+
+
+def _has_screen(screen_name: str) -> Callable[[list[Any]], str | None]:
+    def gui_check(guis: list[Any]) -> str | None:
+        found = any(screen.name == screen_name for gui in guis for screen in _screens(gui))
+        return None if found else f"no screen {screen_name}"
+    return gui_check
+
+
+def add_screen(editor: ModelEditor, class_name: str, title: str | None, route: str | None = None) -> Edited:
+    cls = editor.find_type(class_name, Class)
+    for screen in _screens(_gui_model(editor)):
         if any(isinstance(element, Table) and _bound_class(element) is cls for element in _contents(screen)):
             raise EditError(f"screen {screen.name} shows {class_name} already")
     lineage = _lineage(cls)
@@ -2404,45 +2648,29 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
         raise EditError(f"{class_name} has no attribute, own or inherited, for its table to show: add one first "
                         f"(besser model add-attribute {class_name} name:str)")
     title = title or _plural(class_name)
-    # The name is the page's route: the title's words joined (Book reviews -> BookReviews).
-    screen_name = "".join(word[:1].upper() + word[1:] for word in re.split(r"\W+", title))
-    if not screen_name:
-        raise EditError(f"'{title}' is no title: give it letters or digits")
-    clash = _clashing_screen(screens, screen_name, title)
-    if clash is not None:
-        raise EditError(f"{gui.name} has a screen named '{clash.name}' already: give another --title")
-    module = min(gui.modules, key=lambda m: m.name, default=None)
-    literal = editor.collection(module, "screens") if module is not None else None
-    if literal is None:
-        raise EditError(f"cannot find where the screens of {gui.name} are written in {editor.path.name}; "
-                        "edit it by hand")
+    # The name is the title's words joined (Book reviews -> BookReviews); the route, unless given, that in lower case.
+    _, screens, screen_name, route, literal = _new_screen(editor, title, route)
     anchor = editor.src.top_statement(literal)
     fields = {key: var for owner in lineage for key, var in _attribute_variables(editor, owner).items()}
     base = _snake(class_name)
     table, screen_var = editor.free_name(f"{base}_table"), editor.free_name(f"{base}_screen")
-    heading = editor.free_name(f"{base}_heading")
+    heading, content = editor.free_name(f"{base}_heading"), editor.free_name(f"{base}_page")
     columns = "".join(f"        {editor._gui('FieldColumn')}(label={_q(_label(attribute.name))}, "
                       f"field={fields[id(attribute)]}),\n" for attribute in attributes)
-    # The main page links to the new screen: the generated app navigates with buttons only.
-    main = next((screen for screen in screens if screen.is_main_page), screens[0] if screens else None)
+    shown, navigation, reached = _link_screen(editor, screens, anchor, screen_var, screen_name, title, route, False)
     code = (
         f"{table} = {editor._gui('Table')}(\n"
         f"    name={_q(table)}, component_id={_q(table)}, title={_q(title)},\n"
         f"    action_buttons=True, show_pagination=True, columns=[\n{columns}    ],\n)\n"
         f"{table}.data_binding = {editor._gui('DataBinding')}(domain_concept={editor.type_code(class_name)})\n"
-        f"{screen_var} = {editor._gui('Screen')}(\n"
-        f"    name={_q(screen_name)}, component_id={_q(screen_name)}, description={_q(title)},"
-        f"{' is_main_page=True,' if main is None else ''}\n"
-        f"    view_elements={{\n        {editor._gui('Text')}(name={_q(heading)}, component_id={_q(heading)}, "
-        f"content={_q(title)}),\n        {table},\n    }},\n)\n"
+        + _content_code(editor, content, title, [_heading_code(editor, heading, title), table])
+        + _screen_code(editor, screen_var, screen_name, title, route, not screens, [*shown, content])
+        + navigation
     )
-    if main is not None:
-        code += _navigation_button(editor, main, anchor, editor.free_name(f"to_{_snake(screen_name)}"),
-                                   screen_var, screen_name, title)
     editor.src.insert_before(anchor, code, separate=True)
     editor.add_to_literal(literal, screen_var)
-    summary = f"added screen {screen_name} (table of {class_name}: {', '.join(a.name for a in attributes)}"
-    summary += f"; button on {main.name})" if main is not None else "; the main page)"
+    summary = (f"added screen {screen_name} at {route} (table of {class_name}: "
+               f"{', '.join(a.name for a in attributes)}; {reached})")
 
     def gui_check(guis: list[Any]) -> str | None:
         shown = [screen for gui in guis for screen in _screens(gui) if screen.name == screen_name and any(
@@ -2450,14 +2678,377 @@ def add_screen(editor: ModelEditor, class_name: str, title: str | None) -> Edite
             for element in _contents(screen))]
         return None if shown else f"no screen {screen_name} showing {class_name}"
 
-    return Edited(editor.finish(), summary, lambda model: None, gui_check=gui_check)
+    return Edited(editor.finish(), summary, lambda model: None, editor.warnings, gui_check=gui_check)
 
 
-def _navigation_button(editor: ModelEditor, main: Screen, anchor: ast.stmt, button: str, screen_var: str,
-                       screen_name: str, title: str) -> str:
-    """The code that defines the button ``button`` opening the screen ``screen_var`` (named ``screen_name``,
-    titled ``title``) and puts it on the screen ``main``; the code goes before the statement ``anchor``."""
-    code = (
+def add_page(editor: ModelEditor, title: str, route: str | None, main: bool) -> Edited:
+    _, screens, screen_name, route, literal = _new_screen(editor, title, route)
+    anchor = editor.src.top_statement(literal)
+    base = _snake(screen_name)
+    screen_var, heading = editor.free_name(f"{base}_screen"), editor.free_name(f"{base}_heading")
+    content = editor.free_name(f"{base}_page")
+    shown, navigation, reached = _link_screen(editor, screens, anchor, screen_var, screen_name, title, route, main)
+    code = (_content_code(editor, content, title, [_heading_code(editor, heading, title)])
+            + _screen_code(editor, screen_var, screen_name, title, route, main or not screens, [*shown, content]))
+    editor.src.insert_before(anchor, code + navigation, separate=True)
+    editor.add_to_literal(literal, screen_var)
+    return Edited(editor.finish(), f"added page {screen_name} at {route} ({reached or 'no link to it yet'})",
+                  lambda model: None, editor.warnings, gui_check=_has_screen(screen_name))
+
+
+def add_menu(editor: ModelEditor) -> Edited:
+    gui = _gui_model(editor)
+    screens = _screens(gui)
+    existing = _navigation_menus(editor, screens)
+    if existing:  # nothing to do: an error would undo the batch this line is part of
+        return Edited(editor.finish(), f"menu {existing[0][0].name} links the screens of {gui.name} already "
+                                       "(no change)", lambda model: None)
+    module = min(gui.modules, key=lambda m: m.name, default=None)
+    literal = editor.collection(module, "screens") if module is not None else None
+    if literal is None:
+        raise EditError(f"cannot find where the screens of {gui.name} are written in {editor.path.name}; "
+                        "edit it by hand")
+    # The menu is defined before the first statement that writes a screen, and each screen shows it.
+    first = editor.src.top_statement(literal)
+    var = editor.free_name("menu")
+    after, last = "", None
+    for screen in screens:
+        elements, screen_var = editor.collection(screen, "view_elements"), editor.var_of(screen)
+        statement = editor.src.top_statement(elements) if elements is not None else \
+            editor.src.assignment(screen_var) if screen_var else None
+        if statement is None:
+            raise EditError(f"cannot find where screen {screen.name} is written in {editor.path.name} to put the "
+                            "menu on it: give it a variable")
+        if editor.src.start(statement) < editor.src.start(first):
+            first = statement
+        if elements is not None:
+            editor.add_to_literal(elements, var)
+        else:
+            after += f"{screen_var}.view_elements.add({var})\n"
+            last = statement if last is None or editor.src.start(statement) > editor.src.start(last) else last
+    items = "".join(f"        {editor._gui('MenuItem')}(label={_q(screen.description or screen.name)}, "
+                    f"url={_q(screen.route_path)}),\n" for screen in screens)
+    # Ordered first: a page's elements without an order follow those that have one.
+    listed = "{\n" + items + "    }" if items else "set()"
+    editor.src.insert_before(first, (
+        f"{var} = {editor._gui('Menu')}(\n"
+        f"    name={_q(var)}, component_id={_q(var)}, description=\"Navigation\", display_order=0,\n"
+        f"    {_classes(_MENU_CLASSES)},\n"
+        f"    menuItems={listed},\n)\n"), separate=True)
+    if last is not None:
+        editor.src.insert_after(last, after)
+    replaced = _drop_navigation_buttons(editor, screens)
+
+    def gui_check(guis: list[Any]) -> str | None:
+        bare = [screen.name for gui in guis for screen in _screens(gui)
+                if not any(isinstance(element, Menu) and element.name == var for element in _contents(screen))]
+        return f"screen {', '.join(bare)} does not show the menu" if bare else None
+
+    summary = f"added menu {var}" + (f" to {', '.join(screen.name for screen in screens)}" if screens else
+                                     " (no screen yet: each new one joins it)")
+    if replaced:
+        summary += f"; it replaces the button{'s' if len(replaced) > 1 else ''} to {', '.join(replaced)}"
+    return Edited(editor.finish(), summary, lambda model: None, editor.warnings, gui_check=gui_check)
+
+
+def _drop_navigation_buttons(editor: ModelEditor, screens: Sequence[Screen]) -> list[str]:
+    """Remove the buttons that only open a screen, as ``add-screen`` writes them while there is no menu:
+    the menu links every screen, and beside it they are a second, unstyled navigation. Returns the
+    screens they opened. A button the file writes inside a set stays (removing it there and adding the
+    menu to the same set would be two edits of one place)."""
+    in_sets = {item.id for node in ast.walk(editor.src.tree) if isinstance(node, (ast.Set, ast.List))
+               for item in node.elts if isinstance(item, ast.Name)}
+    buttons = {id(element): element for screen in screens for element in _contents(screen)
+               if isinstance(element, Button) and getattr(element, "targetScreen", None) in screens}
+    opened: list[str] = []
+    for button in sorted(buttons.values(), key=lambda button: button.name):
+        var = editor.var_of(button)
+        if var is None or var in in_sets:
+            continue
+        _remove_gui_element(editor, button, {}, [])
+        opened.append(button.targetScreen.name)
+    return opened
+
+
+def _end_variable(editor: ModelEditor, end: Property) -> tuple[str, int]:
+    """The variable of an association end and where it is defined; an end written inside its association
+    gets one, defined before it, so that a column can follow it."""
+    var = editor.var_of(end)
+    if var is not None:
+        return var, editor.src.start(editor.src.assignment(var))
+    association = editor.association_of(end)
+    literal = editor.collection(association, "ends")
+    item = next((item for item in _items(literal) if _builds(item, end)), None) if literal is not None else None
+    if item is None:
+        raise EditError(f"cannot find where {editor.describe(end)} is written to follow it from a table; "
+                        "give it a variable")
+    statement = editor.src.top_statement(literal)
+    var = editor.free_name(f"{editor.var_of(association) or _snake(association.name)}_{end.name}")
+    editor.src.insert_before(statement, f"{var} = {editor.src.segment(item)}\n", False)
+    editor.src.replace(editor.src.start(item), editor.src.end(item), var)
+    return var, editor.src.start(statement)
+
+
+def _attribute_named(cls: Class, name: str) -> Property:
+    found = next((attribute for attribute in cls.all_attributes() if attribute.name == name), None)
+    if found is None:
+        known = ", ".join(sorted(attribute.name for attribute in cls.all_attributes())) or "none"
+        raise EditError(f"{cls.name} has no attribute '{name}' (its attributes: {known})")
+    return found
+
+
+def _field_variables(editor: ModelEditor, attributes: Sequence[Property]) -> dict[int, str]:
+    """The variable of each of ``attributes``, for a GUI element to refer to them by."""
+    owners = {id(attribute.owner): attribute.owner for attribute in attributes}
+    return {key: var for owner in owners.values() for key, var in _attribute_variables(editor, owner).items()}
+
+
+def add_column(editor: ModelEditor, class_name: str, path: str, label: str | None) -> Edited:
+    cls = editor.find_type(class_name, Class)
+    end_name, _, attribute_name = path.partition(".")
+    own = next((attribute for attribute in cls.all_attributes() if attribute.name == path), None)
+    if own is not None:  # an attribute of the class itself: add-attribute adds this column already
+        tables = [table for table in editor.tables_of(cls)
+                  if not any(getattr(column, "field", None) is own and not isinstance(column, LookupColumn)
+                             for column in table.columns)]
+        if not tables:
+            return Edited(editor.finish(), f"{class_name}.{path} is a column of its table already (no change)",
+                          lambda model: None)
+        names = _add_columns(editor, tables, [(own.name, _field_variables(editor, [own])[id(own)])])
+        return Edited(editor.finish(), f"added column {_label(own.name)} to table {', '.join(names)}",
+                      lambda model: None, editor.warnings)
+    ends = {end.name: end for end in cls.all_association_ends()}
+    if end_name not in ends or not attribute_name:
+        to_one = sorted(name for name, end in ends.items() if end.multiplicity.max == 1)
+        raise EditError(f"'{path}' is not end.attribute of {class_name}: write an association end that leads to "
+                        f"one object ({', '.join(to_one) or 'it has none'}), then an attribute of its class")
+    end = ends[end_name]
+    if end.multiplicity.max != 1:
+        raise EditError(f"{class_name}.{end_name} is {multiplicity_text(end.multiplicity.min, end.multiplicity.max)}: "
+                        "a column shows one object, so the end must be [1] or [0..1]")
+    attribute = _attribute_named(end.type, attribute_name)
+    tables = [table for table in editor.tables_of(cls) if not any(
+        isinstance(column, LookupColumn) and column.path is end and column.field is attribute
+        for column in table.columns)]
+    if not tables:
+        raise EditError(f"no table of {class_name} to add the column to: " + (
+            f"{path} is a column already" if editor.tables_of(cls) else
+            f"add its screen first (besser model add-screen {class_name})"))
+    end_var, defined = _end_variable(editor, end)
+    field_var = _field_variables(editor, [attribute])[id(attribute)]
+    label = label or _label(end.name)
+    for table in tables:
+        columns = editor.collection(table, "columns")
+        if columns is not None and editor.src.start(editor.src.top_statement(columns)) < defined:
+            raise EditError(f"{editor.describe(end)} is written after table {table.name} in {editor.path.name}: "
+                            "move its association above the table")
+        editor.add(table, "columns", f"{editor._gui('LookupColumn')}(label={_q(label)}, path={end_var}, "
+                                     f"field={field_var})",
+                   lambda table=table: editor.free_name(f"{editor.var_of(table) or table.name}_{end.name}"),
+                   need_var=False, separate=False)
+
+    def gui_check(guis: list[Any]) -> str | None:
+        shown = [column for gui in guis for screen in _screens(gui) for table in _contents(screen)
+                 if isinstance(table, Table) for column in table.columns
+                 if isinstance(column, LookupColumn) and column.label == label]
+        return None if shown else f"no column {label}"
+
+    return Edited(editor.finish(), f"added column {label} ({path}) to table {', '.join(t.name for t in tables)}",
+                  lambda model: None, editor.warnings, gui_check=gui_check)
+
+
+# ── cards and charts: one number, or one per value of an attribute ──────────
+
+_VALUE = re.compile(r"^(?P<how>[A-Za-z]+):(?P<cls>[A-Za-z_]\w*)(?:\.(?P<attribute>[A-Za-z_]\w*))?$")
+# What a card or chart computes -> the member of DataAggregation.
+_AGGREGATIONS = {"sum": "SUM", "avg": "AVG", "count": "COUNT", "min": "MIN", "max": "MAX", "median": "MEDIAN"}
+_CONDITION = re.compile(r"^(?P<field>[A-Za-z_]\w*)\s*(?P<op>==|!=|>=|<=|=|>|<)\s*(?P<value>.+)$")
+_CHARTS = {"bar": "BarChart", "line": "LineChart", "pie": "PieChart"}
+
+
+def _parse_value(editor: ModelEditor, spec: str) -> tuple[str, Class, Property | None]:
+    """What ``sum:Deal.amount`` or ``count:Deal`` computes: how, over which class, of which attribute."""
+    match = _VALUE.match(spec)
+    how = match["how"].lower() if match else ""
+    if how not in _AGGREGATIONS:
+        raise EditError(f"'{spec}' is not a value: write sum:Class.attribute (also avg, min, max, median) or "
+                        "count:Class")
+    cls = editor.find_type(match["cls"], Class)
+    if match["attribute"] is None:
+        if how != "count":
+            raise EditError(f"'{spec}': {how} is of an attribute, as {how}:{cls.name}.attribute")
+        return how, cls, None
+    attribute = _attribute_named(cls, match["attribute"])
+    if how != "count" and _value_kind(attribute.type) != "number":
+        raise EditError(f"{cls.name}.{attribute.name} is {_type_name(attribute.type)}: {how} is of an int or float "
+                        "attribute")
+    return how, cls, attribute
+
+
+def _filter_expression(cls: Class, where: str | None) -> str | None:
+    """``where`` as the generated pages read a filter: ``attribute op value`` conditions joined by
+    ``and``. They drop without a word a condition they cannot read (and split a value at a comma), so
+    anything else is refused here."""
+    if where is None:
+        return None
+    if re.search(r"\s(or|OR)\s|\|\|", where):
+        raise EditError(f"'{where}': the pages cannot read 'or'; they read conditions joined by 'and'")
+    conditions = []
+    for part in re.split(r"\s+and\s+|\s*&&\s*", where.strip()):
+        match = _CONDITION.match(part.strip())
+        attribute = next((a for a in cls.all_attributes() if match and a.name == match["field"]), None)
+        if attribute is None:
+            known = ", ".join(sorted(a.name for a in cls.all_attributes()))
+            raise EditError(f"'{part.strip()}' is not a condition on {cls.name}: write attribute == value (also != > "
+                            f">= < <=), several joined by 'and'; its attributes: {known}")
+        value = match["value"].strip()
+        if len(value) > 1 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        operator = "==" if match["op"] == "=" else match["op"]
+        kind = _value_kind(attribute.type)
+        if isinstance(attribute.type, Enumeration):
+            value = re.sub(rf"^{attribute.type.name}(\.|::)", "", value)
+            literals = [literal.name for literal in sort_by_timestamp(attribute.type.literals)]
+            if value not in literals or operator not in ("==", "!="):
+                raise EditError(f"'{part.strip()}': compare {attribute.name} with == or != to a literal of "
+                                f"{attribute.type.name} ({', '.join(literals)})")
+        elif kind == "number":
+            try:
+                float(value)
+            except ValueError:
+                raise EditError(f"'{part.strip()}': {attribute.name} is a number, '{value}' is not") from None
+        elif kind == "boolean":
+            value = value.lower()
+            if value not in ("true", "false") or operator not in ("==", "!="):
+                raise EditError(f"'{part.strip()}': compare {attribute.name} with == or != to true or false")
+        elif re.search(r"[,;&'\"]|\band\b", value):
+            raise EditError(f"'{part.strip()}': the pages cannot read a value that holds , ; & a quote or 'and'")
+        quoted = kind not in ("number", "boolean")
+        conditions.append(f"{attribute.name} {operator} " + (f"'{value}'" if quoted else value))
+    return " and ".join(conditions)
+
+
+def _find_screen(editor: ModelEditor, name: str) -> Screen:
+    """The screen ``name`` names: by its name, title or route, whatever the case."""
+    gui = _gui_model(editor)
+    screens = _screens(gui)
+    found = [screen for screen in screens
+             if name.lower() in (screen.name.lower(), (screen.description or "").lower(), screen.route_path.lower())]
+    if len(found) != 1:
+        known = ", ".join(f"{screen.name} ({screen.route_path})" for screen in screens) or "none"
+        raise EditError(f"{gui.name} has no screen '{name}' (its screens: {known}); 'besser model add-page' adds one")
+    return found[0]
+
+
+def _add_bound(editor: ModelEditor, screen_name: str, title: str, kind: type, constructor: str, title_argument: str,
+               options: Sequence[str], how: str, cls: Class, attribute: Property | None, label: Property | None,
+               where: str | None) -> tuple[str, str, Callable[[list[Any]], str | None]]:
+    """Add to a screen an element that shows data of a class (a card or a chart, built by ``constructor``):
+    after what the screen shows already. Returns the screen's name, the element's and the check."""
+    screen = _find_screen(editor, screen_name)
+    if any(isinstance(element, kind) and title in (getattr(element, "title", None),
+                                                   getattr(element, "metric_title", None))
+           for element in _contents(screen)):
+        raise EditError(f"screen {screen.name} has a {kind.__name__.lower()} titled '{title}' already")
+    fields = _field_variables(editor, [a for a in (attribute, label) if a is not None])
+    binding = [f"domain_concept={editor.type_code(cls.name, (Class,))}"]
+    if label is not None:
+        binding.append(f"label_field={fields[id(label)]}")
+    if attribute is not None:
+        binding.append(f"data_field={fields[id(attribute)]}")
+    binding.append(f"aggregation={editor._gui('DataAggregation')}.{_AGGREGATIONS[how]}")
+    filter_expression = _filter_expression(cls, where)
+    if filter_expression is not None:
+        binding.append(f"filter_expression={_q(filter_expression)}")
+    var = editor.free_name(_snake(_screen_name(title)))
+    data = _arguments(f"    data_binding={editor._gui('DataBinding')}(", binding)
+
+    def code(order: int) -> str:
+        arguments = [f"name={_q(var)}", f"component_id={_q(var)}", f"{title_argument}={_q(title)}", *options,
+                     f"display_order={order}"]
+        return f"{editor._gui(constructor)}(\n{_arguments('    ', arguments)}\n{data[:-1]}),\n)"
+
+    target = _content_of(screen)
+    row = next((element for element in target.view_elements
+                if type(element) is ViewContainer and element.name.endswith("_cards")), None)
+    literal = editor.collection(target, "view_elements")
+    if kind is MetricCard and row is not None:  # beside the cards the page shows
+        editor.add(row, "view_elements", code(_next_order(row)), lambda: var, need_var=True, separate=False)
+    elif kind is MetricCard and target is not screen and literal is not None:
+        # The page's first card starts the row of its cards, under the heading and above the rest.
+        anchor = editor.src.top_statement(literal)
+        cards = editor.free_name(f"{target.name.removesuffix('_page')}_cards")
+        editor._define(var, code(1), anchor, False)
+        editor._define(cards, (
+            f"{editor._gui('ViewContainer')}(\n"
+            f"    name={_q(cards)}, component_id={_q(cards)}, description=\"Cards\", display_order=1.5,\n"
+            f"    {_classes(_CARDS_CLASSES)},\n"
+            f"    view_elements={{\n        {var},\n    }},\n)"), anchor, False)
+        editor.add_to_literal(literal, cards)
+    else:  # after the elements shown in an order; those without one come last on the page
+        editor.add(target, "view_elements", code(_next_order(target)), lambda: var, need_var=True, separate=False)
+
+    def gui_check(guis: list[Any]) -> str | None:
+        shown = any(element.name == var for gui in guis for found in _screens(gui) if found.name == screen.name
+                    for element in _contents(found))
+        return None if shown else f"screen {screen.name} does not show {var}"
+
+    return screen.name, var, gui_check
+
+
+def _computed(how: str, cls: Class, attribute: Property | None, where: str | None) -> str:
+    return (f"{how} of {cls.name}.{attribute.name}" if attribute is not None else f"{how} of {cls.name}") + (
+        f" where {_filter_expression(cls, where)}" if where else "")
+
+
+def add_card(editor: ModelEditor, screen: str, title: str, value: str, where: str | None) -> Edited:
+    how, cls, attribute = _parse_value(editor, value)
+    # No trend: the pages have no earlier value to compare with, and would show a made-up one.
+    screen_name, _, gui_check = _add_bound(editor, screen, title, MetricCard, "MetricCard", "metric_title",
+                                           ["show_trend=False"], how, cls, attribute, None, where)
+    return Edited(editor.finish(), f"added card '{title}' to screen {screen_name} ({_computed(how, cls, attribute, where)})",
+                  lambda model: None, editor.warnings, gui_check=gui_check)
+
+
+def add_link(editor: ModelEditor, screen: str, label: str, url: str) -> Edited:
+    target = _find_screen(editor, screen)
+    if not re.fullmatch(r"(https?://|/)\S+", url):
+        raise EditError(f"'{url}' is not an address: write /route of the application, or http(s)://... (a route of "
+                        "the backend needs its whole address)")
+    if any(getattr(element, "label", None) == label and type(element).__name__ == "Link"
+           for element in _contents(target)):
+        raise EditError(f"screen {target.name} has a link '{label}' already")
+    content = _content_of(target)
+    var = editor.free_name(_snake(_screen_name(label)))
+    code = _arguments(f"{editor._gui('Link')}(", [f"name={_q(var)}", f"component_id={_q(var)}",
+                                                 f"description={_q(label)}", f"label={_q(label)}", f"url={_q(url)}",
+                                                 _classes(_LINK_CLASSES),
+                                                 f"display_order={_next_order(content)}"])[:-1] + ")"
+    editor.add(content, "view_elements", code, lambda: var, need_var=True, separate=False)
+
+    def gui_check(guis: list[Any]) -> str | None:
+        shown = any(element.name == var for gui in guis for found in _screens(gui) if found.name == target.name
+                    for element in _contents(found))
+        return None if shown else f"screen {target.name} does not show {var}"
+
+    return Edited(editor.finish(), f"added link '{label}' to screen {target.name} ({url})", lambda model: None,
+                  editor.warnings, gui_check=gui_check)
+
+
+def add_chart(editor: ModelEditor, screen: str, title: str, value: str, by: str, kind: str,
+              where: str | None) -> Edited:
+    how, cls, attribute = _parse_value(editor, value)
+    label = _attribute_named(cls, by)
+    screen_name, _, gui_check = _add_bound(editor, screen, title, Chart, _CHARTS[kind], "title",
+                                           [_classes(_PANEL_CLASSES)], how, cls, attribute, label, where)
+    return Edited(editor.finish(), f"added {kind} chart '{title}' to screen {screen_name} "
+                                   f"({_computed(how, cls, attribute, where)} by {by})",
+                  lambda model: None, editor.warnings, gui_check=gui_check)
+
+
+def _button_code(editor: ModelEditor, button: str, screen_var: str, screen_name: str, title: str) -> str:
+    """The code that defines the button ``button`` opening the screen ``screen_var``."""
+    return (
         f"{button} = {editor._gui('Button')}(\n"
         f"    name={_q(button)}, component_id={_q(button)}, description={_q('Go to the ' + title.lower())}, "
         f"label={_q(title)},\n"
@@ -2467,6 +3058,13 @@ def _navigation_button(editor: ModelEditor, main: Screen, anchor: ast.stmt, butt
         f"    {editor._gui('Transition')}(name={_q('go_to_' + _snake(screen_name))}, "
         f"target_screen={screen_var}),\n}})}}\n"
     )
+
+
+def _navigation_button(editor: ModelEditor, main: Screen, anchor: ast.stmt, button: str, screen_var: str,
+                       screen_name: str, title: str) -> str:
+    """The code that defines the button ``button`` opening the screen ``screen_var`` (named ``screen_name``,
+    titled ``title``) and puts it on the screen ``main``; the code goes before the statement ``anchor``."""
+    code = _button_code(editor, button, screen_var, screen_name, title)
     main_var = editor.var_of(main)
     if main_var is not None:
         return code + f"{main_var}.view_elements.add({button})\n"
@@ -2491,6 +3089,9 @@ def _new_main_pages(editor: ModelEditor, removed: Sequence[Any], removed_vars: S
             continue
         main = left[0]
         _make_main_page(editor, main)
+        if _navigation_menus(editor, left):  # the menu reaches every screen: no button needed
+            said += f"; {main.name} is the main page now"
+            continue
         module = next(module for module in gui.modules if main in module.screens)
         literal = editor.collection(module, "screens")
         if literal is None:
@@ -2537,13 +3138,24 @@ def _make_main_page(editor: ModelEditor, screen: Screen) -> None:
 
 
 def _add_columns(editor: ModelEditor, tables: Sequence[Table], added: Sequence[tuple[str, str]]) -> list[str]:
-    """Add a column per new attribute (name, variable) to each of ``tables``; returns their names."""
+    """Add a column per new attribute (name, variable) to each of ``tables``; returns the names of those
+    that got them. A table whose columns the file does not write where a command can add to them (a
+    function builds it) keeps its columns: a warning gives the code to add by hand."""
+    done = []
     for table in tables:
-        for name, var in added:
-            editor.add(table, "columns", f"{editor._gui('FieldColumn')}(label={_q(_label(name))}, field={var})",
-                       lambda name=name: editor.free_name(f"{editor.var_of(table) or table.name}_{name}"),
-                       need_var=False, separate=False)
-    return [table.name for table in tables]
+        columns = [f"{editor._gui('FieldColumn')}(label={_q(_label(name))}, field={var})" for name, var in added]
+        try:
+            for (name, _), column in zip(added, columns):
+                editor.add(table, "columns", column,
+                           lambda name=name: editor.free_name(f"{editor.var_of(table) or table.name}_{name}"),
+                           need_var=False, separate=False)
+        except EditError:
+            editor.warnings.append(
+                f"table {table.name} got no column for {', '.join(name for name, _ in added)}: {editor.path.name} "
+                f"does not write its columns where a command can add to them; add {', '.join(columns)} by hand")
+            continue
+        done.append(table.name)
+    return done
 
 
 def _inherited_columns(editor: ModelEditor, cls: Class, parent: Class) -> str:
@@ -2571,8 +3183,11 @@ def _gui_removals(editor: ModelEditor, cls: Class) -> list[Any]:
         if shown and all(table in tables for table in shown):
             removed.append(screen)
     gone = [element for element in removed if isinstance(element, Screen)]
-    # What the removed screens hold goes with them, as do the buttons elsewhere that open them.
-    held = [element for screen in gone for element in _contents(screen)]
+    # What the removed screens hold goes with them, as do the buttons elsewhere that open them. What a
+    # screen that stays shows too (a menu) stays.
+    stays = [element for screen in screens if screen not in gone for element in _contents(screen)]
+    held = [element for screen in gone for element in _contents(screen)
+            if not isinstance(element, Menu) and not any(element is other for other in stays)]
     candidates = [element for screen in screens for element in _contents(screen)] + list(editor.namespace.values())
     for element in [*held, *candidates]:
         if element not in removed and (element in held or isinstance(element, Button) and element.targetScreen in gone):
@@ -2622,14 +3237,25 @@ def _remove_gui_element(editor: ModelEditor, element: Any, drops: dict[int, tupl
 # Operation name -> what it does, the arguments it takes (for help and batch lines) and its function.
 OPERATIONS: dict[str, tuple[str, Callable[..., Edited]]] = {
     "add-class": ("add a class: NAME [ATTRIBUTE...] [--parent CLASS] [--abstract] [--screen]", add_class),
-    "add-attribute": ("add attributes to a class: CLASS ATTRIBUTE...", add_attribute),
+    "add-attribute": ("add attributes to a class: CLASS ATTRIBUTE... [--derived]", add_attribute),
     "add-parent": ("make a class specialize another (a generalization): CLASS PARENT", add_parent),
     "add-association": ("add an association: NAME END END [--composite]", add_association),
     "add-method": ("add a method: CLASS 'name(param:type, ...) -> type' [--code CODE]", add_method),
     "add-constraint": ("add an OCL invariant: CLASS EXPRESSION [--name NAME]", add_constraint),
-    "add-screen": ("add a screen with a table of a class to the GUI model: CLASS [--title TITLE]", add_screen),
+    "add-screen": ("add a screen with a table of a class to the GUI model: CLASS [--title TITLE] [--route /PATH]",
+                   add_screen),
+    "add-page": ("add a screen with a heading, for cards and charts: TITLE [--route /PATH] [--main]", add_page),
+    "add-menu": ("add a menu with a link to every screen, on every screen", add_menu),
+    "add-column": ("add a table column showing an attribute of a related object: CLASS END.ATTRIBUTE [--label LABEL]",
+                   add_column),
+    "add-card": ("add a metric card to a screen: SCREEN TITLE sum:CLASS.ATTRIBUTE|count:CLASS [--where CONDITION]",
+                 add_card),
+    "add-link": ("add a link to a screen: SCREEN LABEL URL", add_link),
+    "add-chart": ("add a chart to a screen: SCREEN TITLE VALUE --by ATTRIBUTE [--kind bar|line|pie] "
+                  "[--where CONDITION]", add_chart),
     "set-enum": ("create an enumeration or set its literals: NAME LITERAL...", set_enum),
-    "rename": ("rename a class, enumeration, member, literal, association or constraint: PATH NEW_NAME", rename),
+    "rename": ("rename a class, enumeration, member, literal, association or constraint: PATH NEW_NAME "
+               "[--keep-pages]", rename),
     "remove": ("remove an element (a class with its associations): PATH", remove),
     "set-attribute": ("change an attribute's type, ?, default in place: CLASS.ATTRIBUTE :TYPE[?][=DEFAULT]",
                       set_attribute),

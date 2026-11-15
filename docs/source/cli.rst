@@ -347,9 +347,15 @@ generated tests and gives the project's own tests a ``client`` fixture, and
 what the ``backend`` generator's API answers, so that an agent needs neither
 the generated code nor this documentation. The guide follows ``besser.toml``:
 
+* it names the project's file for hand-written backend code by its path
+  (``web_app/backend/extensions.py``), when the project has one such file;
+
 * an output that reads a GUI model (``web_app``, ``react``, ``flutter``) adds
-  6 lines (about 600 bytes) on pages: ``add-screen``, the tables that follow
-  their class, and that the generated frontend has no file for hand-written code;
+  16 lines (about 1,400 bytes) on pages: ``add-screen``, ``add-menu``,
+  ``add-column``, ``add-link``, ``add-page`` with its cards and charts, the
+  tables that follow their class, and that anything else on a page is an edit
+  of that page's generated file, which ``besser apply`` merges with later
+  model changes (it needs ``besser[regen]``);
 * a ``backend`` or ``web_app`` output without ``tests = true`` gets, in place
   of the line on the generated tests, a ``tests/conftest.py`` to write with a
   ``client`` fixture;
@@ -711,9 +717,13 @@ name one of each).
    * - ``add-class NAME [ATTRIBUTE...] [--parent CLASS] [--abstract] [--screen]``
      - A class, with its attributes and the generalization to its parent;
        ``--screen`` adds its screen too, as ``add-screen`` does.
-   * - ``add-attribute CLASS ATTRIBUTE...``
+   * - ``add-attribute CLASS ATTRIBUTE... [--derived]``
      - Attributes: ``name:type``, ``name:type?`` (optional) or
-       ``name:type=default``. Types are written as ``besser info`` prints them
+       ``name:type=default``. With ``--derived`` the server computes them:
+       the generated API never takes them from a client (your code sets
+       them, for example in a SQLAlchemy ``before_insert`` /
+       ``before_update`` listener in ``extensions.py``), and ``besser info``
+       marks them ``(derived)``. Types are written as ``besser info`` prints them
        (``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``,
        ``time``, ``timedelta``, ``any``) or name an enumeration. A class is
        no attribute type: the refusal gives the ``add-association`` command
@@ -740,25 +750,66 @@ name one of each).
        expression does not start with it), named ``<class>_rule_<n>`` without
        ``--name``. It must parse against the model
        (see :ref:`OCL constraints <cli-ocl>`).
-   * - ``add-screen CLASS [--title TITLE]``
+   * - ``add-screen CLASS [--title TITLE] [--route /PATH]``
      - A screen of the file's GUI model (``--use`` names one when there are
        several) that shows a table of the class: a column per attribute,
        inherited ones first, labelled after it, with pagination and the buttons that add, edit and
        delete an object. The screen is named after ``TITLE`` (default: the
        plural of the class, ``Publishers``, ``Shelves``, ``People``; a name
        already plural or uncountable, ``News``, is kept), which is also its heading, and
-       goes in the first module; a button on the main page opens it (the
-       generated app navigates with buttons only). Refused when the file has
+       goes in the first module. Its address is ``--route`` (default: the
+       name in lower case, ``/publishers``). It joins the menu ``add-menu``
+       made and shows it; without a menu, a button on the main page opens it.
+       Refused when the file has
        no GUI model, the class has no attribute (own or inherited), a screen shows it already, or
-       a screen has its name but for case (the app's routes ignore case) or
+       a screen has its route or name but for case (the app's routes ignore case) or
        would have the same page file but for case (the React generator names
        it after the title, ``OrderLines`` -> ``Orderlines.tsx``, ``Order_lines``
        -> ``OrderLines.tsx``: one file on macOS or Windows).
+   * - ``add-page TITLE [--route /PATH] [--main]``
+     - A screen with a heading only, for cards and charts; named, addressed
+       and linked as ``add-screen`` does. ``--main`` makes it the main page,
+       the one the application opens on (without a menu, it gets a button to
+       each other screen).
+   * - ``add-menu``
+     - A menu with a link to every screen, shown first on every screen. A
+       screen added later joins it, a removed one leaves it, and the link of
+       a screen renamed with its class follows it. It replaces the buttons that
+       only open a screen (what ``add-screen`` writes while there is no menu),
+       unless the file writes them inside a set. When such a menu exists
+       the line says so and changes nothing (an error would undo the batch
+       it is part of).
+   * - ``add-column CLASS END.ATTRIBUTE [--label LABEL]``
+     - A column, in the tables of the class, that shows an attribute of the
+       object an association end leads to (``account.name``); labelled after
+       the end without ``--label``. The end must lead to one object (``[1]``
+       or ``[0..1]``). The column goes with the attribute or the association
+       when they are removed. With an attribute of the class itself
+       (``add-column Invoice total``) it adds that column where a table lacks
+       it, and says "no change" where ``add-attribute`` added it already.
+   * - ``add-link SCREEN LABEL URL``
+     - A link on a screen: a route of the application (``/invoices``) or an
+       ``http(s)://`` address; a route of the backend needs its whole address.
+       ``besser info`` lists a screen's links, and a link to the backend
+       routes of a class (``.../invoice/export/``) follows a rename of the
+       class.
+   * - ``add-card SCREEN TITLE VALUE [--where CONDITION]``
+     - A metric card on a screen (named by its name, title or route), after
+       what the screen shows already. ``VALUE`` is ``sum:Class.attribute``
+       (also ``avg``, ``min``, ``max``, ``median``, of an ``int`` or ``float``
+       attribute) or ``count:Class``. ``--where`` keeps the objects that meet
+       conditions ``attribute == value`` (also ``!=``, ``>``, ``>=``, ``<``,
+       ``<=``) joined by ``and``; a condition the generated pages could not
+       read (``or``, an unknown attribute, a value that is no literal of the
+       attribute's enumeration) is refused, since they would drop it silently.
+   * - ``add-chart SCREEN TITLE VALUE --by ATTRIBUTE [--kind bar|line|pie] [--where CONDITION]``
+     - A chart with one bar, point or slice per value of ``ATTRIBUTE``, each
+       showing ``VALUE`` over the objects that have it; ``bar`` by default.
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
        is an attribute's default, or that a
        constraint compares to, is not removed.
-   * - ``rename PATH NEW_NAME``
+   * - ``rename PATH NEW_NAME [--keep-pages]``
      - Renames a class, enumeration, association or constraint (``Name``), an
        attribute, method or association end (``Class.member``; an end also
        as ``association.end``) or a literal (``Enumeration.LITERAL``). A
@@ -778,7 +829,9 @@ name one of each).
        are derived from its name (``Authors``, ``Author``): another title is kept.
        A screen whose new name would be another screen's route or page file
        but for case keeps all of its titles (heading, tables, buttons too), and a warning
-       says so.
+       says so. The route of such a screen follows too when it was derived
+       from its name, as does its link in a menu. With ``--keep-pages`` the
+       pages keep their titles, column labels and routes.
    * - ``remove PATH``
      - Removes the element. A class goes with its associations,
        generalizations and constraints; an association end with its
@@ -790,7 +843,9 @@ name one of each).
        class's tables go with it, with the screens that show nothing else and
        the buttons that open them. When the main screen goes, the first screen
        left (by module, then name, the generator's order) becomes the main
-       page, with a button to each other screen left (the line names it).
+       page, with a button to each other screen left (the line names it)
+       unless a menu links them. A column that shows the removed attribute
+       through an association end goes too, in any table.
    * - ``set-attribute CLASS.ATTRIBUTE CHANGE``
      - Changes an attribute where it is written, so the constraints, table
        columns, objects and method code that refer to it keep doing so.
@@ -857,17 +912,39 @@ what changed in them:
    $ besser model add-attribute Author bio:str?
    model.py: added Author.bio:str?; column added to table author_table
    $ besser model rename Author Writer
-   model.py: renamed Author to Writer (variable author -> writer); GUI titles Authors -> Writers; ...
+   model.py: renamed Author to Writer (variable author -> writer); GUI titles Authors -> Writers (--keep-pages keeps them); ...
    $ besser model remove Writer.email
    model.py: removed Writer.email; its column from table author_table
 
+The pages these commands write look finished without hand-written CSS: the
+generated React application ships Tailwind, and the commands set its utility
+classes on the elements they create (``css_classes``). A screen holds the menu,
+as a navigation bar, and one container, a centred column with the heading
+(``h1``) and the page's content; a page's cards sit side by side in a row under
+the heading, whenever they were added, and a chart gets a panel. What a command
+adds to a page written otherwise (no such container) goes on the screen itself,
+as before.
+
 A column refers to its attribute's variable, so an attribute of a class with a
 table gets one (as the starter writes them), and ``add-screen`` gives one to
-the attributes written inside their class's set. ``besser info`` lists each
-screen with the class and attributes of its tables.
+the attributes written inside their class's set. A table the file builds
+its own way (in a function) gets no column: the attribute is added and a
+warning gives the column to add by hand. ``besser info`` lists each
+screen with its route, the class and columns of its tables, its cards and
+charts with what they compute, and whether it shows a menu. For a domain
+model of more than 20 classes it prints the names only (classes,
+enumerations, screens with their routes), since the full report grows with
+the model and is read at the start of every session; ``--class X`` then
+gives one class in full with the page that shows it, and ``--all`` the whole
+report.
 
 The file is written only when the new text loads, holds every change and has
 no validation error the old text did not have; one line says what changed.
+After a ``rename`` or a ``remove``, a warning lists the hand-written files and
+lines that still use the old name (code files outside the generated ones, such
+as ``extensions.py`` and your tests), so that nobody has to search for them.
+In Git Bash on Windows, a route typed as ``/overview`` reaches the command
+rewritten as a Windows path; the command reads it as typed.
 Otherwise nothing is written: exit status 2 when a change does not apply
 (an unknown class, an existing name, a malformed argument), 1 when it would
 make the model invalid or break the file. ``--json`` adds ``model`` and

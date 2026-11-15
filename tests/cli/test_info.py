@@ -53,10 +53,10 @@ def test_json_describes_each_model(besser, model):
         "counts": {"classes": 2, "enumerations": 0, "associations": 1, "generalizations": 0, "constraints": 0},
         "classes": [
             {"name": "Library", "is_abstract": False, "parents": [], "methods": [],
-             "attributes": [{"name": "name", "type": "str", "optional": False, "default": None}]},
+             "attributes": [{"name": "name", "type": "str", "optional": False, "default": None, "derived": False}]},
             {"name": "Book", "is_abstract": False, "parents": [], "methods": [],
-             "attributes": [{"name": "title", "type": "str", "optional": False, "default": None},
-                            {"name": "pages", "type": "int", "optional": False, "default": None}]},
+             "attributes": [{"name": "title", "type": "str", "optional": False, "default": None, "derived": False},
+                            {"name": "pages", "type": "int", "optional": False, "default": None, "derived": False}]},
         ],
         "enumerations": [],
         "associations": [{"name": "holds", "ends": [
@@ -98,6 +98,7 @@ def test_each_screen_says_the_class_and_the_columns_of_its_tables(besser):
     ]
     screens = besser("info", "model.py", "--json").json["models"][1]["screens"]
     assert screens[1] == {"name": "Books", "route": "/Books", "main": False, "opens": [],
+                          "cards": [], "charts": [], "menu": False, "links": [],
                           "tables": [{"name": "book_table", "class": "Book", "columns": ["title", "pages"]}]}
 
 
@@ -242,3 +243,28 @@ def test_class_routes_follow_association_classes_and_read_only_classes(besser, w
     assert "  inherited ends: items:Item[*] (stock, from Cat)\n" in kitten
     assert "    Listing routes: POST|GET /listing/, GET|PUT|DELETE /listing/{cats_id:int}/{items_id:int}/," in summary
     assert "    Cat routes:" not in summary
+
+
+def test_a_large_model_is_summarised_by_its_names(besser, tmp_path):
+    # Why: at 48 classes the full report is 17,000 characters, read at the start of every session of a coding
+    # agent that then changes one class; --class gives that class, with the page that shows it.
+    assert besser("init", "--kind", "gui").returncode == 0
+    batch = "".join(f"add-class Thing{n} code:str label:str --screen\n" for n in range(1, 21))
+    assert besser("model", "batch", "-", stdin=batch).returncode == 0
+    full = besser("info", "model.py", "--all").stdout
+    assert "class Thing7: code:str, label:str" in full and "screen Thing7s, /thing7s: Thing7 table" in full
+
+    overview = besser("info", "model.py").stdout
+    assert len(overview) < len(full) / 2
+    assert "    classes: Book, Author, Thing1, Thing2," in overview and "class Thing7:" not in overview
+    assert "    screens: Authors /Authors (main page), Books /Books, Thing10s /thing10s," in overview
+    assert ("A large model: names only. 'besser info model.py --class X' shows a class in full with its page; "
+            "--all shows everything.") in overview
+    one = besser("info", "model.py", "--class", "Thing7").stdout
+    assert "  attributes: code:str, label:str\n" in one
+    assert "  page: screen Thing7s, /thing7s: Thing7 table thing7_table (code, label); buttons to" not in one
+    assert "  page: screen Thing7s, /thing7s: Thing7 table thing7_table (code, label)\n" in one
+
+    # A model of ordinary size is printed in full, as before.
+    assert besser("model", "batch", "-", stdin="remove Thing20\nremove Thing19\n").returncode == 0
+    assert "class Thing7: code:str, label:str" in besser("info", "model.py").stdout

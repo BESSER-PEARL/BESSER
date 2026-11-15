@@ -11,10 +11,14 @@ replaces a link rather than following it.
 
 import os
 import posixpath
+import secrets
 import shutil
 import stat
-import tempfile
 from typing import Iterable, Iterator
+
+# Temp files of an atomic write: the run-record prefix, so every walk skips them.
+_TEMP_PREFIX = ".besser_tmp_"
+_TEMP_NAME_BYTES = 8
 
 # An NTFS junction: a directory to os.lstat and os.path.islink, though it leads elsewhere like a link.
 _IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
@@ -200,7 +204,7 @@ def open_plain_write(path, mode: str = "w", *, root: "str | None" = None, **kwar
     return _fdopen_regular(fd, path, mode.replace("x", "w"), kwargs, truncate="w" in mode)
 
 
-def remove_plain(path, *, root: "str | None" = None) -> None:
+def remove_plain(path: "str | os.PathLike[str]", *, root: "str | None" = None) -> None:
     """``os.remove`` that never reaches the file through a link parent.
 
     A link at ``path`` is removed itself, as ``os.remove`` does.
@@ -213,7 +217,7 @@ def remove_plain(path, *, root: "str | None" = None) -> None:
         _close(parent)
 
 
-def makedirs_plain(path, *, root: str) -> None:
+def makedirs_plain(path: "str | os.PathLike[str]", *, root: "str | os.PathLike[str]") -> None:
     """``os.makedirs(path, exist_ok=True)`` that never creates or enters a
     directory through a link between ``root`` and ``path``."""
     path = _refuse_link_parents(os.fspath(path), os.fspath(root))
@@ -223,28 +227,35 @@ def makedirs_plain(path, *, root: str) -> None:
     _close(_open_dirs(os.fspath(root), os.path.relpath(path, os.path.abspath(root)).split(os.sep), create=True))
 
 
-def write_atomic_plain_bytes(path, content: bytes, *, root: "str | None" = None,
+def write_atomic_plain_bytes(path: "str | os.PathLike[str]", content: bytes, *, root: "str | None" = None,
                              mode: "int | None" = None) -> None:
     """Replace ``path`` with ``content`` via a fresh temp file and a rename.
 
-    ``mkstemp`` creates the temp file with ``O_EXCL``, and the rename replaces a
-    link at ``path`` rather than writing through it. ``mode`` sets the new file's
-    permissions (the temp file's are 0600).
+    The temp file is created with ``O_EXCL``, and the rename replaces a link at
+    ``path`` rather than writing through it. Both go through the parent's
+    link-free descriptor where the platform has one (see :func:`_open_parent_dir`).
+    ``mode`` sets the new file's permissions (the temp file's are 0600).
     """
     path = _refuse_link_parents(os.fspath(path), None if root is None else os.fspath(root))
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".besser_tmp_")
+    parent, name = _open_parent_dir(path, None if root is None else os.fspath(root))
     try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(content)
-        if mode is not None:
-            os.chmod(tmp, mode)
-        os.replace(tmp, path)
-    except BaseException:
+        # Relative to ``parent``, or beside the absolute ``path`` without one.
+        tmp = os.path.join(os.path.dirname(name), _TEMP_PREFIX + secrets.token_hex(_TEMP_NAME_BYTES))
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NO_LINK_NO_WAIT, 0o600, dir_fd=parent)
         try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(content)
+                if mode is not None:
+                    os.chmod(handle.fileno() if os.chmod in os.supports_fd else tmp, mode)
+            os.replace(tmp, name, src_dir_fd=parent, dst_dir_fd=parent)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=parent)
+            except OSError:
+                pass
+            raise
+    finally:
+        _close(parent)
 
 
 def is_plain_relpath(rel: str) -> bool:
@@ -284,7 +295,8 @@ def walk_plain(top: str) -> Iterator[tuple[str, list[str], list[str]]]:
         yield root, dirs, [f for f in files if is_plain_entry(os.path.join(root, f))]
 
 
-def copy_plain_file(src, dst, *, root: "str | None" = None, dst_root: "str | None" = None) -> None:
+def copy_plain_file(src: "str | os.PathLike[str]", dst: "str | os.PathLike[str]", *,
+                    root: "str | None" = None, dst_root: "str | None" = None) -> None:
     """``shutil.copy2`` that reads ``src`` with :func:`open_plain` and writes
     ``dst`` with :func:`open_plain_write`: a link at either end, even one
     swapped in after a check, raises ``OSError`` instead of being followed."""

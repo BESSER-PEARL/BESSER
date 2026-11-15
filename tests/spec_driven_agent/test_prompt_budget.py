@@ -20,26 +20,31 @@ HEADROOM = 0.06
 # `python -m tests.spec_driven_agent.prompt_budget` from the repo root: it
 # prints chars per fixture, section and tool.
 BASELINES = {
-    "shelf": {"system_chars": 22_485, "tools_chars": 14_689},
-    "conference": {"system_chars": 42_953, "tools_chars": 14_689},
-    "state_machine": {"system_chars": 13_520, "tools_chars": 12_431},
+    "shelf": {"system_chars": 23_312, "tools_chars": 14_861},
+    "shelf_no_requirements": {"system_chars": 20_291, "tools_chars": 14_861},
+    "conference": {"system_chars": 44_175, "tools_chars": 14_861},
+    "state_machine": {"system_chars": 13_614, "tools_chars": 12_603},
 }
 
 # Per-section and per-tool sizes at the same point, only to name what grew.
 BASELINE_SECTIONS = {
-    "shelf": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "models": 803, "data_contract": 1515,
-              "tail_header": 60, "inventory": 2071, "endpoint_manifest": 4199, "requirements": 351,
-              "request": 333, "checklist": 1035, "phase2_appendix": 519},
-    "conference": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "models": 5205, "data_contract": 1622,
-                   "tail_header": 60, "inventory": 5758, "endpoint_manifest": 16471, "requirements": 351,
-                   "request": 333, "checklist": 1035, "phase2_appendix": 519},
+    "shelf": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "models": 803, "data_contract": 1618,
+              "tail_header": 60, "inventory": 2071, "endpoint_manifest": 4747, "requirements": 351,
+              "request": 326, "checklist": 1124, "phase2_appendix": 613},
+    "shelf_no_requirements": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "models": 803,
+                              "data_contract": 1618, "tail_header": 60, "inventory": 2071,
+                              "endpoint_manifest": 2077, "request": 326, "checklist": 1124,
+                              "phase2_appendix": 613},
+    "conference": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "models": 5205, "data_contract": 1725,
+                   "tail_header": 60, "inventory": 5758, "endpoint_manifest": 17310, "requirements": 351,
+                   "request": 326, "checklist": 1228, "phase2_appendix": 613},
     "state_machine": {"role_plan": 993, "rules": 9823, "models": 464, "tail_header": 60, "requirements": 351,
-                      "request": 275, "checklist": 1035, "phase2_appendix": 519},
+                      "request": 275, "checklist": 1035, "phase2_appendix": 613},
 }
 BASELINE_TOOLS = {
     "generate_python_classes": 195, "generate_java_classes": 170, "generate_rdf": 156, "generate_supabase": 358,
-    "list_files": 146, "read_file": 1238, "write_file": 673, "modify_file": 1418, "replace_file_lines": 1164,
-    "search_in_files": 694, "delete_file": 558, "query_class": 416, "list_classes_with": 414,
+    "list_files": 245, "read_file": 1238, "write_file": 673, "modify_file": 1473, "replace_file_lines": 1175,
+    "search_in_files": 701, "delete_file": 558, "query_class": 416, "list_classes_with": 414,
     "get_constraints_for": 375, "test_api": 2745, "validate_app": 468, "validate_model": 166, "check_syntax": 384,
     "task_list": 2931,
 }
@@ -101,3 +106,13 @@ def test_tool_order_is_the_canonical_order(prefixes, fixture):
     canonical = [tool["name"] for tool in get_all_tools_including_generators()]
     names = [tool["name"] for tool in tools]
     assert names == [name for name in canonical if name in names]
+
+
+def test_both_mutation_coverage_paths_are_measured(prefixes):
+    """The fixtures with requirements carry the coverage block; the known-empty ledger omits it."""
+    def system(name):
+        return prefixes[name][1][0]
+    block = "Relationship mutation coverage"
+    assert block in system("shelf") and block in system("conference")
+    assert block not in system("shelf_no_requirements")
+    assert "Request shapes (inherited fields included):" in system("shelf_no_requirements")

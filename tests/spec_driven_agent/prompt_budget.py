@@ -91,6 +91,9 @@ class Fixture:
     domain_model: object = None
     state_machines: tuple = ()
     scaffold: bool = False
+    # The extracted ledger. Empty and known (no requirement stated) omits the
+    # mutation coverage block when the model holds no rule either.
+    requirements: tuple = tuple(REQUIREMENTS)
 
 
 def shelf_fixture() -> Fixture:
@@ -152,6 +155,12 @@ def conference_model() -> DomainModel:
     return DomainModel(name="Conference", types={*classes.values(), kind}, associations=associations)
 
 
+def shelf_no_requirements_fixture() -> Fixture:
+    """The shelf run with a known-empty ledger: the prompt without the mutation coverage block."""
+    return Fixture("shelf_no_requirements", domain_model=shelf_model(isbn=True, author=True, library_method=True),
+                   scaffold=True, requirements=())
+
+
 def conference_fixture() -> Fixture:
     return Fixture("conference", domain_model=conference_model(), scaffold=True)
 
@@ -173,7 +182,8 @@ def state_machine_fixture() -> Fixture:
     return Fixture("state_machine", state_machines=(order_state_machine(),))
 
 
-FIXTURES = {"shelf": shelf_fixture, "conference": conference_fixture, "state_machine": state_machine_fixture}
+FIXTURES = {"shelf": shelf_fixture, "shelf_no_requirements": shelf_no_requirements_fixture,
+            "conference": conference_fixture, "state_machine": state_machine_fixture}
 
 
 def phase2_request(fixture: Fixture, workspace) -> tuple[str, list[dict]]:
@@ -199,7 +209,8 @@ def phase2_request(fixture: Fixture, workspace) -> tuple[str, list[dict]]:
         use_streaming=False,
     )
     orch._instructions = INSTRUCTIONS
-    orch._requirements = [dict(item) for item in REQUIREMENTS]
+    orch._requirements = [dict(item) for item in fixture.requirements]
+    orch._requirement_extraction_attempts = 1  # extracted by this process, as in a run
     if fixture.scaffold:
         generate_backend(workspace, fixture.domain_model)
         orch._generator_used = GENERATOR

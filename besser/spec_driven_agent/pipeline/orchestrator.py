@@ -102,7 +102,9 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     build_system_prompt,
     build_inventory,
     build_endpoint_manifest,
+    mutation_coverage_applies,
     requests_frontend,
+    ROUTER_TEMPLATE_GENERATORS,
     _FRONTEND_ASK_RE,
 )
 from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
@@ -288,6 +290,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # How many times the end_turn checklist gate sends the model back to
     # its open items before letting the run finish anyway.
     _MAX_TASK_NUDGES = 2
+    # End-of-turn nudges that show static frontend blockers; each also counts as a task nudge.
+    _MAX_FRONTEND_BLOCKER_NUDGES = 1
     _PHASE2_STAGNANT_TURNS = 10
     _PHASE2_INSPECTION_TURNS = 20
 
@@ -631,6 +635,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # model back to its open task_list items (bounded by
         # ``_MAX_TASK_NUDGES`` so a stubborn model can't loop the budget).
         self._end_turn_task_nudges: int = 0
+        self._end_turn_frontend_nudges: int = 0
         # Model-derived acceptance matrix (per entity: route/page/create),
         # computed by Phase 3 and saved in the recipe. Report-only.
         self._acceptance_matrix: dict | None = None
@@ -976,6 +981,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             checkpoint.tasks,
             verification_tasks=self._deterministic_gap_tasks(),
         )
+        self._reattach_frontend_verifier()
         self.executor.restore_evidence(checkpoint.write_evidence)
         self._trace.write(
             EVENT_RUN_START,
@@ -1845,7 +1851,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._ensure_gitignore()
 
         scoped_issues = list(extra_issues) if extra_issues else []
-        scoped_issues.extend(self._validate_app()["issues"])
+        # "Issues to fix" takes blockers only; warnings stay in validate_app, marked advisory.
+        scoped_issues.extend(issue for issue in self._validate_app()["issues"]
+                             if _classify_issue(issue).severity == "blocker")
 
         resumed = self._resume_messages is not None
         # A new conversation (or one rebuilt from a checkpoint) holds none of
@@ -1959,7 +1967,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         system += (
             "\nAfter each coherent backend change call validate_app. It returns actual "
-            "startup and data-entry failures, even when shell tools are disabled. "
+            "startup and data-entry failures, even when shell tools are disabled. Ending "
+            "your turn runs it by itself: call it after code changes, never just before you finish. "
             "Fix import/DDL errors first, then schema-router contracts and business "
             "behavior. Schema edits require updating all consumers and forms. "
             "Use test_api to exercise complete workflows with persisted values and negative "
@@ -2062,7 +2071,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # rather than looping the user's budget away; Phase 3
                 # still validates whatever state it left).
                 execution_report = self._validate_app()
-                if execution_report["blocker_count"]:
+                # Static frontend blockers go back to the model once (it has the
+                # context here); any other blocker ends Phase 2 as before.
+                frontend_blockers = ([issue for issue in self._static_frontend_issues()
+                                      if _classify_issue(issue).severity == "blocker"]
+                                     if execution_report["blocker_count"] else [])
+                if execution_report["blocker_count"] > len(frontend_blockers):
                     self._phase2_stop_reason = "validation_required"
                     self._phase2_stop_detail = "end_turn blocker gate"
                     self._phase2_exited_cleanly = False
@@ -2071,12 +2085,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 _has_verified_open = any(t.get("verify") for t in open_items)
                 _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
                               else self._MAX_TASK_NUDGES)
-                if open_items and self._end_turn_task_nudges < _nudge_cap:
+                frontend_nudge = (bool(frontend_blockers)
+                                  and self._end_turn_frontend_nudges < self._MAX_FRONTEND_BLOCKER_NUDGES)
+                if (open_items or frontend_nudge) and self._end_turn_task_nudges < _nudge_cap:
                     self._end_turn_task_nudges += 1
+                    self._end_turn_frontend_nudges += frontend_nudge
                     logger.info(
-                        "end_turn with %d open checklist item(s) — nudge %d/%d",
-                        len(open_items), self._end_turn_task_nudges,
-                        self._MAX_TASK_NUDGES,
+                        "end_turn with %d open checklist item(s), %d frontend blocker(s) — nudge %d/%d",
+                        len(open_items), len(frontend_blockers) if frontend_nudge else 0,
+                        self._end_turn_task_nudges, _nudge_cap,
                     )
                     # An empty end_turn reply (no text, no tool calls) is not
                     # replayed: OpenAI-compatible APIs reject an assistant
@@ -2086,12 +2103,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         messages.append(
                             {"role": "assistant", "content": response["content"]}
                         )
-                    listing = "\n".join(
-                        f"  {t['id']}. {t['text']}" for t in open_items
-                    )
-                    messages.append({
-                        "role": "user",
-                        "content": [{"type": "text", "text": (
+                    parts = []
+                    if frontend_nudge:
+                        shown = "\n".join(f"  - {clip_finding(issue)}"
+                                          for issue in frontend_blockers[:self._VALIDATE_APP_MAX_ISSUES])
+                        parts.append(
+                            "Ending the turn ran validate_app, and the frontend still has these "
+                            f"blockers:\n{shown}\nFix them now; Phase 2 ends with them unfixed "
+                            "the next time you end the turn.")
+                    if open_items:
+                        listing = "\n".join(
+                            f"  {t['id']}. {t['text']}" for t in open_items
+                        )
+                        parts.append(
                             "You ended the turn, but these checklist items "
                             "are still OPEN:\n"
                             f"{listing}\n"
@@ -2104,9 +2128,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             "honestly with task_list(action='drop', id=N, "
                             "reason=...) - never mark undone work done. End "
                             "the turn only when every item is closed."
-                        )}],
+                        )
+                    messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": "\n\n".join(parts)}],
                     })
                     continue
+                if frontend_blockers:
+                    self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = "end_turn frontend blocker gate"
+                    self._phase2_exited_cleanly = False
+                    break
                 logger.info("LLM completed after %d turns", turn + 1)
                 self._phase2_exited_cleanly = True
                 self._phase2_stop_reason = "completed"
@@ -2969,13 +3001,55 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     # Findings one validate_app result lists, most urgent first; the rest are counted.
     _VALIDATE_APP_MAX_ISSUES = 40
+    # Dropped passing checks a refused test_api correction names; the rest are counted.
+    _DROPPED_CHECKS_SHOWN = 8
+
+    def _acceptance_matrix_issues(self) -> list[str]:
+        """Compute and keep the acceptance matrix; its missing cells as warnings."""
+        if self.target is not None and not self.target.is_web_app:
+            logger.info("Acceptance matrix not applicable to a %s target", self.target.kind)
+            return []
+        try:
+            from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
+            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            return matrix_issues(self._acceptance_matrix)
+        except Exception as exc:
+            logger.warning("Acceptance matrix computation failed", exc_info=True)
+            return [_check_did_not_run("the acceptance matrix", f"it crashed: {type(exc).__name__}")]
+
+    def _frontend_form_issues(self) -> list[str]:
+        """Create-form checks: the probes never render a page, so a form that cannot save passes them."""
+        try:
+            from besser.spec_driven_agent.validation.frontend_forms import collect_frontend_form_issues
+            return collect_frontend_form_issues(self.output_dir)
+        except Exception as exc:
+            logger.warning("Frontend form validation failed", exc_info=True)
+            return [_check_did_not_run("the frontend form check", f"it crashed: {type(exc).__name__}")]
+
+    def _static_frontend_issues(self) -> list[str]:
+        """Phase 3's frontend source checks that need no build or node: shown by validate_app too.
+
+        The acceptance matrix is left out with a GUI model: those screens are the
+        user's scope, and the matrix would ask for pages they did not model.
+        """
+        if not self._has_frontend_files():
+            return []
+        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
+
+        return [*self._collect_frontend_contract_issues(), *collect_frontend_resolution_issues(self.output_dir),
+                *self._frontend_form_issues(),
+                *(self._acceptance_matrix_issues() if self.gui_model is None else [])]
 
     def _validate_app(self) -> dict:
         """Model-facing, revision-bound diagnostics with no additional LLM cost."""
         revision = self._workspace_revision()
         if self._app_validation_cache and self._app_validation_cache[0] == revision:
             return self._app_validation_cache[1]
-        issues = sorted((_classify_issue(s) for s in self._collect_execution_issues()), key=self._repair_priority)
+        raw = self._collect_execution_issues()
+        # A static frontend warning (e.g. an entity with no page) is reported, not refused: say so.
+        raw += [issue if _classify_issue(issue).severity == "blocker" else f"{_ADVISORY_PREFIX}{issue}"
+                for issue in dict.fromkeys(self._static_frontend_issues()) if issue not in raw]
+        issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
         blockers = [issue for issue in issues if issue.severity == "blocker"]
         # A required check that did not run is a warning, not a pass.
         unverified = not blockers and any(is_completion_issue(issue) for issue in issues)
@@ -3056,6 +3130,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         reason = args.get("correction_reason")
         if changed and (not isinstance(reason, str) or not reason.strip()):
             return {"error": "Changing a saved scenario requires correction_reason explaining the mistaken test; do not relax the original specification."}
+        dropped = _dropped_passing_requests(previous["scenario"]["requests"], previous["report"],
+                                            scenario["requests"]) if changed else []
+        if dropped:
+            shown = "; ".join(dropped[:self._DROPPED_CHECKS_SHOWN]) + (
+                f" (+{len(dropped) - self._DROPPED_CHECKS_SHOWN} more)"
+                if len(dropped) > self._DROPPED_CHECKS_SHOWN else "")
+            return {"error": (f"Correction refused: it drops checks that passed in this scenario's last run: {shown}. "
+                              "Resubmit the full scenario with only the failing requests fixed, or run those "
+                              "checks under their own scenario_id.")}
         if key not in self._api_scenarios and len(self._api_scenarios) >= 10:
             return {"error": "Ten workflow scenarios are already retained. Rerun an existing scenario or use validate_app."}
         revision = self._workspace_revision()
@@ -3254,19 +3337,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # field): a GUI-scoped run may legitimately omit entities, so
         # these are visibility, never blockers. It measures web routes and
         # pages, so it says nothing about a native or CLI target.
-        if self.target is not None and not self.target.is_web_app:
-            logger.info("Phase 3: acceptance matrix not applicable to a %s target", self.target.kind)
-        else:
-            try:
-                from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
-                self._acceptance_matrix = build_acceptance_matrix(
-                    self.output_dir, self.domain_model,
-                )
-                raw_issues.extend(matrix_issues(self._acceptance_matrix))
-            except Exception as exc:
-                logger.warning("Acceptance matrix computation failed", exc_info=True)
-                raw_issues.append(_check_did_not_run(
-                    "the acceptance matrix", f"it crashed: {type(exc).__name__}"))
+        raw_issues.extend(self._acceptance_matrix_issues())
 
         execution_issues = self._collect_execution_issues()
         # An enabled ledger that extracted nothing verified nothing. Saying so
@@ -3320,17 +3391,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             collect_frontend_resolution_issues,
         )
         raw_issues.extend(collect_frontend_resolution_issues(self.output_dir))
-        # The probes above never render a page, so a UI whose create forms
-        # cannot save still passes them. Static, milliseconds.
-        try:
-            from besser.spec_driven_agent.validation.frontend_forms import (
-                collect_frontend_form_issues,
-            )
-            raw_issues.extend(collect_frontend_form_issues(self.output_dir))
-        except Exception as exc:
-            logger.warning("Frontend form validation failed", exc_info=True)
-            raw_issues.append(_check_did_not_run(
-                "the frontend form check", f"it crashed: {type(exc).__name__}"))
+        raw_issues.extend(self._frontend_form_issues())
 
         from besser.spec_driven_agent.validation.frontend_build import collect_frontend_build_issues
         build_verdicts = self._frontend_build_verdicts
@@ -3508,6 +3569,57 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         "a table plus working Create/Edit/Delete wired to the API. This "
         "task cannot be marked done until frontend files exist on disk."
     )
+    _FRONTEND_TASK_FILES_CLAUSE = "This task cannot be marked done until frontend files exist on disk."
+
+    # The text both checklist variants start with; a checkpoint is matched on it.
+    _FRONTEND_TASK_PREFIX = _FRONTEND_CHECKLIST_TASK.split(_FRONTEND_TASK_FILES_CLAUSE)[0].rstrip()
+
+    def _routed_entity_pages(self) -> dict[str, bool]:
+        """{class: has a frontend page} for each model class with a backend route
+        (acceptance matrix), association classes left out: they are edited inline."""
+        from besser.BUML.metamodel.structural import AssociationClass
+        from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix
+
+        linked = {cls.name for cls in self.domain_model.get_classes() if isinstance(cls, AssociationClass)}
+        matrix = build_acceptance_matrix(self.output_dir, self.domain_model) or {}
+        return {cls: bool(cells.get("page")) for cls, cells in sorted(matrix.items())
+                if cells.get("route") and cls not in linked}
+
+    def _frontend_checklist_task(self) -> dict:
+        """The 'build the frontend' item. With no GUI model the LLM authors the
+        screens: the item names the routed classes, and closes on an app with at
+        least one entity screen, not on its first file. Classes left without a page
+        stay acceptance warnings. With a GUI model (or no routes yet) any frontend
+        file closes it."""
+        routed = list(self._routed_entity_pages()) if self.gui_model is None and self.domain_model else []
+        if not routed:
+            return {"text": self._FRONTEND_CHECKLIST_TASK, "verify": self._has_frontend_files}
+        text = self._FRONTEND_CHECKLIST_TASK.replace(self._FRONTEND_TASK_FILES_CLAUSE, (
+            f"Build a screen for each class with backend routes ({', '.join(routed)}) unless the request "
+            "scopes the UI to fewer screens, in which case the request wins."))
+        return {"text": text, "verify": self._frontend_has_entity_screen}
+
+    def _reattach_frontend_verifier(self) -> None:
+        """Give a restored frontend item its verifier, matched on the stable prefix.
+
+        ``restore_tasks`` matches verifiers by exact text, and the text names the
+        routed classes (and changed between versions); the item is also seeded only
+        while no frontend file exists, so a frontend written before the crash would
+        leave it with none.
+        """
+        if not self._asks_for_frontend():
+            return
+        verify = self._frontend_checklist_task()["verify"]
+        for task in getattr(self.executor, "_tasks", []):
+            if task.get("verify") is None and task["text"].startswith(self._FRONTEND_TASK_PREFIX):
+                task["verify"] = verify
+
+    def _frontend_has_entity_screen(self) -> bool:
+        """Frontend files exist and at least one routed class has a page (all, if none is routed)."""
+        if not self._has_frontend_files():
+            return False
+        pages = self._routed_entity_pages()
+        return not pages or any(pages.values())
 
     def _deterministic_gap_tasks(self) -> list[str]:
         """Checklist items the harness ADDS regardless of the planner.
@@ -3520,11 +3632,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """
         tasks: list = []
         if self._asks_for_frontend() and not self._has_frontend_files():
-            tasks.append({
-                "text": self._FRONTEND_CHECKLIST_TASK,
-                # Cheat-proof: done is refused until frontend files exist.
-                "verify": self._has_frontend_files,
-            })
+            # Cheat-proof: done is refused until the frontend exists.
+            tasks.append(self._frontend_checklist_task())
         if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
             # The requirements judge checks it in Phase 3 (agent_data); a modify
             # run's app already has an agent, so only the judge applies there.
@@ -4405,8 +4514,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # real routes instead of reconstructing (and drifting from) them. Best
         # effort — never let a parse failure abort prompt construction.
         endpoint_manifest = ""
+        requirements = self._requirements_for_validation()
+        # Empty counts as known only when this process ran the extraction and it
+        # returned a list; failed, skipped or restored-on-resume is unknown (None).
+        known_empty = self._requirements is not None and self._requirement_extraction_attempts > 0
+        known_requirements = requirements if requirements or known_empty else None
         try:
-            endpoint_manifest = build_endpoint_manifest(self.output_dir)
+            endpoint_manifest = build_endpoint_manifest(
+                self.output_dir,
+                response_model=(self.domain_model if self._generator_used in ROUTER_TEMPLATE_GENERATORS
+                                else None),
+                mutation_coverage=mutation_coverage_applies(self.domain_model, known_requirements),
+            )
         except Exception:
             logger.debug("Endpoint manifest build failed", exc_info=True)
 
@@ -4433,7 +4552,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             primary_kind=self.primary_kind,
             scaffold_snapshot=scaffold_snapshot,
             endpoint_manifest=endpoint_manifest,
-            requirements=_requirements_ledger.render_requirements(self._requirements_for_validation()),
+            requirements=_requirements_ledger.render_requirements(requirements),
             # ``_modify_mode`` is False on the run()/resume() paths, so the
             # from-scratch prompt stays byte-identical; only ``modify()``
             # flips it to prepend the "preserve what works" directive.
@@ -5002,6 +5121,45 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 # Helpers
 # ======================================================================
 
+
+
+# validate_app's marker for a static frontend warning: reported, never refused.
+_ADVISORY_PREFIX = "advisory, not a blocker: "
+
+
+def _scenario_request_label(request: dict) -> str:
+    """``METHOD path -> expected status`` for one test_api request."""
+    expected = request.get("expected_status")
+    shown = ("2xx" if expected is None else "|".join(map(str, expected)) if isinstance(expected, list)
+             else str(expected))
+    return f"{request.get('method')} {request.get('path')} -> {shown}"
+
+
+def _dropped_passing_requests(old: list, report: dict, new: list) -> list[str]:
+    """Labels of ``old`` requests that passed in ``report`` and whose route ``new`` no longer calls.
+
+    A request that failed, or reads (``{{N...}}``) a response that failed, may be
+    dropped. Requests match on method and normalised path only (references and
+    numeric ids are one placeholder; query string and trailing slash ignored), so
+    fixing an id, a status, a slash or a query value is a correction, not a drop.
+    """
+    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
+
+    def route(request) -> tuple[str, str]:
+        path = _REFERENCE.sub("{id}", str(request.get("path", ""))).split("?", 1)[0].rstrip("/")
+        return (str(request.get("method", "")).upper(),
+                "/".join("{id}" if segment.isdigit() else segment for segment in path.split("/")))
+
+    responses = {item.get("index"): item for item in report.get("responses") or [] if isinstance(item, dict)}
+    failed: set[int] = set()
+    for index, request in enumerate(old):
+        response = responses.get(index) or {}
+        if (not isinstance(response.get("status"), int) or response.get("failures") or "error" in response
+                or {int(ref) for ref, _ in _REFERENCE.findall(json.dumps(request))} & failed):
+            failed.add(index)
+    kept = {route(request) for request in new if isinstance(request, dict)}
+    return [_scenario_request_label(request) for index, request in enumerate(old)
+            if index not in failed and isinstance(request, dict) and route(request) not in kept]
 
 
 def _redact_for_trace(value: Any) -> Any:

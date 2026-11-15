@@ -334,12 +334,37 @@ def _observed_inputs(routes, relations, schema_fields, records, current_revision
     return result
 
 
+def _request_shape_lines(used_schemas, schema_fields, schema_names) -> list[str]:
+    """The "Request shapes" block: each write body schema and the schemas nested in it."""
+    lines = ["Request shapes (inherited fields included):"]
+    pending = set(used_schemas)
+    rendered = set()
+    while pending:
+        name = sorted(pending)[0]
+        pending.remove(name)
+        rendered.add(name)
+        fields = schema_fields(name)
+        if fields is None:
+            lines.append(f"- {name}: UNKNOWN ambiguous/unresolved schema")
+            continue
+        lines.append(f"- {name}: " + ", ".join(f"{field}:{annotation}" for field, annotation in sorted(fields.items())))
+        for annotation in fields.values():
+            try:
+                nested = _type_names(parse_source(annotation, mode="eval"))
+            except SyntaxError:
+                nested = set()
+            pending |= (nested & schema_names) - rendered
+    return lines
+
+
 def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
-                            scenario_records=None, current_revision: str | None = None) -> str:
+                            scenario_records=None, current_revision: str | None = None,
+                            coverage: bool = True) -> str:
     """Describe potential invariant entry points; unknowns are not passing checks.
 
     Optional retained scenario records add bounded input observations. Reports
     without a matching non-None revision remain historical/unknown, not proof.
+    ``coverage=False`` renders only the request shapes: no invariant to cover.
     """
     if max_chars < 500:
         return "Mutation coverage OMITTED: character budget too small; no coverage verified."[:max(0, max_chars)]
@@ -370,7 +395,7 @@ def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
                     secondary = _keyword(value, "secondary")
                     native = _name(secondary.value) if isinstance(secondary, ast.Attribute) and secondary.attr == "__table__" else None
                     relations.append((entity, role, linked, native))
-    if not relations:
+    if not relations and coverage:
         return (f"Mutation coverage UNKNOWN: no relationship map could be built; {len(unknown)} source items unresolved. "
                 + "; ".join(unknown[:5]))[:max_chars] if unknown else ""
 
@@ -466,6 +491,10 @@ def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
             groups.setdefault(key, set()).add(f"{owner}.{role}->{target}")
 
     routes.sort(key=lambda item: (item[1], item[0], item[2]))
+    shape_lines = _request_shape_lines(used_schemas, schema_fields, schema_names)
+    if not coverage:
+        output = "\n".join(shape_lines) if len(shape_lines) > 1 else ""
+        return output if len(output) <= max_chars else output[:max_chars].rsplit("\n", 1)[0]
     lines = [
         "### Relationship mutation coverage (static candidates; NOT verification)",
         "For each specification invariant, use the groups below to inspect all relevant public writes, including reverse input fields, bulk, link/unlink and deletion. A candidate may only read data: inspect its handler/shared service before deciding it affects the rule.",
@@ -481,24 +510,7 @@ def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
     if scenario_records is not None:
         records = scenario_records.values() if isinstance(scenario_records, dict) else scenario_records
         lines.append(_observed_inputs(routes, relations, schema_fields, records, current_revision))
-    lines.append("Request shapes (inherited fields included):")
-    pending = set(used_schemas)
-    rendered = set()
-    while pending:
-        name = sorted(pending)[0]
-        pending.remove(name)
-        rendered.add(name)
-        fields = schema_fields(name)
-        if fields is None:
-            lines.append(f"- {name}: UNKNOWN ambiguous/unresolved schema")
-            continue
-        lines.append(f"- {name}: " + ", ".join(f"{field}:{annotation}" for field, annotation in sorted(fields.items())))
-        for annotation in fields.values():
-            try:
-                nested = _type_names(parse_source(annotation, mode="eval"))
-            except SyntaxError:
-                nested = set()
-            pending |= (nested & schema_names) - rendered
+    lines.extend(shape_lines)
     lines.append("Write catalog (source references; full path only when mount resolved):")
     for index, (method, route, site, schemas, affected, resolved) in enumerate(routes, 1):
         flags = []

@@ -731,8 +731,10 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 {crud_rule}{design_system}
 {idiom_section}{model_tools_section}"""
 
+    scaffold_parts = "CRUD, ORM, schemas" + (
+        ", pages" if _FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}") else "")
     request_intro = (
-        "The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to\n"
+        f"The generator handled the base app ({scaffold_parts}). Your job is to\n"
         "implement what the user asked for, on top of the generator output:"
         if has_scaffold else
         "No generator ran. Build what the user asked for, from the specification and the models:"
@@ -993,7 +995,8 @@ def _norm_path(*parts: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"/{2,}", "/", path)).strip()[:200]
 
 
-def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:
+def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
+                            response_model=None, mutation_coverage: bool = True) -> str:
     """List the EXACT HTTP routes the generated backend serves.
 
     The LLM-authored frontend otherwise reconstructs each URL from the router
@@ -1005,6 +1008,10 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:
     Parsed STATICALLY from the generated FastAPI routers (no import / no code
     execution). Returns ``""`` when no HTTP routes are found (non-backend runs),
     so the caller can omit the section.
+
+    ``response_model``: the domain model the routers were generated from by
+    ``router.py.j2``; adds what create/update return. ``mutation_coverage``:
+    False keeps only the request shapes of the mutation inventory.
     """
     port = None
     app_prefix_by_module: dict[str, str] = {}
@@ -1090,8 +1097,100 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:
     body = "\n".join(lines)
     if truncated:
         body += f"\n\n  ... and {truncated} more routes (same conventions)."
-    mutations = build_mutation_manifest(output_dir)
+    shapes = _response_shape_note(response_model) if response_model is not None else ""
+    if shapes:
+        body += f"\n\n{shapes}"
+    mutations = build_mutation_manifest(output_dir, coverage=mutation_coverage)
     return f"{header}\n\n{body}" + (f"\n\n{mutations}" if mutations else "")
+
+
+# Generators whose FastAPI routers come from besser/generators/backend/templates/router.py.j2.
+ROUTER_TEMPLATE_GENERATORS = frozenset({"generate_fastapi_backend", "generate_web_app"})
+
+def mutation_coverage_applies(domain_model, requirements: list[dict] | None) -> bool:
+    """Whether the relationship-mutation coverage block is rendered.
+
+    ``requirements`` is the ledger plus the rejected model rules, or None when it is
+    not known (extraction failed, was not attempted, or ran before a resume). Any
+    requirement keeps the block: the extractor's ``kind`` label varies between runs
+    of one request, so it cannot decide. With a ledger known to be empty, the model
+    decides: a constraint, a rejected constraint, or a lower bound on a to-many end.
+    """
+    if requirements is None or requirements:
+        return True
+    if domain_model is None:
+        return False
+    if list(getattr(domain_model, "constraints", None) or []) or getattr(domain_model, "conversion_issues", None):
+        return True
+    return any(end.multiplicity.min > 0 and end.multiplicity.max > 1
+               for association in domain_model.associations for end in association.ends)
+
+
+def create_response_keys(domain_model) -> dict[str, list[str]]:
+    """Per class, the top-level keys of its generated create/update response; ``[]`` for the bare record.
+
+    Mirrors ``router.py.j2``: a class (or a parent) with a navigable binary end to
+    many, or a link through an association class, returns ``{"<class lowercased>":
+    record, ...id lists}``. The id lists are keyed ``<other class lowercased>_ids``
+    for an N:M end, ``<other end>_ids`` for a 1:N end or an association-class link,
+    in that order. An association class itself returns the bare record.
+    """
+    from besser.BUML.metamodel.structural import AssociationClass
+
+    by_association = {cls.association.name for cls in domain_model.get_classes()
+                      if isinstance(cls, AssociationClass)}
+    keys: dict[str, list[str]] = {}
+    for cls in domain_model.get_classes():
+        many_to_many, linked, one_to_many = [], [], []
+        if not isinstance(cls, AssociationClass):
+            for owner in [cls, *sorted(cls.all_parents(), key=lambda parent: parent.name)]:
+                for association in sorted(owner.associations, key=lambda association: association.name):
+                    ends = sorted(association.ends, key=lambda end: end.name)
+                    if len(ends) != 2:
+                        continue
+                    if ends[0].type.name == ends[1].type.name:
+                        own, other = ends[1], ends[0]
+                    else:
+                        own, other = (ends[0], ends[1]) if ends[0].type.name == owner.name else (ends[1], ends[0])
+                    if not other.is_navigable:
+                        continue
+                    if association.name in by_association:
+                        linked.append(f"{other.name}_ids")
+                    elif own.multiplicity.max > 1 and other.multiplicity.max > 1:
+                        many_to_many.append(f"{other.type.name.lower()}_ids")
+                    elif own.multiplicity.max == 1 and other.multiplicity.max > 1:
+                        one_to_many.append(f"{other.name}_ids")
+        id_lists = list(dict.fromkeys(many_to_many + linked + one_to_many))
+        keys[cls.name] = [cls.name.lower(), *id_lists] if id_lists else []
+    return keys
+
+
+def _response_shape_note(domain_model) -> str:
+    """What the generated routers return: the actual top-level keys of each wrapped entity."""
+    from besser.BUML.metamodel.structural import AssociationClass
+
+    try:
+        keys = create_response_keys(domain_model)
+        association_classes = {cls.name for cls in domain_model.get_classes() if isinstance(cls, AssociationClass)}
+    except Exception:
+        logger.debug("Response shape derivation failed", exc_info=True)
+        return ""
+    if not keys:
+        return ""
+    wrapped = sorted(name for name, names in keys.items() if names)
+    if wrapped:
+        listed = "; ".join(f"{name} {{{', '.join(keys[name])}}}" for name in wrapped)
+        create = (f"POST and PUT return these top-level keys for {listed} - a created {wrapped[0]}'s id is "
+                  f"{{{{N.{keys[wrapped[0]][0]}.id}}}} in test_api; every other entity's POST and PUT return "
+                  "the bare record ({{N.id}}).")
+    else:
+        create = "POST and PUT return the bare record ({{N.id}} in test_api)."
+    bare = sorted(name for name, names in keys.items() if not names and name not in association_classes)
+    example = (f" (GET /{bare[0].lower()}/1/ -> {{\"{bare[0].lower()}\": {{...}}}})" if bare else "")
+    return (f"Response shapes (generated routers): {create} GET /<entity>/{{id}}/ wraps EVERY entity except an "
+            "association class under its lowercased name, also one whose POST is bare"
+            f"{example}, with the same _ids lists. List rows are flat, with an `<end>_id` column per to-one "
+            "end; ?detailed=true nests related objects.")
 
 
 def build_scaffold_snapshot(

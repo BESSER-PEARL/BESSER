@@ -58,6 +58,7 @@ from besser.utilities.web_modeling_editor.backend.dependencies import (
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DurableRunManager,
+    RunRecord,
     SmartGenerationRunner,
     SpecDrivenRuntime,
 )
@@ -405,6 +406,16 @@ async def get_smart_run_status(
     return record.to_api_dict()
 
 
+def _run_with_events(runtime: SpecDrivenRuntime, run_id: str) -> RunRecord:
+    """The run's record; 404 when unknown, 410 when the sweep already deleted its events."""
+    record = runtime.durable_runs.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    if runtime.durable_runs.store.events_swept(run_id):
+        raise HTTPException(status_code=410, detail="The events of this run have expired")
+    return record
+
+
 @router.get("/spec-driven/runs/{run_id}/events.json")
 async def poll_smart_run_events(
     runtime: SpecDrivenRuntimeDep,
@@ -429,9 +440,7 @@ async def poll_smart_run_events(
     the same reducer it feeds streamed events. ``hasMore`` says to come straight
     back, ``status``/``terminalEvent`` say when to stop.
     """
-    record = runtime.durable_runs.get_run(run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    record = _run_with_events(runtime, run_id)
     # A poller is present: it holds off the abandonment cancel like a stream does.
     runtime.durable_runs.touch(run_id)
 
@@ -468,9 +477,7 @@ async def stream_smart_run_events(
     endpoint compatible with native EventSource clients. The larger valid
     cursor wins, preventing a stale query value from replaying duplicates.
     """
-    record = runtime.durable_runs.get_run(run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    _run_with_events(runtime, run_id)
 
     cursor = after
     if last_event_id:

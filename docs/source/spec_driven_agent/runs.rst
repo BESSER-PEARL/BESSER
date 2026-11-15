@@ -62,6 +62,9 @@ runs survive a dropped connection:
   whole new attempt. A finished run's events are deleted after
   ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``; its status record stays for 24 hours,
   as long as its workspace can be resumed, so numbering continues after that too.
+  Once its events are deleted, ``/events`` and ``events.json`` answer ``410``
+  (Gone) while the status endpoint still answers; after the 24 hours all three
+  answer ``404``.
 
 .. code-block:: bash
 

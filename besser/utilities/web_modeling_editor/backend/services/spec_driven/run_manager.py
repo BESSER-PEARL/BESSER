@@ -208,7 +208,8 @@ class SqliteRunEventStore:
                     last_subscriber_at REAL,
                     disconnected_at REAL,
                     abandonment_requested_at REAL,
-                    resume_available INTEGER NOT NULL DEFAULT 0
+                    resume_available INTEGER NOT NULL DEFAULT 0,
+                    events_swept_at REAL
                 );
 
                 CREATE TABLE IF NOT EXISTS spec_run_events (
@@ -242,12 +243,24 @@ class SqliteRunEventStore:
                 "disconnected_at": "REAL",
                 "abandonment_requested_at": "REAL",
                 "resume_available": "INTEGER NOT NULL DEFAULT 0",
+                # Set by sweep_expired when it deletes the run's events.
+                "events_swept_at": "REAL",
             }
             for column, declaration in additive_columns.items():
                 if column not in existing_columns:
                     self._conn.execute(
                         f"ALTER TABLE spec_runs ADD COLUMN {column} {declaration}"
                     )
+            if "events_swept_at" not in existing_columns:
+                # Older stores did not record a sweep: a finished run that had
+                # events and holds none was swept.
+                self._conn.execute(
+                    """
+                    UPDATE spec_runs SET events_swept_at = updated_at
+                     WHERE status NOT IN ('queued', 'running') AND last_sequence > 0
+                       AND run_id NOT IN (SELECT run_id FROM spec_run_events)
+                    """
+                )
             # No producer can survive a Python process restart.  Preserve its
             # events/checkpoint but tell reconnecting clients the truth.
             now = time.time()
@@ -274,7 +287,7 @@ class SqliteRunEventStore:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT r.run_id, r.last_sequence, e.event_type, e.payload_json
+                SELECT r.run_id, r.events_swept_at, e.event_type, e.payload_json
                   FROM spec_runs r
                   LEFT JOIN spec_run_events e
                     ON e.run_id = r.run_id AND e.sequence = r.last_sequence
@@ -283,8 +296,8 @@ class SqliteRunEventStore:
             ).fetchall()
         for row in rows:
             run_id = row["run_id"]
-            if row["event_type"] is None and int(row["last_sequence"]) > 0:
-                continue  # events swept
+            if row["events_swept_at"] is not None:
+                continue
             if row["event_type"] == "done":
                 continue
             if row["event_type"] == "error":
@@ -349,7 +362,7 @@ class SqliteRunEventStore:
                            terminal_event = NULL, error = NULL,
                            subscriber_count = 0, disconnected_at = NULL,
                            abandonment_requested_at = NULL,
-                           resume_available = 0
+                           resume_available = 0, events_swept_at = NULL
                      WHERE run_id = ?
                     """,
                     (now, run_id),
@@ -417,6 +430,14 @@ class SqliteRunEventStore:
         if row is None:
             return 0
         return int(row["last_sequence"]) if row["first"] is None else int(row["first"]) - 1
+
+    def events_swept(self, run_id: str) -> bool:
+        """True when ``sweep_expired`` deleted the run's events and no resume has begun since."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT events_swept_at FROM spec_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        return row is not None and row["events_swept_at"] is not None
 
     def set_status(
         self,
@@ -578,6 +599,14 @@ class SqliteRunEventStore:
                 f"SELECT COUNT(DISTINCT run_id) FROM spec_run_events WHERE run_id IN ({expired})",
                 (events_cutoff,),
             ).fetchone()[0]
+            # Not updated_at: the record cutoff below is measured from it.
+            self._conn.execute(
+                f"""
+                UPDATE spec_runs SET events_swept_at = ?
+                 WHERE run_id IN (SELECT run_id FROM spec_run_events WHERE run_id IN ({expired}))
+                """,
+                (now, events_cutoff),
+            )
             self._conn.execute(
                 f"DELETE FROM spec_run_events WHERE run_id IN ({expired})",
                 (events_cutoff,),
@@ -635,6 +664,7 @@ class DurableRunManager:
             # Before the task exists: a failure here reaches the caller, which
             # still owns the run's slot and reservation and releases them.
             self.store.set_status(run_id, "running")
+            self.store.set_subscriber_count(run_id, 0)
             generation = self._generations.get(run_id, 0) + 1
             self._generations[run_id] = generation
             condition = asyncio.Condition()
@@ -645,7 +675,6 @@ class DurableRunManager:
             )
             self._tasks[run_id] = task
             self._subscriber_counts[run_id] = 0
-            self.store.set_subscriber_count(run_id, 0)
             if on_abandoned is not None:
                 self._abandonment_policies[run_id] = _AbandonmentPolicy(
                     grace_seconds=max(0.0, float(disconnect_grace_seconds)),

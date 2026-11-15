@@ -40,7 +40,9 @@ Endpoints
    * - ``/spec-driven/runs/{run_id}/events``
      - GET
      - Replay this run's events after ``?after=N``, then follow the live
-       stream. Also honours the ``Last-Event-ID`` header.
+       stream. Also honours the ``Last-Event-ID`` header. Answers ``410``
+       for a finished run whose events have expired (see
+       :ref:`spec-driven-durable-runs`).
    * - ``/spec-driven/runs/{run_id}/events.json``
      - GET
      - Polling alternative to the stream: the run's lifecycle metadata plus
@@ -51,7 +53,8 @@ Endpoints
        share one sequence, so a client can switch between them. Use it where
        a proxy buffers responses and holds back an SSE stream. Each poll
        counts as presence, like an open stream, so a polled run is not
-       stopped as abandoned.
+       stopped as abandoned. Answers ``410`` like the stream once a finished
+       run's events have expired.
    * - ``/spec-driven/resume/{run_id}``
      - POST
      - Resume an interrupted run from its checkpoint (streams SSE).
@@ -161,10 +164,12 @@ Request body
    * - ``base_url``
      - string (optional)
      - An ``http(s)://`` OpenAI-compatible endpoint: the editor's Local
-       (self-hosted) provider sends ``provider: "openai"`` with it. Rejected
-       with a ``BAD_REQUEST`` error event unless the server sets
-       ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``; dropped for ``pia`` /
-       ``gateway`` and ignored by the keyless tiers.
+       (self-hosted) provider sends ``provider: "openai"`` with it. Dropped
+       for ``pia`` / ``gateway``. For every other provider, the keyless tiers
+       included, a request carrying it is rejected with a ``BAD_REQUEST``
+       error event unless the server sets ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``;
+       where it is set, the keyless tiers still ignore it and use the server's
+       endpoint.
    * - ``demo_token``
      - string (secret, optional)
      - The demo-link secret; required for ``sponsored`` and checked against

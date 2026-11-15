@@ -655,7 +655,8 @@ class SmartRunRegistry:
         and modify read its workspace) but its download answers 404.
         """
         try:
-            entry = self._store_download(run_id, entry)
+            # Copying the artifact (tens of MB) is blocking file IO: keep it off the event loop.
+            entry = await asyncio.to_thread(self._store_download, run_id, entry)
         except OSError:
             logger.warning("Run %s: its download could not be kept; /download will answer 404",
                            run_id, exc_info=True)

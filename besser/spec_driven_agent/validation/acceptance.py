@@ -529,8 +529,52 @@ def _previous_char(text: str, i: int) -> str:
     return text[i - 1] if i else ""
 
 
+# A call's first argument read off an object: `config.path`, `ENTITIES[key].path`.
+_PROPERTY_ARG_RE = re.compile(
+    r"\s*(?P<root>[A-Za-z_$][\w$]*)(?P<chain>(?:\s*\??\.\s*[\w$]+|\s*\[[^\[\]]*\])*?)"
+    r"\s*\??\.\s*(?P<prop>[A-Za-z_$][\w$]*)\s*(?:,|\Z)")
+# The entry of an object a local name is bound to: `const config = ENTITIES[entityKey]`.
+_ENTRY_BINDING = r"\b(?:const|let|var)\s+{name}\s*=\s*(?P<base>[A-Za-z_$][\w$]*)\s*(?:\?\.)?\["
+# Depth of an entry's own property in `const ENTITIES = { key: { path: 'x' } }` (or `[{ path: 'x' }]`).
+_ENTRY_PROPERTY_DEPTH = 2
+
+
+def _metadata_values(arg_text: str, code: str, bindings: dict[str, str], files: dict[str, str]) -> list[str]:
+    """The literal values a create's first argument can take when it reads a
+    property of an entry of an imported metadata object, else ``[]``.
+
+    `api.create(config.path, ...)` with `const config = ENTITIES[entityKey]` and
+    `ENTITIES` imported from `entities.js` takes the `path` of each entry of
+    `ENTITIES` there. Only literal values of that property, at entry level of
+    that object, count: an entity the object does not list gets nothing.
+    """
+    read = _PROPERTY_ARG_RE.match(arg_text)
+    if read is None:
+        return []
+    base = read.group("root")
+    if not read.group("chain").lstrip().startswith("["):
+        entry = re.search(_ENTRY_BINDING.format(name=re.escape(base)), code)
+        if entry is None or read.group("chain").strip():
+            return []
+        base = entry.group("base")
+    module = files.get(bindings.get(base, ""))
+    if module is None:
+        return []
+    module = _blank_comments(module)
+    blanked = _blank_literals(module)
+    declared = re.search(r"\b(?:const|let|var)\s+" + re.escape(base) + r"\b[^=;]*=\s*(?=[{\[])", blanked)
+    if declared is None:
+        return []
+    start = declared.end()
+    end = _group_end(blanked, start)
+    prop = re.compile(r"(?<![\w$.])" + re.escape(read.group("prop")) + r"\s*:\s*(['\"])([^'\"\n]{1,100})\1")
+    return [value.group(2) for value in prop.finditer(module, start, end)
+            if _bracket_depth(blanked, start, value.start()) == _ENTRY_PROPERTY_DEPTH]
+
+
 def _client_create_calls(rel: str, source: str, files: dict[str, str],
-                         helper_cache: dict[str, dict], used_clients: set[str]) -> list:
+                         helper_cache: dict[str, dict], used_clients: set[str],
+                         traced: list[str] | None = None) -> list:
     """Creates ``rel`` issues through an imported api-client module.
 
     One entry per call site: the helper's own literal path, else the call's
@@ -544,8 +588,13 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
 
     ``helper_cache`` is keyed by module path: one api client is imported by
     every page, so it is scanned once rather than once per importer.
+
+    A call that names no literal resource but whose path is read off an entry
+    of an imported metadata object adds that property's values to ``traced``.
     """
     calls = []
+    bindings = {binding: target for binding, spec in _import_bindings(source)
+                for target in [next((c for c in _resolve_import(rel, spec) if c in files), None)] if target}
     # The import statements name every helper without using it; a comment or a
     # string (`const mode = 'create'`) uses none. Arguments are read from ``uses``.
     uses = _IMPORT_RE.sub(lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()), source)
@@ -577,6 +626,9 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
                 args = uses[call.start("args"):call.end("args")] if call.group("args") is not None else ""
                 calls.append(helpers[name] or _STRING_ARG_RE.findall(args) or None)
                 used_clients.add(target)
+                if calls[-1] is None and traced is not None:
+                    traced += _metadata_values(code[call.start("args"):call.end("args")] if args else "",
+                                               code, bindings, files)
     return calls
 
 
@@ -723,7 +775,8 @@ def build_acceptance_matrix(
     by_path = dict(frontend_files)
     helper_cache: dict[str, dict] = {}
     used_clients: set[str] = set()
-    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients)
+    traced: dict[str, list[str]] = {rel: [] for rel, _ in frontend_files}
+    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients, traced[rel])
                     for rel, content in frontend_files}
     # A shared client's own POSTs count where its helpers are called, not as
     # creates of whatever its other helpers (`getMetrics`) happen to name.
@@ -793,15 +846,17 @@ def build_acceptance_matrix(
         page = False
         create = False
         for rel, content in frontend_files:
+            # A create whose path is read off this entity's metadata entry.
+            traced_create = any(_creates([value], forms) for value in traced[rel])
             about = (_mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(content, forms)
-                     or _mentions(config_text.get(rel, ""), forms, whole_word=True))
+                     or _mentions(config_text.get(rel, ""), forms, whole_word=True) or traced_create)
             if not about:
                 continue
             page = True
             # A create that names another resource literally is that resource's
             # create, not this entity's: `api.create('order', ...)` on a page
             # that merely lists clerks in a dropdown proves nothing about Clerk.
-            if (any(_creates(args, forms) for args in create_calls[rel])
+            if (traced_create or any(_creates(args, forms) for args in create_calls[rel])
                     or renders_generic_creator[rel]
                     or _table_block_create_wired(content, cls)):
                 create = True

@@ -15,10 +15,12 @@ Features:
 - **Factory function** — ``create_llm_client()`` to instantiate the right provider
 """
 
+import json
 import logging
 import os
 import re
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
@@ -44,6 +46,7 @@ from besser.spec_driven_agent.providers.model_settings import (
     sampling_kwargs,
     thinking_can_be_disabled,
 )
+from besser.spec_driven_agent.agent.history_eviction import _THINKING_BLOCK_TYPES
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY, dumps_for_model
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 from besser.spec_driven_agent.settings import AgentSettings
@@ -856,10 +859,6 @@ def _with_refusal_detail(result: dict, response) -> dict:
     return result
 
 
-# Reasoning blocks of a Claude response.
-_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
-
-
 def _without_reasoning(result: dict) -> dict:
     """``result`` minus the thinking blocks of a reply to a one-off instruction.
 
@@ -1188,17 +1187,19 @@ class _ToolUseBlock:
         self.input = arguments
 
 
-def _openai_stop_reason(finish_reason: str | None, complete_tool_calls: bool) -> str:
-    """Native complete calls beat a normal stop label, never a safety/length stop.
+def _openai_stop_reason(finish_reason: str | None, has_tool_calls: bool) -> str:
+    """Native calls beat a normal stop label, never a safety/length stop.
 
     Observed with Nebius Qwen forced tool_choice: a valid read_file call plus
     finish_reason='stop'. Treating that as end_turn silently discarded the call.
+    An unusable call is ``tool_use`` too: the executor answers it with an error,
+    and an unanswered call in the history fails the next request.
     Do not infer calls from prose or execute a truncated/refused response.
     """
     if finish_reason == "tool_calls":
         return "tool_use"
     if finish_reason in (None, "stop"):
-        return "tool_use" if complete_tool_calls else "end_turn"
+        return "tool_use" if has_tool_calls else "end_turn"
     if finish_reason == "content_filter":
         return "refusal"  # OpenAI's safety stop; the loop handles "refusal"
     return finish_reason
@@ -1221,6 +1222,30 @@ def _canonical_tool_name(name: str | None, index: dict[str, str]) -> str:
     return index.get((name or "").casefold(), name or "")
 
 
+# Name given to a returned call with none, so its replay is a valid request; the
+# executor answers it "Unknown tool" like any other name it does not know.
+_MISSING_TOOL_NAME = "missing_tool_name"
+
+
+def _openai_tool_use_block(call_id: str | None, name: str | None, raw_arguments: str | None,
+                           index: dict[str, str]) -> _ToolUseBlock:
+    """One returned call as a block every later request can replay.
+
+    Chat Completions needs a non-empty id and name on each replayed call; a
+    missing id is generated, a missing name gets ``_MISSING_TOOL_NAME``, and
+    unparseable arguments become the ``INVALID_ARGUMENTS_KEY`` error input.
+    """
+    try:
+        arguments = json.loads(raw_arguments)
+    except (ValueError, TypeError) as exc:
+        arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
+    return _ToolUseBlock(
+        tool_id=call_id or f"call_{uuid.uuid4().hex}",
+        name=_canonical_tool_name(name, index) or _MISSING_TOOL_NAME,
+        arguments=arguments,
+    )
+
+
 def _openai_response_to_common(response, tools: list[dict] | None = None) -> dict[str, Any]:
     """
     Convert an OpenAI chat completion response to the common format
@@ -1241,28 +1266,12 @@ def _openai_response_to_common(response, tools: list[dict] | None = None) -> dic
     if message.content:
         content.append(_TextBlock(text=message.content))
 
-    # Tool calls
-    complete_tool_calls = bool(message.tool_calls)
-    if message.tool_calls:
-        import json as _json
-        for tc in message.tool_calls:
-            try:
-                arguments = _json.loads(tc.function.arguments)
-            except (ValueError, TypeError) as exc:
-                arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
-                complete_tool_calls = False
-            name = _canonical_tool_name(tc.function.name, tool_index)
-            if not isinstance(arguments, dict) or not tc.id or not name:
-                complete_tool_calls = False
-            content.append(_ToolUseBlock(
-                tool_id=tc.id,
-                name=name,
-                arguments=arguments,
-            ))
+    for tc in message.tool_calls or []:
+        content.append(_openai_tool_use_block(tc.id, tc.function.name, tc.function.arguments, tool_index))
 
     # Map OpenAI finish_reason to our stop_reason
     finish_reason = choice.finish_reason
-    stop_reason = _openai_stop_reason(finish_reason, complete_tool_calls)
+    stop_reason = _openai_stop_reason(finish_reason, bool(message.tool_calls))
 
     return {"stop_reason": stop_reason, "content": normalize_tool_blocks(content, tools),
             "provider_finish_reason": finish_reason}
@@ -1725,27 +1734,14 @@ class OpenAIProvider(LLMProvider):
                 content: list[Any] = []
                 if collected_text:
                     content.append(_TextBlock(text=collected_text))
-                complete_tool_calls = bool(tool_calls_accum)
                 tool_index = _tool_name_index(tools)
                 for _idx in sorted(tool_calls_accum.keys()):
                     tc_data = tool_calls_accum[_idx]
-                    import json as _json
-                    try:
-                        arguments = _json.loads(tc_data["arguments"])
-                    except (ValueError, TypeError) as exc:
-                        arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
-                        complete_tool_calls = False
-                    name = _canonical_tool_name(tc_data["name"], tool_index)
-                    if not isinstance(arguments, dict) or not tc_data["id"] or not name:
-                        complete_tool_calls = False
-                    content.append(_ToolUseBlock(
-                        tool_id=tc_data["id"],
-                        name=name,
-                        arguments=arguments,
-                    ))
+                    content.append(_openai_tool_use_block(
+                        tc_data["id"], tc_data["name"], tc_data["arguments"], tool_index))
 
                 # Map finish_reason
-                stop_reason = _openai_stop_reason(finish_reason, complete_tool_calls)
+                stop_reason = _openai_stop_reason(finish_reason, bool(tool_calls_accum))
 
                 yield {
                     "type": "message_done",

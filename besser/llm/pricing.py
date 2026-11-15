@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -33,6 +34,9 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     # they land on the coarse tier above (Opus 5.5 at $15/$75, ~4x over).
     # Cache write is the standard 1.25x of input.
     "claude-opus-5-5": {"input": 4.0, "output": 20.0, "cache_write": 5.0, "cache_read": 0.2},
+    # Copied from the vendored 5.1 rows of each family; not a published 5.2 rate.
+    "claude-fable-5-2": {"input": 10.0, "output": 50.0, "cache_write": 12.5, "cache_read": 0.25},
+    "claude-mythos-5-2": {"input": 10.0, "output": 50.0, "cache_write": 12.5, "cache_read": 0.25},
     # OpenAI — early-2026 public rates
     "gpt-4o-mini": {"input": 0.15, "output": 0.6,  "cache_write": 0, "cache_read": 0.075},
     "gpt-4o":      {"input": 2.5,  "output": 10.0, "cache_write": 0, "cache_read": 1.25},
@@ -259,9 +263,10 @@ def get_pricing(model_id: str, billed: bool = False, route: "str | None" = None)
     published = _published_pricing(model_id)
     if published is not None:
         return published
-    # Exact Anthropic ids first: each is also inside a coarse tier below.
-    for key in ("claude-opus-5-5",):
-        if key in model_lower:
+    # Exact Anthropic ids first: each is also inside a coarse tier below. A
+    # version must not run on into a digit ("claude-fable-5-20260101").
+    for key in ("claude-fable-5-2", "claude-mythos-5-2", "claude-opus-5-5"):
+        if re.search(re.escape(key) + r"(?!\d)", model_lower):
             return MODEL_PRICING[key]
     # Anthropic tiers — unambiguous identifiers so order doesn't matter.
     for tier in ("haiku", "sonnet", "opus"):

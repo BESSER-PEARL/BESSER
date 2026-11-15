@@ -21,6 +21,7 @@ or a probe recorded in the comment. Sampling defaults we cannot observe are
 left alone rather than guessed at.
 """
 
+import re
 from dataclasses import dataclass, field, replace
 
 from besser.llm.catalog import load_model_catalog
@@ -139,8 +140,9 @@ _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL = ModelSettings(
 
 
 # Ordered longest-marker-first at import so a specific id always beats a
-# shorter family prefix. Matched as a lowercased substring, the same way
-# get_pricing and compaction's window tables match.
+# shorter family prefix. Matched as a lowercased substring that must not run
+# on into a digit: "claude-fable-5-2" is a prefix of the dated Fable 5 id
+# "claude-fable-5-20260101", which must keep the "claude-fable-5" row.
 #
 # Markers are chosen not to overlap: "qwen3-30b-a3b-instruct-2507" and
 # "qwen3-coder" cannot both match one id. The Claude markers do overlap
@@ -188,7 +190,8 @@ def settings_for(model: str | None) -> ModelSettings:
     if not model:
         return _DEFAULTS
     low = model.lower()
-    settings = next((row for marker, row in _REGISTRY if marker in low), _DEFAULTS)
+    settings = next((row for marker, row in _REGISTRY if re.search(re.escape(marker) + r"(?!\d)", low)),
+                    _DEFAULTS)
     override = load_model_catalog().request_override(model)
     return replace(settings, **override) if override else settings
 

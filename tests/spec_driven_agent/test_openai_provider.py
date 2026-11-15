@@ -222,7 +222,8 @@ class TestOpenAIResponseToCommon:
         resp = self._make_response(tool_calls=[tc], finish_reason=finish_reason)
         result = _openai_response_to_common(resp)
         assert set(result["content"][0].input) == {INVALID_ARGUMENTS_KEY}
-        assert result["stop_reason"] == ("tool_use" if finish_reason == "tool_calls" else "end_turn")
+        # Answered with the executor's invalid-arguments error: an unanswered call fails the next request.
+        assert result["stop_reason"] == "tool_use"
 
     def test_empty_response(self):
         resp = self._make_response(content=None, tool_calls=None, finish_reason="stop")

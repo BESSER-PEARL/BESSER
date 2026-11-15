@@ -2767,7 +2767,7 @@ def _drop_navigation_buttons(editor: ModelEditor, screens: Sequence[Screen]) -> 
             continue
         _remove_gui_element(editor, button, {}, [])
         opened.append(button.targetScreen.name)
-    return opened
+    return list(dict.fromkeys(opened))  # each screen once, whatever the number of buttons to it
 
 
 def _end_variable(editor: ModelEditor, end: Property) -> tuple[str, int]:

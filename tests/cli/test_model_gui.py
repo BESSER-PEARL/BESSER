@@ -430,6 +430,12 @@ def test_a_new_screen_is_at_its_title_in_lower_case_or_at_the_route_asked_for(st
     assert bad.returncode == 2 and "'tags' is not a route: write /name or /group/name" in bad.stderr
 
 
+def test_a_menu_names_once_each_page_its_buttons_opened(starter, change):
+    # Before: with a button to Books on two pages, "it replaces the buttons to Authors, Books, Books".
+    change("add-page", "Overview", "--route", "/overview", "--main")
+    assert change("add-menu").endswith("; it replaces the buttons to Authors, Books")
+
+
 def test_a_menu_links_every_page_from_every_page_and_follows_the_screens(starter, change, besser, app):
     # The menu replaces the starter's button to Books: beside it, the button was a second navigation.
     assert change("add-menu") == "model.py: added menu menu to Authors, Books; it replaces the button to Books"

@@ -619,3 +619,18 @@ def test_an_operation_typed_as_a_command_is_run_as_one(besser, model):
     # Before: "invalid choice: 'add-attribute'" with the list of commands, and one more call.
     run = besser("add-attribute", "Book", "isbn:str", "-f", model, output=None)
     assert run.returncode == 0 and run.stdout == "library.py: added Book.isbn:str\n", run.stderr
+
+
+def test_a_method_written_on_one_line_is_stored_on_two(besser, model, tmp_path):
+    """Before: 'def shorten(self): self.pages = 1' was stored as written, the backend generator wrote a route
+    with no body, and every test of the generated backend failed on the syntax error (a run lost three calls)."""
+    run = besser("model", "-f", model, "add-method", "Book", "shorten()", "--code", "def shorten(self): self.pages = 1")
+    assert run.returncode == 0, run.stderr
+    namespace = {}
+    exec(compile((tmp_path / model).read_text(encoding="utf-8"), model, "exec"), namespace)  # noqa: S102
+    book = next(cls for cls in namespace["library_model"].get_classes() if cls.name == "Book")
+    assert next(iter(book.methods)).code == "def shorten(self):" + chr(10) + "    self.pages = 1"
+    refused = besser("model", "-f", model, "add-method", "Book", "broken()", "--code", "def broken(self) self.x")
+    assert refused.returncode == 2 and "--code is not Python" in refused.stderr
+    refused = besser("model", "-f", model, "add-method", "Book", "loose()", "--code", "x = 1")
+    assert refused.returncode == 2 and "--code must be one function: 'def loose(self, ...): ...'" in refused.stderr

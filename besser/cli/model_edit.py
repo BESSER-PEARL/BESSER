@@ -1185,6 +1185,21 @@ def add_association(editor: ModelEditor, name: str, first: str, second: str, com
     return Edited(editor.finish(), f"added association {name}: {first} {second}", check)
 
 
+def _method_code(name: str, code: str) -> str:
+    """The code of a method as the backend generators read it: one function, its body on lines of its
+    own. ``def f(self): self.x = 1`` on one line generated a route with no body, a syntax error that
+    failed every test of the backend, so that form is written out on two lines."""
+    text = code.strip()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        raise EditError(f"--code is not Python ({exc.msg}, line {exc.lineno}): write 'def {name}(self, ...): ...'") from exc
+    if len(tree.body) != 1 or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+        raise EditError(f"--code must be one function: 'def {name}(self, ...): ...'")
+    function = tree.body[0]
+    return ast.unparse(tree) if function.body[0].lineno == function.lineno else text
+
+
 def add_method(editor: ModelEditor, class_name: str, signature: str, code: str | None) -> Edited:
     cls = editor.find_type(class_name, Class)
     match = _SIGNATURE.match(signature.strip())
@@ -1207,7 +1222,7 @@ def add_method(editor: ModelEditor, class_name: str, signature: str, code: str |
     if match["type"]:
         method += f", type={editor.type_code(match['type'])}"
     if code:
-        method += f", code={_q(code)}"
+        method += f", code={_q(_method_code(name, code))}"
     method += ")"
     editor.add(cls, "methods", method, lambda: editor.free_name(f"{editor.var_of(cls) or _snake(class_name)}_{name}"),
                need_var=False, separate=False)

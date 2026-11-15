@@ -125,6 +125,7 @@ from besser.spec_driven_agent.planning.target import (
 )
 from besser.spec_driven_agent.planning.stack_metadata import (
     effective_rivals,
+    detect_routed_stack,
     detect_stack,
     pre_generate_metadata,
     stack_label,
@@ -368,7 +369,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "LLMOrchestrator requires at least one model (domain, gui, "
                 "agent, state_machine, object, BPMN, neural network, or quantum)"
             )
-        self.output_dir = output_dir or tempfile.mkdtemp(prefix="besser_llm_")
+        # Absolute: checks pin their cwd to it, which resolves a relative path twice.
+        self.output_dir = os.path.abspath(output_dir or tempfile.mkdtemp(prefix="besser_llm_"))
         self.max_turns = max_turns or self.MAX_TURNS
         self.max_cost_usd = max_cost_usd
         self.max_runtime_seconds = max_runtime_seconds
@@ -446,6 +448,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirements: list[dict] | None = None
         self._requirement_verdicts: list[dict] = []
         self._requirement_verdicts_scope = ""  # the requirements and request they answered
+        # (requirement cache key, import index): one index per judged tree; see _import_index.
+        self._import_index_cache: tuple[str, _requirements_ledger.ImportIndex] | None = None
         self._requirement_judgments: dict[str, list[dict]] = {}
         self._requirement_evidence_retries: set[str] = set()
         self._requirement_extraction_attempts = 0
@@ -550,6 +554,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._runtime_verdict_revision: str | None = None
         # (source revision, findings) for the boot probe; see _runtime_probe_issues.
         self._runtime_probe_cache: tuple[str, list[str]] | None = None
+        # Per-revision check results (see _revision_cached) and frontend build verdicts.
+        self._check_results: dict[tuple, list[str]] = {}
+        self._frontend_build_verdicts: dict = {}
         self._previous_errors: list[str] = []  # track errors to avoid re-attempting
         # Last model name observed on the client. The provider's outage
         # fallback (``OpenAIProvider._activate_fallback``) can swap the
@@ -1583,7 +1590,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # The routing answer decided the stack: words of the request may be
         # its domain ("a cargo company", "rust-proof paint").
         if self._routed:
-            stack_id = detect_stack(self._unsupported_stack)
+            stack_id = detect_routed_stack(self._unsupported_stack)
         else:
             stack_id = detect_stack(instructions)
             if stack_id is not None:
@@ -1876,6 +1883,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 target_description=(
                     self.target.description
                     if self.target is not None and not self.target.is_web_app else ""),
+                can_call=self._verification_call_allowed,
             )
             # The planning call may have switched the client to its
             # outage fallback model — surface that before Phase 2 turns.
@@ -2001,9 +2009,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # The post-call check below catches the overrun; this one
             # prevents firing ANOTHER billable request when the budget
             # is already spent (e.g. after an expensive streaming turn).
-            if self.client.usage.estimated_cost > self.max_cost_usd:
+            if self.client.usage.estimated_cost >= self.max_cost_usd:  # reached is spent
                 logger.warning(
-                    "Cost cap already reached before turn %d: $%.4f > $%.4f",
+                    "Cost cap already reached before turn %d: $%.4f >= $%.4f",
                     turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
                 )
                 self._phase2_stop_reason = "cost_cap"
@@ -2800,10 +2808,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         This path never calls an LLM, installs packages, or grants shell access.
         It is available during editing as well as at the final verification gate.
         """
-        from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
+        from besser.spec_driven_agent.validation.write_diagnostics import (
+            diagnose_written_content,
+            undefined_name_check_skipped,
+        )
 
         raw: list[str] = []
-        for path in _python_files(self.output_dir):
+        python_files = _python_files(self.output_dir)
+        if python_files:
+            raw.extend(undefined_name_check_skipped())
+        for path in python_files:
             rel = os.path.relpath(path, self.output_dir).replace("\\", "/")
             try:
                 with open(path, encoding="utf-8-sig") as fh:
@@ -3319,7 +3333,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "the frontend form check", f"it crashed: {type(exc).__name__}"))
 
         from besser.spec_driven_agent.validation.frontend_build import collect_frontend_build_issues
-        build_verdicts = vars(self).setdefault("_frontend_build_verdicts", {})
+        build_verdicts = self._frontend_build_verdicts
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
         raw_issues.extend(collect_frontend_build_issues(
@@ -3433,14 +3447,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not rivals:
             return []
         offenders: list[str] = []
-        for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
+        for root, files in walk_app_tree(self.output_dir):
             for fname in files:
                 if not fname.endswith(".py"):
                     continue
                 fpath = os.path.join(root, fname)
                 rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
-                if rel.startswith(_SNAPSHOT_DIR) or rel.startswith(".besser_"):
+                if rel.startswith(".besser_"):
                     continue
                 try:
                     with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
@@ -3476,10 +3489,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return requests_frontend(self._instructions, bare_app=not self._modify_mode)
 
     def _has_frontend_files(self) -> bool:
-        for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
-            rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
-            if rel_root.startswith(_SNAPSHOT_DIR):
+        for root, files in walk_app_tree(self.output_dir):
+            # Not the harness's folders: a snapshot, the tree a rollback parks.
+            if os.path.relpath(root, self.output_dir).replace("\\", "/").startswith(".besser_"):
                 continue
             for fname in files:
                 if fname.endswith((".js", ".jsx", ".ts", ".tsx", ".html")) or fname == "package.json":
@@ -3638,16 +3650,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         AND the workspace holds not a single frontend artifact
         (js/ts/tsx/jsx/html or a package.json).
         """
-        if not self._asks_for_frontend():
+        if not self._asks_for_frontend() or self._has_frontend_files():
             return []
-        for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
-            rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
-            if rel_root.startswith(_SNAPSHOT_DIR):
-                continue
-            for fname in files:
-                if fname.endswith((".js", ".jsx", ".ts", ".tsx", ".html")) or fname == "package.json":
-                    return []
         return [
             "frontend contract: the instructions request a web app / "
             "frontend, but the output contains no frontend files at all "
@@ -3687,14 +3691,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         issues: list[str] = []
         exts = (".py", ".js", ".jsx", ".ts", ".tsx")
-        for root, dirs, files in walk_plain(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
+        for root, files in walk_app_tree(self.output_dir):
             for fname in files:
                 if not fname.endswith(exts):
                     continue
                 fpath = os.path.join(root, fname)
                 rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
-                if rel.startswith(_SNAPSHOT_DIR) or rel.startswith(".besser_"):
+                if rel.startswith(".besser_"):
                     continue
                 try:
                     if os.path.getsize(fpath) > 1_000_000:
@@ -3832,6 +3835,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         digest = _requirements_ledger.build_app_digest(self.output_dir)
         cache_key = self._requirement_cache_key(requirements)
+        imports = self._import_index(cache_key)
         scope = json.dumps([requirements, self._instructions], sort_keys=True)
         verdicts = self._requirement_judgments.get(cache_key)
         # A judge outage is an unknown no code edit settles: a warning that
@@ -3852,7 +3856,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                "not asked again this run", len(self._requirement_judge_failures))
                 return [f"{judge_failed} It failed on {len(self._requirement_judge_failures)} "
                         "revisions and is not asked again this run."]
-            kept = self._requirements_still_verified(scope)
+            kept = self._requirements_still_verified(scope, imports)
             to_judge = [item for item in requirements if item["id"] not in kept]
             verdicts = _requirements_ledger.judge_coverage(
                 to_judge, digest, self.client, original_spec=self._instructions,
@@ -3873,7 +3877,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if len(self._requirement_judgments) > 8:
             self._requirement_judgments.pop(next(iter(self._requirement_judgments)))
         self._requirement_verdicts = _requirements_ledger.verify_evidence(
-            verdicts, self.output_dir,
+            verdicts, self.output_dir, imports,
         )
         unknown_ids = {item["id"] for item in self._requirement_verdicts
                        if item["status"] == "unverified"}
@@ -3901,29 +3905,36 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
             # Only a verified 'implemented' replaces a verdict: the focused digest
             # omits most of the app, so a 'missing' from it proves nothing.
-            repaired = _requirements_ledger.verify_evidence(repair or [], self.output_dir)
+            repaired = _requirements_ledger.verify_evidence(repair or [], self.output_dir, imports)
             valid_ids = {item["id"] for item in repaired if item["status"] == "implemented"}
             replacements = {item["id"]: item for item in repair or [] if item["id"] in valid_ids}
             if replacements:
                 verdicts = [replacements.get(item["id"], item) for item in verdicts]
                 self._requirement_judgments[cache_key] = verdicts
-                self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir)
+                self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir, imports)
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
             self._requirement_verdicts, self._ui_in_scope())
         self._requirement_verdicts_scope = scope
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
-    def _requirements_still_verified(self, scope: str) -> dict[int, dict]:
-        """The last pass's verified verdicts whose cited files are byte-identical
-        (no call): an edit elsewhere must not re-roll them. An edit to a cited
-        file can break the behaviour while the cited line survives."""
+    def _requirements_still_verified(self, scope: str,
+                                     imports: _requirements_ledger.ImportIndex) -> dict[int, dict]:
+        """The last pass's verified verdicts whose cited files, and the files
+        those import or are mounted by, are byte-identical (no call): an edit
+        elsewhere must not re-roll them. An edit to a cited file can break the
+        behaviour while the cited line survives."""
         if scope != self._requirement_verdicts_scope:
             return {}
+
+        def unchanged(hashes: dict[str, str]) -> bool:
+            return all(digest and _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
+                       for rel, digest in hashes.items())
+
+        # A verdict recorded before dependency hashes existed has none to check.
         previous = [item for item in self._requirement_verdicts if item.get("status") == "implemented"
-                    and item.get("cited_file_hashes") and all(
-                        _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
-                        for rel, digest in item["cited_file_hashes"].items())]
-        return {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir)
+                    and item.get("cited_file_hashes") and unchanged(item["cited_file_hashes"])
+                    and unchanged(item.get("dependency_file_hashes") or {})]
+        return {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir, imports)
                 if item["status"] == "implemented"}
 
     def _format_python_output(self) -> None:
@@ -3958,6 +3969,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         return collect_frontend_contract_issues(self.output_dir)
 
+    def _import_index(self, cache_key: str) -> _requirements_ledger.ImportIndex:
+        """The import index of the judged tree ``cache_key`` names (it carries the
+        tree's fingerprint), reused until that tree changes."""
+        if self._import_index_cache is None or self._import_index_cache[0] != cache_key:
+            self._import_index_cache = (cache_key, _requirements_ledger.ImportIndex(self.output_dir))
+        return self._import_index_cache[1]
+
     def _requirement_cache_key(self, requirements: list[dict]) -> str:
         """What the judge answers: the source it reads, the requirements and
         the specification. An edit elsewhere (README, a pin, a test) cannot
@@ -3973,7 +3991,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
             return
         self._requirement_extraction_attempts += 1
-        self._requirements = _requirements_ledger.extract_requirements(instructions, self.client)
+        self._requirements = _requirements_ledger.extract_requirements(
+            instructions, self.client, can_call=self._verification_call_allowed)
         if self._requirements is None:
             # extract_requirements has five silent None paths; an empty list
             # in the recipe would read as "the user asked for nothing" rather
@@ -4093,7 +4112,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Keyed by revision, not just the latest one, so a restored tree hits.
         In memory only, per run, like ``_runtime_probe_issues``.
         """
-        results = vars(self).setdefault("_check_results", {})
+        results = self._check_results
         key = (check, self._workspace_revision(), inputs)
         if key in results:
             return list(results[key])
@@ -4915,7 +4934,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "tasks": self.executor.task_snapshot(),
             # The user's requirements with the last Phase 3 verdict on each:
             # what was NOT built is read here, not inferred from the code.
-            "requirements": self._requirement_verdicts,
+            # The file hashes stay out: only this run's kept-verdict check reads them.
+            "requirements": _requirements_ledger.without_fingerprints(self._requirement_verdicts),
             "api_scenarios": api_scenario_snapshot(self._api_scenarios.values(), include_reports=True),
             "model_conversion_issues": getattr(self.domain_model, "conversion_issues", []) or [],
             "model_assembly_issues": self._assembly_issues,

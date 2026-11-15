@@ -159,7 +159,7 @@ def test_failed_requirement_extraction_stays_unknown_and_retries_once(orch, monk
 
     calls = []
     monkeypatch.setattr(ledger, "_is_real_provider", lambda client: True)
-    monkeypatch.setattr(ledger, "extract_requirements", lambda *args: calls.append(args))
+    monkeypatch.setattr(ledger, "extract_requirements", lambda *args, **_: calls.append(args))
     monkeypatch.setattr(orch, "_should_continue", lambda: False)
     orch._planner_instructions("Build a booking app")
     assert calls == [] and orch._requirement_extraction_attempts == 0
@@ -183,7 +183,7 @@ def test_conversion_losses_remain_obligations_until_current_code_evidence(orch, 
         "source": {"diagram_title": "Users", "element_id": "ocl-1"},
     }
     orch.domain_model.conversion_issues = [diagnostic]
-    monkeypatch.setattr(ledger, "extract_requirements", lambda *_: [])
+    monkeypatch.setattr(ledger, "extract_requirements", lambda *_, **__: [])
     planned = orch._planner_instructions("Users must have a nonnegative count.")
     assert expression in planned
     assert orch._requirements == []  # recovery does not pretend extraction found the rule

@@ -336,8 +336,8 @@ class Phase3RepairMixin:
         # Validation itself rewrites files (npm ci -> npm install, dependency
         # pins, the vite config). Re-snapshot so the rollback target is the
         # tree ``issues`` describe, not the one before those rewrites.
-        self._create_snapshot()
-        self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_fix_loop")
+        if self._create_snapshot():  # a failed one keeps the previous target, and is no trace event
+            self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_fix_loop")
 
         # Repair within the remaining budgets. Fixing an upstream failure can
         # expose downstream failures, so blocker counts are not a progress
@@ -456,11 +456,20 @@ class Phase3RepairMixin:
             # Re-validate: re-running the checks is the only evidence that
             # the repair actually compiles.
             issues_after = self._collect_validation_issues()
+            blockers_after = [i for i in issues_after if i.severity == "blocker"]
+            if (self._phase3_tree_score(blockers_after)[1] > best_score[1]
+                    and not self._phase3_stop_requested(check_turn_budget=False)):
+                # One probe that did not run can be a slow machine, not a hung
+                # startup: measure the same tree once more before ranking it.
+                logger.warning("Phase 3: attempt %d: the runtime probe did not measure a backend it "
+                               "measured before; measuring the same tree again.", attempts_run)
+                self._runtime_probe_cache = None
+                issues_after = self._collect_validation_issues()
+                blockers_after = [i for i in issues_after if i.severity == "blocker"]
             last_issues = issues_after
             self._validation_issues = self._with_model_contract(issues_after)
             last_validated_revision = self._workspace_revision()
             last_obligations_revision = self._repair_obligations_revision()
-            blockers_after = [i for i in issues_after if i.severity == "blocker"]
             self._trace.write(
                 EVENT_PHASE_EXIT,
                 phase="phase3_fix_attempt",

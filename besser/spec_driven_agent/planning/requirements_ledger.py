@@ -20,6 +20,7 @@ import json
 import keyword
 import logging
 import os
+import posixpath
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -593,9 +594,11 @@ def _tool_input(response: dict, tool_name: str) -> dict | None:
     return extract_json(text, dict)
 
 
-def extract_requirements(instructions: str, llm_client) -> list[dict] | None:
+def extract_requirements(instructions: str, llm_client, *,
+                         can_call: Callable[[], bool] | None = None) -> list[dict] | None:
     """``[{"id": 1, "text": ..., "kind": ...}, ...]`` from the user's request,
-    or None when no real provider is available or the call failed."""
+    or None when no real provider is available or the call failed.
+    ``can_call`` as in :func:`_call_with_tool`."""
     validate_specification(instructions)
     if not _is_real_provider(llm_client):
         return None
@@ -604,7 +607,7 @@ def extract_requirements(instructions: str, llm_client) -> list[dict] | None:
         return None
     payload = _call_with_tool(
         llm_client, _EXTRACT_SYSTEM_PROMPT,
-        f"## The user's request\n\n{request}", _SUBMIT_REQUIREMENTS_TOOL,
+        f"## The user's request\n\n{request}", _SUBMIT_REQUIREMENTS_TOOL, can_call=can_call,
     )
     if not payload:
         return None
@@ -795,7 +798,9 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
         if not content:  # an empty __init__.py: nothing to show
             continue
         header = f"### {rel}\n"
-        cap = max(0, source_budget - len(header) - 200) if rel in focused else _DIGEST_MAX_FILE_CHARS
+        # The cited files share the budget: one large file must not crowd out the next.
+        cap = (max(0, source_budget // len(focused) - len(header) - 200) if rel in focused
+               else _DIGEST_MAX_FILE_CHARS)
         truncated = len(content) > cap
         chunk = header + content[:cap]
         if truncated:
@@ -1374,7 +1379,7 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
                 + (where or f"no source line matches the part `{_as_written(raw_quote, unmatched)}`"))
 
 
-def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
+def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex | None = None) -> list[dict]:
     """Re-check every 'implemented' citation against the output tree.
 
     The evidence is a list of ``{"path", "line"}`` citations, or the older
@@ -1387,7 +1392,10 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     file or the run's own recipe to rescue a bad citation. A declaration alone
     cannot prove enforcement or behaviour. Failed evidence is ``unverified``:
     it does not prove that no implementation exists elsewhere. A verified
-    verdict records ``cited_file_hashes`` ({path: sha256}) of the files it cites.
+    verdict records ``cited_file_hashes`` ({path: sha256}) of the files it cites
+    and ``dependency_file_hashes`` of the files those rest on (:meth:`ImportIndex.dependencies`).
+    ``imports`` is an index of this same tree a caller reuses across calls; one is built
+    on the first verified verdict otherwise.
     """
     files = _source_files(output_dir)
     rel_of = {full: rel for rel, full in files.items()}
@@ -1397,7 +1405,8 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
-        item.pop("cited_file_hashes", None)
+        for key in VERDICT_FINGERPRINT_KEYS:
+            item.pop(key, None)
         if item.get("kind") == "verification":
             item.update(status="unverified", evidence="",
                         note="requirement extraction completeness has not been established")
@@ -1436,14 +1445,146 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
         else:
-            item["cited_file_hashes"] = {rel_of[full]: cited_file_hash(full) for full in sorted(
-                {part_source.path for _, _, part_source, _, _ in located})}
+            cited = {rel_of[part_source.path] for _, _, part_source, _, _ in located}
+            if imports is None:
+                imports = ImportIndex(output_dir, files)
+            item["cited_file_hashes"] = {rel: cited_file_hash(files[rel]) for rel in sorted(cited)}
+            item["dependency_file_hashes"] = {rel: cited_file_hash(files[rel])
+                                              for rel in sorted(imports.dependencies(cited))}
         checked.append(item)
     return checked
 
 
+VERDICT_FINGERPRINT_KEYS = ("cited_file_hashes", "dependency_file_hashes")
+
+_JS_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"})
+# ``from './x'``, ``import './x'``, ``import('./x')``, ``require('./x')``: relative specifiers only.
+_JS_IMPORT_RE = re.compile(r"""(?:\bfrom|\bimport|\brequire)\s*\(?\s*["'](\.{1,2}/[^"'\n]+)["']""")
+_JS_RESOLVE_SUFFIXES = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte",
+                        "/index.ts", "/index.tsx", "/index.js", "/index.jsx")
+
+
+def _python_import_stems(rel: str, tree: ast.AST) -> set[str]:
+    """Workspace paths (no suffix) a module's imports can name. An absolute
+    import resolves against every enclosing folder: a service runs from its own."""
+    folder = posixpath.dirname(rel)
+    ancestors = _ancestors(folder)
+    stems: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            stems |= {posixpath.join(base, alias.name.replace(".", "/")) for alias in node.names for base in ancestors}
+        elif isinstance(node, ast.ImportFrom):
+            bases = ancestors
+            if node.level:
+                base = folder
+                for _ in range(node.level - 1):
+                    base = posixpath.dirname(base)
+                bases = [base]
+            module = (node.module or "").replace(".", "/")
+            for base in bases:
+                package = posixpath.join(base, module) if module else base
+                if module:
+                    stems.add(package)
+                stems |= {posixpath.join(package, alias.name) for alias in node.names if alias.name != "*"}
+    return stems
+
+
+def _local_imports(rel: str, text: str, files) -> set[str]:
+    """The judged files ``rel`` imports directly (Python, or relative JS/TS)."""
+    suffix = Path(rel).suffix.lower()
+    if suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError):
+            return set()
+        candidates = {stem + tail for stem in _python_import_stems(rel, tree) for tail in (".py", "/__init__.py")}
+    elif suffix in _JS_SUFFIXES:
+        folder = posixpath.dirname(rel)
+        candidates = {posixpath.normpath(posixpath.join(folder, spec)) + tail
+                      for spec in _JS_IMPORT_RE.findall(text) for tail in _JS_RESOLVE_SUFFIXES}
+    else:
+        return set()
+    return {path for path in candidates if path in files and path != rel}
+
+
+def _module_name(rel: str) -> str:
+    """The name an import of ``rel`` spells: its stem, or its folder for a package/index file."""
+    stem = posixpath.splitext(posixpath.basename(rel))[0]
+    return posixpath.basename(posixpath.dirname(rel)) if stem in ("__init__", "index") else stem
+
+
+class ImportIndex:
+    """Direct local imports between the judged files of one tree, read and parsed on demand.
+
+    A virtualenv the agent made (any folder holding ``pyvenv.cfg``, as ``ToolExecutor._list_dir``
+    recognises one) is not the app: its files are neither imports nor importers.
+    """
+
+    def __init__(self, output_dir: str, files: dict[str, str] | None = None) -> None:
+        self._output_dir = output_dir
+        self._judged = files  # walked on first use when not given
+        self._app: dict[str, str] | None = None
+        self._texts: dict[str, str] = {}
+        self._imports: dict[str, set[str]] = {}
+        self._importers: dict[str, set[str]] = {}
+
+    @property
+    def _files(self) -> dict[str, str]:
+        if self._app is None:
+            files = self._judged if self._judged is not None else _source_files(self._output_dir)
+            folders = {parent for rel in files for parent in _ancestors(posixpath.dirname(rel))}
+            venvs = {folder for folder in folders
+                     if folder and os.path.isfile(os.path.join(self._output_dir, folder, "pyvenv.cfg"))}
+            self._app = {rel: full for rel, full in files.items()
+                         if not venvs.intersection(_ancestors(posixpath.dirname(rel)))}
+        return self._app
+
+    def _text(self, rel: str) -> str:
+        if rel not in self._texts:
+            try:
+                self._texts[rel] = Path(self._files[rel]).read_text(encoding="utf-8-sig", errors="ignore")
+            except OSError:
+                self._texts[rel] = ""
+        return self._texts[rel]
+
+    def imports(self, rel: str) -> set[str]:
+        if rel not in self._imports:
+            self._imports[rel] = _local_imports(rel, self._text(rel), self._files) if rel in self._files else set()
+        return self._imports[rel]
+
+    def importers(self, rel: str) -> set[str]:
+        """Every file importing ``rel``; only files that spell its name are parsed."""
+        if rel not in self._importers:
+            name = _module_name(rel)
+            self._importers[rel] = {other for other in self._files if other != rel
+                                    and name in self._text(other) and rel in self.imports(other)}
+        return self._importers[rel]
+
+    def dependencies(self, cited: set[str]) -> set[str]:
+        """What a cited file's behaviour rests on beyond its own bytes: its direct
+        local imports, and the entry files mounting it (a file importing a cited
+        file that no judged file imports). One level only."""
+        imported = set().union(*(self.imports(rel) for rel in cited))
+        entries = {other for rel in cited for other in self.importers(rel) if not self.importers(other)}
+        return (imported | entries) - cited
+
+
+def _ancestors(folder: str) -> list[str]:
+    """``folder`` and every folder above it, up to the workspace root ("")."""
+    chain = [folder]
+    while chain[-1]:
+        chain.append(posixpath.dirname(chain[-1]))
+    return chain
+
+
+def without_fingerprints(verdicts: list[dict]) -> list[dict]:
+    """The verdicts without the file hashes only a kept verdict's check reads."""
+    return [{key: value for key, value in item.items() if key not in VERDICT_FINGERPRINT_KEYS}
+            for item in verdicts]
+
+
 def cited_file_hash(full_path: str) -> str:
-    """sha256 of a cited file's raw bytes ("" when unreadable)."""
+    """sha256 of a file's raw bytes ("" when unreadable, which never matches)."""
     try:
         return hashlib.sha256(Path(full_path).read_bytes()).hexdigest()
     except OSError:

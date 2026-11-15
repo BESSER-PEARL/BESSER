@@ -121,6 +121,7 @@ def analyze_gaps_via_llm(
     workspace_files: list[str] | None = None,
     action_endpoints: list[ActionEndpoint] | None = None,
     target_description: str = "",
+    can_call: Callable[[], bool] | None = None,
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
@@ -156,6 +157,8 @@ def analyze_gaps_via_llm(
             this inventory identifies the actual executable extension points.
         target_description: What the run builds when it is not a web app
             (``planning/target.py``), named in the from-scratch task.
+        can_call: The run's stop and spend gate, asked before every paid
+            planner call; ``None`` sends them all.
 
     Returns:
         ``None`` on failure, ``[]`` when no work is needed, otherwise
@@ -228,7 +231,7 @@ def analyze_gaps_via_llm(
                           else "Action handlers were not inventoried; inspect their implementations."),
     )
 
-    tasks = _call_planner(llm_client, user_prompt)
+    tasks = _call_planner(llm_client, user_prompt, can_call)
     if tasks is None:
         return None
     cleaned = _dedupe(_drop_scaffold_conflicts(tasks))[:_MAX_TASKS]
@@ -1154,12 +1157,19 @@ def _note_present_relationships(tasks: list, domain_model) -> list:
     return noted
 
 
-def _call_planner(llm_client, user_prompt: str) -> list | None:
+def _call_planner(llm_client, user_prompt: str,
+                  can_call: Callable[[], bool] | None = None) -> list | None:
     """Run the planning call: cheap model first, primary on error, one
     repair retry on an unparseable reply. Returns the raw task list or
-    ``None`` on failure."""
+    ``None`` on failure, or once ``can_call`` refuses a call."""
     structured = _chat_supports_kwargs(llm_client, "force_tool", "model_override")
     planning_model = getattr(llm_client, "planning_model", None) if structured else None
+
+    def _refused(call: str) -> bool:
+        if can_call is None or can_call():
+            return False
+        logger.warning("Gap analyzer: %s not sent (stopped or budget exhausted); no checklist", call)
+        return True
 
     def _chat(prompt: str, model_override: str | None):
         messages = [{"role": "user", "content": prompt}]
@@ -1174,6 +1184,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
         return llm_client.chat(system=_SYSTEM_PROMPT, messages=messages, tools=[])
 
     response = None
+    if _refused("the planning call"):
+        return None
     try:
         response = _chat(user_prompt, planning_model)
     except Exception:
@@ -1184,6 +1196,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
                 "Gap analyzer: planning model %r failed; retrying on primary",
                 planning_model,
             )
+            if _refused("the primary fallback"):
+                return None
             try:
                 response = _chat(user_prompt, None)
             except Exception:
@@ -1204,6 +1218,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
         'array of {"task": ..., "kind": ...} objects (or call the submit_tasks '
         "tool). No prose, no markdown."
     )
+    if _refused("the repair retry"):
+        return None
     try:
         response = _chat(repair_prompt, planning_model)
         tasks = _extract_tasks(response)
@@ -1222,6 +1238,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
     # an error even though ordinary tool calling works, which would drop
     # the checklist (and with it the end_turn gate). A plain call asking for
     # a bare JSON array sidesteps the gateway quirk entirely.
+    if _refused("the plain fallback"):
+        return None
     try:
         response = llm_client.chat(
             system=_SYSTEM_PROMPT,

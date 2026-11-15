@@ -748,7 +748,7 @@ def _write(root, rel, text):
 
 def test_phase3_feeds_missing_requirements_to_the_fix_loop(simple_model, tmp_path, monkeypatch):
     _write(tmp_path, "backend/routers/room.py", "def create_room():\n    return True\n")
-    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client: [
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client, **_: [
         {"id": 1, "text": "Rooms can be created", "kind": "action"},
         {"id": 2, "text": "Room numbers are unique", "kind": "uniqueness"},
     ])
@@ -780,7 +780,7 @@ def test_ui_requirements_on_a_backend_only_output_are_out_of_scope(
     if frontend:
         _write(tmp_path, "frontend/src/App.jsx", "export default () => null;\n")
     ui = "The task list displays every task with its completion state"
-    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client: [
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client, **_: [
         {"id": 1, "text": ui, "kind": "ui"},
     ])
     monkeypatch.setattr(ledger, "judge_coverage", lambda reqs, digest, client, **kwargs: [
@@ -920,7 +920,7 @@ def test_the_planner_is_handed_the_ledger_under_the_request(simple_model, tmp_pa
         seen["instructions"] = kwargs["instructions"]
         return []
 
-    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client: list(_LEDGER))
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client, **_: list(_LEDGER))
     monkeypatch.setattr("besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm", fake_planner)
     orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
                            output_dir=str(tmp_path))

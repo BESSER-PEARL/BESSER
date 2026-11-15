@@ -564,7 +564,7 @@ def test_resume_keeps_the_extracted_requirements(simple_model, tmp_path, monkeyp
 
     extractions = []
 
-    def extract(instructions, client):
+    def extract(instructions, client, **_):
         extractions.append(instructions)
         return [{"id": 1, "kind": "action", "text": "A user can publish a post"}]
 

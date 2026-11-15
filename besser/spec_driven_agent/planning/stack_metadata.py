@@ -56,6 +56,13 @@ logger = logging.getLogger(__name__)
 # far more often the domain ("a cargo tracking company", "a model rocket club")
 # than the build tool or the framework.
 _RUST_KEYWORDS: tuple[str, ...] = ("rust", "axum", "actix", "tokio", "serde", "cargo.toml", "rocket.rs")
+# A routing answer that is the bare name alone ("Rocket", "cargo", "Rocket framework")
+# names Rust; in a longer stack name ("Python rocket simulator") the words are the domain.
+_ROUTED_RUST_NAME_RE = re.compile(r"(?:rocket|cargo)(?: framework)?")
+
+
+def _routed_name_is_rust(routed_stack: str) -> bool:
+    return bool(_ROUTED_RUST_NAME_RE.fullmatch(" ".join(routed_stack.lower().split())))
 
 
 # Order matters: a request mentioning both "Next.js" and "TypeScript"
@@ -139,6 +146,12 @@ def detect_stack(instructions: str) -> str | None:
                 return stack_id
 
     return None
+
+
+def detect_routed_stack(routed_stack: str) -> str | None:
+    """:func:`detect_stack` for the routing answer's stack name, where a bare
+    "Rocket" or "cargo" names Rust."""
+    return "rust" if _routed_name_is_rust(routed_stack) else detect_stack(routed_stack)
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +531,8 @@ def detect_idiom_stack(instructions: str, routed_stack: str | None = None) -> st
     named = _named_idioms(instructions)
     if routed_stack is None:
         return named[0][0] if named else None
-    routed = [idiom_id for idiom_id, _ in _named_idioms(routed_stack)]
+    routed = (["rust_axum"] if _routed_name_is_rust(routed_stack)
+              else [idiom_id for idiom_id, _ in _named_idioms(routed_stack)])
     for idiom_id, needle in named:
         if needle in _PYTHON_STACK_KEYWORDS or idiom_id in routed:
             return idiom_id

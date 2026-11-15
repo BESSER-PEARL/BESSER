@@ -38,6 +38,7 @@ from besser.BUML.metamodel.structural import (
     TimeType,
 )
 from besser.generators.backend import BackendGenerator
+from besser.generators.generator_interface import InvalidIdentifierError
 
 pytestmark = pytest.mark.skipif(
     importlib.util.find_spec("fastapi") is None or importlib.util.find_spec("httpx") is None,
@@ -246,7 +247,18 @@ def _required_cycle_model() -> DomainModel:
     )
 
 
+def _inherited_key_model() -> DomainModel:
+    """A client-supplied key inherited from a parent: the subclass's row is addressed by it."""
+    party = Class(name="Party", attributes={Property(name="code", type=StringType, is_id=True),
+                                            Property(name="name", type=StringType)})
+    customer = Class(name="Customer", attributes={Property(name="tier", type=IntegerType)})
+    return DomainModel(name="Crm", types={party, customer},
+                       generalizations={Generalization(general=party, specific=customer)})
+
+
 MODELS = {
+    # Before: the update step changed the inherited key (code sorts before name), and the PUT answered 409.
+    "inherited_key": (_inherited_key_model, {"passed": 2}),
     "inheritance": (_inheritance_model, {"passed": 4, "skipped": 1}),
     "attribute_types": (_attribute_types_model, {"passed": 1}),
     "one_to_one": (_one_to_one_model, {"passed": 3}),
@@ -301,6 +313,19 @@ def test_the_tests_use_only_the_generated_http_methods(tmp_path, library_book_au
     assert counts == {"passed": 3}, output
     text = (tmp_path / "tests" / "test_generated_api.py").read_text(encoding="utf-8")
     assert "client.put(" not in text and "client.delete(" not in text
+
+
+def test_a_model_name_cannot_end_a_string_of_the_generated_code(tmp_path):
+    """The model's name goes inside strings of the generated code. Before: an editor project titled
+    Library\"\"\"<newline>code<newline>\"\"\" put that code at the top of tests/test_generated_api.py, and
+    `besser apply` ran it with the tests."""
+    model = _ocl_model()
+    model.name = 'Library"""\n__import__("pathlib").Path("PWNED").touch()\n"""'
+
+    with pytest.raises(InvalidIdentifierError, match="quote, a backslash or a line break"):
+        BackendGenerator(model, output_dir=str(tmp_path / "out"), tests=True).generate()
+
+    assert not list(tmp_path.rglob("test_generated_api.py"))
 
 
 def test_the_tests_are_the_same_bytes_for_the_same_model(tmp_path):

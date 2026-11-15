@@ -2805,12 +2805,18 @@ class DomainModel(Model):
         quotes, ``;`` and newlines, and a name written verbatim into generated
         Python would otherwise become code.
         """
-        return [
+        errors = [
             f"{label} is not a valid identifier: generated code uses the name as written, "
             f"so it will not parse. Use letters, digits and '_' only, not starting with a digit."
             for label, name in self._code_names()
             if not name.isidentifier()
         ]
+        # The model's own name is written inside strings (a database file name, a docstring): it need
+        # not be an identifier, but it must not end the string it is in.
+        if any(character in (self.name or "") for character in ("\"", "'", "\\", "\r", "\n")):
+            errors.append(f"The model's name {self.name!r} holds a quote, a backslash or a line break: generated "
+                          f"code writes it inside strings, which it would end. Remove those characters.")
+        return errors
 
     def _validate_attribute_types(self, errors: list[str]):
         """Report an attribute typed by a class or enumeration that is not in the model.

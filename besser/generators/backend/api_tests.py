@@ -562,8 +562,10 @@ def _update(shape: _ApiShape, planner: _Planner, obj: _Object) -> tuple[str, Any
     """An attribute of ``obj`` to change, and its new valid value; None when none can change."""
     constraints = _class_constraints(obj.cls, shape.constraints_map)
     pk = shape.pk_names.get(obj.cls.name, "id")
+    # Never a key, own or inherited: a subclass's row is addressed by its parent's is_id attribute, which
+    # is not the class's own primary key name.
     attributes = [a for a in shape.attributes(obj.cls)
-                  if a.name != pk and not a.is_external_id and _type_name(a) in _UPDATE_ORDER]
+                  if a.name != pk and not a.is_id and not a.is_external_id and _type_name(a) in _UPDATE_ORDER]
     attributes.sort(key=lambda a: (_UPDATE_ORDER.index(_type_name(a)), a.name))
     for attribute in attributes:
         current = obj.values[attribute.name]

@@ -50,16 +50,21 @@ _SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "p
 _REDACTED = "[REDACTED]"
 # A response field holding a credential, judged on its snake/kebab/camel words: any secret
 # word (``passwordNew``, ``password_reset_code``), ``token`` that is not a page cursor
-# (``next_page_token``), or api/access/private/secret key or auth code, unless the next word
-# only describes or identifies it (``password_changed_at``, ``token_count``, ``api_key_name``).
-_KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
+# (``next_page_token``), or api/access/private/secret key, auth/reset code or session id, unless
+# the next word only describes or identifies it (``password_changed_at``, ``token_count``, ``api_key_name``).
+# A run of non-ASCII letters is a word of its own, so no letter is dropped and the ASCII
+# camelCase words around it stay apart (``überAdmin``: ü, ber, admin).
+_KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+|[^\W\d_A-Za-z]+")
 _SECRET_WORDS = frozenset({"password", "passwd", "passphrase", "secret", "jwt", "apikey", "credential",
                            "credentials", "otp"})
 _DESCRIBING_WORDS = frozenset({"changed", "updated", "created", "at", "hint", "expires", "expiry", "expiration",
                                "length", "policy", "required", "strength", "count", "type", "santa",
-                               "question", "sent", "id", "name", "prefix", "suffix", "last", "label"})
+                               "question", "sent", "id", "name", "prefix", "suffix", "last", "label",
+                               "attempts", "min", "max"})
 _CURSOR_WORDS = frozenset({"page", "next", "prev", "previous", "continuation", "cursor", "sync"})
-_SECRET_PAIRS = {"key": frozenset({"api", "access", "private", "secret"}), "code": frozenset({"auth", "authorization"})}
+_SECRET_PAIRS = {"key": frozenset({"api", "access", "private", "secret"}),
+                 "code": frozenset({"auth", "authorization", "reset", "verification"}),
+                 "id": frozenset({"session"})}
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
 _SCOPE = "Only the submitted scenario was checked; this is not complete specification verification."
 # ``boot`` values meaning the scenario never ran: the sandbox was unavailable,
@@ -132,8 +137,13 @@ def redact_scenario_headers(requests):
             for request in requests]
 
 
+def name_words(name: str) -> list[str]:
+    """The lowercase words of a snake_case, camelCase or kebab-case name."""
+    return [word.lower() for word in _KEY_WORDS.findall(name)]
+
+
 def _credential_key(key):
-    words = [word.lower() for word in _KEY_WORDS.findall(key)] if isinstance(key, str) else []
+    words = name_words(key) if isinstance(key, str) else []
     for index, word in enumerate(words):
         secret = (word in _SECRET_WORDS
                   or (word == "token" and not _CURSOR_WORDS.intersection(words[:index]))
@@ -144,11 +154,38 @@ def _credential_key(key):
 
 
 def _credential_field(key, value):
-    return isinstance(value, str) and bool(value) and _credential_key(key)
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)) or value == "":
+        return False
+    if not isinstance(value, str) and isinstance(key, str) and name_words(key)[-1:] == ["id"]:
+        return False  # a numeric id references a record (a conference Session), it is no minted secret
+    return _credential_key(key)
+
+
+def _singular(name: str) -> str:
+    return name[:-1] if name.endswith("s") and not name.endswith("ss") else name
+
+
+def _child_names(parent, key) -> list:
+    """The names a value at ``parent.key`` goes by: ``key`` and, unless ``key`` repeats
+    the parent's last word, the parent's word before it (``tokens.access`` is ``token_access``)."""
+    if not isinstance(parent, str) or not isinstance(key, str):
+        return [key]
+    head = _singular(parent)
+    last = name_words(head)[-1:]
+    return [key] if not last or last[0] in name_words(key) else [key, f"{head}_{key}"]
+
+
+def _path_names(path: str) -> list:
+    """The names of the value at a dotted JSON path; a list item goes by its list's name."""
+    names: list = []
+    for part in path.split(".") if path else []:
+        names = [_singular(name) for name in names] if part.isdecimal() else _child_names(
+            names[0] if names else None, part)
+    return names
 
 
 def _credential_reference(match):
-    return _credential_key((match.group(2) or "").rsplit(".", 1)[-1])
+    return any(_credential_key(name) for name in _path_names(match.group(2) or ""))
 
 
 def _sent_credentials(request, previous):
@@ -162,19 +199,23 @@ def _sent_credentials(request, previous):
     return sent
 
 
-def _scrub(value, secrets):
+def _scrub(value, secrets, names=()):
+    """``value`` with credentials hidden; ``names`` are what it is called (see ``_child_names``)."""
+    if any(_credential_field(name, value) for name in names):
+        return _REDACTED
     if isinstance(value, str):
         for secret in secrets:
             value = value.replace(secret, _REDACTED)
         return _JWT.sub(_REDACTED, value)
     if isinstance(value, list):
-        return [_scrub(item, secrets) for item in value]
+        return [_scrub(item, secrets, [_singular(name) for name in names if isinstance(name, str)]) for item in value]
     if isinstance(value, dict):
         # A validation error echoes the submitted value: {"loc": [..., "password"], "input": ...}.
         loc = value.get("loc")
         field = next((part for part in reversed(loc) if isinstance(part, str)), None) if isinstance(loc, list) else None
         echoed = {"input", "ctx"} if _credential_key(field) else set()
-        return {key: _REDACTED if key in echoed or _credential_field(key, item) else _scrub(item, secrets)
+        parent = names[0] if names else None
+        return {key: _REDACTED if key in echoed else _scrub(item, secrets, _child_names(parent, key))
                 for key, item in value.items()}
     return value
 
@@ -309,15 +350,6 @@ def confirmed_create_paths(report: dict) -> set[str]:
     if report.get("boot") != "ok":
         return set()
 
-    def records(value):
-        if isinstance(value, dict):
-            if type(value.get("id")) in (int, str):
-                return [value]
-            return [record for child in value.values() for record in records(child)]
-        if isinstance(value, list):
-            return [record for child in value for record in records(child)]
-        return []
-
     responses = report.get("responses", [])
     confirmed = set()
     for index, created in enumerate(responses):
@@ -331,15 +363,36 @@ def confirmed_create_paths(report: dict) -> set[str]:
                     or not 200 <= read["status"] < 300 or read.get("truncated") or read.get("failures")
                     or not (read_path == path or read_path.startswith(path + "/"))):
                 continue
-            for inserted in records(created.get("json")):
-                for observed in records(read.get("json")):
-                    common = set(inserted) & set(observed) - {"id"}
-                    # Two redacted values are equal whatever they hid, so they prove nothing.
-                    if (_same_literal(inserted["id"], observed["id"])
-                            and any(isinstance(inserted[key], (str, int, float, bool)) and inserted[key] != _REDACTED
-                                    and _same_literal(inserted[key], observed[key]) for key in common)):
-                        confirmed.add(path)
+            # The worker compared the unredacted bodies; a report without that comparison
+            # (an older saved one) is judged on its redacted copies.
+            reads_back = read.get("reads_back")
+            if (created.get("index") in reads_back if isinstance(reads_back, list)
+                    else _reads_back(created.get("json"), read.get("json"))):
+                confirmed.add(path)
     return confirmed
+
+
+def _records(value):
+    if isinstance(value, dict):
+        if type(value.get("id")) in (int, str):
+            return [value]
+        return [record for child in value.values() for record in _records(child)]
+    if isinstance(value, list):
+        return [record for child in value for record in _records(child)]
+    return []
+
+
+def _reads_back(created, observed) -> bool:
+    """Whether ``observed`` holds a record of ``created``: the same id and one equal plain field."""
+    for inserted in _records(created):
+        for record in _records(observed):
+            common = set(inserted) & set(record) - {"id"}
+            # Two redacted values are equal whatever they hid, so they prove nothing.
+            if (_same_literal(inserted["id"], record["id"])
+                    and any(isinstance(inserted[key], (str, int, float, bool)) and inserted[key] != _REDACTED
+                            and _same_literal(inserted[key], record[key]) for key in common)):
+                return True
+    return False
 
 
 def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | None = None) -> dict:
@@ -510,8 +563,7 @@ async def _run_requests(app, requests):
                             actual = _json_path(body, path)
                             if not _same_literal(actual, expected_value):
                                 # A message is a string: redact the response value before quoting it.
-                                actual = (_REDACTED if _credential_field(path.rsplit(".", 1)[-1], actual)
-                                          else _scrub(actual, ()))
+                                actual = _scrub(actual, (), _path_names(path))
                                 item["failures"].append(f"{path}: expected {_bounded(expected_value)!r}, got {_bounded(actual)!r}")
                         except ValueError as exc:
                             item["failures"].append(str(exc))
@@ -522,6 +574,11 @@ async def _run_requests(app, requests):
                 item["failures"] = _scrub(item["failures"], sent)
                 if "error" in item:
                     item["error"]["message"] = _scrub(item["error"]["message"], sent)
+                if request["method"] == "GET" and body is not _NO_JSON:
+                    # Compared here, before redaction: a record whose only field is a secret is read back too.
+                    item["reads_back"] = [earlier for earlier, raw in enumerate(previous)
+                                          if requests[earlier]["method"] == "POST" and raw is not _NO_JSON
+                                          and _reads_back(raw, body)]
                 previous.append(body)
                 count = len(item["failures"])
                 item["failure_count"] = count

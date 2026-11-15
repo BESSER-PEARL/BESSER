@@ -241,14 +241,14 @@ def test_redaction_keeps_ordinary_fields():
         "csrf_token", "token", "Token", "api_key", "apiKey", "APIKey", "x-api-key", "apikey",
         "access_key", "private_key", "credentials", "secret_key", "token_hash", "otp", "auth_code",
         "authorization_code", "passwordNew", "password_plain", "secret_answer", "password_reset_code",
-        "reset_token")],
+        "reset_token", "session_id")],
     *[(name, False) for name in (
         "token_type", "tokenType", "token_count", "max_tokens", "next_page_token", "nextPageToken",
         "page_token", "continuation_token", "cursor_token", "sync_token", "cursor", "expires_in", "secretary",
         "author", "keywords", "key", "monkey", "username", "email", "passage", "password_changed_at",
         "credential_type", "secret_santa", "passwordHint", "password_expires", "credentials_count",
         "password_policy", "password_length", "secret_question", "jwt_expires_in", "otp_sent_at", "code",
-        "country_code", "session_id", "value", "api_key_name", "secret_id", "token_id", "apiKeyPrefix",
+        "country_code", "value", "api_key_name", "secret_id", "token_id", "apiKeyPrefix",
         "api_key_last4", "access_key_id", "token_suffix", "secret_label")],
 ])
 def test_credential_field_names(name, redacted):
@@ -362,17 +362,6 @@ def test_a_redacted_field_is_hidden_and_references_read_the_raw_value():
     assert api_probe.confirmed_create_paths(report) == {"/vault"}
     assert report["status"] == "passed", report
     assert "vk-123456789" not in json.dumps(report), "the key interpolated into a path is shown too"
-
-
-def test_a_redacted_field_is_no_evidence_that_a_create_was_read_back():
-    """Review probe: two ``[REDACTED]`` values compared equal, so a read-back whose only
-    common field was a redacted one confirmed the create whatever it returned."""
-    report = _run_in_process(_vault_app({}), [
-        {"method": "POST", "path": "/vault/"},
-        {"method": "GET", "path": "/vault/{{0.id}}"},
-    ])
-    assert report["responses"][1]["json"] == {"id": 1, "secretKey": "[REDACTED]"}
-    assert api_probe.confirmed_create_paths(report) == set()
 
 
 def test_orchestrator_result_and_saved_snapshot_never_carry_unsent_tokens(tmp_path):

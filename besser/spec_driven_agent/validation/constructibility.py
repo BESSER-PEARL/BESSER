@@ -78,6 +78,11 @@ import subprocess
 import sys
 import tempfile
 
+if __name__ == "__main__":  # the child, run by path beside api_probe.py and without ``besser``
+    from api_probe import name_words as _name_tokens
+else:
+    from besser.spec_driven_agent.validation.api_probe import name_words as _name_tokens
+
 logger = logging.getLogger(__name__)
 
 PREFIX = "create contract:"
@@ -369,6 +374,13 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                 "aggregate-creation workflow (such as nested creation), retaining the rule"
             )
         issues.append(text)
+    for entry in report.get("unprobed_creates") or []:
+        issues.append(
+            f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - its body {entry['schema']} is no table's own and "
+            f"its handler uses {', '.join(entry['tables'])}, so the probe could not tell which record it creates. "
+            f"This does not prove the endpoint is broken. To settle it, one test_api scenario must POST "
+            f"{entry['path']} with valid specification-based fixtures (logging in first where the API requires "
+            "it) and then GET that record by its id; a create that is not read back stays unverified")
     issues.extend(_action_issue_text(entry, rel) for entry in report.get("actions") or [])
     return issues
 
@@ -854,6 +866,69 @@ def _handler_site(app, path: str, entity: str) -> dict | None:
     return None
 
 
+class _Unknowable(Exception):
+    """The tables behind a handler cannot be read."""
+
+
+def _foreign(read):
+    """``read()``, an attribute lookup on app code; whatever that code raises is ``_Unknowable``."""
+    try:
+        return read()
+    except Exception as exc:  # a module ``__getattr__`` or a ``__wrapped__`` cycle may raise anything
+        raise _Unknowable(f"{type(exc).__name__}: {exc}") from exc
+
+
+def _tables_behind(app, path: str, orm: dict) -> list[str]:
+    """The ORM classes the ``POST path`` handler instantiates, in its own code or in app
+    functions it calls; a class it only reads (``db.query(User)``) creates nothing.
+    Raises ``_Unknowable`` when the handler's code cannot be read."""
+    import ast
+    import inspect
+    import textwrap
+    import types
+
+    root = os.getcwd()
+    found: set = set()
+    seen: set = set()
+
+    def visit(fn) -> None:
+        fn = _foreign(lambda: inspect.unwrap(fn))
+        if not isinstance(fn, types.FunctionType) or fn.__code__ in seen:
+            return
+        seen.add(fn.__code__)
+        try:
+            if os.path.commonpath([os.path.abspath(fn.__code__.co_filename), root]) != root:
+                return  # a library function: the classes it builds are not the app's tables
+        except ValueError:
+            return  # another drive
+        try:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        except (OSError, TypeError, SyntaxError) as exc:
+            raise _Unknowable(f"{type(exc).__name__}: {exc}") from exc
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):  # ``NoteRow(...)``, ``helper(...)``
+                name, value = node.func.id, fn.__globals__.get(node.func.id)
+            elif isinstance(node.func, ast.Attribute):  # ``models.NoteRow(...)``, ``service.add(...)``
+                name, base = node.func.attr, None
+                if isinstance(node.func.value, ast.Name):
+                    base = fn.__globals__.get(node.func.value.id)
+                value = (_foreign(lambda: getattr(base, name, None))
+                         if isinstance(base, types.ModuleType) else None)
+            else:
+                continue
+            if name in orm:
+                found.add(name)
+            elif isinstance(value, types.FunctionType):
+                visit(value)
+
+    for route in _routes(app):
+        if getattr(route, "path", None) == path and "POST" in (getattr(route, "methods", None) or ()):
+            visit(route.endpoint)
+    return sorted(found)
+
+
 # ---------------------------------------------------------------------------
 # Action/method endpoints: ``POST /<entity>/{id}/methods/<action>/``
 #
@@ -1222,20 +1297,26 @@ _TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
 # Whole words of a field name (adjacent pairs joined: ``isSuperUser``, ``account_type``).
 _PRIVILEGE_WORDS = frozenset({"role", "admin", "administrator", "superuser", "staff", "permission", "scope",
                               "privilege", "manager", "owner", "moderator", "accounttype", "usertype"})
-# A required box every visitor must tick to register (terms, consent, age) grants nothing,
-# so the probe ticks one naming at least one consent noun (or an age: "over 18", "18 or older") with
-# every other word a filler, a number or a qualifier that follows a document noun ("privacy policy",
-# "terms of use"); any other boolean is a choice.
-_CONSENT_DOCUMENTS = frozenset({"terms", "tos", "eula", "consent", "privacy", "gdpr", "cookie", "cookies", "legal"})
-_CONSENT_NOUNS = _CONSENT_DOCUMENTS | {"newsletter", "marketing", "remember", "adult", "age"}
+# A required box every visitor must tick to register (terms, consent, age) grants nothing, so the
+# probe ticks one whose every word is listed below and whose name reads as a consent: it names a
+# consent document ("terms", "userAgreement"), an acceptance of a subject ("privacy_policy_accepted",
+# "marketing_opt_in"), a document and its qualifier ("privacy_policy"), "newsletter", "remember me"
+# or an age ("is_adult", "over 18", "18 or older"). Any other boolean is a choice.
+_CONSENT_DOCUMENTS = frozenset({"terms", "tos", "eula", "consent", "agreement", "privacy", "gdpr", "cookie",
+                                "cookies", "legal"})
+_CONSENT_ITSELF = frozenset({"terms", "tos", "eula", "consent", "agreement"})
+_CONSENT_SUBJECTS = _CONSENT_DOCUMENTS | {"newsletter", "marketing", "age", "adult"}
 _CONSENT_QUALIFIERS = frozenset({"policy", "conditions", "service", "use"})
-_CONSENT_FILLERS = frozenset({"is", "has", "i", "accept", "accepted", "accepts", "agree", "agreed", "agrees", "to",
-                              "the", "of", "and", "opt", "in", "confirm", "confirmed", "me", "over", "read",
-                              "given", "signup", "user", "data", "processing", "acknowledge", "acknowledged",
-                              "agreement", "confirmation", "have", "or", "older"})
+_ACCEPT_WORDS = frozenset({"accept", "accepted", "accepts", "agree", "agreed", "agrees", "acknowledge",
+                           "acknowledged", "confirm", "confirmed", "confirmation", "given", "opt", "read"})
+_CONSENT_FILLERS = frozenset({"is", "has", "i", "have", "to", "the", "of", "and", "in", "me", "user", "signup",
+                              "data", "processing", "over", "or", "older", "remember"})
+_BARE_CONSENT = (["newsletter"], ["remember", "me"], ["adult"])
 _AGE_RE = re.compile(r"\bover \d+\b|\b\d+ or older\b")
-# A required number naming a rank picks the account's standing, like a reference to another record.
+# A required number naming a rank picks the account's standing, like a reference to another record;
+# so does one whose last word is a group or an access grant ("user_group", "access_rights").
 _RANK_WORDS = frozenset({"level", "tier", "rank", "grade", "clearance", "plan"})
+_GRANT_WORDS = frozenset({"group", "access", "authority", "rights"})
 _PROBE_USERNAME = "probe_auth_user"
 _PROBE_EMAIL = "probe.auth.user@example.com"
 _PROBE_PASSWORD = "Probe-Passw0rd-2817"
@@ -1273,21 +1354,19 @@ def _body_schema(op: dict, schemas: dict) -> tuple[str | None, dict]:
     return kind, _resolve(media.get("schema") or {}, schemas)
 
 
-def _name_tokens(field: str) -> list[str]:
-    """The lowercase words of a snake_case, camelCase or kebab-case name."""
-    return [t.lower() for t in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", field)]
-
-
 def _is_consent(tokens: list[str]) -> bool:
     """Whether a boolean's name words state consent, an age or "remember me" and nothing else."""
-    def qualifies(k: int) -> bool:  # follows a document noun, directly or across "of"/"and"
-        before = tokens[k - 2] if k > 1 and tokens[k - 1] in ("of", "and") else tokens[k - 1] if k else ""
-        return before in _CONSENT_DOCUMENTS
-
-    if not all(t in _CONSENT_NOUNS or t in _CONSENT_FILLERS or t.isdigit()
-               or t in _CONSENT_QUALIFIERS and qualifies(k) for k, t in enumerate(tokens)):
+    known = _CONSENT_SUBJECTS | _CONSENT_QUALIFIERS | _ACCEPT_WORDS | _CONSENT_FILLERS
+    if not all(t in known or t.isdigit() for t in tokens):
         return False
-    return any(t in _CONSENT_NOUNS for t in tokens) or bool(_AGE_RE.search(" ".join(tokens)))
+    documents = [k for k, t in enumerate(tokens) if t in _CONSENT_DOCUMENTS]
+    if not documents and any(t in _CONSENT_QUALIFIERS for t in tokens):
+        return False  # "has_policy", "service_policy": a qualifier of no document
+    return (any(t in _CONSENT_ITSELF for t in tokens)
+            or (any(t in _ACCEPT_WORDS for t in tokens) and any(t in _CONSENT_SUBJECTS for t in tokens))
+            or any(tokens[k + 1:k + 2] in (["policy"], ["conditions"]) for k in documents)
+            or [t for t in tokens if t not in ("is", "has")] in _BARE_CONSENT
+            or bool(_AGE_RE.search(" ".join(tokens))))
 
 
 def _choice(field: str, schema: dict) -> str | None:
@@ -1307,7 +1386,7 @@ def _choice(field: str, schema: dict) -> str | None:
     if schema.get("type") == "boolean" and _is_consent(tokens):
         return None
     if schema.get("type") in ("integer", "number") and (
-            (len(tokens) > 1 and tokens[-1] == "id") or words & _RANK_WORDS):
+            (len(tokens) > 1 and tokens[-1] == "id") or words & _RANK_WORDS or _GRANT_WORDS.intersection(tokens[-1:])):
         return "a reference to another record or a rank"
     if schema.get("type") not in ("string", "integer", "number"):
         return f"a {schema.get('type') or 'untyped'} value"
@@ -1511,6 +1590,8 @@ def _probe_cwd() -> dict:
                 (os.environ.get(_ABSTRACT_ENV) or "").split(",") if name.strip()}
     skipped_abstract: list = []
     skipped_non_entity: list = []
+    other_tables: dict = {}  # ``<X>Create`` bodies with no ORM class ``X``
+    unprobed_creates: list = []
     for path, ops in spec.get("paths", {}).items():
         body = (ops.get("post") or {}).get("requestBody", {})
         ref = body.get("content", {}).get("application/json", {}).get("schema", {}).get("$ref", "")
@@ -1523,12 +1604,25 @@ def _probe_cwd() -> dict:
                 skipped_abstract.append(entity)
                 continue
             if entity not in orm:
-                # A ``*Create`` body with no table behind it (a signup, a
-                # login form) persists no record a test_api read-back could
-                # confirm, so reporting it unverified is a blocker no edit clears.
-                skipped_non_entity.append(entity)
+                other_tables[entity] = (path, schema_name)
                 continue
             creates[entity] = (path, schema_name)
+    for entity, (path, schema_name) in other_tables.items():
+        # A ``*Create`` body whose handler instantiates no table (a signup, a login form), or
+        # whose handler cannot be read, persists no record a test_api read-back could confirm:
+        # reporting it unverified is a blocker no edit clears. One table it instantiates
+        # (``NoteRow`` for ``NoteCreate``) is probed as that table; a table with its own
+        # create route is probed there.
+        try:
+            tables = [name for name in _tables_behind(app, path, orm) if name not in creates]
+        except _Unknowable:
+            tables = []
+        if len(tables) == 1:
+            creates[tables[0]] = (path, schema_name)
+        elif tables:
+            unprobed_creates.append({"path": path, "schema": schema_name, "tables": tables})
+        else:
+            skipped_non_entity.append(entity)
 
     import asyncio
 
@@ -1677,7 +1771,8 @@ def _probe_cwd() -> dict:
               # Named so a reader can tell "not probed because the model says
               # it is abstract" from "probed and passed".
               "skipped_abstract": sorted(set(skipped_abstract)),
-              "skipped_non_entity": sorted(set(skipped_non_entity))}
+              "skipped_non_entity": sorted(set(skipped_non_entity)),
+              "unprobed_creates": unprobed_creates}
     if result["auth"]:
         report["auth"] = result["auth"]
     return report

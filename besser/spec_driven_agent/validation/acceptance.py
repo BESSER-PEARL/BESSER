@@ -33,6 +33,7 @@ on. Blocker-level enforcement stays with ``contract_checks``.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import os
 import re
@@ -48,9 +49,23 @@ _POST_RE = re.compile(
     r"\.post\s*\(|\(\s*['\"]POST['\"]\s*,"
     r"|(?:\(\s*['\"](?P<url>[^'\"]{1,200})['\"]\s*,\s*\{[^{}]{0,200}?)?method\s*:\s*['\"]POST['\"]",
     re.IGNORECASE)
-_FIRST_ARG_RE = re.compile(r"\s*['\"]([^'\"]{1,200})['\"]")
-# The rest of a one-expression arrow helper up to its call: `(r, b) => api`.
-_ARROW_BODY_RE = re.compile(r"\s*(?:async\s+)?\([^()]*\)\s*=>\s*[\w$.\s]*")
+_LITERAL_PATH_RE = re.compile(r"\s*['\"]([^'\"]{1,200})['\"]\s*")
+_TEMPLATE_SLOT_RE = re.compile(r"\$\{[^}]*\}")
+# A one-expression arrow body up to the call that POSTs: `=> api`, `=> request<T>`.
+_CALL_HEAD_RE = re.compile(r"[\w$.\s]*(?:<[^<>()]*>)?\s*")
+_BRACKET_RE = re.compile(r"[()\[\]{}]")
+# A helper handed over as a value sits after one of these and before `_REFERENCE_AFTER_RE`.
+_REFERENCE_BEFORE = frozenset(":=({,[")
+_REFERENCE_AFTER_RE = re.compile(r"\s*(?:[,)}\];]|\Z)")
+# Characters (a bracket group counts as one) a type annotation or type
+# parameter list is read for: real ones are short, and an unbounded scan from
+# every candidate name is quadratic on a long line with no terminator.
+_MAX_TYPE_SCAN = 200
+# What a name with a type annotation follows: a declaration keyword, or the
+# start of a line (a class field). Not `{`/`,` (an object key) nor `?` (a ternary).
+_DECLARATION_RE = re.compile(
+    r"(?:\b(?:const|let|var|readonly|static|public|private|protected|declare|export)\s+|\n[ \t]*)\Z")
+_DECLARATION_WINDOW = 40
 
 # The GUI-model scaffold's runtime-bound create path: a <TableBlock> whose
 # dataBinding names the entity + endpoint and whose options carry at least
@@ -72,24 +87,16 @@ _IMPORT_RE = re.compile(
 _NAMESPACE_IMPORT_RE = re.compile(r"\*\s+as\s+([A-Za-z_$][\w$]*)")
 _NAMED_IMPORT_RE = re.compile(r"\{([^}]*)\}")
 _LEADING_NAME_RE = re.compile(r"^([A-Za-z_$][\w$]*)")
-# A named definition whose value is itself callable. The second branch must
-# require a function on the right: `const response = await fetch(...)` would
-# otherwise read as the helper enclosing the POST and the real one — the
-# exported `createItem` around it — would never be found.
-_HELPER_DEF_RE = re.compile(
-    r"\b(?P<fn>[A-Za-z_$][\w$]*)\s*(?=\([^()]*\)\s*\{)"
-    r"|(?:^|[,{;(]|\bconst\s+|\blet\s+|\bvar\s+|\bexport\s+)[ \t]*"
-    r"(?P<name>[A-Za-z_$][\w$]*)\s*[:=](?![=>])"
-    r"(?=\s*(?:async\s+)?(?:function\b|\())"
-    # A TypeScript function declaration with a return type: `function useX(): T {`.
-    r"|\bfunction\s+(?P<typed>[A-Za-z_$][\w$]*)\s*(?=\([^()]*\)\s*:)",
-    re.MULTILINE,
-)
+# A name a callable definition can start with: `name(`, `name<T>(`, `name =`,
+# `name:`. ``_definition_body`` decides whether a function follows; a value
+# that is not one (`const response = await fetch(...)`) must not read as the
+# helper enclosing the POST, or the real one around it is never found.
+_DEF_NAME_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?=[(<:=])")
+_WORD_RE = re.compile(r"[A-Za-z_$][\w$]*")
 _RETURN_TYPE_RE = re.compile(r"\s*:")
-_ARROW_RE = re.compile(r"\s*=>")
 _NOT_A_HELPER = frozenset({
     "if", "for", "while", "switch", "catch", "function", "return", "await",
-    "typeof", "new", "delete", "void", "do", "else",
+    "typeof", "new", "delete", "void", "do", "else", "case", "default",
 })
 _STRING_ARG_RE = re.compile(r"['\"]([^'\"]{1,60})['\"]")
 _BLANKABLE_RE = re.compile(
@@ -127,41 +134,134 @@ def _blank_comments(text: str) -> str:
         lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()) if m.group().startswith("/") else m.group(), text)
 
 
-def _post_path(source: str, post: re.Match) -> str | None:
-    """The literal path a POST targets, or None when it is built at run time."""
+def _argument_path(source: str, blanked: str, start: int) -> str | None:
+    """The literal text of the call argument at ``start``, or None when it names no path.
+
+    A plain literal is the path. ``API + '/booking/'`` and `` `${API}/booking/` ``
+    keep their literal parts; when no letter is left (`` `/${route}/` ``) the
+    path is computed. An options object (`axios({ url, method })`) is no path.
+    """
+    end, operands = start, [start]
+    while end < len(blanked) and blanked[end] not in ",)]}":
+        if blanked[end] == "+":
+            operands.append(end + 1)
+        end = _group_end(blanked, end) if blanked[end] in "([{" else end + 1
+    text = source[start:end]
+    leading = _LITERAL_PATH_RE.match(text)
+    if leading:
+        return leading.group(1)
+    if text.lstrip().startswith("{"):
+        return None
+    # The literal parts, and None for each part computed at run time.
+    pieces: list[str | None] = []
+    for begin, stop in zip(operands, [o - 1 for o in operands[1:]] + [end]):
+        operand = source[begin:stop].strip()
+        literal = _BLANKABLE_RE.fullmatch(operand)
+        if literal and operand[0] in "'\"":
+            pieces.append(operand[1:-1])
+        elif literal and operand[0] == "`":
+            body, at = operand[1:-1], 0
+            for slot in _TEMPLATE_SLOT_RE.finditer(body):
+                pieces += [body[at:slot.start()], None]
+                at = slot.end()
+            pieces.append(body[at:])
+        else:
+            pieces.append(None)
+    while pieces and not pieces[0]:
+        pieces.pop(0)  # the base URL
+    # A slot after the base names the resource (`/api/${resource}/`): computed.
+    if None in pieces:
+        return None
+    static = "".join(pieces)
+    return static if re.search(r"[A-Za-z]", static) else None
+
+
+def _options_call_start(blanked: str, method_at: int) -> int | None:
+    """Where the first argument starts of the call whose options object holds
+    the ``method:`` at ``method_at`` (`fetch(url, { method: 'POST' })`)."""
+    options = _innermost_open(blanked, method_at)
+    call = _innermost_open(blanked, options) if options >= 0 else -1
+    if options < 0 or call < 0 or blanked[options] != "{" or blanked[call] != "(":
+        return None
+    return call + 1
+
+
+def _post_path(source: str, blanked: str, post: re.Match) -> str | None:
+    """The path a POST targets (its literal parts), or None when it is built at run time."""
     if post.group("url"):
         return post.group("url")
-    first = _FIRST_ARG_RE.match(source, post.end()) if post.group().endswith(("(", ",")) else None
-    return first.group(1) if first else None
+    if post.group().endswith(("(", ",")):
+        return _argument_path(source, blanked, post.end())
+    start = _options_call_start(blanked, post.start())
+    return None if start is None else _argument_path(source, blanked, start)
 
 
 def _direct_create_calls(source: str) -> list:
     """Creates ``source`` issues itself, shaped like ``_client_create_calls``."""
     code = _blank_comments(source)
-    return [[path] if (path := _post_path(code, m)) else None for m in _POST_RE.finditer(code)]
+    blanked = _blank_literals(code)
+    return [[path] if (path := _post_path(code, blanked, m)) else None for m in _POST_RE.finditer(code)]
+
+
+_BracketTable = tuple[list[int], list[int], list[int], dict[int, int]]
+# The text last asked about and its table. Looked up by identity: an equality
+# lookup compares two copies of a large file on every call. Read once into a
+# local, so a thread that swaps it in between never mixes tables.
+_last_brackets: tuple[str, _BracketTable] | None = None
+
+
+def _brackets(blanked: str) -> _BracketTable:
+    """``_bracket_table(blanked)``, built once per text."""
+    global _last_brackets
+    last = _last_brackets
+    if last is None or last[0] is not blanked:
+        last = _last_brackets = (blanked, _bracket_table(blanked))
+    return last[1]
+
+
+def _bracket_table(blanked: str) -> _BracketTable:
+    """One pass over the brackets of ``blanked``: their positions, the depth and
+    the innermost open bracket (-1 for none) after each, and the index past the
+    group each opener starts. Every kind counts alike; an opener never closed
+    runs to the end of the text."""
+    positions: list[int] = []
+    depths: list[int] = []
+    tops: list[int] = []
+    group_end: dict[int, int] = {}
+    stack: list[int] = []
+    for match in _BRACKET_RE.finditer(blanked):
+        i = match.start()
+        if blanked[i] in "([{":
+            stack.append(i)
+        elif stack:
+            group_end[stack.pop()] = i + 1
+        positions.append(i)
+        depths.append(len(stack))
+        tops.append(stack[-1] if stack else -1)
+    return positions, depths, tops, group_end
+
+
+def _depth_before(blanked: str, i: int) -> int:
+    positions, depths, _, _ = _brackets(blanked)
+    k = bisect.bisect_left(positions, i)
+    return depths[k - 1] if k else 0
+
+
+def _innermost_open(blanked: str, i: int) -> int:
+    """The innermost bracket still open just before ``i``, or -1."""
+    positions, _, tops, _ = _brackets(blanked)
+    k = bisect.bisect_left(positions, i)
+    return tops[k - 1] if k else -1
 
 
 def _bracket_depth(blanked: str, start: int, end: int) -> int:
-    depth = 0
-    for char in blanked[start:end]:
-        if char in "([{":
-            depth += 1
-        elif char in ")]}":
-            depth -= 1
-    return depth
+    """The net bracket depth of ``blanked[start:end]``."""
+    return _depth_before(blanked, end) - _depth_before(blanked, start)
 
 
 def _group_end(blanked: str, start: int) -> int:
     """The index just past the bracket group that opens at ``start``."""
-    depth = 0
-    for i in range(start, len(blanked)):
-        if blanked[i] in "([{":
-            depth += 1
-        elif blanked[i] in ")]}":
-            depth -= 1
-            if depth == 0:
-                return i + 1
-    return len(blanked)
+    return _brackets(blanked)[3].get(start, len(blanked))
 
 
 def _blank_entity_branches(code: str, forms: list[str]) -> str:
@@ -179,6 +279,127 @@ def _blank_entity_branches(code: str, forms: list[str]) -> str:
     return code
 
 
+def _skip_space(blanked: str, i: int) -> int:
+    while i < len(blanked) and blanked[i].isspace():
+        i += 1
+    return i
+
+
+def _angle_end(blanked: str, i: int) -> int | None:
+    """Past the ``<...>`` type parameters opening at ``i``, or None when it is not a list of them."""
+    depth = 0
+    for _ in range(_MAX_TYPE_SCAN):
+        if i >= len(blanked):
+            return None
+        char = blanked[i]
+        if char in "([{":
+            i = _group_end(blanked, i)
+            continue
+        if char in ";)]}":
+            return None
+        if char == "<":
+            depth += 1
+        elif char == ">" and blanked[i - 1] != "=":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def _params_body(blanked: str, i: int, arrow: bool) -> int | None:
+    """Where the body starts of ``[<T>](params)[: R]`` at ``i``, followed by ``{``
+    or, for an arrow function, ``=>``; None when that is not what follows."""
+    if blanked.startswith("<", i):
+        end = _angle_end(blanked, i)
+        if end is None:
+            return None
+        i = _skip_space(blanked, end)
+    if not blanked.startswith("(", i):
+        return None
+    i = _skip_space(blanked, _return_type_end(blanked, _group_end(blanked, i)))
+    if arrow:
+        return _skip_space(blanked, i + 2) if blanked.startswith("=>", i) else None
+    return i if blanked.startswith("{", i) else None
+
+
+def _function_value_body(blanked: str, i: int) -> int | None:
+    """Where the body starts of a function expression or arrow function at ``i``."""
+    word = _WORD_RE.match(blanked, i)
+    if word and word.group() == "async":
+        i = _skip_space(blanked, word.end())
+        word = _WORD_RE.match(blanked, i)
+    if word and word.group() == "function":
+        i = _skip_space(blanked, word.end())
+        i = _skip_space(blanked, i + 1) if blanked.startswith("*", i) else i
+        name = _WORD_RE.match(blanked, i)
+        return _params_body(blanked, _skip_space(blanked, name.end()) if name else i, arrow=False)
+    if word:  # one parameter, no parentheses: `d => ...`
+        i = _skip_space(blanked, word.end())
+        return _skip_space(blanked, i + 2) if blanked.startswith("=>", i) else None
+    return _params_body(blanked, i, arrow=True)
+
+
+def _annotation_end(blanked: str, i: int) -> int | None:
+    """The ``=`` that ends the ``: Type`` annotation starting at ``i``, or None."""
+    angle = 0
+    for _ in range(_MAX_TYPE_SCAN):
+        if i >= len(blanked):
+            return None
+        char = blanked[i]
+        if char in "([{":
+            i = _group_end(blanked, i)
+            continue
+        if char in ";)]}\n" or char == "," and angle <= 0:
+            return None
+        if char == "=":
+            if blanked.startswith("=>", i):
+                i += 2
+                continue
+            return None if blanked.startswith("==", i) else i
+        angle += (char == "<") - (char == ">")
+        i += 1
+    return None
+
+
+def _definition_body(blanked: str, i: int, typed: bool) -> int | None:
+    """Where the body starts of the callable whose name ends at ``i``: a function
+    or method, a function bound by ``=`` or ``:``, or one bound with a type
+    (`const save: Handler = async () => {`). None when the name defines no body
+    (a call, a plain value, ``declare function f(): T;``). ``typed``: the name
+    is a declaration (`const x`, a class field), so ``name: Type =`` may follow."""
+    i = _skip_space(blanked, i)
+    if blanked.startswith("=", i):
+        if blanked.startswith(("==", "=>"), i):
+            return None
+        return _function_value_body(blanked, _skip_space(blanked, i + 1))
+    if blanked.startswith(":", i):
+        value = _skip_space(blanked, i + 1)
+        body = _function_value_body(blanked, value)
+        equals = _annotation_end(blanked, value) if body is None and typed else None
+        return body if equals is None else _function_value_body(blanked, _skip_space(blanked, equals + 1))
+    return _params_body(blanked, i, arrow=False)
+
+
+def _callable_definitions(blanked: str) -> list[tuple[int, str]]:
+    """``(body start, name)`` of every named callable definition, in source order.
+
+    A brace body starts at its ``{``; a one-expression arrow body at the expression.
+    A name inside a definition's head (the ``Handler`` of `save: Handler = ...`,
+    a parameter's default) is part of that definition, not another one.
+    """
+    definitions: list[tuple[int, str]] = []
+    for match in _DEF_NAME_RE.finditer(blanked):
+        if match.group(1) in _NOT_A_HELPER or definitions and match.start() < definitions[-1][0]:
+            continue
+        begin = max(0, match.start() - _DECLARATION_WINDOW)
+        window = ("" if begin else "\n") + blanked[begin:match.start()]  # the file start is a line start
+        body = _definition_body(blanked, match.end(), typed=bool(_DECLARATION_RE.search(window)))
+        if body is not None:
+            definitions.append((body, match.group(1)))
+    return definitions
+
+
 def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
     """{helper name: the literal paths its POSTs target, or None if any is not literal}.
 
@@ -188,36 +409,29 @@ def _post_helper_paths(source: str) -> dict[str, list[str] | None]:
     `list`/`update`/`remove` next to them do not.
     """
     blanked = _blank_literals(source)
-    definitions = [
-        (match.end(), match.group("fn") or match.group("name") or match.group("typed"))
-        for match in _HELPER_DEF_RE.finditer(blanked)
-        if (match.group("fn") or match.group("name") or match.group("typed")) not in _NOT_A_HELPER
-    ]
+    definitions = _callable_definitions(blanked)
+    starts = [start for start, _ in definitions]  # ascending: see _callable_definitions
     helpers: dict[str, list[str] | None] = {}
     for post in _POST_RE.finditer(source):
-        for end, name in reversed(definitions):
-            if end <= post.start() and (_bracket_depth(blanked, end, post.start()) >= 1
-                                        or _ARROW_BODY_RE.fullmatch(blanked, end, post.start())):
-                path, known = _post_path(source, post), helpers.get(name, [])
+        for k in range(bisect.bisect_right(starts, post.start()) - 1, -1, -1):
+            start, name = definitions[k]
+            if (_bracket_depth(blanked, start, post.start()) >= 1
+                    or _CALL_HEAD_RE.fullmatch(blanked, start, post.start())):
+                path, known = _post_path(source, blanked, post), helpers.get(name, [])
                 helpers[name] = None if path is None or known is None else known + [path]
                 break
     return helpers
 
 
-def _definition_end(blanked: str, start: int) -> int:
-    """Where a definition starting at ``start`` ends: its parameters, an optional
-    return type, an optional ``=>``, then the first bracket group (its body)."""
-    params = blanked.find("(", start)
-    if params < 0:
+def _body_end(blanked: str, start: int) -> int:
+    """Where the body starting at ``start`` ends: its brace group, or for an
+    arrow's expression the first bracket group in it."""
+    positions = _brackets(blanked)[0]
+    k = bisect.bisect_left(positions, start)
+    if k == len(positions):
         return len(blanked)
-    i = _return_type_end(blanked, _group_end(blanked, params))
-    arrow = _ARROW_RE.match(blanked, i)
-    for j in range(arrow.end() if arrow else i, len(blanked)):
-        if blanked[j] in ")]}":
-            return j
-        if blanked[j] in "([{":
-            return _group_end(blanked, j)
-    return len(blanked)
+    j = positions[k]
+    return j if blanked[j] in ")]}" else _group_end(blanked, j)
 
 
 def _return_type_end(blanked: str, i: int) -> int:
@@ -228,7 +442,9 @@ def _return_type_end(blanked: str, i: int) -> int:
     if not colon:
         return i
     i, angle, previous = colon.end(), 0, ":"
-    while i < len(blanked):
+    for _ in range(_MAX_TYPE_SCAN):
+        if i >= len(blanked):
+            break
         char = blanked[i]
         if char.isspace():
             i += 1
@@ -255,16 +471,15 @@ def _hook_post_paths(source: str) -> dict[str, list[str] | None]:
     """
     blanked = _blank_literals(source)
     posts = list(_POST_RE.finditer(source))
+    post_starts = [post.start() for post in posts]
     hooks: dict[str, list[str] | None] = {}
-    for match in _HELPER_DEF_RE.finditer(blanked):
-        name = match.group("fn") or match.group("name") or match.group("typed")
+    for start, name in _callable_definitions(blanked):
         if not re.fullmatch(r"use[A-Z][\w$]*", name):
             continue
-        end = _definition_end(blanked, match.end())
-        for post in posts:
-            if match.end() <= post.start() < end:
-                path, known = _post_path(source, post), hooks.get(name, [])
-                hooks[name] = None if path is None or known is None else known + [path]
+        end = _body_end(blanked, start)
+        for post in posts[bisect.bisect_left(post_starts, start):bisect.bisect_left(post_starts, end)]:
+            path, known = _post_path(source, blanked, post), hooks.get(name, [])
+            hooks[name] = None if path is None or known is None else known + [path]
     return hooks
 
 
@@ -307,6 +522,13 @@ def _resolve_import(rel: str, spec: str) -> list[str]:
             + [f"{stem}/index{ext}" for ext in _FRONTEND_EXTS])
 
 
+def _previous_char(text: str, i: int) -> str:
+    """The last non-space character before ``i``, or ``""``."""
+    while i > 0 and text[i - 1].isspace():
+        i -= 1
+    return text[i - 1] if i else ""
+
+
 def _client_create_calls(rel: str, source: str, files: dict[str, str],
                          helper_cache: dict[str, dict], used_clients: set[str]) -> list:
     """Creates ``rel`` issues through an imported api-client module.
@@ -317,11 +539,17 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
     None means "a create happens here but this call does not say which
     entity", which is exactly the evidence the file-mention test already
     stands on. Each module a call resolves into is added to ``used_clients``.
+    A helper handed over uncalled (`mutationFn: api.createBooking`) is a call
+    site too, and so is a method called on an instance of an imported class.
 
     ``helper_cache`` is keyed by module path: one api client is imported by
     every page, so it is scanned once rather than once per importer.
     """
     calls = []
+    # The import statements name every helper without using it; a comment or a
+    # string (`const mode = 'create'`) uses none. Arguments are read from ``uses``.
+    uses = _IMPORT_RE.sub(lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()), source)
+    code = _blank_literals(uses)
     for binding, spec in _import_bindings(source):
         target = next((c for c in _resolve_import(rel, spec) if c in files), None)
         if target is None or not _POST_RE.search(files[target]):
@@ -331,13 +559,23 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
         helpers = helper_cache[target]
         if not helpers:
             continue
+        construct = r"new\s+" + re.escape(binding) + r"\s*\("
+        # An instance of an imported class: the name it is assigned to, or the `new` expression itself.
+        receivers = [re.escape(binding), construct + r"[^()]*\)",
+                     *(re.escape(name) for name in re.findall(r"([A-Za-z_$][\w$]*)\s*=\s*" + construct, code))]
         pattern = re.compile(
-            r"\b" + re.escape(binding) + r"\s*(?:\.\s*(?P<member>[\w$]+)\s*)?\("
-            r"(?P<args>[^()]{0,200})")
-        for call in pattern.finditer(source):
+            r"\b(?:" + "|".join(receivers) + r")\s*(?:\.\s*(?P<member>[\w$]+))?\s*"
+            r"(?:\((?P<args>[^()]{0,200})|(?![\w$.(]))")
+        for call in pattern.finditer(code):
             name = call.group("member") or binding
-            if name in helpers:
-                calls.append(helpers[name] or _STRING_ARG_RE.findall(call.group("args")) or None)
+            # Uncalled, a capitalised name is a component or class used as a value, not a create;
+            # and only a value handed over (`fn: x`, `={x}`, `(x)`) is a use, not a word in JSX text.
+            handed_over = ((call.group("member") or name[:1].islower())
+                           and _previous_char(code, call.start()) in _REFERENCE_BEFORE
+                           and _REFERENCE_AFTER_RE.match(code, call.end()))
+            if name in helpers and (call.group("args") is not None or handed_over):
+                args = uses[call.start("args"):call.end("args")] if call.group("args") is not None else ""
+                calls.append(helpers[name] or _STRING_ARG_RE.findall(args) or None)
                 used_clients.add(target)
     return calls
 

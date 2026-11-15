@@ -21,6 +21,7 @@ import keyword
 import logging
 import os
 import posixpath
+import textwrap
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, NamedTuple
@@ -433,7 +434,9 @@ _JUDGE_SYSTEM_PROMPT = (
     "the line that enforces or performs it: a unique=True, a validator, an "
     "if/raise in a router, the assignment that performs a transition. Behaviour "
     "spanning several lines or files gets one citation per line; explanations "
-    "go in the note, never in a citation. A "
+    "go in the note, never in a citation. A statement written over several lines "
+    "is cited as ONE of its physical lines exactly as written (the line that does "
+    "the work, or its first line), never rejoined. A "
     "column, relationship or field EXISTING is not evidence that a rule "
     "about it is enforced; a comment, docstring or TODO is not an "
     "implementation. A modeled action whose body raises HTTP 501 or "
@@ -489,7 +492,8 @@ _SUBMIT_VERDICTS_TOOL = {
                             "description": (
                                 "One citation per source line that enforces or performs the "
                                 "requirement: the file's path as listed in the code and one "
-                                "line copied exactly from it."
+                                "line copied exactly from it (of a multi-line statement, one "
+                                "physical line, never the statement rejoined)."
                             ),
                         },
                         "note": {"type": "string", "description": "Explanation; never in a citation."},
@@ -1210,7 +1214,7 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
         if candidate.endswith(".py"):
             try:
                 tree = ast.parse(source)
-            except SyntaxError:
+            except (SyntaxError, RecursionError):  # too deeply nested to parse: read as text only
                 pass
         lines = source.splitlines()
         normalised = [_normalise_line(line) for line in lines]
@@ -1301,10 +1305,11 @@ def _reads_as_description(text: str) -> bool:
     return bool(match) and match.group(1) not in _STATEMENT_WORDS
 
 
-def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str) -> str:
+def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str, cache: dict) -> tuple[str, bool]:
     """For a quote part that matched no span: the source lines it follows from
     their start and what the file has next, or that it reads as prose; ""
-    when it follows no line."""
+    when it follows no line. The flag says a near match was found: the cited
+    code is there, the quote of it is malformed."""
     lines = source.normalised
     best = (0, 0, 0, 0)  # characters followed, first line, line where it leaves, whole-line characters
     for start, first in enumerate(lines):
@@ -1318,37 +1323,284 @@ def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str) -> 
             best = (followed, start, index, whole)
     followed, start, index, whole = best
     if followed < _MIN_CUT_QUOTE or followed >= len(part):
+        closest = _closest_statement(part, source, path, raw, cache) if followed < _MIN_CUT_QUOTE else ""
+        if closest:
+            return closest, True
         prose = _as_written(raw, part, _PROSE_NOTE_CHARS)
-        return f"`{prose}` reads as a description, not code; put it in the note" if _reads_as_description(prose) else ""
+        return (f"`{prose}` reads as a description, not code; put it in the note"
+                if _reads_as_description(prose) else ""), False
     if index == len(lines):
-        return ""
+        return "", False
     text = source.lines[index].strip()
-    next_line = f"`{text if len(text) <= _UNMATCHED_NOTE_CHARS else text[:_UNMATCHED_NOTE_CHARS - 3] + '...'}`"
+    fits = len(text) <= _UNMATCHED_NOTE_CHARS
+    next_line = f"`{text if fits else text[:_UNMATCHED_NOTE_CHARS - 3] + '...'}`"
+    # A line too long to show whole is shown where the quote leaves it.
+    differs = f"reads {next_line}" if fits else _divergence(text, followed - whole, raw, part[followed:])
     if index == start:
-        return f"the part differs from {path} line {index + 1}: {next_line}"
+        return f"the part differs from {path} line {index + 1}" + (
+            f": {next_line}" if fits else f", which {differs}"), True
     matched = f"the part matches {path} " + (f"lines {start + 1}-{index}" if index > start + 1 else f"line {start + 1}")
     rest = part[whole:]
     resumes = next((k for k in range(index + 1, min(index + 4, len(lines)))
                     if lines[k] and rest.startswith(lines[k][:_MIN_CUT_QUOTE])), None)
     if resumes is not None:
         skipped = f"line {index + 1}" if resumes == index + 1 else f"lines {index + 1}-{resumes}"
-        return f"{matched}, then skips {skipped}: {next_line}"
+        return f"{matched}, then skips {skipped}: {next_line}", True
     prose = _as_written(raw, rest, _PROSE_NOTE_CHARS)
     if _reads_as_description(prose):
-        return f"{matched}, then `{prose}` reads as a description; put it in the note"
-    return f"{matched}, then line {index + 1} reads {next_line}"
+        return f"{matched}, then `{prose}` reads as a description; put it in the note", True
+    return f"{matched}, then line {index + 1} {differs}", True
+
+
+# Characters shown on each side of the point where a quote and the file part.
+_DIVERGENCE_CONTEXT_CHARS = 24
+
+
+def _divergence(text: str, offset: int, raw: str, rest: str) -> str:
+    """``text`` and the quote side by side where they part: ``offset`` whitespace-free
+    characters into ``text``; ``rest`` is the whitespace-free quote from that point."""
+    kept = [i for i, char in enumerate(text) if not char.isspace()]
+    at = kept[offset] if offset < len(kept) else len(text)
+    lead = "..." if at > _DIVERGENCE_CONTEXT_CHARS else ""
+    before = text[max(0, at - _DIVERGENCE_CONTEXT_CHARS):at]
+    after = text[at:at + _DIVERGENCE_CONTEXT_CHARS] + ("..." if len(text) > at + _DIVERGENCE_CONTEXT_CHARS else "")
+    quote = _as_written(raw, rest, _DIVERGENCE_CONTEXT_CHARS + 3)
+    return f"has `{lead}{before}{after}` where your quote has `{lead}{before}{quote}`"
+
+
+def _unparsed_statements(source: _Source, cache: dict) -> list[tuple[int, int, str, str]]:
+    """(first line, last line, text on one line, normalised text) of each multi-line
+    statement spanning fewer than ``_MAX_QUOTE_LINES`` lines, unparsed once per file
+    per verification. A one-line statement is compared line by line instead."""
+    key = ("unparsed", source.path)
+    if key not in cache:
+        statements = []
+        for node in ast.walk(source.tree) if source.tree is not None else ():
+            if (isinstance(node, ast.stmt) and node.end_lineno > node.lineno
+                    and node.end_lineno - _statement_start(node) < _MAX_QUOTE_LINES):
+                try:
+                    text = " ".join(ast.unparse(node).split())
+                except RecursionError:  # too deeply nested to unparse: no candidate
+                    continue
+                statements.append((_statement_start(node), node.end_lineno, text, _normalise_line(text)))
+        cache[key] = statements
+    return cache[key]
+
+
+def _closest_statement(part: str, source: _Source, path: str, raw: str, cache: dict) -> str:
+    """For a Python quote that starts no line (``patterns = (`` starts no quote): the
+    multi-line statement it follows furthest and where it leaves it; "" when none is close."""
+    best: tuple[int, tuple[int, int, str, str] | None] = (0, None)
+    for statement in _unparsed_statements(source, cache):
+        common = len(os.path.commonprefix([part, statement[3]]))
+        if common >= best[0]:  # ast.walk goes outside in: the innermost wins a tie
+            best = (common, statement)
+    common, statement = best
+    if statement is None or common < _MIN_CUT_QUOTE or common >= len(statement[3]):
+        return ""
+    first, last, text, _ = statement
+    return (f"the closest statement is {path} lines {first}-{last}, which "
+            + _divergence(text, common, raw, part[common:]))
+
+
+def _collapsed_text(full: str, cache: dict) -> str:
+    """A judged file's whole text in a quote's form (no whitespace, double quotes), read once."""
+    key = ("collapsed", full)
+    if key not in cache:
+        try:
+            with open(full, "r", encoding="utf-8-sig", errors="ignore") as handle:
+                cache[key] = _collapse(handle.read().replace("'", '"'))
+        except OSError:
+            cache[key] = ""
+    return cache[key]
+
+
+def _found_elsewhere(part: str, cited: str | None, files: dict[str, str], parsed: dict,
+                     quote_cache: dict, sqlite: bool) -> str:
+    """For a line that is not in the file the citation names: where it is when exactly
+    one other judged file holds it verbatim, "" otherwise. Never relocates the citation."""
+    hits = []
+    for rel, full in files.items():
+        if full == cited or part not in _collapsed_text(full, quote_cache):
+            continue
+        spans = _quote_spans(part, _load_source(full, parsed, sqlite))
+        if spans:
+            hits.append(f"{rel} line {spans[0][0]}")
+            if len(hits) > 1:
+                return ""
+    return (f"the line is in {hits[0]}, not in the cited file; the citation must name the file the line is in"
+            if hits else "")
+
+
+_NOT_FOUND = "the quoted executable line was not found in the cited source: "
+
+
+def _not_found(part: str, source: _Source | None, path: str, raw: str, files: dict[str, str], parsed: dict,
+               quote_cache: dict, sqlite: bool) -> tuple[list, str, bool]:
+    """The failure of a part found in no span, and whether the cited code exists: the
+    line verbatim in another judged file, or a near match in the cited one."""
+    elsewhere = _found_elsewhere(part, source.path if source else None, files, parsed, quote_cache, sqlite)
+    if elsewhere:
+        return [], _NOT_FOUND + elsewhere, True
+    where, near = _where_the_quote_leaves(part, source, path, raw, quote_cache) if source else ("", False)
+    return [], _NOT_FOUND + (where or f"no source line matches the part `{_as_written(raw, part)}`"), near
+
+
+def _quoted_statements(raw: str) -> list[list[ast.stmt]]:
+    """The quote read as Python: its escapes as written (source such as ``"\\n".join``),
+    then as line breaks; each reading that parses to at least one statement."""
+    readings = []
+    for text in dict.fromkeys((raw, raw.replace("\\n", "\n"))):
+        try:
+            body = ast.parse(textwrap.dedent(text).strip()).body
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        if body:
+            readings.append(body)
+    return readings
+
+
+def _statement_index(source: _Source, cache: dict) -> dict[str, list[tuple[list[ast.stmt], int]]]:
+    """Each statement of a parsed file by its syntax tree without positions, with its
+    block and position there. Built once per file per verification, from the tree
+    :func:`_load_source` parsed; only statements spanning fewer than
+    ``_MAX_QUOTE_LINES`` lines are indexed, which bounds the work on a large file."""
+    key = ("statements", source.path)
+    if key not in cache:
+        index: dict[str, list[tuple[list[ast.stmt], int]]] = {}
+        for node in ast.walk(source.tree) if source.tree is not None else ():
+            for _, block in ast.iter_fields(node):
+                if isinstance(block, list) and block and isinstance(block[0], ast.stmt):
+                    for position, statement in enumerate(block):
+                        if statement.end_lineno - _statement_start(statement) < _MAX_QUOTE_LINES:
+                            try:
+                                index.setdefault(ast.dump(statement), []).append((block, position))
+                            except RecursionError:  # too deeply nested to compare: never matched
+                                continue
+        cache[key] = index
+    return cache[key]
+
+
+def _syntax_spans(raw: str, source: _Source, cache: dict) -> list[tuple[int, int]]:
+    """1-based spans of the statement, or run of consecutive statements, whose syntax
+    tree is the quote's: the same code whatever its layout (a formatter's wrapping
+    parentheses, a string split into adjacent literals, a call or a small function on
+    one line). One changed token changes the tree."""
+    index = _statement_index(source, cache)
+    for statements in _quoted_statements(raw) if index else ():
+        spans = []
+        try:
+            dumps = [ast.dump(statement) for statement in statements]
+            for block, position in index.get(dumps[0], ()):
+                run = block[position:position + len(dumps)]
+                first, last = _statement_start(run[0]), run[-1].end_lineno
+                if (len(run) == len(dumps) and last - first < _MAX_QUOTE_LINES
+                        and all(ast.dump(statement) == dump for statement, dump in zip(run[1:], dumps[1:]))):
+                    spans.append((first, last))
+        except RecursionError:  # too deeply nested to compare: no match
+            continue
+        if spans:
+            return spans
+    return []
+
+
+# Where a def collapsed onto its decorator's line starts: "@router.get(...) def f(...):".
+_COLLAPSED_DEF_RE = re.compile(r"\s+(?=(?:async\s+)?def\s+\w+\s*\()")
+_DECORATOR_ONLY = "the citation must identify an implemented statement, not only a decorator"
+
+
+def _decorator_dumps(text: str) -> list[str] | None:
+    """The syntax trees of ``text``'s decorators when it is decorators and nothing else."""
+    try:
+        body = ast.parse(textwrap.dedent(text).strip() + "\ndef _decorated(): pass").body
+        if len(body) != 1 or not getattr(body[0], "decorator_list", None):
+            return None
+        return [ast.dump(decorator) for decorator in body[0].decorator_list]
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+
+
+def _decorated(source: _Source, cache: dict) -> list[tuple[ast.stmt, set[str]]]:
+    """Each def and class of a parsed file with the syntax trees of its decorators."""
+    key = ("decorated", source.path)
+    if key not in cache:
+        decorated = []
+        for node in ast.walk(source.tree) if source.tree is not None else ():
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.decorator_list:
+                try:
+                    decorated.append((node, {ast.dump(decorator) for decorator in node.decorator_list}))
+                except RecursionError:  # too deeply nested to compare: never matched
+                    continue
+        cache[key] = decorated
+    return cache[key]
+
+
+def _annotates(source: _Source, end: int, starts: set[int]) -> bool:
+    """An annotation ending on line ``end`` sits on a line in ``starts``: only blank
+    lines or other annotations lie between."""
+    return any(start > end and all(not line.strip() or line.strip().startswith("@")
+                                   for line in source.lines[end:start - 1]) for start in starts)
+
+
+def _locate_decorator(path: str, raw_quote: str, files: dict[str, str], parsed: dict,
+                      quote_cache: dict, sqlite: bool) -> tuple[list, str, bool]:
+    """A quote that starts with decorators (annotations): located in the file it names
+    but proving nothing, so another citation must prove the role. What follows them in
+    the quote (the next line, or a def collapsed onto the decorator's line) is located
+    as a part of its own, and the decorators must be on that definition."""
+    lines = raw_quote.replace("\\n", "\n").strip().splitlines()
+    # The decorators: the most leading lines that parse as Python decorators, else the first line.
+    count = next((k for k in range(len(lines), 0, -1) if _decorator_dumps("\n".join(lines[:k])) is not None), 1)
+    head, tail = "\n".join(lines[:count]), "\n".join(lines[count:]).strip()
+    if not tail:
+        for split in _COLLAPSED_DEF_RE.finditer(head):
+            if _decorator_dumps(head[:split.start()]) is not None:
+                head, tail = head[:split.start()], head[split.end():]
+                break
+    candidates = _resolve_cited_path(path, "", files, quote_cache)
+    if len(candidates) != 1:
+        return [], "the cited source path is missing, excluded or ambiguous", False
+    source = _load_source(candidates[0], parsed, sqlite)
+    quoted = _normalise_quote(head)
+    decorators = _decorator_dumps(head) if source.tree is not None else None
+    if decorators is not None:
+        homes = [node for node, dumps in _decorated(source, quote_cache) if set(decorators) <= dumps]
+        spans = []
+    else:  # not Python (a Java annotation), or not parseable: one line, verbatim
+        homes, spans = [], _quote_spans(quoted, source) if "\n" not in head else []
+    if not homes and not spans:
+        return _not_found(quoted, source, path.strip(), raw_quote, files, parsed, quote_cache, sqlite)
+    located = [(source, quoted, [])]
+    if tail:
+        rest, failure, malformed = _locate_citation(path, tail, files, parsed, quote_cache, sqlite)
+        if failure:
+            return [], failure, malformed
+        starts = {first for _, _, part_spans in rest for first, _ in part_spans}
+        on_it = (any(_statement_start(node) <= start <= node.lineno for node in homes for start in starts)
+                 or any(_annotates(source, end, starts) for _, end in spans))
+        if not on_it:
+            return [], (_NOT_FOUND + f"the decorator `{_as_written(raw_quote, quoted)}` is in {path.strip()}, "
+                        "but not on the definition quoted with it"), True
+        located += rest
+    return located, "", False
 
 
 def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: dict,
-                     quote_cache: dict, sqlite: bool) -> tuple[list, str]:
+                     quote_cache: dict, sqlite: bool) -> tuple[list, str, bool]:
     """The ``(source, part, spans)`` of one ``path: quote`` citation, or why it is
-    not source: every part must be code in the file it names, one a whole line."""
+    not source: every part must be code in the file it names, one a whole line.
+    The flag of a failure says the cited code exists (a near match in the file, or
+    the line in another file): the citation is malformed, not invented."""
     quoted = _evidence_quote(raw_quote)
     if not quoted:
-        return [], "the citation must identify an implemented statement, not only a decorator"
+        if raw_quote.replace("\\n", "\n").strip().startswith("@"):
+            return _locate_decorator(path, raw_quote, files, parsed, quote_cache, sqlite)
+        return [], _DECORATOR_ONLY, False
     candidates = _resolve_cited_path(path, quoted, files, quote_cache)
     if len(candidates) != 1:
-        return [], "the cited source path is missing, excluded or ambiguous"
+        elsewhere = "" if candidates else _found_elsewhere(quoted, None, files, parsed, quote_cache, sqlite)
+        return [], "the cited source path is missing, excluded or ambiguous" + (
+            f": {elsewhere}" if elsewhere else ""), bool(elsewhere)
     source = _load_source(candidates[0], parsed, sqlite)
     spans = list(_quote_spans(quoted, source))
     literal = _evidence_quote(raw_quote, escapes=False)
@@ -1372,11 +1624,14 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
                 break
             located.append((part_source, part, spans))
     if any(spans for _, _, spans in located):
-        return located, ""
-    where = _where_the_quote_leaves(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote) if (
-        unmatched_in[0]) else ""
-    return [], ("the quoted executable line was not found in the cited source: "
-                + (where or f"no source line matches the part `{_as_written(raw_quote, unmatched)}`"))
+        return located, "", False
+    syntax = _syntax_spans(raw_quote, source, quote_cache)
+    if syntax:
+        # The role check reads the matched source without comments, never the quote:
+        # a comment the judge wrote into it is not code.
+        return [(source, "".join(source.bare[first - 1:last]), [(first, last)]) for first, last in syntax], "", False
+    return _not_found(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote,
+                      files, parsed, quote_cache, sqlite)
 
 
 def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex | None = None) -> list[dict]:
@@ -1405,7 +1660,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
-        for key in VERDICT_FINGERPRINT_KEYS:
+        for key in (*VERDICT_FINGERPRINT_KEYS, EVIDENCE_UNLOCATED):
             item.pop(key, None)
         if item.get("kind") == "verification":
             item.update(status="unverified", evidence="",
@@ -1422,14 +1677,20 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
             (evidence or "")[:_MAX_EVIDENCE_CHARS].partition(":")[::2]]
         located, reason = [], "" if citations else "no source line is cited"
         for index, (path, raw_quote) in enumerate(citations, 1):
-            found, failure = _locate_citation(path, raw_quote, files, parsed, quote_cache, sqlite)
+            found, failure, malformed = _locate_citation(path, raw_quote, files, parsed, quote_cache, sqlite)
             if failure:
-                reason = f"citation {index} ({path.strip()}): {failure}" if structured else failure
-                break
+                # The first failure is the reason; every failure decides whether the cited code exists.
+                reason = reason or (f"citation {index} ({path.strip()}): {failure}" if structured else failure)
+                item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED if malformed and item.get(
+                    EVIDENCE_UNLOCATED, CITATION_MALFORMED) == CITATION_MALFORMED else CITATION_ABSENT
+                if item[EVIDENCE_UNLOCATED] == CITATION_ABSENT:
+                    break
+                continue
             located += [(index, path, *part) for part in found]
         if not reason:
             # A part found only inside a line proves no role: one whole line must.
-            reason = "no cited part is a whole source line"
+            reason = (_DECORATOR_ONLY if located and all(part.startswith("@") for _, _, _, part, _ in located)
+                      else "no cited part is a whole source line")
             for index, path, part_source, part, spans in located:
                 if not spans:
                     continue
@@ -1456,6 +1717,13 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
 
 
 VERDICT_FINGERPRINT_KEYS = ("cited_file_hashes", "dependency_file_hashes")
+# Set on a verdict with a citation not found in the file it names. CITATION_MALFORMED:
+# every such citation's code exists (a near match in the file, or the line verbatim in
+# one other file), so only the judge can correct it. CITATION_ABSENT: some cited code
+# exists nowhere, so implementing it may be the fix.
+EVIDENCE_UNLOCATED = "evidence_unlocated"
+CITATION_MALFORMED = "near_match"
+CITATION_ABSENT = "absent"
 
 _JS_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"})
 # ``from './x'``, ``import './x'``, ``import('./x')``, ``require('./x')``: relative specifiers only.

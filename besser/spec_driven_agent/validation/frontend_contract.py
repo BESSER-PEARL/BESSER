@@ -10,15 +10,17 @@ Both checks read only ``output_dir`` and depend on ``frontend_bindings``.
 
 from __future__ import annotations
 
+import bisect
 import os
 import re as _re
 
-from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
-from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from pygments.lexers import JsxLexer, TsxLexer, TypeScriptLexer
+from pygments.token import Comment, String
+
 from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.spec_driven_agent.validation.frontend_source import match_bracket
-from besser.utilities.workspace_fs import walk_plain
+from besser.spec_driven_agent.validation.python_source import walk_app_tree
 
 
 def _method_button_source_issues(output_dir: str) -> list[str]:
@@ -31,15 +33,12 @@ def _method_button_source_issues(output_dir: str) -> list[str]:
     one-file check; a button whose table is not on the page is left alone.
     """
     issues: list[str] = []
-    for root, dirs, files in walk_plain(output_dir):
-        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
+    for root, files in walk_app_tree(output_dir):
         for fname in files:
             if not fname.endswith((".tsx", ".jsx")):
                 continue
             fpath = os.path.join(root, fname)
             rel = os.path.relpath(fpath, output_dir).replace("\\", "/")
-            if rel.startswith(_SNAPSHOT_DIR):
-                continue
             try:
                 with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
@@ -80,16 +79,57 @@ def _method_button_source_issues(output_dir: str) -> list[str]:
 
 
 _DATA_ROUTER = _re.compile(r"\b(?:create(?:Browser|Hash|Memory)Router|useRoutes)\s*\(")
+# JSX in .js files is the norm for generated React apps; the plain JS lexer
+# reads an apostrophe in JSX text as the start of a string.
+_LEXERS = {".js": JsxLexer, ".jsx": JsxLexer, ".ts": TypeScriptLexer, ".tsx": TsxLexer}
 
 
-def _route_may_serve_home(files: list[tuple[str, str]], blob: str) -> bool:
+def _non_code_spans(rel: str, text: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of every comment and string or template literal in ``text``."""
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    lexer = _LEXERS.get(os.path.splitext(rel)[1].lower(), JsxLexer)(stripnl=False, ensurenl=False)
+    for token, value in lexer.get_tokens(text):
+        if token in Comment or token in String:
+            spans.append((offset, offset + len(value)))
+        offset += len(value)
+    # The lexer rewrites \r and a BOM; offsets that no longer line up mask nothing.
+    return spans if offset == len(text) else []
+
+
+def _in_code(spans: list[tuple[int, int]], offset: int) -> bool:
+    index = bisect.bisect_right(spans, (offset, float("inf"))) - 1
+    return index < 0 or not spans[index][0] <= offset < spans[index][1]
+
+
+class _CodeFiles:
+    """The frontend files, with each file's comments and literals lexed on first use."""
+
+    def __init__(self, files: list[tuple[str, str]]):
+        self.files = files
+        self._spans: dict[str, list[tuple[int, int]]] = {}
+
+    def in_code(self, rel: str, text: str, offset: int) -> bool:
+        if rel not in self._spans:
+            self._spans[rel] = _non_code_spans(rel, text)
+        return _in_code(self._spans[rel], offset)
+
+    def search(self, pattern: str, flags: int = 0) -> bool:
+        """Whether ``pattern`` matches, starting in code, in any file."""
+        return any(self.in_code(rel, text, match.start())
+                   for rel, text in self.files for match in _re.finditer(pattern, text, flags))
+
+
+def _route_may_serve_home(code: _CodeFiles) -> bool:
     """A route that is an index route, serves "/", or has a computed path.
 
     A computed path (``path={ROUTES.HOME}``, ``path: ROUTES.HOME``) may be
     "/", so the check cannot decide and stays silent.
     """
-    for _, text in files:
-        for _, attrs, top in _jsx_tags(text, "Route"):
+    for rel, text in code.files:
+        for start, attrs, top in _jsx_tags(text, "Route"):
+            if not code.in_code(rel, text, start):
+                continue
             if _re.search(r"(?:^|\s)index\b", top):  # anywhere among the attributes
                 return True
             expr = _attr(attrs, "path")
@@ -98,13 +138,15 @@ def _route_may_serve_home(files: list[tuple[str, str]], blob: str) -> bool:
             literal = _re.fullmatch(r"\s*(['\"`])(.*)\1\s*", expr, _re.S)
             if literal is None or "${" in literal.group(2) or literal.group(2) == "/":
                 return True
-    return bool(_DATA_ROUTER.search(blob) and _re.search(r"\bpath\s*:\s*[A-Za-z_$`]", blob))
+    return code.search(_DATA_ROUTER.pattern) and code.search(r"\bpath\s*:\s*[A-Za-z_$`]")
 
 
+# Platform objects whose create*/update* methods make no request.
+_NOT_AN_API = r"(?:document|window|globalThis|Object|Reflect|URL|React|ReactDOM|crypto|navigator)"
 _HTTP_WRITE_CALL = _re.compile(
     r"""method\s*:\s*['"](?:post|put|patch)['"]"""  # fetch(url, { method: 'POST' })
     r"""|\.(?:post|put|patch)\s*\("""                # axios.post(...), client.put(...)
-    r"""|\b\w+\.(?:create|update)\w*\s*\(""",       # api.createBook(...)
+    rf"""|\b(?!{_NOT_AN_API}\.)\w+\.(?:create|update)\w*\s*\(""",  # api.createBook(...)
     _re.IGNORECASE)
 _ONCLICK_HANDLER = _re.compile(
     r"onClick\s*=\s*\{\s*(?:(\w+)\s*\}|(?:async\s*)?\(\s*\w*\s*\)\s*=>\s*(?:await\s+)?(\w+)\s*\()")
@@ -148,16 +190,12 @@ def collect_frontend_contract_issues(output_dir: str) -> list[str]:
     issues: list[str] = []
     frontend_files: list[tuple[str, str]] = []  # (rel, content)
 
-    for root, dirs, files in walk_plain(output_dir):
-        # Prune noisy / irrelevant trees in place.
-        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
+    for root, files in walk_app_tree(output_dir):
         for fname in files:
             if not fname.endswith((".js", ".jsx", ".ts", ".tsx")):
                 continue
             fpath = os.path.join(root, fname)
             rel = os.path.relpath(fpath, output_dir).replace("\\", "/")
-            if rel.startswith(_SNAPSHOT_DIR):
-                continue
             try:
                 if os.path.getsize(fpath) > 1_000_000:
                     continue
@@ -189,18 +227,20 @@ def collect_frontend_contract_issues(output_dir: str) -> list[str]:
     blob = "\n".join(c for _, c in frontend_files)
 
     # ---- Check 1: blank-on-load (router present, but no home route) ----
+    # Route signals count only in code: a snippet in a string or comment routes nothing.
+    code = _CodeFiles(frontend_files)
     uses_router = bool(
-        _re.search(r"<Route\b", blob)
+        code.search(r"<Route\b")
         or "react-router" in blob.lower()
-        or "createbrowserrouter" in blob.lower()
+        or code.search(r"createbrowserrouter", _re.IGNORECASE)
     )
     if uses_router:
         has_home = bool(
-            _re.search(r"""path\s*[=:]\s*['"]/['"]""", blob)  # path="/" or path: "/"
-            or _re.search(r"<Route\s+index\b", blob)          # <Route index .../>
-            or _re.search(r"\bindex\s*:\s*true\b", blob)       # data-router index: true
-            or _re.search(r"<Navigate\b", blob)                # redirect to a default
-            or _route_may_serve_home(frontend_files, blob)
+            code.search(r"""path\s*[=:]\s*['"]/['"]""")  # path="/" or path: "/"
+            or code.search(r"<Route\s+index\b")          # <Route index .../>
+            or code.search(r"\bindex\s*:\s*true\b")       # data-router index: true
+            or code.search(r"<Navigate\b")                # redirect to a default
+            or _route_may_serve_home(code)
         )
         if not has_home:
             route_file = next(

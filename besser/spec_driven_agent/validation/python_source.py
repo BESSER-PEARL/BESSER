@@ -4,6 +4,7 @@ import ast
 import os
 import re as _re
 import warnings
+from collections.abc import Iterator
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
@@ -360,7 +361,7 @@ def _python_files(output_dir: str) -> list[str]:
         return []
 
 
-def walk_app_tree(output_dir: str):
+def walk_app_tree(output_dir: str) -> Iterator[tuple[str, list[str]]]:
     """``(folder, files)`` for the workspace, minus snapshots, dependency caches and build output.
 
     An installed node_modules or .venv is someone else's code: its files are

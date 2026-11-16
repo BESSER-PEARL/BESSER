@@ -29,6 +29,7 @@ from besser.spec_driven_agent.planning.specification import (
 from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.responses import CommitStatus, ResponseModel
+from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_MAX_ACTOR_NAME_LENGTH
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 # Model IDs are provider-specific but all follow a conservative
@@ -88,11 +89,16 @@ class SmartGenerateRequest(BaseModel):
         user's request. When given, the requirements ledger is built from
         them instead of extracting its own, and each verdict names its
         requirement's trace id. Left out, the run extracts them.
+    actorName
+        Optional name of the person starting the run (the project owner), the
+        Person the run's trace (``done.trace``) records besides the agent.
+        Left out, the trace names only the Spec-Driven Agent.
     """
 
     project: ProjectInput
     instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
     requirements: Optional[List[RequirementInput]] = Field(default=None, max_length=MAX_REQUIREMENTS)
+    actorName: Optional[str] = Field(default=None, max_length=TRACE_MAX_ACTOR_NAME_LENGTH)
     # Optional: the ``"free"`` provider needs no key (the server injects a
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.

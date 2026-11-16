@@ -89,20 +89,25 @@ _ENFORCEMENT_TOKENS = (
 # items and may label them 'rule'; a column IS that requirement. The
 # enforcing-line demand applies to a 'rule' only when its text states a
 # constraint.
-_CONSTRAINT_WORDS = (
-    "unique", "must not", "may not", "may never", "cannot", "can not",
-    "never", "at least", "at most", "no more than", "exceed", "only if",
-    "only when", "only after", "valid", "format", "shape", "match",
-    "overlap", "before", "after", "greater", "less", "between", "positive",
-    "non-negative", "refuse", "reject",
+# Whole words with their inflections: as substrings "less" matched "lesson"
+# and "format" matched "information". A word the requirement lists as a value
+# ("one of: positive, mixed, negative") still states the rule that the field
+# takes only those values; an enumeration that has them enforces it.
+_CONSTRAINT_WORDS = re.compile(
+    r"\b(?:unique(?:ly|ness)?|must\s+not|may\s+not|may\s+never|cannot|can\s+not|never|at\s+least|at\s+most"
+    r"|no\s+more\s+than|exceed(?:s|ed|ing)?|only\s+(?:if|when|after)|(?:in)?valid(?:ly|ity|at\w+)?"
+    r"|format(?:s|ted|ting)?|shap(?:e|es|ed|ing)|(?:mis)?match(?:es|ed|ing)?|overlap(?:s|ped|ping)?|before|after"
+    r"|greater|less(?:er)?|between|positive(?:ly)?|non-negative|refus(?:e|es|ed|ing|al)|reject(?:s|ed|ing|ion)?)\b",
+    re.IGNORECASE,
 )
 
 
+def _states_constraint(text: str) -> bool:
+    return bool(_CONSTRAINT_WORDS.search(text))
+
+
 def _demands_enforcement(kind: str, text: str) -> bool:
-    if kind == "uniqueness":
-        return True
-    low = text.lower()
-    return kind in ("validation", "rule") and any(w in low for w in _CONSTRAINT_WORDS)
+    return kind == "uniqueness" or (kind in ("validation", "rule") and _states_constraint(text))
 
 
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
@@ -1505,9 +1510,35 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     if (_demands_enforcement(item.get("kind", ""), item.get("text", ""))
             and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
             and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
-            and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)):
+            and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)
+            and not _lists_cited_enumeration(item.get("text", ""), statement, source.tree)):
         return "the cited line declares data; it does not demonstrate enforcement"
     return ""
+
+
+_MEMBER_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
+
+
+def _lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None) -> bool:
+    """The cited Python statement defines, belongs to or types a field with an
+    enumeration of the same file, and the requirement names every one of its
+    values: the type refuses any other value, which is the enforcement."""
+    if statement is None or tree is None:
+        return False
+    enumerations = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+        and any(getattr(base, "id", getattr(base, "attr", "")).endswith("Enum") for base in node.bases)}
+    cited = [node for node in enumerations.values() if node.lineno <= statement.lineno <= node.end_lineno] or [
+        enumerations[name] for name in {n.id for n in ast.walk(statement) if isinstance(n, ast.Name)}
+        if name in enumerations]
+    if len(cited) != 1:
+        return False
+    members = [target.id for member in cited[0].body if isinstance(member, ast.Assign)
+               for target in member.targets if isinstance(target, ast.Name)]
+    # IN_PROGRESS and InProgress both read "in progress", "in-progress" or "inprogress".
+    return len(members) > 1 and all(
+        re.search(r"\b" + r"[\s_-]*".join(map(re.escape, _MEMBER_WORD_RE.findall(member))) + r"\b", text, re.I)
+        for member in members)
 
 
 _UNMATCHED_NOTE_CHARS = 80

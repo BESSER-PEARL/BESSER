@@ -355,7 +355,14 @@ Findings are classified into three severities:
        decorator is located but proves nothing alone; quoted with a ``def``,
        it must be on that definition. A line quoted from the wrong file is
        rejected, and the note names the file it is in. Every citation of a
-       verdict must be found. With a class model and an agent model, the list also holds
+       verdict must be found. A validation or rule requirement whose text
+       states a constraint (``must not``, ``at least``, ``between`` ...) needs
+       a line that enforces it, not a declaration. A constraint word counts
+       as a whole word ("lesson" does not state "less"). A value the
+       requirement lists ("one of: positive, mixed, negative") still states
+       that the field takes only those values: a Python enumeration whose
+       every value the requirement names, cited itself or as the type of a
+       field, is such an enforcement. With a class model and an agent model, the list also holds
        one requirement built from the models: every intent that creates,
        lists or changes the model's records reads or writes them through the
        app's code (its models, database, API or a helper), while a greeting

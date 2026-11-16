@@ -20,6 +20,7 @@ import logging
 import os
 import posixpath
 import re
+import shlex
 import stat
 import sys
 import threading
@@ -437,6 +438,23 @@ def _looks_like_command_not_found(stderr: str) -> bool:
     if any(pat in lowered for pat in _RUNTIME_NOT_INSTALLED_PATTERNS):
         return True
     return bool(_EXEC_ENOENT_RE.search(stderr) or _DASH_NOT_FOUND_RE.search(stderr))
+
+
+# What a shell or an interpreter prints when a command of the line could not do its job.
+_COMMAND_FAILURE_RE = re.compile(
+    r"no such file or directory|can't open file|command not found|: not found\b|permission denied"
+    r"|cannot access|not recognized as an internal or external command|traceback \(most recent call last\)",
+    re.IGNORECASE)
+
+
+def _joins_commands_unconditionally(command: str) -> bool:
+    """Whether the line runs a later command whatever an earlier one returned (``a; b``, a new line)."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+    lexer.whitespace = " \t\r"
+    try:
+        return any(set(token) <= {";", "\n"} for token in lexer)
+    except ValueError:
+        return False  # unbalanced quotes: the shell reports that itself
 
 
 def ends_shell_session(method):
@@ -3596,6 +3614,10 @@ class ToolExecutor:
             }
 
         logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
+        # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
+        carried_over = None if working_dir else self._shell.relative_cwd()
+        located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
+                   if carried_over not in (None, ".") else {})
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
         try:
             # Fail closed: a command that cannot be confined is not run.
@@ -3657,12 +3679,20 @@ class ToolExecutor:
         stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
 
         payload = {
+            **located,
             "exit_code": result.returncode,
             "stdout": stdout,
             "stderr": stderr,
             "success": result.returncode == 0,
             **extra,
         }
+        if (result.returncode == 0 and _COMMAND_FAILURE_RE.search(raw_stderr)
+                and _joins_commands_unconditionally(command)):
+            payload["note"] = (
+                "exit_code is that of the last command only. This line joins commands with ';' or a "
+                "new line and stderr reports a failure, so an earlier command did not do its job: "
+                "read stderr, and join commands with && to stop at the first failure."
+            )
         # A missing binary is a failure like any other: the model must not
         # read a check whose tool is absent as a passed one.
         if result.returncode != 0 and _looks_like_command_not_found(stderr):

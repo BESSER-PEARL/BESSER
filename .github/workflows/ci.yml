@@ -9,7 +9,8 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The suite takes 9 to 14 minutes on a hosted runner.
+    timeout-minutes: 25
     strategy:
       matrix:
         python-version: ['3.11', '3.12']

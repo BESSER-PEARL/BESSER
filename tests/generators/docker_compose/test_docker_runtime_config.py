@@ -11,6 +11,7 @@ import yaml
 
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.uml_deployment import Artifact, DeploymentModel, DeploymentRelation, Locality, Node
+from besser.generators import GeneratorInterface
 from besser.generators.docker_compose.docker_compose_generator import DockerComposeGenerator
 from besser.generators.docker_compose.runtime_config import resolve_runtime_yaml
 
@@ -150,12 +151,10 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
 
     monkeypatch.setattr(route, 'normalize_personalization_mapping', normalize)
 
-    class CaptureGenerator:
-        traced_files = {}
-
+    class CaptureGenerator(GeneratorInterface):
         def __init__(self, model, output_dir, **kwargs):
+            super().__init__(model, output_dir)
             captured.update(kwargs)
-            self.output_dir = output_dir
 
         def generate(self):
             Path(self.output_dir, 'docker-compose.yml').write_text('services: {}\n', encoding='utf-8')

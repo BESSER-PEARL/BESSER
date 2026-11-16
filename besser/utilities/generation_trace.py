@@ -53,6 +53,7 @@ from besser.BUML.metamodel.traceability import (
     RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.BUML.metamodel.traceability.traceability import model_elements_by_depth
+from besser.utilities.secret_redaction import redact_shared_file
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +373,25 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def stored_content(generated: GeneratedFile) -> Optional[str]:
+    """The content a trace keeps of a generated file: the file with its credentials redacted
+    (``secret_redaction.redact_shared_file``), since a trace is exported and shared while the
+    delivered file keeps its keys. ``contentHash`` stays the hash of the delivered file, so a
+    redacted file's content does not hash to it; its ``[REDACTED]`` marks say why. A redaction
+    that would move lines (a private key spanning several) keeps no content, so the line ranges of
+    the file's fragments always point at the content kept.
+    """
+    redacted, findings = redact_shared_file(generated.path, generated.content)
+    if not findings:
+        return generated.content
+    if redacted.count("\n") != generated.content.count("\n"):
+        logger.warning("Generated file %s holds a credential over several lines; the trace keeps only its hash.",
+                       generated.path)
+        return None
+    logger.warning("Generated file %s holds %d credential(s); the trace keeps it redacted.", generated.path, findings)
+    return redacted
+
+
 def build_generation_trace(
     files: Sequence[GeneratedFile],
     *,
@@ -402,7 +422,8 @@ def build_generation_trace(
     and the operation also calls ``llm`` (an unnamed ``LLM("llm", "unknown")`` when none is given).
 
     A file's content is kept when it is at most ``max_stored_content_bytes`` (UTF-8), so the
-    views can show it and its fragments' lines; its hash always is. The fragment's
+    views can show it and its fragments' lines, with its credentials redacted
+    (:func:`stored_content`); its hash, that of the delivered file, always is. The fragment's
     ``project_id`` is None: the caller merges it into the project trace.
 
     Raises:
@@ -445,7 +466,7 @@ def build_generation_trace(
     for generated in files:
         stored = None
         if len(generated.content.encode("utf-8")) <= max_stored_content_bytes:
-            stored = generated.content
+            stored = stored_content(generated)
         else:
             logger.warning("Generated file %s is over %d bytes; the trace keeps only its hash.",
                            generated.path, max_stored_content_bytes)

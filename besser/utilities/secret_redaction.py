@@ -6,7 +6,8 @@ or invented/pasted in an instruction.  Treat the artifact and SSE serializers
 as the final trust boundary: remove populated ``.env`` files and replace
 credential-shaped text everywhere else with a stable placeholder.
 
-The Spec-Driven agent's trace (:func:`redact_trace_text`), the LLM clients'
+The Spec-Driven agent's trace (:func:`redact_trace_text`), the file contents a
+generation trace keeps (:func:`redact_shared_file`), the LLM clients'
 error logs (:func:`redact_literal`) and the editor backend's generator-config
 logs (:func:`sanitize_config`) use this module too. The one other redactor is
 ``spec_driven_agent/validation/api_probe.py``'s ``_scrub``: its child process
@@ -523,6 +524,48 @@ def sanitize_config(config: Any) -> Any:
     if isinstance(config, str):
         return _redact_db_url_passwords(redact_text(config, env_style=False)[0], keep_local=False)[0]
     return config
+
+
+# A credential written as a quoted literal in code or config (``SECRET_KEY = "..."``,
+# ``"apiKey": "..."``, ``password: '...'``): the name ends with a credential word, the value is
+# the literal. Only the literal is replaced, so the line keeps its shape.
+_CREDENTIAL_LITERAL_RE = re.compile(
+    r"(?im)([A-Za-z0-9_]*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|password|passwd"
+    r"|private[_-]?key|access[_-]?key)[\"']?\s*[:=]\s*)([\"'])([^\"'\r\n]{8,})\2"
+)
+
+
+def _redact_credential_literals(text: str) -> tuple[str, int]:
+    findings = 0
+
+    def _replacement(match: re.Match[str]) -> str:
+        nonlocal findings
+        value = match.group(3)
+        # No template check: a generated key may hold "%s" (Django's alphabet has % and s).
+        if _is_placeholder(value) or value == REDACTED_SECRET:
+            return match.group(0)
+        findings += 1
+        return f"{match.group(1)}{match.group(2)}{REDACTED_SECRET}{match.group(2)}"
+
+    return _CREDENTIAL_LITERAL_RE.sub(_replacement, text), findings
+
+
+def redact_shared_file(path: str, content: str) -> tuple[str, int]:
+    """A generated file as a record others may read keeps it (a generation trace), and a match count.
+
+    The delivered file stays as it is: the app needs its keys. The copy a record shares has
+    every credential the value rules of :func:`redact_text` find replaced, a ``.env`` file's
+    assignments, a YAML file's ``key: value`` credential lines, and a credential written as a
+    quoted literal (``SECRET_KEY = "..."``). Every rule replaces text within a line, except a
+    private key spanning lines.
+    """
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    findings = 0
+    if name.endswith((".yaml", ".yml")):
+        content, findings = _redact_yaml_lines(content)
+    redacted, value_findings = redact_text(content, env_style=name.startswith(".env"))
+    redacted, literal_findings = _redact_credential_literals(redacted)
+    return redacted, findings + value_findings + literal_findings
 
 
 def looks_like_secret_env(content: str) -> bool:

@@ -311,3 +311,16 @@ def test_shift_and_prefix_helpers():
     assert shift_file_trace(trace, 0) is trace
     assert prefixed_traces({"x.py": trace}, "backend/") == {"backend/x.py": trace}
     assert prefixed_traces({"x.py": trace}, "") == {"x.py": trace}
+
+
+def test_a_trace_keeps_a_file_with_its_credentials_redacted_and_the_delivered_hash():
+    content = 'h\nSECRET_KEY = "django-insecure-0123456789abcdef"\n'
+    _, file = _trace(content, cap=1000).artifacts[:2]
+    assert file.content == 'h\nSECRET_KEY = "[REDACTED]"\n'
+    assert file.content_hash == hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def test_a_trace_keeps_only_the_hash_when_redaction_would_move_lines():
+    key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(["A" * 64] * 3) + "\n-----END PRIVATE KEY-----\n"
+    _, file = _trace("h\nclass Book:\n  x\n\nrel\n" + key, cap=10_000).artifacts[:2]
+    assert file.content is None and file.content_hash

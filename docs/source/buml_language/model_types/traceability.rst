@@ -189,7 +189,13 @@ and the models it read (``input_model``: id, metaclass, name), and builds its
 file, from each whole-file source to its file, and from each element to each of its
 blocks, with the template rule as evidence and confidence 1. A generator that records
 nothing still gets the links from its models to its files. A file's content is kept when it is under the size
-cap, so the views can show it and its blocks' lines; above it only its hash is.
+cap, so the views can show it and its blocks' lines; above it only its hash is. A trace is exported and
+shared while the delivered files keep their keys, so the content it keeps has every credential replaced by
+``[REDACTED]`` (``secret_redaction.redact_shared_file``: provider tokens, a ``.env`` file's assignments, a
+YAML file's credential lines, a quoted literal such as Django's ``SECRET_KEY = "..."``); the line
+count is kept, so its blocks' lines still point at it. ``contentHash`` stays the SHA-256 of the
+delivered file, so a redacted content does not hash to it. A credential spanning lines (a private key)
+leaves the file with its hash only.
 Elements without an ``id`` (a model built in Python rather than in the editor) are
 rendered untraced. The editor's processors give each element they build the id the
 editor records it by (see :ref:`traceable-generator-coverage` for what each

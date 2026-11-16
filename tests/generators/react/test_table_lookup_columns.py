@@ -76,3 +76,13 @@ def test_a_column_without_a_lookup_field_shows_a_readable_attribute_not_the_gene
     app = build_app(classes, {"Flights": [_table(column)]}, ASSOCIATIONS)
 
     assert _lookup_fields(app.gui_model) == {"Airline": "label"}
+
+
+def test_a_column_naming_a_class_reached_twice_takes_the_end_its_label_names(build_app, caplog):
+    table = _table(_lookup("Airport", "Origin", lookupEntity="cls-Airport"),
+                   _lookup("Airport", "Destination airport", lookupEntity="cls-Airport"))
+    with caplog.at_level("WARNING"):
+        app = build_app(CLASSES, {"Flights": [table]}, ASSOCIATIONS)
+
+    assert _lookup_paths(app.gui_model) == {"Origin": "origin", "Destination airport": "destination"}
+    assert not [record for record in caplog.records if "Lookup column" in record.getMessage()]

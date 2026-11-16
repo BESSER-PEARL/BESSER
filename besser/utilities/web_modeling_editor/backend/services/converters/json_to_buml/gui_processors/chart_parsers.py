@@ -592,12 +592,16 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                         (end for end in ends if getattr(end.type, 'name', None) == target_name),
                         key=lambda end: end.name,
                     )
+                    # Of several, the end the column's label names ("Origin", "Destination airport")
+                    named = [end for end in matches if _names_end(label, end.name)]
+                    if len(named) == 1:
+                        matches = named
                     if matches:
                         path_end = matches[0]
                     if len(matches) > 1:
                         logger.warning(
                             "Lookup column %r names the class %s, which %s reaches through %d associations: "
-                            "using %r. Name the association end in the column's 'path' to choose another.",
+                            "using %r. Name the association end in the column's label or 'path' to choose another.",
                             label or lookup_path, target_name, domain_class.name, len(matches), path_end.name,
                         )
 
@@ -631,6 +635,14 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                 columns_list.append(column)
 
     return columns_list
+
+
+def _names_end(label: str, end_name: str) -> bool:
+    """Whether a column label names an association end: the end's name is the
+    label or one of its words, case and separators aside."""
+    words = re.findall(r"[a-z0-9]+", (label or "").lower())
+    end_key = re.sub(r"[^a-z0-9]", "", end_name.lower())
+    return bool(end_key) and (end_key == "".join(words) or end_key in words)
 
 
 def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:

@@ -50,6 +50,9 @@ EVENT_RUN_START = "run_start"
 EVENT_PHASE_ENTER = "phase_enter"
 EVENT_PHASE_EXIT = "phase_exit"
 EVENT_TURN_START = "turn_start"
+# The turn's LLM response arrived: what the client spends after it (validation, the requirements
+# judge, a runtime gate's checks) is not the turn's.
+EVENT_TURN_END = "turn_end"
 EVENT_TOOL_CALL = "tool_call"
 EVENT_COST_UPDATE = "cost_update"
 EVENT_COMPACTION = "compaction"
@@ -73,7 +76,7 @@ EVENT_REQUIREMENTS = "requirements"
 # when the writer has a ``usage`` source. They bound the run's LLM turns, so the
 # tokens of one turn are the difference between two of them.
 USAGE_EVENTS = frozenset({
-    EVENT_RUN_START, EVENT_PHASE_ENTER, EVENT_PHASE_EXIT, EVENT_TURN_START, EVENT_RUN_END,
+    EVENT_RUN_START, EVENT_PHASE_ENTER, EVENT_PHASE_EXIT, EVENT_TURN_START, EVENT_TURN_END, EVENT_RUN_END,
 })
 
 

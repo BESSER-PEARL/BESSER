@@ -182,9 +182,11 @@ resumed run.
        element to its lines.
    * - ``LLM`` tool calls
      - One per agent turn (Phases 2 and 3), with the model that served it, the
-       provider, and the tokens of that turn (input counts cache reads and
-       writes). The LLM calls a phase made outside its turns (generator selection,
-       planning, the judge) are one more call when they used tokens. A turn's tool
+       provider, and the tokens of that turn, from its start to its LLM response
+       (input counts cache reads and writes; a context compaction before the
+       request is part of the turn). The LLM calls a phase made outside its turns
+       (generator selection, planning, Phase 3 validation, the judge, the runtime
+       gate's checks) are one more call when they used tokens. A turn's tool
        calls (arguments without file bodies), validation findings, gate outcomes
        and the run's final findings are its log records, at most 40 per call and
        500 characters each, redacted.

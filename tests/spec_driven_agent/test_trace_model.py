@@ -27,7 +27,7 @@ from besser.spec_driven_agent.state.trace_model import (
 )
 from besser.spec_driven_agent.state.tracing import (
     EVENT_GENERATOR_OUTPUT, EVENT_PHASE_ENTER, EVENT_PHASE_EXIT, EVENT_REQUIREMENTS, EVENT_RUN_END,
-    EVENT_RUN_START, EVENT_TOOL_CALL, EVENT_TURN_START, EVENT_VALIDATION_ISSUE, TraceWriter,
+    EVENT_RUN_START, EVENT_TOOL_CALL, EVENT_TURN_END, EVENT_TURN_START, EVENT_VALIDATION_ISSUE, TraceWriter,
 )
 from besser.utilities.generation_trace import ElementRef, InputModel
 from besser.utilities.web_modeling_editor.backend.services.converters import process_trace, trace_buml_to_json
@@ -489,3 +489,23 @@ def test_a_run_trace_keeps_contents_with_their_credentials_redacted(tmp_path):
 
     file = _file(_build(tmp_path), "site/settings.py")
     assert file.content == 'DEBUG = True\nSECRET_KEY = "[REDACTED]"\n' and file.content_hash == _sha(settings)
+
+
+def test_a_turn_ends_at_its_llm_response_and_later_calls_are_the_phases(tmp_path):
+    # A Phase 3 repair turn, then the judge: its tokens once went to the turn, still open until the phase exit.
+    log = _Log(tmp_path)
+    log.write(EVENT_RUN_START)
+    log.write(EVENT_PHASE_ENTER, phase="phase3")
+    log.write(EVENT_TURN_START, turn=1, phase="phase3")
+    log.spend(tokens_in=1000, tokens_out=100)
+    log.write(EVENT_TURN_END, turn=1, phase="phase3")
+    log.write(EVENT_TOOL_CALL, turn=1, tool="read_file", success=True, input={"path": "a.py"})
+    log.spend(tokens_in=400, tokens_out=40)  # the requirements judge
+    log.write(EVENT_PHASE_EXIT, phase="phase3")
+    log.write(EVENT_RUN_END)
+    _recipe(tmp_path)
+
+    calls = _calls(_build(tmp_path), LLM)
+    assert [(c.input_tokens, c.output_tokens) for c in calls] == [(1000, 100), (400, 40)]
+    assert any("read_file" in log.content for log in calls[0].logs)
+    assert "outside the agent's turns" in calls[1].logs[0].content

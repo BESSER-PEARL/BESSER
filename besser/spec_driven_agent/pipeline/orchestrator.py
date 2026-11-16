@@ -192,6 +192,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_TARGET,
     EVENT_TOOL_CALL,
+    EVENT_TURN_END,
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
     TRACE_FILENAME,
@@ -2012,6 +2013,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = str(e)
                 self._phase2_quota_exhausted = _is_quota_exhausted(e)
                 break
+            self._trace.write(EVENT_TURN_END, turn=turn + 1)
 
             # The call may have switched the client to its outage
             # fallback model mid-flight — surface that to the UI.

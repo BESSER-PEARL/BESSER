@@ -58,6 +58,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_EXIT,
     EVENT_ROLLBACK,
     EVENT_SNAPSHOT,
+    EVENT_TURN_END,
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
 )
@@ -1073,6 +1074,7 @@ class Phase3RepairMixin:
                 self._phase3_interrupted = True
                 self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
                 return edits
+            self._trace.write(EVENT_TURN_END, turn=self.total_turns, phase="phase3")
             # A stop can arrive while a provider request is in flight. Do not
             # apply its returned mutations after cancellation. The final allowed
             # turn may still execute its tools; it is not a new provider call.

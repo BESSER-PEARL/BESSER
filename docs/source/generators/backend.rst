@@ -240,11 +240,17 @@ How the model shapes these endpoints:
   refused with ``409`` and a message naming that record, including when the
   record is required by a part that would be deleted with its whole.
 
-Known limits for an association from a class to itself: one carried by an
-association class is not supported (the generated app does not start
-serving), and neither is ``nested_creations=True`` with a many-to-many. A
-record that is, directly or through others, one of its own parts cannot be
-deleted (``409``) until the cycle is broken.
+Known limits:
+
+* An association from a class to itself carried by an association class is
+  not supported (the generated app does not start serving).
+* A record that is, directly or through others, one of its own parts cannot be
+  deleted (``409``) until the cycle is broken. In a one-to-many from a class to
+  itself that is not a composition, deleting a record whose to-one end points
+  at the record itself answers ``500``; clear that end with an update first.
+* With ``nested_creations=True``, a many-to-many end that carries a new object
+  instead of an id answers ``500``; create the related record first and send
+  its id.
 
 .. versionchanged:: 8.0.0
    The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``

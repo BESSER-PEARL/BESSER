@@ -76,8 +76,54 @@ _TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
 
 
 def _page_key(reference: Any) -> str:
-    """A page reference (id, name, route or slug) in one comparable form."""
-    return re.sub(r"[^a-z0-9]+", "-", str(reference or "").lower()).strip("-")
+    """A page reference (id, name, route or slug) in one comparable form: its
+    letters and digits (any script, as in ``page_route``), runs of others as ``-``."""
+    return re.sub(r"[\W_]+", "-", str(reference or "").lower()).strip("-")
+
+
+# A route stored on a page that the app can use as is: the characters of a
+# derived route (letters of any script, digits, ``_``, ``-``), one or more per segment.
+_STORED_ROUTE = re.compile(r"(?:/[\w-]+)+")
+
+
+def _screen_fallback(page: Dict[str, Any], page_index: int, frame_index: int) -> str:
+    """The name of a page's frame when the page has none of its own (or several frames)."""
+    fallback = page.get("name", f"Page_{page_index + 1}") or f"Screen_{page_index + 1}"
+    if len(page.get("frames", [])) > 1:
+        fallback = f"{fallback}_{frame_index + 1}"
+    return fallback
+
+
+def _page_routes(pages: List[Dict[str, Any]]) -> Dict[tuple, str]:
+    """The route of each frame of each page, by ``(page index, frame index)``.
+
+    A page keeps the ``route_path`` stored on it when it is URL-safe, else its
+    route comes from its name (``page_route``). A route another page already has
+    gets ``-2``, ``-3``...; pages are taken in id order, so reordering or
+    exporting the pages does not swap the routes of two pages with one name.
+    """
+    routes: Dict[tuple, str] = {}
+    used: Set[str] = set()
+    for page_index in sorted(range(len(pages)), key=lambda i: (str(pages[i].get("id") or ""), i)):
+        page = pages[page_index]
+        stored = str(page.get("route_path") or "")
+        for frame_index, _frame in enumerate(page.get("frames", [])):
+            route = stored if _STORED_ROUTE.fullmatch(stored) else ""
+            if route in used:
+                route = ""
+            if stored and not route:
+                logger.warning("Page %r: its route %r is not a URL-safe route of its own; deriving one from "
+                               "its name.", page.get("name"), stored)
+            route = route or page_route(page.get("name") or _screen_fallback(page, page_index, frame_index))
+            if route == "/":
+                route = f"/page-{page_index + 1}"
+            base_route, suffix = route, 1
+            while route in used:
+                suffix += 1
+                route = f"{base_route}-{suffix}"
+            used.add(route)
+            routes[(page_index, frame_index)] = route
+    return routes
 
 
 def _holds_only_text(component: Dict[str, Any]) -> bool:
@@ -543,17 +589,14 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     pages = gui_model_json.get("pages", [])
     screen_list: List[Screen] = []
     page_id_to_screen: Dict[str, Screen] = {}  # Map page IDs to Screen objects
-    used_routes: Set[str] = set()
+    routes = _page_routes(pages)
 
     for page_index, page in enumerate(pages):
         page_id = page.get("id")  # Get the page ID for target-screen resolution
-        page_name = page.get("name", f"Page_{page_index + 1}")
         frames = page.get("frames", [])
         for frame_index, frame in enumerate(frames):
             wrapper = frame.get("component", {}) or {}
-            screen_fallback = page_name or f"Screen_{page_index + 1}"
-            if len(frames) > 1:
-                screen_fallback = f"{screen_fallback}_{frame_index + 1}"
+            screen_fallback = _screen_fallback(page, page_index, frame_index)
             screen_name = get_unique_name(wrapper, screen_fallback)
 
             # Extract screen properties
@@ -567,16 +610,6 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 x_dpi = str(page_attrs.get("x-dpi") or page_attrs.get("dpi") or "")
                 y_dpi = str(page_attrs.get("y-dpi") or page_attrs.get("dpi") or "")
 
-            # Route from the page name, unique among the pages
-            route_path = page_route(page.get("name") or screen_fallback)
-            if route_path == "/":
-                route_path = f"/page-{page_index + 1}"
-            base_route, suffix = route_path, 1
-            while route_path in used_routes:
-                suffix += 1
-                route_path = f"{base_route}-{suffix}"
-            used_routes.add(route_path)
-
             screen = Screen(
                 name=screen_name,
                 description=str(page.get("name") or screen_fallback),
@@ -585,7 +618,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 x_dpi=x_dpi,
                 y_dpi=y_dpi,
                 screen_size=screen_size,
-                route_path=route_path,
+                route_path=routes[(page_index, frame_index)],
             )
             styling = resolve_component_styling(wrapper, style_map)
             if styling:  # Only assign if styling exists

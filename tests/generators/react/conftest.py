@@ -45,12 +45,15 @@ def class_diagram(classes, associations=()):
 
 
 def gui_json(pages):
-    """GrapesJS project JSON; ``pages`` = {Name: [component, ...]}."""
-    return {"pages": [
-        {"id": f"page-{name.lower()}", "name": name,
-         "frames": [{"component": {"type": "wrapper", "components": components}}]}
-        for name, components in pages.items()
-    ], "styles": []}
+    """GrapesJS project JSON; ``pages`` = {Name: [component, ...]}, or {Name: {"components":
+    [...], other page keys such as "id" or "route_path"}}."""
+    project_pages = []
+    for name, content in pages.items():
+        page = dict(content) if isinstance(content, dict) else {"components": content}
+        components = page.pop("components")
+        project_pages.append({"id": f"page-{name.lower()}", "name": name, **page,
+                              "frames": [{"component": {"type": "wrapper", "components": components}}]})
+    return {"pages": project_pages, "styles": []}
 
 
 def _read(path):

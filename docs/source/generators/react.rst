@@ -102,9 +102,20 @@ link with ``target="_blank"``, stays a plain anchor. When the GUI comes from the
 web editor, a link names its page by a ``data-navigate-to`` attribute or by a
 site-relative ``href`` matching the page's route, name or id.
 
-A page's route is ``/`` and its name in lower case, with every run of characters
-other than letters, digits and ``_`` as one hyphen (``Orders & Returns`` gives
-``/orders-returns``); a route another page already has is numbered (``-2``).
+A page's route is the route set on the page in the web editor when it is URL-safe
+(letters of any script, digits, ``_``, ``-`` and ``/``). Otherwise it is ``/`` and the page name
+in lower case, with every run of characters other than letters (of any script),
+digits and ``_`` as one hyphen and no hyphen at either end (``Orders & Returns``
+gives ``/orders-returns``). A route another page already has is numbered (``-2``,
+``-3``) in the order of the pages' ids, so reordering pages does not swap them.
+
+Earlier versions used the name in lower case with each space as a hyphen and
+ignored the route set in the editor. A page's route changes when that old route
+held a character other than a letter, digit, ``_`` or ``-`` (``My.Page`` was
+``/my.page``, now ``/my-page``), two hyphens in a row or a hyphen at either end
+(a name with repeated, leading or trailing spaces), or when the page has a URL-safe
+route of its own in the editor. Links written with an old route still open their
+page; a bookmark of an old route opens the main page.
 
 Data refresh
 ^^^^^^^^^^^^

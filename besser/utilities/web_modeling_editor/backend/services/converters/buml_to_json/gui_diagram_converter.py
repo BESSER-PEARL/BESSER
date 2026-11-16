@@ -323,6 +323,8 @@ def _serialize_screen(screen: Screen) -> Dict[str, Any]:
         "name": screen.description or screen.name or screen_id,
         "frames": [frame],
     }
+    if screen.route_path:
+        page["route_path"] = screen.route_path
     if page_attrs:
         page["attributes"] = page_attrs
     return page

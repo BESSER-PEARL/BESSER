@@ -127,6 +127,10 @@ reload when it changes. A record saved in one component therefore shows up in
 the others on the page without a reload. Custom code that writes to the backend
 calls ``notifyDataChanged()`` to get the same effect.
 
+The table context's ``refreshTable`` and ``registerTableRefresh`` are deprecated:
+generated tables no longer register a refresh function, ``refreshTable`` calls
+``notifyDataChanged()`` (and a function custom code registered for that table).
+
 Chart Components
 ^^^^^^^^^^^^^^^^
 

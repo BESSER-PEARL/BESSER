@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from "react";
+import { notifyDataChanged } from "../components/runtime/dataVersion";
 
 // Record actions a table performs with its own dialog and endpoint; a
 // CrudButton on the page asks the bound table to run one.
@@ -14,6 +15,10 @@ interface TableContextValue {
   selectedRows: Record<string, any>;
   setSelectedRow: (tableId: string, row: any) => void;
   getSelectedRow: (tableId: string) => any;
+  /** @deprecated Every data-bound component reloads after a write; call notifyDataChanged(). */
+  refreshTable: (tableId: string) => void;
+  /** @deprecated Generated tables reload by themselves; a function registered here runs on refreshTable. */
+  registerTableRefresh: (tableId: string, refreshFn: () => void) => void;
   registerTableActions: (tableId: string, actions: TableActions) => () => void;
   // Runs the action on the table (update/delete on its selected row) and
   // returns why it could not, or null. With `whenMounted` a table that is not
@@ -27,6 +32,7 @@ export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedRows, setSelectedRows] = useState<Record<string, any>>({});
   const tableActions = useRef<Record<string, TableActions>>({});
   const pendingActions = useRef<Record<string, TableActionName>>({});
+  const refreshFunctions = useRef<Record<string, () => void>>({});
 
   const setSelectedRow = useCallback((tableId: string, row: any) => {
     setSelectedRows((prev) => prev[tableId] === row ? prev : ({
@@ -38,6 +44,15 @@ export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const getSelectedRow = (tableId: string) => {
     return selectedRows[tableId];
   };
+
+  const registerTableRefresh = useCallback((tableId: string, refreshFn: () => void) => {
+    refreshFunctions.current[tableId] = refreshFn;
+  }, []);
+
+  const refreshTable = useCallback((tableId: string) => {
+    notifyDataChanged();
+    refreshFunctions.current[tableId]?.();
+  }, []);
 
   const registerTableActions = useCallback((tableId: string, actions: TableActions) => {
     tableActions.current[tableId] = actions;
@@ -78,7 +93,10 @@ export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   return (
-    <TableContext.Provider value={{ selectedRows, setSelectedRow, getSelectedRow, registerTableActions, runTableAction }}>
+    <TableContext.Provider value={{
+      selectedRows, setSelectedRow, getSelectedRow, refreshTable, registerTableRefresh, registerTableActions,
+      runTableAction,
+    }}>
       {children}
     </TableContext.Provider>
   );

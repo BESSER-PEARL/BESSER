@@ -53,7 +53,8 @@ def test_every_data_bound_component_reloads_on_a_change(build_app):
 def test_the_table_no_longer_keeps_its_own_refresh_registry(build_app):
     app = build_app(CLASSES, PAGES)
 
-    for source in (app.file("contexts", "TableContext.tsx"), app.file("components", "MethodButton.tsx"),
+    # The table context keeps them only as deprecated wrappers (see below).
+    for source in (app.file("components", "MethodButton.tsx"),
                    app.file("components", "table", "TableComponent.tsx")):
         assert "refreshTable" not in source and "registerTableRefresh" not in source
 
@@ -66,3 +67,19 @@ def test_deleting_a_row_asks_for_confirmation(build_app):
     remove = remove[:remove.index("</button>")]
     assert "window.confirm(" in remove
     assert remove.index("window.confirm(") < remove.index("deleteRow(row)")
+
+
+def test_the_former_table_refresh_api_is_kept_as_deprecated_wrappers(build_app):
+    """Pages customised in an older generated app call refreshTable / registerTableRefresh;
+    they must still compile and reload the data."""
+    context = build_app(CLASSES, PAGES).file("contexts", "TableContext.tsx")
+
+    for member in ("refreshTable: (tableId: string) => void;",
+                   "registerTableRefresh: (tableId: string, refreshFn: () => void) => void;"):
+        declared = context[:context.index(member)]
+        assert declared.rstrip().endswith("*/") and "@deprecated" in declared[declared.rindex("/**"):], member
+    refresh = context[context.index("const refreshTable"):]
+    assert "notifyDataChanged();" in refresh[:refresh.index("}, [")]
+    provided = context[context.index("<TableContext.Provider value={{"):]
+    assert "refreshTable" in provided[:provided.index("}}>")]
+    assert "registerTableRefresh" in provided[:provided.index("}}>")]

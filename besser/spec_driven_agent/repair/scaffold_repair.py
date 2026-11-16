@@ -280,20 +280,30 @@ _DOCKERIGNORE_ALWAYS = (
 )
 # Left out only when the Dockerfile makes its own: one that installs packages
 # does not need the host's, one that builds does not need the host's output.
-# A Python service's ``.env`` holds its secrets; a Vite ``.env`` is build input.
 _DOCKERIGNORE_WHEN = (
     (_re.compile(r"\b(?:npm\s+(?:ci|install)|yarn\s+install|pnpm\s+install)\b"), ("**/node_modules",)),
     (_re.compile(r"(?m)^\s*RUN\b.*\b(?:run\s+build|yarn\s+build|vite\s+build)\b"), ("dist", "build")),
-    (_re.compile(r"\bpip3?\s+install\b"), ("**/.env",)),
 )
-_COPIES_WHOLE_FOLDER_RE = _re.compile(r"(?im)^\s*(?:COPY|ADD)\s+(?:--(?!from)\S+\s+)*\.\s+\S")
+# A Python service's env files hold its secrets; the example file documents them.
+_PYTHON_SERVICE_RE = _re.compile(r"\bpip3?\s+install\b|\bpoetry\s+install\b|\buv\s+(?:sync|pip)\b|\bpyproject\.toml\b")
+_PYTHON_ENV_FILES = ("**/.env", "**/.env.*", "!**/.env.example")
+_COPIES_WHOLE_FOLDER_RE = _re.compile(r"(?im)^\s*(?:COPY|ADD)\s+(?:--(?!from)\S+\s+)*\./?\s+\S")
 
 
-def _dockerignore_for(dockerfile: str) -> str:
-    """The ``.dockerignore`` for a Dockerfile, or "" when it copies named paths only."""
+def _dockerignore_for(dockerfile: str, vite_folders: tuple = ()) -> str:
+    """The ``.dockerignore`` for a Dockerfile, or "" when it copies named paths only.
+
+    ``vite_folders`` are the Vite projects in the build context, by relative
+    path: their ``.env`` and ``.env.<mode>`` are build input, never left out.
+    """
     if not _COPIES_WHOLE_FOLDER_RE.search(dockerfile):
         return ""
     extra = [pattern for when, patterns in _DOCKERIGNORE_WHEN if when.search(dockerfile) for pattern in patterns]
+    if _PYTHON_SERVICE_RE.search(dockerfile):
+        extra.extend(_PYTHON_ENV_FILES)
+        for folder in vite_folders:
+            prefix = "" if folder == "." else folder + "/"
+            extra.extend((f"!{prefix}.env", f"!{prefix}.env.*"))
     return "\n".join((*extra, *_DOCKERIGNORE_ALWAYS)) + "\n"
 
 _COMPOSE_TEMPLATE = """\
@@ -471,6 +481,19 @@ def _find_vite_react_frontends(output_dir: str) -> list:
         if "react" in declared and uses_vite:
             found.append((folder, manifest))
     return found
+
+
+def _uses_vite(folder: str, files: list) -> bool:
+    """A Vite project: a Vite config, or Vite declared in its package.json."""
+    if any(name.startswith(_VITE_CONFIG_PREFIX) for name in files):
+        return True
+    if "package.json" not in files:
+        return False
+    try:
+        manifest = json.loads(_read_text(os.path.join(folder, "package.json")) or "{}")
+    except ValueError:
+        return False
+    return isinstance(manifest, dict) and "vite" in _declared(manifest)
 
 
 def _existing_vite_config(frontend_dir: str):
@@ -742,7 +765,9 @@ def _ensure_dockerignores(output_dir: str) -> list:
     for folder, files in _iter_project_dirs(output_dir):
         if "Dockerfile" not in files or ".dockerignore" in files:
             continue
-        content = _dockerignore_for(_read_text(os.path.join(folder, "Dockerfile")))
+        vite_folders = tuple(os.path.relpath(project, folder).replace("\\", "/")
+                             for project, names in _iter_project_dirs(folder) if _uses_vite(project, names))
+        content = _dockerignore_for(_read_text(os.path.join(folder, "Dockerfile")), vite_folders)
         if content and _write_text(os.path.join(folder, ".dockerignore"), content):
             written.append(os.path.relpath(os.path.join(folder, ".dockerignore"), output_dir).replace("\\", "/"))
     return written

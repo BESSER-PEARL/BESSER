@@ -366,19 +366,25 @@ def test_readme_moves_the_api_port_without_editing_source(tmp_path):
 
 def _docker_ignores(patterns, rel):
     """Docker's rule for the pattern shapes used: ``**/x`` matches a path
-    component at any depth, a bare ``x`` the first one; a matched folder
-    takes everything under it."""
+    component at any depth, any other pattern a path from the context root; a
+    matched folder takes everything under it; the last pattern that matches
+    decides, and a ``!`` pattern keeps the path."""
     parts = rel.split("/")
-    return any(
-        any(fnmatch.fnmatchcase(part, pattern[3:]) for part in parts) if pattern.startswith("**/")
-        else fnmatch.fnmatchcase(parts[0], pattern)
-        for pattern in patterns
-    )
+    prefixes = ["/".join(parts[:end]) for end in range(1, len(parts) + 1)]
+    ignored = False
+    for pattern in patterns:
+        keep = pattern.startswith("!")
+        pattern = pattern.removeprefix("!")
+        if (any(fnmatch.fnmatchcase(part, pattern[3:]) for part in parts) if pattern.startswith("**/")
+                else any(fnmatch.fnmatchcase(prefix, pattern) for prefix in prefixes)):
+            ignored = not keep
+    return ignored
 
 
 _LEFT_BY_A_LOCAL_RUN = {
     "backend": ("data/app.db", "data/app.db-wal", ".venv/lib/site.py", "venv/pyvenv.cfg",
-                "routers/__pycache__/order.cpython-311.pyc", ".env", ".env.local", "server.log"),
+                "routers/__pycache__/order.cpython-311.pyc", ".env", ".env.local", ".env.production",
+                ".env.prod", "server.log"),
     "frontend": ("node_modules/react/index.js", "dist/index.html", "build/index.html",
                  ".env.local", ".env.production.local", "npm-debug.log"),
 }
@@ -448,6 +454,50 @@ def test_a_dockerfile_that_serves_what_the_host_built_keeps_it_in_the_context(tm
     assert not _docker_ignores(patterns, "node_modules/express/index.js")
     assert not _docker_ignores(patterns, "dist/server.js")
     assert _docker_ignores(patterns, "data/app.db")
+
+
+_PYTHON_SECRETS = (".env", ".env.production", ".env.prod", "config/.env", "data/app.db")
+_PYTHON_SOURCES = (".env.example", "main.py", "pyproject.toml")
+
+
+@pytest.mark.parametrize("dockerfile", [
+    "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\n",
+    "FROM python:3.12-slim\nCOPY --from=ghcr.io/astral-sh/uv:0.5 /uv /bin/uv\nWORKDIR /app\nCOPY . .\n"
+    "RUN uv sync --frozen\n",
+    "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN poetry install --no-root\n",
+    "FROM python:3.12-slim\nWORKDIR /app\nCOPY pyproject.toml pdm.lock ./\nRUN pdm install --prod\nCOPY . .\n",
+    "FROM python:3.12-slim\nCOPY ./ /app/\nRUN pip install -r /app/requirements.txt\n",
+], ids=["pip", "uv", "poetry", "pyproject", "copy-dot-slash"])
+def test_a_python_service_leaves_out_its_env_files_but_not_the_example(tmp_path, dockerfile):
+    """Whatever installs it, a Python service's env files hold its secrets."""
+    (tmp_path / "service").mkdir()
+    (tmp_path / "service" / "Dockerfile").write_text(dockerfile, encoding="utf-8")
+
+    assert ensure_frontend_scaffold(str(tmp_path)) == ["service/.dockerignore"]
+    patterns = (tmp_path / "service" / ".dockerignore").read_text(encoding="utf-8").split()
+    for secret in _PYTHON_SECRETS:
+        assert _docker_ignores(patterns, secret), secret
+    for source in _PYTHON_SOURCES:
+        assert not _docker_ignores(patterns, source), source
+
+
+def test_a_combined_image_keeps_the_vite_build_input_and_leaves_out_the_service_secrets(tmp_path):
+    """One root Dockerfile that builds the frontend and installs the API: the
+    Vite build reads frontend/.env, the API's .env holds its secrets."""
+    _flat_app(tmp_path)
+    (tmp_path / "Dockerfile").write_text(
+        "FROM node:22-alpine AS ui\nWORKDIR /ui\nCOPY frontend/ .\nRUN npm ci && npm run build\n"
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -r backend/requirements.txt\n"
+        "COPY --from=ui /ui/dist ./frontend/dist\n", encoding="utf-8")
+
+    assert ".dockerignore" in ensure_frontend_scaffold(str(tmp_path))
+    patterns = (tmp_path / ".dockerignore").read_text(encoding="utf-8").split()
+    for leftover in ("backend/.env", "backend/.env.production", ".env", "frontend/.env.local",
+                     "frontend/.env.production.local", "frontend/node_modules/react/index.js"):
+        assert _docker_ignores(patterns, leftover), leftover
+    for needed in ("frontend/.env", "frontend/.env.production", "frontend/package.json",
+                   "backend/.env.example", "backend/main_api.py"):
+        assert not _docker_ignores(patterns, needed), needed
 
 
 def test_keeps_an_existing_dockerignore(tmp_path):

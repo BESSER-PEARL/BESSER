@@ -784,8 +784,9 @@ def _covers_required(domain_class, inputs) -> bool:
 
 def _infer_form_class(inputs, domain_model):
     """The one class whose attributes name every input (own attributes first,
-    so a ``name``/``email`` form binds to Person, not to each subclass) and
-    that the inputs can create a record of."""
+    so a ``name``/``email`` form binds to Person, not to each subclass; an
+    input may also be named after a to-one association end) and that the
+    inputs can create a record of."""
     if not inputs or domain_model is None:
         return None
     classes = sorted(domain_model.get_classes(), key=lambda c: c.name)
@@ -793,6 +794,7 @@ def _infer_form_class(inputs, domain_model):
         matches = []
         for domain_class in classes:
             names = {_normalized(attr.name) for attr in attributes_of(domain_class)}
+            names.update(_normalized(end.name) for end in _parent_ends(domain_class, domain_model))
             if all(any(key in names for key in _input_keys(i)) for i in inputs):
                 matches.append(domain_class)
         if len(matches) == 1:

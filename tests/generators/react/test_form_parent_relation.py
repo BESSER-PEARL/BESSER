@@ -98,3 +98,30 @@ def test_the_select_and_the_table_dialog_share_one_lookup(build_app):
     assert shared in app.file("components", "runtime", "LookupSelect.tsx")
     assert shared in app.file("components", "table", "TableComponent.tsx")
     assert "export const fetchLookupOptions" in app.file("components", "runtime", "lookup.ts")
+
+
+def test_a_form_bound_by_its_input_names_gets_the_parent_select_too(build_app, jsx):
+    """No ``data-source``: the inputs name the class, and its mandatory parent is still asked for."""
+    form = {"tagName": "form", "components": [
+        _input("quantity", "number"),
+        {"tagName": "button", "components": [{"type": "textnode", "content": "Add line"}]},
+    ]}
+    app = build_app(CLASSES, {"Lines": [form]}, ASSOCIATIONS)
+    page = app.page("Lines")
+
+    assert _gui_form(app.gui_model).data_binding.domain_concept.name == "OrderLine"
+    assert 'endpoint="/orderline/"' in jsx(page, "FormBlock")
+    assert 'entity="Order"' in jsx(page, "LookupSelect") and "required={true}" in jsx(page, "LookupSelect")
+
+
+def test_a_designed_parent_control_does_not_stop_the_form_from_being_bound(build_app, jsx):
+    form = {"tagName": "form", "components": [
+        _input("quantity", "number"),
+        {"tagName": "select", "attributes": {"name": "order"}},
+        {"tagName": "button", "components": [{"type": "textnode", "content": "Add line"}]},
+    ]}
+    app = build_app(CLASSES, {"Lines": [form]}, ASSOCIATIONS)
+    page = app.page("Lines")
+
+    assert _gui_form(app.gui_model).data_binding.domain_concept.name == "OrderLine"
+    assert page.count("<LookupSelect") == 1 and 'entity="Order"' in jsx(page, "LookupSelect")

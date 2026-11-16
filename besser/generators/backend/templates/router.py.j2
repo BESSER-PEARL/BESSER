@@ -159,6 +159,12 @@ router = APIRouter()
    class, an association from a class to itself). Variables use the same name, prefixed
    when it is the name of the class, so that none is the entity's variable or its path
    parameter. A related record is always "related_<name>", the entity "db_<class>". #}
+{# Attributes a new link of each association class must carry (required, no default).
+   A bare id carries none: it can keep a link that exists, not create one. #}
+{% set link_required = {} %}
+{% for name, info in assoc_classes.items() %}
+    {% do link_required.update({name: info.attributes | selectattr('is_required') | map(attribute='name') | list}) %}
+{% endfor %}
 {% set mn_targets = ns.end_name_multiple | map(attribute=1) | list %}
 {% set mn_name = {} %}
 {% set mn_var = {} %}
@@ -554,6 +560,11 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             related_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
             if not related_{{x[1] | lower}}:
                 raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+            {% if link_required[x[4]] %}
+            missing = [name for name in {{ link_required[x[4]] }} if link_attrs(link, {{ link_required[x[4]] }}).get(name) is None]
+            if missing:
+                raise HTTPException(status_code=422, detail="{{x[4]}} requires " + ", ".join(missing))
+            {% endif %}
     {% else %}
     {# To-one end through an association class: the link is optional at creation
        time (it can be established later from the other side or via the
@@ -564,6 +575,11 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         related_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }} == {{x[3]}}_target).first()
         if not related_{{x[1] | lower}}:
             raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[3]}}_target{% raw %}}{% endraw %} not found")
+        {% if link_required[x[4]] %}
+        missing = [name for name in {{ link_required[x[4]] }} if link_attrs({{x[3]}}_payload, {{ link_required[x[4]] }}).get(name) is None]
+        if missing:
+            raise HTTPException(status_code=422, detail="{{x[4]}} requires " + ", ".join(missing))
+        {% endif %}
     {% endif %}
     {% endfor %}
     {% endif %}
@@ -1123,6 +1139,11 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
         for {{x[3]}}_target, link in incoming_{{x[3]}}_links.items():
             link_row = existing_{{x[3]}}_links.get({{x[3]}}_target)
             if link_row is None:
+                {% if link_required[x[4]] %}
+                missing = [name for name in {{ link_required[x[4]] }} if link_attrs(link, {{ link_required[x[4]] }}).get(name) is None]
+                if missing:
+                    raise HTTPException(status_code=422, detail="{{x[4]}} requires " + ", ".join(missing))
+                {% endif %}
                 database.add({{x[4]}}(
                     {{x[2]}}_id=db_{{ class.name | lower }}.{{ pk }},
                     {{x[3]}}_id={{x[3]}}_target,
@@ -1414,10 +1435,8 @@ async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 
     if existing:
         raise HTTPException(status_code=400, detail="Relationship already exists")
-    {% set required_link_attrs = assoc_classes[x[4]].attributes | selectattr('is_required') | map(attribute='name') | list %}
-    {% if required_link_attrs %}
-
-    missing = [name for name in {{ required_link_attrs }} if not link or link.get(name) is None]
+    {% if link_required[x[4]] %}
+    missing = [name for name in {{ link_required[x[4]] }} if link_attrs(link, {{ link_required[x[4]] }}).get(name) is None]
     if missing:
         raise HTTPException(status_code=422, detail="{{x[4]}} requires " + ", ".join(missing))
     {% endif %}

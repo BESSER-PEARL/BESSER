@@ -94,9 +94,6 @@ class PydanticGenerator(GeneratorInterface):
         assoc_by_association = {}
         assoc_link_meta = []
         assoc_end_fields = {}
-        # Links that may travel as a bare id: every attribute of the association
-        # class is optional or has a default, so the id alone makes a valid row.
-        bare_id_links = set()
         pk_types = pk_python_types(self.domain_model)
         for cls in sorted_classes:
             if not isinstance(cls, AssociationClass):
@@ -120,9 +117,6 @@ class PydanticGenerator(GeneratorInterface):
                     if not is_server_owned_attribute(attr)
                 ],
             })
-            if all(attr.is_optional or attr.default_value is not None
-                   for attr in cls.attributes if not is_server_owned_attribute(attr)):
-                bare_id_links.add(link_class)
             assoc_end_fields[cls.name] = [
                 {"name": end.name, "type_name": end.type.name}
                 for end in sorted(cls.association.ends, key=lambda e: e.name)
@@ -142,7 +136,6 @@ class PydanticGenerator(GeneratorInterface):
                 assoc_by_association=assoc_by_association,
                 assoc_link_meta=assoc_link_meta,
                 assoc_end_fields=assoc_end_fields,
-                bare_id_links=bare_id_links,
                 sort_by_timestamp=sort_by_timestamp,
             )
             f.write(generated_code)

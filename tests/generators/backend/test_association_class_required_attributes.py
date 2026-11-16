@@ -1,9 +1,10 @@
 """Links of an association class whose attributes are required.
 
-The relation field accepted a bare id next to the ``{target, <attributes>}``
-payload. With a required attribute the id alone can never make a valid link:
-the request passed validation and failed in the database, and the client got
-the driver's message (409 "NOT NULL constraint failed: ...").
+The relation field accepts a bare id next to the ``{target, <attributes>}``
+payload. With a required attribute the id alone cannot create a link: the
+request failed in the database and the client got the driver's message (409
+"NOT NULL constraint failed: ..."). A bare id that names a link which already
+exists changes nothing and stays valid.
 """
 from besser.BUML.metamodel.structural import (
     AssociationClass, BinaryAssociation, Class, DomainModel, IntegerType, Multiplicity, Property, StringType,
@@ -19,9 +20,14 @@ SCRIPT = """
     other = client.post("/course/", json={"title": "Logic"}).json()["course"]["id"]
     no_body = client.post(f"/student/{student}/courses/{other}/")
     with_body = client.post(f"/student/{student}/courses/{other}/", json={"grade": 4})
+    third = client.post("/course/", json={"title": "Sets"}).json()["course"]["id"]
+    kept = client.put(f"/student/{student}/", json={"name": "Bob", "courses": [course, other], "clubs": [club]})
+    added = client.put(f"/student/{student}/", json={"name": "Bob", "courses": [course, other, third], "clubs": [club]})
+    grades = sorted(link["grade"] for link in client.get(f"/student/{student}/courses/").json()["courses_links"])
     print(json.dumps({
         "bare": [bare.status_code, bare.json()], "full": [full.status_code, full.json()],
         "no_body": [no_body.status_code, no_body.json()], "with_body": with_body.status_code,
+        "kept": [kept.status_code, kept.json()], "added": [added.status_code, added.json()], "grades": grades,
         "students": [item["name"] for item in client.get("/student/").json()],
     }))
 """
@@ -56,7 +62,7 @@ def test_a_bare_id_is_refused_when_the_link_needs_an_attribute(run_generated_bac
 
     status, body = result["bare"]
     assert status == 422, body
-    assert "constraint" not in str(body)
+    assert body["detail"] == "Enrolled requires grade"
     assert result["students"] == ["Bob"]
 
     # A link that needs no attribute still travels as its id.
@@ -73,8 +79,19 @@ def test_the_link_route_names_the_missing_attribute(run_generated_backend):
     assert result["with_body"] == 200
 
 
-def test_the_create_schema_offers_the_bare_id_only_where_it_is_enough(tmp_path):
+def test_a_bare_id_keeps_a_link_that_exists(run_generated_backend):
+    """Sending back the ids a GET returned is a valid update; only a new link needs its attributes."""
+    result = run_generated_backend(_model(), SCRIPT)
+    status, body = result["kept"]
+    assert status == 200, body
+    assert sorted(body["courses_ids"]) == [1, 2]
+    status, body = result["added"]
+    assert status == 422 and body["detail"] == "Enrolled requires grade"
+    assert result["grades"] == [4, 5]
+
+
+def test_the_create_schema_accepts_a_bare_id_for_every_link(tmp_path):
     PydanticGenerator(model=_model(), backend=True, output_dir=str(tmp_path)).generate()
     schema = (tmp_path / "pydantic_classes.py").read_text(encoding="utf-8")
-    assert 'courses: Optional[List["EnrolledLinkCreate"]] = None' in schema
+    assert 'courses: Optional[List[Union["EnrolledLinkCreate", int]]] = None' in schema
     assert 'clubs: Optional[List[Union["ClubRoleLinkCreate", int]]] = None' in schema

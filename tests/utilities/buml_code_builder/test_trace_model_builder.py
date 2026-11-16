@@ -12,6 +12,7 @@ from besser.BUML.metamodel.traceability import (
     TraceModel,
 )
 from besser.utilities.buml_code_builder.trace_model_builder import trace_model_to_code
+from besser.utilities.web_modeling_editor.backend.constants.constants import MAX_BUML_SIZE
 from besser.utilities.web_modeling_editor.backend.services.converters import parse_trace_code, process_trace, trace_buml_to_json
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -94,16 +95,24 @@ def _code(trace, tmp_path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_code_loads_back_as_the_same_trace(trace, tmp_path):
-    loaded = parse_trace_code(_code(trace, tmp_path))
-    assert trace_buml_to_json(loaded) == trace_buml_to_json(trace)
+def _without_contents(data: dict) -> dict:
+    """Trace file JSON as the B-UML form keeps it: a file's content is not written (its hash is)."""
+    return {**data, "artifacts": [{k: v for k, v in a.items() if not (k == "content" and a["type"] == "CodeArtifact")}
+                                   for a in data["artifacts"]]}
+
+
+def test_code_loads_back_as_the_same_trace_without_file_contents(trace, tmp_path):
+    code = _code(trace, tmp_path)
+    assert "class Book(Base)" not in code
+    loaded = parse_trace_code(code)
+    assert trace_buml_to_json(loaded) == _without_contents(trace_buml_to_json(trace))
     assert loaded.validate(raise_exception=False)["success"]
 
 
 def test_code_runs_as_a_plain_script(trace, tmp_path):
     namespace = {}
     exec(compile(_code(trace, tmp_path), "trace.py", "exec"), namespace)  # noqa: S102 -- our own builder output
-    assert trace_buml_to_json(namespace["trace_model"]) == trace_buml_to_json(trace)
+    assert trace_buml_to_json(namespace["trace_model"]) == _without_contents(trace_buml_to_json(trace))
 
 
 def test_code_with_a_call_outside_the_metamodel_is_refused(trace, tmp_path):
@@ -136,3 +145,11 @@ def test_a_revision_keeps_the_version_it_revises(trace, tmp_path):
     assert "revisionOfId" not in revised  # left out when unset, as optional fields are
     loaded = parse_trace_code(_code(trace, tmp_path))
     assert next(a for a in loaded.artifacts if a.id == edited["id"]).revision_of.id == revised["id"]
+
+
+def test_a_trace_section_as_large_as_a_project_file_loads(tmp_path):
+    # The section's caps are those of the file it is part of (MAX_BUML_SIZE), not the loader's 1 MB.
+    files = [CodeArtifact(f"f{i}.py", f"src/module_{i}/f{i}.py", "a" * 64, timestamp=_at(1)) for i in range(6000)]
+    code = _code(TraceModel(artifacts=files), tmp_path)
+    assert 1_000_000 < len(code) <= MAX_BUML_SIZE
+    assert len(parse_trace_code(code).artifacts) == 6000

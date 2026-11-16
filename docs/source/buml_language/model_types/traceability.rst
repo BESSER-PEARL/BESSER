@@ -230,7 +230,8 @@ Python form
 -----------
 
 ``trace_model_to_code`` (:doc:`../../utilities/buml_code_builder`) writes a trace
-as Python that rebuilds it, ids and timestamps included. A project exported as
+as Python that rebuilds it, ids and timestamps included, but not the contents of
+generated files (their hashes, paths and line ranges are written). A project exported as
 B-UML with its trace has it as a ``TRACEABILITY`` section bound to
 ``trace_model``, after the models it is about. It references their elements
 instead of repeating them -- ``ModelArtifact(element=domain_model)``,

@@ -11,7 +11,9 @@ from besser.BUML.metamodel.structural import (
     BinaryAssociation, Class, DomainModel, Enumeration, EnumerationLiteral, Generalization, Method, Multiplicity,
     Property, StringType,
 )
+from besser.utilities.web_modeling_editor.backend.constants.constants import EXPORT_WARNING_HEADER, MAX_BUML_SIZE
 from besser.utilities.web_modeling_editor.backend.services.converters import class_buml_to_json
+from besser.utilities.web_modeling_editor.backend.services.traceability import project_trace
 
 EXPORT_URL = "/besser_api/export-project-as-buml"
 IMPORT_URL = "/besser_api/get-project-json-model"
@@ -111,9 +113,11 @@ def _class_names(body) -> set:
 
 
 def _without_element_ids(trace):
-    """The artifacts without what the import may change: the element ids, and the name of a
-    referenced method (its B-UML name ``open`` instead of the editor's label ``+ open()``)."""
-    return [{k: v for k, v in a.items() if k != "elementId" and not (k == "name" and a.get("elementType") == "Method")}
+    """The artifacts without what the import may change: the element ids, the name of a
+    referenced method (its B-UML name ``open`` instead of the editor's label ``+ open()``), and
+    a file's content, which the B-UML export does not write (the JSON export keeps it)."""
+    return [{k: v for k, v in a.items()
+             if k not in ("elementId", "content") and not (k == "name" and a.get("elementType") == "Method")}
             for a in trace["artifacts"]]
 
 
@@ -133,6 +137,7 @@ def test_trace_survives_export_and_import(client, project, trace):
     # The same trace, except that its elements now carry the ids the import gave them.
     assert _without_element_ids(body["trace"]) == _without_element_ids(trace)
     assert body["trace"]["operations"] == trace["operations"]
+    assert not any("content" in a for a in body["trace"]["artifacts"] if a["type"] == "CodeArtifact")
     assert body["trace"]["traceLinks"] == trace["traceLinks"]
 
 
@@ -192,12 +197,42 @@ def test_invalid_trace_is_rejected_on_export(client, project, trace):
     assert "unknown artifact" in response.json()["detail"]
 
 
-def test_unsafe_trace_section_is_rejected_on_import(client, project, trace):
+def test_an_unsafe_trace_section_is_left_out_of_the_import_with_a_warning(client, project, trace):
     source = _export(client, {**project, "trace": trace})
     tampered = source.replace("trace_model = TraceModel(", 'open("x", "w")\ntrace_model = TraceModel(', 1)
     response = _import(client, tampered)
-    assert response.status_code == 400
-    assert "traceability section" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["trace"] is None
+    assert _class_names(body) == {"Library", "Book", "Publication"}
+    [warning] = body["warnings"]
+    assert warning["code"] == "trace-not-imported" and "traceability section" in warning["message"]
+
+
+def test_a_traced_backend_and_django_project_round_trips(client, project, class_diagram):
+    trace = _merged(_traced(client, class_diagram, "backend"),
+                    _traced(client, class_diagram, "django", {"project_name": "library_site", "app_name": "books"}))
+    source = _export(client, {**project, "trace": trace})
+    assert len(source.encode("utf-8")) <= MAX_BUML_SIZE
+    assert "content=" not in source.split("# TRACEABILITY MODEL #")[1]
+
+    response = _import(client, source)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["warnings"] is None
+    assert _without_element_ids(body["trace"]) == _without_element_ids(trace)
+
+
+def test_a_trace_that_would_make_the_file_unimportable_is_left_out_and_reported(client, project, trace, monkeypatch):
+    monkeypatch.setattr(project_trace, "MAX_BUML_SIZE", len(_export(client, project).encode("utf-8")) + 100)
+    response = client.post(EXPORT_URL, json={**project, "trace": trace})
+    assert response.status_code == 200, response.text
+    warning = response.headers[EXPORT_WARNING_HEADER]
+    assert "left out" in warning and "TRACEABILITY" not in response.text
+
+    body = _import(client, response.text).json()
+    assert body["trace"] is None
+    assert body["warnings"] == [{"code": "trace-not-imported", "message": warning}]
 
 
 # ------------------------------------------------------------ a project with a class diagram and a GUI
@@ -283,9 +318,9 @@ LIBRARY_AGENT_DIAGRAM = LIBRARY_CLASS_DIAGRAM.parent / "library_template_agent_d
 PIZZA_BPMN_DIAGRAM = pathlib.Path(__file__).parent / "fixtures" / "template_bpmn_pizza_store.json"
 
 
-def _traced(client, diagram, generator):
+def _traced(client, diagram, generator, config=None):
     response = client.post("/besser_api/traceability/generate-output",
-                           json={**diagram, "generator": generator, "config": None, "actorName": "Ada Lovelace"})
+                           json={**diagram, "generator": generator, "config": config, "actorName": "Ada Lovelace"})
     assert response.status_code == 200, response.text
     return response.json()["trace"]
 

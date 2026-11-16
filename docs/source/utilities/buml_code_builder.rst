@@ -94,7 +94,8 @@ Use the specialized helpers in the same way:
     buml_code_builder.project_to_code(project_model, file_path="output/project.py")
 
 ``project_to_code`` also takes ``trace=``, a ``TraceModel``: it is written as a
-``TRACEABILITY`` section bound to ``trace_model``, after the models and outside
+``TRACEABILITY`` section bound to ``trace_model`` (without the generated files'
+contents: hashes, paths and line ranges only), after the models and outside
 ``Project(models=[...])``, since a trace describes the models rather than being
 one of them. The section references the structural elements it is about
 (``ModelArtifact(element=Library)``) by the variables the structural sections bind

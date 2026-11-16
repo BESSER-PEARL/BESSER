@@ -29,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     MAX_REQUEST_SIZE,
     API_VERSION,
     DEFAULT_CORS_ORIGINS,
+    EXPORT_WARNING_HEADER,
 )
 
 # Pre-load services.converters before config to avoid circular import:
@@ -287,7 +288,7 @@ app.add_middleware(
     # that failed at the transport layer (see spec_driven_router).
     allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition",
                    "Authorization", "Idempotency-Key"],
-    expose_headers=["Content-Disposition", "X-BESSER-Run-Id"],
+    expose_headers=["Content-Disposition", "X-BESSER-Run-Id", EXPORT_WARNING_HEADER],
 )
 
 # Request logging middleware (outermost – added last so it wraps everything)

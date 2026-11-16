@@ -598,13 +598,15 @@ Conversion
 ^^^^^^^^^^
 
 - ``POST /export-buml`` -- Diagram JSON to BUML Python code
-- ``POST /export-project-as-buml`` -- Full project to BUML Python code. An optional ``trace`` (trace file JSON) is written as a ``TRACEABILITY`` section; an invalid trace is a 400
+- ``POST /export-project-as-buml`` -- Full project to BUML Python code. An optional ``trace`` (trace file JSON) is written as a ``TRACEABILITY`` section, without file contents (hashes, paths and line ranges are kept; the editor's JSON export keeps the contents); an invalid trace is a 400. When the file with the trace would be over ``MAX_BUML_SIZE`` (2 MB, what the import accepts), the trace is left out: the file starts with a ``# BESSER: trace left out:`` comment and the response carries the reason in the ``X-BESSER-Warning`` header
 - ``POST /get-json-model`` -- BUML Python file to JSON (auto-detects diagram type)
 - ``POST /get-project-json-model`` -- BUML project file to JSON. Both import endpoints answer 400 with the
   reason when a model cannot be read, and list in ``warnings`` (``{code, message}``) what they repaired to
   load it, e.g. a composition whose owner end was not navigable. ``trace`` holds the trace file JSON of the
   file's ``TRACEABILITY`` section (null when it has none). That section is loaded with the same AST
-  allowlist as the models, restricted to the traceability metamodel; a section that fails to load is a 400
+  allowlist as the models, restricted to the traceability metamodel, with the size caps of a whole project
+  file (2 MB). The trace is best effort: a section that fails to load, or a file exported without its trace,
+  gives ``trace: null`` and a ``warnings`` entry with code ``trace-not-imported``; the project imports
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- **Deprecated.** Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON through OpenAI (requires an OpenAI API key). Use ``/kg/import-owl`` and ``/kg/to-class-diagram`` instead
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)

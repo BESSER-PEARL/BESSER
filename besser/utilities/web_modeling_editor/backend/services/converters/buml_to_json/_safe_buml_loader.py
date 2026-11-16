@@ -502,6 +502,7 @@ def safe_load_buml(
     content: str,
     allowed_names: Mapping[str, Any],
     max_ast_nodes: int = _MAX_AST_NODES,
+    max_content_chars: int = _MAX_CONTENT_BYTES,
 ) -> Dict[str, Any]:
     """
     Parse ``content`` as Python, validate against the allowlist, and execute
@@ -522,8 +523,10 @@ def safe_load_buml(
         from ``dir(package)``, which lists submodules too.
     max_ast_nodes:
         Cap on the number of AST nodes. A trace is a long flat list of
-        constructor calls and gets a higher one; the source-size and depth
-        caps still apply.
+        constructor calls and gets a higher one; the depth cap still applies.
+    max_content_chars:
+        Cap on the source size. A trace section gets the size of a whole
+        project file, which it can fill.
 
     Returns
     -------
@@ -541,9 +544,9 @@ def safe_load_buml(
     # Fail fast on oversized uploads before we spend memory on parsing.
     # ``len(content)`` is char count; bytes would be >= char count for
     # UTF-8 so this is a conservative cap.
-    if len(content) > _MAX_CONTENT_BYTES:
+    if len(content) > max_content_chars:
         raise SafeBumlLoaderError(
-            f"BUML content too large ({len(content)} chars > {_MAX_CONTENT_BYTES})"
+            f"BUML content too large ({len(content)} chars > {max_content_chars})"
         )
 
     allowed_names = {

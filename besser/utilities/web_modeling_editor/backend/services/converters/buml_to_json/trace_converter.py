@@ -18,7 +18,7 @@ from besser.BUML.metamodel.traceability import (
     AIEvidence, Artifact, ChangeEvent, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
     ModelingSession, Operation, PromptArtifact, RequirementArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
-from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
+from besser.utilities.web_modeling_editor.backend.constants.constants import MAX_BUML_SIZE, TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     structural_allowed_names,
 )
@@ -27,10 +27,12 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
-# A trace is a flat list of constructor calls, ~40 AST nodes per element, so the
-# loader's default cap (20k) would refuse a trace after a few generations. Its
-# 1 MB source cap still bounds the size (about 90k nodes).
-_TRACE_MAX_AST_NODES = 200_000
+# A trace section (with the structural code it references) is part of a project file, so
+# its caps are those of the whole file: the import's MAX_BUML_SIZE, and the AST nodes trace
+# code of that size holds (about one per 9 characters; 8 leaves room). The loader's own
+# caps (1 MB, 20k nodes) would refuse a trace after a few generations.
+_TRACE_MAX_CONTENT_CHARS = MAX_BUML_SIZE
+_TRACE_MAX_AST_NODES = MAX_BUML_SIZE // 8
 
 
 def utc_iso(value: datetime) -> str:
@@ -179,8 +181,8 @@ def parse_trace_code(content: str, context_code: Optional[str] = None) -> TraceM
         allowed_names[name] = getattr(traceability_module, name)
     code = f"{context_code}\n{content}" if context_code else content
     try:
-        local_vars = safe_load_buml(code, allowed_names,
-                                    max_ast_nodes=_TRACE_MAX_AST_NODES)
+        local_vars = safe_load_buml(code, allowed_names, max_ast_nodes=_TRACE_MAX_AST_NODES,
+                                    max_content_chars=_TRACE_MAX_CONTENT_CHARS)
     except Exception as exc:
         raise ConversionError(f"Failed to load the traceability section: {exc}") from exc
     traces = [value for value in local_vars.values() if isinstance(value, TraceModel)]

@@ -145,7 +145,10 @@ project* on that page turns it off or on.
 * **Exported with the project.** Once a trace has been recorded, the *Export
   Project* dialog lists *Traceability* next to the diagrams. Ticked (it is off by
   default), the trace goes into the JSON export as ``trace`` beside ``project``, or
-  into the B-UML export as a ``TRACEABILITY`` section. Importing either file restores
+  into the B-UML export as a ``TRACEABILITY`` section. The JSON export keeps the
+  generated files' contents; the B-UML one keeps their hashes, paths and line ranges
+  only, so the file stays small, and leaves the trace out (saying so) when the file
+  would still be over the 2 MB a B-UML import accepts. Importing either file restores
   the trace under the new project. Importing a B-UML file with a trace also turns
   recording on, because a B-UML file carries no project settings. A trace that cannot
   be read is skipped with a warning, and the project imports without it.

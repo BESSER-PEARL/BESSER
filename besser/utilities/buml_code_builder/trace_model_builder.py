@@ -7,7 +7,9 @@ Counterpart of ``parse_trace_code`` in
 ``safe_load_buml``. The emitted code therefore sticks to literals and
 constructor calls on the public names of ``besser.BUML.metamodel.traceability``.
 
-Every trace element keeps its id and timestamp. Variables are numbered
+Every trace element keeps its id and timestamp. A file's content is not written (its hash,
+path and line range are): the code would double the file the trace is about, and a project
+file has to stay under the import cap. The JSON export of a project keeps it. Variables are numbered
 (``artifact_3``, ``change_12``) rather than named after elements: trace names
 are free text, and a trace can hold many elements with the same name.
 
@@ -208,8 +210,10 @@ class _TraceWriter:
         if isinstance(artifact, CodeArtifact):
             revision_of = (f", revision_of={self.vars[artifact.revision_of.id]}"
                            if artifact.revision_of is not None else "")
+            # No content: the B-UML export keeps a file's hash, path and lines, not the file
+            # (the JSON export keeps it), so a project with its trace stays importable.
             return (f"CodeArtifact({_string(artifact.name)}, path={_string(artifact.path)}, "
-                    f"content_hash={_string(artifact.content_hash)}, content={_optional(artifact.content)}, "
+                    f"content_hash={_string(artifact.content_hash)}, "
                     f"start_line={_optional(artifact.start_line)}, end_line={_optional(artifact.end_line)}"
                     f"{parent}{revision_of}, {_common(artifact)})")
         if isinstance(artifact, PromptArtifact):

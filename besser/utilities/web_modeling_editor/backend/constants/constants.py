@@ -249,6 +249,12 @@ TRACE_MAX_STORED_CONTENT_BYTES = 1_000_000
 # ships next to the run's ZIP (a Spec-Driven `done` event, kept by the durable run store) and the
 # editor keeps it in IndexedDB; the files after it keep only their hash.
 TRACE_MAX_TOTAL_CONTENT_BYTES = 4_000_000
+# Response header of a download that was changed to stay usable (a B-UML project export whose
+# trace was left out): its value says what and why. Exposed to the browser (backend.py CORS).
+EXPORT_WARNING_HEADER = "X-BESSER-Warning"
+# First words of the comment a B-UML project file starts with when its trace was left out
+# (the file with it would be over MAX_BUML_SIZE); its import reports it.
+TRACE_LEFT_OUT_NOTE = "# BESSER: trace left out:"
 # Longest actor name accepted on a traced generation (the project owner field).
 TRACE_MAX_ACTOR_NAME_LENGTH = 200
 # Actor recorded when the project has no owner.

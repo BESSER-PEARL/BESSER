@@ -17,28 +17,28 @@ from enum import Enum
 # Definition of Enumerations
 ############################################
 
-{% for enum in domain.get_enumerations()|sort(attribute='name') -%}
+{% for enum in domain.get_enumerations()|sort(attribute='name') %}{% trace enum, "enumeration" -%}
 class {{ enum.name }}(Enum):
 {%- if enum.literals %}
-{%- for literal in sort_by_timestamp(enum.literals) %}
+{%- for literal in sort_by_timestamp(enum.literals) %}{% trace literal, "literal" %}
     {{ literal.name }} = "{{ literal.name }}"
-{%- endfor %}
+{%- endtrace %}{% endfor %}
 {%- else %}
     pass
 {%- endif %}
-{% endfor -%}
+{% endtrace %}{% endfor -%}
 {% endif %}
 
 ############################################
 # Definition of Classes
 ############################################
-{% for class in domain.classes_sorted_by_inheritance() %}
+{% for class in domain.classes_sorted_by_inheritance() %}{% trace class, "class" %}
 class {{ class.name }}{% if class.parents() %}({% for parent in class.parents()|sort(attribute='name') %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
 {% if class.all_attributes() or class.methods %}
     def __init__({{ class_parameters.init_parameters(class, sort_by_timestamp) }}):
         {{ class_parameters.init_parameters_definition(class, sort_by_timestamp) }}
 
-    {%- for attribute in class.attributes|sort(attribute='name') %}
+    {%- for attribute in class.attributes|sort(attribute='name') %}{% trace attribute, "attribute" %}
     @property
     def {{ attribute.name }}(self) -> {{ attribute.type.name }}:
         return self.__{{ attribute.name }}
@@ -46,9 +46,9 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents()|
     @{{ attribute.name }}.setter
     def {{ attribute.name }}(self, {{ attribute.name }}: {{ attribute.type.name }}):
         self.__{{ attribute.name }} = {{ attribute.name }}
-{% endfor -%}
+{% endtrace %}{% endfor -%}
 
-    {% for end in class.association_ends()|sort(attribute='name') if end.is_navigable %}
+    {% for end in class.association_ends()|sort(attribute='name') if end.is_navigable %}{% trace end.owner, "association" %}{% trace end, "association_end" %}
     @property
     def {{ end.name }}(self):
         return self.__{{ end.name }}
@@ -112,9 +112,9 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents()|
                 {%- endif %}
             {%- endif %}
         {%- endif %}
-{% endfor -%}
+{% endtrace %}{% endtrace %}{% endfor -%}
 
-    {%- for method in class.methods|sort(attribute='name') %}
+    {%- for method in class.methods|sort(attribute='name') %}{% trace method, "method" %}
     {%- if method.code %}
     {#- If method has code, use it directly (it contains the full function definition) #}
 {{ normalize_code(method.code, method.name) | indent(4, first=true) }}
@@ -130,8 +130,8 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents()|
         {{ method_body.infer_body(class, method) }}
         {%- endif %}
     {%- endif %}
-{% endfor -%}
+{% endtrace %}{% endfor -%}
 {%- else %}
     pass
 {%- endif %}
-{%- endfor %}
+{%- endtrace %}{% endfor %}

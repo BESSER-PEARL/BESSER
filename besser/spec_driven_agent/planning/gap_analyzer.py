@@ -865,6 +865,34 @@ def _note_derived_enum_initial_state(domain_model, instructions: str) -> list[st
     return tasks
 
 
+def derived_attribute_tasks(domain_model) -> list[str]:
+    """One task per class whose derived attributes the scaffold only stores.
+
+    The generators emit a derived attribute as a plain column with a constant
+    default (sql_alchemy/templates/helpers.py.j2); computing it is left to the
+    agent. A derived enumeration is a state the app moves, not a value to
+    compute: ``_note_derived_enum_initial_state`` covers it.
+    """
+    if domain_model is None:
+        return []
+    enums = {enum.name for enum in domain_model.get_enumerations()}
+    tasks: list[str] = []
+    for cls in sorted(domain_model.get_classes(), key=lambda c: c.name):
+        derived = sorted(attr.name for attr in cls.attributes
+                         if attr.is_derived and not attr.is_id and attr.type.name not in enums)
+        if not derived:
+            continue
+        many = len(derived) > 1
+        tasks.append(
+            f"Compute the derived attribute{'s' if many else ''} "
+            f"{', '.join(f'{cls.name}.{name}' for name in derived)}: the scaffold stores "
+            f"{'each' if many else 'it'} as a plain column that nothing computes. Derive the value "
+            "from the data it depends on whenever the record is read, or update it in every write "
+            "that changes that data, and never accept it from the client."
+        )
+    return tasks
+
+
 # File paths named inside a task: a dotted basename, optionally preceded
 # by directory segments. Restricted to extensions the generators actually
 # emit so prose like ``domain_model.get_classes`` or a bare ``Booking.`` is

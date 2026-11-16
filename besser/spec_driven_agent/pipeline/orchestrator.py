@@ -89,7 +89,9 @@ from besser.spec_driven_agent.errors import (
     EmptyInstructionsError,
     InvalidApiKeyError,
 )
-from besser.spec_driven_agent.planning.gap_analyzer import _placement_advice, analyze_gaps_via_llm
+from besser.spec_driven_agent.planning.gap_analyzer import (
+    _placement_advice, analyze_gaps_via_llm, derived_attribute_tasks,
+)
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
@@ -3750,6 +3752,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
         if not self._modify_mode and self._scaffold_family() == "fastapi":
+            tasks.extend(derived_attribute_tasks(self.domain_model))
             # A path the user wrote must exist verbatim, whatever the planner judged.
             tasks.extend(requested_route_tasks(
                 self.output_dir, _requirements_ledger.original_request(self._instructions)))

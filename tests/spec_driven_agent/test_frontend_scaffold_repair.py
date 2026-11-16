@@ -200,7 +200,7 @@ def test_leaves_a_non_react_project_alone(tmp_path):
 def test_readme_is_titled_after_the_model_not_the_run_folder(tmp_path):
     """Run workspaces are temp folders (besser_llm_<run id>_...); the title
     comes from the backend's FastAPI(title="<Name> API")."""
-    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    run_dir = tmp_path / "besser_llm_example_run_folder"
     run_dir.mkdir()
     _flat_app(run_dir)
     (run_dir / "backend" / "main_api.py").write_text(
@@ -212,7 +212,7 @@ def test_readme_is_titled_after_the_model_not_the_run_folder(tmp_path):
 
 def _run_dir_app(tmp_path, title_literal):
     """A run workspace whose backend declares ``FastAPI(title=<title_literal>)``."""
-    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    run_dir = tmp_path / "besser_llm_example_run_folder"
     run_dir.mkdir()
     _flat_app(run_dir)
     (run_dir / "backend" / "main_api.py").write_text(
@@ -236,7 +236,7 @@ def test_readme_title_reads_the_title_the_backend_generator_writes(tmp_path, mod
 def test_readme_title_matches_the_generated_backend(tmp_path, library_book_author_model):
     from besser.generators.backend import BackendGenerator
 
-    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    run_dir = tmp_path / "besser_llm_example_run_folder"
     _flat_app(run_dir, with_backend=False)
     BackendGenerator(library_book_author_model, output_dir=str(run_dir / "backend")).generate()
     assert _readme_title(run_dir) == "# " + library_book_author_model.name.replace("_", " ")
@@ -258,8 +258,22 @@ def test_readme_title_skips_a_default_tab_name_for_the_project_name(tmp_path):
     assert _readme_title(run_dir, app_name="City_Library") == "# City Library"
 
 
+@pytest.mark.parametrize("project_name", ["New_Project", "New Project", "new_project"])
+def test_readme_title_skips_the_editors_default_project_name(tmp_path, project_name):
+    """Every project starts as "New_Project" (the editor's ProjectHubDialog and
+    useProject); the model it holds has the real name."""
+    run_dir = _run_dir_app(tmp_path, "'Library API'")
+    assert _readme_title(run_dir, app_name=project_name) == "# Library"
+
+
+def test_readme_title_is_cut_to_a_heading(tmp_path):
+    run_dir = _run_dir_app(tmp_path, "'Library API'")
+    title = _readme_title(run_dir, app_name="Warehouse " * 40)
+    assert title == "# " + ("Warehouse " * 8).strip()
+
+
 def test_readme_never_uses_a_run_folder_name(tmp_path):
-    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    run_dir = tmp_path / "besser_llm_example_run_folder"
     run_dir.mkdir()
     _flat_app(run_dir)
     ensure_frontend_scaffold(str(run_dir))
@@ -301,18 +315,32 @@ def test_readme_commands_each_start_from_the_app_folder(tmp_path):
     assert "two terminals" in readme
 
 
-@pytest.mark.parametrize("vite_config, dev_script, port", [
-    (None, "vite", 3000),                                      # the config this repair writes
-    ("export default {plugins: [], server: { port: 5173 }};\n", "vite", 5173),
-    ("export default {plugins: []};\n", "vite", 5173),         # Vite's default
-    ("export default {server: {port: 5173}};\n", "vite --host 0.0.0.0 --port 4000", 4000),
+_PRINTED = "the address `npm run dev` prints"
+
+
+@pytest.mark.parametrize("vite_config, dev_script, address", [
+    (None, "vite", "http://localhost:3000"),                   # the config this repair writes
+    ("export default {plugins: [], server: { port: 5173 }};\n", "vite", "http://localhost:5173"),
+    ("export default {plugins: []};\n", "vite", "http://localhost:5173"),          # Vite's default
+    ("export default {server: {port: 5173}};\n", "vite --host 0.0.0.0 --port 4000", "http://localhost:4000"),
+    # The server's own port, not the one of its hot-reload socket or of a proxy target.
+    ("export default {server: {hmr: {port: 24678}, port: 5190}};\n", "vite", "http://localhost:5190"),
+    ("export default {server: {proxy: {'/api': {target: 'http://x', port: 9}}, port: 5180}};\n", "vite",
+     "http://localhost:5180"),
+    ("export default {server: {hmr: {port: 24678}}};\n", "vite", "http://localhost:5173"),
+    ("export default {server: {\n  // port: 3000 was taken\n  port: 5200,\n}};\n", "vite", "http://localhost:5200"),
+    # Not readable without running the config: say where the address appears.
+    ("const p = 4321;\nexport default {server: {port: p}};\n", "vite", _PRINTED),
+    ("export default {server: {port: Number(process.env.PORT) || 5173}};\n", "vite", _PRINTED),
+    ("export default {preview: {port: 4173}};\n", "vite", _PRINTED),
+    ("export default {plugins: []};\n", "vite --host --port=$PORT", _PRINTED),
 ])
-def test_readme_names_the_dev_server_address(tmp_path, vite_config, dev_script, port):
+def test_readme_names_the_dev_server_address(tmp_path, vite_config, dev_script, address):
     package_json = dict(_PACKAGE_JSON, scripts={"dev": dev_script, "build": "vite build"})
     frontend = _flat_app(tmp_path, package_json=package_json)
     if vite_config:
         (frontend / "vite.config.js").write_text(vite_config, encoding="utf-8")
-    assert f"The web app, on http://localhost:{port}:" in _readme(tmp_path)
+    assert f"The web app, on {address}:" in _readme(tmp_path)
 
 
 def test_readme_starts_a_backend_that_does_not_run_itself_with_uvicorn(tmp_path):

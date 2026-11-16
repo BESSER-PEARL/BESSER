@@ -346,7 +346,7 @@ pip install -r requirements.txt
 {start}
 ```
 
-The web app, on http://localhost:{dev_port}:
+The web app, on {dev_address}:
 
 ```bash
 cd {frontend}
@@ -387,9 +387,12 @@ _RUN_DIR_PREFIX = "besser_llm_"
 _API_TITLE_RE = _re.compile(
     r"""FastAPI\(\s*title\s*=\s*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")""")
 
-# The editor's name for a class diagram tab nobody renamed ("Class Diagram",
-# "Class Diagram 2"), which is also the model's name then: it names no app.
-_DEFAULT_DIAGRAM_NAME_RE = _re.compile(r"class diagram(?: \d+)?", _re.IGNORECASE)
+# The editor's names for a class diagram tab ("Class Diagram", "Class Diagram
+# 2", which is also the model's name then) and for a project ("New_Project")
+# that nobody renamed: they name no app.
+_DEFAULT_NAME_RE = _re.compile(r"class diagram(?: \d+)?|new project", _re.IGNORECASE)
+# A longer name is cut: it is a heading.
+_MAX_TITLE_CHARS = 80
 
 
 def _api_title(backend_entry: str) -> str:
@@ -405,15 +408,15 @@ def _api_title(backend_entry: str) -> str:
 
 
 def _app_title(output_dir: str, backend_entry: str, app_name: str = "") -> str:
-    """The app's name for the README: the project's name, else the model's
-    (unless it is a default tab name), else a user-chosen folder name."""
+    """The app's name for the README: the project's name, else the model's,
+    else a user-chosen folder name; never one of the editor's default names."""
     folder = os.path.basename(os.path.abspath(output_dir))
     candidates = (app_name, _api_title(backend_entry),
                   "" if folder.startswith(_RUN_DIR_PREFIX) else folder)
     for candidate in candidates:
         title = " ".join((candidate or "").replace("_", " ").split())
-        if title and not _DEFAULT_DIAGRAM_NAME_RE.fullmatch(title):
-            return title
+        if title and not _DEFAULT_NAME_RE.fullmatch(title):
+            return title[:_MAX_TITLE_CHARS].rstrip()
     return "Generated app"
 
 
@@ -603,15 +606,62 @@ def _backend_entry_command(backend_dir: str):
     return f'["uvicorn", "{fname[:-3]}:app", "--host", "0.0.0.0", "--port", "8000"]'
 
 
-def _dev_server_port(frontend_dir: str, manifest: dict) -> int:
-    """The port ``npm run dev`` serves on: the script's ``--port``, else the
-    Vite config's ``server.port``, else Vite's default."""
+def _own_text(text: str, start: int) -> str:
+    """The text of the ``{...}`` block opening at ``start``, without its
+    nested blocks, string literals and comments."""
+    depth, quote, own = 0, "", []
+    index = start
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif text.startswith(("//", "/*"), index):
+            closing = "\n" if text[index + 1] == "/" else "*/"
+            end = text.find(closing, index + 2)
+            if end < 0:
+                break
+            index = end + len(closing) - 1
+        elif char in "'\"`":
+            quote = char
+        elif char in "{[(":
+            depth += 1
+        elif char in "}])":
+            depth -= 1
+            if depth == 0:
+                break
+        elif depth == 1:
+            own.append(char)
+        index += 1
+    return "".join(own)
+
+
+def _dev_server_port(frontend_dir: str, manifest: dict):
+    """The port ``npm run dev`` serves on, or None when it cannot be read
+    without doubt: the script's ``--port``, else the Vite config's own
+    ``server.port`` (not ``hmr.port`` or a proxy's), else Vite's default."""
     script = str((manifest.get("scripts") or {}).get("dev", ""))
-    found = _re.search(r"--port[= ](\d+)", script)
-    if not found:
-        config = _existing_vite_config(frontend_dir)
-        found = config and _re.search(r"\bserver\s*:\s*\{[^}]*?\bport\s*:\s*(\d+)", _read_text(config))
-    return int(found.group(1)) if found else _VITE_DEFAULT_DEV_PORT
+    if "--port" in script:
+        found = _re.search(r"--port[= ](\d+)(?!\S)", script)
+        return int(found.group(1)) if found else None
+    config = _existing_vite_config(frontend_dir)
+    text = _read_text(config) if config else ""
+    if not _re.search(r"\bport\b", text):
+        return _VITE_DEFAULT_DEV_PORT
+    blocks = list(_re.finditer(r"\bserver\s*:\s*\{", text))
+    if len(blocks) != 1:
+        return None
+    ports = _re.findall(r"(?<![\w.])port\s*:\s*([^\s,]*)", _own_text(text, blocks[0].end() - 1))
+    if not ports:
+        return _VITE_DEFAULT_DEV_PORT
+    return int(ports[0]) if len(ports) == 1 and ports[0].isdigit() else None
+
+
+def _dev_server_address(frontend_dir: str, manifest: dict) -> str:
+    port = _dev_server_port(frontend_dir, manifest)
+    return f"http://localhost:{port}" if port else "the address `npm run dev` prints"
 
 
 def _find_backend_dir(output_dir: str):
@@ -680,7 +730,7 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict,
                 backend=backend_name, frontend=frontend_name, module=module,
                 start=(f"python {entry_file}" if starts_server
                        else f"python -m uvicorn {module}:app --port 8000"),
-                dev_port=_dev_server_port(frontend_dir, manifest))):
+                dev_address=_dev_server_address(frontend_dir, manifest))):
             repairs.append("README.md")
     return repairs
 

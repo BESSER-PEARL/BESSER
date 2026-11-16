@@ -2,14 +2,17 @@
 
 - ``dispatch``: picks the generator path from its registry entry and runs it.
 - ``agents``: agent (BAF) generation.
-- ``downloads``: :class:`GeneratedOutput`, the ZIP or single file a request downloads.
+- ``downloads``: :class:`GeneratedOutput`, the ZIP or single file a request downloads, and
+  :class:`Generation`, that download with the diagrams it was generated from.
 """
 
 from .dispatch import generate_from_diagram, generate_from_project
-from .downloads import GeneratedOutput
+from .downloads import DiagramRead, GeneratedOutput, Generation
 
 __all__ = [
+    "DiagramRead",
     "GeneratedOutput",
+    "Generation",
     "generate_from_diagram",
     "generate_from_project",
 ]

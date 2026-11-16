@@ -43,7 +43,7 @@ def _isolate_cwd(tmp_path, monkeypatch):
 
 def _generate(generator, config=None):
     return asyncio.run(generate_from_diagram(
-        DiagramInput(title="Library", model=CLASS_MODEL, generator=generator, config=config)))
+        DiagramInput(title="Library", model=CLASS_MODEL, generator=generator, config=config))).output
 
 
 def test_a_single_file_generator_gives_its_download_name_and_version_comment():

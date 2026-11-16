@@ -137,10 +137,10 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
                             config={'personalizationMapping': [{'user_profile': {'raw': True}}]},
                             configYaml=_yaml(a2a=9002))]
     saved = deepcopy(entries)
-    diagram = SimpleNamespace(model_dump=lambda: {})
+    diagram = SimpleNamespace(id='deployment', title='Deployment', model_dump=lambda: {})
     project = SimpleNamespace(name='Example', diagrams={'AgentDiagram': entries},
                               get_active_diagram=lambda kind: diagram)
-    monkeypatch.setattr(route, 'process_deployment_diagram', lambda payload: 'deployment')
+    monkeypatch.setattr(route, 'process_deployment_diagram', lambda payload: DeploymentModel('deployment'))
     monkeypatch.setattr(route, 'process_agent_diagram', lambda payload: Agent('SameName'))
     monkeypatch.setattr(route, 'annotate_agent_with_a2a', lambda *args: None)
 
@@ -151,6 +151,8 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
     monkeypatch.setattr(route, 'normalize_personalization_mapping', normalize)
 
     class CaptureGenerator:
+        traced_files = {}
+
         def __init__(self, model, output_dir, **kwargs):
             captured.update(kwargs)
             self.output_dir = output_dir
@@ -160,7 +162,7 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
 
     response = asyncio.run(route._handle_deployment_project_generation(
         project, SimpleNamespace(generator_class=CaptureGenerator), 'docker_compose'))
-    assert response.media_type == 'application/zip'
+    assert response.output.media_type == 'application/zip'
     assert set(captured['agent_models_by_id']) == {'first', 'second'}
     assert captured['agent_configs_by_id']['first'] == entries[0].config
     assert captured['agent_configs_by_id']['second']['personalizationMapping'][0]['user_profile'] == {

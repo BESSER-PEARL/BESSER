@@ -74,10 +74,12 @@ def test_blank_actor_is_anonymous(client, payload):
     assert response.json()["trace"]["actors"][0]["name"] == "anonymous"
 
 
-def test_untraced_generator_is_rejected(client, payload):
-    response = client.post(URL, json={**payload, "generator": "django"})
-    assert response.status_code == 400
-    assert "does not record traces" in response.json()["detail"]
+def test_an_unknown_generator_is_refused_as_by_the_plain_endpoint(client, payload):
+    response = client.post(URL, json={**payload, "generator": "nope"})
+    plain = client.post("/besser_api/generate-output", json={k: v for k, v in payload.items() if k != "actorName"}
+                        | {"generator": "nope"})
+    assert response.status_code == plain.status_code == 400
+    assert response.json()["detail"] == plain.json()["detail"]
 
 
 def test_diagram_id_is_required(client, payload):

@@ -504,7 +504,9 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         if status == "implemented":
             how = ("implementation cited and re-checked against the delivered "
                    f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}")
-            level = str(verdict.get("verification_note") or "") if verdict.get("verification") == "unverified" else ""
+            # api_verified: the API half ran, the screens did not; the note says which.
+            level = (str(verdict.get("verification_note") or "")
+                     if verdict.get("verification") in ("unverified", "api_verified") else "")
             if level:
                 # Clip the citation, not the note: a bare "implemented" would read as checked.
                 how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"

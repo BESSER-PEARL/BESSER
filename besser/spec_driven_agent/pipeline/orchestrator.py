@@ -4020,6 +4020,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         imports = self._import_index(cache_key)
         scope = json.dumps([requirements, self._instructions], sort_keys=True)
         verdicts = self._requirement_judgments.get(cache_key)
+        checked = None  # the check of a fresh judgment, reused below when nothing was kept
         # A judge outage is an unknown no code edit settles: a warning that
         # still refuses verified completion, not a blocker that buys repair rounds.
         judge_failed = required_check_unverified(
@@ -4046,10 +4047,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     can_call=self._verification_call_allowed,
                 ) if to_judge else []
                 call.update(_judge_outcome(to_judge, verdicts))
+                if verdicts:
+                    checked = _requirements_ledger.verify_evidence(verdicts, self.output_dir, imports)
+                    call.update(_citation_outcome(verdicts, checked))
             if verdicts is not None and kept:
                 logger.info("Requirements ledger: %d verdict(s) kept, their cited files are unchanged; "
                             "%d judged again", len(kept), len(to_judge))
                 verdicts = sorted([*kept.values(), *verdicts], key=lambda item: item["id"])
+                checked = None
         if verdicts is None:
             if not self._verification_call_allowed():
                 return [judge_stopped]  # a stop mid-judgment is not a judge failure
@@ -4060,7 +4065,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_judgments[cache_key] = verdicts
         if len(self._requirement_judgments) > 8:
             self._requirement_judgments.pop(next(iter(self._requirement_judgments)))
-        self._requirement_verdicts = _requirements_ledger.verify_evidence(
+        self._requirement_verdicts = checked if checked is not None else _requirements_ledger.verify_evidence(
             verdicts, self.output_dir, imports,
         )
         # A partial/missing/unverified verdict about a file the digest left out or cut
@@ -4078,41 +4083,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # gratuitous code edits. Rejudge only those entries once per revision;
             # never reroll other missing/verified judgments on unchanged source.
             self._requirement_evidence_retries.add(cache_key)
-            focus_paths = [path for item in self._requirement_verdicts if item["id"] in unknown_ids
-                           for path in _requirements_ledger.cited_paths(item.get("evidence"))]
-            focus_paths = [path for paths in unseen.values() for path in paths] + [
-                path for item in self._requirement_verdicts
-                if item["id"] in unknown_ids for path in item.get("inspection_paths", [])] + focus_paths
-            focused_digest = _requirements_ledger.build_app_digest(
-                self.output_dir, focus_paths=focus_paths,
-            )
-            to_rejudge = [item for item in requirements if item["id"] in unknown_ids]
-            with self._traced_llm_call("requirements_rejudge") as call:
-                repair = _requirements_ledger.judge_coverage(
-                    to_rejudge, focused_digest, self.client, original_spec=self._instructions,
-                    previous_verdicts=[item for item in self._requirement_verdicts
-                                       if item["id"] in unknown_ids],
-                    can_call=self._verification_call_allowed,
-                )
-                call.update(_judge_outcome(to_rejudge, repair))
-            # Only a verified 'implemented' replaces a verdict: the focused digest
-            # omits most of the app, so a 'missing' from it proves nothing.
-            repaired = _requirements_ledger.verify_evidence(repair or [], self.output_dir, imports)
-            valid_ids = {item["id"] for item in repaired if item["status"] == "implemented"}
-            replacements = {item["id"]: item for item in repair or [] if item["id"] in valid_ids}
-            # Otherwise a missing/partial from the focused digest proves no absence, so that
-            # status stands; the evidence and note are the judge's that saw the files: the
-            # first one's ("risk_service.py was not provided") is stale (r12-p81). Its own
-            # "implemented" is kept and re-checked, so the reason given is about its citation.
-            shown = ", ".join(_requirements_ledger.resolved_focus_paths(
-                _requirements_ledger._source_files(self.output_dir), focus_paths))
-            where = f"Judged again with {shown} shown" if shown else "Judged again on the whole app"
-            replacements.update({
-                item["id"]: {**previous, "evidence": item.get("evidence", previous.get("evidence")),
-                             "status": "implemented" if item.get("status") == "implemented" else previous["status"],
-                             "note": f"{where}: {item.get('note') or 'no note'}"}
-                for previous in verdicts for item in repair or []
-                if item["id"] == previous["id"] and item["id"] not in valid_ids})
+            replacements = self._rejudge_unknown(requirements, unknown_ids, unseen, imports)
             if replacements:
                 verdicts = [replacements.get(item["id"], item) for item in verdicts]
                 self._requirement_judgments[cache_key] = verdicts
@@ -4122,6 +4093,71 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts_scope = scope
         self._requirement_verdicts_key = cache_key
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
+
+    def _rejudge_unknown(self, requirements: list[dict], unknown_ids: set[int], unseen: dict[int, list[str]],
+                         imports: _requirements_ledger.ImportIndex) -> dict[int, dict]:
+        """The focused re-judge of the unknown verdicts: their files shown, each requirement's
+        taken in turn; one more round for an answer naming a file that round left out
+        (``_REJUDGE_ROUNDS``). Returns the raw verdicts that replace the first judge's.
+
+        Only a verified "implemented" replaces a verdict as it is: the focused digest omits
+        most of the app, so a missing/partial from it proves no absence. Otherwise the
+        CHECKED first verdict keeps its status and takes the re-judge's citation (when it
+        gave one), note and inspection paths: the first judge's note ("risk_service.py was
+        not provided") is stale (r12-p81), and a raw first "implemented" with the re-judge's
+        empty citation is not a verdict anyone gave (r13-p81).
+        """
+        files = _requirements_ledger._source_files(self.output_dir)
+        checked = {item["id"]: item for item in self._requirement_verdicts}
+        first = dict(checked)
+        focus = {rid: [*unseen.get(rid, []), *checked[rid].get("inspection_paths", []),
+                       *_requirements_ledger.cited_paths(checked[rid].get("evidence"))] for rid in sorted(unknown_ids)}
+        replacements: dict[int, dict] = {}
+        for round_number in range(1, _REJUDGE_ROUNDS + 1):
+            focus_paths = _requirements_ledger.focus_paths_in_turn(list(focus.values()))
+            shown_files = _requirements_ledger.resolved_focus_paths(files, focus_paths)
+            focused_digest, gaps, shown = _requirements_ledger.build_app_digest_details(
+                self.output_dir, focus_paths=focus_paths)
+            to_rejudge = [item for item in requirements if item["id"] in focus]
+            with self._traced_llm_call("requirements_rejudge") as call:
+                repair = _requirements_ledger.judge_coverage(
+                    to_rejudge, focused_digest, self.client, original_spec=self._instructions,
+                    previous_verdicts=[checked[rid] for rid in focus], can_call=self._verification_call_allowed,
+                )
+                call.update(_judge_outcome(to_rejudge, repair), round=round_number)
+                repaired = _requirements_ledger.verify_evidence(repair or [], self.output_dir, imports)
+                if repair:
+                    call.update(_citation_outcome(repair, repaired))
+            valid_ids = {item["id"] for item in repaired if item["status"] == "implemented"}
+            where = f"Judged again with {', '.join(shown_files)} shown" if shown_files else "Judged again on the whole app"
+            for item, verified in zip(repair or [], repaired):
+                rid = item["id"]
+                if rid in valid_ids:
+                    replacements[rid] = item
+                    continue
+                base = {key: value for key, value in first[rid].items()
+                        if key not in (*_requirements_ledger.VERDICT_FINGERPRINT_KEYS, _requirements_ledger.EVIDENCE_UNLOCATED)}
+                cited = bool(_requirements_ledger.render_evidence(item.get("evidence")).strip(": "))
+                # Its own "implemented" is kept and re-checked, so the reason is about its citation.
+                status = "implemented" if item.get("status") == "implemented" and cited else base["status"]
+                # Without a citation of its own the first one stays, and so does why it failed.
+                reason = "" if cited else _check_reason(str(first[rid].get("note") or ""))
+                replacements[rid] = {**base, "status": status,
+                                     "evidence": item["evidence"] if cited else base.get("evidence", ""),
+                                     "inspection_paths": item.get("inspection_paths", []),
+                                     "note": f"{where}: {item.get('note') or 'no note'}"
+                                             + (f" {reason}" if reason else "")}
+                checked[rid] = verified
+            # A file this round did not show whole (left out or cut), named by an answer that is
+            # not a verified implemented. The schema files a focused digest shows are not.
+            left_out = (frozenset(files) - shown) | gaps
+            named = {item["id"]: _requirements_ledger.named_digest_gaps(item, left_out)
+                     for item in repaired if item["id"] not in valid_ids}
+            named = {rid: paths for rid, paths in named.items() if paths}
+            if not named or not self._verification_call_allowed():
+                break
+            focus = {rid: [*paths, *focus[rid]] for rid, paths in named.items()}
+        return replacements
 
     def _requirements_still_verified(self, scope: str,
                                      imports: _requirements_ledger.ImportIndex) -> dict[int, dict]:
@@ -5060,7 +5096,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if "cost_usd" in delta:
                 delta["cost_usd"] = round(delta["cost_usd"], 6)
             if delta.get("api_calls") or call["outcome"] != "ok":
-                self._trace.write(EVENT_LLM_CALL, purpose=purpose, **call, **delta)
+                models = {"model": getattr(self.client, "model", None)}
+                if planning := getattr(self.client, "planning_model", None):
+                    models["planning_model"] = planning  # gap analysis and the judge try it first
+                self._trace.write(EVENT_LLM_CALL, purpose=purpose, **models, **call, **delta)
 
     def _checks_that_ran(self) -> dict:
         """What ran on the delivered tree: a passing frontend build, and the calls of the
@@ -5068,10 +5107,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         revision = self._workspace_revision()
         passed = [record["report"] for record in self._api_scenarios.values()
                   if record["revision"] == revision and record["report"].get("status") == "passed"]
+        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
+        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == revision]
         return {
-            # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
-            "frontend_built": any(key[1] == revision and verdict is None
-                                  for key, verdict in self._frontend_build_verdicts.items()),
+            "frontend_build": ("passed" if any(verdict is None for verdict in builds) else "failed" if builds
+                               else "not_run" if self._has_frontend_files() else "none"),
             "exercised": {(str(response.get("method", "")).upper(), str(response.get("path", "")))
                           for report in passed for response in report.get("responses") or []
                           if isinstance(response, dict) and response.get("path")},
@@ -5298,6 +5338,32 @@ _FRONTEND_SOURCE_MAX_BYTES = 1_000_000
 _ADVISORY_PREFIX = "advisory, not a blocker: "
 
 
+# Focused re-judge rounds per judged source: the first, and one more for files it left out.
+_REJUDGE_ROUNDS = 2
+
+
+def _check_reason(note: str) -> str:
+    """The ``[reason]`` verify_evidence appended to a verdict's note ("" when none); the
+    reason may itself hold brackets (``LEVEL_ORDER["medium"]``)."""
+    if not note.endswith("]"):
+        return ""
+    at = note.rfind(" [citation ")
+    at = at if at >= 0 else note.rfind(" [")
+    return note[at + 1:] if at >= 0 else ""
+
+
+def _citation_outcome(verdicts: list[dict], checked: list[dict]) -> dict:
+    """For a judge's trace event: how many "implemented" citations the check verified,
+    and per requirement id why one failed (the unlocated label, or the check's reason)."""
+    claimed = [item for item in verdicts if item.get("status") == "implemented"]
+    failures = {}
+    for raw, item in zip(verdicts, checked):
+        if raw.get("status") == "implemented" and item.get("status") != "implemented":
+            reason = _check_reason(str(item.get("note") or ""))[1:-1]
+            failures[str(item.get("id"))] = item.get(_requirements_ledger.EVIDENCE_UNLOCATED) or reason[:120]
+    return {"citations": {"claimed": len(claimed), "verified": len(claimed) - len(failures)}, "failures": failures}
+
+
 def _judge_outcome(requirements: list[dict], verdicts: list[dict] | None) -> dict:
     """A judge call's trace outcome: failed, or the verdict count per status."""
     if verdicts is None:
@@ -5325,11 +5391,24 @@ def _failed_requests(report: dict) -> set[int]:
 
 
 def _with_requests_appended(new: list, old: list, indices: list[int]) -> list | None:
-    """``new`` with ``old[i]`` for each of ``indices`` appended, references renumbered;
-    None when one of them reads a response of a request that is not appended with it."""
+    """``new`` with ``old[i]`` for each of ``indices`` appended, references renumbered: onto
+    the appended copy, or onto the request ``new`` keeps with the same method and route
+    and body (at the same index, or the only one; r13-web1). None when one reads a response that
+    neither gives."""
     from besser.spec_driven_agent.validation.api_probe import _REFERENCE
 
     position = {index: len(new) + offset for offset, index in enumerate(indices)}
+    for index, request in enumerate(old):
+        # The same request: method, route and body. Another body is another record (review 11).
+        same = [kept for kept, candidate in enumerate(new)
+                if isinstance(candidate, dict) and isinstance(request, dict)
+                and _request_route(candidate) == _request_route(request)
+                and candidate.get("json") == request.get("json")]
+        if index not in position and same:
+            if index in same:
+                position[index] = index
+            elif len(same) == 1:
+                position[index] = same[0]
     appended = []
     for index in indices:
         text = json.dumps(old[index])
@@ -5351,11 +5430,6 @@ def _dropped_passing_requests(old: list, report: dict, new: list) -> list[int]:
     """
     from besser.spec_driven_agent.validation.api_probe import _REFERENCE
 
-    def route(request) -> tuple[str, str]:
-        path = _REFERENCE.sub("{id}", str(request.get("path", ""))).split("?", 1)[0].rstrip("/")
-        return (str(request.get("method", "")).upper(),
-                "/".join("{id}" if segment.isdigit() else segment for segment in path.split("/")))
-
     responses = {item.get("index"): item for item in report.get("responses") or [] if isinstance(item, dict)}
     failed: set[int] = set()
     for index, request in enumerate(old):
@@ -5363,9 +5437,19 @@ def _dropped_passing_requests(old: list, report: dict, new: list) -> list[int]:
         if (not isinstance(response.get("status"), int) or response.get("failures") or "error" in response
                 or {int(ref) for ref, _ in _REFERENCE.findall(json.dumps(request))} & failed):
             failed.add(index)
-    kept = {route(request) for request in new if isinstance(request, dict)}
+    kept = {_request_route(request) for request in new if isinstance(request, dict)}
     return [index for index, request in enumerate(old)
-            if index not in failed and isinstance(request, dict) and route(request) not in kept]
+            if index not in failed and isinstance(request, dict) and _request_route(request) not in kept]
+
+
+def _request_route(request: dict) -> tuple[str, str]:
+    """A test_api request's method and normalised path: references and numeric ids are one
+    placeholder; query string and trailing slash ignored."""
+    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
+
+    path = _REFERENCE.sub("{id}", str(request.get("path", ""))).split("?", 1)[0].rstrip("/")
+    return (str(request.get("method", "")).upper(),
+            "/".join("{id}" if segment.isdigit() else segment for segment in path.split("/")))
 
 
 def _redact_for_trace(value: Any) -> Any:

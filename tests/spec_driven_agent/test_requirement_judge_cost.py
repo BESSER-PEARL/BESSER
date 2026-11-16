@@ -402,8 +402,9 @@ def test_the_citation_repair_reads_every_file_a_structured_citation_names(orch, 
         {"path": "routers/room.py", "line": "if number in taken:"},
         {"path": "routers/guest.py", "line": "raise HTTPException(409, 'taken')"}]}
     focused = []
-    digest = ledger.build_app_digest
-    monkeypatch.setattr(ledger, "build_app_digest",
+    # The focused round also needs its gaps (a file it left out gets one more round).
+    digest = ledger.build_app_digest_details
+    monkeypatch.setattr(ledger, "build_app_digest_details",
                         lambda out, focus_paths=None: focused.append(focus_paths) or digest(out, focus_paths=focus_paths))
     orch._collect_requirement_issues()
 

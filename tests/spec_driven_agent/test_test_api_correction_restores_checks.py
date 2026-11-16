@@ -28,12 +28,41 @@ def test_left_out_checks_return_at_the_end_with_their_references_renumbered(tmp_
     assert "added back at the end" in result["restored_checks"]
 
 
-def test_a_left_out_check_reading_a_kept_request_is_still_refused(tmp_path):
-    old = [{"method": "POST", "path": "/plant/", "json": {"name": "a"}},
-           {"method": "GET", "path": "/plant/{{0.id}}/"}]
-    orch = _orch(tmp_path, old, {})
-    result, probe = _correct(orch, [{**old[0], "expected_status": 201}])
-    assert not probe.called and "GET /plant/{{0.id}}/ -> 2xx" in result["error"]
+def test_a_left_out_check_reading_a_kept_request_reads_it_at_its_new_place(tmp_path):
+    """r13-web1 turn 5: the correction kept ``POST /tag/`` and left out the PUT and DELETE
+    that read it; they were refused, and the model filed a second scenario instead, leaving
+    the failing one stored and replayed as a blocker."""
+    old = [{"method": "POST", "path": "/todolist/", "json": {"name": "Home"}, "expected_fields": {"name": "Home"}},
+           {"method": "POST", "path": "/tag/", "json": {"name": "urgent"}},
+           {"method": "PUT", "path": "/tag/{{1.tag.id}}/", "json": {"name": "urgent2"}},
+           {"method": "DELETE", "path": "/tag/{{1.tag.id}}/"}]
+    orch = _orch(tmp_path, old, {0: {"status": 200, "failures": ["JSON path 'name' was not present"]}})
+    new = [{"method": "GET", "path": "/todolist/"},
+           {**old[0], "expected_fields": {"todolist.name": "Home"}},
+           old[1]]
+    result, probe = _correct(orch, new)
+    sent = probe.call_args.args[1]
+    assert sent[:3] == new and [r["path"] for r in sent[3:]] == ["/tag/{{2.tag.id}}/", "/tag/{{2.tag.id}}/"]
+
+
+def test_a_left_out_check_reads_only_a_kept_request_with_the_same_body(tmp_path):
+    """Review 11: with two POST /tag/ in the new list, the one at the old index won even
+    though the request actually kept had moved, and a restored DELETE removed another
+    record. A same-route request with another body is never the target."""
+    old = [{"method": "POST", "path": "/tag/", "json": {"name": "urgent"}},
+           {"method": "GET", "path": "/stats/", "expected_fields": {"count": 1}},
+           {"method": "DELETE", "path": "/tag/{{0.id}}/"}]
+    orch = _orch(tmp_path, old, {1: {"status": 200, "failures": ["count: expected 1, got 2"]}})
+    moved = [{"method": "POST", "path": "/tag/", "json": {"name": "other"}},
+             {"method": "POST", "path": "/tag/", "json": {"name": "urgent"}},
+             {"method": "GET", "path": "/stats/", "expected_fields": {"count": 2}}]
+    result, probe = _correct(orch, moved)
+    assert probe.call_args.args[1][3]["path"] == "/tag/{{1.id}}/"
+
+    orch = _orch(tmp_path, old, {1: {"status": 200, "failures": ["count: expected 1, got 2"]}})
+    other_only = [moved[0], moved[2]]
+    result, probe = _correct(orch, other_only)
+    assert not probe.called and "DELETE /tag/{{0.id}}/ -> 2xx" in result["error"]
 
 
 def test_more_than_twenty_requests_is_still_refused(tmp_path):

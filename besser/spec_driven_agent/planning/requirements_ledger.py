@@ -183,6 +183,10 @@ def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) ->
 _TRAILING_COMMA_RE = re.compile(r",(?=[)\]}])")
 
 
+# A line that opens with a prefixed string piece (``f"{b} ..."``) continuing the last line's.
+_PREFIXED_PIECE_RE = re.compile(r'[fFrRbBuU]{1,2}"')
+
+
 @lru_cache(maxsize=65536)
 def _joined_strings(text: str) -> str:
     """Adjacent string literals ``"a " "b"`` read as the one string ``"a b"``, and
@@ -239,6 +243,8 @@ def _in_code(quoted: str, source: _Source, index: int, min_code: int = 1) -> boo
     A string's text with its closing ``")`` is not code (review: ``...stored.";``).
     """
     line = source.normalised[index]
+    if not quoted:
+        return False
     if not source.masked:
         code = _collapse(code_only(quoted, source.path))
         return len(code) >= min_code and quoted in line and code in source.code[index]
@@ -299,12 +305,17 @@ def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):
                 or _in_code(quoted, source, start, min_code)):
             yield start + 1, start + 1
             continue
-        if not first or not target.startswith(_joined_strings(first)):
+        # A first line ending in a string piece ends in its closing quote; the next line's
+        # piece joins it (the join below then needs the whole quote).
+        if not first or not target.startswith(_joined_strings(first).rstrip('"')):
             continue
         joined = first
         for end in range(start + 1, min(start + _MAX_QUOTE_LINES, len(normalised))):
             earlier = _joined_strings(joined)
-            joined += normalised[end]
+            piece = _PREFIXED_PIECE_RE.match(normalised[end]) if joined.endswith('"') else None
+            # A formatter's split ``"... " f"{b} ..."`` reads as one string: the seam is
+            # removed only here, where one line's piece ends and the next one's starts.
+            joined = joined[:-1] + normalised[end][piece.end():] if piece else joined + normalised[end]
             span_text = _joined_strings(joined)
             # The quote may stop inside its last line (a signature quoted without
             # its "-> T:", anywhere when an ellipsis marks the cut), never inside an earlier one.
@@ -908,10 +919,28 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     return build_app_digest_and_gaps(output_dir, focus_paths=focus_paths)[0]
 
 
+# Files a focused digest shows whole, beside the schema files.
+_MAX_FOCUS_FILES = 10
+
+
+def focus_paths_in_turn(path_lists: list[list[str]]) -> list[str]:
+    """The paths of several requirements taken one from each in turn, without repeats, so
+    the paths of a later requirement are not crowded out by an earlier one's (r13-p81)."""
+    lists = [list(dict.fromkeys(path for path in paths if isinstance(path, str) and path.strip()))
+             for paths in path_lists]
+    ordered: list[str] = []
+    for depth in range(max((len(paths) for paths in lists), default=0)):
+        ordered += [paths[depth] for paths in lists if depth < len(paths) and paths[depth] not in ordered]
+    return ordered
+
+
 def resolved_focus_paths(files: dict[str, str], focus_paths: list | None) -> list[str]:
-    """The judged files the first ten focus paths name, each unambiguously (a path or a suffix)."""
+    """The first ten distinct judged files the focus paths name, each unambiguously (a path
+    or a suffix). Capped after resolving: ten copies of one path left the rest out (r13-p81)."""
     resolved: list[str] = []
-    for path in (focus_paths or [])[:10]:
+    for path in focus_paths or []:
+        if len(resolved) >= _MAX_FOCUS_FILES:
+            break
         if not isinstance(path, str):
             continue
         path = path.strip().replace("\\", "/")
@@ -931,6 +960,14 @@ def build_app_digest_and_gaps(output_dir: str, *,
     not a fair one. Files never shown (``_DIGEST_SKIP_NAMES``) and the files a
     focused digest leaves out on purpose are not gaps.
     """
+    digest, gaps, _shown = build_app_digest_details(output_dir, focus_paths=focus_paths)
+    return digest, gaps
+
+
+def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None = None
+                             ) -> tuple[str, frozenset[str], frozenset[str]]:
+    """:func:`build_app_digest_and_gaps`, and the files the digest shows (a focused one
+    always shows the schema files too)."""
     files = _source_files(output_dir)
     baselines = _generator_baselines(output_dir, files)
     shares = _written_shares(output_dir, files, baselines)
@@ -993,6 +1030,7 @@ def build_app_digest_and_gaps(output_dir: str, *,
     omitted = unreadable + omitted_by_focus
     truncated_paths = []
     over_budget = []
+    shown: list[str] = []
     for _, rel, chunk, truncated in entries:
         if rel not in reserved:
             if total + len(chunk) + 2 > source_budget:
@@ -1001,6 +1039,7 @@ def build_app_digest_and_gaps(output_dir: str, *,
                 continue
             total += len(chunk) + 2
         parts.append(chunk)
+        shown.append(rel)
         if truncated or rel in regions:
             truncated_paths.append(rel)
     footer = (
@@ -1018,7 +1057,7 @@ def build_app_digest_and_gaps(output_dir: str, *,
     )
     if len(footer) > footer_budget:
         footer = footer[:max(0, footer_budget - 42)] + "\n[Coverage path listing also truncated.]\n"
-    return "\n\n".join(parts) + footer[:footer_budget], frozenset(over_budget + truncated_paths)
+    return "\n\n".join(parts) + footer[:footer_budget], frozenset(over_budget + truncated_paths), frozenset(shown)
 
 
 def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
@@ -1706,6 +1745,42 @@ def _syntax_spans(raw: str, source: _Source, cache: dict) -> list[tuple[int, int
     return []
 
 
+# Statements whose header a judge quotes alone ("if a or b:"); defs and classes match as text.
+_HEADER_STATEMENTS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith)
+_BLOCK_FIELDS = ("body", "orelse", "handlers", "finalbody")
+
+
+def _header_dump(node: ast.stmt) -> str:
+    """The syntax tree of a compound statement without its blocks: its header."""
+    header = type(node)(**{field: [] if field in _BLOCK_FIELDS else getattr(node, field)
+                           for field in node._fields})
+    return ast.dump(header)
+
+
+def _header_end(node: ast.stmt, source: _Source) -> int:
+    """The line holding a compound statement's closing ``:``: the last line before its body
+    with code on it (a comment between the header and the body is not the header)."""
+    before_body = range(node.lineno, max(node.lineno, node.body[0].lineno - 1) + 1)
+    return max((line for line in before_body if source.code[line - 1].strip()), default=node.lineno)
+
+
+def _header_spans(raw: str, source: _Source) -> list[tuple[int, int]]:
+    """1-based spans of the compound-statement headers whose syntax tree is the quote's,
+    a header such as ``if a or b:`` quoted on one line while a formatter wrapped it."""
+    text = raw.replace("\\n", "\n").strip()
+    if source.tree is None or not text.endswith(":"):
+        return []
+    try:
+        body = ast.parse(textwrap.dedent(text) + " pass").body
+        if len(body) != 1 or not isinstance(body[0], _HEADER_STATEMENTS):
+            return []
+        wanted = _header_dump(body[0])
+        return [(node.lineno, _header_end(node, source)) for node in ast.walk(source.tree)
+                if isinstance(node, type(body[0])) and _header_dump(node) == wanted]
+    except (SyntaxError, ValueError, RecursionError):
+        return []
+
+
 # Where a def collapsed onto its decorator's line starts: "@router.get(...) def f(...):".
 _COLLAPSED_DEF_RE = re.compile(r"\s+(?=(?:async\s+)?def\s+\w+\s*\()")
 _DECORATOR_ONLY = "the citation must identify an implemented statement, not only a decorator"
@@ -1835,7 +1910,7 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
             unmatched = literals[0]
     if any(spans for _, _, spans in located):
         return located, "", False
-    syntax = _syntax_spans(raw_quote, source, quote_cache)
+    syntax = _syntax_spans(raw_quote, source, quote_cache) or _header_spans(raw_quote, source)
     if syntax:
         # The role check reads the matched source without comments, never the quote:
         # a comment the judge wrote into it is not code.
@@ -1885,6 +1960,8 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
         citations = [(str(c.get("path") or ""), str(c.get("line") or "")[:_MAX_EVIDENCE_CHARS])
                      for c in evidence if isinstance(c, dict)] if structured else [
             (evidence or "")[:_MAX_EVIDENCE_CHARS].partition(":")[::2]]
+        # An empty citation is no citation, not one of absent code (r13-p81 R8).
+        citations = [(path, quote) for path, quote in citations if quote.replace("\\n", "").strip()]
         located, reason = [], "" if citations else "no source line is cited"
         for index, (path, raw_quote) in enumerate(citations, 1):
             found, failure, malformed = _locate_citation(path, raw_quote, files, parsed, quote_cache, sqlite)
@@ -2065,9 +2142,10 @@ def _path_segments(path: str) -> tuple[str, ...]:
     return tuple("{}" if part.isdigit() else part for part in path.split("/") if part)
 
 
-def _declared_routes(full: str) -> set[tuple[frozenset[str] | None, tuple[str, ...]]]:
+def _declared_routes(full: str) -> set[tuple[frozenset[str] | None, tuple[str, ...], int, int]]:
     """The routes a Python file's decorators and ``add_api_route`` calls declare: (methods or
-    None for any, segments), under the literal ``prefix=`` of the router they are on. A
+    None for any, segments, first line, last line of the handler or call), under the literal
+    ``prefix=`` of the router they are on. A
     router whose prefix is not a literal declares nothing that can be matched. Prefixes
     added where the router is included are not known: calls are matched by suffix."""
     try:
@@ -2087,8 +2165,10 @@ def _declared_routes(full: str) -> set[tuple[frozenset[str] | None, tuple[str, .
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             calls = [d for d in node.decorator_list if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
                      and d.func.attr in _ROUTE_VERBS | _ROUTE_ANY_VERB]
+            lines = (_statement_start(node), node.end_lineno)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_api_route":
             calls = [node]
+            lines = (node.lineno, node.end_lineno)
         for call in calls:
             route = _route_literal(call.args[0] if call.args else next(
                 (kw.value for kw in call.keywords if kw.arg == "path"), None))
@@ -2096,7 +2176,7 @@ def _declared_routes(full: str) -> set[tuple[frozenset[str] | None, tuple[str, .
             if route is None or (receiver in prefixes and prefixes[receiver] is None):
                 continue
             prefix = prefixes.get(receiver) or ""
-            routes.add((_route_methods(call, call.func.attr), _path_segments(f"{prefix}/{route}")))
+            routes.add((_route_methods(call, call.func.attr), _path_segments(f"{prefix}/{route}"), *lines))
     return routes
 
 
@@ -2104,7 +2184,7 @@ def _route_called(routes: set, method: str, path: str) -> bool:
     """A call ends with one of ``routes`` (the router prefix is not known), method included.
     A route of parameters only (``/{id}``) proves nothing about which file served it."""
     called = _path_segments(path)
-    for methods, segments in routes:
+    for methods, segments, *_lines in routes:
         if (not any(part != "{}" for part in segments) or len(segments) > len(called)
                 or (methods is not None and method.upper() not in methods)):
             continue
@@ -2114,14 +2194,30 @@ def _route_called(routes: set, method: str, path: str) -> bool:
     return False
 
 
-def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_built: bool,
-                             exercised: set[tuple[str, str]], workflows_passed: int) -> list[dict]:
-    """Each implemented verdict with what besides its citation checked it.
+# Why no screen check ran, by the state of the frontend build on the final tree.
+_SCREEN_REASONS = {"passed": "the frontend builds", "failed": "the frontend build failed",
+                   "not_run": "the frontend build check did not run", "none": "no frontend"}
 
-    ``verified`` only when a passing ``test_api`` workflow called (``exercised``: method,
-    path) a route declared in a cited backend file and no frontend file is cited: no
-    harness check renders a screen, and a frontend that builds has not been run.
-    ``unverified`` otherwise, the note saying what did and did not run. Never a blocker.
+
+def _cited_lines(full: str, quotes: list[str]) -> set[int]:
+    """The 1-based lines of a cited file the quotes locate on."""
+    source = _load_source(full, {}, False)
+    return {line for quote in quotes for first, last in _quote_spans(_evidence_quote(quote), source)
+            for line in range(first, last + 1)}
+
+
+def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_build: str,
+                             exercised: set[tuple[str, str]], workflows_passed: int) -> list[dict]:
+    """Each implemented verdict with what besides its citation checked it, the API half and
+    the screens half reported apart.
+
+    The API half is exercised when a passing ``test_api`` call (``exercised``: method, path)
+    hit the route a cited line is on (its decorator or handler), or, when no cited line is
+    on a route, any route of a cited backend file; that call is named. No harness check
+    renders a screen, so a cited frontend file is never exercised (``frontend_build``:
+    passed, failed, not_run or none says why). ``verification``: ``verified`` when every
+    cited half was exercised, ``api_verified`` when the API half was and screens are cited,
+    ``unverified`` otherwise. Never a blocker.
     """
     files = _source_files(output_dir)
     routes_cache: dict[str, set] = {}
@@ -2130,36 +2226,37 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
         if item.get("status") != "implemented":
             leveled.append(item)
             continue
-        paths = [path.strip().replace("\\", "/") for path in cited_paths(item.get("evidence")) if path.strip()]
-        ran, missing = [], []
-        if any(path.lower().endswith(_FRONTEND_SUFFIXES) for path in paths):
-            missing.append("the frontend builds; its screens were not run" if frontend_built
-                           else "the frontend was not built")
-        backend = [path for path in paths if not path.lower().endswith(_FRONTEND_SUFFIXES)]
+        evidence = item.get("evidence")
+        cited = ([(str(c.get("path") or "").strip().replace("\\", "/"), str(c.get("line") or ""))
+                  for c in evidence if isinstance(c, dict)] if isinstance(evidence, list)
+                 else [(path.strip().replace("\\", "/"), quote) for path, quote in [str(evidence or "").partition(":")[::2]]])
+        cited = [(path, quote) for path, quote in cited if path]
+        screens = any(path.lower().endswith(_FRONTEND_SUFFIXES) for path, _ in cited)
+        backend = [(path, quote) for path, quote in cited if not path.lower().endswith(_FRONTEND_SUFFIXES)]
+        halves, api_exercised = [], False
         if backend:
-            routes = set()
-            for path in backend:
+            on_cited, in_files = set(), set()
+            for path, quote in backend:
                 full = files.get(path) or next((v for k, v in files.items() if k.endswith("/" + path)), None)
                 if full and full.endswith(".py"):
-                    routes |= routes_cache.setdefault(full, _declared_routes(full))
+                    routes = routes_cache.setdefault(full, _declared_routes(full))
+                    lines = _cited_lines(full, [quote])
+                    in_files |= routes
+                    on_cited |= {route for route in routes if any(route[2] <= line <= route[3] for line in lines)}
+            routes, which = (on_cited, "the cited route") if on_cited else (in_files, "a route of the cited file")
             call = next((f"{method} {path}" for method, path in sorted(exercised) if _route_called(routes, method, path)),
                         None)
-            if call:
-                ran.append(f"a passing API workflow called {call}, a route in the cited files")
-            else:
-                missing.append("an API workflow passed but called no route in the cited files" if workflows_passed
-                               else "no API workflow passed against the app")
-        verified = bool(paths) and not missing
-        if verified:
-            note = "Cited in the source; " + " and ".join(ran)
-        elif ran:
-            note = "Found in the source; " + " and ".join(ran + missing)
-        else:
-            note = "Found in the source only; " + " and ".join(missing or ["nothing cited"])
-        leveled.append({**item, "verification": "verified" if verified else "unverified", "verification_note": note})
+            api_exercised = call is not None
+            halves.append(f"API: a passing workflow called {call}, {which}" if call
+                          else "API: a workflow passed but called no cited route" if workflows_passed
+                          else "API: no workflow passed")
+        if screens:
+            halves.append(f"screens: not run ({_SCREEN_REASONS.get(frontend_build, frontend_build)})")
+        level = ("verified" if api_exercised and not screens else "api_verified" if api_exercised else "unverified")
+        note = ("Cited in the source; " if level == "verified" else "Found in the source; ") + "; ".join(
+            halves or ["nothing cited"])
+        leveled.append({**item, "verification": level, "verification_note": note})
     return leveled
-
-
 def without_fingerprints(verdicts: list[dict]) -> list[dict]:
     """The verdicts without the file hashes only a kept verdict's check reads."""
     return [{key: value for key, value in item.items() if key not in VERDICT_FINGERPRINT_KEYS}

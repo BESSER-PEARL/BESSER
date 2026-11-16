@@ -47,7 +47,8 @@ def test_the_rejudge_message_carries_its_own_evidence_and_names_only_files_shown
     second = {"status": "implemented", "evidence": [{"path": "backend/risk_service.py",
                                                      "line": "return [m for m in sent if is_aggressive(m)]"}],
               "note": "detect() filters aggressive messages"}
-    _judge(monkeypatch, first, second)
+    # The whole-app digest left the service out, so its citation gets one more round (r13-p81).
+    _judge(monkeypatch, first, second, second)
     (blocker,) = [issue for issue in orch._collect_requirement_issues()
                   if issue.startswith("requirement unverified:")]
     assert "detector.py" not in blocker

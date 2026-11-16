@@ -139,6 +139,7 @@ def get_association_classes(model: DomainModel) -> Dict[str, dict]:
                     "is_enum": attribute.type.__class__.__name__ == "Enumeration",
                     "is_id": attribute.is_id,
                     "is_optional": attribute.is_optional,
+                    "is_required": not attribute.is_optional and attribute.default_value is None,
                 }
                 for attribute in sort_by_timestamp(cls.attributes)
                 if not is_server_owned_attribute(attribute)

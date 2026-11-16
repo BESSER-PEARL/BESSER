@@ -1403,6 +1403,13 @@ async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 
     if existing:
         raise HTTPException(status_code=400, detail="Relationship already exists")
+    {% set required_link_attrs = assoc_classes[x[4]].attributes | selectattr('is_required') | map(attribute='name') | list %}
+    {% if required_link_attrs %}
+
+    missing = [name for name in {{ required_link_attrs }} if not link or link.get(name) is None]
+    if missing:
+        raise HTTPException(status_code=422, detail="{{x[4]}} requires " + ", ".join(missing))
+    {% endif %}
 
     # Create the association class row
     database.add({{x[4]}}(

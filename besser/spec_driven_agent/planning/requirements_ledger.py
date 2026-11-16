@@ -1507,22 +1507,72 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
         )), None)
         if invalid:
             return "the cited implementation is invalid: " + invalid["message"]
-    if (_demands_enforcement(item.get("kind", ""), item.get("text", ""))
+    kind, text = item.get("kind", ""), item.get("text", "")
+    if (_demands_enforcement(kind, text)
             and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
             and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
             and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)
-            and not _lists_cited_enumeration(item.get("text", ""), statement, source.tree)):
+            and not (kind != "uniqueness" and _only_lists_cited_enumeration(text, statement, source.tree))):
         return "the cited line declares data; it does not demonstrate enforcement"
     return ""
 
 
 _MEMBER_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
+# A list of values: "a, b or c", "a/b", "a and b".
+_LIST_SEPARATOR = r"(?:,\s*(?:(?:or|and)\b)?|/|\b(?:or|and)\b)"
+_NEXT_LISTED_RE = re.compile(
+    rf"\s*{_LIST_SEPARATOR}\s*(?P<item>[\w'-]+(?:\s+[\w'-]+){{0,2}}?)(?=\s*(?:[,/.;:)]|\b(?:or|and)\b|$))", re.I)
+_PREVIOUS_LISTED_RE = re.compile(rf"(?P<item>[\w'-]+)\s*{_LIST_SEPARATOR}\s*$", re.I)
+# Words that start a clause, not a value: "positive or negative, never anything else".
+_NOT_A_VALUE = frozenset({"a", "an", "the", "its", "their", "each", "every", "is", "are", "be", "must", "may",
+                          "can", "should", "will", "not", "never", "no", "any", "only"})
 
 
-def _lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None) -> bool:
-    """The cited Python statement defines, belongs to or types a field with an
-    enumeration of the same file, and the requirement names every one of its
-    values: the type refuses any other value, which is the enforcement."""
+def _names_pattern(name: str) -> str:
+    # IN_PROGRESS and InProgress both read "in progress", "in-progress" or "inprogress".
+    return r"[\s_-]*".join(map(re.escape, _MEMBER_WORD_RE.findall(name)))
+
+
+def _member_pattern(member: ast.Assign) -> re.Pattern | None:
+    """A member as the requirement may write it: its name, or its string value (``P = "positive"``)."""
+    names = [target.id for target in member.targets if isinstance(target, ast.Name)]
+    value = member.value.value if isinstance(member.value, ast.Constant) else None
+    names += [value] if isinstance(value, str) else []
+    spelled = [_names_pattern(name) for name in names if len(name.strip()) > 1 and _MEMBER_WORD_RE.search(name)]
+    return re.compile(rf"\b(?:{'|'.join(spelled)})\b", re.I) if spelled else None
+
+
+def _lists_only_members(text: str, spans: list[tuple[int, int]]) -> bool:
+    """Every value listed beside a member ("a, b or c") is a member too."""
+    starts, ends = {start for start, _ in spans}, {end for _, end in spans}
+    for start, end in spans:
+        following = _NEXT_LISTED_RE.match(text, end)
+        if (following and following.start("item") not in starts
+                and following.group("item").split()[0].lower() not in _NOT_A_VALUE):
+            return False
+        preceding = _PREVIOUS_LISTED_RE.search(text[:start])
+        if (preceding and preceding.end("item") not in ends
+                and preceding.group("item").lower() not in _NOT_A_VALUE):
+            return False
+    return True
+
+
+def _field_named(text: str, field: str) -> bool:
+    """Every word of a field's name is a word of the requirement, singular or plural."""
+    words = _MEMBER_WORD_RE.findall(field)
+    return bool(words) and all(re.search(rf"\b{re.escape(word)}(?:e?s)?\b", text, re.I) for word in words)
+
+
+def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None) -> bool:
+    """The requirement's constraint words are values of the enumeration cited.
+
+    The cited Python statement defines, belongs to or types a field with one
+    enumeration of the same file. A field of a class of that file is of that
+    enumeration and is the one the requirement names (the cited field, when one
+    is cited). The requirement names every value of the enumeration, lists no
+    other value beside them, and states no constraint once they are taken out.
+    The type then refuses any other value, which is the enforcement. "Must not
+    go from closed back to open" names the values too, and still needs its check."""
     if statement is None or tree is None:
         return False
     enumerations = {
@@ -1533,12 +1583,24 @@ def _lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AS
         if name in enumerations]
     if len(cited) != 1:
         return False
-    members = [target.id for member in cited[0].body if isinstance(member, ast.Assign)
-               for target in member.targets if isinstance(target, ast.Name)]
-    # IN_PROGRESS and InProgress both read "in progress", "in-progress" or "inprogress".
-    return len(members) > 1 and all(
-        re.search(r"\b" + r"[\s_-]*".join(map(re.escape, _MEMBER_WORD_RE.findall(member))) + r"\b", text, re.I)
-        for member in members)
+    enumeration = cited[0]
+    fields = [field for node in ast.walk(tree) if isinstance(node, ast.ClassDef) and node.name not in enumerations
+              for field in node.body if isinstance(field, (ast.AnnAssign, ast.Assign))
+              and any(isinstance(n, ast.Name) and n.id == enumeration.name for n in ast.walk(field))]
+    if statement in fields:
+        fields = [statement]
+    if not any(isinstance(target, ast.Name) and _field_named(text, target.id)
+               for field in fields for target in getattr(field, "targets", None) or [field.target]):
+        return False
+    members = [_member_pattern(member) for member in enumeration.body if isinstance(member, ast.Assign)]
+    if len(members) < 2 or None in members or not all(member.search(text) for member in members):
+        return False
+    spans = sorted(match.span() for member in members for match in member.finditer(text))
+    if not _lists_only_members(text, spans):
+        return False
+    for member in members:
+        text = member.sub(" ", text)
+    return not _states_constraint(text)
 
 
 _UNMATCHED_NOTE_CHARS = 80

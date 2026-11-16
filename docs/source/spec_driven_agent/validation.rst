@@ -360,9 +360,11 @@ Findings are classified into three severities:
        a line that enforces it, not a declaration. A constraint word counts
        as a whole word ("lesson" does not state "less"). A value the
        requirement lists ("one of: positive, mixed, negative") still states
-       that the field takes only those values: a Python enumeration whose
-       every value the requirement names, cited itself or as the type of a
-       field, is such an enforcement. With a class model and an agent model, the list also holds
+       that the field takes only those values. A Python enumeration, cited
+       itself or as the type of a field, is such an enforcement when a field
+       of the same file that the requirement names is of that enumeration,
+       its values are exactly the ones the requirement lists, and the
+       requirement states no constraint beyond those values. With a class model and an agent model, the list also holds
        one requirement built from the models: every intent that creates,
        lists or changes the model's records reads or writes them through the
        app's code (its models, database, API or a helper), while a greeting

@@ -15,7 +15,8 @@ indicate whether the entity appears in the app (not executed acceptance):
   non-empty ``options.formColumns``. The GUI-model scaffold's only
   generated create path issues its POST from a shared runtime component
   (``TableComponent``), never a literal call in the page file itself, so
-  the binding — not the call site — is the signal.
+  the binding — not the call site — is the signal. An abstract class is
+  created through its subclasses, so its cell is ``None`` (not expected).
 
 Most generated React frontends put every request behind one api module
 (``api.create('carpark', payload)`` → ``fetch(url, {method:'POST'})``),
@@ -37,6 +38,8 @@ import bisect
 import functools
 import os
 import re
+from besser.spec_driven_agent.validation.constructibility import _abstract_entities
+from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.utilities.workspace_fs import walk_plain
 
 _FRONTEND_EXTS = (".js", ".jsx", ".ts", ".tsx")
@@ -134,12 +137,27 @@ def _blank_comments(text: str) -> str:
         lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()) if m.group().startswith("/") else m.group(), text)
 
 
+def _blank_prose(text: str) -> str:
+    """Blank comments and every string holding a space: a message or a label, not a name."""
+    return _BLANKABLE_RE.sub(
+        lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group())
+        if m.group().startswith("/") or re.search(r"\s", m.group()) else m.group(), text)
+
+
+def _record_id_piece(expression: str) -> str | None:
+    """The path text of a part computed at run time: nothing for a record id
+    (`cartId`, `cart.id`), None for anything else, which may name the resource."""
+    name = re.split(r"[^\w$]", expression.strip())[-1]
+    return "" if name == "id" or name.endswith(("Id", "ID", "_id")) else None
+
+
 def _argument_path(source: str, blanked: str, start: int) -> str | None:
     """The literal text of the call argument at ``start``, or None when it names no path.
 
     A plain literal is the path. ``API + '/booking/'`` and `` `${API}/booking/` ``
     keep their literal parts; when no letter is left (`` `/${route}/` ``) the
-    path is computed. An options object (`axios({ url, method })`) is no path.
+    path is computed. A record id in it (`` `/checkout/${cartId}/` ``) leaves the
+    path literal. An options object (`axios({ url, method })`) is no path.
     """
     end, operands = start, [start]
     while end < len(blanked) and blanked[end] not in ",)]}":
@@ -162,14 +180,14 @@ def _argument_path(source: str, blanked: str, start: int) -> str | None:
         elif literal and operand[0] == "`":
             body, at = operand[1:-1], 0
             for slot in _TEMPLATE_SLOT_RE.finditer(body):
-                pieces += [body[at:slot.start()], None]
+                pieces += [body[at:slot.start()], _record_id_piece(slot.group()[2:-1])]
                 at = slot.end()
             pieces.append(body[at:])
         else:
-            pieces.append(None)
+            pieces.append(_record_id_piece(operand))
     while pieces and not pieces[0]:
         pieces.pop(0)  # the base URL
-    # A slot after the base names the resource (`/api/${resource}/`): computed.
+    # A slot after the base that is no record id names the resource (`/api/${resource}/`): computed.
     if None in pieces:
         return None
     static = "".join(pieces)
@@ -277,6 +295,14 @@ def _blank_entity_branches(code: str, forms: list[str]) -> str:
         done = _group_end(blanked, body.end() - 1)
         code = code[:match.start()] + _KEEP_NEWLINES_RE.sub(" ", code[match.start():done]) + code[done:]
     return code
+
+
+def _names_an_entity(code: str, forms: list[str]) -> bool:
+    """Whether a component's code names an entity beyond what a shared form holds
+    for any of them: a test of the entity it was given and the block it runs for
+    it, an error or response read, another record's id."""
+    return _mentions(_REFERENCE_ID_RE.sub(" ", _ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(
+        " ", _blank_entity_branches(code, forms)))), forms)
 
 
 def _skip_space(blanked: str, i: int) -> int:
@@ -522,6 +548,12 @@ def _resolve_import(rel: str, spec: str) -> list[str]:
             + [f"{stem}/index{ext}" for ext in _FRONTEND_EXTS])
 
 
+def _import_targets(rel: str, source: str, files: dict[str, str]) -> dict[str, str]:
+    """{local name: the workspace file it is imported from} for the relative imports of ``rel``."""
+    return {binding: target for binding, spec in _import_bindings(source)
+            for target in [next((c for c in _resolve_import(rel, spec) if c in files), None)] if target}
+
+
 def _previous_char(text: str, i: int) -> str:
     """The last non-space character before ``i``, or ``""``."""
     while i > 0 and text[i - 1].isspace():
@@ -537,6 +569,12 @@ _PROPERTY_ARG_RE = re.compile(
 _ENTRY_BINDING = r"\b(?:const|let|var)\s+{name}\s*=\s*(?P<base>[A-Za-z_$][\w$]*)\s*(?:\?\.)?\["
 # Depth of an entry's own property in `const ENTITIES = { key: { path: 'x' } }` (or `[{ path: 'x' }]`).
 _ENTRY_PROPERTY_DEPTH = 2
+# A component's destructured props holding ``name``: `function Page({ entity, mode = 'list' })`.
+_PROPS_PARAMETER = r"\(\s*\{{[^{{}}()]*(?<![\w$]){name}(?![\w$])[^{{}}()]*\}}"
+# One entry of a metadata object, or any of them: `ENTITIES.order`, `ENTITIES['order']`, `ENTITIES[key]`.
+_ENTRY_EXPRESSION_RE = re.compile(
+    r"\s*(?P<base>[A-Za-z_$][\w$]*)\s*(?:\??\.\s*(?P<key>[A-Za-z_$][\w$]*)"
+    r"|(?:\?\.)?\s*\[\s*(?:(['\"])(?P<quoted>[^'\"\[\]]+)\3|[^\[\]]*)\s*\])\s*")
 
 
 def _metadata_values(arg_text: str, code: str, bindings: dict[str, str], files: dict[str, str]) -> list[str]:
@@ -557,6 +595,13 @@ def _metadata_values(arg_text: str, code: str, bindings: dict[str, str], files: 
         if entry is None or read.group("chain").strip():
             return []
         base = entry.group("base")
+    return _entry_values(base, read.group("prop"), None, bindings, files)
+
+
+def _entry_values(base: str, prop: str, key: str | None,
+                  bindings: dict[str, str], files: dict[str, str]) -> list[str]:
+    """The literal values of ``prop`` in the entries of the imported object ``base``,
+    or in its entry ``key`` alone when one is given; ``[]`` when nothing declares them."""
     module = files.get(bindings.get(base, ""))
     if module is None:
         return []
@@ -565,16 +610,49 @@ def _metadata_values(arg_text: str, code: str, bindings: dict[str, str], files: 
     declared = re.search(r"\b(?:const|let|var)\s+" + re.escape(base) + r"\b[^=;]*=\s*(?=[{\[])", blanked)
     if declared is None:
         return []
-    start = declared.end()
+    start, depth = declared.end(), _ENTRY_PROPERTY_DEPTH
+    if key is not None:
+        named = re.compile(r"(?<![\w$.])(['\"]?)" + re.escape(key) + r"\1\s*:\s*(?=\{)")
+        entry = next((m for m in named.finditer(module, start, _group_end(blanked, start))
+                      if _bracket_depth(blanked, start, m.start()) == 1), None)
+        if entry is None:
+            return []
+        start, depth = entry.end(), 1
     end = _group_end(blanked, start)
-    prop = re.compile(r"(?<![\w$.])" + re.escape(read.group("prop")) + r"\s*:\s*(['\"])([^'\"\n]{1,100})\1")
-    return [value.group(2) for value in prop.finditer(module, start, end)
-            if _bracket_depth(blanked, start, value.start()) == _ENTRY_PROPERTY_DEPTH]
+    values = re.compile(r"(?<![\w$.])" + re.escape(prop) + r"\s*:\s*(['\"])([^'\"\n]{1,100})\1")
+    return [value.group(2) for value in values.finditer(module, start, end)
+            if _bracket_depth(blanked, start, value.start()) == depth]
+
+
+def _prop_read(arg_text: str, code: str) -> tuple[str, str] | None:
+    """``(prop, property)`` when a create's first argument reads a property of a
+    component prop (`entity.path` in `function Page({ entity })`), else None."""
+    read = _PROPERTY_ARG_RE.match(arg_text)
+    if read is None or read.group("chain").strip():
+        return None
+    name = read.group("root")
+    if not re.search(_PROPS_PARAMETER.format(name=re.escape(name)), code):
+        return None
+    return name, read.group("prop")
+
+
+def _rendered_entry_values(source: str, binding: str, prop: str, entry_property: str,
+                           bindings: dict[str, str], files: dict[str, str]) -> list[str]:
+    """The literal values of ``entry_property`` in the metadata entries ``source``
+    hands to the component ``binding`` as ``prop``: `<EntityPage entity={ENTITIES.order} />`."""
+    values: list[str] = []
+    for _, attrs, _ in _jsx_tags(_blank_comments(source), re.escape(binding)):
+        entry = _ENTRY_EXPRESSION_RE.fullmatch(_attr(attrs, re.escape(prop)) or "")
+        if entry:
+            key = entry["key"] or entry["quoted"]
+            values += _entry_values(entry["base"], entry_property, key, bindings, files)
+    return values
 
 
 def _client_create_calls(rel: str, source: str, files: dict[str, str],
                          helper_cache: dict[str, dict], used_clients: set[str],
-                         traced: list[str] | None = None) -> list:
+                         traced: list[str] | None = None,
+                         prop_reads: list[tuple[str, str]] | None = None) -> list:
     """Creates ``rel`` issues through an imported api-client module.
 
     One entry per call site: the helper's own literal path, else the call's
@@ -590,11 +668,12 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
     every page, so it is scanned once rather than once per importer.
 
     A call that names no literal resource but whose path is read off an entry
-    of an imported metadata object adds that property's values to ``traced``.
+    of an imported metadata object adds that property's values to ``traced``;
+    one whose path is read off a component prop adds ``(prop, property)`` to
+    ``prop_reads``, for the files that render the component to resolve.
     """
     calls = []
-    bindings = {binding: target for binding, spec in _import_bindings(source)
-                for target in [next((c for c in _resolve_import(rel, spec) if c in files), None)] if target}
+    bindings = _import_targets(rel, source, files)
     # The import statements name every helper without using it; a comment or a
     # string (`const mode = 'create'`) uses none. Arguments are read from ``uses``.
     uses = _IMPORT_RE.sub(lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()), source)
@@ -626,12 +705,17 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
                            and _REFERENCE_AFTER_RE.match(code, call.end()))
             if name in helpers and (call.group("args") is not None or handed_over):
                 args = uses[call.start("args"):call.end("args")] if call.group("args") is not None else ""
+                # A helper that posts to the path it is given: `api.post(`/checkout/${cartId}/`, body)`.
+                path = _argument_path(uses, code, call.start("args")) if args and helpers[name] is None else None
                 calls.append(helpers[name] or _STRING_ARG_RE.findall(args)
-                             or re.findall(r"[\w$]+", call.group("chain")) or None)
+                             or re.findall(r"[\w$]+", call.group("chain")) or ([path] if path else None))
                 used_clients.add(target)
                 if calls[-1] is None and traced is not None:
-                    traced += _metadata_values(code[call.start("args"):call.end("args")] if args else "",
-                                               code, bindings, files)
+                    argument = code[call.start("args"):call.end("args")] if args else ""
+                    traced += _metadata_values(argument, code, bindings, files)
+                    read = _prop_read(argument, code)
+                    if read and prop_reads is not None:
+                        prop_reads.append(read)
     return calls
 
 
@@ -694,9 +778,7 @@ def _config_declarations(source: str) -> str:
     (`'Dataset Version'`) and every list nested inside an entry (`fields: [...]`,
     whose `ref`s name other entities) are blanked.
     """
-    source = _BLANKABLE_RE.sub(
-        lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group())
-        if m.group().startswith("/") or re.search(r"\s", m.group()) else m.group(), source)
+    source = _blank_prose(source)
     blanked = _blank_literals(source)
     spans, depth, start, outer = [], 0, None, 0
     for i, char in enumerate(blanked):
@@ -733,6 +815,9 @@ def build_acceptance_matrix(
 ) -> dict[str, dict[str, bool | None]] | None:
     """Compute {class name: {route, page, create}} for the workspace.
 
+    A ``None`` cell is not a finding: the signal was not measured (``route`` on
+    an unparsed stack) or does not apply (``create`` of an abstract class).
+
     ``endpoint_manifest`` is the statically parsed route listing (from
     ``prompt_builder.build_endpoint_manifest``); pass it in when the
     caller already built one, else it is rebuilt here.
@@ -747,6 +832,7 @@ def build_acceptance_matrix(
         return None
     if not classes:
         return None
+    abstract = set(_abstract_entities(domain_model))
 
     if not endpoint_manifest:
         try:
@@ -779,8 +865,16 @@ def build_acceptance_matrix(
     helper_cache: dict[str, dict] = {}
     used_clients: set[str] = set()
     traced: dict[str, list[str]] = {rel: [] for rel, _ in frontend_files}
-    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients, traced[rel])
+    prop_reads: dict[str, list[tuple[str, str]]] = {rel: [] for rel, _ in frontend_files}
+    client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients,
+                                              traced[rel], prop_reads[rel])
                     for rel, content in frontend_files}
+    # A create path read off a prop is that of the entry each rendering file hands the component.
+    for rel, content in frontend_files:
+        bindings = _import_targets(rel, content, by_path)
+        for binding, target in bindings.items():
+            for prop, entry_property in prop_reads[target]:
+                traced[rel] += _rendered_entry_values(content, binding, prop, entry_property, bindings, by_path)
     # A shared client's own POSTs count where its helpers are called, not as
     # creates of whatever its other helpers (`getMetrics`) happen to name.
     # A module other files call into is such a client even when none of those
@@ -811,8 +905,7 @@ def build_acceptance_matrix(
         rel for rel, calls in create_calls.items()
         if any(args is None for args in calls)
         and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
-        and not _mentions(_REFERENCE_ID_RE.sub(" ", _ERROR_READ_RE.sub(" ", _COMPARED_STRING_RE.sub(
-            " ", _blank_entity_branches(_blank_comments(by_path[rel]), all_forms)))), all_forms)
+        and not _names_an_entity(_blank_prose(by_path[rel]), all_forms)
     }
     # A generic creator may read its entities from a config module it imports
     # (`entities.js`); that module, not the creator's own code, declares them.
@@ -828,8 +921,12 @@ def build_acceptance_matrix(
         for rel in generic_creators
     }
     # A configured creator is credited through its config alone: the page that
-    # renders it mentioning `user` (the signed-in one) declares nothing.
-    unconfigured = {rel for rel in generic_creators if not _mentions(config_text[rel], all_forms, whole_word=True)}
+    # renders it mentioning `user` (the signed-in one) declares nothing. Next
+    # to such a config a message the creator shows (`'Add a product first.'`)
+    # names no entity; without one, the message ties the form to that entity.
+    unconfigured = {rel for rel in generic_creators
+                    if not _mentions(config_text[rel], all_forms, whole_word=True)
+                    and not _names_an_entity(_blank_comments(by_path[rel]), all_forms)}
     renders_generic_creator = {
         rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None) in unconfigured
                  and re.search(r"<\s*" + re.escape(binding) + r"\b", content)
@@ -864,7 +961,8 @@ def build_acceptance_matrix(
                     or _table_block_create_wired(content, cls)):
                 create = True
                 break
-        matrix[cls] = {"route": route, "page": page, "create": create}
+        # An abstract class is created through its subclasses: no create form is expected.
+        matrix[cls] = {"route": route, "page": page, "create": None if cls in abstract else create}
     return matrix
 
 
@@ -875,7 +973,7 @@ def matrix_issues(matrix: dict[str, dict[str, bool | None]] | None) -> list[str]
     issues: list[str] = []
     for cls, cells in matrix.items():
         # `is False` and not falsiness: None means the signal was never
-        # collected, and "we did not look" is not a finding.
+        # collected or does not apply, and neither is a finding.
         missing = [k for k in ("route", "page", "create") if cells.get(k) is False]
         if not missing:
             continue

@@ -142,8 +142,9 @@ def test_a_shared_form_reading_err_message_is_still_generic(tmp_path):
 
 
 def test_a_form_that_names_an_entity_in_its_code_is_still_that_entitys(tmp_path):
+    """The path is computed, so no page's metadata entry says where the form posts."""
     composer = ENTITY_PAGE.replace("await create(entity.path, values);",
-                                   "await create(entity.path, { body: message });")
+                                   "await create(pathOf(entity), { body: message });")
     root = _workspace(tmp_path, {
         "frontend/src/api.js": CLIENT,
         "frontend/src/entities.js": ENTITIES,

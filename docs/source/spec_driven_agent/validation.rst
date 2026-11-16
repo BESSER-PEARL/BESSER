@@ -676,7 +676,8 @@ broken artifact as a green success is worse than spending a few more turns.
    understands FastAPI decorators in ``.py`` files, so an Express, Django,
    Spring or axum backend reports no route finding at all rather than one per
    entity. The ``page`` and ``create`` cells are stack-independent and still
-   apply.
+   apply. The ``create`` cell of an abstract class is *not expected*: its
+   records are created through its subclasses.
 
 .. warning::
    Validation includes isolated backend execution, not a deployment or full

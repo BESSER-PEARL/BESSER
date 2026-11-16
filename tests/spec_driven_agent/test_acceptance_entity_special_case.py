@@ -109,7 +109,9 @@ def test_a_shared_form_whose_branch_for_one_entity_names_it_creates_them_all(tmp
 
 
 def test_a_branch_on_something_else_still_names_the_entity(tmp_path):
-    page = BRANCH_PAGE.replace("config.key === 'booking'", "config.mode === 'wizard'")
+    """The create's target is computed, so no page's metadata entry names it."""
+    page = BRANCH_PAGE.replace("config.key === 'booking'", "config.mode === 'wizard'").replace(
+        "api.create(config.key, payload)", "api.create(keyOf(config), payload)")
     assert _creates(tmp_path, page=page) == {"Hotel": False, "Booking": True, "Guest": False}
 
 

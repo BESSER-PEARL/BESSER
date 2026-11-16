@@ -164,8 +164,9 @@ def test_a_property_the_entries_do_not_hold_traces_nothing(tmp_path):
 
 
 def test_metadata_that_comes_from_props_cannot_be_traced(tmp_path):
-    """The config arrives as a prop: nothing static names its path, so only the
-    entities the page itself names are credited, as before."""
+    """The config arrives as a prop no render site fills with a metadata entry:
+    nothing static names its path, so only the entities the page itself names
+    are credited."""
     page = _ENTITY_PAGE.replace("({ entityKey })", "({ config })").replace(
         "  const config = ENTITIES[entityKey];\n", "")
     files = {**_FILES, "frontend/src/pages/EntityPage.jsx": page}

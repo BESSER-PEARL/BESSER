@@ -1,9 +1,12 @@
 {% if package_name %}
 package {{ package_name }};
 {% endif %}
+{% trace enum_obj, "enum" %}
 public enum {{ enum_obj.name }} {
 {% for literal in sort_by_timestamp(enum_obj.literals) %}
+{% trace literal, "literal" %}
     {{ literal.name }}{% if not loop.last %},{% endif %}
 
+{% endtrace %}
 {% endfor %}
-}
+}{% endtrace %}

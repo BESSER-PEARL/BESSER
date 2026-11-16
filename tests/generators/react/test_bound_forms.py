@@ -191,3 +191,43 @@ def test_a_boolean_checkbox_in_a_bound_form_is_named_once(build_app, jsx):
     block = jsx(page, "FormBlock")
     fields = json.JSONDecoder().raw_decode(block[block.index("fields={") + len("fields={"):])[0]
     assert {"name": "vip", "field": "vip", "type": "bool"} in fields
+
+
+def test_a_bare_required_attribute_makes_the_input_required(build_app, jsx):
+    """``<input required>`` is saved as ``required=""``: present means required."""
+    form = _editor_form()
+    form["components"] = [
+        _input("full_name", id="gf-name", required=""),
+        _input("email", "email", id="gf-email", required="false"),
+        _input("age", "number", id="gf-age"),
+        {"tagName": "button", "attributes": {"type": "submit"},
+         "components": [{"type": "textnode", "content": "Register guest"}]},
+    ]
+    app = build_app(CLASSES, {"Register": [form]})
+
+    required = {i.custom_attributes["name"]: i.required for i in _form(app.gui_model).inputFields}
+    assert required == {"full_name": True, "email": False, "age": False}
+    page = app.page("Register")
+    assert "required={true}" in jsx(page, "input", 'id="gf_name"')
+    assert "required" not in jsx(page, "input", 'id="gf_email"')
+
+
+def test_the_submit_button_keeps_its_design_classes(build_app, jsx):
+    form = _editor_form()
+    form["components"][-1]["attributes"]["class"] = "btn btn-primary"
+    app = build_app(CLASSES, {"Register": [form]})
+
+    assert 'submitClassName="btn btn-primary"' in jsx(app.page("Register"), "FormBlock")
+    block = app.file("components", "runtime", "FormBlock.tsx")
+    assert '<button type="submit" className={submitClassName} disabled={saving}>' in block
+
+
+def test_an_unbound_form_keeps_the_classes_of_its_submit_button(build_app):
+    form = {"tagName": "form", "components": [
+        _input("message"),
+        {"tagName": "button", "classes": ["btn", {"name": "btn-primary"}],
+         "components": [{"type": "textnode", "content": "Send"}]},
+    ]}
+    app = build_app(CLASSES, {"Contact": [form]})
+
+    assert '<button type="submit" className="btn btn-primary">{"Send"}</button>' in app.page("Contact")

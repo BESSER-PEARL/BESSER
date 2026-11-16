@@ -416,8 +416,9 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
         )
         if req_raw:
             required = str(req_raw).lower() in ("true", "1", "yes")
-        elif attributes.get("required"):
-            required = True
+        elif "required" in attributes:
+            # HTML boolean attribute: present means required, whatever its value
+            required = str(attributes["required"]).lower() != "false"
 
         # Default value (Toggle's "Default On" / "default-checked")
         default_raw = (
@@ -657,6 +658,7 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
         buttons[0] if buttons else None,
     )
     submit_label = attributes.get("data-submit-label") or (submit.label if submit else None) or "Submit"
+    submit_classes = attributes.get("data-submit-class") or " ".join((submit.css_classes if submit else None) or [])
 
     form = Form(
         name=name,
@@ -692,6 +694,8 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
                 ))
 
     _attach_component_metadata(form, component, meta)
+    if submit_classes:
+        form.custom_attributes["data-submit-class"] = submit_classes
     return form
 
 

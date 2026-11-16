@@ -404,9 +404,13 @@ def _serialize_form_children(form: Form) -> List[Dict[str, Any]]:
                 label_node["attributes"] = {"for": field_id}
             children.append(label_node)
         children.append(serialized)
+    submit_attributes = {"type": "submit"}
+    submit_classes = (form.custom_attributes or {}).get("data-submit-class")
+    if submit_classes:
+        submit_attributes["class"] = submit_classes
     children.append({
         "tagName": "button",
-        "attributes": {"type": "submit"},
+        "attributes": submit_attributes,
         "components": [{"type": "textnode", "content": getattr(form, "submit_label", None) or "Submit"}],
     })
     return children

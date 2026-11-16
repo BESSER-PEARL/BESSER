@@ -376,6 +376,7 @@ class GuiSerializationMixin:
             if inputs:
                 node["inputs"] = inputs
             node["submit_label"] = getattr(element, "submit_label", None) or "Submit"
+            node["submit_class"] = (attributes or {}).get("data-submit-class")
 
         if isinstance(element, Menu):
             items = []

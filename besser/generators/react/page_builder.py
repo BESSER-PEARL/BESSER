@@ -344,6 +344,7 @@ class PageBuilderMixin:
                         "entity": binding.get("entity"),
                         "fields": fields,
                         "submitLabel": submit_label,
+                        "submitClassName": node.get("submit_class"),
                     },
                 )
                 return (
@@ -355,10 +356,12 @@ class PageBuilderMixin:
             props = self._build_element_props(component_id, class_list, style, attributes, None)
             props += " onSubmit={" + on_submit_expr + "}"
             submit_expr = f"{{{json.dumps(submit_label, ensure_ascii=False)}}}"
+            submit_class = node.get("submit_class")
+            submit_props = f" className={json.dumps(submit_class)}" if submit_class else ""
             return (
                 f"{indent_str}<form{props}>\n"
                 + inner
-                + f"\n{indent_str}  <button type=\"submit\">{submit_expr}</button>\n"
+                + f"\n{indent_str}  <button type=\"submit\"{submit_props}>{submit_expr}</button>\n"
                 + f"{indent_str}</form>"
             )
 
@@ -382,18 +385,18 @@ class PageBuilderMixin:
                     url = self._page_path_map.get(label) or "/"
                 target = item.get("target")
                 rel = item.get("rel")
-                label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
-                item_lines.append(
-                    f"{indent_str}    <li {list_item_style}>"
                 on_click = ""
                 if target != "_blank" and self._page_route(url):
                     context.needs_navigate = True
                     on_click = f" onClick={{(e) => {{ e.preventDefault(); navigate({json.dumps(url)}); }}}}"
+                label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
+                item_lines.append(
+                    f"{indent_str}    <li {list_item_style}>"
                     f"<a href={json.dumps(url)}"
+                    + on_click
                     + (f" target={json.dumps(target)}" if target else "")
                     + (f" rel={json.dumps(rel)}" if rel else "")
                     + f">{label_expr}</a></li>"
-                    + on_click
                 )
             items_jsx = "\n".join(item_lines)
             return (
@@ -1193,13 +1196,13 @@ class PageBuilderMixin:
                     return target_path or self._path_from_name(action.get("target_screen"))
         return None
 
-    @staticmethod
-    def _path_from_name(name: Optional[str]) -> Optional[str]:
-        if not name:
     def _page_route(self, url: Optional[str]) -> Optional[str]:
         """``url`` when it is the route of one of the app's own pages."""
         return url if url and url in getattr(self, "_page_path_map", {}).values() else None
 
+    @staticmethod
+    def _path_from_name(name: Optional[str]) -> Optional[str]:
+        if not name:
             return None
         return "/" + str(name).strip().lower().replace(" ", "-")
 

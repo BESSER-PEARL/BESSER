@@ -59,9 +59,10 @@ def integrity_error_detail(exc) -> str:
     """What a constraint violation tells the client.
 
     A duplicate value or a broken reference gets a sentence, naming the class
-    and field when the driver names them. Any other violation keeps the
-    driver's text, which states the column the server failed to fill, without
-    the row PostgreSQL appends to it.
+    and field when the driver names them. Any other violation keeps the first
+    line of the driver's text, which classifies it ("NOT NULL constraint
+    failed: book.title"). PostgreSQL's DETAIL line and those after it can
+    carry the values of the rejected row, in any language.
     """
     driver_text = str(getattr(exc, "orig", exc))
     lowered = driver_text.lower()
@@ -79,4 +80,4 @@ def integrity_error_detail(exc) -> str:
         return "A record with the same values already exists"
     if "foreign key constraint" in lowered:
         return "The record refers to a record that does not exist, or another record still refers to it"
-    return re.split(r"\s*DETAIL:\s+Failing row contains", driver_text)[0]
+    return re.split(r"\n|\s*DETAIL:", driver_text, maxsplit=1)[0]

@@ -104,6 +104,17 @@ DRIVER_TEXTS = {
     'null value in column "title" of relation "book" violates not-null constraint\n'
     'DETAIL:  Failing row contains (111, null, 4).': (
         'null value in column "title" of relation "book" violates not-null constraint'),
+    # So does an exclusion constraint, and a message in another language says it in that language.
+    'conflicting key value violates exclusion constraint "book_no_overlap"\n'
+    'DETAIL:  Key (title)=(secret) conflicts with existing key (title)=(secret).': (
+        'conflicting key value violates exclusion constraint "book_no_overlap"'),
+    'NULL-Wert in Spalte »title« von Relation »book« verletzt Not-Null-Constraint\n'
+    'DETAIL:  Fehlgeschlagene Zeile enthält (111, null, 4).': (
+        'NULL-Wert in Spalte »title« von Relation »book« verletzt Not-Null-Constraint'),
+    'la valeur NULL de la colonne « title » de la relation « book » viole la contrainte '
+    'NOT NULL\nDÉTAIL : La ligne en échec contient (111, null, 4).': (
+        'la valeur NULL de la colonne « title » de la relation « book » viole la contrainte '
+        'NOT NULL'),
 }
 
 

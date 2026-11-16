@@ -1115,7 +1115,9 @@ def _relationship_names_by_class(domain_model) -> dict:
             bucket = names.setdefault(cls_name, set())
             if getattr(other, "name", None):
                 bucket.add(other.name.lower())
-            if getattr(assoc, "name", None):
+            # An association named after this class is not told apart from the
+            # class itself in a sentence; the other class still reaches it by that name.
+            if getattr(assoc, "name", None) and assoc.name.lower() != cls_name.lower():
                 bucket.add(assoc.name.lower())
     return names
 
@@ -1166,7 +1168,7 @@ def _note_present_relationships(tasks: list, domain_model) -> list:
                     continue
                 low = sentence.lower()
                 match = next(
-                    (rel for rel in idents if re.search(rf"\b{re.escape(rel)}\b", low)), None,
+                    (rel for rel in sorted(idents) if re.search(rf"\b{re.escape(rel)}\b", low)), None,
                 )
                 if match:
                     hit = (cls.name, match)

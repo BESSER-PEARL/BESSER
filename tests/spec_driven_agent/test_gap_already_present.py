@@ -484,3 +484,32 @@ class TestWiredIntoTheAnalyser:
         assert rejected_constraint_task in tasks
         assert all(t == rejected_constraint_task or t.startswith("Enforce the ")
                    for t in tasks), "nothing but harness enforcement tasks may be added"
+
+
+def _order_model() -> DomainModel:
+    """Order -- Invoice through an association named after Order itself, and Order -- Customer."""
+    order, invoice, customer = Class(name="Order"), Class(name="Invoice"), Class(name="Customer")
+    billing = BinaryAssociation(name="order", ends={
+        Property(name="order", type=order, multiplicity=Multiplicity(1, 1)),
+        Property(name="invoices", type=invoice, multiplicity=Multiplicity(0, "*"))})
+    buying = BinaryAssociation(name="customer", ends={
+        Property(name="orders", type=order, multiplicity=Multiplicity(0, "*")),
+        Property(name="customer", type=customer, multiplicity=Multiplicity(0, 1))})
+    return DomainModel(name="Shop", types={order, invoice, customer}, associations={billing, buying})
+
+
+class TestAssociationNamedAfterItsClass:
+
+    def test_the_class_own_name_is_not_one_of_its_relationships(self):
+        task = "Show the relationship summary on the Order page."
+        assert _note_present_relationships([task], _order_model()) == [task]
+
+    def test_the_note_names_the_relationship_the_task_is_about(self):
+        task = "Return the customer name through the Order.customer relationship in the API response."
+        [noted] = _note_present_relationships([task], _order_model())
+        assert "'customer' is a relationship the model already declares on Order" in noted
+
+    def test_the_other_class_still_reaches_it_by_that_name(self):
+        task = "Ensure the 'order' relationship in Invoice references a valid order."
+        [noted] = _note_present_relationships([task], _order_model())
+        assert "'order' is a relationship the model already declares on Invoice" in noted

@@ -686,6 +686,8 @@ broken artifact as a green success is worse than spending a few more turns.
    entity. The ``page`` and ``create`` cells are stack-independent and still
    apply. The ``create`` cell of an abstract class is *not expected*: its
    records are created through its subclasses.
+   An entry of a page's metadata object that declares no create form
+   (``allowCreate: false``, ``readOnly: true``) is not credited with one.
 
 .. warning::
    Validation includes isolated backend execution, not a deployment or full

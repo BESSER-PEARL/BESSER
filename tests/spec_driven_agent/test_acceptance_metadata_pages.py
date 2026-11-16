@@ -140,6 +140,52 @@ def test_a_name_that_is_not_a_prop_is_not_traced_through_render_sites(tmp_path):
         "Order": False, "Customer": True, "Invoice": False}
 
 
+@pytest.mark.parametrize("post", [
+    "api.post(`${record.path}?owner=${ownerId}`, values)",
+    "api.post(record.path + '?owner=' + ownerId, values)",
+    "api.post(`${record.path}bulk/`, [values])",
+    "api.post(`${record.path}${ownerId}/`, values)",
+])
+def test_a_path_that_extends_the_entry_path_is_still_that_entrys_create(tmp_path, post):
+    """A query or a suffix after the entry's path does not turn it into a literal path."""
+    page = RECORD_PAGE.replace("api.post(record.path, { ...values, customer })", post)
+    assert _creates(tmp_path, _record_app(page=page), "Order", "Customer", "Invoice") == {
+        "Order": True, "Customer": True, "Invoice": False}
+
+
+@pytest.mark.parametrize("flag", ["allowCreate: false", "readOnly: true", "creatable: false"])
+def test_an_entry_that_offers_no_create_form_is_not_credited(tmp_path, flag):
+    records = RECORDS.replace("order: { path: '/order/',", f"order: {{ path: '/order/', {flag},")
+    files = {**_record_app(), "frontend/src/records.js": records}
+    assert _creates(tmp_path, files, "Order", "Customer", "Invoice") == {
+        "Order": False, "Customer": True, "Invoice": False}
+
+
+def test_a_computed_entry_credits_only_the_entries_that_offer_a_create(tmp_path):
+    files = _record_app()
+    del files["frontend/src/pages/OrderList.jsx"]
+    files["frontend/src/records.js"] = RECORDS.replace("order: { path: '/order/',",
+                                                       "order: { path: '/order/', allowCreate: false,")
+    files["frontend/src/App.jsx"] = (
+        "import RecordPage from './components/RecordPage.jsx';\nimport { RECORDS } from './records.js';\n"
+        "export default function App({ keys }) {\n"
+        "  return <>{keys.map((key) => <RecordPage key={key} record={RECORDS[key]} />)}</>;\n}\n")
+    assert _creates(tmp_path, files, "Order", "Customer", "Invoice") == {
+        "Order": False, "Customer": True, "Invoice": True}
+
+
+def test_a_form_posting_to_a_path_its_parent_hands_over_is_not_credited_through_its_config(tmp_path):
+    """The config is imported for its labels; the parent, not the config, decides the path."""
+    form = ("import { api } from '../api.js';\nimport { RECORDS } from '../records.js';\n"
+            "export default function Checkout({ endpoint, cart }) {\n"
+            "  const pay = () => api.post(endpoint, cart);\n"
+            "  return <button onClick={pay}>{Object.keys(RECORDS).length} sections</button>;\n}\n")
+    files = {"frontend/src/api.js": API, "frontend/src/records.js": RECORDS,
+             "frontend/src/components/Checkout.jsx": form}
+    assert _creates(tmp_path, files, "Order", "Customer", "Invoice") == {
+        "Order": False, "Customer": False, "Invoice": False}
+
+
 # One form for every entry of the config; its only entity words are in a message.
 CONFIG = """\
 export const RECORDS = {

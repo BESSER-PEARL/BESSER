@@ -575,6 +575,33 @@ _PROPS_PARAMETER = r"\(\s*\{{[^{{}}()]*(?<![\w$]){name}(?![\w$])[^{{}}()]*\}}"
 _ENTRY_EXPRESSION_RE = re.compile(
     r"\s*(?P<base>[A-Za-z_$][\w$]*)\s*(?:\??\.\s*(?P<key>[A-Za-z_$][\w$]*)"
     r"|(?:\?\.)?\s*\[\s*(?:(['\"])(?P<quoted>[^'\"\[\]]+)\3|[^\[\]]*)\s*\])\s*")
+# An entry that says its page offers no create form: `allowCreate: false`, `readOnly: true`.
+_NO_CREATE_RE = re.compile(
+    r"(?<![\w$.])(?:(?:allowCreate|canCreate|creatable)\s*:\s*false|(?:readOnly|readonly)\s*:\s*true)\b")
+# The key an object entry is declared under, right before its `{`.
+_ENTRY_KEY_BEFORE_RE = re.compile(r"(['\"]?)[\w$]+\1\s*:\s*$")
+
+
+def _without_uncreatable_entries(source: str) -> str:
+    """``source`` with every object entry that declares no create form blanked, key included."""
+    blanked = _blank_literals(source)
+    spans = set()
+    for flag in _NO_CREATE_RE.finditer(blanked):
+        opened = _innermost_open(blanked, flag.start())
+        if opened < 0 or blanked[opened] != "{":
+            continue
+        key = _ENTRY_KEY_BEFORE_RE.search(source, 0, opened)
+        spans.add((key.start() if key else opened, _group_end(blanked, opened)))
+    for start, end in sorted(spans, reverse=True):
+        source = source[:start] + _KEEP_NEWLINES_RE.sub(" ", source[start:end]) + source[end:]
+    return source
+
+
+def _leading_expression(argument: str) -> str:
+    """The expression a create's path argument starts with: `record.path` in
+    `` `${record.path}?owner=${id}` ``, in `record.path + 'bulk/'` and in `record.path`."""
+    slot = re.match(r"\s*`\$\{([^{}]*)\}", argument)
+    return slot.group(1) if slot else re.split(r"[+,]", argument, maxsplit=1)[0]
 
 
 def _metadata_values(arg_text: str, code: str, bindings: dict[str, str], files: dict[str, str]) -> list[str]:
@@ -605,7 +632,7 @@ def _entry_values(base: str, prop: str, key: str | None,
     module = files.get(bindings.get(base, ""))
     if module is None:
         return []
-    module = _blank_comments(module)
+    module = _without_uncreatable_entries(_blank_comments(module))
     blanked = _blank_literals(module)
     declared = re.search(r"\b(?:const|let|var)\s+" + re.escape(base) + r"\b[^=;]*=\s*(?=[{\[])", blanked)
     if declared is None:
@@ -652,7 +679,8 @@ def _rendered_entry_values(source: str, binding: str, prop: str, entry_property:
 def _client_create_calls(rel: str, source: str, files: dict[str, str],
                          helper_cache: dict[str, dict], used_clients: set[str],
                          traced: list[str] | None = None,
-                         prop_reads: list[tuple[str, str]] | None = None) -> list:
+                         prop_reads: list[tuple[str, str]] | None = None,
+                         handed: list[str] | None = None) -> list:
     """Creates ``rel`` issues through an imported api-client module.
 
     One entry per call site: the helper's own literal path, else the call's
@@ -670,7 +698,9 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
     A call that names no literal resource but whose path is read off an entry
     of an imported metadata object adds that property's values to ``traced``;
     one whose path is read off a component prop adds ``(prop, property)`` to
-    ``prop_reads``, for the files that render the component to resolve.
+    ``prop_reads``, for the files that render the component to resolve. Text
+    after such a read (`?owner=`, `bulk/`) keeps the path the entry's. One whose
+    path is a whole prop that keys nothing (`api.post(endpoint, body)`) adds it to ``handed``.
     """
     calls = []
     bindings = _import_targets(rel, source, files)
@@ -705,17 +735,27 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
                            and _REFERENCE_AFTER_RE.match(code, call.end()))
             if name in helpers and (call.group("args") is not None or handed_over):
                 args = uses[call.start("args"):call.end("args")] if call.group("args") is not None else ""
-                # A helper that posts to the path it is given: `api.post(`/checkout/${cartId}/`, body)`.
-                path = _argument_path(uses, code, call.start("args")) if args and helpers[name] is None else None
-                calls.append(helpers[name] or _STRING_ARG_RE.findall(args)
-                             or re.findall(r"[\w$]+", call.group("chain")) or ([path] if path else None))
+                head = _leading_expression(args)
+                read = _prop_read(head, code) if args else None
+                entries = _metadata_values(head, code, bindings, files) if args else []
+                if helpers[name] or read or entries:
+                    calls.append(helpers[name] or None)
+                else:
+                    # A helper that posts to the path it is given: `api.post(`/checkout/${cartId}/`, body)`.
+                    path = _argument_path(uses, code, call.start("args")) if args and helpers[name] is None else None
+                    calls.append(_STRING_ARG_RE.findall(args) or re.findall(r"[\w$]+", call.group("chain"))
+                                 or ([path] if path else None))
                 used_clients.add(target)
                 if calls[-1] is None and traced is not None:
-                    argument = code[call.start("args"):call.end("args")] if args else ""
-                    traced += _metadata_values(argument, code, bindings, files)
-                    read = _prop_read(argument, code)
+                    traced += entries
                     if read and prop_reads is not None:
                         prop_reads.append(read)
+                    # A prop that indexes nothing (`ENTITIES[entity]` does) is no key of an imported config.
+                    whole = head.strip()
+                    if (handed is not None and re.fullmatch(r"[A-Za-z_$][\w$]*", whole)
+                            and re.search(_PROPS_PARAMETER.format(name=re.escape(whole)), code)
+                            and not re.search(r"\[\s*" + re.escape(whole) + r"\s*\]", code)):
+                        handed.append(whole)
     return calls
 
 
@@ -776,9 +816,10 @@ def _config_declarations(source: str) -> str:
 
     An entry's own key, path and label declare it. Comments, multi-word labels
     (`'Dataset Version'`) and every list nested inside an entry (`fields: [...]`,
-    whose `ref`s name other entities) are blanked.
+    whose `ref`s name other entities) are blanked, and so is an entry that offers no
+    create form (`allowCreate: false`, `readOnly: true`).
     """
-    source = _blank_prose(source)
+    source = _blank_prose(_without_uncreatable_entries(source))
     blanked = _blank_literals(source)
     spans, depth, start, outer = [], 0, None, 0
     for i, char in enumerate(blanked):
@@ -866,8 +907,9 @@ def build_acceptance_matrix(
     used_clients: set[str] = set()
     traced: dict[str, list[str]] = {rel: [] for rel, _ in frontend_files}
     prop_reads: dict[str, list[tuple[str, str]]] = {rel: [] for rel, _ in frontend_files}
+    handed: dict[str, list[str]] = {rel: [] for rel, _ in frontend_files}
     client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients,
-                                              traced[rel], prop_reads[rel])
+                                              traced[rel], prop_reads[rel], handed[rel])
                     for rel, content in frontend_files}
     # A create path read off a prop is that of the entry each rendering file hands the component.
     for rel, content in frontend_files:
@@ -911,8 +953,10 @@ def build_acceptance_matrix(
     # (`entities.js`); that module, not the creator's own code, declares them.
     # An entry's nested `actions: [{ method: 'POST' }]` is data and is blanked
     # with the other nested lists; a POST left over makes the module a client.
+    # A creator that posts to a path its parent hands over (`api.post(endpoint)`)
+    # is not configured by what it imports: the parent decides what it creates.
     config_text = {
-        rel: " ".join(text for text in (
+        rel: "" if handed[rel] else " ".join(text for text in (
             _config_declarations(by_path[target]) for target in (
                 next((c for c in _resolve_import(rel, spec) if c in by_path), None)
                 for _, spec in _import_bindings(by_path[rel]))

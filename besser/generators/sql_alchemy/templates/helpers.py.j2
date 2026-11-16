@@ -95,9 +95,11 @@
         this class, so each end names the column on its side. The column called
         after an end holds the members of that end's collection. #}
     {%- set self_joins %}{% if secondary and end.type.name == other_end.type.name %}, primaryjoin={{ class.name }}.{{ ids.get(class.name, 'id') }} == {{ secondary }}.c["{{ other_end.name }}"], secondaryjoin={{ class.name }}.{{ ids.get(class.name, 'id') }} == {{ secondary }}.c["{{ end.name }}"]{% endif %}{% endset %}
+    {#- The other class has no relationship to pair with when an attribute keeps its name #}
+    {%- set back %}{% if not end_hidden_by_attribute(other_end, end.type) %}, back_populates="{{other_end.name}}"{% endif %}{% endset %}
     {%- if is_many -%}
 {{class.name}}.{{end.name}}: Mapped_[List_["{{end.type.name}}"]] = relationship("{{end.type.name}}"
-        {%- if secondary %}, secondary={{ secondary }}{{ self_joins }}{% endif %}, back_populates="{{other_end.name}}"
+        {%- if secondary %}, secondary={{ secondary }}{{ self_joins }}{% endif %}{{ back }}
         {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
     {%- else -%}
 {#- uselist is spelled out because these relationships are assigned after the class
@@ -109,6 +111,6 @@
     it: it is the reverse, one-to-one side of the same FK. #}
     {%- set owns_fk = fk_needed and fkeys[end.owner.name][1] == end.name %}
     {%- set is_self = end.type.name == other_end.type.name and owns_fk %}
-{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}", uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% if is_self %}, remote_side=[{{ end.type.name }}.{{ ids.get(end.type.name, 'id') }}]{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
+{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}"{{ back }}, uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% if is_self %}, remote_side=[{{ end.type.name }}.{{ ids.get(end.type.name, 'id') }}]{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
     {%- endif -%}
 {%- endmacro %}

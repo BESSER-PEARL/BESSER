@@ -9,6 +9,7 @@ from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
 from besser.utilities.utils import sort_by_timestamp
 from besser.generators.structural_utils import (
+    end_hidden_by_attribute,
     get_deferred_fk_associations,
     get_foreign_keys,
     is_shadowed_by_association_end,
@@ -280,7 +281,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
         env.globals.update(normalize_code=normalize_method_code,
-                           is_shadowed_by_association_end=is_shadowed_by_association_end)
+                           is_shadowed_by_association_end=is_shadowed_by_association_end,
+                           end_hidden_by_attribute=end_hidden_by_attribute)
         env.tests["credential"] = is_credential_attribute
         for cls in classes + asso_classes:
             for attr in sort_by_timestamp(cls.attributes):

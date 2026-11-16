@@ -2871,21 +2871,32 @@ class DomainModel(Model):
         """Warn about a class reaching an attribute and an association end of the same name.
 
         Generated code gives both the same member name. The Java generator's
-        class does not compile; the SQLAlchemy, Pydantic and FastAPI backend
-        generators keep the association end and leave the attribute out. A
+        class does not compile. The SQLAlchemy, Pydantic and FastAPI backend
+        generators keep one of the two: the association end, or the attribute
+        when the end is not navigable from the class. They do not handle an
+        attribute inherited from a parent that does not reach the end. A
         warning, since generation itself succeeds. A name inherited on both
         sides is reported once, on the class that declares one of them.
         """
         for cls in sorted(self.get_classes(), key=lambda c: c.name):
             own_names = {attr.name for attr in cls.attributes} | {end.name for end in cls.association_ends()}
-            attr_names = {attr.name for attr in cls.all_attributes()}
-            end_names = {end.name for end in cls.all_association_ends()}
-            for name in sorted((attr_names & end_names) & own_names):
+            attributes = {attr.name: attr for attr in cls.all_attributes()}
+            ends = {end.name: end for end in cls.all_association_ends()}
+            for name in sorted((attributes.keys() & ends.keys()) & own_names):
+                if not ends[name].is_navigable:
+                    outcome = ("the SQLAlchemy, Pydantic and FastAPI backend generators keep the attribute, "
+                               "since the association end is not navigable from this class")
+                elif name in {end.name for end in attributes[name].owner.all_association_ends()}:
+                    outcome = ("the SQLAlchemy, Pydantic and FastAPI backend generators keep the association "
+                               "end and leave the attribute out")
+                else:
+                    outcome = (f"the attribute comes from a parent class, where it stays, so in the SQLAlchemy "
+                               f"model of '{cls.name}' the relationship hides the attribute's column and the "
+                               f"generated backend cannot create a '{cls.name}'")
                 warnings.append(
                     f"Attribute and association end share a name: class '{cls.name}' has an attribute and an "
                     f"association end both named '{name}'. Generated code gives a class one member per name: "
-                    f"the Java class does not compile, and the SQLAlchemy, Pydantic and FastAPI backend "
-                    f"generators keep the association end and leave the attribute out. Rename one; if the "
+                    f"the Java class does not compile, and {outcome}. Rename one; if the "
                     f"attribute stores the related object, delete it and keep the association."
                 )
 

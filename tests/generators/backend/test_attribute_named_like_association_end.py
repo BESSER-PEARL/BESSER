@@ -86,3 +86,60 @@ def test_each_name_is_emitted_once(tmp_path):
     assert article_schema.count("    tags:") == 1 and article_schema.count("    author:") == 1
     assert "tags: Optional[List[int]] = None" in article_schema
     assert "author: int" in article_schema
+
+
+def _non_navigable_model() -> DomainModel:
+    """Purchase.customer is a text attribute; the end ``customer`` is not navigable from Purchase."""
+    customer = Class(name="Customer", attributes={Property(name="name", type=StringType)})
+    purchase = Class(name="Purchase", attributes={
+        Property(name="customer", type=StringType),
+        Property(name="total", type=IntegerType),
+    })
+    buying = BinaryAssociation(name="Buying", ends={
+        Property(name="customer", type=customer, multiplicity=Multiplicity(0, 1), is_navigable=False),
+        Property(name="purchases", type=purchase, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(name="Shop", types={customer, purchase}, associations={buying})
+
+
+NON_NAVIGABLE_SCRIPT = """
+    purchase = client.post("/purchase/", json={"customer": "walk-in", "total": 3})
+    buyer = client.post("/customer/", json={"name": "Ann", "purchases": [purchase.json()["id"]]})
+    print(json.dumps({
+        "statuses": [purchase.status_code, buyer.status_code],
+        "purchase": client.get(f"/purchase/{purchase.json()['id']}/").json()["purchase"],
+        "search": len(client.get("/purchase/search/", params={"customer": "walk"}).json()),
+        "bought": client.get(f"/customer/{buyer.json()['customer']['id']}/purchases/").json()["purchases_count"],
+    }))
+"""
+
+
+def test_an_attribute_keeps_its_name_when_the_end_is_not_navigable(run_generated_backend):
+    """The attribute was left out although nothing else accepted the value."""
+    result = run_generated_backend(_non_navigable_model(), NON_NAVIGABLE_SCRIPT)
+    assert result["statuses"] == [200, 200]
+    assert result["purchase"]["customer"] == "walk-in"
+    assert result["purchase"]["customer_id"] == 1
+    assert result["search"] == 1
+    assert result["bought"] == 1
+
+
+def _warning(model: DomainModel) -> str:
+    return next(w for w in model.validate()["warnings"] if w.startswith("Attribute and association end share a name:"))
+
+
+def test_the_validation_warning_says_what_the_generators_do():
+    assert "keep the association end and leave the attribute out" in _warning(_model())
+    assert "keep the attribute, since the association end is not navigable" in _warning(_non_navigable_model())
+
+    # An attribute of a parent class and an end of the subclass: not handled, and said so.
+    asset = Class(name="Asset", attributes={Property(name="owner", type=StringType)})
+    laptop = Class(name="Laptop", attributes={Property(name="serial", type=StringType)})
+    member = Class(name="Member", attributes={Property(name="name", type=StringType)})
+    owning = BinaryAssociation(name="Owning", ends={
+        Property(name="owner", type=member, multiplicity=Multiplicity(0, 1)),
+        Property(name="laptops", type=laptop, multiplicity=Multiplicity(0, "*")),
+    })
+    inherited = DomainModel(name="Assets", types={asset, laptop, member}, associations={owning},
+                            generalizations={Generalization(general=asset, specific=laptop)})
+    assert "the generated backend cannot create a 'Laptop'" in _warning(inherited)

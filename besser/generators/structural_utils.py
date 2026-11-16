@@ -21,15 +21,29 @@ def is_server_owned_attribute(attribute: Property) -> bool:
 
 
 def is_shadowed_by_association_end(attribute: Property) -> bool:
-    """Whether an attribute has the name of an association end its class reaches.
+    """Whether an attribute has the name of a navigable association end its class reaches.
 
     Generated Python gives a class one member per name. The association is the
     richer fact (the attribute usually repeats it as text), so the SQLAlchemy,
     Pydantic and backend generators emit the association end and leave the
-    attribute out. ``DomainModel.validate()`` warns about the clash.
+    attribute out. An end that is not navigable from the class is not part of
+    its API, so there the attribute stays (see ``end_hidden_by_attribute``).
+    ``DomainModel.validate()`` warns about the clash.
     """
     owner = attribute.owner
-    return isinstance(owner, Class) and attribute.name in {end.name for end in owner.all_association_ends()}
+    return isinstance(owner, Class) and attribute.name in {
+        end.name for end in owner.all_association_ends() if end.is_navigable}
+
+
+def end_hidden_by_attribute(end: Property, cls: Class) -> bool:
+    """Whether ``cls`` gets no relationship for ``end`` because an attribute keeps the name.
+
+    The counterpart of ``is_shadowed_by_association_end``: ``end`` is an end
+    ``cls`` reaches but cannot navigate, and ``cls`` has an attribute called
+    the same. The foreign key column and the other side of the association are
+    unaffected.
+    """
+    return not end.is_navigable and end.name in {attribute.name for attribute in cls.all_attributes()}
 
 
 def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],

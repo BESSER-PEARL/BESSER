@@ -100,6 +100,9 @@ class Checkpoint:
     # Files a generator wrote (``ToolExecutor._generator_files``): the scaffold
     # guardrail and the recipe's ``source`` tags.
     generator_files: list[str] = field(default_factory=list)
+    # What the workspace held when the run started (``None``: an older
+    # checkpoint). The run never deletes these as files the app wrote.
+    files_at_start: list[str] | None = None
     # What ``task_list`` evidence is checked against (``ToolExecutor.evidence_snapshot``).
     write_evidence: dict = field(default_factory=dict)
     # The requirements ledger (``None``: not extracted). Phase 2 and Phase 3
@@ -137,6 +140,7 @@ class Checkpoint:
             "target": self.target,
             "modify": self.modify,
             "generator_files": self.generator_files,
+            "files_at_start": self.files_at_start,
             "write_evidence": self.write_evidence,
             "requirements": self.requirements,
             "routed_stack": self.routed_stack,
@@ -415,6 +419,9 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             target=data.get("target"),
             modify=modify,
             generator_files=[p for p in generator_files if isinstance(p, str)],
+            files_at_start=(
+                [p for p in data["files_at_start"] if isinstance(p, str)]
+                if isinstance(data.get("files_at_start"), list) else None),
             write_evidence=data.get("write_evidence") if isinstance(data.get("write_evidence"), dict) else {},
             requirements=(
                 [r for r in data["requirements"] if isinstance(r, dict)]

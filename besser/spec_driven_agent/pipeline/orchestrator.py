@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import os
+import posixpath
 import re as _re
 import shutil
 import subprocess
@@ -133,7 +134,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     pre_generate_metadata,
     stack_label,
 )
-from besser.spec_driven_agent.agent.runbook import remove_app_runtime_files
+from besser.spec_driven_agent.agent.runbook import RuntimeFileRemoval, remove_app_runtime_files
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
@@ -690,6 +691,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._seed_llm_modified: set[str] = set()
         # Why the model-sync call failed, for the trace and the recipe.
         self._model_sync_error: str | None = None
+        # What the workspace held before this run wrote anything (a modify
+        # run's seed, an imported repository): never deleted as the app's own.
+        self._files_at_start: frozenset[str] = frozenset(self._workspace_file_list())
+        # Files the app wrote in its test runs that this run deleted from the output.
+        self._runtime_files = RuntimeFileRemoval()
 
         # Fix/modify success gate (modify() only). When a modify run is
         # seeded by a user-reported error (a pasted traceback, a broken
@@ -964,6 +970,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._restore_modify_state(checkpoint.modify)
         self.executor._generator_files.clear()
         self.executor._generator_files.update(checkpoint.generator_files)
+        if checkpoint.files_at_start is not None:
+            # Else an older checkpoint: every file now present stays protected.
+            self._files_at_start = frozenset(checkpoint.files_at_start)
         self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
@@ -2737,6 +2746,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 locked_generators=sorted(self.executor.locked_generators),
                 modify=self._modify_checkpoint_state(),
                 generator_files=sorted(self.executor._generator_files),
+                files_at_start=sorted(self._files_at_start),
                 write_evidence=self.executor.evidence_snapshot(),
                 requirements=self._requirements,
                 routed_stack=self._unsupported_stack if self._routed else None,
@@ -5129,24 +5139,54 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return None
         return bool(getattr(self.domain_model, "constraints", None) or self._requirements_for_validation())
 
-    # Paths of removed runtime files the recipe names; it travels in the done event.
+    # Paths of runtime files the recipe names; it travels in the done event.
     _MAX_RECIPE_RUNTIME_FILES = 50
 
-    def _remove_app_runtime_files(self) -> list[str]:
-        """Delete what the app wrote while the agent test-ran it in the workspace."""
+    def _written_paths(self) -> set[str]:
+        """Workspace-relative paths whose content a generator or a write tool
+        produced; a later ``delete_file`` takes a path out again."""
+        written = set(self.executor._generator_files)
+        for call in self.tool_calls_log:
+            path = (call.get("input") or {}).get("path")
+            if call.get("success") is False or not isinstance(path, str) or not path.strip():
+                continue
+            rel = posixpath.normpath(path.strip().replace("\\", "/"))
+            if call.get("tool") == "delete_file":
+                written.discard(rel)
+            elif call.get("tool") in _WRITE_TOOLS_ON_RECORD:
+                written.add(rel)
+        return written
+
+    def remove_app_runtime_files(self) -> dict:
+        """Delete what the app wrote while the agent test-ran it in the workspace.
+
+        Runs before the recipe lists the output, and again from packaging, so
+        a run that ended without a recipe is covered too. Returns the recipe's
+        account of every call so far.
+        """
         self.executor.stop_shell_processes()
-        written = self._llm_edited_paths() | {
-            os.path.normcase(os.path.normpath(os.path.join(self.output_dir, rel)))
-            for rel in self.executor._generator_files
-        }
-        removed = remove_app_runtime_files(self.output_dir, written)
-        if removed:
+        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start)
+        if result.removed:
             logger.warning("Removed %d file(s) the app wrote while it was test-run; they are not "
-                           "part of the output: %s", len(removed), ", ".join(removed[:20]))
-        return removed
+                           "part of the output: %s", len(result.removed), ", ".join(result.removed[:20]))
+        earlier = self._runtime_files
+        self._runtime_files = RuntimeFileRemoval(
+            earlier.removed + result.removed,
+            tuple(dict.fromkeys(earlier.not_removed + result.not_removed)),
+            result.note or earlier.note)
+        outcome = self._runtime_files
+        return {
+            # Written by the app while the agent test-ran it, and deleted: not output.
+            "runtime_files_removed": list(outcome.removed[:self._MAX_RECIPE_RUNTIME_FILES]),
+            "runtime_files_removed_count": len(outcome.removed),
+            # Still in the output: the delete failed.
+            "runtime_files_not_removed": list(outcome.not_removed[:self._MAX_RECIPE_RUNTIME_FILES]),
+            "runtime_files_not_removed_count": len(outcome.not_removed),
+            "runtime_files_note": outcome.note,
+        }
 
     def _save_recipe(self, instructions: str, elapsed: float) -> None:
-        runtime_files_removed = self._remove_app_runtime_files()
+        runtime_files = self.remove_app_runtime_files()
         # Build file manifest. Dependency / build directories are pruned:
         # an LLM-run ``npm install`` would otherwise put thousands of
         # node_modules entries in the manifest, ballooning the recipe
@@ -5298,8 +5338,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # The Phase 3 edits in tool_calls are on disk only when this is
             # False; a rollback discarded them and kept the Phase 2 output.
             "phase3_rolled_back": self._phase3_rolled_back,
-            # Written by the app while the agent test-ran it, and deleted: not output.
-            "runtime_files_removed": runtime_files_removed[:self._MAX_RECIPE_RUNTIME_FILES],
+            **runtime_files,
             "output_files": sorted(output_files, key=lambda f: f["path"]),
             "output_summary": {
                 "total_files": len(output_files),

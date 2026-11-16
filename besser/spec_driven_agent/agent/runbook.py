@@ -32,18 +32,27 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
+from dataclasses import dataclass
+from typing import Iterable
 
-from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.pipeline.constants import (
+    _RECIPE_EXCLUDED_DIRS,
+    WORKSPACE_SKIP_DIRS,
+    is_excluded_output_file,
+)
 from besser.spec_driven_agent.settings import AgentSettings
-from besser.utilities.workspace_fs import open_plain, open_plain_write, remove_plain, walk_plain
+from besser.utilities.workspace_fs import is_plain_relpath, open_plain, open_plain_write, remove_plain, walk_plain
 
 logger = logging.getLogger(__name__)
 
 PROBE_FILENAME = ".besser_probe.py"
 # Written by the probe: the files that appeared under the backend while it ran the app.
 RUNTIME_FILES_FILENAME = ".besser_probe.runtime_files.json"
-# The record comes from the sandbox; a longer one is cut, so it fails to parse and is ignored.
-_MAX_RUNTIME_RECORD_CHARS = 1_000_000
+# The record comes from the sandbox. The probe stops at MAX_RECORDED entries
+# (about 300 KB); a larger record is not the probe's and is not parsed.
+_MAX_RUNTIME_RECORD_BYTES = 1_000_000
+_MAX_RUNTIME_RECORD_ENTRIES = 2000
 
 # Environment kill switch (BESSER_LLM_SHELL_RUNBOOK). Default on whenever
 # shell tools are enabled; ``0`` gives the shell without the procedure (an
@@ -91,44 +100,117 @@ def install_probe(output_dir: str) -> bool:
         return False
 
 
-def remove_app_runtime_files(output_dir: str, written: set[str]) -> list[str]:
-    """Delete what the app wrote while the probe ran it, and the probe's record of it.
+@dataclass(frozen=True)
+class RuntimeFileRemoval:
+    """What the end-of-run removal of the app's own files did."""
 
-    A database, a generated signing key or an upload is state of that test
-    run, not part of the app: shipped, every deployment would share it.
-    ``written`` holds the absolute, case-normalised paths a generator or a
-    write tool produced; those stay, whatever the record says, since the
-    sandbox the record comes from is not trusted. Returns the paths removed,
-    workspace-relative. Never raises.
-    """
+    removed: tuple[str, ...] = ()
+    # Still the app's and still in the output: the operating system refused the delete.
+    not_removed: tuple[str, ...] = ()
+    # Why the probe's record could not be used in full; "" when it could.
+    note: str = ""
+
+
+def _read_runtime_record(output_dir: str) -> tuple[dict, str]:
+    """The probe's ``{path: [size, mtime_ns]}`` record and why it is incomplete, if it is."""
     record = os.path.join(output_dir, RUNTIME_FILES_FILENAME)
     try:
+        if os.lstat(record).st_size > _MAX_RUNTIME_RECORD_BYTES:
+            return {}, "the record of files the app wrote is too large to read"
         with open_plain(record, "r", root=output_dir, encoding="utf-8") as handle:
-            recorded = json.loads(handle.read(_MAX_RUNTIME_RECORD_CHARS))
-    except OSError:
-        return []
-    except (ValueError, RecursionError):
-        logger.warning("runbook: %s is unreadable; files the app wrote in its test run may remain",
-                       RUNTIME_FILES_FILENAME)
-        return []
+            data = json.load(handle)
+    except FileNotFoundError:
+        return {}, ""
+    except (OSError, ValueError, RecursionError):
+        return {}, "the record of files the app wrote could not be read"
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, dict):
+        return {}, "the record of files the app wrote could not be read"
+    overflow = data.get("overflow")
+    note = (f"the app wrote more files than the record holds ({overflow} more)"
+            if type(overflow) is int and overflow > 0 else "")
+    return files, note
+
+
+def _is_app_file_path(rel: object, backend: str) -> bool:
+    """A path the probe can have recorded: a plain one under the backend folder,
+    through no dot-folder, naming no run record, and free of the trailing dot or
+    space under which Windows opens another file."""
+    if not is_plain_relpath(rel) or not rel.startswith(backend + "/"):
+        return False
+    *folders, name = rel.split("/")
+    return (not name.startswith(".besser_")
+            and not any(folder.startswith(".") for folder in folders)
+            and not any(part != part.rstrip(". ") for part in (*folders, name)))
+
+
+def remove_app_runtime_files(output_dir: str, keep: Iterable[str]) -> RuntimeFileRemoval:
+    """Delete what the app wrote while the probe ran it, and the probe's record of it.
+
+    A generated signing key or an upload is state of that test run, not part
+    of the app: shipped, every deployment would share it. The record comes
+    from the sandbox and is not trusted. A file is deleted only when it is
+    under the backend folder this function finds itself, is not in ``keep``
+    (the workspace-relative paths a generator or a write tool wrote, or that
+    were there when the run started) and still has the size and modification
+    time the probe recorded. A file the output leaves out by name anyway is
+    left where it is. Never raises.
+    """
+    root = os.path.realpath(output_dir)
+    files, note = _read_runtime_record(root)
+    backend = _find_backend(root)
+    if files and backend is None:
+        files, note = {}, "no backend folder was found, so the record of files the app wrote was not used"
+    elif files and backend == ".":
+        # At the workspace root "under the backend" confines nothing: a lock
+        # file or seed data written during a probe call would go too.
+        files, note = {}, ("the backend is the workspace root, so files the app wrote "
+                           "cannot be told from the rest; none were removed")
+    if len(files) > _MAX_RUNTIME_RECORD_ENTRIES:
+        note = note or f"the record names {len(files)} files; only the first {_MAX_RUNTIME_RECORD_ENTRIES} were read"
+    kept = {os.path.normcase(os.path.realpath(os.path.join(root, rel))) for rel in keep}
     removed: list[str] = []
-    for rel in recorded if isinstance(recorded, list) else []:
-        if not isinstance(rel, str) or os.path.basename(rel).startswith(".besser_"):
+    not_removed: list[str] = []
+    rejected: list[str] = []
+    for rel in sorted(files, key=str)[:_MAX_RUNTIME_RECORD_ENTRIES]:
+        if not _is_app_file_path(rel, backend):
+            rejected.append(repr(rel)[:120])
             continue
-        path = os.path.normpath(os.path.join(output_dir, rel))
-        if os.path.normcase(path) in written:
+        *folders, name = rel.split("/")
+        if is_excluded_output_file(name) or _RECIPE_EXCLUDED_DIRS.intersection(folders):
             continue
+        path = os.path.join(root, *folders, name)
         try:
-            # ``root`` refuses a recorded path that leaves the workspace.
-            remove_plain(path, root=output_dir)
+            info = os.lstat(path)
         except OSError:
             continue
-        removed.append(os.path.relpath(path, output_dir).replace("\\", "/"))
+        # A link, or a name the file system resolves to another file.
+        resolved = os.path.normcase(os.path.realpath(path))
+        if not stat.S_ISREG(info.st_mode) or resolved != os.path.normcase(path):
+            rejected.append(repr(rel)[:120])
+            continue
+        if resolved in kept or [info.st_size, info.st_mtime_ns] != files[rel]:
+            # Written on purpose, or edited since the app wrote it: it ships.
+            continue
+        try:
+            remove_plain(path, root=root)
+        except OSError as exc:
+            logger.warning("runbook: could not remove %s, which the app wrote in its test run: %s",
+                           rel, exc.strerror or type(exc).__name__)
+            not_removed.append(rel)
+        else:
+            removed.append(rel)
+    if rejected:
+        logger.warning("runbook: ignored %d entr(ies) of %s that do not name a file the app wrote "
+                       "under %s: %s", len(rejected), RUNTIME_FILES_FILENAME, backend,
+                       ", ".join(rejected[:10]))
+    if note:
+        logger.warning("runbook: %s; such files may remain in the output", note)
     try:
-        remove_plain(record, root=output_dir)
+        remove_plain(os.path.join(root, RUNTIME_FILES_FILENAME), root=root)
     except OSError:
         logger.debug("runbook: could not remove the runtime-file record", exc_info=True)
-    return sorted(removed)
+    return RuntimeFileRemoval(tuple(removed), tuple(not_removed), note)
 
 
 def runbook_section(output_dir: str) -> str:
@@ -252,6 +334,7 @@ STATE = os.path.join(ROOT, ".besser_probe.state.json")
 LOG = os.path.join(ROOT, ".besser_probe.server.log")
 RUNTIME_FILES = os.path.join(ROOT, ".besser_probe.runtime_files.json")
 SKIP = {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build"}
+MAX_RECORDED = 2000          # files noted as written by the app; the rest are only counted
 MAX_LIFETIME = 1800          # a forgotten server reaps itself after 30 minutes
 BOOT_WAIT = 45
 BODY_CHARS = 1800
@@ -295,30 +378,48 @@ def log_tail(lines=40):
 def app_files(backend):
     found = set()
     for root, dirs, files in os.walk(backend):
-        dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".besser_")]
+        # Dot-folders hold tool caches and run records, never the app's data.
+        dirs[:] = [d for d in dirs if d not in SKIP and d != "htmlcov" and not d.startswith(".")]
         found.update(os.path.relpath(os.path.join(root, name), ROOT).replace("\\", "/")
                      for name in files if not name.startswith(".besser_"))
     return found
 
 
+def file_stat(rel):
+    try:
+        info = os.stat(os.path.join(ROOT, rel))
+    except OSError:
+        return None
+    return [info.st_size, info.st_mtime_ns]
+
+
 def recording(action):
     """Run `action` (a boot or a request) and note the files that appeared
-    under the backend meanwhile: the running app wrote them (a database, a
-    generated key, an upload), so they are left out of the delivered app."""
+    under the backend meanwhile, each with its size and modification time: the
+    running app wrote them (a generated key, an upload), so they are left out
+    of the delivered app. A noted file that changed between two probe calls
+    was edited by something else and is no longer noted."""
     backend = find_backend()
-    before = app_files(backend) if backend else set()
+    if backend is None or os.path.samefile(backend, ROOT):
+        # With the app at the workspace root its files cannot be told from the rest.
+        return action()
+    try:
+        with open(RUNTIME_FILES, encoding="utf-8") as handle:
+            noted = dict(json.load(handle)["files"])
+    except (OSError, ValueError, TypeError, KeyError):
+        noted = {}
+    noted = {path: seen for path, seen in noted.items() if file_stat(path) == seen}
+    before = app_files(backend)
     try:
         return action()
     finally:
-        created = (app_files(backend) - before) if backend else set()
-        if created:
-            try:
-                with open(RUNTIME_FILES, encoding="utf-8") as handle:
-                    known = [path for path in json.load(handle) if isinstance(path, str)]
-            except (OSError, ValueError, TypeError):
-                known = []
+        noted.update(dict.fromkeys(app_files(backend) - before))
+        noted = {path: file_stat(path) for path in sorted(noted)}
+        noted = {path: seen for path, seen in noted.items() if seen}
+        if noted or os.path.exists(RUNTIME_FILES):
+            kept = dict(list(noted.items())[:MAX_RECORDED])
             with open(RUNTIME_FILES, "w", encoding="utf-8") as handle:
-                json.dump(sorted(created.union(known)), handle)
+                json.dump({"files": kept, "overflow": len(noted) - len(kept)}, handle)
 
 
 def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None):

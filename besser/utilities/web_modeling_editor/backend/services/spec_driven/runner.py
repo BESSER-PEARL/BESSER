@@ -389,6 +389,14 @@ def run_summary_markdown(
     lines.append(
         f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
         f"{counts.shippedUnenforced} checked and missing in the code")
+    removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
+                     for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
+    note = recipe.get("runtime_files_note")
+    if removed or kept or note:
+        lines.append(
+            f"- Left out: {removed} file(s) the app wrote while it was test-run"
+            + (f"; {kept} more could not be removed and are still in the output" if kept else "")
+            + (f" ({one_line(note)})" if note else ""))
     for title, items in (("Missing in the code", verification.shippedUnenforced),
                          ("Not checked", verification.notVerified)):
         if items:
@@ -2242,6 +2250,17 @@ class SmartGenerationRunner:
         if self.temp_dir is None:
             raise RuntimeError("Runner has no temp_dir")
 
+        # What the app wrote while the agent test-ran it is not output. The
+        # orchestrator removes it before it writes the recipe; a run that
+        # ended without one still holds it, so remove it here as well.
+        runtime_files: dict = {}
+        remove_runtime_files = getattr(self._t_orchestrator, "remove_app_runtime_files", None)
+        if remove_runtime_files is not None:
+            try:
+                runtime_files = remove_runtime_files()
+            except Exception:
+                logger.exception("Removing the app's runtime files failed for run %s", self.run_id)
+
         # Every line that differs from the scaffold (or from the seed) was
         # written by the LLM; attribute it before the deterministic packaging
         # steps below change anything.
@@ -2292,6 +2311,7 @@ class SmartGenerationRunner:
 
         recipe = self._read_recipe(result_path)
         recipe["secret_findings"] = scrub.findings
+        recipe.update(runtime_files)
 
         # Agent Trace record (.agent-trace/<run id>.json): who wrote each line
         # of the delivered files. Built after the scrub, so a redacted line

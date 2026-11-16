@@ -193,7 +193,8 @@ def _sent_credentials(request, previous):
     sent = set()
     for match in _REFERENCE.finditer(json.dumps([request.get(key) for key in ("path", "headers", "json")])):
         if _credential_reference(match) and int(match.group(1)) < len(previous):
-            value = _walk(previous[int(match.group(1))], match.group(2))
+            body = previous[int(match.group(1))]
+            value = _walk(body, _reference_path(body, match.group(2) or ""))
             if isinstance(value, str) and len(value) >= 8:
                 sent.add(value)
     return sent
@@ -266,17 +267,34 @@ def _holds(value, path):
     return _walk(value, path) is not _MISSING
 
 
+def _sole_wrapper(body, path):
+    """The one dict key holding ``path``, as in {"dataset": {"id": 1}}, or None.
+
+    With {"meta": {"id": ...}, "data": [...]} a guess could name the wrong id.
+    """
+    if not isinstance(body, dict):
+        return None
+    holders = [key for key, child in body.items()
+               if isinstance(child, (dict, list)) and _holds(child, path)]
+    if len(holders) == 1 and isinstance(body[holders[0]], dict) and "." not in holders[0]:
+        return holders[0]
+    return None
+
+
+def _reference_path(body, path):
+    """The path a ``{{N.path}}`` reference reads: ``path``, or it under the one wrapper holding it."""
+    wrapper = _sole_wrapper(body, path) if _walk(body, path) is _MISSING else None
+    return path if wrapper is None else f"{wrapper}.{path}"
+
+
 def _json_path(body, path):
     current = _walk(body, path)
     if current is _MISSING:
         hint = ""
         if isinstance(body, dict) and body:
-            # Guess only the one wrapper holding the path, as in {"dataset": {"id": 1}};
-            # with {"meta": {"id": ...}, "data": [...]} a guess could name the wrong id.
-            holders = [key for key, child in body.items()
-                       if isinstance(child, (dict, list)) and _holds(child, path)]
-            if len(holders) == 1 and isinstance(body[holders[0]], dict) and "." not in holders[0]:
-                hint = f"; did you mean {holders[0] + '.' + path!r}?"
+            wrapper = _sole_wrapper(body, path)
+            if wrapper is not None:
+                hint = f"; did you mean {wrapper + '.' + path!r}?"
             else:
                 keys = ", ".join(map(repr, list(body)[:10])) + (", ..." if len(body) > 10 else "")
                 hint = f"; the top-level keys are {keys}"
@@ -288,11 +306,17 @@ def _json_path(body, path):
     return current
 
 
-def _resolve_references(value, previous, *, in_path=False, in_header=False, redact=False):
+def _resolve_references(value, previous, *, in_path=False, in_header=False, redact=False, notes=None):
+    """Substitute ``{{N.path}}`` references from earlier responses.
+
+    A path missing from a response that wraps the record under one key
+    (``{"todolist": {"id": 1}}``) resolves through that key, and ``notes``,
+    when given, records the path actually read.
+    """
     if isinstance(value, dict):
-        return {key: _resolve_references(item, previous) for key, item in value.items()}
+        return {key: _resolve_references(item, previous, notes=notes) for key, item in value.items()}
     if isinstance(value, list):
-        return [_resolve_references(item, previous) for item in value]
+        return [_resolve_references(item, previous, notes=notes) for item in value]
     if not isinstance(value, str):
         return value
 
@@ -300,7 +324,11 @@ def _resolve_references(value, previous, *, in_path=False, in_header=False, reda
         index = int(match.group(1))
         if index >= len(previous) or previous[index] is _NO_JSON:
             raise ValueError(f"response {index} has no preceding JSON value to reference")
-        return _json_path(previous[index], match.group(2) or "")
+        body, path = previous[index], match.group(2) or ""
+        read = _reference_path(body, path)
+        if read != path and notes is not None:
+            notes.append(f"`{{{{{index}.{path}}}}}` resolved as `{{{{{index}.{read}}}}}`")
+        return _json_path(body, read)
 
     match = _REFERENCE.fullmatch(value)
     if match and not (in_path or in_header):
@@ -514,14 +542,17 @@ async def _run_requests(app, requests):
             for index, request in enumerate(requests):
                 item = {"index": index, "method": request["method"], "path": request["path"], "failures": []}
                 body = _NO_JSON
+                notes: list[str] = []
                 try:
-                    path = _local_path(_resolve_references(request["path"], previous, in_path=True))
+                    path = _local_path(_resolve_references(request["path"], previous, in_path=True, notes=notes))
                     item["path"] = _resolve_references(request["path"], previous, in_path=True, redact=True)
-                    kwargs = {"json": _resolve_references(request["json"], previous)} if "json" in request else {}
+                    kwargs = ({"json": _resolve_references(request["json"], previous, notes=notes)}
+                              if "json" in request else {})
                     if request.get("headers"):
                         headers = {}
                         for name, raw in request["headers"].items():
-                            value = _header_value(_resolve_references(raw, previous, in_header=True), index, name)
+                            value = _header_value(
+                                _resolve_references(raw, previous, in_header=True, notes=notes), index, name)
                             headers[name] = value
                             if _sensitive_header(name):
                                 # The whole value and its credential part, e.g.
@@ -569,9 +600,12 @@ async def _run_requests(app, requests):
                             item["failures"].append(str(exc))
                 except Exception as exc:
                     item["failures"].append(f"{type(exc).__name__}: {exc}"[:1000])
+                if notes:
+                    item["notes"] = list(dict.fromkeys(notes))
                 # An error or failure of this request may quote a credential it sent back.
                 sent = sorted(_sent_credentials(request, previous), key=len, reverse=True)
                 item["failures"] = _scrub(item["failures"], sent)
+                secrets.update(sent)  # a later body may echo it back; scrubbed with the headers' below
                 if "error" in item:
                     item["error"]["message"] = _scrub(item["error"]["message"], sent)
                 if request["method"] == "GET" and body is not _NO_JSON:

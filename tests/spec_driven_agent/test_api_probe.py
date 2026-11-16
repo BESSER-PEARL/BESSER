@@ -91,8 +91,8 @@ def test_a_missing_json_path_names_the_record_wrapped_one_level_down():
         api_probe._json_path({"dataset": {"id": 5, "name": "a"}, "versions_ids": []}, "id")
     with pytest.raises(ValueError, match=r"^JSON path 'id' was not present; the top-level keys are 'page'$"):
         api_probe._json_path({"page": {"items": [{"id": 1}]}}, "id")
-    with pytest.raises(ValueError, match=r"did you mean 'plant\.id'"):
-        api_probe._resolve_references("{{0.id}}", [{"plant": {"id": 1}}])
+    # A reference now resolves through that one wrapper (test_api_probe_wrapped_reference.py).
+    assert api_probe._resolve_references("{{0.id}}", [{"plant": {"id": 1}}]) == 1
     assert api_probe._json_path({"dataset": {"id": 5}}, "dataset.id") == 5
 
 

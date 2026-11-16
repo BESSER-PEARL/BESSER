@@ -585,10 +585,19 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                     # name in 'field'; lookupEntity (the target class id) picks the end.
                     entity = col_data.get('lookupEntity')
                     target = get_element_by_id(class_model, entity)
-                    target_name = target.get('name') if target else entity
-                    matches = [end for end in ends if getattr(end.type, 'name', None) == target_name]
-                    if len(matches) == 1:
+                    target_name = target.get('name') if target else (entity or lookup_path)
+                    matches = sorted(
+                        (end for end in ends if getattr(end.type, 'name', None) == target_name),
+                        key=lambda end: end.name,
+                    )
+                    if matches:
                         path_end = matches[0]
+                    if len(matches) > 1:
+                        logger.warning(
+                            "Lookup column %r names the class %s, which %s reaches through %d associations: "
+                            "using %r. Name the association end in the column's 'path' to choose another.",
+                            label or lookup_path, target_name, domain_class.name, len(matches), path_end.name,
+                        )
 
                 if path_end and path_end.type:
                     target_class = path_end.type

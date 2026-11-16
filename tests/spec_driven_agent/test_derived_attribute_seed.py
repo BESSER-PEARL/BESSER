@@ -1,7 +1,7 @@
 """A derived attribute of the model becomes a Phase 2 task.
 
-The scaffold stores a derived attribute as a plain column with a constant
-default. Nothing planned its computation, so an app shipped the constant
+The scaffold keeps a derived attribute at its default value (a database
+column with a constant default, or a field of an in-memory record). Nothing planned its computation, so an app shipped the constant
 unless the agent happened to notice the attribute while reading the model.
 """
 
@@ -31,15 +31,23 @@ def _shop() -> DomainModel:
         Property(name="priority", type=level, is_derived=True),
     }
     customer = Class(name="Customer")
-    customer.attributes = {Property(name="name", type=PrimitiveDataType("str"))}
+    customer.attributes = {Property(name="name", type=PrimitiveDataType("str")),
+                           Property(name="orderCount", type=PrimitiveDataType("int"), is_derived=True)}
     return DomainModel(name="Shop", types={order, customer, level})
 
 
-def test_each_class_with_derived_attributes_gets_one_task_naming_them():
+def test_one_task_names_every_derived_attribute_of_the_model():
     [task] = derived_attribute_tasks(_shop())
-    assert task.startswith("Compute the derived attributes Order.isLate, Order.total:")
-    assert "whenever the record is read" in task and "every write that changes" in task
+    assert task.startswith("Compute the model's derived attributes Customer.orderCount, Order.isLate, "
+                           "Order.total:")
+    assert "whenever its record is read" in task and "every write that changes" in task
     assert "never accept" in task
+
+
+def test_the_task_does_not_say_how_the_scaffold_stores_the_value():
+    """A REST-only scaffold keeps records in memory: there is no column."""
+    task = derived_attribute_tasks(_shop())[0]
+    assert "column" not in task and "keeps its default value" in task
 
 
 def test_a_derived_enumeration_is_left_to_its_initial_state_task():
@@ -48,8 +56,8 @@ def test_a_derived_enumeration_is_left_to_its_initial_state_task():
 
 def test_a_model_without_derived_attributes_gets_none():
     model = _shop()
-    order = next(c for c in model.get_classes() if c.name == "Order")
-    order.attributes = {a for a in order.attributes if not a.is_derived}
+    for cls in model.get_classes():
+        cls.attributes = {a for a in cls.attributes if not a.is_derived}
     assert derived_attribute_tasks(model) == []
     assert derived_attribute_tasks(None) == []
 

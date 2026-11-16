@@ -27,6 +27,7 @@ from besser.spec_driven_agent.model_serializer import (
 from besser.spec_driven_agent.agent.runbook import runbook_section
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
 from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
+from besser.spec_driven_agent.providers.llm_client import SYSTEM_CACHE_SPLIT
 from besser.utilities.workspace_fs import walk_plain
 from besser.spec_driven_agent.planning.target import OTHER, Target
 
@@ -357,9 +358,8 @@ def build_system_prompt(
     models_block = "\n".join(model_sections)
 
     # Model-derived data contract — the hard rules a weak model breaks
-    # first (id types, server-owned fields, honest 501s). Derived only
-    # from the domain model, so it is constant across turns and lives in
-    # the cached region with the serialized models.
+    # first (id types, server-owned fields, honest 501s). Per project, like
+    # the serialized models.
     contract_section = _data_contract_section(domain_model)
 
     # Build inventory section
@@ -434,13 +434,11 @@ def build_system_prompt(
     # Cache strategy
     # ------------------------------------------------------------------
     # Anthropic prompt caching keys on byte-identical prefixes. Everything
-    # BEFORE the ``## Variable context`` marker is stable across turns and
-    # across runs for the same diagram — so we keep role, rules, tool
-    # guidance, and the serialized models up top where they benefit from
-    # ephemeral caching. The variable tail (inventory, user request, gap
-    # tasks, Phase 1 issues) changes per run and never gets cached; mixing
-    # variable content into the middle would invalidate the cache on every
-    # new request.
+    # BEFORE the ``SYSTEM_CACHE_SPLIT`` marker depends only on the run's
+    # configuration (scaffold or not, frontend or not, design or not, target
+    # kind, primary kind), so llm_client caches it as its own block shared by
+    # every run of that configuration. Anything per project or per request
+    # (models, data contract, design, idioms, inventory, request) goes after it.
     # Primary-kind banner. When the user drove the run from anything
     # other than a ClassDiagram, we tell the LLM up front so it doesn't
     # default to "build a CRUD app". Omitted for class-diagram-driven
@@ -458,12 +456,8 @@ def build_system_prompt(
         }.get(primary_kind, f"Primary model kind: {primary_kind}")
         primary_banner = f"\n> Primary input: {friendly}\n"
 
-    # Stack-specific idiom reminders. ``instructions`` is constant
-    # across every turn of a single Phase 2 run, so — like ``primary_banner``
-    # above — placing this in the cached stable_header doesn't cost any
-    # turn-to-turn cache hits; it only varies between runs, same as the
-    # rest of this header already does via primary_kind. See
-    # stack_metadata.idiom_guidance_section for the detection + content.
+    # Stack-specific idiom reminders, keyed on the request's wording (per run).
+    # See stack_metadata.idiom_guidance_section for the detection + content.
     # The idiom blocks assume a web / server project.
     builds_other = target is not None and target.kind == OTHER
     idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
@@ -728,21 +722,20 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     input validation to make a check or test pass: when one fails on a
     security path, find the cause (dependency, configuration, test input)
     and fix that.
-{crud_rule}{design_system}
-{idiom_section}{model_tools_section}"""
+{crud_rule}
+{model_tools_section}"""
 
-    scaffold_parts = "CRUD, ORM, schemas" + (
-        ", pages" if _FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}") else "")
+    # What the scaffold holds is listed above; naming parts here claimed some a generator never makes.
     request_intro = (
-        f"The generator handled the base app ({scaffold_parts}). Your job is to\n"
-        "implement what the user asked for, on top of the generator output:"
+        "The generator output above is your starting point. Your job is to\n"
+        "implement what the user asked for, on top of it:"
         if has_scaffold else
         "No generator ran. Build what the user asked for, from the specification and the models:"
     )
-    variable_tail = f"""\
-
-## Variable context (per-run — not cached below this line)
-{inventory_section}{endpoint_section}{snapshot_section}{requirements_section}
+    idiom_block = f"\n{idiom_section}" if idiom_section else ""
+    models_part = f"\n{models_block}\n" if models_block else ""
+    variable_tail = f"""{SYSTEM_CACHE_SPLIT} (per run)
+{design_system}{idiom_block}{models_part}{contract_section}{inventory_section}{endpoint_section}{snapshot_section}{requirements_section}
 ## User request
 
 {request_intro}
@@ -767,7 +760,7 @@ When done, briefly summarize what you changed.
             "`modify_file` edits on it.\n\n"
         )
 
-    return f"{modify_directive}{stable_header}\n{models_block}\n{contract_section}{variable_tail}"
+    return f"{modify_directive}{stable_header}{variable_tail}"
 
 
 # Wire-type mapping for the contract table: model type -> TypeScript type.

@@ -48,11 +48,12 @@ REQUIREMENTS = [
 _SECTION_MARKERS = (
     ("rules", "\n## Rules\n"),
     ("model_tools", "\n## Tools for deeper model inspection"),
+    # The cached block shared across runs ends here (llm_client.SYSTEM_CACHE_SPLIT).
+    ("tail_header", "\n## Variable context"),
     ("models", ("\n## Domain Model", "\n## GUI Model", "\n## Agent Model", "\n## Object Model",
                 "\n## State Machines", "\n## Quantum Circuit", "\n## BPMN Process Model",
                 "\n## Neural Network Model")),
     ("data_contract", "\n## Data contract"),
-    ("tail_header", "\n## Variable context"),
     ("inventory", "\n## What was already generated"),
     ("endpoint_manifest", "\n## Backend REST API"),
     ("requirements", "\n## Requirements the user stated"),

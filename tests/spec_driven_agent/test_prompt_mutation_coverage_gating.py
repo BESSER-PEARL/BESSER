@@ -87,5 +87,5 @@ def _intro(inventory):
 def test_request_intro_says_pages_only_when_the_scaffold_has_them():
     backend = "Generator `generate_fastapi_backend` produced 2 files:\n  - backend/main_api.py (10 bytes)"
     web = backend + "\n  - frontend/src/pages/BookList.tsx (10 bytes)"
-    assert "(CRUD, ORM, schemas)" in _intro(backend)
-    assert "(CRUD, ORM, schemas, pages)" in _intro(web)
+    # The intro names no parts (the inventory above lists them), so it cannot claim pages.
+    assert "pages" not in _intro(backend) and _intro(web) == _intro(backend)

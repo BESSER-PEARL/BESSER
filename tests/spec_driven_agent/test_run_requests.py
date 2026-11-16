@@ -385,7 +385,7 @@ def test_a_claude_5x_run_keeps_its_cache_prefix_and_valid_thinking(tmp_path):
     # The long request is in the system prompt, once, and not repeated as a turn.
     for request in phase2:
         assert _occurrences(request, LAST_SENTENCE) == 1
-        assert LAST_SENTENCE in plain(request["system"])[0]["text"]
+        assert LAST_SENTENCE in "".join(block["text"] for block in plain(request["system"]))
     assert _first_text(phase2[0]) == LLMOrchestrator._KICKOFF_POINTER
     _assert_usage_matches_script(client, model, fake)
 

@@ -343,7 +343,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "Run the harness's application checks now: Python declarations, schema/router "
             "contracts, and (when enabled) isolated backend startup and create requests. "
             "No arbitrary shell commands or package installation. Call after a coherent "
-            "change and before claiming completion. Fix the returned blockers, then rerun. "
+            "code change, not again without one: ending your turn runs it too. Fix the "
+            "returned blockers, then rerun. "
             "A passing result covers these checks only, not all business requirements."
         ),
         "input_schema": {"type": "object", "properties": {}},

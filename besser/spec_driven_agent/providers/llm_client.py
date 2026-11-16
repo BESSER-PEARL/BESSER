@@ -939,9 +939,23 @@ def _strict_tool(tool: dict) -> dict | None:
     return {**tool, "input_schema": schema, "strict": True}
 
 
+# Everything before this heading in a Phase 2 system prompt is the same for every
+# web-app run of one configuration (prompt_builder.build_system_prompt), so it is
+# cached as its own block and read across runs. A non-web target, or a modify run
+# that changes the target, names that target in the rules: stable per request only.
+SYSTEM_CACHE_SPLIT = "\n## Variable context"
+
+
 def _with_cache_control(system: str) -> list[dict]:
-    """Wrap system prompt for prompt caching."""
-    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+    """The system prompt as cached text blocks: the shared part, then the per-run part.
+
+    Two breakpoints: with the tools and the rolling message markers that is the
+    API's limit of 4. The second keeps the whole prompt readable when the
+    message cache misses (a compaction rewrites the history).
+    """
+    stable, marker, tail = system.partition(SYSTEM_CACHE_SPLIT)
+    parts = [stable, marker + tail] if marker and stable.strip() else [system]
+    return [{"type": "text", "text": part, "cache_control": {"type": "ephemeral"}} for part in parts]
 
 
 def _with_tool_cache(tools: list[dict]) -> list[dict]:

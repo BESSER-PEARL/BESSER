@@ -58,3 +58,15 @@ The generator produces a Python file (default: ``qiskit_circuit.py``) containing
 3.  **Circuit Construction**: Code to initialize registers and apply gates.
 4.  **Measurement**: Measurement operations if defined.
 5.  **Execution**: (Optional) Code to execute the circuit on the specified backend.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files["qiskit_circuit.py"]`` names the circuit as the source of the file and
+lists the line ranges rendered from each quantum register (``quantum_register``), classical register
+(``classical_register``), function gate definition (``function_gate``) and operation (``operation``: a gate, a
+measurement, an input or a display operation; an operation that expands to several lines, such as an input value,
+covers them all) that has an ``id``. A classical register the generator adds for measurements has no region. Elements
+without an ``id`` are rendered untraced, and recording the trace does not change the generated file. The web editor's
+quantum circuit processor does not assign ids to the registers and gates it converts, so a circuit drawn there is
+traced at file level until it does. See :doc:`traceable_generator`.

@@ -1,6 +1,6 @@
 import os
-from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import trace_source, traced_environment
 from besser.BUML.metamodel.quantum import (
     QuantumCircuit, PrimitiveGate, ParametricGate, Measurement,
     ControlState, SwapGate, PauliXGate, PauliYGate, PauliZGate,
@@ -15,6 +15,11 @@ VALID_BACKENDS = {"aer_simulator", "fake_backend", "ibm_quantum"}
 class QiskitGenerator(GeneratorInterface):
     """
     Generates Qiskit code from a BESSER QuantumCircuit model.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, ``qiskit_circuit.py`` with the circuit as
+            source and the lines rendered from each quantum register, classical register, function gate
+            definition and operation (gate, measurement, ...) that has an ``id``.
     """
     regenerable = True
 
@@ -35,7 +40,7 @@ class QiskitGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="qiskit_circuit.py")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = traced_environment(templates_path)
         template = env.get_template('qiskit_circuit.py.j2')
 
         # Check if circuit needs classical registers for measurements
@@ -52,16 +57,17 @@ class QiskitGenerator(GeneratorInterface):
         # Determine which helper classes are needed
         helper_classes = self._get_required_helper_classes()
 
-        with open(file_path, "w", encoding="utf-8") as f:
-            generated_code = template.render(
-                circuit=self.model,
-                function_gates_code=function_gates_code,
-                operations_code=operations_code,
-                backend_type=self.backend_type,
-                shots=self.shots,
-                helper_classes=helper_classes
-            )
-            f.write(generated_code)
+        rendered = template.render(
+            circuit=self.model,
+            function_gates=list(self._function_gates().values()),
+            function_gates_code=function_gates_code,
+            operations=self.model.operations,
+            operations_code=operations_code,
+            backend_type=self.backend_type,
+            shots=self.shots,
+            helper_classes=helper_classes
+        )
+        self._write_traced("qiskit_circuit.py", rendered, trace_source(self.model, "qiskit_circuit.py.j2#circuit"))
 
         print(f"Qiskit code generated at: {file_path}")
 
@@ -124,11 +130,8 @@ class QiskitGenerator(GeneratorInterface):
                     return True
         return False
 
-    def _generate_function_gates_code(self) -> list[str]:
-        """
-        Generates function definitions for all FunctionGates in the circuit.
-        Returns a list of Python function definitions.
-        """
+    def _function_gates(self) -> dict:
+        """The unique FunctionGates of the circuit, by key, in the order their definitions are generated."""
         function_gates = {}
 
         # Collect all unique function gates by their unique ID (not just name)
@@ -139,6 +142,14 @@ class QiskitGenerator(GeneratorInterface):
                 gate_key = f"{op.name}_{id(op)}"
                 if gate_key not in function_gates:
                     function_gates[gate_key] = op
+        return function_gates
+
+    def _generate_function_gates_code(self) -> list[str]:
+        """
+        Generates function definitions for all FunctionGates in the circuit.
+        Returns a list of Python function definitions.
+        """
+        function_gates = self._function_gates()
 
         # Generate function definitions
         functions = []

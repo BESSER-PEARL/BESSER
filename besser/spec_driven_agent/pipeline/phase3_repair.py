@@ -58,6 +58,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_EXIT,
     EVENT_ROLLBACK,
     EVENT_SNAPSHOT,
+    EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
 )
 from besser.spec_driven_agent.validation.issues import (
@@ -1035,6 +1036,7 @@ class Phase3RepairMixin:
                 })
             turn += 1
             self.total_turns += 1
+            self._trace.write(EVENT_TURN_START, turn=self.total_turns, phase="phase3")
             # Recovery is shared with Phase 2. Do not force the failing text
             # strategy again after the executor requested a fresh read/range edit.
             force = self._force_tool_next or force_next

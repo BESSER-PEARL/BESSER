@@ -183,8 +183,10 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
     EVENT_ERROR,
     EVENT_COST_UPDATE,
+    EVENT_GENERATOR_OUTPUT,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
+    EVENT_REQUIREMENTS,
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
@@ -389,6 +391,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self.executor.app_validator = self._validate_app
         self.executor.time_left = self._time_left
+        # Each generator call's files and traced regions go to the run log, which
+        # the run's TraceModel is built from (state/trace_model.py).
+        self.executor.on_generated = self._record_generator_output
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[str, dict] | None = None
         self._api_scenarios: dict[str, dict] = {}
@@ -557,7 +562,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # can disable them without polluting the working tree.
         self.run_id = run_id
         self._trace: TraceWriter | NullTraceWriter = (
-            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind)
+            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind,
+                        usage=self._usage_counters)
             if enable_tracing
             else NullTraceWriter()
         )
@@ -1056,6 +1062,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._start_time is None:
             return None
         return self.max_runtime_seconds - (time.monotonic() - self._start_time)
+
+    def _usage_counters(self) -> dict[str, Any]:
+        """The client's cumulative token counters and the model serving it, for the run log."""
+        usage = self.client.usage
+        counters = {key: int(getattr(usage, key, 0) or 0) for key in (
+            "api_calls", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")}
+        counters["model"] = getattr(usage, "served_model", None) or getattr(self.client, "model", None)
+        return counters
+
+    def _safe_usage_counters(self) -> dict[str, Any]:
+        """:meth:`_usage_counters`, or ``{}`` for a client that keeps none (a test double)."""
+        try:
+            return self._usage_counters()
+        except Exception:
+            return {}
+
+    def _record_generator_output(self, record: dict) -> None:
+        """Log one generator call's files (see ``ToolExecutor.on_generated``)."""
+        self._trace.write(EVENT_GENERATOR_OUTPUT, **record)
 
     def _run_phase1(self, instructions: str) -> None:
         """Select and run the best generator, then inventory the output."""
@@ -3848,15 +3873,26 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._stated_requirements = None  # decided once: used, or extract below
             if self._requirements is not None:
                 self._requirements_source = "editor"
+                self._trace.write(EVENT_REQUIREMENTS, source="editor", items=self._requirements)
                 return
         # One initial attempt and one recovery attempt; failed extraction stays
         # unknown instead of being cached forever as a successful empty list.
         if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
             return
         self._requirement_extraction_attempts += 1
+        before = self._safe_usage_counters()
         self._requirements = _requirements_ledger.extract_requirements(instructions, self.client)
         if self._requirements is not None:
             self._requirements_source = "extracted"
+            after = self._safe_usage_counters()
+            # The extraction's own tokens, so the run's TraceModel can give the
+            # RequirementExtraction its LLM call (and not count them twice).
+            self._trace.write(
+                EVENT_REQUIREMENTS, source="extracted", items=self._requirements,
+                extraction_usage={key: after[key] - before.get(key, 0)
+                                  for key in after if isinstance(after[key], int)},
+                model=after.get("model"),
+            )
         else:
             # extract_requirements has five silent None paths; an empty list
             # in the recipe would read as "the user asked for nothing" rather

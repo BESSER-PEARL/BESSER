@@ -51,6 +51,7 @@ from besser.spec_driven_agent.run_recap import (
     recorded_requests,
     repo_notes,
 )
+from besser.spec_driven_agent.state.trace_model import generator_output_record
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
@@ -347,6 +348,7 @@ class ModifyRunMixin:
             logger.info("Model changed; the app has no generator output to regenerate")
             self._trace.write(EVENT_REGENERATION, generator=None, skipped="the app has no generator output")
             return
+        started = time.time()
         try:
             regeneration, reason = regenerate(
                 self.output_dir, generator, self.domain_model, self._seed_output_files,
@@ -375,6 +377,12 @@ class ModifyRunMixin:
             not_restored=regeneration.not_restored, not_checked=regeneration.not_checked,
             upgraded_from=regeneration.upgraded_from, base_rebuilt=regeneration.base_rebuilt,
             merge_warning=regeneration.merge_warning or None)
+        # The regenerated and merged files, as a generator call of the run's TraceModel
+        # (file level: a merged file's lines are no longer the template's).
+        regenerated = regeneration.written + regeneration.merged + [new for _, new in regeneration.moved]
+        if regenerated:
+            self._record_generator_output(generator_output_record(
+                self.output_dir, self.output_dir, regenerated, {}, generator, started))
 
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""

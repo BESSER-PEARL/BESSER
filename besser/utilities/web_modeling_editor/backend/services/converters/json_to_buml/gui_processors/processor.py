@@ -3,6 +3,7 @@ Main GUI diagram processor - orchestrates the conversion of GrapesJS JSON to BUM
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -11,6 +12,8 @@ from besser.BUML.metamodel.gui import (
     Button,
     ButtonActionType,
     GUIModel,
+    Link,
+    Menu,
     Module,
     Screen,
     ViewComponent,
@@ -54,6 +57,15 @@ from .component_parsers import (
 from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
 from .styling import build_style_map, build_stylesheet, resolve_component_styling
 from .utils import css_class_names, html_attributes, sanitize_name, get_element_by_id, clean_method_name
+
+# An href that cannot name a page of the app: a URL with a scheme
+# (https:, mailto:), a protocol-relative URL, or a fragment of the current page.
+_NOT_A_PAGE_HREF = re.compile(r"\s*(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
+
+
+def _page_key(reference: Any) -> str:
+    """A page reference (id, name, route or slug) in one comparable form."""
+    return re.sub(r"[^a-z0-9]+", "-", str(reference or "").lower()).strip("-")
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -681,10 +693,42 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             if isinstance(element, ViewContainer) and hasattr(element, 'view_elements'):
                 resolve_action_references(element.view_elements)
 
+    # Every way a link may name a page: its id, route, name or screen name.
+    screens_by_key: Dict[str, Screen] = {}
+    for page_id, screen in page_id_to_screen.items():
+        screens_by_key.setdefault(_page_key(page_id), screen)
+    for screen in screen_list:
+        for reference in (screen.route_path, screen.description, screen.name):
+            screens_by_key.setdefault(_page_key(reference), screen)
+
+    def linked_screen(href, navigate_to=None):
+        """The page a link opens: the one ``data-navigate-to`` names, else the
+        one a site-relative ``href`` names by route, name or id."""
+        key = _page_key(navigate_to)
+        if not key and href and not _NOT_A_PAGE_HREF.match(str(href)):
+            key = _page_key(href)
+        return screens_by_key.get(key) if key else None
+
+    def resolve_page_links(elements):
+        """Point links and menu items that open a page of this GUI at its route."""
+        for element in elements:
+            if isinstance(element, Link):
+                target = linked_screen(element.url, (element.custom_attributes or {}).get("data-navigate-to"))
+                if target is not None:
+                    element.url = target.route_path
+            elif isinstance(element, Menu):
+                for item in element.menuItems:
+                    target = linked_screen(item.url)
+                    if target is not None:
+                        item.url = target.route_path
+            if isinstance(element, ViewContainer):
+                resolve_page_links(element.view_elements)
+
     # Apply resolution to all screens
     for screen in screen_list:
         if hasattr(screen, 'view_elements'):
             resolve_action_references(screen.view_elements)
+            resolve_page_links(screen.view_elements)
 
     # Create module and finalize
     module_name = register_name(f"{gui_name}_Module", "Module")

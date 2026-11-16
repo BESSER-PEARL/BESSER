@@ -261,6 +261,8 @@ class PageBuilderMixin:
         if comp_type in {"link", "link-button"}:
             url = node.get("url") or ""
             target_path = self._resolve_target_path(node)
+            if not target_path and node.get("target") != "_blank":
+                target_path = self._page_route(url)
             on_click_expr = None
             if target_path and (not url or url == "#" or not str(url).startswith("http")):
                 context.needs_navigate = True
@@ -383,10 +385,15 @@ class PageBuilderMixin:
                 label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
                 item_lines.append(
                     f"{indent_str}    <li {list_item_style}>"
+                on_click = ""
+                if target != "_blank" and self._page_route(url):
+                    context.needs_navigate = True
+                    on_click = f" onClick={{(e) => {{ e.preventDefault(); navigate({json.dumps(url)}); }}}}"
                     f"<a href={json.dumps(url)}"
                     + (f" target={json.dumps(target)}" if target else "")
                     + (f" rel={json.dumps(rel)}" if rel else "")
                     + f">{label_expr}</a></li>"
+                    + on_click
                 )
             items_jsx = "\n".join(item_lines)
             return (
@@ -1189,6 +1196,10 @@ class PageBuilderMixin:
     @staticmethod
     def _path_from_name(name: Optional[str]) -> Optional[str]:
         if not name:
+    def _page_route(self, url: Optional[str]) -> Optional[str]:
+        """``url`` when it is the route of one of the app's own pages."""
+        return url if url and url in getattr(self, "_page_path_map", {}).values() else None
+
             return None
         return "/" + str(name).strip().lower().replace(" ", "-")
 

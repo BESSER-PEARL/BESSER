@@ -1243,10 +1243,11 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
 
 
 {% if not is_assoc_class %}
-def {{ class.name | lower}}_delete_conflict(db_{{ class.name | lower}}, deleting=None):
+def {{ class.name | lower}}_delete_conflict(db_{{ class.name | lower}}, deleting=None, wholes=()):
     """Why this {{ class.name }} cannot be deleted (None when it can): a related record
     would be left without a link it requires. Covers the parts deleted with it;
-    ``deleting`` holds every record of the delete, since none of them can block it."""
+    ``deleting`` holds every record of the delete, since none of them can block it,
+    and ``wholes`` the records on the way down to this part."""
     if deleting is None:
         state = sa_inspect(db_{{ class.name | lower}})
         deleting = [db_{{ class.name | lower}}] + [item[0] for item in state.mapper.cascade_iterator("delete", state)]
@@ -1275,11 +1276,15 @@ def {{ class.name | lower}}_delete_conflict(db_{{ class.name | lower}}, deleting
     {% endfor %}
     {# Composition: the parts are deleted with this entity, so what blocks a part blocks it.
        Imported here because the routers of a whole and its part can refer to each other. #}
+    {% if ns.parts %}
+    if any(whole is db_{{ class.name | lower}} for whole in wholes):
+        return "{{ class.name }} " + str(getattr(db_{{ class.name | lower}}, '{{ pk }}')) + " is one of its own parts"
+    {% endif %}
     {% for part in ns.parts %}
     from routers.{{ part[0] | lower }} import {{ part[0] | lower }}_delete_conflict
     parts_{{ part[1] }} = db_{{ class.name | lower}}.{{ part[1] }}
     for part in (list(parts_{{ part[1] }}) if isinstance(parts_{{ part[1] }}, list) else [item for item in [parts_{{ part[1] }}] if item is not None]):
-        conflict = {{ part[0] | lower }}_delete_conflict(part, deleting)
+        conflict = {{ part[0] | lower }}_delete_conflict(part, deleting, wholes + (db_{{ class.name | lower}},))
         if conflict:
             return "{{ part[0] }} " + str(getattr(part, '{{ part[0] | pk }}')) + " would be deleted with it, and " + conflict
     {% endfor %}

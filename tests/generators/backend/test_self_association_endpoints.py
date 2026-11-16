@@ -367,3 +367,43 @@ def test_a_subclass_handles_both_ends_of_an_inherited_one_to_many(tmp_path):
     assert lead["subordinates_ids"] == [result["ray"]]
     assert result["ray_after"]["manager_id"] == lead["engineer"]["id"]
     assert result["junior"]["engineer"]["manager_id"] == result["lea"]
+
+
+def _folder_model() -> DomainModel:
+    """A composition from a class to itself: a folder is deleted with the folders in it."""
+    folder = Class(name="Folder", attributes={Property(name="name", type=StringType)})
+    nesting = BinaryAssociation(name="Nesting", ends={
+        Property(name="parent", type=folder, multiplicity=Multiplicity(0, 1), is_composite=True),
+        Property(name="children", type=folder, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(name="Tree", types={folder}, associations={nesting})
+
+
+CYCLE_SCRIPT = """
+    with TestClient(main_api.app, raise_server_exceptions=False) as client:
+        def folder(name, parent=None):
+            return client.post("/folder/", json={"name": name, "parent": parent}).json()["folder"]["id"]
+
+        root = folder("root")
+        inner = folder("inner", folder("middle", root))
+        plain = folder("plain")
+        kept = folder("kept", plain)
+        client.put(f"/folder/{root}/", json={"name": "root", "parent": inner})
+        cyclic = client.delete(f"/folder/{root}/")
+        tree = client.delete(f"/folder/{plain}/")
+        print(json.dumps({
+            "cyclic": [cyclic.status_code, cyclic.json()["detail"]], "tree": tree.status_code,
+            "left": sorted(item["name"] for item in client.get("/folder/").json()),
+        }))
+"""
+
+
+def test_deleting_a_record_that_contains_itself_is_refused_readably(tmp_path):
+    """The delete followed the parts round the cycle and answered 500."""
+    result = _run_client(tmp_path, _folder_model(), CYCLE_SCRIPT)
+    status, detail = result["cyclic"]
+    assert status == 409
+    assert detail.startswith("Cannot delete Folder 1: ") and detail.endswith("Folder 1 is one of its own parts")
+    # A tree without a cycle is deleted with the folders in it.
+    assert result["tree"] == 200
+    assert result["left"] == ["inner", "middle", "root"]

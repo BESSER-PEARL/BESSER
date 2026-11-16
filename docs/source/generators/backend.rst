@@ -245,7 +245,9 @@ How the model shapes these endpoints:
 
 Known limits for an association from a class to itself: one carried by an
 association class is not supported (the generated app does not start
-serving), and neither is ``nested_creations=True`` with a many-to-many.
+serving), and neither is ``nested_creations=True`` with a many-to-many. A
+record that is, directly or through others, one of its own parts cannot be
+deleted (``409``) until the cycle is broken.
 
 .. versionchanged:: 8.0.0
    The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``

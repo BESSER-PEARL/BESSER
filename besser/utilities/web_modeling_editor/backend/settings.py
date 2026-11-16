@@ -27,6 +27,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _TRUTHY = ("1", "true", "yes", "on")
 
 
+# How long a BESSER temp directory, a spec-driven run's folders included, is kept (services/cleanup.py).
+TEMP_DIR_MAX_AGE_HOURS = 24
+
+
 def _positive(parse):
     """A blank, unparsable or non-positive value gives the default."""
     def validate(value):
@@ -157,7 +161,7 @@ class BackendSettings(BaseSettings):
         description="How long a finished run's workspace stays: what a modify run, a push and the events need.")
     llm_archive_ttl_seconds: _PositiveInt = Field(
         86400, validation_alias="BESSER_LLM_ARCHIVE_TTL_SECONDS",
-        description="How long a finished run's download stays available; never shorter than its workspace.")
+        description="How long a finished run's download stays available: at least its workspace, at most a day.")
     llm_cost_emitter_interval_seconds: _PositiveFloat = Field(
         2.0, validation_alias="BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS",
         description="Seconds between two cost events on a run's stream.")
@@ -344,7 +348,9 @@ class BackendSettings(BaseSettings):
         self.llm_default_max_runtime_seconds = min(
             self.llm_default_max_runtime_seconds, self.llm_max_runtime_seconds_hard_cap)
         self.llm_default_max_turns = min(self.llm_default_max_turns, self.llm_max_turns_hard_cap)
-        self.llm_archive_ttl_seconds = max(self.llm_archive_ttl_seconds, self.llm_download_ttl_seconds)
+        # The hourly temp cleanup deletes run folders older than it allows, downloads included.
+        self.llm_archive_ttl_seconds = min(max(self.llm_archive_ttl_seconds, self.llm_download_ttl_seconds),
+                                           TEMP_DIR_MAX_AGE_HOURS * 3600)
         return self
 
 

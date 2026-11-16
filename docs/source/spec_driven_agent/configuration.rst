@@ -297,9 +297,9 @@ Storage and lifecycle
 - ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (86400, 24 hours) -- How long the
   output stays downloadable (``archive_ttl_seconds`` in the config). The
   archive is small, so it outlives the workspace; it is never shorter than
-  ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``. The hourly cleanup of BESSER temp
-  folders also removes run folders older than 24 hours, so a longer value has
-  no effect.
+  ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` and never longer than 24 hours, the age at
+  which the hourly cleanup of BESSER temp folders removes run folders (a larger
+  value is lowered to it, and the config reports the value in force).
 - ``BESSER_LLM_CANCEL_ABANDONED_RUNS`` (on) and
   ``BESSER_LLM_DISCONNECTED_GRACE_SECONDS`` (``300``) -- How long a run with no
   subscribers keeps going before it is cooperatively cancelled through the

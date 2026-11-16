@@ -690,7 +690,8 @@ class SpecDrivenConfigResponse(ResponseModel):
     download_ttl_seconds: int = Field(
         description="How long a finished run can be modified, pushed or resumed (its workspace).")
     archive_ttl_seconds: int = Field(
-        description="How long a finished run's download stays available; never shorter than download_ttl_seconds.")
+        description="How long a finished run's download stays available: at least download_ttl_seconds, "
+                    "at most 24 hours.")
     cost_emitter_interval_seconds: float
     concurrency: SpecDrivenConcurrencyResponse
     features: SpecDrivenFeaturesResponse

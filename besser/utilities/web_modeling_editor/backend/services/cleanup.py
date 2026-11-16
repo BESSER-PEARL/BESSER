@@ -17,7 +17,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_TEMP_DIR_PREFIX,
     TEMP_DIR_PREFIXES,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.utilities.web_modeling_editor.backend.settings import TEMP_DIR_MAX_AGE_HOURS, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,6 @@ _BESSER_TEMP_PREFIXES = TEMP_DIR_PREFIXES + _LEGACY_TEMP_PREFIXES
 _CLEANUP_INTERVAL_SECONDS = 3600  # 1 hour
 
 
-# How long a BESSER temp directory, a spec-driven run's resumable workspace included, is kept.
-TEMP_DIR_MAX_AGE_HOURS = 24
 
 
 def cleanup_old_temp_files(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:

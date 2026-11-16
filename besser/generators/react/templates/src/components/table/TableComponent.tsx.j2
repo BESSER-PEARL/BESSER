@@ -1,7 +1,8 @@
-import React, { CSSProperties, useEffect, useMemo, useState } from "react";
+import React, { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { createPortal } from "react-dom";
 import { useTableContext } from "../../contexts/TableContext";
+import { notifyDataChanged, useDataVersion } from "../runtime/dataVersion";
 import { ColumnFilter } from "./ColumnFilter";
 import { ColumnSort } from "./ColumnSort";
 import "./TableComponent.css";
@@ -131,7 +132,7 @@ export const TableComponent: React.FC<Props> = ({
 }) => {
   // Local state for table data
   const [tableData, setTableData] = useState<any[]>(data ?? []);
-  const { selectedRows, setSelectedRow, registerTableRefresh, registerTableActions } = useTableContext();
+  const { selectedRows, setSelectedRow, registerTableActions } = useTableContext();
   const selectedRow = selectedRows[id];
   const rowKeyFields: string[] | undefined = dataBinding?.row_key_fields ?? dataBinding?.rowKeyFields;
   const selectedRowKey = getRowKey(selectedRow, rowKeyFields);
@@ -184,11 +185,16 @@ export const TableComponent: React.FC<Props> = ({
     }
   };
 
-  // Register refresh function with context
+  // Reload the rows after a write anywhere on the page (this table's included)
+  const dataVersion = useDataVersion();
+  const loadedVersion = useRef(dataVersion);
   useEffect(() => {
-    registerTableRefresh(id, fetchTableData);
+    if (dataVersion !== loadedVersion.current) {
+      loadedVersion.current = dataVersion;
+      fetchTableData();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [dataVersion]);
 
   // Initial fetch and update on data prop change
   useEffect(() => {
@@ -806,7 +812,7 @@ export const TableComponent: React.FC<Props> = ({
     try {
       await axios.delete(fullUrl);
       setRowActionError("");
-      await fetchTableData();
+      notifyDataChanged();
     } catch (err) {
       console.error("Error deleting data:", err);
       // Surface the backend's reason (e.g. a refused delete because a
@@ -1101,7 +1107,7 @@ export const TableComponent: React.FC<Props> = ({
                     const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
                     try {
                       await axios.post(url, processedValues);
-                      await fetchTableData();
+                      notifyDataChanged();
                       setShowModal(false);
                     } catch (err) {
                       console.error("Error saving data:", err);
@@ -1137,7 +1143,7 @@ export const TableComponent: React.FC<Props> = ({
                     const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
                     try {
                       await axios.put(fullUrl, processedValues);
-                      await fetchTableData();
+                      notifyDataChanged();
                       setShowModal(false);
                     } catch (err) {
                       console.error("Error updating data:", err);

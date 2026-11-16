@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useTableContext } from "../contexts/TableContext";
+import { notifyDataChanged } from "./runtime/dataVersion";
 
 export interface MethodParameter {
   name: string;
@@ -292,11 +293,8 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
         setShowResultModal(true);
       }
       
-      // Refresh the source table if this is an instance method
-      if (isInstanceMethod && instanceSourceTableId) {
-        console.log(`[MethodButton] Refreshing table: ${instanceSourceTableId}`);
-        tableContext.refreshTable(instanceSourceTableId);
-      }
+      // The method may have changed records: reload what the page shows
+      notifyDataChanged();
       
       if (onSuccess) {
         onSuccess(response.data);

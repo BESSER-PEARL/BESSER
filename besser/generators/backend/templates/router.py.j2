@@ -27,6 +27,7 @@
    `pk` filter yields each class's real primary-key attribute name, and link_target /
    link_attrs (from bal_stdlib) read the {target, <attrs>} link payloads. #}
 from fastapi import APIRouter, Depends, HTTPException, Body
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from pydantic_classes import *
@@ -38,7 +39,7 @@ router = APIRouter()
 
 {% set pk = class.name | pk %}
 {% set is_assoc_class = class.name in assoc_classes %}
-{% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[], assoc_links=[], lower_bound_guards=[], reverse_one=[]) %}
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[], assoc_links=[], lower_bound_guards=[], reverse_one=[], parts=[]) %}
 {% set all_parents = class.all_parents() | sort(attribute='name') %}
 {% for association in class.associations|sort(attribute='name') %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
@@ -65,6 +66,9 @@ router = APIRouter()
            (self-associations are left alone: their ends are not distinguishable by type).
            A composite whole has none: the ORM deletes its parts with it. #}
         {% set is_whole = lns.end1.is_composite and lns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if is_whole and class2_name not in assoc_classes %}
+            {% do ns.parts.append((class2_name, name_end2)) %}
+        {% endif %}
         {% if lns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min, lns.end1.multiplicity.max, lns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
@@ -117,6 +121,9 @@ router = APIRouter()
            (self-associations are left alone: their ends are not distinguishable by type).
            A composite whole has none: the ORM deletes its parts with it. #}
         {% set is_whole = plns.end1.is_composite and plns.end1.multiplicity.max <= 1 and association.name not in assoc_by_association %}
+        {% if is_whole and class2_name not in assoc_classes %}
+            {% do ns.parts.append((class2_name, name_end2)) %}
+        {% endif %}
         {% if plns.end1.multiplicity.min > 0 and class1_name != class2_name and not is_whole %}
             {% do ns.lower_bound_guards.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min, plns.end1.multiplicity.max, plns.end2.multiplicity.max, assoc_by_association.get(association.name))) %}
         {% endif %}
@@ -920,6 +927,9 @@ async def bulk_delete_{{ class.name | lower}}(ids: list[{{ pk_types.get(class.na
     for item_id in ids:
         db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == item_id).first()
         if db_{{ class.name | lower}}:
+            conflict = {{ class.name | lower}}_delete_conflict(db_{{ class.name | lower}})
+            if conflict:
+                raise HTTPException(status_code=409, detail="Cannot delete {{ class.name }} " + str(item_id) + ": " + conflict)
             database.delete(db_{{ class.name | lower}})
             deleted_count += 1
         else:
@@ -1158,6 +1168,51 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
 {% endif %}
 
 
+{% if not is_assoc_class %}
+def {{ class.name | lower}}_delete_conflict(db_{{ class.name | lower}}, deleting=None):
+    """Why this {{ class.name }} cannot be deleted (None when it can): a related record
+    would be left without a link it requires. Covers the parts deleted with it;
+    ``deleting`` holds every record of the delete, since none of them can block it."""
+    if deleting is None:
+        state = sa_inspect(db_{{ class.name | lower}})
+        deleting = [db_{{ class.name | lower}}] + [item[0] for item in state.mapper.cascade_iterator("delete", state)]
+    {# The ORM cannot express a lower bound on the many side, so it is enforced here,
+       like the "At least N required" check of the create endpoint.
+       g = (other class, this end name, other end name, min, this max, other max, association class or None) #}
+    {% for g in ns.lower_bound_guards %}
+    {% if g[6] %}
+    for link in list(db_{{ class.name | lower}}.{{ g[6] | lower }}s):
+        related = link.{{ g[2] }}
+        if related is not None and related not in deleting and len(related.{{ g[6] | lower }}s) - 1 < {{ g[3] }}:
+            return "{{ g[0] }} " + str(getattr(related, '{{ g[0] | pk }}')) + " requires at least {{ g[3] }} {{ g[1] }}"
+    {% else %}
+    {# The relationship attribute is a collection or a scalar depending on the
+       mapped multiplicity; handle both rather than depend on the ORM's choice #}
+    related_{{ g[2] }} = db_{{ class.name | lower}}.{{ g[2] }}
+    for related in (list(related_{{ g[2] }}) if isinstance(related_{{ g[2] }}, list) else [item for item in [related_{{ g[2] }}] if item is not None]):
+        {% if g[4] > 1 %}
+        remaining = len(related.{{ g[1] }}) - 1
+        {% else %}
+        remaining = 0
+        {% endif %}
+        if related not in deleting and remaining < {{ g[3] }}:
+            return "{{ g[0] }} " + str(getattr(related, '{{ g[0] | pk }}')) + " requires at least {{ g[3] }} {{ g[1] }}"
+    {% endif %}
+    {% endfor %}
+    {# Composition: the parts are deleted with this entity, so what blocks a part blocks it.
+       Imported here because the routers of a whole and its part can refer to each other. #}
+    {% for part in ns.parts %}
+    from routers.{{ part[0] | lower }} import {{ part[0] | lower }}_delete_conflict
+    parts_{{ part[1] }} = db_{{ class.name | lower}}.{{ part[1] }}
+    for part in (list(parts_{{ part[1] }}) if isinstance(parts_{{ part[1] }}, list) else [item for item in [parts_{{ part[1] }}] if item is not None]):
+        conflict = {{ part[0] | lower }}_delete_conflict(part, deleting)
+        if conflict:
+            return "{{ part[0] }} " + str(getattr(part, '{{ part[0] | pk }}')) + " would be deleted with it, and " + conflict
+    {% endfor %}
+    return None
+{% endif %}
+
+
 {% if "DELETE" in http_methods %}
 {% if is_assoc_class %}
 {% set ac_ends = assoc_classes[class.name].ends %}
@@ -1195,31 +1250,9 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-    {# Lower-bound guards: refuse the delete when a related entity would be left
-       with fewer instances of this class than its multiplicity requires. The ORM
-       cannot express a lower bound on the many side, so it is enforced here, like
-       the "At least N required" check of the create endpoint.
-       g = (other class, this end name, other end name, min, this max, other max, association class or None) #}
-    {% for g in ns.lower_bound_guards %}
-    {% if g[6] %}
-    for link in list(db_{{ class.name | lower}}.{{ g[6] | lower }}s):
-        related = link.{{ g[2] }}
-        if related is not None and len(related.{{ g[6] | lower }}s) - 1 < {{ g[3] }}:
-            raise HTTPException(status_code=409, detail="Cannot delete {{ class.name }} " + str({{ class.name | lower}}_id) + ": {{ g[0] }} " + str(getattr(related, '{{ g[0] | pk }}')) + " requires at least {{ g[3] }} {{ g[1] }}")
-    {% else %}
-    {# The relationship attribute is a collection or a scalar depending on the
-       mapped multiplicity; handle both rather than depend on the ORM's choice #}
-    related_{{ g[2] }} = db_{{ class.name | lower}}.{{ g[2] }}
-    for related in (list(related_{{ g[2] }}) if isinstance(related_{{ g[2] }}, list) else [item for item in [related_{{ g[2] }}] if item is not None]):
-        {% if g[4] > 1 %}
-        remaining = len(related.{{ g[1] }}) - 1
-        {% else %}
-        remaining = 0
-        {% endif %}
-        if remaining < {{ g[3] }}:
-            raise HTTPException(status_code=409, detail="Cannot delete {{ class.name }} " + str({{ class.name | lower}}_id) + ": {{ g[0] }} " + str(getattr(related, '{{ g[0] | pk }}')) + " requires at least {{ g[3] }} {{ g[1] }}")
-    {% endif %}
-    {% endfor %}
+    conflict = {{ class.name | lower}}_delete_conflict(db_{{ class.name | lower}})
+    if conflict:
+        raise HTTPException(status_code=409, detail="Cannot delete {{ class.name }} " + str({{ class.name | lower}}_id) + ": " + conflict)
     # Snapshot the columns before deleting: cascading the association-class
     # links loads relationship collections whose back-references would make
     # the JSON encoder recurse endlessly on the live object.

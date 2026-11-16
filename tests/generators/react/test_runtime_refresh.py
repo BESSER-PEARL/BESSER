@@ -57,3 +57,12 @@ def test_the_table_no_longer_keeps_its_own_refresh_registry(build_app):
                    app.file("components", "table", "TableComponent.tsx")):
         assert "refreshTable" not in source and "registerTableRefresh" not in source
 
+
+def test_deleting_a_row_asks_for_confirmation(build_app):
+    app = build_app(CLASSES, PAGES)
+    table = app.file("components", "table", "TableComponent.tsx")
+
+    remove = table[table.index('title="Remove"'):]
+    remove = remove[:remove.index("</button>")]
+    assert "window.confirm(" in remove
+    assert remove.index("window.confirm(") < remove.index("deleteRow(row)")

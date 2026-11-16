@@ -64,20 +64,7 @@ def _configure_sqlite_engine(engine):
 
 
 class Base(DeclarativeBase):
-    # Attributes that store a credential (a password hash, a token, a key): read
-    # and written like any other, and left out of a serialized record.
-    __credentials__ = ()
-
-    def __iter__(self):
-        """The (name, value) pairs of the loaded attributes, without credentials.
-
-        This is what ``dict(record)`` holds, and what a web framework that
-        serializes a returned record (FastAPI) sends to the client.
-        """
-        return (
-            (key, value) for key, value in vars(self).items()
-            if not key.startswith("_sa") and key not in self.__credentials__
-        )
+    pass
 {%- for association in associations|sort(attribute='name') if association.ends|length > 2 %}
 # WARNING: n-ary association '{{ association.name }}' is not supported by this generator — model it manually.
 {%- endfor %}
@@ -151,10 +138,6 @@ class {{ class.name }}(
     {%- if (class.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0) 
         and ((not ids.get(class.name))) %}
     id: Mapped_[int] = mapped_column(primary_key=True)
-    {%- endif %}
-    {%- set credentials = class.all_attributes() | select('credential') | map(attribute='name') | sort | list %}
-    {%- if credentials %}
-    __credentials__ = ({% for name in credentials %}"{{ name }}", {% endfor %})
     {%- endif %}
     {#- Class attributes #}
         {{- helper.render_attributes(class, enumerations, types, ids, sort)}}
@@ -272,10 +255,6 @@ class {{ asso_class.name }}(Base):
     {{ end.name }}_id: Mapped_[{% if end.multiplicity.min == 0 %}Optional_[{{ pk_types.get(end.type.name, 'int') }}]{% else %}{{ pk_types.get(end.type.name, 'int') }}{% endif %}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ ids.get(end.type.name, 'id') }}"){% if end.multiplicity.min == 0 %}, nullable=True{% endif %})
         {%- endif %}
     {%- endfor %}
-    {%- set credentials = asso_class.all_attributes() | select('credential') | map(attribute='name') | sort | list %}
-    {%- if credentials %}
-    __credentials__ = ({% for name in credentials %}"{{ name }}", {% endfor %})
-    {%- endif %}
     {{- helper.render_attributes(asso_class, enumerations, types, ids, sort)}}
 {% endfor %}
 

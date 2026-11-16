@@ -1,8 +1,39 @@
 from __future__ import annotations
 
+import re
 from typing import Dict, List
 
 from besser.BUML.metamodel.structural import Class, DomainModel, Property
+
+# Last word of an attribute name that marks a stored secret, and the words before a last
+# "token" that make it one (an invitation or device token is data a client reads back).
+_SECRET_WORDS = frozenset({"password", "passwd", "pwd", "passphrase", "passcode", "secret", "salt"})
+_SECRET_TOKEN_KINDS = frozenset({"access", "refresh", "auth", "api", "reset", "session"})
+
+
+def is_secret_attribute(attribute: Property) -> bool:
+    """Whether a text attribute's name marks it as a stored secret, such as a password hash.
+
+    The generated search endpoint does not filter by such an attribute: a partial
+    match would let a caller recover the value one character at a time. The name
+    is read as camelCase / snake_case words. Its last word, or the word before a
+    last ``hash``, is ``password``, ``passwd``, ``pwd``, ``passphrase``,
+    ``passcode``, ``secret`` or ``salt`` (``passwordHash``, ``clientSecret``), or
+    ``token`` alone or after ``access``, ``refresh``, ``auth``, ``api``, ``reset``
+    or ``session``. Any other last word (``passwordHint``, ``tokenCount``) and an
+    ``is`` / ``has`` prefix make ordinary data. Only the search filter depends
+    on this: the attribute is stored, validated and returned like any other.
+    """
+    if attribute.type.name not in ("str", "string"):
+        return False
+    words = [word.lower() for word in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", attribute.name)]
+    if words and words[-1] == "hash":
+        words = words[:-1]
+    if not words or words[0] in ("is", "has"):
+        return False
+    if words[-1] == "token":
+        return len(words) == 1 or words[-2] in _SECRET_TOKEN_KINDS
+    return words[-1] in _SECRET_WORDS
 
 
 def is_server_owned_attribute(attribute: Property) -> bool:

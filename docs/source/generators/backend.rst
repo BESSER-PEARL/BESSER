@@ -215,22 +215,19 @@ How the model shapes these endpoints:
   its subclasses.
 * The **search filters** are the text, number and boolean attributes of the
   class and its parents, except derived attributes (their stored value is not
-  kept up to date by the generated code) and credentials.
-* An attribute that stores a **credential** is accepted on create and update
-  and is never returned or offered as a filter. Since a client never receives
-  it, an update that leaves it out, ``null`` or empty keeps the stored value;
-  it is required on create when the model requires it. The model has no marker
-  for it, so the name of a text attribute decides, read as camelCase or
-  snake_case words: its last word is ``password``, ``passwd``, ``pwd``,
-  ``passphrase``, ``passcode``, ``secret``, ``token``, ``salt``, ``otp``,
-  ``pin``, ``cvv`` or ``credential``, or its last two are ``api``,
-  ``private``, ``access``, ``auth``, ``signing`` or ``secret`` followed by
-  ``key``; ``hash`` and ``digest`` are ignored (``passwordHash``). A word that
-  follows makes it ordinary data (``passwordHint``, ``tokenCount``). Model
-  validation lists the attributes treated this way; rename an attribute that
-  holds ordinary data. The records themselves leave credentials out when
-  serialized (see :doc:`alchemy`), so a route added by hand that returns a
-  record does not send them either.
+  kept up to date by the generated code) and **stored secrets**.
+* The search endpoint does not filter by an attribute whose name marks a
+  stored secret, since a partial match would reveal its value one character at
+  a time, but every other endpoint stores and returns it like any other
+  attribute: an application that stores credentials must leave them out of its
+  own responses. The name of a text attribute is read as camelCase or
+  snake_case words, and marks a stored secret when its last word, or the word
+  before a last ``hash``, is ``password``, ``passwd``, ``pwd``,
+  ``passphrase``, ``passcode``, ``secret`` or ``salt`` (``passwordHash``,
+  ``clientSecret``), or when it is ``token`` alone or after ``access``,
+  ``refresh``, ``auth``, ``api``, ``reset`` or ``session``
+  (``refreshToken``). Any other last word keeps the filter (``passwordHint``,
+  ``tokenCount``, ``inviteToken``).
 * An association **from a class to itself** has a field, and for a
   many-to-many a link endpoint, for each of its two ends. The id lists of a
   many-to-many are returned as ``<target class>_ids``; when that does not tell

@@ -152,10 +152,6 @@ Each message says what is wrong, why it breaks generation, and how to fix it.
      - warning
      - Attribute and association end share a name: class 'Book' has an attribute and an
        association end both named 'author'.
-   * - Attribute treated as a credential
-     - warning
-     - Credential attribute: attribute 'passwordHash' of class 'Account' is treated as a
-       credential because of its name. … Rename it if it holds ordinary data.
    * - Python keyword name
      - warning
      - Python keyword name: Attribute 'from' of class 'Item' is the Python keyword 'from'.

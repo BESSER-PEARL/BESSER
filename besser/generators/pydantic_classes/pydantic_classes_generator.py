@@ -3,7 +3,7 @@ import os
 import re
 import unicodedata
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.structural import DomainModel, AssociationClass, is_credential_attribute
+from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
 from besser.generators.generator_interface import require_valid_identifiers
@@ -73,7 +73,6 @@ class PydanticGenerator(GeneratorInterface):
         env.filters["ascii_identifier"] = ascii_identifier
         env.globals["is_server_owned_attribute"] = is_server_owned_attribute
         env.globals["is_shadowed_by_association_end"] = is_shadowed_by_association_end
-        env.globals["is_credential_attribute"] = is_credential_attribute
         register_default_literals(env)
         template = env.get_template('pydantic_classes_template.py.j2')
 

@@ -3,7 +3,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 
 from besser.generators.default_literals import register_default_literals
-from besser.BUML.metamodel.structural import DomainModel, AssociationClass, is_credential_attribute
+from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
@@ -283,15 +283,6 @@ class SQLAlchemyGenerator(GeneratorInterface):
         env.globals.update(normalize_code=normalize_method_code,
                            is_shadowed_by_association_end=is_shadowed_by_association_end,
                            end_hidden_by_attribute=end_hidden_by_attribute)
-        env.tests["credential"] = is_credential_attribute
-        for cls in classes + asso_classes:
-            for attr in sort_by_timestamp(cls.attributes):
-                if is_credential_attribute(attr):
-                    logger.warning(
-                        "Attribute '%s.%s' is treated as a credential because of its name: it is "
-                        "left out of dict(record), and so of API responses and search filters.",
-                        cls.name, attr.name,
-                    )
         # default_value reaches the metamodel unvalidated from request JSON and
         # used to be interpolated raw into the generated module — which
         # SQLGenerator then EXECUTES. These emit literals, never expressions.

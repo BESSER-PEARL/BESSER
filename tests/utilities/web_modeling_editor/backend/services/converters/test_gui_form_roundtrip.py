@@ -105,3 +105,16 @@ def test_the_submit_button_keeps_its_classes():
 
     second = _roundtrip(first)
     assert _form(second)["components"][-1]["attributes"] == {"type": "submit", "class": "btn btn-primary"}
+
+
+def test_a_class_given_to_the_submit_button_after_an_export_wins():
+    styled = {**SIGNUP, "components": [
+        *SIGNUP["components"][:-1],
+        {"tagName": "button", "attributes": {"type": "submit", "class": "btn btn-primary"},
+         "components": [{"type": "textnode", "content": "Sign up"}]},
+    ]}
+    exported = _roundtrip(_page(styled))
+    # The user restyles the button in the editor.
+    _form(exported)["components"][-1]["attributes"]["class"] = "btn btn-danger"
+
+    assert _parsed_form(exported).custom_attributes["data-submit-class"] == "btn btn-danger"

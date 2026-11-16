@@ -659,7 +659,8 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
         buttons[0] if buttons else None,
     )
     submit_label = attributes.get("data-submit-label") or (submit.label if submit else None) or "Submit"
-    submit_classes = attributes.get("data-submit-class") or " ".join((submit.css_classes if submit else None) or [])
+    # The button's own classes, else those kept on the form when it was exported
+    submit_classes = " ".join((submit.css_classes if submit else None) or []) or attributes.get("data-submit-class")
 
     form = Form(
         name=name,

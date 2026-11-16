@@ -36,7 +36,7 @@ from besser.spec_driven_agent.planning.action_inventory import (
 )
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_inventory
 from besser.spec_driven_agent.planning.model_rules import DROPPED
-from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest
+from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest, route_serves
 from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
@@ -1339,7 +1339,8 @@ class Phase3RepairMixin:
                      for path in confirmed_create_paths(record["report"])}
         listed = (_CREATE_UNVERIFIED.search(issue.message) for issue in blockers)
         return {(match.group(1), match.group(2)) for match in listed
-                if match and (match.group(1), match.group(2).rstrip("/")) not in confirmed}
+                if match and not any(backend == match.group(1) and route_serves(match.group(2), path)
+                                     for backend, path in confirmed)}
 
     def _may_save_phase3_checkpoint(self) -> bool:
         """Whether a repair checkpoint may be written now.

@@ -2986,7 +2986,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         re-prefixed ``runtime unverified:`` so it reaches the fix loop as a
         blocker instead of a warning nothing consumes.
         """
+        from besser.spec_driven_agent.planning.mutation_inventory import route_serves
         from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
+        from besser.spec_driven_agent.validation.constructibility import _declared_failure
 
         revision = self._workspace_revision()
         current = [record for record in self._api_scenarios.values()
@@ -2994,28 +2996,33 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         confirmed = {(record["report"].get("backend"), path)
                      for record in current
                      for path in confirmed_create_paths(record["report"])}
-        # An action route a passing current scenario exercised end-to-end.
+        # An action route a passing current scenario exercised end-to-end: a
+        # 2xx whose body says the call did not act is not such a call.
         exercised = {
-            (record["report"].get("backend"),
-             str(response.get("path", "")).split("?", 1)[0].rstrip("/"))
+            (record["report"].get("backend"), str(response.get("path", "")))
             for record in current if record["report"].get("status") == "passed"
             for response in record["report"].get("responses", [])
             if response.get("method") == "POST"
             and isinstance(response.get("status"), int)
             and 200 <= response["status"] < 300
+            and not _declared_failure(json.dumps(response.get("json")))
         }
+
+        def settled(match, evidence) -> bool:
+            # The probe prints the route template; a scenario records the path it called.
+            return bool(match) and any(backend == match.group(1) and route_serves(match.group(2), path)
+                                       for backend, path in evidence)
+
         checked: list[str] = []
         for item in raw:
             if item.startswith("create unverified: "):
-                match = _re.match(r"create unverified: (.+?): POST (\S+) -", item)
-                if match and (match.group(1), match.group(2).rstrip("/")) in confirmed:
+                if settled(_re.match(r"create unverified: (.+?): POST (\S+) -", item), confirmed):
                     continue
                 item = "runtime unverified: " + item
             elif item.startswith("action unverified: "):
                 # Same shape as the create side. Without this promotion the
                 # finding stays a warning the blocker-only fix loop ignores.
-                match = _re.match(r"action unverified: (.+?): POST (\S+) -", item)
-                if match and (match.group(1), match.group(2).rstrip("/")) in exercised:
+                if settled(_re.match(r"action unverified: (.+?): POST (\S+) -", item), exercised):
                     continue
                 item = "runtime unverified: " + item
             checked.append(item)

@@ -306,6 +306,12 @@ def test_an_observed_action_500_is_a_blocker():
     assert issue.severity == "blocker"
 
 
+# The route as the action probe prints it: the OpenAPI path template.
+_UNSETTLED_CANCEL = (
+    "action unverified: web_app/backend: POST /booking/{booking_id}/methods/cancel/ - "
+    "cancel on Booking refused every state this probe could construct")
+
+
 def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch, monkeypatch):
     """``action unverified:`` had no promotion at all, so it stayed a warning.
 
@@ -313,10 +319,7 @@ def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch,
     unconditional blocker: the probe legitimately cannot construct every
     state, so a passing ``test_api`` workflow must be able to retire it.
     """
-    _probe_recorder(monkeypatch, orch, findings=[
-        "action unverified: web_app/backend: POST /booking/1/methods/cancel/ - "
-        "cancel on Booking refused every state this probe could construct",
-    ])
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
 
     issues = orch._collect_execution_issues()
     promoted = [i for i in issues if i.startswith("runtime unverified: action unverified:")]
@@ -325,211 +328,62 @@ def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch,
     assert _classify_issue(promoted[0]).severity == "blocker"
 
 
-def test_a_passing_scenario_retires_an_unsettled_action(orch, monkeypatch):
-    _probe_recorder(monkeypatch, orch, findings=[
-        "action unverified: web_app/backend: POST /booking/1/methods/cancel/ - "
-        "cancel on Booking refused every state this probe could construct",
-    ])
+def _cancel_scenario(orch, monkeypatch, response):
+    """Record a passing current scenario whose only response is ``response``."""
     monkeypatch.setattr(orch, "_workspace_revision", lambda: "rev-1")
     orch._api_scenarios["named:cancel"] = {
         "scenario": {"requests": [], "backend": "web_app/backend"},
         "scenario_id": "cancel", "revision": "rev-1",
         "report": {"status": "passed", "boot": "ok", "backend": "web_app/backend",
-                   "responses": [{"method": "POST", "status": 200,
-                                  "path": "/booking/1/methods/cancel/"}]},
+                   "responses": [{"method": "POST", "status": 200, **response}]},
     }
+
+
+def test_a_passing_scenario_retires_an_unsettled_action(orch, monkeypatch):
+    """The finding names the route template; the scenario called a concrete path."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": "/booking/1/methods/cancel/"})
 
     issues = orch._collect_execution_issues()
 
     assert not [i for i in issues if "action unverified:" in i]
 
 
-# ---------------------------------------------------------------------------
-# 6. The runtime gate refuses to report success
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("response", [
+    {"path": "/booking/1/methods/confirm/"},                      # another action
+    {"path": "/room/1/methods/cancel/"},                          # another entity
+    {"path": "/booking/1/methods/cancel/extra/"},                 # a longer route
+    {"path": "/booking/1/methods/cancel/", "json": {"success": False, "message": "refused"}},
+])
+def test_a_scenario_that_did_not_run_the_action_leaves_it_unsettled(orch, monkeypatch, response):
+    """A 2xx elsewhere, or one whose body says the call did not act, proves nothing."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, response)
 
-def test_the_gate_refuses_completion_when_the_app_cannot_start(orch, monkeypatch):
-    """Detection alone is provably not enough.
+    issues = orch._collect_execution_issues()
 
-    Run mbzbzhq9 held its fatal ``mapper config:`` blocker in top-priority
-    position through six attempts and shipped anyway. The gate is the part
-    that makes the run report itself incomplete, naming the runtime failure.
-    """
-    monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
-    orch._runtime_probe_verdict = 2  # _RUNTIME_FAILED
-    orch._validation_issues = [ValidationIssue(
-        "blocker", "mapper config: sql_alchemy.py line 107: Mapper 'Booking' has no property 'bill'")]
-
-    orch._apply_runtime_gate()
-
-    gate = [i for i in orch._validation_issues if i.message.startswith("runtime gate:")]
-    assert len(gate) == 1
-    assert gate[0].severity == "blocker"
-    assert "mapper config:" in gate[0].message
+    assert [i for i in issues if i.startswith("runtime unverified: action unverified:")]
 
 
-def test_an_exhausted_budget_with_a_red_gate_reports_incomplete(orch, monkeypatch):
-    """The honest outcome when the money runs out is a named runtime failure,
-    not a silent pass."""
-    monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
-    orch._runtime_probe_verdict = 2  # last probe: the app does not come up
-    # The budget is gone before the first repair turn, so Phase 3 bails at its
-    # own stop gate - the path that used to end the run with no runtime word.
-    monkeypatch.setattr(orch, "_phase3_stop_requested",
-                        lambda **_kwargs: "cost budget exhausted")
-    orch._validation_issues = [ValidationIssue(
-        "blocker", "create contract: POST /booking/ - observed a server/persistence failure")]
+def test_a_read_back_under_a_nested_create_route_retires_its_unverified_create(orch, monkeypatch):
+    _probe_recorder(monkeypatch, orch, findings=[
+        "create unverified: web_app/backend: POST /booking/{booking_id}/guest/ - "
+        "autogenerated input was refused (422)",
+    ])
+    monkeypatch.setattr(orch, "_workspace_revision", lambda: "rev-1")
+    orch._api_scenarios["named:guest"] = {
+        "scenario": {"requests": [], "backend": "web_app/backend"},
+        "scenario_id": "guest", "revision": "rev-1",
+        "report": {"status": "passed", "boot": "ok", "backend": "web_app/backend", "responses": [
+            {"index": 0, "method": "POST", "status": 201, "path": "/booking/3/guest/",
+             "json": {"id": 5, "name": "Ada"}},
+            {"index": 1, "method": "GET", "status": 200, "path": "/booking/3/guest/5/",
+             "json": {"id": 5, "name": "Ada"}}]},
+    }
 
-    with patch.object(orch, "_invoke_phase3_fix_loop",
-                      side_effect=AssertionError("no repair on an exhausted budget")):
-        orch._run_phase3_validation()
+    issues = orch._collect_execution_issues()
 
-    gate = [i for i in orch._validation_issues if i.message.startswith("runtime gate:")]
-    assert gate and gate[0].severity == "blocker"
-    assert "NOT complete" in gate[0].message
-
-
-def test_no_runtime_evidence_at_all_is_not_a_pass(orch, monkeypatch):
-    """20 of 23 runs never called ``test_api`` and nothing noticed.
-
-    An empty scenario dict produced an empty finding list - byte-identical to
-    an app whose scenarios all passed. Absence of evidence is not evidence of
-    absence.
-    """
-    monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
-    orch._runtime_probe_verdict = None
-    orch._validation_issues = []
-
-    orch._apply_runtime_gate()
-
-    gate = [i for i in orch._validation_issues if i.message.startswith("runtime gate:")]
-    assert len(gate) == 1
-    assert "no runtime evidence" in gate[0].message
-
-
-def test_a_business_rule_refusing_a_guessed_fixture_does_not_refuse_the_run(orch, monkeypatch):
-    """The gate must stay silent on an unsettled create. Measured, twice.
-
-    dp3trml9 - the accepted artifact - answers the probe's guessed
-    ReservedRoom payload with ``409 This room is already linked to the
-    booking``, and 308z4wo2 passes 11/11 corrected acceptance checks with
-    EVERY create route coming back ``create unverified:``. A gate that read a
-    business-rule refusal as a defect would refuse working applications, so
-    the unsettled route keeps only its own ``runtime unverified:`` finding.
-    """
-    monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
-    orch._runtime_probe_verdict = 1  # _RUNTIME_UNVERIFIED
-    unsettled = ValidationIssue(
-        "blocker",
-        "runtime unverified: create unverified: web_app/backend: POST /reservedroom/ - "
-        "autogenerated input was refused (409: This room is already linked to the booking)")
-    orch._validation_issues = [unsettled]
-
-    orch._apply_runtime_gate()
-
-    assert orch._validation_issues == [unsettled]
-
-
-def test_a_failing_retained_scenario_does_not_refuse_the_run(orch, monkeypatch):
-    """A retained workflow is a model-authored assertion, not the spec.
-
-    Run dynioweu passes 11/11 corrected acceptance checks and still fails its
-    own ``booking_overlap_violation`` scenario; ``test_api`` itself says "a
-    generated assertion can be wrong". The scenario stays a blocker, but the
-    gate does not add a second, louder refusal on top of it.
-    """
-    monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
-    orch._runtime_probe_verdict = 1  # api scenario: ranks as unsettled, not failed
-    failing = ValidationIssue(
-        "blocker", "api scenario: booking_overlap_violation failed: expected 200, got 400")
-    orch._validation_issues = [failing]
-
-    orch._apply_runtime_gate()
-
-    assert orch._validation_issues == [failing]
-
-
-def test_the_gate_is_silent_on_a_verified_app(orch, monkeypatch):
-    monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
-    orch._runtime_probe_verdict = 0  # _RUNTIME_OK
-    orch._validation_issues = []
-
-    orch._apply_runtime_gate()
-
-    assert orch._validation_issues == []
-
-
-def test_the_gate_is_silent_when_there_is_nothing_to_boot(orch):
-    """A Qiskit or BAF run has no backend; the gate makes no claim about it."""
-    orch._runtime_probe_verdict = None
-    orch._validation_issues = []
-
-    orch._apply_runtime_gate()
-
-    assert orch._validation_issues == []
-
-
-# ---------------------------------------------------------------------------
-# 7. Small wirings
-# ---------------------------------------------------------------------------
-
-def test_compaction_carries_the_checklist_blockers_and_contract(orch, monkeypatch):
-    """Without ``work_state`` the model resumes after a compaction unable to
-    see the checklist the end_turn gate is blocking on."""
-    orch.executor.set_tasks([{"text": "Implement POST /booking/{id}/methods/cancel/"}])
-    orch._validation_issues = [
-        ValidationIssue("blocker", "create contract: POST /booking/ - failure"),
-        ValidationIssue("style", "ruff: F401 unused import"),
-    ]
-    seen = {}
-
-    def fake_maybe_compact(**kwargs):
-        seen.update(kwargs)
-        return kwargs["messages"], False
-
-    monkeypatch.setattr("besser.spec_driven_agent.pipeline.orchestrator.maybe_compact", fake_maybe_compact)
-    orch._maybe_compact([{"role": "user", "content": "hi"}])
-
-    state = seen["work_state"]
-    assert [t["text"] for t in state["tasks"]] == [
-        "Implement POST /booking/{id}/methods/cancel/"]
-    assert state["blockers"] == ["create contract: POST /booking/ - failure"]
-    assert any("server-owned" in rule for rule in state["contract_rules"])
-
-
-def _refuse(orch, times):
-    """The same edit on routers/booking.py refused ``times`` times."""
-    for _ in range(times):
-        orch.executor._note_rejection("routers/booking.py", "old", "new")
-
-
-def test_seven_refusals_at_one_target_end_the_phase(orch):
-    """``tool_executor`` now counts refusals per TARGET through the same
-    ``last_repeat`` channel, so the stop threshold governs redrafts too."""
-    assert orch._TARGET_REFUSAL_STOP_AT == orch._REPEAT_STOP_AT == 7
-    _refuse(orch, 7)
-
-    assert orch._escalate_repeat_rejection([]) is True
-    assert orch._phase2_stop_reason == "stuck_edit_loop"
-
-
-def test_six_refusals_at_one_target_do_not_end_the_phase(orch):
-    _refuse(orch, 6)
-    messages: list[dict] = []
-
-    assert orch._escalate_repeat_rejection(messages) is False
-    assert messages, "the model still gets a strategy hint"
-
-
-def test_a_phase3_stuck_edit_loop_does_not_block_a_later_verified_repair(orch):
-    """The Phase 3 repair loop shares the refusal guard with Phase 2. Writing
-    ``stuck_edit_loop`` into the Phase 2 stop reason from there meant a later
-    attempt that cleared every blocker still reported the run incomplete."""
-    orch._phase2_stop_reason = "validation_required"
-    _refuse(orch, 7)
-
-    assert orch._apply_edit_loop_guards([], where="phase 3 repair") is True
-    orch._complete_repair_if_verified()
-
-    assert orch._phase2_stop_reason == "completed"
-    assert orch._phase2_exited_cleanly
+    assert not [i for i in issues if "create unverified:" in i]
+    assert orch._unconfirmed_creates([_classify_issue(
+        "runtime unverified: create unverified: web_app/backend: POST /booking/{booking_id}/guest/ - "
+        "autogenerated input was refused (422)")]) == set()

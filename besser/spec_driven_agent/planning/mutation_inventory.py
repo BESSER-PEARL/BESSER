@@ -19,6 +19,18 @@ _SKIP = {"node_modules", "venv", "env", "dist", "build", "__pycache__", "tests",
 _WRITES = {"post", "put", "patch", "delete"}
 
 
+def route_pattern(route: str) -> re.Pattern:
+    """The concrete paths a route template serves: ``/order/{order_id}/pay`` matches ``/order/7/pay``."""
+    parts = re.split(r"(\{[^{}]+\})", route)
+    return re.compile("".join((".*" if part.endswith(":path}") else "[^/]+")
+                              if part.startswith("{") else re.escape(part) for part in parts))
+
+
+def route_serves(route: str, path: str) -> bool:
+    """Whether the request ``path`` is one the template ``route`` serves, trailing slash aside."""
+    return bool(route_pattern(route.rstrip("/")).fullmatch(urlsplit(path).path.rstrip("/")))
+
+
 def _name(node):
     return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else ""
 
@@ -267,10 +279,7 @@ def _observed_inputs(routes, relations, schema_fields, records, current_revision
                     continue
                 if backend and not Path(site.rsplit(":", 1)[0]).is_relative_to(Path(backend)):
                     continue
-                parts = re.split(r"(\{[^{}]+\})", route)
-                pattern = "".join((".*" if part.endswith(":path}") else "[^/]+")
-                                  if part.startswith("{") else re.escape(part) for part in parts)
-                if re.fullmatch(pattern, urlsplit(path).path):
+                if route_pattern(route).fullmatch(urlsplit(path).path):
                     matches.append(route_index)
             if len(matches) != 1:
                 unmatched += 1

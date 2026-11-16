@@ -325,17 +325,18 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     the whole hierarchy has no searchable primitive attribute the
     endpoint is not generated at all. #}
 {#- A credential is never a filter: matching on part of the stored value
-    would let a caller recover it one character at a time. #}
+    would let a caller recover it one character at a time. Neither is a derived
+    attribute: its column is a stored copy that nothing here keeps up to date. #}
 {%- set ns_search = namespace(attrs=[]) %}
 {%- for parent in all_parents %}
 {%- for attribute in parent.attributes | sort(attribute='name') %}
-{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) and not attribute.is_derived %}
 {%- do ns_search.attrs.append(attribute) %}
 {%- endif %}
 {%- endfor %}
 {%- endfor %}
 {%- for attribute in class.attributes | sort(attribute='name') %}
-{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) and not attribute.is_derived %}
 {%- do ns_search.attrs.append(attribute) %}
 {%- endif %}
 {%- endfor %}

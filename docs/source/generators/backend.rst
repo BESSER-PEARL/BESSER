@@ -209,9 +209,10 @@ CRUD Operations
 
 How the model shapes these endpoints:
 
-* An **abstract class** gets the ``GET`` endpoints only. They answer across its
-  subclasses; records are created, changed and deleted through the endpoints of
-  the concrete subclasses.
+* An **abstract class** has no endpoint that creates a record (no ``POST
+  /{entity}/`` and no bulk create): records are created through the concrete
+  subclasses. Its other endpoints read, change, link and delete the records of
+  its subclasses.
 * The **search filters** are the text, number and boolean attributes of the
   class and its parents, except derived attributes (their stored value is not
   kept up to date by the generated code) and credentials.

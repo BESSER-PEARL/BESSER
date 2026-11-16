@@ -1,6 +1,8 @@
 """A class associated with itself (Product.parent / Product.children, or a 1:1
 Person.mentor / Person.mentee) generates mappers SQLAlchemy can configure: only
-the end that owns the FK column carries ``remote_side``."""
+the end that owns the FK column carries ``remote_side``. A many-to-many to
+itself (Course.prerequisites / Course.requiredBy) names the secondary-table
+column of each end."""
 
 import importlib.util
 import os
@@ -29,6 +31,14 @@ def _mentoring_model() -> DomainModel:
     mentee = Property(name="mentee", type=person, multiplicity=Multiplicity(0, 1))
     mentoring = BinaryAssociation(name="Person_mentoring", ends={mentor, mentee})
     return DomainModel(name="School", types={person}, associations={mentoring})
+
+
+def _prerequisites_model() -> DomainModel:
+    course = Class(name="Course", attributes={Property(name="code", type=StringType)})
+    prerequisites = Property(name="prerequisites", type=course, multiplicity=Multiplicity(0, "*"))
+    required_by = Property(name="requiredBy", type=course, multiplicity=Multiplicity(0, "*"))
+    association = BinaryAssociation(name="Course_prerequisites", ends={prerequisites, required_by})
+    return DomainModel(name="Curriculum", types={course}, associations={association})
 
 
 def _generate_and_import(tmp_path, module_name: str, model: DomainModel = None):
@@ -89,3 +99,25 @@ def test_one_to_one_self_association_mappers_configure_and_round_trip(tmp_path):
         session.commit()
         assert session.get(module.Person, teacher.id).mentee.name == "Alan"
         assert session.get(module.Person, student.id).mentor.name == "Ada"
+
+
+def test_many_to_many_self_association_mappers_configure_and_round_trip(tmp_path):
+    _, module = _generate_and_import(tmp_path, "self_assoc_many_to_many", _prerequisites_model())
+    configure_mappers()  # raised AmbiguousForeignKeysError before: no join condition per end
+
+    engine = create_engine("sqlite://")
+    module.Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        algebra = module.Course(code="ALG")
+        calculus = module.Course(code="CAL")
+        analysis = module.Course(code="ANA")
+        analysis.prerequisites = [algebra, calculus]
+        session.add_all([algebra, calculus, analysis])
+        session.commit()
+        assert sorted(c.code for c in session.get(module.Course, analysis.id).prerequisites) == ["ALG", "CAL"]
+        assert [c.code for c in session.get(module.Course, algebra.id).requiredBy] == ["ANA"]
+        assert session.get(module.Course, algebra.id).prerequisites == []
+        # The column named after an end holds the members of that end's collection.
+        rows = session.execute(module.course_prerequisites.select()).mappings().all()
+        assert {(row["requiredBy"], row["prerequisites"]) for row in rows} == {
+            (analysis.id, algebra.id), (analysis.id, calculus.id)}

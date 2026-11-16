@@ -20,12 +20,15 @@ from tests.spec_driven_agent.shelf_app import GENERATOR, generate_backend, shelf
 
 
 def _model() -> DomainModel:
-    """One class per template branch: 1:N, N:M, to-one only, non-navigable, inherited, association class."""
-    def cls(name):
-        return Class(name=name, attributes={Property(name="label", type=StringType)})
+    """One class per template branch: 1:N, N:M, to-one only, non-navigable, inherited, association class,
+    a class linked to itself (N:M and 1:N), two N:M links to one class, an abstract class."""
+    def cls(name, is_abstract=False):
+        return Class(name=name, attributes={Property(name="label", type=StringType)}, is_abstract=is_abstract)
 
     owner, item, tag, note, animal, dog, vet, course, student = map(cls, (
         "Owner", "Item", "Tag", "Note", "Animal", "Dog", "Vet", "Course", "Student"))
+    person, team, node, leaf, circle = map(cls, ("Person", "Team", "Node", "Leaf", "Circle"))
+    shape = cls("Shape", is_abstract=True)
     associations = {
         BinaryAssociation(name="owns", ends={
             Property(name="items", type=item, multiplicity=Multiplicity(0, "*")),
@@ -39,15 +42,32 @@ def _model() -> DomainModel:
         BinaryAssociation(name="treats", ends={
             Property(name="patients", type=animal, multiplicity=Multiplicity(0, "*")),
             Property(name="doctors", type=vet, multiplicity=Multiplicity(0, "*"))}),
+        BinaryAssociation(name="friendship", ends={
+            Property(name="friends", type=person, multiplicity=Multiplicity(0, "*")),
+            Property(name="friend_of", type=person, multiplicity=Multiplicity(0, "*"))}),
+        BinaryAssociation(name="membership", ends={
+            Property(name="members", type=person, multiplicity=Multiplicity(0, "*")),
+            Property(name="member_teams", type=team, multiplicity=Multiplicity(0, "*"))}),
+        BinaryAssociation(name="leadership", ends={
+            Property(name="leaders", type=person, multiplicity=Multiplicity(0, "*")),
+            Property(name="led_teams", type=team, multiplicity=Multiplicity(0, "*"))}),
+        # The single end sorts before the collection end.
+        BinaryAssociation(name="tree", ends={
+            Property(name="branch", type=node, multiplicity=Multiplicity(0, 1)),
+            Property(name="twigs", type=node, multiplicity=Multiplicity(0, "*"))}),
     }
     enrolment = BinaryAssociation(name="enrolment", ends={
         Property(name="students", type=student, multiplicity=Multiplicity(0, "*")),
         Property(name="courses", type=course, multiplicity=Multiplicity(0, "*"))})
     enrolled = AssociationClass(name="Enrolled", attributes={Property(name="grade", type=StringType)},
                                 association=enrolment)
-    return DomainModel(name="Shapes", types={owner, item, tag, note, animal, dog, vet, course, student, enrolled},
+    return DomainModel(name="Shapes",
+                       types={owner, item, tag, note, animal, dog, vet, course, student, enrolled,
+                              person, team, node, leaf, shape, circle},
                        associations=associations | {enrolment},
-                       generalizations={Generalization(general=animal, specific=dog)})
+                       generalizations={Generalization(general=animal, specific=dog),
+                                        Generalization(general=node, specific=leaf),
+                                        Generalization(general=shape, specific=circle)})
 
 
 def _router_keys(router_source: str, function: str) -> list[str]:
@@ -68,7 +88,9 @@ def test_every_predicted_key_matches_the_generated_routes(tmp_path):
     keys = create_response_keys(model)
     for name, create in keys.items():
         source = (tmp_path / "routers" / f"{name.lower()}.py").read_text(encoding="utf-8")
-        for function in (f"create_{name.lower()}", f"update_{name.lower()}"):
+        # An abstract class has no create route.
+        written = ("update",) if name == "Shape" else ("create", "update")
+        for function in (f"{verb}_{name.lower()}" for verb in written):
             assert _router_keys(source, function) == create, (name, function)
         get = [] if name == "Enrolled" else [name.lower(), *create[1:]]
         assert _router_keys(source, f"get_{name.lower()}") == get, name
@@ -79,6 +101,13 @@ def test_every_predicted_key_matches_the_generated_routes(tmp_path):
     assert keys["Course"] == ["course", "students_ids"]
     assert keys["Dog"] == ["dog", "vet_ids"]
     assert keys["Note"] == keys["Enrolled"] == []
+    # A class linked to itself lists both ends; two N:M links to one class are keyed by their ends.
+    assert keys["Person"] == ["person", "friend_of_ids", "friends_ids", "led_teams_ids", "member_teams_ids"]
+    assert keys["Team"] == ["team", "leaders_ids", "members_ids"]
+    assert keys["Node"] == ["node", "twigs_ids"]
+    assert keys["Leaf"] == ["leaf", "twigs_ids"]
+    assert keys["Shape"] == keys["Circle"] == []
+    assert "async def create_shape" not in (tmp_path / "routers" / "shape.py").read_text(encoding="utf-8")
 
 
 def test_manifest_names_the_actual_keys_and_the_reference_to_use(tmp_path):

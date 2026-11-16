@@ -1126,7 +1126,9 @@ def create_response_keys(domain_model) -> dict[str, list[str]]:
     many, or a link through an association class, returns ``{"<class lowercased>":
     record, ...id lists}``. The id lists are keyed ``<other class lowercased>_ids``
     for an N:M end, ``<other end>_ids`` for a 1:N end or an association-class link,
-    in that order. An association class itself returns the bare record.
+    in that order. An N:M end is keyed by its own name instead when the class links
+    to itself (both ends are listed) or has several N:M links to the same class.
+    An association class itself returns the bare record.
     """
     from besser.BUML.metamodel.structural import AssociationClass
 
@@ -1141,8 +1143,10 @@ def create_response_keys(domain_model) -> dict[str, list[str]]:
                     ends = sorted(association.ends, key=lambda end: end.name)
                     if len(ends) != 2:
                         continue
-                    if ends[0].type.name == ends[1].type.name:
-                        own, other = ends[1], ends[0]
+                    is_self = ends[0].type.name == ends[1].type.name
+                    if is_self:
+                        # The far end of a self-association is its collection end.
+                        own, other = (ends[1], ends[0]) if ends[0].multiplicity.max > 1 else (ends[0], ends[1])
                     else:
                         own, other = (ends[0], ends[1]) if ends[0].type.name == owner.name else (ends[1], ends[0])
                     if not other.is_navigable:
@@ -1150,9 +1154,16 @@ def create_response_keys(domain_model) -> dict[str, list[str]]:
                     if association.name in by_association:
                         linked.append(f"{other.name}_ids")
                     elif own.multiplicity.max > 1 and other.multiplicity.max > 1:
-                        many_to_many.append(f"{other.type.name.lower()}_ids")
+                        many_to_many.append(other)
+                        if is_self and own.is_navigable:
+                            many_to_many.append(own)
                     elif own.multiplicity.max == 1 and other.multiplicity.max > 1:
                         one_to_many.append(f"{other.name}_ids")
+        targets = [end.type.name for end in many_to_many]
+        many_to_many = [
+            f"{end.name}_ids" if end.type.name == cls.name or targets.count(end.type.name) > 1
+            else f"{end.type.name.lower()}_ids"
+            for end in many_to_many]
         id_lists = list(dict.fromkeys(many_to_many + linked + one_to_many))
         keys[cls.name] = [cls.name.lower(), *id_lists] if id_lists else []
     return keys

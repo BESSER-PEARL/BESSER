@@ -612,8 +612,10 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
         # An instance of an imported class: the name it is assigned to, or the `new` expression itself.
         receivers = [re.escape(binding), construct + r"[^()]*\)",
                      *(re.escape(name) for name in re.findall(r"([A-Za-z_$][\w$]*)\s*=\s*" + construct, code))]
+        # ``chain``: members between the binding and the helper (``api.tag.create(``), the
+        # resource of a client built by a factory (``tag: crud('tag')``).
         pattern = re.compile(
-            r"\b(?:" + "|".join(receivers) + r")\s*(?:\.\s*(?P<member>[\w$]+))?\s*"
+            r"\b(?:" + "|".join(receivers) + r")(?P<chain>(?:\s*\.\s*[\w$]+)*?)\s*(?:\.\s*(?P<member>[\w$]+))?\s*"
             r"(?:\((?P<args>[^()]{0,200})|(?![\w$.(]))")
         for call in pattern.finditer(code):
             name = call.group("member") or binding
@@ -624,7 +626,8 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
                            and _REFERENCE_AFTER_RE.match(code, call.end()))
             if name in helpers and (call.group("args") is not None or handed_over):
                 args = uses[call.start("args"):call.end("args")] if call.group("args") is not None else ""
-                calls.append(helpers[name] or _STRING_ARG_RE.findall(args) or None)
+                calls.append(helpers[name] or _STRING_ARG_RE.findall(args)
+                             or re.findall(r"[\w$]+", call.group("chain")) or None)
                 used_clients.add(target)
                 if calls[-1] is None and traced is not None:
                     traced += _metadata_values(code[call.start("args"):call.end("args")] if args else "",

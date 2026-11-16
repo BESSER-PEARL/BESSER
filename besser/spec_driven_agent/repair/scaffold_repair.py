@@ -270,6 +270,27 @@ EXPOSE 8000
 CMD {cmd}
 """
 
+# Written beside both Dockerfiles: their ``COPY . .`` otherwise takes what a
+# local run left in the folder (installed packages, the database, an env
+# file) into the image. Patterns are relative to the build context.
+_DOCKERIGNORE = """\
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/venv
+dist
+build
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite3
+**/*.log
+**/.env
+**/.env.*
+.git
+"""
+
 _COMPOSE_TEMPLATE = """\
 services:
   backend:
@@ -611,7 +632,8 @@ def _find_backend_dir(output_dir: str):
 
 
 def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict, app_name: str = "") -> list:
-    """Dockerfiles + compose + README, only for the plain two-service shape.
+    """Dockerfiles (each with a .dockerignore) + compose + README, only for
+    the plain two-service shape.
 
     Skipped entirely when the app already ships any Docker file: a
     hand-written deployment belongs to its author, and a second one would be
@@ -641,6 +663,10 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict,
     if _write_text(os.path.join(backend_dir, "Dockerfile"),
                    _BACKEND_DOCKERFILE_TEMPLATE.format(cmd=cmd)):
         repairs.append(f"{backend_name}/Dockerfile")
+    for folder, name in ((frontend_dir, frontend_name), (backend_dir, backend_name)):
+        ignore_file = os.path.join(folder, ".dockerignore")
+        if not os.path.exists(ignore_file) and _write_text(ignore_file, _DOCKERIGNORE):
+            repairs.append(f"{name}/.dockerignore")
     if _write_text(os.path.join(output_dir, "docker-compose.yml"),
                    _COMPOSE_TEMPLATE.format(backend=backend_name, frontend=frontend_name)):
         repairs.append("docker-compose.yml")

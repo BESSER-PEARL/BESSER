@@ -22,6 +22,7 @@ had a JSX file with no React import, 185 hardcoded the API base, 20 had
 Each test below fails against the pre-fix tree, where the function does not
 exist and none of these files are ever written.
 """
+import fnmatch
 import json
 import os
 import re
@@ -333,6 +334,44 @@ def test_readme_moves_the_api_port_without_editing_source(tmp_path):
     assert "python -m uvicorn main_api:app --port 8080" in readme
     assert "frontend/.env.local" in readme
     assert "VITE_API_URL=http://localhost:8080" in readme
+
+
+def _docker_ignores(patterns, rel):
+    """Docker's rule for the pattern shapes used: ``**/x`` matches a path
+    component at any depth, a bare ``x`` the first one; a matched folder
+    takes everything under it."""
+    parts = rel.split("/")
+    return any(
+        any(fnmatch.fnmatchcase(part, pattern[3:]) for part in parts) if pattern.startswith("**/")
+        else fnmatch.fnmatchcase(parts[0], pattern)
+        for pattern in patterns
+    )
+
+
+@pytest.mark.parametrize("service", ["backend", "frontend"])
+def test_each_dockerfile_has_a_dockerignore_for_what_a_local_run_leaves(tmp_path, service):
+    """Both Dockerfiles ``COPY . .``: without it a host node_modules, virtualenv
+    or database file is copied into the image built after a local run."""
+    _flat_app(tmp_path)
+    ensure_frontend_scaffold(str(tmp_path))
+
+    assert "COPY . ." in (tmp_path / service / "Dockerfile").read_text(encoding="utf-8")
+    patterns = (tmp_path / service / ".dockerignore").read_text(encoding="utf-8").split()
+    for leftover in ("node_modules/react/index.js", "data/app.db", ".venv/lib/site.py",
+                     "venv/pyvenv.cfg", "routers/__pycache__/order.cpython-311.pyc",
+                     "dist/index.html", ".env", ".env.local", "server.log"):
+        assert _docker_ignores(patterns, leftover), leftover
+    for source in ("main_api.py", "database.py", "routers/order.py", "requirements.txt",
+                   "package.json", "package-lock.json", "index.html", "src/App.jsx",
+                   "src/environment.js", "vite.config.mjs"):
+        assert not _docker_ignores(patterns, source), source
+
+
+def test_keeps_an_existing_dockerignore(tmp_path):
+    _flat_app(tmp_path)
+    (tmp_path / "backend" / ".dockerignore").write_text("tests\n", encoding="utf-8")
+    ensure_frontend_scaffold(str(tmp_path))
+    assert (tmp_path / "backend" / ".dockerignore").read_text(encoding="utf-8") == "tests\n"
 
 
 def test_frontend_dockerfile_builds_on_node_22(tmp_path):

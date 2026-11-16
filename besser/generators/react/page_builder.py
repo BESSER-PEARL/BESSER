@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, Set
+
+logger = logging.getLogger(__name__)
 
 # Inline SVG elements, by lowercase name, with the casing React needs.
 _SVG_TAGS = {name.lower(): name for name in (
@@ -1053,6 +1056,11 @@ class PageBuilderMixin:
 
         props = self._build_element_props(component_id, class_list, style, attributes, on_click_expr)
         label = node.get("label") or node.get("name") or "Button"
+        if not target_path:
+            logger.warning(
+                "Button %r (%s) has no action, method or target page: it is generated as a button "
+                "that does nothing.", label, component_id,
+            )
         content_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
         return f"{indent_str}<button{props}>{content_expr}</button>"
 

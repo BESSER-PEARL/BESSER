@@ -113,3 +113,21 @@ def test_a_create_button_without_a_table_on_its_page_opens_the_table_page(build_
     create = jsx(app.page("Home"), "CrudButton")
     assert 'tableId="table-books"' in create
     assert 'targetPath="/books"' in create
+
+
+def test_a_button_without_an_action_is_reported(build_app, caplog):
+    """A button with no action, method or target page still renders, and says so."""
+    dead = {"tagName": "button", "attributes": {"id": "refresh", "type": "button"},
+            "components": [{"type": "textnode", "content": "Refresh"}]}
+    go = {"type": "button", "attributes": {"id": "go", "data-action-type": "navigate",
+                                           "data-target-screen": "page-other"},
+          "components": [{"type": "textnode", "content": "Open"}]}
+    with caplog.at_level("WARNING", logger="besser.generators.react.page_builder"):
+        app = build_app(CLASSES, {"Home": [dead, go], "Other": []})
+
+    assert '<button id="refresh"' in app.page("Home")
+    messages = [record.getMessage() for record in caplog.records]
+    assert [m for m in messages if "has no action" in m] == [
+        "Button 'Refresh' (refresh) has no action, method or target page: it is generated as a "
+        "button that does nothing."
+    ]

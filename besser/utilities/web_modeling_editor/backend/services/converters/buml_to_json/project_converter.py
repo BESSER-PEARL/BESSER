@@ -148,6 +148,10 @@ def _build_section_boundary_pattern() -> str:
     return rf'(?m)^[ \t]*(?:#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION)'
 
 
+# The header line the project definition starts with (``# PROJECT DEFINITION #``), as a line of its own.
+_PROJECT_DEFINITION_HEADER = re.compile(r"(?m)^[ \t]*# PROJECT DEFINITION\b")
+
+
 def _has_code(section_code: str) -> bool:
     """True when ``section_code`` holds a line that is neither blank nor a comment."""
     return any(line.strip() and not line.lstrip().startswith("#") for line in section_code.splitlines())
@@ -524,10 +528,10 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
         Dictionary representing the complete project with all diagrams.
         Each diagram type maps to a list of diagram entries.
     """
-    # Detect models included in the project. The project definition closes the file: read it there,
-    # not in a string of an earlier section (a generated file a trace keeps).
-    definition_start = max(content.rfind("# PROJECT DEFINITION"), 0)
-    project_code = content[definition_start:]
+    # Detect models included in the project. The project definition closes the file: read it from
+    # its last header line, not from the same words in a string (the owner, a file a trace keeps).
+    headers = list(_PROJECT_DEFINITION_HEADER.finditer(content))
+    project_code = content[headers[-1].start():] if headers else content
     model_match = re.search(r"models\s*=\s*\[(.*?)\]", project_code, re.DOTALL)
     if not model_match:
         # No Project(...) wrapper — fall back to single-diagram detection so

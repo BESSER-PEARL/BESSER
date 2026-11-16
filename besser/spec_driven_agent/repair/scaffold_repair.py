@@ -21,6 +21,7 @@ import re as _re
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 from besser.spec_driven_agent.repair.dependency_pins import pin_known_incompatible
+from besser.spec_driven_agent.validation.frontend_resolution import import_specifiers
 
 
 # The deterministic Phase-1 backend generator always writes a correct
@@ -204,10 +205,6 @@ _API_BASE_DECL_RE = _re.compile(
 )
 _API_BASE_OPTION_RE = _re.compile(
     r"(?P<lead>\bbaseURL[ \t]*:[ \t]*)" + _LOCALHOST_BASE
-)
-
-_IMPORT_SPEC_RE = _re.compile(
-    r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)['"]([^'"\n]+)['"]"""
 )
 
 _COMPOSE_NAMES = ("docker-compose.yml", "docker-compose.yaml",
@@ -464,7 +461,7 @@ def _bare_imports(frontend_dir: str) -> set:
         for fname in files:
             if not fname.endswith(_FRONTEND_SOURCE_EXT):
                 continue
-            for spec in _IMPORT_SPEC_RE.findall(_read_text(os.path.join(folder, fname))):
+            for spec in import_specifiers(os.path.join(folder, fname)):
                 if spec.startswith((".", "/")):
                     continue
                 parts = spec.split("/")

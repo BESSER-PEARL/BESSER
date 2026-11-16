@@ -219,6 +219,8 @@ PYTHON_CONTRACT_REPEATED_NAME_RE = _re.compile(
     r"^python contract: (?P<file>.+?) line \d+: undefined name '(?P<name>[^']+)'")
 # A real concise-format line always carries a file, a position and a rule.
 _CONCISE_FINDING_RE = _re.compile(r"^.+?:\d+:\d+: \S+ ")
+# ruff's I/O error: the file (or the target itself) could not be read.
+_RUFF_UNREADABLE_RE = _re.compile(r"^.+?:\d+:\d+: E902 ")
 
 
 def _collect_ruff_issues(
@@ -317,8 +319,14 @@ def _collect_ruff_issues(
     # which carries no rule code and would become a warning about nothing.
     lines = [line.strip() for line in (result.stdout or "").strip().splitlines()
              if _CONCISE_FINDING_RE.match(line.strip())]
+    # E902 is ruff failing to read a file (exit 0 under --exit-zero): that file
+    # was not linted, so it is a skipped check, not a finding.
+    unread = [line for line in lines if _RUFF_UNREADABLE_RE.match(line)]
+    lines = [line for line in lines if line not in unread]
+    skipped = [_check_did_not_run("ruff", f"it could not read {len(unread)} file(s), first: {unread[0]}")
+               ] if unread else []
     if not lines:
-        return [], warned_missing
+        return skipped, warned_missing
     # ruff sorts by path, so a plain head-of-output cap keeps the same
     # scaffold files and drops a real F821 late in the alphabet. Keep every
     # blocker-code line, then the rest with files the LLM edited this run first.
@@ -338,7 +346,7 @@ def _collect_ruff_issues(
     issues = [f"ruff: {line}" for line in kept]
     if len(ordered) > len(kept):
         issues.append(f"ruff: (+{len(ordered) - len(kept)} more issues truncated)")
-    return issues, warned_missing
+    return skipped + issues, warned_missing
 
 
 _SYNTAX_ERROR_RE = _re.compile(r"^Syntax error in (?P<file>.+?) line \d+:")

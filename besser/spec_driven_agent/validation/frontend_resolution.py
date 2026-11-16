@@ -197,6 +197,11 @@ def _stripped_source(path: str) -> str:
     return _lexed_source(path).code
 
 
+def import_specifiers(path: str) -> tuple[str, ...]:
+    """The import specifiers a JS/TS source file makes, read from code tokens."""
+    return _lexed_source(path).specs
+
+
 def _walk(root: str):
     # Imported here so the module stays runnable as a stdlib-only script.
     from besser.utilities.workspace_fs import walk_plain

@@ -51,3 +51,16 @@ This changes the import line of the generated file to ``from my_domain import ..
    installed, and the domain model classes to be importable from the configured
    ``module_name`` module (e.g. the ``classes.py`` produced by the
    :doc:`python` generator).
+
+Trace Links
+-----------
+
+The generator records which lines of ``test_hypothesis.py`` come from which model element: after ``generate()``,
+``generator.traced_files["test_hypothesis.py"].regions`` lists, for every class, attribute, enumeration (and its
+literals), association end (and its association), method and OCL post-condition that has an ``id`` (as every element
+drawn in the web editor does), the line ranges rendered from it and the template block that rendered them
+(``structural_tests``, ``attribute_tests``, ``enumeration_tests``, ``literal``, ``strategy``, ``strategy_param``,
+``property_tests``, ``setter_tests``, ``association_end_tests``, ``association``, ``method_tests``,
+``post_condition``). Recording them does not change the generated file. ``build_generation_trace`` in
+``besser.utilities.generation_trace`` turns them into a :doc:`traceability model
+<../buml_language/model_types/traceability>`; the web editor shows them on its *Traceability* page.

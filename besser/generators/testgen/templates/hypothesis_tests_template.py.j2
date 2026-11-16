@@ -20,7 +20,7 @@ from {{ module_name }} import (
 # SECTION 1 — STRUCTURAL TESTS
 # =============================================================================
 
-{%- for class in domain.classes_sorted_by_inheritance() %}
+{%- for class in domain.classes_sorted_by_inheritance() %}{% trace class, "structural_tests" %}
 
 
 
@@ -40,7 +40,7 @@ def test_{{ class.name | lower }}_constructor_args():
     {%- endfor %}
 
 
-{%- for attr in sort_by_timestamp(class.all_attributes()) %}
+{%- for attr in sort_by_timestamp(class.all_attributes()) %}{% trace attr, "attribute_tests" %}
 
 def test_{{ class.name | lower }}_has_{{ attr.name }}():
     assert hasattr({{ class.name }}, "{{ attr.name | escape_py }}")
@@ -51,10 +51,10 @@ def test_{{ class.name | lower }}_has_{{ attr.name }}():
             break
     assert isinstance(descriptor, property)
 
-{%- endfor %}
+{%- endtrace %}{% endfor %}
 
-{%- endfor %}
-{%- for enumeration in sort_by_timestamp(domain.get_enumerations()) %}
+{%- endtrace %}{% endfor %}
+{%- for enumeration in sort_by_timestamp(domain.get_enumerations()) %}{% trace enumeration, "enumeration_tests" %}
 
 def test_{{ enumeration.name | lower }}_exists():
     # Check that the Enumeration exists
@@ -64,15 +64,15 @@ def test_{{ enumeration.name | lower }}_has_all_literals():
     # Collect the names of literals in this Enumeration
     enum_literals = [lit.name for lit in {{ enumeration.name }}]
     expected_literals = [
-        {%- for lit in sort_by_timestamp(enumeration.literals) %}
+        {%- for lit in sort_by_timestamp(enumeration.literals) %}{% trace lit, "literal" %}
         "{{ lit.name | escape_py }}",
-        {%- endfor %}
+        {%- endtrace %}{% endfor %}
     ]
     # Check that all expected literals exist
     for lit_name in expected_literals:
         assert lit_name in enum_literals, f"Literal '{lit_name}' missing in {{ enumeration.name | escape_py }}"
 
-{%- endfor %}
+{%- endtrace %}{% endfor %}
 
 
 # =============================================================================
@@ -88,10 +88,10 @@ safe_text = st.text(
 ).filter(lambda s: s[0].isalpha())
 
 
-{%- for class in domain.classes_sorted_by_inheritance() %}
+{%- for class in domain.classes_sorted_by_inheritance() %}{% trace class, "strategy" %}
 {{ class.name }}_strategy = st.builds(
     {{ class.name }},
-    {%- for attr in sort_by_timestamp(class.all_attributes()) %}
+    {%- for attr in sort_by_timestamp(class.all_attributes()) %}{% trace attr, "strategy_param" %}
     {{ attr.name }}=
         {%- if attr.type.name == "str" %}
         safe_text
@@ -107,13 +107,13 @@ safe_text = st.text(
         st.none()
         {%- endif %}
     {%- if not loop.last %},{% endif %}
-    {%- endfor %}
+    {%- endtrace %}{% endfor %}
 )
 
-{%- endfor %}
+{%- endtrace %}{% endfor %}
 
 
-{%- for class in domain.classes_sorted_by_inheritance() %}
+{%- for class in domain.classes_sorted_by_inheritance() %}{% trace class, "property_tests" %}
 
 @given(instance={{ class.name }}_strategy)
 @settings(max_examples=50)
@@ -121,7 +121,7 @@ def test_{{ class.name | lower }}_instantiation(instance):
     assert isinstance(instance, {{ class.name }})
 
 
-{%- for attr in sort_by_timestamp(class.all_attributes()) %}
+{%- for attr in sort_by_timestamp(class.all_attributes()) %}{% trace attr, "setter_tests" %}
 
 
 @given(instance={{ class.name }}_strategy)
@@ -130,10 +130,10 @@ def test_{{ class.name | lower }}_{{ attr.name }}_setter(instance):
     instance.{{ attr.name }} = original
     assert instance.{{ attr.name }} == original
 
-{%- endfor %}
+{%- endtrace %}{% endfor %}
 
 
-{%- for assoc in sort_by_timestamp(class.association_ends()) %}
+{%- for assoc in sort_by_timestamp(class.association_ends()) %}{% trace assoc.owner, "association" %}{% trace assoc, "association_end_tests" %}
 
 @given(instance={{ class.name }}_strategy)
 def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
@@ -147,8 +147,8 @@ def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
     assert value is None or isinstance(value, {{ assoc.type.name }})
     {%- endif %}
 
-{%- endfor %}
-{%- for operation in sort_by_timestamp(class.methods) %}
+{%- endtrace %}{% endtrace %}{% endfor %}
+{%- for operation in sort_by_timestamp(class.methods) %}{% trace operation, "method_tests" %}
 {%- if 'get' not in operation.name.lower() %}
 
 import warnings
@@ -200,8 +200,8 @@ def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(ins
         warnings.warn(f"Operation '{{ operation.name | escape_py }}' in {{ class.name | escape_py }} is not implemented or raised an error")
 
 {%- endif %}
-{%- endfor %}
-{%- endfor %}
+{%- endtrace %}{% endfor %}
+{%- endtrace %}{% endfor %}
 
 # =============================================================================
 # SECTION 3 — OCL TESTS
@@ -224,7 +224,7 @@ def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(ins
     {%- set param_type = sig_inner.split(':')[-1].strip() | lower %}
 
     {# ---- detect whether we need st.data() for object-type params ---- #}
-    {%- set needs_data = param_type not in ['integer', 'int', 'real', 'float', 'double', 'string', 'str', 'bool', 'boolean'] %}
+    {%- set needs_data = param_type not in ['integer', 'int', 'real', 'float', 'double', 'string', 'str', 'bool', 'boolean'] %}{% trace constraint, "post_condition" %}
 
 @given(
     instance={{ class.name }}_strategy
@@ -278,7 +278,7 @@ def test_{{ class.name | lower }}_ocl_{{ constraint.name | lower }}(instance
     {%- set expr = expr | regex_replace('(?<![<>!])=(?!=)', '==') %}
 
     assert {{ expr }}
-    {%- endif %}
+    {%- endtrace %}{%- endif %}
     {%- endfor %}
   {%- endfor %}
 {%- endfor %}

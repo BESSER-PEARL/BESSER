@@ -112,12 +112,18 @@ empty while the link holds (other tools call an out-of-date link *suspect*):
 
 Changes made by the operation that made the link are part of making it and do not count.
 Only a changed source travels downstream: an edited target is the source of the next link,
-which sees the edit as its own changed source. Generated code is never edited in the
-editor, so a link into code is never ``TARGET_CHANGED``.
-``TraceModel.validate()`` checks that every reference stays inside the trace (a tool
-call's tool, an ``AIEvidence``'s log records, the version a revision revises), that ids
-are unique, that no artifact is written by two operations and that the tool calls of an
-operation have distinct sequence numbers.
+which sees the edit as its own changed source. An edit of code is not a change of the version
+a link points at: it is a new ``CodeArtifact`` version that revises it (``revision_of``), so a
+link into code is not ``TARGET_CHANGED``, and that the code was edited since is told by the
+newer version.
+``TraceModel.validate()`` checks that every reference stays inside the trace (an artifact's
+parent, the version a revision revises, an operation's actors and artifacts, a tool call's
+tool, a link's ends and operation, the log records any evidence rests on, which must be
+messages of a tool call of the trace), that ids are unique, that no artifact is written by two
+operations and that the tool calls of an operation have distinct sequence numbers. It also
+checks each kind of operation: a ``ModelingSession`` has at least one change, a
+``CodeGeneration`` calls a ``CodeGenerator`` or an ``LLM``, a ``RequirementExtraction`` calls an
+``LLM`` and writes only requirements, and a ``Conversation`` has an ``Agent`` among its actors.
 
 A check is not a concept of its own. A validation gate's outcome (tests run on generated
 code, a linter) is recorded in the ``LogRecord`` messages of the tool call that ran it
@@ -198,7 +204,11 @@ The editor records traces per project when *Record traces for this project* is
 turned on (off by default) on the project's *Traceability* page. Class
 diagram edits are recorded as modeling sessions (each with one call to the
 editor), SQLAlchemy and backend generations as generation runs (one call to the
-generator), and the exchange with the modeling assistant as conversations. The trace is kept in the browser apart from the project, and
+generator), and the exchange with the modeling assistant as conversations. A
+Spec-Driven Agent run is recorded from the trace its ``done`` event carries: one generation run
+with a call per generator run and per LLM turn, the files the LLM wrote or edited (an edited
+generated file as a new version), and the judge's links from the requirements to the code (see
+:ref:`spec-driven-run-trace`). The trace is kept in the browser apart from the project, and
 travels with a project export when asked for: in a JSON export as the JSON form of
 this metamodel (see ``trace_converter.py`` / ``trace_processor.py`` in the backend
 converters), in a B-UML export as its Python form (below). The JSON form carries a

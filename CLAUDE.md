@@ -150,7 +150,10 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
 - `planning/gap_analyzer.py` — produces the Phase 2 checklist. Its return value is load-bearing: `None` =
   analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
 - `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.
-- `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and trace files.
+- `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and run log (`.besser_trace.jsonl`).
+- `state/trace_model.py` — the run trace: a B-UML `TraceModel` fragment built at packaging from the run log,
+  the recipe and the attribution, sent as `done.trace` and zipped as `.besser_trace_model.json`. Three names,
+  three records: run log, Agent Trace record, run trace (see the agent's README).
 - `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,
   updated on generator writes, on seeding and at packaging) and the run's Agent Trace record
   (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).

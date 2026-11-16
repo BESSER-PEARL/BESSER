@@ -142,6 +142,76 @@ the same way: ``POST /besser_api/spec-driven/import-github-run`` re-imports it
 as a run whose ``run_id`` can then seed a ``mode: "modify"`` run. See
 :doc:`api` for both request shapes.
 
+.. _spec-driven-run-trace:
+
+The run's trace
+---------------
+
+A run is recorded in the project's trace (:doc:`../buml_language/model_types/traceability`)
+like a traced generation: the ``done`` event carries a trace-file fragment
+(``trace``, ``projectId`` null, ``schemaVersion`` 6), and the same JSON ships in
+the download ZIP as ``.besser_trace_model.json``. A run keeps three records of
+itself, with three names: the *run log* (``.besser_trace.jsonl``, for debugging,
+see :doc:`how_it_works`), the *Agent Trace record* (who wrote which lines, below)
+and this *run trace*, a ``TraceModel``. The run trace is built at the end of the
+run from the other two, the recipe and the delivered files
+(``besser/spec_driven_agent/state/trace_model.py``), so it is the same after a
+resumed run.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Element
+     - What it records
+   * - ``CodeGeneration`` ``spec-driven:<run id>``
+     - The run, performed by the ``Agent`` "BESSER Spec-Driven Agent" (with the
+       BESSER version) and the ``Person`` named by ``actorName``. Its status is
+       ``SUCCEEDED`` when the customization loop finished (unresolved findings
+       are in its log records), ``CANCELLED`` or ``TIMED_OUT`` when it was cut
+       short by a cancellation or the time cap, ``FAILED`` otherwise (provider
+       error, cost or turn cap).
+   * - Reads
+     - One root ``ModelArtifact`` per diagram the run read (the diagram id as
+       element id, the B-UML metaclass as type), the instructions as a
+       ``PromptArtifact``, and the requirements the editor sent, by their own ids.
+   * - ``CodeGenerator`` tool calls
+     - One per generator run: Phase 1, a generator tool the LLM called, a modify
+       run's regeneration. ``RuleEvidence`` links go from the models it read to
+       its files and, for the generators that record line ranges, from each
+       element to its lines.
+   * - ``LLM`` tool calls
+     - One per agent turn (Phases 2 and 3), with the model that served it, the
+       provider, and the tokens of that turn (input counts cache reads and
+       writes). The LLM calls a phase made outside its turns (generator selection,
+       planning, the judge) are one more call when they used tokens. A turn's tool
+       calls (arguments without file bodies), validation findings, gate outcomes
+       and the run's final findings are its log records, at most 40 per call and
+       500 characters each, redacted.
+   * - Code versions
+     - Every file version the run produced, with its SHA-256 (content kept up to
+       1 MB per file, 4 MB in all). A file the LLM wrote is linked from the prompt
+       with ``AIEvidence``, at the line ranges the attribution gives to this run's
+       LLM; a generated file the LLM then edited is a new version whose
+       ``revisionOfId`` is the generator's version, which keeps the generator's links.
+   * - ``RequirementExtraction`` ``spec-driven:<run id>:requirements``
+     - Only when the run extracted the requirements itself: one LLM call with the
+       extraction's tokens, writing one ``RequirementArtifact`` per requirement
+       (id ``<run id>:R<n>``), each linked from the prompt.
+   * - Judge's verdicts
+     - One LLM call whose log records are the verdicts. A requirement found
+       implemented is linked to the cited line (or file) with ``AIEvidence`` resting
+       on its verdict and confidence 1, one partly implemented with confidence 0.5;
+       the confidence's explanation is the verdict. A requirement found missing, or
+       that no verdict settled, has no link: as for a model element, a requirement
+       without a link is one the code does not realize, and its verdict says why.
+
+A run that fails before its ``done`` event sends no trace; the editor records it
+from its stream under the same operation id. Known limits: a modify run's edit of a
+file from the previous run is a new version without ``revisionOfId`` (the previous
+version lives in the earlier run's trace); the judge's tokens are counted in the
+phase's call for the LLM calls outside the turns, not on the call holding its verdicts.
+
 .. _spec-driven-agent-trace:
 
 Who wrote which lines (Agent Trace)

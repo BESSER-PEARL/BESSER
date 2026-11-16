@@ -148,6 +148,11 @@ Request body
        unique, text up to 1,000 characters. When given, the requirements ledger
        judges these instead of extracting its own (see :doc:`validation`).
        Left out, the run extracts them.
+   * - ``actorName``
+     - string (optional)
+     - The person starting the run (the project owner), at most 200
+       characters. The run's trace (``done.trace``) records them as a
+       ``Person`` beside the Spec-Driven Agent; left out, it names only the agent.
    * - ``api_key``
      - string (secret)
      - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``;
@@ -306,6 +311,12 @@ SSE event types
        ``changedFiles`` (capped) and ``changedFileCount`` are the files the
        agent wrote, edited or deleted, and ``modelChanges`` how the model
        differs from the one the base app was built from (modify runs).
+       ``trace`` is the run's trace, a trace-file fragment (``projectId``
+       null) the editor merges into the project trace (see
+       :ref:`spec-driven-run-trace`); ``null`` when it could not be built.
+       ``verification`` lists what the run verified, could not verify and
+       shipped unenforced; a requirement item's ``id`` is its ``R<n>`` label
+       and its ``traceRef`` the id of its ``RequirementArtifact`` in ``trace``.
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``

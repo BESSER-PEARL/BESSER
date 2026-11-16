@@ -26,15 +26,18 @@
    non-`id` primary keys (e.g. Seat.code) are handled exactly as the monolith does; the
    `pk` filter yields each class's real primary-key attribute name, and link_target /
    link_attrs (from bal_stdlib) read the {target, <attrs>} link payloads. #}
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from pydantic_classes import *
 from sql_alchemy import *
-from database import get_db
+from database import get_db, integrity_error_detail
 from bal_stdlib import *
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 {% set pk = class.name | pk %}
@@ -897,8 +900,13 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             database.add(db_{{ class.name | lower}})
             database.flush()  # Get ID without committing
             created_items.append(db_{{ class.name | lower}}.{{ pk }})
-        except Exception as e:
+        except ValueError as e:
             errors.append({"index": idx, "error": str(e)})
+        except IntegrityError as e:
+            # The driver's text goes to the log; a failed flush ends the session's work.
+            logger.error("Bulk creation of {{ class.name }} failed at item %s: %s", idx, e)
+            errors.append({"index": idx, "error": integrity_error_detail(e)})
+            break
 
     if errors:
         database.rollback()

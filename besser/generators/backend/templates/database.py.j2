@@ -1,5 +1,6 @@
 import os
 import logging
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sql_alchemy import Base, _configure_sqlite_engine
@@ -40,9 +41,36 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        logger.error("Database session rollback due to exception")
+        # A 4xx answer is the client's mistake, not a failure of the server.
+        if not (isinstance(exc, HTTPException) and exc.status_code < 500):
+            logger.error("Database session rollback due to exception")
         raise
     finally:
         db.close()
+
+
+def integrity_error_detail(exc) -> str:
+    """What a constraint violation tells the client.
+
+    A duplicate value or a broken reference gets a sentence, naming the class
+    and field when the driver names them. Any other violation keeps the
+    driver's text, which states the column the server failed to fill.
+    """
+    driver_text = str(getattr(exc, "orig", exc))
+    lowered = driver_text.lower()
+    if "unique" in lowered or "duplicate" in lowered:
+        class_names = {mapper.local_table.name: mapper.class_.__name__ for mapper in Base.registry.mappers}
+        fields = [
+            (class_names.get(table.name, table.name), column.name)
+            for table in Base.metadata.tables.values()
+            for column in table.columns
+            if f"{table.name}.{column.name}" in driver_text or f'"{table.name}_{column.name}_key"' in driver_text
+        ]
+        if len(fields) == 1:
+            return f"{fields[0][0]} with this {fields[0][1]} already exists"
+        return "A record with the same values already exists"
+    if "foreign key" in lowered:
+        return "The record refers to a record that does not exist, or another record still refers to it"
+    return driver_text

@@ -89,49 +89,59 @@ jobs:
           fi
           echo "The host defines:${{ steps.svc.outputs.list }}"
 
+      # Watchtower deploys whatever reaches :latest, so this runs before any push.
+      - name: Check the frontend build settings
+        if: inputs.target == 'all' || inputs.target == 'frontend'
+        run: |
+          if [[ -z "${{ vars.FRONTEND_POSTHOG_KEY }}" ]]; then
+            echo "::error::Set the repository variable FRONTEND_POSTHOG_KEY. Nothing was built, pushed or restarted."
+            exit 1
+          fi
+
       - name: Login to Docker registry
         run: echo "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" | docker login artefacts.list.lu -u "${{ secrets.DOCKER_REGISTRY_USERNAME }}" --password-stdin
+
+      # Images are pushed as an OCI index and checked against the registry by
+      # .github/scripts/publish_image.sh; a plain `docker push` never moved
+      # :latest on artefacts.list.lu (run 43050874178).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # ── Backend and the besser-wme-smartgen worker ──────────
       # Two targets of one Dockerfile: the worker adds the toolchains and
       # bubblewrap to the backend's dependency layers.
-      - name: Build backend and worker images
+      - name: Build and push backend and worker images
         if: inputs.target == 'all' || inputs.target == 'backend'
         run: |
-          docker build --target backend --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
-            -t ${{ env.REGISTRY }}/backend:latest -f Dockerfile .
-          docker build --target smartgen-worker --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
-            -t ${{ env.REGISTRY }}/smartgen_worker:latest -f Dockerfile .
-
-      - name: Push backend and worker images
-        if: inputs.target == 'all' || inputs.target == 'backend'
-        run: |
-          docker push ${{ env.REGISTRY }}/backend:latest
-          docker push ${{ env.REGISTRY }}/smartgen_worker:latest
+          .github/scripts/publish_image.sh ${{ env.REGISTRY }}/backend:latest \
+            --target backend --build-arg GIT_SHA=${{ steps.src.outputs.sha }} -f Dockerfile .
+          .github/scripts/publish_image.sh ${{ env.REGISTRY }}/smartgen_worker:latest \
+            --target smartgen-worker --build-arg GIT_SHA=${{ steps.src.outputs.sha }} -f Dockerfile .
 
       # ── Frontend ─────────────────────────────────────────────
-      - name: Build frontend image
+      # The URLs and the PostHog key are baked into the bundle at build time;
+      # the Dockerfile defaults point the assistant at ws://localhost:8765.
+      - name: Build and push frontend image
         if: inputs.target == 'all' || inputs.target == 'frontend'
+        env:
+          POSTHOG_KEY: ${{ vars.FRONTEND_POSTHOG_KEY }}
         run: |
-          docker build -t ${{ env.REGISTRY }}/frontend:latest \
+          .github/scripts/publish_image.sh ${{ env.REGISTRY }}/frontend:latest \
+            --build-arg DEPLOYMENT_URL=${{ env.EDITOR_URL }} \
+            --build-arg BACKEND_URL=${{ env.EDITOR_URL }}/besser_api \
+            --build-arg UML_BOT_WS_URL=wss://editor.besser-pearl.org/agent \
+            --build-arg POSTHOG_HOST=https://eu.i.posthog.com \
+            --build-arg POSTHOG_KEY="$POSTHOG_KEY" \
             -f besser/utilities/web_modeling_editor/frontend/Dockerfile \
             besser/utilities/web_modeling_editor/frontend/
 
-      - name: Push frontend image
-        if: inputs.target == 'all' || inputs.target == 'frontend'
-        run: docker push ${{ env.REGISTRY }}/frontend:latest
-
       # ── Agent simulator ──────────────────────────────────────
       # Built from the repository root so it ships this checkout's `besser`.
-      - name: Build agent simulator image
+      - name: Build and push agent simulator image
         if: inputs.target == 'all' || inputs.target == 'agent_simulator'
         run: |
-          docker build -t ${{ env.REGISTRY }}/agent_simulator:latest \
+          .github/scripts/publish_image.sh ${{ env.REGISTRY }}/agent_simulator:latest \
             -f besser/utilities/web_modeling_editor/agent_simulator/Dockerfile .
-
-      - name: Push agent simulator image
-        if: inputs.target == 'all' || inputs.target == 'agent_simulator'
-        run: docker push ${{ env.REGISTRY }}/agent_simulator:latest
 
       # ── Deploy to EC2 ───────────────────────────────────────
       - name: Deploy on EC2

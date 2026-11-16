@@ -1,18 +1,24 @@
 """
 Matching a trace loaded from a project file to the project imported from the same file.
 
+Each model artifact tree of the trace (a root per model, see the traceability metamodel) is
+matched to an imported diagram of its model's type (``DomainModel`` to a ``ClassDiagram``,
+``GUIModel`` to a ``GUINoCodeDiagram``, ...): the only one of that type, else the one with the
+model's name. The root takes the diagram's new id.
+
 A project's Python export has no element ids in its structural sections, so importing it
-gives every element a new id. The trace refers to the elements as they were, by reference
-(``ModelArtifact(element=Library)``) or by record (name, type and the old id), so each of its
-model artifacts is matched to the imported diagrams by qualified name: ``Library``,
-``Library.name``, an association's name, ``Color.RED``. Names are unique inside one diagram,
-so the match is exact; an artifact that matches nothing (a deleted element, kept as
-history) keeps its recorded id.
+gives every class diagram element a new id. The trace refers to the elements as they were, by
+reference (``ModelArtifact(element=Library)``) or by record (name, type and the old id), so each
+of its class diagram artifacts is matched by qualified name: ``Library``, ``Library.name``, an
+association's name, ``Color.RED``. Names are unique inside one diagram, so the match is exact.
+The other diagram types keep their element ids through the export (a GUI's pages and
+components), so an artifact of one keeps its id when the imported diagram still has it. An
+artifact that matches nothing (a deleted element, kept as history) keeps its recorded id.
 """
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from besser.BUML.metamodel.traceability import ModelArtifact, TraceModel
 
@@ -82,6 +88,43 @@ def _artifact_keys(artifact: ModelArtifact) -> List[Key]:
     return []
 
 
+#: The project diagram type a model of each metaclass is drawn in (``ProjectInput.diagrams`` keys).
+_DIAGRAM_TYPE_OF_MODEL = {
+    "DomainModel": "ClassDiagram",
+    "GUIModel": "GUINoCodeDiagram",
+    "Agent": "AgentDiagram",
+    "StateMachine": "StateMachineDiagram",
+    "ObjectModel": "ObjectDiagram",
+    "NN": "NNDiagram",
+    "QuantumCircuit": "QuantumCircuitDiagram",
+    "BPMNModel": "BPMN",
+    "DeploymentModel": "DeploymentDiagram",
+    "ComponentModel": "ComponentDiagram",
+    "KnowledgeGraph": "KnowledgeGraphDiagram",
+}
+_CLASS_DIAGRAM = "ClassDiagram"
+
+
+def _ids_in(model: Any) -> Set[str]:
+    """Every id an imported diagram's JSON holds: the keys of its ``elements`` and ``relationships``
+    and every ``id`` value, at any depth (a GUI's pages and components carry theirs in ``id`` and
+    ``attributes.id``)."""
+    ids: Set[str] = set()
+    pending = [model]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            for key in ("elements", "relationships"):
+                if isinstance(value.get(key), dict):
+                    ids.update(k for k in value[key] if isinstance(k, str))
+            if isinstance(value.get("id"), str):
+                ids.add(value["id"])
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return ids
+
+
 def _root(artifact: ModelArtifact) -> ModelArtifact:
     while isinstance(artifact.parent, ModelArtifact):
         artifact = artifact.parent
@@ -99,15 +142,19 @@ def match_trace_to_project(trace: TraceModel, project: Dict[str, Any], model_nam
     Returns:
         How many artifacts matched nothing and keep their recorded id.
     """
-    diagrams = project.get("diagrams", {}).get("ClassDiagram", [])
+    all_diagrams = project.get("diagrams", {})
 
     def diagram_of(root: ModelArtifact) -> Optional[Dict[str, Any]]:
+        diagram_type = _DIAGRAM_TYPE_OF_MODEL.get(root.element_type)
+        diagrams = all_diagrams.get(diagram_type, []) if diagram_type else []
         if len(diagrams) == 1:
             return diagrams[0]
-        indexes = [i for i, name in enumerate(model_names) if name == root.name]
+        names = model_names if diagram_type == _CLASS_DIAGRAM else [d.get("title") for d in diagrams]
+        indexes = [i for i, name in enumerate(names) if name == root.name]
         return diagrams[indexes[0]] if len(indexes) == 1 and indexes[0] < len(diagrams) else None
 
     keys_of: Dict[int, Dict[Key, str]] = {}
+    ids_of: Dict[int, Set[str]] = {}
     unmatched = 0
     for artifact in trace.artifacts:
         if not isinstance(artifact, ModelArtifact):
@@ -118,9 +165,12 @@ def match_trace_to_project(trace: TraceModel, project: Dict[str, Any], model_nam
             new_id = None
         elif artifact is root:
             new_id = diagram["id"]
-        else:
+        elif _DIAGRAM_TYPE_OF_MODEL.get(root.element_type) == _CLASS_DIAGRAM:
             keys = keys_of.setdefault(id(diagram), _diagram_keys(diagram.get("model", {})))
             new_id = next((keys[key] for key in _artifact_keys(artifact) if key in keys), None)
+        else:  # its element ids survive the export
+            ids = ids_of.setdefault(id(diagram), _ids_in(diagram.get("model", {})))
+            new_id = artifact.element_id if artifact.element_id in ids else None
         if new_id is not None:
             artifact.element_id = new_id
         elif artifact.element_id is None:

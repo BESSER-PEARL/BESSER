@@ -2,6 +2,8 @@
 (``/get-project-json-model``)."""
 
 import copy
+import json
+import pathlib
 
 import pytest
 
@@ -196,3 +198,80 @@ def test_unsafe_trace_section_is_rejected_on_import(client, project, trace):
     response = _import(client, tampered)
     assert response.status_code == 400
     assert "traceability section" in response.json()["detail"]
+
+
+# ------------------------------------------------------------ a project with a class diagram and a GUI
+
+# The editor's "Library (Full Stack)" template: its class diagram and the GUI generated from it.
+LIBRARY_CLASS_DIAGRAM = pathlib.Path(__file__).parents[3] / "generators" / "fixtures" / "library_template_class_diagram.json"
+LIBRARY_GUI_DIAGRAM = pathlib.Path(__file__).parent / "fixtures" / "library_template_gui_diagram.json"
+
+
+def _gui_diagram():
+    return {"id": "gui-diagram", **json.loads(LIBRARY_GUI_DIAGRAM.read_text("utf-8"))}
+
+
+@pytest.fixture
+def gui_project(project):
+    library_template = {"id": "diagram-1", **json.loads(LIBRARY_CLASS_DIAGRAM.read_text("utf-8"))}
+    return {**project, "diagrams": {"ClassDiagram": [library_template], "GUINoCodeDiagram": [_gui_diagram()]},
+            "currentDiagramIndices": {"ClassDiagram": 0, "GUINoCodeDiagram": 0}}
+
+
+@pytest.fixture
+def gui_trace(client, gui_project):
+    """What the editor records for a GUI generated from the class diagram: a GUI model tree (a page and a
+    component, and a deleted button) made by one session of the GUI generator, each page linked from its class."""
+    (class_diagram,) = gui_project["diagrams"]["ClassDiagram"]
+    response = client.post("/besser_api/traceability/generate-output", json={
+        **class_diagram, "generator": "sqlalchemy", "config": {"dbms": "sqlite"}, "actorName": "Ada Lovelace"})
+    assert response.status_code == 200, response.text
+    trace = {**response.json()["trace"], "projectId": "project-1"}
+    book_id = next(e["id"] for e in class_diagram["model"]["elements"].values() if e.get("name") == "Book")
+    book = next(a for a in trace["artifacts"] if a.get("elementId") == book_id)
+    gui_artifacts = [
+        {"id": "a-gui", "type": "ModelArtifact", "name": "GUI Diagram", "elementId": "gui-diagram",
+         "elementType": "GUIModel", "timestamp": T},
+        {"id": "a-page", "type": "ModelArtifact", "name": "Book", "elementId": "page-book-0", "elementType": "Screen",
+         "parentId": "a-gui", "timestamp": T},
+        {"id": "a-text", "type": "ModelArtifact", "name": "title", "elementId": "i7thg", "elementType": "Text",
+         "parentId": "a-page", "timestamp": T},
+        {"id": "a-gone", "type": "ModelArtifact", "name": "save", "elementId": "gone-button",
+         "elementType": "Button", "parentId": "a-page", "timestamp": T},
+    ]
+    trace["artifacts"] += gui_artifacts
+    trace["tools"].append({"id": "gui-generator", "type": "ModelGenerator", "name": "BESSER GUI generator",
+                           "timestamp": T})
+    trace["operations"].append({
+        "id": "op-gui", "type": "ModelingSession", "status": "SUCCEEDED", "startedAt": T,
+        "performedBy": [trace["actors"][0]["id"]], "reads": [book["id"]], "writes": [],
+        "toolCalls": [{"id": "call-gui", "toolId": "gui-generator", "sequenceNumber": 0, "status": "SUCCEEDED",
+                       "startedAt": T, "logs": []}],
+        "changes": [{"id": f"c-{a['id']}", "kind": "CREATED", "artifactId": a["id"], "timestamp": T}
+                    for a in gui_artifacts]})
+    trace["traceLinks"].append({"id": "l-page", "sourceId": book["id"], "targetId": "a-page", "operationId": "op-gui",
+                                "evidence": [{"id": "e-page", "type": "RuleEvidence", "rule": "page of its class",
+                                              "timestamp": T}], "timestamp": T})
+    return trace
+
+
+def test_a_gui_trace_matches_the_imported_gui_not_the_class_diagram(client, gui_project, gui_trace):
+    body = _import(client, _export(client, {**gui_project, "trace": gui_trace})).json()
+    diagrams = body["project"]["diagrams"]
+    (class_diagram,), (gui_diagram,) = diagrams["ClassDiagram"], diagrams["GUINoCodeDiagram"]
+    artifacts = {a["id"]: a for a in body["trace"]["artifacts"]}
+    roots = {a["elementType"]: a["elementId"] for a in artifacts.values()
+             if a["type"] == "ModelArtifact" and "parentId" not in a}
+    # Each root takes the id of its own diagram: no two artifacts stand for one element.
+    assert roots == {"DomainModel": class_diagram["id"], "GUIModel": gui_diagram["id"]}
+    model_ids = [a["elementId"] for a in artifacts.values() if a["type"] == "ModelArtifact"]
+    assert len(model_ids) == len(set(model_ids))
+    # GUI elements keep their ids through the export, so they are still found in the imported GUI.
+    gui_json = json.dumps(gui_diagram["model"])
+    for artifact_id in ("a-page", "a-text"):
+        assert f'"{artifacts[artifact_id]["elementId"]}"' in gui_json
+    assert artifacts["a-gone"]["elementId"] == "gone-button"  # deleted: kept as a record
+    # The class side still matches by name.
+    book = next(e["id"] for e in class_diagram["model"]["elements"].values() if e.get("name") == "Book")
+    assert any(a.get("elementId") == book and a["elementType"] == "Class" for a in artifacts.values())
+    assert body["trace"]["traceLinks"] == gui_trace["traceLinks"]

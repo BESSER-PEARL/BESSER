@@ -57,7 +57,8 @@ def _artifact(artifact: Artifact) -> Dict[str, Any]:
         data.update(elementId=artifact.element_id, elementType=artifact.element_type)
     elif isinstance(artifact, CodeArtifact):
         data.update(path=artifact.path, contentHash=artifact.content_hash)
-        _with_optional(data, content=artifact.content, startLine=artifact.start_line, endLine=artifact.end_line)
+        _with_optional(data, content=artifact.content, startLine=artifact.start_line, endLine=artifact.end_line,
+                       revisionOfId=artifact.revision_of.id if artifact.revision_of is not None else None)
     elif isinstance(artifact, PromptArtifact):
         data.update(content=artifact.content, contentHash=artifact.content_hash)
     elif isinstance(artifact, RequirementArtifact):

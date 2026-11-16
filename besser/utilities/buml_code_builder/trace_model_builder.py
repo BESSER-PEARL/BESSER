@@ -206,10 +206,12 @@ class _TraceWriter:
             return (f"ModelArtifact({_string(artifact.name)}, element_id={_string(artifact.element_id)}, "
                     f"element_type={_string(artifact.element_type)}{parent}, {_common(artifact)})")
         if isinstance(artifact, CodeArtifact):
+            revision_of = (f", revision_of={self.vars[artifact.revision_of.id]}"
+                           if artifact.revision_of is not None else "")
             return (f"CodeArtifact({_string(artifact.name)}, path={_string(artifact.path)}, "
                     f"content_hash={_string(artifact.content_hash)}, content={_optional(artifact.content)}, "
                     f"start_line={_optional(artifact.start_line)}, end_line={_optional(artifact.end_line)}"
-                    f"{parent}, {_common(artifact)})")
+                    f"{parent}{revision_of}, {_common(artifact)})")
         if isinstance(artifact, PromptArtifact):
             return (f"PromptArtifact({_string(artifact.name)}, content={_string(artifact.content)}, "
                     f"content_hash={_string(artifact.content_hash)}{parent}, {_common(artifact)})")
@@ -292,7 +294,8 @@ class _TraceWriter:
 
 
 def _parents_first(artifacts: List[Artifact]) -> List[Artifact]:
-    """``artifacts`` reordered so that each parent comes before its fragments."""
+    """``artifacts`` reordered so that each comes after its parent and the version it revises,
+    which its constructor call references."""
     ordered: List[Artifact] = []
     placed = set()
 
@@ -301,6 +304,8 @@ def _parents_first(artifacts: List[Artifact]) -> List[Artifact]:
             return
         if artifact.parent is not None:
             place(artifact.parent)
+        if isinstance(artifact, CodeArtifact) and artifact.revision_of is not None:
+            place(artifact.revision_of)
         placed.add(artifact.id)
         ordered.append(artifact)
 

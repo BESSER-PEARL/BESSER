@@ -385,3 +385,104 @@ def test_a_code_generation_calls_a_generator_or_an_llm(generation_trace):
     editor = trace.add_tool(Editor("BESSER Web Modeling Editor"))
     trace.add_operation(CodeGeneration([owner], started_at=T0, tool_calls=[ToolCall(editor, 0, started_at=T0)]))
     assert "calls no CodeGenerator or LLM" in "\n".join(trace.validate(raise_exception=False)["errors"])
+
+
+# ------------------------------------------------------------ size: building and checking a large trace
+
+LARGE_TRACE_LINKS = 5000
+# Generous: the run takes well under a tenth of this; a quadratic collection took minutes.
+LARGE_TRACE_SECONDS = 2.0
+
+
+def test_a_large_trace_builds_and_validates_in_linear_time():
+    import time
+
+    started = time.perf_counter()
+    owner, generator = Person("BESSER User"), CodeGenerator("sqlalchemy")
+    model = ModelArtifact("Library", "diagram-1", "DomainModel")
+    generation = CodeGeneration([owner], tool_calls=[ToolCall(generator, 0)], reads=[model])
+    trace = TraceModel(artifacts=[model], operations=[generation], actors=[owner], tools=[generator])
+    for index in range(LARGE_TRACE_LINKS):
+        file = trace.add_artifact(CodeArtifact(f"f{index}.py", f"f{index}.py", "h"))
+        trace.add_trace_link(TraceLink(model, file, generation))
+    generation.writes = trace.artifacts[1:]
+    rebuilt = TraceModel(artifacts=trace.artifacts, operations=trace.operations, trace_links=trace.trace_links,
+                         actors=trace.actors, tools=trace.tools)
+    assert rebuilt.validate()["success"]
+    assert time.perf_counter() - started < LARGE_TRACE_SECONDS
+    assert len(rebuilt.trace_links) == LARGE_TRACE_LINKS
+
+
+def test_collections_keep_the_first_of_duplicates_in_order():
+    owner, other = Person("A"), Person("B")
+    trace = TraceModel(actors=[owner, other, owner])
+    assert trace.add_actor(owner) is owner
+    assert trace.actors == [owner, other]
+    with pytest.raises(TypeError):
+        trace.add_actor("not an actor")
+    assert trace.actors == [owner, other]
+
+
+# ------------------------------------------------------------ revisions: a generated file edited later
+
+def test_an_edited_file_is_a_revision_written_by_the_edit(generation_trace):
+    """A generator writes a file, an LLM edits it: two versions, each with one writer."""
+    trace, link, owner, book, _ = generation_trace
+    generated = next(a for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is None)
+    llm = trace.add_tool(LLM("gpt-6-luna", "openai"))
+    edited = trace.add_artifact(CodeArtifact("sql_alchemy.py", "sql_alchemy.py", "h2", revision_of=generated))
+    edit = trace.add_operation(CodeGeneration([owner], started_at=T0 + timedelta(minutes=1),
+                                              tool_calls=[ToolCall(llm, 0)], reads=[generated], writes=[edited]))
+    trace.add_trace_link(TraceLink(book, edited, edit, [AIEvidence("gpt-6-luna")]))
+    assert trace.validate()["success"]
+    assert edited.revision_of is generated and generated.revision_of is None
+    # Writing the generated version again is still refused: the edit is the new version.
+    trace.add_operation(CodeGeneration([owner], tool_calls=[ToolCall(llm, 0)], writes=[generated]))
+    assert "is written by both" in " ".join(trace.validate(raise_exception=False)["errors"])
+
+
+def test_a_revision_chain_has_no_cycle():
+    first = CodeArtifact("a.py", "a.py", "h0")
+    second = CodeArtifact("a.py", "a.py", "h1", revision_of=first)
+    with pytest.raises(ValueError):
+        first.revision_of = second
+    with pytest.raises(ValueError):
+        first.revision_of = first
+    with pytest.raises(TypeError):
+        second.revision_of = ModelArtifact("Book", "c", "Class")
+
+
+def test_validate_reports_a_revised_version_outside_the_trace(generation_trace):
+    trace, *_ = generation_trace
+    outside = CodeArtifact("old.py", "old.py", "h")
+    trace.add_artifact(CodeArtifact("old.py", "old.py", "h2", revision_of=outside, id="new"))
+    errors = trace.validate(raise_exception=False)["errors"]
+    assert errors == [f"Artifact 'new' (revision_of) references artifact {outside.id!r}, which is not in the trace."]
+
+
+# ------------------------------------------------------------ resolve: artifacts of any kind of model
+
+def test_resolve_finds_elements_of_a_gui_model():
+    from besser.BUML.metamodel.gui import Button, ButtonActionType, ButtonType, GUIModel, Module, Screen
+
+    button = Button("save", "", "Save", ButtonType.RaisedButton, ButtonActionType.Navigate)
+    screen = Screen("Books", "", {button})
+    gui = GUIModel("LibraryGUI", "pkg", "1", "1.0", {Module("main", {screen})}, "")
+    gui.id, screen.id, button.id = "gui-diagram", "page-1", "button-1"
+    assert ModelArtifact("save", "button-1", "Button").resolve(gui) is button
+    assert ModelArtifact("Books", "page-1", "Screen").resolve(gui) is screen
+    assert ModelArtifact("LibraryGUI", "gui-diagram", "GUIModel").resolve(gui) is gui
+    assert ModelArtifact("ghost", "gone", "Button").resolve(gui) is None
+    assert ModelArtifact(element=button).resolve(gui) is button
+
+
+def test_resolve_finds_states_of_a_state_machine_and_stays_inside_the_model():
+    from besser.BUML.metamodel.state_machine.state_machine import StateMachine
+
+    machine = StateMachine("Door")
+    closed = machine.new_state("closed", initial=True)
+    closed.id = "state-1"
+    assert ModelArtifact("closed", "state-1", "State").resolve(machine) is closed
+    # An element of another model is not found in this one.
+    library = DomainModel("Library", types={Class("Book")})
+    assert ModelArtifact(element=closed).resolve(library) is None

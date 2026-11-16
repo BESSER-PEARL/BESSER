@@ -26,13 +26,19 @@ Concepts
     editor element id), its name and its B-UML metaclass name (``DomainModel``,
     ``Class``, ``Property``, ``BinaryAssociation``, ...). A record is what lets a trace
     keep the history of deleted elements and live apart from the model, as the
-    editor's JSON does; ``ModelArtifact.resolve(model)`` finds the live element.
+    editor's JSON does; ``ModelArtifact.resolve(model)`` finds the live element in
+    any kind of B-UML model (domain, GUI, state machine or agent, object, neural
+    network, quantum, BPMN, deployment, ...).
     The model artifacts of a project form one tree per model: a model (a
     diagram, of any type) has no ``parent``, its elements are its fragments,
     and their members (attributes, literals) are theirs. An operation can
     change or read several models, and a generator can read several.
   - **CodeArtifact** -- a generated file, or a line range of one, with the SHA-256 of
-    its content. The content itself may be kept too.
+    its content. The content itself may be kept too. An artifact is written by one
+    operation, so a file changed by a later one (an LLM editing a generated file) is a
+    new version: a new ``CodeArtifact`` written by the edit, whose ``revision_of`` is the
+    version it changed (``prov:wasRevisionOf``). The generated version keeps the links
+    the generator made; the edit's links go to the new version.
   - **PromptArtifact** -- a message given to an agent, with its SHA-256. A message is
     kept as an artifact only when something is derived from it (it is the source of a
     trace link); the other messages of a conversation stay in the logs of its tool calls.
@@ -109,8 +115,16 @@ Only a changed source travels downstream: an edited target is the source of the 
 which sees the edit as its own changed source. Generated code is never edited in the
 editor, so a link into code is never ``TARGET_CHANGED``.
 ``TraceModel.validate()`` checks that every reference stays inside the trace (a tool
-call's tool, an ``AIEvidence``'s log records), that ids are unique and that the tool
-calls of an operation have distinct sequence numbers.
+call's tool, an ``AIEvidence``'s log records, the version a revision revises), that ids
+are unique, that no artifact is written by two operations and that the tool calls of an
+operation have distinct sequence numbers.
+
+A check is not a concept of its own. A validation gate's outcome (tests run on generated
+code, a linter) is recorded in the ``LogRecord`` messages of the tool call that ran it
+(``INFO``, ``ERROR``). A judge's verdict that code realizes a requirement is a trace link
+from the ``RequirementArtifact`` to the code, with ``AIEvidence`` (the judge, with its
+prompt and answer as log records) and a ``Confidence`` whose ``explanation`` gives the
+verdict's reason.
 
 Names are free text (a project owner is "BESSER User"), so trace elements inherit
 ``Element`` rather than ``NamedElement``. Every trace element has an ``id`` (a UUID
@@ -185,7 +199,9 @@ editor), SQLAlchemy and backend generations as generation runs (one call to the
 generator), and the exchange with the modeling assistant as conversations. The trace is kept in the browser apart from the project, and
 travels with a project export when asked for: in a JSON export as the JSON form of
 this metamodel (see ``trace_converter.py`` / ``trace_processor.py`` in the backend
-converters), in a B-UML export as its Python form (below). See
+converters), in a B-UML export as its Python form (below). The JSON form carries a
+``schemaVersion`` (6: ``revisionOfId`` on a code artifact; 5: requirement artifacts);
+the backend reads version 5 too, upgrading it on read. See
 :doc:`../../web_editor`.
 
 Python form

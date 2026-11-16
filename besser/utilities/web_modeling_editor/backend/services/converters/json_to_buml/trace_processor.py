@@ -89,15 +89,37 @@ def _build(factory: Callable, where: str, **kwargs):
         raise ConversionError(f"{where}: {error}") from error
 
 
-def process_trace(data: Dict[str, Any]) -> TraceModel:
-    """Build a TraceModel from trace file JSON.
+# How a trace of an older schema version becomes one of the next. Version 6 added
+# ``CodeArtifact.revisionOfId``, optional: a version 5 trace is a valid version 6 one.
+_MIGRATIONS: Dict[int, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
+    5: lambda data: data,
+}
+
+
+def _migrated(data: Dict[str, Any]) -> Dict[str, Any]:
+    """``data`` brought to ``TRACE_SCHEMA_VERSION``.
 
     Raises:
-        ConversionError: If the JSON is not a valid trace of the supported schema version.
+        ConversionError: If its version is neither the current one nor one with a migration.
     """
     version = _field(data, "schemaVersion", "Trace")
-    if version != TRACE_SCHEMA_VERSION:
-        raise ConversionError(f"Unsupported trace schemaVersion {version!r}; expected {TRACE_SCHEMA_VERSION}.")
+    readable = sorted([*_MIGRATIONS, TRACE_SCHEMA_VERSION])
+    if version not in readable:
+        raise ConversionError(f"Unsupported trace schemaVersion {version!r}; expected one of {readable}.")
+    while version != TRACE_SCHEMA_VERSION:
+        data = {**_MIGRATIONS[version](data), "schemaVersion": version + 1}
+        version += 1
+    return data
+
+
+def process_trace(data: Dict[str, Any]) -> TraceModel:
+    """Build a TraceModel from trace file JSON of the current schema version or an older one
+    (migrated on read, see ``_MIGRATIONS``).
+
+    Raises:
+        ConversionError: If the JSON is not a valid trace of a supported schema version.
+    """
+    data = _migrated(data)
 
     actors, tools, artifacts, logs, operations = {}, {}, {}, {}, {}
 
@@ -145,16 +167,21 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
         if artifact.id in artifacts:
             raise ConversionError(f"Artifact id {artifact.id!r} is used twice.")
         artifacts[artifact.id] = artifact
-    # Parents can come later in the list, so they are wired once every artifact exists.
+    # Parents and revised versions can come later in the list, so they are wired once every artifact exists.
     for raw in raw_artifacts:
+        where = f"Artifact {raw['id']!r}"
+        artifact = artifacts[raw["id"]]
         parent_id = raw.get("parentId")
-        if parent_id is not None:
-            where = f"Artifact {raw['id']!r}"
-            parent = _resolve(artifacts, parent_id, "artifact", where)
-            try:
-                artifacts[raw["id"]].parent = parent
-            except ValueError as error:
-                raise ConversionError(f"{where}: {error}") from error
+        revision_of_id = raw.get("revisionOfId")
+        if revision_of_id is not None and not isinstance(artifact, CodeArtifact):
+            raise ConversionError(f"{where} is a {type(artifact).__name__}: only a CodeArtifact has revisionOfId.")
+        try:
+            if parent_id is not None:
+                artifact.parent = _resolve(artifacts, parent_id, "artifact", where)
+            if revision_of_id is not None:
+                artifact.revision_of = _resolve(artifacts, revision_of_id, "artifact", where)
+        except (TypeError, ValueError) as error:
+            raise ConversionError(f"{where}: {error}") from error
 
     trace = TraceModel(project_id=data.get("projectId"), actors=list(actors.values()),
                        tools=list(tools.values()), artifacts=list(artifacts.values()))

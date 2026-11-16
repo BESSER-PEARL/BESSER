@@ -238,8 +238,9 @@ WS_CLOSE_RATE_LIMITED = 4429
 
 # Traceability
 # Version of the trace file format (the `trace` of a project export); bump it with a
-# migration in the frontend's trace store when the shape changes.
-TRACE_SCHEMA_VERSION = 5  # 5: requirement artifacts; 4: operations read and write artifacts
+# migration in the frontend's trace store when the shape changes, and in
+# `json_to_buml/trace_processor.py`, which reads every version listed in its migrations.
+TRACE_SCHEMA_VERSION = 6  # 6: code revisions; 5: requirement artifacts; 4: operations read and write artifacts
 # Generators whose output carries trace links (their templates use `{% trace %}`).
 TRACED_GENERATORS = frozenset({"sqlalchemy", "backend"})
 # A generated file up to this size is kept in the trace so the trace view can

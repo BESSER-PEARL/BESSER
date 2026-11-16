@@ -20,6 +20,13 @@ an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
   code generated from it, a requirement and the model element that realizes it).
   :class:`Evidence` says why the link holds and
   :class:`Confidence` how sure it is; an operation may have a Confidence too.
+* An artifact is written by one operation. A file changed by a later operation (an LLM
+  editing generated code) is a new :class:`CodeArtifact` version, ``revision_of`` the one it
+  changed (``prov:wasRevisionOf``).
+* A check is not a concept of its own: a validation gate's outcome is in the
+  :class:`LogRecord` messages of the tool call that ran it, and a judge's verdict that code
+  realizes a requirement is a trace link with :class:`AIEvidence` (the judge's prompt and
+  answer as its logs) and a :class:`Confidence` whose explanation is the verdict's reason.
 
 A trace is stored apart from the model it describes. It points at model
 elements by their persistent ``Element.id`` (the editor element id), never by
@@ -33,7 +40,7 @@ import uuid
 from abc import ABC
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Iterable, List, Optional, Set
+from typing import Iterable, Iterator, List, Optional, Set
 
 from besser.BUML.metamodel.structural import Element, Model
 
@@ -191,12 +198,39 @@ def _end_time(ended_at: Optional[datetime], started_at: datetime, owner: str) ->
 
 def _instances(values: Optional[Iterable], expected_type, owner: str, field: str) -> list:
     """``values`` as a list without duplicates (first occurrence kept), each an ``expected_type``."""
-    result = []
-    for value in values or ():
-        _instance(value, expected_type, owner, f"{field}[]")
-        if not any(value is seen for seen in result):
-            result.append(value)
-    return result
+    return _Members(values, expected_type, owner, field).items
+
+
+class _Members:
+    """An ordered collection of distinct objects (by identity), each checked against a type.
+
+    It keeps the identities it holds in a set, so building it is O(n) and adding to it O(1):
+    a trace grows by one element at a time, and re-checking the whole list on each addition
+    made building or loading a trace cubic in its size.
+    """
+
+    __slots__ = ("items", "_seen", "_type", "_owner", "_field")
+
+    def __init__(self, values: Optional[Iterable], expected_type, owner: str, field: str):
+        self.items: list = []
+        self._seen: Set[int] = set()  # id() of each item; stable, since the list keeps the item alive
+        self._type, self._owner, self._field = expected_type, owner, field
+        for value in values or ():
+            self.add(value)
+
+    def add(self, value) -> None:
+        """Append ``value`` unless it is already held.
+
+        Raises:
+            TypeError: If it is not of the collection's type.
+        """
+        _instance(value, self._type, self._owner, f"{self._field}[]")
+        if id(value) not in self._seen:
+            self._seen.add(id(value))
+            self.items.append(value)
+
+    def __iter__(self):
+        return iter(self.items)
 
 
 class TraceElement(Element, ABC):
@@ -358,34 +392,73 @@ class ModelArtifact(Artifact):
         """The element of ``model`` this artifact stands for, or None when it is not there: the
         referenced element when it belongs to ``model``, else the one with this ``element_id``.
 
-        A whole-model artifact resolves to ``model`` itself.
+        ``model`` is any B-UML model (domain, GUI, state machine or agent, object, neural
+        network, quantum, BPMN, deployment, ...): its elements are found by
+        :func:`model_elements`. A whole-model artifact resolves to ``model`` itself.
         """
         if self.__element is not None:
-            if self.__element is model or any(e is self.__element for e in _model_elements(model)):
+            if self.__element is model or any(e is self.__element for e in model_elements(model)):
                 return self.__element
             return None
         if model.id == self.element_id:
             return model
-        for element in _model_elements(model):
+        for element in model_elements(model):
             if element.id == self.element_id:
                 return element
         return None
 
 
-def _model_elements(model: Model) -> Iterable[Element]:
-    """Every element of a domain model that can carry an editor id: types, their members, relations."""
-    for type_ in getattr(model, "types", ()):
-        yield type_
-        yield from getattr(type_, "attributes", ())
-        yield from getattr(type_, "methods", ())
-        yield from getattr(type_, "literals", ())
-    yield from getattr(model, "associations", ())
-    yield from getattr(model, "generalizations", ())
-    yield from getattr(model, "constraints", ())
+def model_elements(model: Model) -> Iterator[Element]:
+    """Every element of ``model`` that can carry an id, of any kind of B-UML model.
+
+    The metamodels differ in how they hold their elements (a domain model's types and their
+    members, a GUI's modules, screens and nested view elements, a state machine's states and
+    transitions, a network's layers, ...), so the walk is generic: it follows the attributes
+    of every B-UML object reachable from the model, into lists, sets, tuples and dict values,
+    and yields each :class:`Element` once. It does not enter another :class:`Model` (a GUI
+    references its domain model), so it yields the model's own elements and those it
+    references directly (the class a table shows), not a referenced model's whole content.
+    """
+    seen: Set[int] = {id(model)}
+    pending: list = [model]
+    while pending:
+        current = pending.pop()
+        for value in _held_values(current):
+            if id(value) in seen or isinstance(value, Model) or not _is_buml_object(value):
+                continue
+            seen.add(id(value))
+            if isinstance(value, Element):
+                yield value
+            pending.append(value)
+
+
+_BUML_PACKAGE = "besser.BUML."
+
+
+def _is_buml_object(value) -> bool:
+    """True for an instance of a B-UML metamodel class (the walk follows nothing else)."""
+    return type(value).__module__.startswith(_BUML_PACKAGE) and hasattr(value, "__dict__")
+
+
+def _held_values(owner) -> Iterator:
+    """The values ``owner``'s attributes hold, with the items of the collections among them."""
+    for value in vars(owner).values():
+        if isinstance(value, dict):
+            yield from value.values()
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            yield from value
+        else:
+            yield value
 
 
 class CodeArtifact(Artifact):
     """A generated or edited file, or a line range of one (a fragment).
+
+    A file is written by one operation. When another operation changes it (an LLM editing a
+    generated file), the result is a new version: a new CodeArtifact, written by that
+    operation, that is a revision of the one it changed (``revision_of``, PROV's
+    ``wasRevisionOf``). Each version keeps the links made to it, so a link into the generated
+    version still tells what the generator made, and the edit is told by the new version.
 
     Args:
         name (str): Display name (the file name, or a label for the fragment).
@@ -397,16 +470,39 @@ class CodeArtifact(Artifact):
         parent (Artifact): The file artifact holding this fragment.
         id (str): Persistent identifier.
         timestamp (datetime): When the artifact was first recorded.
+        revision_of (CodeArtifact): The version this one revises (None for a first version).
     """
 
     def __init__(self, name: str, path: str, content_hash: str, content: str = None,
                  start_line: int = None, end_line: int = None, parent: Artifact = None,
-                 id: str = None, timestamp: datetime = None):
+                 id: str = None, timestamp: datetime = None, revision_of: "CodeArtifact" = None):
         super().__init__(name, parent, id, timestamp)
         self.path: str = path
         self.content_hash: str = content_hash
         self.content: Optional[str] = content
         self.set_line_range(start_line, end_line)
+        self.revision_of: Optional[CodeArtifact] = revision_of
+
+    @property
+    def revision_of(self) -> Optional["CodeArtifact"]:
+        """CodeArtifact: Get the version this one revises (None for a first version)."""
+        return self.__revision_of
+
+    @revision_of.setter
+    def revision_of(self, revision_of: Optional["CodeArtifact"]):
+        """CodeArtifact: Set the version this one revises.
+
+        Raises:
+            TypeError: If it is neither a CodeArtifact nor None.
+            ValueError: If the chain of revisions would contain this artifact.
+        """
+        _instance(revision_of, CodeArtifact, "CodeArtifact", "revision_of", optional=True)
+        earlier = revision_of
+        while earlier is not None:
+            if earlier is self:
+                raise ValueError(f"CodeArtifact {self.id!r} cannot be a revision of itself.")
+            earlier = earlier.revision_of
+        self.__revision_of = revision_of
 
     @property
     def path(self) -> str:
@@ -1139,16 +1235,16 @@ class ModelingSession(Operation):
     @property
     def changes(self) -> List[ChangeEvent]:
         """list[ChangeEvent]: Get the session's edits, in order."""
-        return list(self.__changes)
+        return list(self.__changes.items)
 
     @changes.setter
     def changes(self, changes: List[ChangeEvent]):
         """list[ChangeEvent]: Set the session's edits."""
-        self.__changes = _instances(changes, ChangeEvent, "ModelingSession", "changes")
+        self.__changes = _Members(changes, ChangeEvent, "ModelingSession", "changes")
 
     def add_change(self, change: ChangeEvent):
         """Append an edit to the session."""
-        self.changes = self.__changes + [change]
+        self.__changes.add(change)
 
 
 class Transformation(Operation, ABC):
@@ -1428,76 +1524,76 @@ class TraceModel(Model):
     @property
     def artifacts(self) -> List[Artifact]:
         """list[Artifact]: Get every artifact recorded."""
-        return list(self.__artifacts)
+        return list(self.__artifacts.items)
 
     @artifacts.setter
     def artifacts(self, artifacts: List[Artifact]):
         """list[Artifact]: Set every artifact recorded."""
-        self.__artifacts = _instances(artifacts, Artifact, "TraceModel", "artifacts")
+        self.__artifacts = _Members(artifacts, Artifact, "TraceModel", "artifacts")
 
     def add_artifact(self, artifact: Artifact) -> Artifact:
         """Add an artifact and return it."""
-        self.artifacts = self.__artifacts + [artifact]
+        self.__artifacts.add(artifact)
         return artifact
 
     @property
     def operations(self) -> List[Operation]:
         """list[Operation]: Get every operation, in order."""
-        return list(self.__operations)
+        return list(self.__operations.items)
 
     @operations.setter
     def operations(self, operations: List[Operation]):
         """list[Operation]: Set every operation."""
-        self.__operations = _instances(operations, Operation, "TraceModel", "operations")
+        self.__operations = _Members(operations, Operation, "TraceModel", "operations")
 
     def add_operation(self, operation: Operation) -> Operation:
         """Add an operation and return it."""
-        self.operations = self.__operations + [operation]
+        self.__operations.add(operation)
         return operation
 
     @property
     def trace_links(self) -> List[TraceLink]:
         """list[TraceLink]: Get every trace link."""
-        return list(self.__trace_links)
+        return list(self.__trace_links.items)
 
     @trace_links.setter
     def trace_links(self, trace_links: List[TraceLink]):
         """list[TraceLink]: Set every trace link."""
-        self.__trace_links = _instances(trace_links, TraceLink, "TraceModel", "trace_links")
+        self.__trace_links = _Members(trace_links, TraceLink, "TraceModel", "trace_links")
 
     def add_trace_link(self, trace_link: TraceLink) -> TraceLink:
         """Add a trace link and return it."""
-        self.trace_links = self.__trace_links + [trace_link]
+        self.__trace_links.add(trace_link)
         return trace_link
 
     @property
     def actors(self) -> List[Actor]:
         """list[Actor]: Get every actor."""
-        return list(self.__actors)
+        return list(self.__actors.items)
 
     @actors.setter
     def actors(self, actors: List[Actor]):
         """list[Actor]: Set every actor."""
-        self.__actors = _instances(actors, Actor, "TraceModel", "actors")
+        self.__actors = _Members(actors, Actor, "TraceModel", "actors")
 
     def add_actor(self, actor: Actor) -> Actor:
         """Add an actor and return it."""
-        self.actors = self.__actors + [actor]
+        self.__actors.add(actor)
         return actor
 
     @property
     def tools(self) -> List[Tool]:
         """list[Tool]: Get every tool."""
-        return list(self.__tools)
+        return list(self.__tools.items)
 
     @tools.setter
     def tools(self, tools: List[Tool]):
         """list[Tool]: Set every tool."""
-        self.__tools = _instances(tools, Tool, "TraceModel", "tools")
+        self.__tools = _Members(tools, Tool, "TraceModel", "tools")
 
     def add_tool(self, tool: Tool) -> Tool:
         """Add a tool and return it."""
-        self.tools = self.__tools + [tool]
+        self.__tools.add(tool)
         return tool
 
     def fragments_of(self, artifact: Artifact) -> List[Artifact]:
@@ -1581,6 +1677,8 @@ class TraceModel(Model):
 
         for artifact in self.__artifacts:
             check(artifact.parent, artifacts, "artifact", f"Artifact {artifact.id!r} (parent)")
+            if isinstance(artifact, CodeArtifact):
+                check(artifact.revision_of, artifacts, "artifact", f"Artifact {artifact.id!r} (revision_of)")
         writer: dict[int, str] = {}
         for operation in self.__operations:
             where = f"Operation {operation.id!r}"

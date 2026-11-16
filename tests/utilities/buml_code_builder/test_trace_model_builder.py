@@ -77,9 +77,15 @@ def trace():
                                  tool_calls=[ToolCall(gui_generator, 0, started_at=_at(6))])
     links.append(TraceLink(book, page, derivation, [RuleEvidence("GUI element bound to the model element",
                                                                  timestamp=_at(6))], timestamp=_at(6)))
+    # The generated file edited by an LLM: a new version, listed before the one it revises.
+    edited = CodeArtifact("sql_alchemy.py", "sql_alchemy.py", "d" * 64, revision_of=file, timestamp=_at(7))
+    edit = CodeGeneration([assistant], started_at=_at(7), reads=[file], writes=[edited],
+                          tool_calls=[ToolCall(llm, 0, started_at=_at(7))])
+    links.append(TraceLink(requirement, edited, edit, [AIEvidence("llm judge", timestamp=_at(7))],
+                           Confidence(0.8, explanation="realized by Book", timestamp=_at(7)), timestamp=_at(7)))
     return TraceModel(project_id="project-1", actors=[owner, assistant], tools=[editor, generator, llm, gui_generator],
-                      artifacts=[lines, book, model, file, prompt, requirement, gui, page],
-                      operations=[chat, extraction, modeling, generation, derivation], trace_links=links)
+                      artifacts=[edited, lines, book, model, file, prompt, requirement, gui, page],
+                      operations=[chat, extraction, modeling, generation, derivation, edit], trace_links=links)
 
 
 def _code(trace, tmp_path) -> str:
@@ -120,3 +126,13 @@ def test_json_form_round_trips_every_element_kind(trace):
     assert "confidence" not in next(op for op in data["operations"] if op["type"] == "Conversation")  # not assessed
     rule_with_log = next(e for link in data["traceLinks"] for e in link["evidence"] if e["type"] == "RuleEvidence" and "logIds" in e)
     assert rule_with_log["logIds"] and "logIds" not in data["traceLinks"][0]["evidence"][0]  # left out when empty
+
+
+def test_a_revision_keeps_the_version_it_revises(trace, tmp_path):
+    data = trace_buml_to_json(trace)
+    edited = next(a for a in data["artifacts"] if a.get("contentHash") == "d" * 64)
+    revised = next(a for a in data["artifacts"] if a["id"] == edited["revisionOfId"])
+    assert revised["contentHash"] == "a" * 64
+    assert "revisionOfId" not in revised  # left out when unset, as optional fields are
+    loaded = parse_trace_code(_code(trace, tmp_path))
+    assert next(a for a in loaded.artifacts if a.id == edited["id"]).revision_of.id == revised["id"]

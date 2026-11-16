@@ -314,7 +314,7 @@ async def check_ocl(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep, s
 _SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
 
 
-@router.post("/semantic-consistency-check")
+@router.post("/semantic-consistency-check", response_class=StreamingResponse)
 @handle_endpoint_errors("semantic_consistency_check")
 async def semantic_consistency_check(input_data: DiagramInput, slots: SemanticCheckSlotsDep) -> StreamingResponse:
     """Searches for an instance of a class diagram and its OCL invariants with the Alloy Analyzer.
@@ -331,7 +331,7 @@ async def semantic_consistency_check(input_data: DiagramInput, slots: SemanticCh
     )
 
 
-@router.post("/generate-object-diagram")
+@router.post("/generate-object-diagram", response_class=StreamingResponse)
 @handle_endpoint_errors("generate_object_diagram")
 async def generate_object_diagram_endpoint(
     input_data: DiagramInput, slots: SemanticCheckSlotsDep

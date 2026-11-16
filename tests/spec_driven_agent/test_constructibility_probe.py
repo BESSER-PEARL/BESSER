@@ -488,11 +488,10 @@ def test_a_create_handler_that_dials_out_is_blocked_inside_the_probe(tmp_path):
 def _abstract_scaffold(tmp_path):
     """A backend whose ``Person`` is ABSTRACT, with a concrete ``Patron``.
 
-    Returns ``(workspace, model)``. The generated create route for Person is
-    then guarded exactly as a real one is: it refuses, with the reason.
+    Returns ``(workspace, model)``. The generator gives an abstract class no
+    create route, so one is added the way a customised app carries it: it
+    refuses, with the reason.
     """
-    import re as _re
-
     from besser.BUML.metamodel.structural import (
         Class, DomainModel, Generalization, Property, StringType,
     )
@@ -508,12 +507,14 @@ def _abstract_scaffold(tmp_path):
     BackendGenerator(model=model, output_dir=str(tmp_path / "web_app" / "backend")).generate()
     router = tmp_path / "web_app" / "backend" / "routers" / "person.py"
     text = router.read_text(encoding="utf-8")
-    head = _re.search(r"async def create_person\(.*\n", text).group(0)
-    guarded = head + (
+    assert "async def create_person(" not in text
+    guarded = (
+        '\n\n@router.post("/person/", response_model=None, tags=["Person"])\n'
+        'async def create_person(person_data: PersonCreate, database: Session = Depends(get_db)):\n'
         '    raise HTTPException(status_code=422, '
         'detail="Person is abstract; create a Patron instead")\n'
     )
-    router.write_text(text.replace(head, guarded, 1), encoding="utf-8")
+    router.write_text(text + guarded, encoding="utf-8")
     return str(tmp_path), model
 
 

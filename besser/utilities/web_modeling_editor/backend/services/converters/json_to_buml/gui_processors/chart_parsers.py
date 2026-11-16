@@ -19,6 +19,8 @@ from besser.BUML.metamodel.gui.dashboard import (
 )
 from besser.BUML.metamodel.gui.dashboard import Series
 from besser.BUML.metamodel.gui.binding import DataAggregation, is_valid_endpoint
+from besser.generators.structural_utils import display_attribute
+from besser.utilities import sort_by_timestamp
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, css_class_names, get_element_by_id, html_attributes, parse_bool, sanitize_name
 
@@ -609,9 +611,9 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                                 lookup_field_attr = attr
                                 break
 
-                    # If no lookup field specified, use first attribute
-                    if not lookup_field_attr and target_class.all_attributes():
-                        lookup_field_attr = list(target_class.all_attributes())[0]
+                    # If no lookup field specified, the attribute that labels a record
+                    if not lookup_field_attr:
+                        lookup_field_attr = display_attribute(sort_by_timestamp(target_class.all_attributes()))
 
                     if lookup_field_attr:
                         column = LookupColumn(

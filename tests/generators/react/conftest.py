@@ -11,20 +11,22 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 
 
 def class_diagram(classes, associations=()):
-    """Apollon class diagram JSON. ``classes`` = {Name: [(attr, type), ...]};
+    """Apollon class diagram JSON. ``classes`` = {Name: [(attr, type), ...]}, an
+    attribute optionally with a dict of extra fields (``{"isExternalId": True}``);
     the class id is ``cls-<Name>`` and an attribute id ``attr-<Name>-<attr>``.
     ``associations`` = [(name, (Class, role, multiplicity), (Class, role, multiplicity)), ...]."""
     elements = {}
     for index, (class_name, attributes) in enumerate(classes.items()):
         class_id = f"cls-{class_name}"
         attribute_ids = []
-        for attr_name, attr_type in attributes:
+        for attr_name, attr_type, *extra in attributes:
             attr_id = f"attr-{class_name}-{attr_name}"
             attribute_ids.append(attr_id)
             elements[attr_id] = {
                 "id": attr_id, "name": attr_name, "type": "ClassAttribute", "owner": class_id,
                 "bounds": {"x": 0, "y": 0, "width": 200, "height": 30}, "visibility": "public",
                 "attributeType": attr_type, "isOptional": False, "isDerived": False, "isId": False,
+                **(extra[0] if extra else {}),
             }
         elements[class_id] = {
             "id": class_id, "name": class_name, "type": "Class", "owner": None,

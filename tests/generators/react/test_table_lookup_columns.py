@@ -58,3 +58,21 @@ def test_a_column_naming_the_association_end_selects_it(build_app, caplog):
 
     assert _lookup_paths(app.gui_model) == {"From": "origin", "To": "destination", "Airline": "airline"}
     assert not [record for record in caplog.records if "Lookup column" in record.getMessage()]
+
+
+def _lookup_fields(gui_model):
+    for module in gui_model.modules:
+        for screen in module.screens:
+            for element in screen.view_elements:
+                if isinstance(element, Table):
+                    return {c.label: c.field.name for c in element.columns if isinstance(c, LookupColumn)}
+    return {}
+
+
+def test_a_column_without_a_lookup_field_shows_a_readable_attribute_not_the_generated_id(build_app):
+    """An ``id`` flagged as external id is the server's generated key; the column shows the name."""
+    classes = {**CLASSES, "Airline": [("id", "int", {"isExternalId": True}), ("code", "int"), ("label", "str")]}
+    column = {"field": "airline", "label": "Airline", "columnType": "lookup"}
+    app = build_app(classes, {"Flights": [_table(column)]}, ASSOCIATIONS)
+
+    assert _lookup_fields(app.gui_model) == {"Airline": "label"}

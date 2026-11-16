@@ -45,6 +45,7 @@ from besser.BUML.metamodel.gui.events_actions import (
 from besser.BUML.metamodel.structural import Association, AssociationClass, Class, Enumeration
 from besser.generators.structural_utils import (
     create_schema_accepts_end,
+    display_attribute,
     form_parent_ends,
     get_foreign_keys,
     is_server_owned_attribute,
@@ -1480,45 +1481,10 @@ class GuiSerializationMixin:
 
     @staticmethod
     def _select_display_field(attributes: List[Any]) -> str:
-        """Pick the attribute shown for a related record in lookup selects.
-
-        The label has to let someone tell two records apart, so an attribute the
-        model marks as a business identifier wins, and an ``email`` outranks a
-        ``name``: two people called Jane are indistinguishable in a dropdown,
-        two email addresses are not.
-
-        Preference order: an attribute marked ``is_external_id``, then one named
-        ``email``, then one named ``name``, then the first string attribute that
-        is not the id, then the first non-id attribute, then the first attribute.
-        """
-        if not attributes:
-            return ""
-        external_id = next(
-            (attr for attr in attributes
-             if getattr(attr, "is_external_id", False) and not getattr(attr, "is_id", False)),
-            None,
-        )
-        if external_id is not None:
-            return external_id.name
-        for preferred in ("email", "name"):
-            if any(attr.name == preferred for attr in attributes):
-                return preferred
-        string_attr = next(
-            (attr for attr in attributes
-             if not getattr(attr, "is_id", False) and attr.name != "id"
-             and getattr(getattr(attr, "type", None), "name", "") == "str"),
-            None,
-        )
-        if string_attr is not None:
-            return string_attr.name
-        non_id = next(
-            (attr for attr in attributes
-             if not getattr(attr, "is_id", False) and attr.name != "id"),
-            None,
-        )
-        if non_id is not None:
-            return non_id.name
-        return attributes[0].name
+        """The name of the attribute shown for a related record in lookup selects
+        (see ``display_attribute``), or ``""`` when there is none."""
+        attribute = display_attribute(attributes)
+        return attribute.name if attribute is not None else ""
 
     @staticmethod
     def _select_lookup_field(attributes: List[Any]) -> str:

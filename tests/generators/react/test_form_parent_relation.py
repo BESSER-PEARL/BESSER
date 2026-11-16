@@ -195,3 +195,11 @@ def test_the_designed_selects_of_an_association_class_form_are_its_two_ends(buil
     for entity, name in (("Student", "students"), ("Course", "courses")):
         select = jsx(page, "LookupSelect", f'entity="{entity}"')
         assert f'name="{name}"' in select and "required={true}" in select
+
+
+def test_the_parent_select_labels_records_by_a_readable_attribute_not_the_generated_id(build_app, jsx):
+    """An ``id`` flagged as external id is still the server's generated key, not a label."""
+    classes = {**CLASSES, "Order": [("id", "int", {"isExternalId": True}), ("reference", "str")]}
+    app = build_app(classes, {"Lines": [_form(_input("quantity", "number"))]}, ASSOCIATIONS)
+
+    assert 'lookupField="reference"' in jsx(app.page("Lines"), "LookupSelect", 'entity="Order"')

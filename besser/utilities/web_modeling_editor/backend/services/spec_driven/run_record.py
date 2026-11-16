@@ -4,9 +4,10 @@ A shared output folder (a download, a pushed repository) used to say nothing
 about the run behind it: whether it edited a previous result or started over
 because that result had expired, which key tier and model ran it, which limit
 stopped it, what the user was warned about. The runner fills a ``RunFacts`` as
-the run goes; ``run_section`` turns it, the recipe and the orchestrator into a
-small dict. The recipe goes into GitHub pushes, so the section holds the public
-model label only, no key, no path and no host, and its texts are redacted.
+the run goes; ``run_section`` turns it and the run's own orchestrator and client
+into a small dict. The recipe goes into GitHub pushes, so the section holds
+fixed categories and fixed sentences only, never an error's text, and the
+public model label only.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from typing import Any, Optional
 
 from besser.spec_driven_agent.state import agent_trace
 from besser.utilities.provenance import get_besser_version, get_build_sha
-from besser.utilities.secret_redaction import redact_text
 
 # ``mode_reason`` values.
 FRESH = "fresh project"
@@ -26,15 +26,52 @@ BASE_EXPIRED = "previous result expired, rebuilt from scratch"
 BASE_NOT_COPIED = "previous result could not be copied, rebuilt from scratch"
 RESUMED = "resumed"
 
-# ``stopped_by`` values, and the ``outcome`` of the end log line.
+# ``stopped_by`` values.
 FINISHED, TIME_LIMIT, COST_LIMIT, TURN_LIMIT = "finished", "time limit", "cost limit", "turn limit"
-PROVIDER_ERROR, CANCELLED = "provider error", "cancelled"
+PROVIDER_ERROR, INTERNAL_ERROR, CANCELLED = "provider error", "internal error", "cancelled"
+STUCK, HANDED_OFF = "repeated edits did not land", "handed off to validation"
 _STOP_REASONS = {"max_turns": TURN_LIMIT, "api_error": PROVIDER_ERROR, "cancelled": CANCELLED,
-                 "cost_cap": COST_LIMIT, "timeout": TIME_LIMIT}
+                 "cost_cap": COST_LIMIT, "timeout": TIME_LIMIT, "stuck_edit_loop": STUCK,
+                 "validation_required": HANDED_OFF}
 
-# The section stays far under 4 KB: a few warnings, each cut.
+# ``stop_message``: the run card's sentence for each way a run ends, without its variable parts.
+_STOP_MESSAGES = {
+    TIME_LIMIT: "The run reached its time limit and was stopped before it finished.",
+    COST_LIMIT: "The run reached its cost limit and was stopped before it finished.",
+    TURN_LIMIT: "The customization loop reached its step limit before finishing every requested change.",
+    PROVIDER_ERROR: "The model provider failed, so the output may be incomplete.",
+    INTERNAL_ERROR: "The run hit an internal error after generating files, so the output may be incomplete.",
+    CANCELLED: "The run was cancelled before it finished.",
+    STUCK: "The customization loop stopped because repeated edits to the same file were not landing.",
+    HANDED_OFF: "The customization loop handed off to validation before finishing every requested change.",
+}
+_UNRESOLVED = ("The app was generated, but unresolved implementation or verification issues remain; "
+               "it is not verified complete.")
+
+# ``warnings``: a warning the user was shown, by how its fixed text starts. A
+# warning not listed here is left out: its text may quote an error.
+_WARNINGS = (
+    ("The previous generation has expired", "The previous result had expired, so the app was rebuilt from scratch."),
+    ("Could not copy the previous generation",
+     "The previous result could not be copied, so the app was rebuilt from scratch."),
+    ("Cost cap reached", _STOP_MESSAGES[COST_LIMIT]),
+    ("Free tier per-run usage limit reached", "The run reached the free tier's per-run usage limit."),
+    ("Runtime cap reached", _STOP_MESSAGES[TIME_LIMIT]),
+    ("The app was generated, but", _UNRESOLVED),
+    ("I changed the app, but could not confirm the reported failure",
+     "The reported failure could not be confirmed as fixed."),
+    ("The model provider failed after generating files", _STOP_MESSAGES[PROVIDER_ERROR]),
+    ("The run hit an internal error after generating files", _STOP_MESSAGES[INTERNAL_ERROR]),
+    ("The customization loop was cut short by a provider error", _STOP_MESSAGES[PROVIDER_ERROR]),
+    ("The customization loop reached its step limit", _STOP_MESSAGES[TURN_LIMIT]),
+    ("The customization loop stopped because repeated edits", _STOP_MESSAGES[STUCK]),
+    ("The customization loop handed off to validation", _STOP_MESSAGES[HANDED_OFF]),
+    ("The run was cancelled before", _STOP_MESSAGES[CANCELLED]),
+)
+_ASSEMBLY_WARNING = "project diagram(s) could not be converted"
+
+# The section stays far under 4 KB.
 _MAX_WARNINGS = 8
-_MAX_TEXT = 300
 _PHASES = (("select", "select"), ("generate", "generate"), ("gap", "plan"), ("customize", "customise"),
            ("validate", "validate"))
 _WRITE_TOOLS = frozenset({"write_file"})
@@ -44,6 +81,12 @@ _EDIT_TOOLS = frozenset({"modify_file", "replace_file_lines"})
 def key_tier(provider: str) -> str:
     """Who pays for the model: the server's keyless tiers, or the user's own key."""
     return provider if provider in ("free", "sponsored") else "own key"
+
+
+def _fixed_warning(message: str) -> Optional[str]:
+    if _ASSEMBLY_WARNING in message:
+        return "A diagram of the project could not be converted, so the result is not verified complete."
+    return next((sentence for start, sentence in _WARNINGS if message.startswith(start)), None)
 
 
 @dataclass
@@ -56,6 +99,8 @@ class RunFacts:
     started: float = field(default_factory=time.monotonic)
     phase_started: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
+    #: ``PROVIDER_ERROR`` or ``INTERNAL_ERROR`` when the worker failed after writing files.
+    late_error: Optional[str] = None
     stopped_by: Optional[str] = None
     stop_message: Optional[str] = None
     outcome: Optional[str] = None
@@ -67,41 +112,44 @@ class RunFacts:
         self.phase_started.setdefault(phase, time.monotonic())
 
     def saw_warning(self, message: str) -> None:
-        if len(self.warnings) < _MAX_WARNINGS and message not in self.warnings:
-            self.warnings.append(message)
+        sentence = _fixed_warning(message)
+        if sentence and sentence not in self.warnings and len(self.warnings) < _MAX_WARNINGS:
+            self.warnings.append(sentence)
 
     def phase_seconds(self, now: float) -> dict:
-        """Each phase's seconds, from its first event to the next phase's."""
+        """Each phase's seconds, from its start to the next phase's."""
         starts = sorted((at, name) for name, at in self.phase_started.items())
         ends = [at for at, _ in starts[1:]] + [now]
         seconds = {name: round(end - at, 1) for (at, name), end in zip(starts, ends)}
         return {label: seconds[name] for name, label in _PHASES if name in seconds}
 
-    def stop(self, *, stop_reason: str, cancelled: bool, cap_breach: Optional[str], timed_out: bool,
-             message: Optional[str], incomplete: bool, blocker_count: int, cost: float) -> None:
-        """Record why a run that produced output ended, in the words the run card used."""
-        if cancelled or stop_reason == "cancelled":
+    def stop(self, *, stop_reason: str, cancelled: bool, cap_breach: bool, timed_out: bool,
+             incomplete: bool, blocker_count: int, cost: float) -> None:
+        """Record why a run that produced output ended, in the run card's fixed words."""
+        if self.late_error:
+            self.stopped_by = self.late_error
+        elif cancelled or stop_reason == "cancelled":
             self.stopped_by = CANCELLED
         elif cap_breach:
             self.stopped_by = TIME_LIMIT if timed_out else COST_LIMIT
         else:
             self.stopped_by = _STOP_REASONS.get(stop_reason, FINISHED)
-        self.stop_message = message
+        self.stop_message = _STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None)
         self.blocker_count = blocker_count
         self.estimated_cost_usd = round(cost, 4)
         if self.stopped_by == CANCELLED:
             self.outcome = "cancelled"
         elif self.stopped_by in (TIME_LIMIT, COST_LIMIT, TURN_LIMIT):
             self.outcome = "budget_stop"
-        elif self.stopped_by == PROVIDER_ERROR:
+        elif self.stopped_by in (PROVIDER_ERROR, INTERNAL_ERROR):
             self.outcome = "failed"
         else:
             self.outcome = "completed_with_blockers" if incomplete or blocker_count else "completed"
 
 
-def _files(recipe: dict) -> tuple[int, int]:
+def _files(tool_calls: list) -> tuple[int, int]:
     written, edited = set(), set()
-    for call in recipe.get("tool_calls") or []:
+    for call in tool_calls:
         path = (call.get("input") or {}).get("path") if isinstance(call, dict) else None
         if isinstance(path, str):
             if call.get("tool") in _WRITE_TOOLS:
@@ -111,23 +159,15 @@ def _files(recipe: dict) -> tuple[int, int]:
     return len(written), len(edited - written)
 
 
-def run_section(facts: RunFacts, recipe: dict, orchestrator: Any, *, provider: str, models: list,
-                request_chars: int, secrets: tuple = ()) -> dict:
-    """The recipe's ``run`` section. ``models`` are the ids that ran; only their public labels are kept."""
+def run_section(facts: RunFacts, orchestrator: Any, *, provider: str, models: list, request_chars: int) -> dict:
+    """The recipe's ``run`` section, from this run's own orchestrator: never from a recipe on disk,
+    which is the base run's when this one failed before writing its own.
+
+    ``models`` are the ids that ran; only their public labels are kept.
+    """
     labels = list(dict.fromkeys(label for label in (agent_trace.normalize_model_id(provider, m) for m in models)
                                 if label))
-    private = [m for m in models if m and m not in labels]
-
-    def public(text: Optional[str]) -> Optional[str]:
-        """A user-facing text as it may go into a repository: no key, no provider-side model id."""
-        if not text:
-            return None
-        for model in private:
-            text = text.replace(model, labels[0] if labels else provider)
-        cleaned, _ = redact_text(" ".join(text.split())[:_MAX_TEXT], env_style=False, secrets=secrets)
-        return cleaned
-
-    target = recipe.get("target") if isinstance(recipe.get("target"), dict) else {}
+    target = getattr(orchestrator, "target", None)
     if getattr(orchestrator, "target_generator_bound", False):
         decided_by = "approved plan"
     elif getattr(orchestrator, "_routed", False):
@@ -135,15 +175,20 @@ def run_section(facts: RunFacts, recipe: dict, orchestrator: Any, *, provider: s
     else:
         decided_by = "not decided"
     asks_for_frontend = getattr(orchestrator, "_asks_for_frontend", None)
-    written, edited = _files(recipe)
-    section = {
+    tool_calls = getattr(orchestrator, "tool_calls_log", None) or []
+    written, edited = _files(tool_calls)
+    validate_started = getattr(orchestrator, "phase3_started_at", None)
+    if validate_started is not None:
+        # The validate phase event arrives once Phase 3 has run its checks; it started earlier.
+        facts.phase_started["validate"] = min(validate_started, facts.phase_started.get("validate", validate_started))
+    return {
         "mode": facts.mode,
         "mode_reason": facts.mode_reason,
         "base_run_id": facts.base_run_id,
-        "target": target.get("kind"),
+        "target": getattr(target, "kind", None),
         "target_decided_by": decided_by,
         "frontend_requested": bool(asks_for_frontend()) if callable(asks_for_frontend) else None,
-        "generator": recipe.get("generator_used"),
+        "generator": getattr(orchestrator, "_generator_used", None),
         "key_tier": key_tier(provider),
         "models": labels,
         "limits": {
@@ -152,15 +197,15 @@ def run_section(facts: RunFacts, recipe: dict, orchestrator: Any, *, provider: s
             "turns": getattr(orchestrator, "max_turns", None),
         },
         "stopped_by": facts.stopped_by,
-        "stop_message": public(facts.stop_message),
+        "stop_message": facts.stop_message,
         "outcome": facts.outcome,
-        "warnings": [public(message) for message in facts.warnings],
+        "warnings": list(facts.warnings),
         "duration_seconds": round(time.monotonic() - facts.started, 1),
         "phase_seconds": facts.phase_seconds(time.monotonic()),
         "estimated_cost_usd": facts.estimated_cost_usd,
         "counts": {
-            "turns": recipe.get("turns"),
-            "tool_calls": recipe.get("tool_calls_count"),
+            "turns": getattr(orchestrator, "total_turns", None),
+            "tool_calls": len(tool_calls),
             "files_written": written,
             "files_edited": edited,
             "blockers": facts.blocker_count,
@@ -169,7 +214,6 @@ def run_section(facts: RunFacts, recipe: dict, orchestrator: Any, *, provider: s
         "besser_build": get_build_sha(),
         "request_chars": request_chars,
     }
-    return section
 
 
 def start_line(run_id: str, facts: RunFacts, *, provider: str, model: Optional[str], generator: Optional[str]) -> str:

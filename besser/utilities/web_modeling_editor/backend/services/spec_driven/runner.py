@@ -1954,6 +1954,7 @@ class SmartGenerationRunner:
                 # the paid-for workspace: package it as INCOMPLETE instead.
                 if _dir_has_user_output(self.temp_dir):
                     result_path = self.temp_dir
+                    self._facts.late_error = run_record.PROVIDER_ERROR
                     self._late_internal_error = (
                         f"The model provider failed after generating files "
                         f"({str(exc)[:300]}), so the output may be incomplete."
@@ -1971,6 +1972,7 @@ class SmartGenerationRunner:
                 # Only when files were actually written; otherwise fail as before.
                 if _dir_has_user_output(self.temp_dir):
                     result_path = self.temp_dir
+                    self._facts.late_error = run_record.INTERNAL_ERROR
                     self._late_internal_error = (
                         "The run hit an internal error after generating files, "
                         "so the output may be incomplete."
@@ -2269,8 +2271,8 @@ class SmartGenerationRunner:
                 ))
 
             self._facts.stop(
-                stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=_cap_breach,
-                timed_out=elapsed > effective_runtime_cap, message=incomplete_reason_msg, incomplete=incomplete,
+                stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
+                timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
                 blocker_count=len(_unfixed_blockers) if exited_cleanly else 0, cost=final_cost,
             )
 
@@ -2438,10 +2440,14 @@ class SmartGenerationRunner:
                 kind="check", what="everything this run did",
                 why="the run's verification report could not be built",
             )], counts=VerificationCounts(notVerified=1))
+        usage = getattr(self._t_client, "usage", None)
+        if callable(getattr(usage, "summary", None)):
+            # This run's spend: a run that failed before writing its recipe leaves the seeded base's here.
+            recipe["usage"] = usage.summary()
         recipe["run"] = run_record.run_section(
-            self._facts, recipe, self._t_orchestrator, provider=self.request.provider,
-            models=[recipe.get("llm_model"), getattr(getattr(self._t_client, "usage", None), "served_model", None)],
-            request_chars=len(self.request.instructions), secrets=(self.request.resolved_api_key(),),
+            self._facts, self._t_orchestrator, provider=self.request.provider,
+            models=[getattr(self._t_client, "model", None), getattr(usage, "served_model", None)],
+            request_chars=len(self.request.instructions),
         )
         redact_recipe_models(recipe, self.request.provider)
         recipe["verification"] = verification.model_dump(mode="json")

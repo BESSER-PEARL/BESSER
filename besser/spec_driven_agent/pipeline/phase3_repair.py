@@ -187,6 +187,9 @@ def _judge_left_unverified(verdict: dict) -> bool:
 class Phase3RepairMixin:
     """_run_phase3_validation and friends; see the module docstring."""
 
+    #: When the run's first Phase 3 validation started (``time.monotonic``): the run record's phase timing.
+    phase3_started_at: float | None = None
+
     def _complete_repair_if_verified(self) -> None:
         if self._phase2_stop_reason == "validation_required":
             self._phase2_exited_cleanly = True
@@ -244,6 +247,8 @@ class Phase3RepairMixin:
         budget-exhausted or crashed - so a dead app cannot leave through any
         of them quietly. See ``_apply_runtime_gate``.
         """
+        if self.phase3_started_at is None:
+            self.phase3_started_at = time.monotonic()
         try:
             self._run_phase3_repair_cycle()
         finally:

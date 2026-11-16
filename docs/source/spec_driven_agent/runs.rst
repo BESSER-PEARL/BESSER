@@ -252,19 +252,24 @@ keys, always in this order:
   gateways).
 - ``limits`` (``time_seconds``, ``cost_usd``, ``turns``), ``stopped_by``
   (``finished``, ``time limit``, ``cost limit``, ``turn limit``, ``provider
-  error`` or ``cancelled``), ``stop_message`` (the sentence the run card shows
-  for an incomplete run) and ``outcome``.
-- ``warnings``: the warnings shown to the user during the run (at most eight).
+  error``, ``internal error``, ``cancelled``, ``repeated edits did not land`` or
+  ``handed off to validation``), ``stop_message`` (the run card's sentence for
+  that ending, without its variable parts) and ``outcome``.
+- ``warnings``: the warnings shown to the user during the run (at most eight),
+  each as a fixed sentence. A warning whose text can quote an error is left out.
 - ``duration_seconds``, ``phase_seconds`` (``select``, ``generate``, ``plan``,
-  ``customise``, ``validate``; the Phase 3 fix loop is part of ``validate``)
-  and ``estimated_cost_usd``.
+  ``customise``, ``validate``; ``validate`` starts with Phase 3 and includes its
+  fix loop) and ``estimated_cost_usd``.
 - ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
   ``blockers``.
 - ``besser_version``, ``besser_build`` and ``request_chars`` (the request itself
   is ``instructions``).
 
-The section holds no key, no user e-mail, no server path and no host name; its
-texts are redacted like the rest of the recipe. ``BESSER_GENERATION.md`` shows
+The section is built from the run's own counters, never from a recipe on disk: a
+modify run that fails before writing its recipe still has the seeded base's,
+so packaging also replaces the recipe's ``usage`` with this run's. The section
+holds fixed values and fixed sentences only, never an error's text, so it holds
+no key, no user e-mail, no server path and no host name. ``BESSER_GENERATION.md`` shows
 its mode, end and model in the *This run* section.
 
 The worker logs one line when a run starts and one when it ends, with the same

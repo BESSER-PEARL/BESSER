@@ -16,6 +16,7 @@ from typing import Any
 
 from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
+from besser.spec_driven_agent.validation.user_wording import agent_texts
 from besser.utilities.provenance import (
     AGENTS_FILENAME,
     BESSER_BLOCK_BEGIN,
@@ -94,8 +95,12 @@ def recorded_requests(entries: list[dict], recipe: Any) -> list[str]:
     return [one_line(request) for request in requests]
 
 
-def _open_items(recipe: dict) -> tuple[list[dict], int]:
-    """What the last run left open, most serious first, and the true total (the lists are capped)."""
+def _open_items(recipe: dict, *, for_agent: bool = False) -> tuple[list[dict], int]:
+    """What the last run left open, most serious first, and the true total (the lists are capped).
+
+    The verification report says each finding in the user's words; ``for_agent``
+    gives the agent the finding's own message back (the request sent, the route).
+    """
     verification = recipe.get("verification")
     verification = verification if isinstance(verification, dict) else {}
     counts = verification.get("counts")
@@ -105,9 +110,12 @@ def _open_items(recipe: dict) -> tuple[list[dict], int]:
     if recipe.get("business_rules_stated") is False:
         items.append({"kind": "not_checked", "text": NO_RULES_STATED})
     total = len(items)
+    precise = agent_texts([str(issue.get("message") or "") for issue in _dicts(recipe.get("validation_issues"))]
+                          ) if for_agent else {}
     for kind, key in (("missing", "shippedUnenforced"), ("not_checked", "notVerified")):
         listed = _dicts(verification.get(key))
-        items += [{"kind": kind, "text": one_line(item.get("what"))} for item in listed]
+        items += [{"kind": kind, "text": one_line(precise.get(item.get("what"), item.get("what")))}
+                  for item in listed]
         count = counts.get(key)
         total += max(len(listed), count if isinstance(count, int) else 0)
     dropped = _dicts(recipe.get("dropped_tasks"))
@@ -115,8 +123,11 @@ def _open_items(recipe: dict) -> tuple[list[dict], int]:
     return items[:_MAX_OPEN_ITEMS], total + len(dropped)
 
 
-def build_recap(recipe: Any) -> dict | None:
-    """The recap of a recipe (shape: ``RepoRecap`` in the backend's models), or None when it records no run."""
+def build_recap(recipe: Any, *, for_agent: bool = False) -> dict | None:
+    """The recap of a recipe (shape: ``RepoRecap`` in the backend's models), or None when it records no run.
+
+    ``for_agent``: open items as the agent's findings, not the user's sentences (see ``_open_items``).
+    """
     if not isinstance(recipe, dict):
         return None
     entries = _dicts(recipe.get("history"))
@@ -133,7 +144,7 @@ def build_recap(recipe: Any) -> dict | None:
         }
         for entry, request in zip(entries, recorded_requests(entries, recipe))
     ]
-    open_items, open_item_count = _open_items(recipe)
+    open_items, open_item_count = _open_items(recipe, for_agent=for_agent)
     commits = _dicts(recipe.get(COMMITS_SINCE_RUN))
     return {
         "runs": runs[-MAX_RUNS:],
@@ -172,7 +183,7 @@ def _without_no_rules(recap: dict) -> tuple[dict, bool]:
 
 def next_run_notes(recipe: Any) -> str:
     """Where the last run ended and what GitHub gained since, for a modify run's inventory."""
-    recap = build_recap(recipe)
+    recap = build_recap(recipe, for_agent=True)
     if recap:
         recap, _ = _without_no_rules(recap)
     if not recap or not (recap["open_items"] or recap["commits_since_run"]):

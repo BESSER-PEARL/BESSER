@@ -264,6 +264,17 @@ def user_sentence(message: str) -> str:
     return user_finding(message).sentence
 
 
+def agent_texts(messages: list[str]) -> dict[str, str]:
+    """Each finding's user sentence (and a skipped check's plain name), mapped back to the
+    text the agent reads: the message without its first prefix."""
+    texts: dict[str, str] = {}
+    for message in messages:
+        texts.setdefault(user_sentence(message), message.partition(": ")[2] or message)
+        if skipped := _DID_NOT_RUN.match(" ".join(message.split())):
+            texts.setdefault(plain_check(skipped.group("check")), skipped.group("check"))
+    return texts
+
+
 # Above this many lines, findings of one group merge into one line.
 GROUP_ABOVE = 5
 

@@ -428,8 +428,13 @@ Vite frontend, the Dockerfiles, compose file and README of the scaffold repair;
 for an app started by one compose file, ``docker compose up --build`` in its
 folder and the ports it publishes; for a FastAPI backend on its own, the virtual
 environment, ``pip install -r requirements.txt``, the start command of its entry
-file and the address of its API documentation. A README the output already has
-is kept. The *This run* section then points to it.
+file and the address of its API documentation. Nothing is written for other
+shapes, such as a backend beside a frontend of another framework, or an entry
+file Python cannot import by name. The README BESSER writes ends with an HTML
+comment line saying so: a later run rewrites that README to match its output (a
+modify run that adds a frontend gets the two-service README) and removes it when
+no shape fits any more. A README without that line is the user's and is never
+touched. The *This run* section then points to the README.
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

@@ -63,7 +63,7 @@ from besser.spec_driven_agent.pipeline.constants import (
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
-from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold, ensure_run_instructions
+from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
@@ -2380,7 +2380,6 @@ class SmartGenerationRunner:
         # tree feeds the download zip and the GitHub push.
         try:
             frontend_repairs = ensure_frontend_scaffold(result_path, app_name=self.request.project.name)
-            frontend_repairs += ensure_run_instructions(result_path, app_name=self.request.project.name)
             if frontend_repairs:
                 logger.info(
                     "spec-driven run %s frontend scaffold repairs: %s",

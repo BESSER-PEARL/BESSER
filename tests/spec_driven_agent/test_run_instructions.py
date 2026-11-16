@@ -128,3 +128,77 @@ def test_an_app_started_by_one_compose_file_gets_its_commands_and_addresses(tmp_
     assert "| backend | http://localhost:8000 |" in readme
     assert "worker" not in readme  # publishes no fixed port
     assert "`web_app/docker-compose.yml`" in readme and "VITE_API_URL" in readme
+
+
+def test_a_later_run_rewrites_the_readme_besser_wrote(tmp_path):
+    """Run 1 delivers a backend; a modify run adds a frontend. The README must describe both."""
+    _backend(tmp_path)
+    ensure_frontend_scaffold(str(tmp_path))
+    assert "A FastAPI backend (`backend/`):" in (tmp_path / "README.md").read_text(encoding="utf-8")
+
+    _flat_app(tmp_path, with_backend=False)
+    ensure_frontend_scaffold(str(tmp_path))
+    readme = (tmp_path / "README.md").read_text(encoding="utf-8")
+
+    assert "and a React + Vite frontend (`frontend/`)" in readme
+    assert "docker compose up --build" in readme and "cd frontend" in _commands(readme)
+    ensure_frontend_scaffold(str(tmp_path))
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == readme
+
+
+def test_a_readme_without_besser_s_line_is_never_touched(tmp_path):
+    _backend(tmp_path)
+    ensure_frontend_scaffold(str(tmp_path))
+    text = (tmp_path / "README.md").read_text(encoding="utf-8")
+    own = "\n".join(line for line in text.splitlines() if "<!--" not in line) + "\nmy notes\n"
+    (tmp_path / "README.md").write_text(own, encoding="utf-8")
+
+    _flat_app(tmp_path, with_backend=False)
+    ensure_frontend_scaffold(str(tmp_path))
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == own
+
+
+def test_a_backend_beside_another_frontend_app_gets_no_half_readme(tmp_path):
+    _backend(tmp_path)
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "package.json").write_text('{"dependencies": {"next": "14"}}', encoding="utf-8")
+
+    assert ensure_run_instructions(str(tmp_path)) == []
+    assert not (tmp_path / "README.md").exists()
+
+
+def test_an_entry_module_python_cannot_import_gets_no_readme(tmp_path):
+    _backend(tmp_path, entry="main-api.py", source="from fastapi import FastAPI\napp = FastAPI()\n")
+    assert ensure_run_instructions(str(tmp_path)) == []
+
+
+_COMPOSE_WITH_STORES = """\
+services:
+  web:
+    build: ./web
+    ports:
+      - "${WEB_PORT:-3000}:80"
+  api:
+    build: ./backend
+    ports: ["8000:8000"]
+  db:
+    image: postgres:16
+    ports: ["5432:5432"]
+  cache:
+    image: redis:7
+    ports: ["6379:6379"]
+"""
+
+
+def test_the_compose_table_lists_the_app_s_own_services(tmp_path):
+    (tmp_path / "docker-compose.yml").write_text(_COMPOSE_WITH_STORES, encoding="utf-8")
+    ensure_run_instructions(str(tmp_path))
+    readme = (tmp_path / "README.md").read_text(encoding="utf-8")
+
+    assert "| web | http://localhost:3000 |" in readme and "| api | http://localhost:8000 |" in readme
+    assert "5432" not in readme and "6379" not in readme
+
+
+def test_a_compose_file_compose_cannot_read_gets_no_readme(tmp_path):
+    (tmp_path / "docker-compose.yml").write_text("services: [web, api\n", encoding="utf-8")
+    assert ensure_run_instructions(str(tmp_path)) == []

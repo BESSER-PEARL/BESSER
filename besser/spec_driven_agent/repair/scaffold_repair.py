@@ -388,6 +388,13 @@ passes it that way.
 """
 
 
+# The last line of a README BESSER wrote: with it, a later generation rewrites the
+# README to match the output; without it, the README is the user's.
+README_MARKER = ("<!-- Run instructions written by BESSER and rewritten on each generation. "
+                 "Delete this line to keep your own edits. -->")
+# A compose variable's default ("${WEB_PORT:-3000}"), the port it publishes when unset.
+_COMPOSE_DEFAULT_RE = _re.compile(r"\$\{\w+:?-([^}]*)\}")
+
 _BACKEND_README_TEMPLATE = """\
 # {title}
 
@@ -796,26 +803,39 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict,
     if _write_text(os.path.join(output_dir, "docker-compose.yml"),
                    _COMPOSE_TEMPLATE.format(backend=backend_name, frontend=frontend_name)):
         repairs.append("docker-compose.yml")
+    return repairs
 
-    readme = os.path.join(output_dir, "README.md")
-    if not os.path.isfile(readme):
-        entry_file, starts_server = _backend_entry(backend_dir)
-        module = entry_file[:-3]
-        if _write_text(readme, _README_TEMPLATE.format(
+
+def _two_service_readme(output_dir: str, app_name: str):
+    """README text for the backend + Vite frontend this module deploys with its own compose file, or None."""
+    backend_dir = _find_backend_dir(output_dir)
+    entry = _backend_entry(backend_dir) if backend_dir else None
+    if entry is None:
+        return None
+    backend_name = os.path.basename(backend_dir)
+    for frontend_dir, manifest in _find_vite_react_frontends(output_dir):
+        frontend_name = os.path.basename(frontend_dir)
+        if (os.path.dirname(os.path.abspath(frontend_dir)) == os.path.abspath(output_dir)
+                and _read_text(os.path.join(output_dir, "docker-compose.yml"))
+                == _COMPOSE_TEMPLATE.format(backend=backend_name, frontend=frontend_name)):
+            entry_file, starts_server = entry
+            module = entry_file[:-3]
+            return _README_TEMPLATE.format(
                 title=_app_title(output_dir, os.path.join(backend_dir, entry_file), app_name),
                 backend=backend_name, frontend=frontend_name, module=module,
                 start=(f"python {entry_file}" if starts_server
                        else f"python -m uvicorn {module}:app --port 8000"),
-                dev_address=_dev_server_address(frontend_dir, manifest))):
-            repairs.append("README.md")
-    return repairs
+                dev_address=_dev_server_address(frontend_dir, manifest))
+    return None
 
 
-def _has_readme(output_dir: str) -> bool:
+def _root_readme(output_dir: str):
+    """The output's README at its root, whatever its case and extension, or None."""
     try:
-        return any(name.lower().startswith("readme") for name in os.listdir(output_dir))
+        names = sorted(os.listdir(output_dir))
     except OSError:
-        return False
+        return None
+    return next((os.path.join(output_dir, name) for name in names if name.lower().startswith("readme")), None)
 
 
 def _served_port(source: str):
@@ -832,9 +852,16 @@ def _backend_readme(output_dir: str, app_name: str):
         backend_dir = _find_backend_dir(output_dir)
     if backend_dir is None:
         return None
+    for folder, files in _iter_project_dirs(output_dir):
+        # Another app (a Next.js or Angular frontend) would make a backend-only README half true.
+        inside = os.path.commonpath([os.path.abspath(folder), os.path.abspath(backend_dir)])
+        if "package.json" in files and inside != os.path.abspath(backend_dir):
+            return None
     entry_file, starts_server = _backend_entry(backend_dir)
     module = entry_file[:-3]
-    port = _served_port(_read_text(os.path.join(backend_dir, entry_file))) if starts_server else None
+    if not module.isidentifier():
+        return None
+    port =_served_port(_read_text(os.path.join(backend_dir, entry_file))) if starts_server else None
     start = f"python {entry_file}" if port else f"python -m uvicorn {module}:app --port 8000"
     folder = "" if backend_dir == output_dir else os.path.basename(backend_dir)
     return _BACKEND_README_TEMPLATE.format(
@@ -843,19 +870,24 @@ def _backend_readme(output_dir: str, app_name: str):
         cd=f"cd {folder}\n" if folder else "", start=start, port=port or 8000, module=module)
 
 
-def _published_ports(compose_path: str) -> list:
-    """(service, port on this machine) for each ``ports`` entry that names one."""
+def _published_ports(compose_path: str):
+    """(service, port on this machine) for each port the app's own services (those with a ``build``)
+    publish, a database or cache image being no address to open; None for a file Compose cannot run."""
     try:
         services = (yaml.safe_load(_read_text(compose_path)) or {}).get("services")
     except (yaml.YAMLError, AttributeError):
-        return []
+        return None
+    if not isinstance(services, dict):
+        return None
     found = []
-    for name, service in services.items() if isinstance(services, dict) else ():
-        for entry in service.get("ports") or [] if isinstance(service, dict) else []:
+    for name, service in services.items():
+        if not isinstance(service, dict) or not service.get("build"):
+            continue
+        for entry in service.get("ports") or []:
             if isinstance(entry, dict):
                 published = entry.get("published")
-            else:  # "8000:8000", "127.0.0.1:8000:8000"; a bare container port publishes none
-                parts = str(entry).split(":")
+            else:  # "8000:8000", "127.0.0.1:8000:8000", "${PORT:-3000}:80"; a bare container port publishes none
+                parts = _COMPOSE_DEFAULT_RE.sub(r"\1", str(entry)).split(":")
                 published = parts[-2] if len(parts) > 1 else None
             if str(published or "").isdigit():
                 found.append((str(name), int(published)))
@@ -876,6 +908,8 @@ def _compose_readme(output_dir: str, app_name: str):
     backend_dir = _find_backend_dir(compose_dir)
     entry = _backend_entry(backend_dir) if backend_dir else None
     ports = _published_ports(found[0])
+    if ports is None:
+        return None
     rows = "".join(f"| {name} | http://localhost:{port} |\n" for name, port in ports)
     compose = (f"{folder}/" if folder else "") + os.path.basename(found[0])
     return _COMPOSE_README_TEMPLATE.format(
@@ -886,20 +920,32 @@ def _compose_readme(output_dir: str, app_name: str):
 
 
 def ensure_run_instructions(output_dir: str, app_name: str = "") -> list:
-    """A README saying how to run the output, when it has none at its root.
+    """A README at the output root saying how to run what was generated.
 
-    Covers what the two-service writer of ``ensure_frontend_scaffold`` does not:
-    an app started by one Compose file, and a FastAPI backend on its own. The
-    commands come from the files delivered. Other outputs are left as they are.
-    Returns ``["README.md"]`` when it wrote one.
+    Shapes, from the files delivered: the backend + Vite frontend deployed by
+    ``_ensure_deployment_files``, an app started by one compose file, and a
+    FastAPI backend on its own; other outputs get none. A README that carries
+    ``README_MARKER`` is BESSER's and is rewritten when the output changes (a
+    later run adds a frontend), or removed when no shape fits any more; any
+    other README is the user's and is never touched. Returns what it changed.
     """
-    if _has_readme(output_dir):
+    path = _root_readme(output_dir)
+    if path is not None and README_MARKER not in _read_text(path):
         return []
-    text = _compose_readme(output_dir, app_name)
-    if text is None and not _find_vite_react_frontends(output_dir):
-        text = _backend_readme(output_dir, app_name)
-    if text and _write_text(os.path.join(output_dir, "README.md"), text):
-        return ["README.md"]
+    text = (_two_service_readme(output_dir, app_name) or _compose_readme(output_dir, app_name)
+            or _backend_readme(output_dir, app_name))
+    if text is None:
+        if path is not None:
+            try:
+                os.remove(path)
+            except OSError:
+                return []
+            return [f"{os.path.basename(path)} (removed: no run instructions fit the output)"]
+        return []
+    text += f"\n{README_MARKER}\n"
+    path = path or os.path.join(output_dir, "README.md")
+    if _read_text(path) != text and _write_text(path, text):
+        return [os.path.basename(path)]
     return []
 
 
@@ -956,4 +1002,5 @@ def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
 
         repairs.extend(_ensure_deployment_files(output_dir, frontend_dir, manifest, app_name))
     repairs.extend(_ensure_dockerignores(output_dir))
+    repairs.extend(ensure_run_instructions(output_dir, app_name))
     return repairs

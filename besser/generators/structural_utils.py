@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Dict, List
 
 from besser.BUML.metamodel.structural import DomainModel, Property
@@ -18,6 +19,24 @@ def is_server_owned_attribute(attribute: Property) -> bool:
         or attribute.name.lower().replace("_", "") in {"createdat", "updatedat"}
         or attribute.is_derived
     )
+
+
+# Name fragments that mark a text attribute as a stored credential.
+_CREDENTIAL_NAME_PARTS = ("password", "passwd", "secret", "token", "apikey")
+
+
+def is_credential_attribute(attribute: Property) -> bool:
+    """Whether a text attribute stores a credential: a password or its hash, a secret, a token, an API key.
+
+    The metamodel has no marker for sensitive data, so the name decides,
+    ignoring case and separators (``passwordHash``, ``api_key``,
+    ``SecretToken``). A generated API accepts such an attribute on create and
+    update, and never returns it or filters by it.
+    """
+    if attribute.is_id or attribute.type.name not in ("str", "string"):
+        return False
+    normalized = re.sub(r"[^a-z0-9]", "", attribute.name.lower())
+    return any(part in normalized for part in _CREDENTIAL_NAME_PARTS)
 
 
 def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],

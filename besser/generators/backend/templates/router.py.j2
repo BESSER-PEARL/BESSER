@@ -185,7 +185,7 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
                 {% if x[0] == class.name %}
                 # Columns only: a related {{ class.name }} carries its own loaded
                 # relationships, which can lead back to this one.
-                related_dict = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs}
+                related_dict = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if not attr.deferred}
                 {% else %}
                 related_dict = related_obj.__dict__.copy()
                 related_dict.pop('_sa_instance_state', None)
@@ -198,11 +198,11 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
                loaded onto the records the lists below serialize #}
             {% for x in ns.one_to_many if x[0] == class.name %}
             related_obj = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_item.{{ x[1] }}_id).first()
-            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs} if related_obj is not None else None
+            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if not attr.deferred} if related_obj is not None else None
             {% endfor %}
             {% for x in ns.reverse_one %}
             related_obj = database.query({{ class.name }}).filter({{ class.name }}.{{ x[0] }}_id == {{ class.name | lower}}_item.{{ pk }}).first()
-            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs} if related_obj is not None else None
+            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if not attr.deferred} if related_obj is not None else None
             {% endfor %}
 
             {% if ns.end_name_multiple or ns.one_to_many %}
@@ -324,16 +324,18 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     route instead of the path falling through to /{id}/ as a 422. When
     the whole hierarchy has no searchable primitive attribute the
     endpoint is not generated at all. #}
+{#- A credential is never a filter: matching on part of the stored value
+    would let a caller recover it one character at a time. #}
 {%- set ns_search = namespace(attrs=[]) %}
 {%- for parent in all_parents %}
 {%- for attribute in parent.attributes | sort(attribute='name') %}
-{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) %}
 {%- do ns_search.attrs.append(attribute) %}
 {%- endif %}
 {%- endfor %}
 {%- endfor %}
 {%- for attribute in class.attributes | sort(attribute='name') %}
-{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) %}
 {%- do ns_search.attrs.append(attribute) %}
 {%- endif %}
 {%- endfor %}
@@ -1247,7 +1249,7 @@ async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.g
     # back-references, which would make the JSON encoder recurse endlessly.
     deleted_{{ class.name | lower}} = {
         attr.key: getattr(db_{{ class.name | lower}}, attr.key)
-        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs if not attr.deferred
     }
     database.delete(db_{{ class.name | lower}})
     database.commit()
@@ -1266,7 +1268,7 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types
     # the JSON encoder recurse endlessly on the live object.
     deleted_{{ class.name | lower}} = {
         attr.key: getattr(db_{{ class.name | lower}}, attr.key)
-        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs if not attr.deferred
     }
     database.delete(db_{{ class.name | lower}})
     database.commit()

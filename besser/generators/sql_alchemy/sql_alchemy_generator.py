@@ -11,6 +11,7 @@ from besser.utilities.utils import sort_by_timestamp
 from besser.generators.structural_utils import (
     get_deferred_fk_associations,
     get_foreign_keys,
+    is_credential_attribute,
     normalize_method_code,
     get_pk_py_types,
 )
@@ -278,7 +279,16 @@ class SQLAlchemyGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
-        env.globals.update(normalize_code=normalize_method_code)
+        env.globals.update(normalize_code=normalize_method_code,
+                           is_credential_attribute=is_credential_attribute)
+        for cls in classes + asso_classes:
+            for attr in sort_by_timestamp(cls.attributes):
+                if is_credential_attribute(attr):
+                    logger.warning(
+                        "Attribute '%s.%s' is treated as a credential because of its name: it is "
+                        "loaded on access only, so API responses and search filters leave it out.",
+                        cls.name, attr.name,
+                    )
         # default_value reaches the metamodel unvalidated from request JSON and
         # used to be interpolated raw into the generated module — which
         # SQLGenerator then EXECUTES. These emit literals, never expressions.

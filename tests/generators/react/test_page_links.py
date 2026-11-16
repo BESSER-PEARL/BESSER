@@ -45,7 +45,7 @@ def test_a_link_to_a_page_route_uses_the_router(build_app, jsx):
     assert 'import { useNavigate } from "react-router-dom";' in page
     anchor = jsx(page, "a")
     assert 'href="/order-list"' in anchor
-    assert 'onClick={(e) => { e.preventDefault(); navigate("/order-list"); }}' in anchor
+    assert 'e.preventDefault(); navigate("/order-list"); }}' in anchor
 
 
 def test_navigate_to_names_the_page_whatever_the_href(build_app, jsx):
@@ -98,5 +98,17 @@ def test_menu_items_to_pages_use_the_router(build_app):
     assert {item.url for item in _elements(app.gui_model, Menu)[0].menuItems} == {
         "/home", "/order-list", "https://example.org/help",
     }
-    assert 'href="/order-list" onClick={(e) => { e.preventDefault(); navigate("/order-list"); }}' in page
+    assert 'href="/order-list" onClick={(e) => {' in page and 'e.preventDefault(); navigate("/order-list"); }}' in page
     assert '<a href="https://example.org/help">' in page
+
+
+def test_a_modified_click_on_a_page_link_is_left_to_the_browser(build_app):
+    """Ctrl/Cmd/Shift-click or a middle click opens the page in a new tab or window."""
+    menu = {"tagName": "nav", "components": [_anchor("Orders", href="/order-list")]}
+    app = build_app(CLASSES, _pages(_anchor("See orders", href="/order-list"), menu))
+    page = app.page("Home")
+
+    plain_click_only = "if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; "
+    handler = f'(e) => {{ {plain_click_only}e.preventDefault(); navigate("/order-list"); }}'
+    assert page.count("onClick={" + handler + "}") == 2
+    assert page.count("e.preventDefault(); navigate(") == 2

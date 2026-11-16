@@ -273,9 +273,7 @@ class PageBuilderMixin:
             on_click_expr = None
             if target_path and (not url or url == "#" or not str(url).startswith("http")):
                 context.needs_navigate = True
-                on_click_expr = (
-                    f"(e) => {{ e.preventDefault(); navigate({json.dumps(target_path)}); }}"
-                )
+                on_click_expr = self._router_click(target_path)
                 url = target_path
             if not url or url == "#":
                 url = target_path or "/"
@@ -395,7 +393,7 @@ class PageBuilderMixin:
                 on_click = ""
                 if target != "_blank" and self._page_route(url):
                     context.needs_navigate = True
-                    on_click = f" onClick={{(e) => {{ e.preventDefault(); navigate({json.dumps(url)}); }}}}"
+                    on_click = f" onClick={{{self._router_click(url)}}}"
                 label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
                 item_lines.append(
                     f"{indent_str}    <li {list_item_style}>"
@@ -1222,6 +1220,15 @@ class PageBuilderMixin:
                             target_path = getattr(self, "_page_path_map", {}).get(target_id)
                     return target_path or self._path_from_name(action.get("target_screen"))
         return None
+
+    @staticmethod
+    def _router_click(path: str) -> str:
+        """The click handler of an anchor that opens ``path`` through the router; a
+        modified or middle click is left to the browser (new tab or window)."""
+        return (
+            "(e) => { if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; "
+            f"e.preventDefault(); navigate({json.dumps(path)}); }}"
+        )
 
     def _page_route(self, url: Optional[str]) -> Optional[str]:
         """``url`` when it is the route of one of the app's own pages."""

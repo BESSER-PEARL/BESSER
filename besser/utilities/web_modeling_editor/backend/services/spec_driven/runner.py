@@ -56,8 +56,8 @@ from besser.spec_driven_agent.providers.llm_client import (
 )
 from besser.llm.catalog import load_model_catalog
 from besser.spec_driven_agent.pipeline.constants import (
-    _SNAPSHOT_IGNORED_DIRS,
     EXCLUDED_OUTPUT_NAMES,
+    INSTALLED_AND_BUILT_DIRS,
     is_excluded_output_file as _is_excluded_output_file,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
@@ -201,15 +201,15 @@ def _remove_run_dir(path: str) -> None:
 
 
 def drop_installed_dependencies(workspace: str) -> None:
-    """Remove what a finished run installed: its dependency folders and its sandbox ``$HOME``.
+    """Remove what a finished run installed and built: those folders and its sandbox ``$HOME``.
 
     Hundreds of MB that nothing reads once the run is packaged: the download, a
-    push and a modify run's seed leave them out, and a resumed run installs again.
+    push and a modify run's seed leave them out.
     """
     close_sessions_for(workspace)
     shutil.rmtree(sandbox_home(workspace), ignore_errors=True)
     for root, dirs, _files in walk_plain(workspace):
-        for name in [d for d in dirs if d in _SNAPSHOT_IGNORED_DIRS]:
+        for name in [d for d in dirs if d in INSTALLED_AND_BUILT_DIRS]:
             dirs.remove(name)
             shutil.rmtree(os.path.join(root, name), ignore_errors=True)
 
@@ -1086,6 +1086,8 @@ class SmartGenerationRunner:
         self._attribution_ok = True
         self._t_blockers_found: Optional[int] = None
         self._t_stream_aborted: Optional[str] = None
+        # Set once the run is packaged: what ``release_disk`` may clear.
+        self._packaged_workspace: Optional[str] = None
         # What the run's recipe section and log lines report; see run_record.
         self._facts = run_record.RunFacts(
             mode=mode, base_run_id=base_run_id,
@@ -1131,6 +1133,26 @@ class SmartGenerationRunner:
         finally:
             logger.info(run_record.end_line(self.run_id, self._facts))
             self._record_run_summary()
+
+    async def release_disk(self) -> None:
+        """Drop what a packaged run installed and built; called once its slot is free.
+
+        A run that kept its checkpoint can be resumed, and nothing in a resume
+        installs dependencies again before validating (only the agent can, on
+        a ``verification setup:`` finding), so it keeps them until it expires.
+        """
+        from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+
+        workspace = self._packaged_workspace
+        if not workspace:
+            return
+        if os.path.isfile(os.path.join(workspace, CHECKPOINT_FILENAME)):
+            logger.info("Run %s can be resumed: its installed dependencies are kept", self.run_id)
+            return
+        try:
+            await self._runtime.run_blocking(drop_installed_dependencies, workspace)
+        except OSError:
+            logger.warning("Run %s: its installed dependencies could not be removed", self.run_id, exc_info=True)
 
     def _is_study_run(self) -> bool:
         """True when this run is recorded for a research study: it carries
@@ -2314,12 +2336,8 @@ class SmartGenerationRunner:
                 self._facts.archive_written = is_plain_file(
                     os.path.join(run_download_dir(entry.temp_dir), _DOWNLOAD_ARTIFACT_NAME),
                     root=run_download_dir(entry.temp_dir))
+                self._packaged_workspace = entry.temp_dir
                 yield self._sse(done_event)
-                try:
-                    await self._runtime.run_blocking(drop_installed_dependencies, entry.temp_dir)
-                except OSError:
-                    logger.warning("Run %s: its installed dependencies could not be removed", self.run_id,
-                                   exc_info=True)
             except _EmptyGenerationError as exc:
                 # Raised inside _package_result when the orchestrator
                 # returned but produced zero user files. Surfaced with

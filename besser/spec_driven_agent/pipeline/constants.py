@@ -72,6 +72,11 @@ _EXCLUDED_OUTPUT_FILE_GLOBS = ("*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-j
 # so the manifest cannot name a file the user does not receive.
 EXCLUDED_OUTPUT_NAMES = frozenset({*_RECIPE_EXCLUDED_DIRS, *_EXCLUDED_OUTPUT_FILE_GLOBS})
 
+# What installing and building put in a workspace, which nothing delivers or seeds:
+# the excluded folders without the run's own records.
+INSTALLED_AND_BUILT_DIRS = frozenset(_RECIPE_EXCLUDED_DIRS - {
+    _SNAPSHOT_DIR, _SNAPSHOT_STAGING_DIR, _ROLLBACK_DISCARD_DIR, COMMAND_OUTPUT_DIR})
+
 
 def is_excluded_output_file(name: str) -> bool:
     """True for a file name the delivered output leaves out."""

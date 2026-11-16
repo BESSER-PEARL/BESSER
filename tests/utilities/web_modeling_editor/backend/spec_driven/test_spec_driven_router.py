@@ -347,3 +347,28 @@ class TestApiInfo:
         endpoints = r.json()["endpoints"]
         assert "smart_generate" in endpoints
         assert "download_smart" in endpoints
+
+
+def test_a_run_frees_its_slot_before_it_frees_its_disk():
+    """Removing a run's installed dependencies takes seconds; the slot must not wait for it."""
+    from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import _stream_with_slot_release
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import SpecDrivenRuntime
+
+    async def frames():
+        yield b"event: done\ndata: {}\n\n"
+
+    async def exercise():
+        runtime = SpecDrivenRuntime.create()
+        assert runtime.slots.try_acquire()
+        held_at_release: list[int] = []
+
+        async def release_disk():
+            held_at_release.append(runtime.slots._held)
+
+        async for _ in _stream_with_slot_release(frames(), runtime, after_release=release_disk):
+            pass
+        await asyncio.gather(*runtime.background)
+        runtime.close()
+        return held_at_release
+
+    assert asyncio.run(exercise()) == [0]

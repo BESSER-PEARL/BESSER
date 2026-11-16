@@ -289,11 +289,14 @@ Storage and lifecycle
 - ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (10800, 3 hours) -- How long a finished
   run's workspace stays: the window in which a modify run can edit it, a push
   can send it to GitHub and its events stay replayable. The editor reads it as
-  ``download_ttl_seconds`` from ``GET /spec-driven/config``. When a run is
-  packaged its installed dependencies (``node_modules``, virtual environments)
-  and its sandbox ``$HOME`` are removed, so what stays is the source tree and
-  the run's own files, a few MB. The run's status record is kept for 24 hours,
-  as long as its workspace can be resumed.
+  ``download_ttl_seconds`` from ``GET /spec-driven/config``. Once a packaged
+  run has freed its concurrency slot, what it installed and built (the folders
+  the download leaves out: ``node_modules``, virtual environments, ``dist``,
+  ``build``, ``target``, ``.next``, ...) and its sandbox ``$HOME`` are removed,
+  so what stays is the source tree and the run's own files, a few MB. A run
+  that kept its checkpoint keeps them, since a resume does not install them
+  again before it validates. The run's status record is kept for 24 hours, as
+  long as its workspace can be resumed.
 - ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (86400, 24 hours) -- How long the
   output stays downloadable (``archive_ttl_seconds`` in the config). The
   archive is small, so it outlives the workspace; it is never shorter than

@@ -16,6 +16,7 @@ from besser.utilities.web_modeling_editor.backend.models.project import ProjectI
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
+from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartGenerationRunner,
 )
@@ -500,35 +501,63 @@ class TestEmptyOutput:
 
 
 class _InstallingOrchestrator(_FakeOrchestrator):
-    """Leaves what Phase 3 installs: a frontend's node_modules and the sandbox $HOME's caches."""
+    """Leaves what Phase 3 installs and builds: dependencies, build output and the sandbox $HOME's caches."""
+
+    resumable = False
 
     def run(self, instructions: str) -> str:
         out = super().run(instructions)
-        os.makedirs(os.path.join(out, "frontend", "node_modules", "react"))
-        os.makedirs(os.path.join(out, "backend", ".venv", "lib"))
+        for folder in (("frontend", "node_modules", "react"), ("backend", ".venv", "lib"),
+                       ("frontend", "dist", "assets"), ("crate", "target", "debug"), ("site", ".next", "cache")):
+            os.makedirs(os.path.join(out, *folder))
         os.makedirs(os.path.join(sandbox_home(self.workspace), ".npm"))
+        if type(self).resumable:
+            with open(os.path.join(self.workspace, CHECKPOINT_FILENAME), "w", encoding="utf-8") as fh:
+                fh.write("{}")
         return out
 
 
+_INSTALLED = (("frontend", "node_modules"), ("backend", ".venv"), ("frontend", "dist"), ("crate", "target"),
+              ("site", ".next"))
+
+
 class TestInstalledDependencies:
-    def test_a_packaged_run_keeps_its_files_and_drops_what_it_installed(self, monkeypatch):
-        """Hundreds of MB per run that nothing reads once the download exists."""
+    def _run(self, monkeypatch, resumable=False):
         monkeypatch.setattr(runner_module, "LLMOrchestrator", _InstallingOrchestrator)
+        monkeypatch.setattr(_InstallingOrchestrator, "resumable", resumable)
         monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
         runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
-        _InstallingOrchestrator.workspace = property(lambda self: runner.temp_dir)
-
+        monkeypatch.setattr(_InstallingOrchestrator, "workspace", property(lambda self: runner.temp_dir),
+                            raising=False)
         frames = asyncio.run(_collect_frames(runner))
         assert _parse_frame(frames[-1])["event"] == "done"
+        return runner, _LAST_ORCHESTRATORS[-1].output_dir
 
-        out = _LAST_ORCHESTRATORS[-1].output_dir
+    def test_a_packaged_run_drops_what_it_installed_and_built_once_released(self, monkeypatch):
+        """Hundreds of MB per run that nothing reads once the download exists."""
+        runner, out = self._run(monkeypatch)
+        # Still there while the run holds its slot: the stream does not wait on a large delete.
+        assert os.path.isdir(os.path.join(out, "frontend", "node_modules"))
+
+        asyncio.run(runner.release_disk())
+
         assert os.path.isfile(os.path.join(out, "main.py"))
         assert os.path.isfile(os.path.join(out, ".besser_recipe.json"))
-        assert not os.path.exists(os.path.join(out, "frontend", "node_modules"))
-        assert not os.path.exists(os.path.join(out, "backend", ".venv"))
+        for folder in _INSTALLED:
+            assert not os.path.exists(os.path.join(out, *folder)), folder
         assert not os.path.exists(sandbox_home(runner.temp_dir))
         entry = asyncio.run(current_runtime().registry.get(runner.run_id))
         assert entry is not None and os.path.isfile(entry.file_path)
+
+    def test_a_resumable_run_keeps_what_a_resume_needs(self, monkeypatch):
+        """No resume step reinstalls: the frontend build and the API probe would report it missing."""
+        runner, out = self._run(monkeypatch, resumable=True)
+
+        asyncio.run(runner.release_disk())
+
+        for folder in _INSTALLED:
+            assert os.path.isdir(os.path.join(out, *folder)), folder
+        assert os.path.isdir(sandbox_home(runner.temp_dir))
 
 
 class TestRegistrySweep:

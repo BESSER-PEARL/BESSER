@@ -29,7 +29,7 @@ import os
 import re
 import time
 import uuid
-from typing import AsyncGenerator, AsyncIterator, Optional
+from typing import AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional
 
 import httpx
 from fastapi import APIRouter, File, Header, HTTPException, Path, Query, UploadFile
@@ -136,6 +136,7 @@ async def _stream_with_slot_release(
     inner: AsyncGenerator[bytes, None],
     runtime: SpecDrivenRuntime,
     run_reservation: Optional[tuple[str, asyncio.Event]] = None,
+    after_release: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> AsyncIterator[bytes]:
     """Yield from an SSE generator and return its concurrency slot
     when the stream ends, regardless of outcome.
@@ -215,6 +216,9 @@ async def _stream_with_slot_release(
         if run_reservation is not None:
             await runtime.active_runs.release(*run_reservation)
         runtime.slots.release()
+        if after_release is not None:
+            # On its own: slow clean-up holds neither the slot nor the run's status.
+            runtime.spawn(after_release())
 
 
 # ---------------------------------------------------------------------
@@ -367,6 +371,7 @@ async def smart_generate(
         runner.generate_and_stream(),
         runtime,
         run_reservation=(run_id, cancel_event),
+        after_release=runner.release_disk,
     )
     try:
         await runtime.durable_runs.start(
@@ -748,6 +753,7 @@ async def resume_smart_gen(
         runner.generate_and_stream(),
         runtime,
         run_reservation=(run_id, cancel_event),
+        after_release=runner.release_disk,
     )
     try:
         await runtime.durable_runs.start(

@@ -109,6 +109,8 @@ class SpecDrivenRuntime:
     #: ``Idempotency-Key`` -> ``(run_id, created_at)`` of recent run starts.
     idempotent_runs: dict[str, tuple[str, float]] = field(default_factory=dict)
     idempotency_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: Work detached from any run (``spawn``), kept referenced until it ends.
+    background: set = field(default_factory=set)
 
     @classmethod
     def create(
@@ -136,6 +138,13 @@ class SpecDrivenRuntime:
         """``asyncio.to_thread`` on this runtime's own pool."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self.executor, functools.partial(func, *args, **kwargs))
+
+    def spawn(self, coroutine) -> asyncio.Task:
+        """Run ``coroutine`` on its own; it handles its own errors."""
+        task = asyncio.get_running_loop().create_task(coroutine)
+        self.background.add(task)
+        task.add_done_callback(self.background.discard)
+        return task
 
     def close(self) -> None:
         """Stop taking new work; threads still running finish at interpreter exit."""

@@ -89,6 +89,8 @@ PREFIX = "create contract:"
 UNVERIFIED_PREFIX = "create unverified:"
 ACTION_PREFIX = "action call:"
 ACTION_UNVERIFIED_PREFIX = "action unverified:"
+# A warning (issues.py default): account records anyone can change in an app with its own login.
+OPEN_ACCOUNT_PREFIX = "open account writes:"
 
 _PROBE_TIMEOUT_SECONDS = 90
 _MARKER = "BESSER_CONSTRUCTIBILITY_REPORT:"
@@ -382,6 +384,15 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
             f"{entry['path']} with valid specification-based fixtures (logging in first where the API requires "
             "it) and then GET that record by its id; a create that is not read back stays unverified")
     issues.extend(_action_issue_text(entry, rel) for entry in report.get("actions") or [])
+    for entry in report.get("open_account_writes") or []:
+        if entry.get("routes"):
+            issues.append(
+                f"{OPEN_ACCOUNT_PREFIX} {rel}: {', '.join(entry['routes'])} changed a {entry['table']} record "
+                f"for a request with no credentials, in an app with its own login (POST {entry['login']})")
+        for taken in entry.get("fields") or []:
+            issues.append(
+                f"{OPEN_ACCOUNT_PREFIX} {rel}: {taken['route']} let one logged-in account change "
+                f"{', '.join(taken['fields'])} of another {entry['table']} record")
     return issues
 
 
@@ -896,6 +907,8 @@ def _tables_behind(app, path: str, orm: dict) -> list[str]:
         if not isinstance(fn, types.FunctionType) or fn.__code__ in seen:
             return
         seen.add(fn.__code__)
+        if fn.__code__.co_filename.startswith("<"):
+            return  # ``<frozen os>``, ``<string>``: no source file to read, so no app code to follow
         try:
             if os.path.commonpath([os.path.abspath(fn.__code__.co_filename), root]) != root:
                 return  # a library function: the classes it builds are not the app's tables
@@ -1320,6 +1333,8 @@ _GRANT_WORDS = frozenset({"group", "access", "authority", "rights"})
 _PROBE_USERNAME = "probe_auth_user"
 _PROBE_EMAIL = "probe.auth.user@example.com"
 _PROBE_PASSWORD = "Probe-Passw0rd-2817"
+# The account-write step's second account: registered after the probe's own, so never the first.
+_MEMBER_IDENTITY = ("probe_member_user", "probe.member.user@example.com")
 
 
 def _auth_routes(spec: dict) -> dict:
@@ -1393,8 +1408,13 @@ def _choice(field: str, schema: dict) -> str | None:
     return None
 
 
-def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
-    """``(httpx body keyword, body)`` for a register/login route, or ``(None, why)``."""
+def _credential_body(op: dict, schemas: dict,
+                     identity: tuple[str, str] = (_PROBE_USERNAME, _PROBE_EMAIL)) -> tuple[str | None, object]:
+    """``(httpx body keyword, body)`` for a register/login route, or ``(None, why)``.
+
+    ``identity`` is the ``(username, email)`` the account is registered under.
+    """
+    username, email = identity
     kind, schema = _body_schema(op, schemas)
     if kind is None:
         return None, "no JSON or form request body"
@@ -1408,9 +1428,9 @@ def _credential_body(op: dict, schemas: dict) -> tuple[str | None, object]:
         elif "password" in low:
             body[field] = _PROBE_PASSWORD
         elif "email" in low or resolved.get("format") == "email":
-            body[field] = _PROBE_EMAIL
+            body[field] = email
         elif low in ("username", "user_name", "login", "name"):
-            body[field] = _PROBE_USERNAME
+            body[field] = username
         elif field in schema.get("required", []):
             # A birth date lies about 33 years back; any other date tomorrow.
             past = "birth" in low or "dob" in _name_tokens(field)
@@ -1427,7 +1447,9 @@ def _find_token(body) -> str | None:
     return None
 
 
-async def _discovered_login(client, spec: dict, schemas: dict) -> tuple[dict | None, str, str]:
+async def _discovered_login(client, spec: dict, schemas: dict,
+                            identity: tuple[str, str] = (_PROBE_USERNAME, _PROBE_EMAIL)
+                            ) -> tuple[dict | None, str, str]:
     """Register (when offered) and log in a probe account; ``(headers, error, identity)``.
 
     Empty headers mean a session cookie, which the client's jar carries. A
@@ -1441,7 +1463,7 @@ async def _discovered_login(client, spec: dict, schemas: dict) -> tuple[dict | N
         if step not in routes:
             continue
         path, op = routes[step]
-        kind, body = _credential_body(op, schemas)
+        kind, body = _credential_body(op, schemas, identity)
         if kind is None:
             errors.append(f"POST {path}: {body}")
             continue
@@ -1487,6 +1509,156 @@ async def _log_in(client, spec: dict, schemas: dict, retry) -> tuple[dict, tuple
         error = f"{type(exc).__name__}: {exc}"[:160]
     client.cookies.clear()
     return {"error": f"its register/login routes: {error}"[:400]}, None
+
+
+_ACCOUNT_WRITE_METHODS = ("put", "patch", "delete")
+_CREDENTIAL_WORDS = frozenset({"password", "passwd", "passphrase", "hash", "secret"})
+_CHANGED_PASSWORD = "Probe-Changed-Passw0rd-2817"
+
+
+def _sensitive_value(field: str, schema: dict, current) -> object | None:
+    """A new value for a credential or privilege field, or None when the probe would only guess."""
+    if _CREDENTIAL_WORDS.intersection(_name_tokens(field)):
+        return _CHANGED_PASSWORD if schema.get("type", "string") == "string" else None
+    if _choice(field, schema) != "a privilege-named field":
+        return None
+    literals = [v for v in schema.get("enum") or [] if v != current]
+    if literals:
+        return next((v for v in literals if "admin" in str(v).lower()), literals[-1])
+    if schema.get("type") == "boolean":
+        return current is not True
+    if schema.get("type") == "string":
+        return "admin" if current != "admin" else "administrator"
+    return None
+
+
+def _field_in(body, field: str):
+    """``field`` in a response record, at the top or in its one wrapper; ``_MISSING_FIELD`` if absent."""
+    for record in (body, *(body.values() if isinstance(body, dict) else ())):
+        if isinstance(record, dict) and field in record:
+            return record[field]
+    return _MISSING_FIELD
+
+
+_MISSING_FIELD = object()
+
+
+async def _logs_in_as(client, op: dict, schemas: dict, payload: dict, password: str) -> bool:
+    """Whether the login route accepts ``payload``'s identity with ``password``."""
+    kind, schema = _body_schema(op, schemas)
+    if kind is None:
+        return False
+    body: dict = {}
+    for field in schema.get("properties", {}):
+        if "password" in field.lower():
+            body[field] = password
+        elif field in payload:
+            body[field] = payload[field]
+        elif field in schema.get("required", []):
+            return False
+    client.cookies.clear()
+    response = await client.post(op["_path"], **{kind: body})
+    client.cookies.clear()  # the session must not make later requests of ``client`` logged in
+    return 200 <= response.status_code < 300
+
+
+async def _open_account_writes(app, spec: dict, schemas: dict, orm: dict, creates: dict, create_fresh,
+                               read_back, anonymous, member, probe_registered: bool) -> tuple[list[dict], str]:
+    """Writes to account records that the app's own login does not stop; ``(found, not_checked)``.
+
+    Asked only of an app with its own register and login routes; the account table is what
+    register instantiates, and its routes are those under its generic create path. Each write
+    gets a fresh record, created as the probe:
+
+    - ``routes``: PUT/PATCH/DELETE that answer 2xx to a request with no credentials;
+    - ``fields``: a credential or privilege field (password, role, is_admin) that ``member``, a
+      second account registered after the probe's own, changed on that other record: shown by a
+      read of the record for a privilege, by logging in as the record with the new password for a
+      credential.
+
+    A guard's own 422 (a missing header) is not a write that got through. A POST is never listed:
+    an open create is how a visitor signs up. ``not_checked`` says why the logged-in writes were
+    not asked, when the second account could not log in.
+    """
+    routes = _auth_routes(spec)
+    if not {"register", "login"} <= routes.keys():
+        return [], ""
+    try:
+        accounts = _tables_behind(app, routes["register"][0], orm)
+    except _Unknowable:
+        return [], ""
+    member_state: list[str] = []  # "" once logged in, else why not; tried once, on the first refusal
+
+    async def member_logged_in() -> bool:
+        if not member_state:
+            try:
+                if not probe_registered:  # so the second account is never the app's first
+                    await _discovered_login(anonymous, spec, schemas)
+                    anonymous.cookies.clear()
+                headers, error, _identity = await _discovered_login(member, spec, schemas, _MEMBER_IDENTITY)
+            except Exception as exc:  # the app's own exception, re-raised by the transport
+                headers, error = None, f"{type(exc).__name__}: {exc}"
+            if headers is not None:
+                member.headers.update(headers)
+            member_state.append("" if headers is not None else f"the second account could not log in: {error}"[:300])
+        return not member_state[0]
+
+    login_op = {**routes["login"][1], "_path": routes["login"][0]}
+    found: list[dict] = []
+    for table in accounts:
+        if table not in creates or _REGISTER_PATH.search(creates[table][0]):
+            continue
+        collection = creates[table][0].rstrip("/") + "/"
+        opened: list[str] = []
+        taken: list[dict] = []
+        for path, ops in sorted(spec.get("paths", {}).items()):
+            if not path.startswith(collection) or path == collection or path.count("{") > 1:
+                continue
+            for method in _ACCOUNT_WRITE_METHODS:
+                op = ops.get(method)
+                if not op:
+                    continue
+                fresh = await create_fresh(table)
+                if fresh is None:
+                    continue
+                record_id, payload = fresh
+                kind, body_schema = _body_schema(op, schemas)
+                body = {} if kind is None else {kind: [record_id] if body_schema.get("type") == "array" else payload}
+                url = re.sub(r"\{[^/{}]+\}", str(record_id), path, count=1)
+                try:
+                    response = await anonymous.request(method.upper(), url, **body)
+                except Exception:
+                    continue
+                if 200 <= response.status_code < 300:
+                    opened.append(f"{method.upper()} {path}")
+                    continue
+                if method == "delete" or kind is None or "{" not in path:
+                    continue
+                changes = {}
+                for field, raw in body_schema.get("properties", {}).items():
+                    value = _sensitive_value(field, _resolve(raw, schemas), payload.get(field))
+                    if value is not None:
+                        changes[field] = value
+                if not changes or not await member_logged_in():
+                    continue
+                try:
+                    response = await member.request(method.upper(), url, **{kind: {**payload, **changes}})
+                    if not 200 <= response.status_code < 300:
+                        continue
+                    stored = await read_back(table, record_id)
+                    proven = [field for field, value in changes.items()
+                              if value != _CHANGED_PASSWORD and stored is not None
+                              and _field_in(stored, field) == value]
+                    if _CHANGED_PASSWORD in changes.values() and await _logs_in_as(
+                            anonymous, login_op, schemas, payload, _CHANGED_PASSWORD):
+                        proven += [field for field, value in changes.items() if value == _CHANGED_PASSWORD]
+                except Exception:
+                    continue
+                if proven:
+                    taken.append({"route": f"{method.upper()} {path}", "fields": sorted(proven)})
+        if opened or taken:
+            found.append({"table": table, "login": routes["login"][0], "routes": opened, "fields": taken})
+    return found, (member_state[0] if member_state else "")
 
 
 def _load_model_actions() -> dict:
@@ -1756,11 +1928,38 @@ def _probe_cwd() -> dict:
                     schemas[schema_name], schemas, orm.get(entity, {}), ids, subclasses, ("base",))
                 entities[entity] = {"path": path, "verdict": "unresolved", "unresolved": unresolved}
 
-            actions, action_calls, _ordinal = await _probe_actions(
+            actions, action_calls, ordinal = await _probe_actions(
                 app, spec, request, read_state, schemas, orm, subclasses, unique_fields,
                 creates, entities, ids, ordinal, _load_model_actions())
+
+            async def create_fresh(table):
+                """``(id, payload)`` of a new ``table`` record, created as the probe, or None."""
+                nonlocal ordinal
+                path, schema_name = creates[table]
+                new_id, ordinal = await _create_instance(
+                    request, schemas[schema_name], schemas, orm, subclasses, unique_fields,
+                    table, path, ids, ("base",), ordinal, ("account-fresh", table))
+                if new_id is None:
+                    return None
+                payload, _ = _build_payload(
+                    schemas[schema_name], schemas, orm.get(table, {}), ids, subclasses, ("base",),
+                    entity=table, ordinal=ordinal, unique_fields=unique_fields.get(table, frozenset()))
+                return new_id, payload
+
+            read_routes = _read_routes(spec, creates)
+
+            async def read_back(table, record_id):
+                """The record as the app serves it to the probe, or None."""
+                return (await read_state(read_routes.get(table), record_id, {}))["entity"]
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://probe") as anonymous:
+                async with httpx.AsyncClient(transport=transport, base_url="http://probe") as member:
+                    # The probe's own account was registered only if a request was refused.
+                    open_writes, not_checked = await _open_account_writes(
+                        app, spec, schemas, orm, creates, create_fresh, read_back, anonymous, member,
+                        probe_registered=bool(auth))
         return {"entities": entities, "actions": actions, "action_calls": action_calls,
-                "auth": auth}
+                "auth": auth, "open_account_writes": open_writes, "account_writes_not_checked": not_checked}
 
     try:
         result = asyncio.run(run())
@@ -1775,6 +1974,10 @@ def _probe_cwd() -> dict:
               "unprobed_creates": unprobed_creates}
     if result["auth"]:
         report["auth"] = result["auth"]
+    if result["open_account_writes"]:
+        report["open_account_writes"] = result["open_account_writes"]
+    if result["account_writes_not_checked"]:
+        report["account_writes_not_checked"] = result["account_writes_not_checked"]
     return report
 
 

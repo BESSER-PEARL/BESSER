@@ -11,9 +11,15 @@ gives every class diagram element a new id. The trace refers to the elements as 
 reference (``ModelArtifact(element=Library)``) or by record (name, type and the old id), so each
 of its class diagram artifacts is matched by qualified name: ``Library``, ``Library.name``, an
 association's name, ``Color.RED``. Names are unique inside one diagram, so the match is exact.
-The other diagram types keep their element ids through the export (a GUI's pages and
-components), so an artifact of one keeps its id when the imported diagram still has it. An
-artifact that matches nothing (a deleted element, kept as history) keeps its recorded id.
+The other diagram types keep their element ids through the export where the B-UML file carries
+them (a GUI's pages and components, the ``layout`` of BPMN, deployment and component elements, a
+knowledge graph's nodes and edges), so an artifact of one keeps its id when the imported diagram
+still has it. Agent and state machine sections carry no ids: their states, intents, tools,
+skills, workspaces and RAGs are matched by kind and name instead, when the name is the only one
+of its kind in the diagram (transitions and bodies have no name to match by). A quantum gate is
+known by its cell under the diagram id (``<diagram id>:gate:<column>:<wire>``), so it follows its
+diagram's new id. An artifact that matches nothing (a deleted element, kept as history) keeps
+its recorded id.
 """
 
 import logging
@@ -125,6 +131,33 @@ def _ids_in(model: Any) -> Set[str]:
     return ids
 
 
+# Editor element type -> the metaclass the trace records an element of it by, for the diagrams whose
+# elements are matched by name (``AgentState`` with ``stateType: reasoning`` is a ``ReasoningState``).
+_NAMED_ELEMENT_TYPES = {
+    "AgentState": "AgentState", "AgentReasoningState": "ReasoningState", "AgentIntent": "Intent",
+    "AgentTool": "Tool", "AgentSkill": "Skill", "AgentWorkspace": "Workspace", "AgentRagElement": "RAG",
+    "State": "State",
+}
+_MATCHED_BY_NAME = {"AgentDiagram", "StateMachineDiagram"}
+
+
+def _named_keys(model: Dict[str, Any]) -> Dict[Key, str]:
+    """(metaclass, name) -> element id, for the elements whose name is the only one of their kind."""
+    keys: Dict[Key, str] = {}
+    ambiguous: Set[Key] = set()
+    for element in {**(model.get("elements") or {}), **(model.get("components") or {})}.values():
+        metaclass = _NAMED_ELEMENT_TYPES.get(element.get("type"))
+        if metaclass == "AgentState" and element.get("stateType") == "reasoning":
+            metaclass = "ReasoningState"
+        if metaclass is None or not element.get("name"):
+            continue
+        key = (metaclass, element["name"])
+        if key in keys:
+            ambiguous.add(key)
+        keys[key] = element["id"]
+    return {key: element_id for key, element_id in keys.items() if key not in ambiguous}
+
+
 def _root(artifact: ModelArtifact) -> ModelArtifact:
     while isinstance(artifact.parent, ModelArtifact):
         artifact = artifact.parent
@@ -155,22 +188,32 @@ def match_trace_to_project(trace: TraceModel, project: Dict[str, Any], model_nam
 
     keys_of: Dict[int, Dict[Key, str]] = {}
     ids_of: Dict[int, Set[str]] = {}
+    # The roots' recorded ids, before they take their diagram's: a quantum gate's id starts with it.
+    recorded_root_ids = {id(a): a.element_id for a in trace.artifacts if isinstance(a, ModelArtifact) and a.parent is None}
     unmatched = 0
     for artifact in trace.artifacts:
         if not isinstance(artifact, ModelArtifact):
             continue
         root = _root(artifact)
         diagram = diagram_of(root)
+        diagram_type = _DIAGRAM_TYPE_OF_MODEL.get(root.element_type)
         if diagram is None:
             new_id = None
         elif artifact is root:
             new_id = diagram["id"]
-        elif _DIAGRAM_TYPE_OF_MODEL.get(root.element_type) == _CLASS_DIAGRAM:
+        elif diagram_type == _CLASS_DIAGRAM:
             keys = keys_of.setdefault(id(diagram), _diagram_keys(diagram.get("model", {})))
             new_id = next((keys[key] for key in _artifact_keys(artifact) if key in keys), None)
-        else:  # its element ids survive the export
+        elif diagram_type == "QuantumCircuitDiagram":
+            prefix = f"{recorded_root_ids.get(id(root))}:"
+            new_id = (f"{diagram['id']}:{artifact.element_id[len(prefix):]}"
+                      if artifact.element_id and artifact.element_id.startswith(prefix) else None)
+        else:  # its element ids survive the export, or (agent, state machine) its names do
             ids = ids_of.setdefault(id(diagram), _ids_in(diagram.get("model", {})))
             new_id = artifact.element_id if artifact.element_id in ids else None
+            if new_id is None and diagram_type in _MATCHED_BY_NAME:
+                keys = keys_of.setdefault(id(diagram), _named_keys(diagram.get("model", {})))
+                new_id = keys.get((artifact.element_type, artifact.name))
         if new_id is not None:
             artifact.element_id = new_id
         elif artifact.element_id is None:

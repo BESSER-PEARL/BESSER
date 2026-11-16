@@ -143,7 +143,9 @@ def _build_section_boundary_pattern() -> str:
     keyword_alts = '|'.join(re.escape(kw) for kw in ALL_SECTION_KEYWORDS)
     # Match both old format: # KEYWORD MODEL #
     # and new numbered format: # KEYWORD MODEL 1: "Title" #
-    return rf'#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION'
+    # A header is a line of its own: the same words inside a string (a generated file a trace
+    # keeps, which may hold a model's own banner) are not one.
+    return rf'(?m)^[ \t]*(?:#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION)'
 
 
 def _has_code(section_code: str) -> bool:
@@ -174,9 +176,10 @@ def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
     #   # KEYWORD MODEL 1 #                        (numbered, no title)
     #   # KEYWORD MODEL 1: "Some Title" #          (numbered with title)
     #   #  KEYWORD MODEL  #                        (extra whitespace, e.g. GUI)
+    # A header is a line of its own (see _build_section_boundary_pattern).
     header_pattern = re.compile(
-        rf'#\s*{re.escape(keyword)}\s+MODEL(?:\s+(\d+))?(?:\s*:\s*"([^"]*)")?\s*#',
-        re.IGNORECASE
+        rf'^[ \t]*#\s*{re.escape(keyword)}\s+MODEL(?:\s+(\d+))?(?:\s*:\s*"([^"]*)")?\s*#',
+        re.IGNORECASE | re.MULTILINE
     )
 
     boundary_pattern = _build_section_boundary_pattern()
@@ -521,8 +524,11 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
         Dictionary representing the complete project with all diagrams.
         Each diagram type maps to a list of diagram entries.
     """
-    # Detect models included in the project
-    model_match = re.search(r"models\s*=\s*\[(.*?)\]", content, re.DOTALL)
+    # Detect models included in the project. The project definition closes the file: read it there,
+    # not in a string of an earlier section (a generated file a trace keeps).
+    definition_start = max(content.rfind("# PROJECT DEFINITION"), 0)
+    project_code = content[definition_start:]
+    model_match = re.search(r"models\s*=\s*\[(.*?)\]", project_code, re.DOTALL)
     if not model_match:
         # No Project(...) wrapper — fall back to single-diagram detection so
         # plain class/agent/state-machine/GUI/NN files can still be imported.
@@ -535,9 +541,9 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
     logger.debug("Detected model names in project: %s", model_names)
 
     # Extract project metadata
-    project_name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
-    project_desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
-    project_owner_match = re.search(r'owner\s*=\s*"(.*?)"', content)
+    project_name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', project_code)
+    project_desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', project_code)
+    project_owner_match = re.search(r'owner\s*=\s*"(.*?)"', project_code)
 
     project_name = project_name_match.group(1) if project_name_match else "Unnamed Project"
     project_description = project_desc_match.group(1) if project_desc_match else "No description"

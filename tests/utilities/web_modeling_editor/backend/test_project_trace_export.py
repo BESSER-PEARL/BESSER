@@ -275,3 +275,76 @@ def test_a_gui_trace_matches_the_imported_gui_not_the_class_diagram(client, gui_
     book = next(e["id"] for e in class_diagram["model"]["elements"].values() if e.get("name") == "Book")
     assert any(a.get("elementId") == book and a["elementType"] == "Class" for a in artifacts.values())
     assert body["trace"]["traceLinks"] == gui_trace["traceLinks"]
+
+
+# ------------------------------------------------------------ the element traces of other diagram types
+
+LIBRARY_AGENT_DIAGRAM = LIBRARY_CLASS_DIAGRAM.parent / "library_template_agent_diagram.json"
+PIZZA_BPMN_DIAGRAM = pathlib.Path(__file__).parent / "fixtures" / "template_bpmn_pizza_store.json"
+
+
+def _traced(client, diagram, generator):
+    response = client.post("/besser_api/traceability/generate-output",
+                           json={**diagram, "generator": generator, "config": None, "actorName": "Ada Lovelace"})
+    assert response.status_code == 200, response.text
+    return response.json()["trace"]
+
+
+def _merged(*traces):
+    """The fragments of several runs in one trace, as the editor merges them."""
+    merged = {**traces[0], "projectId": "project-1"}
+    for trace in traces[1:]:
+        for key in ("actors", "tools", "artifacts", "operations", "traceLinks"):
+            merged[key] = merged[key] + trace[key]
+    return merged
+
+
+def _element_artifacts(trace, root_type):
+    artifacts = {a["id"]: a for a in trace["artifacts"]}
+
+    def root_of(artifact):
+        while "parentId" in artifact:
+            artifact = artifacts[artifact["parentId"]]
+        return artifact
+
+    return [a for a in artifacts.values() if a["type"] == "ModelArtifact" and "parentId" in a
+            and root_of(a)["elementType"] == root_type]
+
+
+def _ids_in(model):
+    return set(json.dumps(model).replace('"', " ").split())
+
+
+def test_generated_element_traces_find_their_elements_in_the_imported_project(client, project):
+    """An agent (by kind and name), a BPMN process (its ids survive in the layout) and a quantum circuit (its
+    gates by cell, under the diagram's new id) traced by a generation are matched to the imported diagrams."""
+    agent = {"id": "agent-diagram", **json.loads(LIBRARY_AGENT_DIAGRAM.read_text("utf-8"))}
+    bpmn = {"id": "bpmn-diagram", "title": "Pizza store", "model": json.loads(PIZZA_BPMN_DIAGRAM.read_text("utf-8"))}
+    quantum = {"id": "quantum-diagram", "title": "Bell",
+               "model": {"version": "1.0.0", "cols": [["H", 1], ["•", "X"]], "gateMetadata": {}}}
+    trace = _merged(_traced(client, agent, "agent"), _traced(client, bpmn, "bpmn"), _traced(client, quantum, "qiskit"))
+    exported = {**project, "currentDiagramType": "AgentDiagram",
+                "diagrams": {"AgentDiagram": [agent], "BPMN": [bpmn], "QuantumCircuitDiagram": [quantum]},
+                "currentDiagramIndices": {"AgentDiagram": 0, "BPMN": 0, "QuantumCircuitDiagram": 0}, "trace": trace}
+
+    response = _import(client, _export(client, exported))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    diagrams = body["project"]["diagrams"]
+    (agent_back,), (bpmn_back,), (quantum_back,) = (diagrams["AgentDiagram"], diagrams["BPMN"],
+                                                     diagrams["QuantumCircuitDiagram"])
+
+    agent_elements = {**agent_back["model"]["elements"], **agent_back["model"].get("components", {})}
+    states_and_intents = [a for a in _element_artifacts(body["trace"], "Agent")
+                          if a["elementType"] in ("AgentState", "Intent")]
+    assert states_and_intents
+    for artifact in states_and_intents:
+        assert agent_elements[artifact["elementId"]]["name"] == artifact["name"]
+
+    bpmn_elements = _element_artifacts(body["trace"], "BPMNModel")
+    assert bpmn_elements
+    assert {a["elementId"] for a in bpmn_elements} <= (set(bpmn_back["model"]["elements"])
+                                                        | set(bpmn_back["model"]["relationships"]))
+
+    gates = _element_artifacts(body["trace"], "QuantumCircuit")
+    assert {a["elementId"] for a in gates} == {f"{quantum_back['id']}:gate:0:0", f"{quantum_back['id']}:gate:1:1"}

@@ -11,6 +11,7 @@ number without its derivation is an invitation to "tune" it blindly.
 
 from __future__ import annotations
 
+import fnmatch
 
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.state.checkpoint import (
@@ -56,13 +57,25 @@ _ROLLBACK_PRESERVED = {
     _ROLLBACK_DISCARD_DIR,
 }
 
-# Dependency / build directories excluded from the recipe's output_files
-# manifest (mirrors the web runner's zip exclusions).
+# Dependency, build and run-internal directories that are not part of the app.
 _RECIPE_EXCLUDED_DIRS = {
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
-    ".next", ".gradle", "venv", ".venv", _SNAPSHOT_DIR,
+    ".next", ".gradle", "venv", ".venv", ".pytest_cache", _SNAPSHOT_DIR,
     _SNAPSHOT_STAGING_DIR, _ROLLBACK_DISCARD_DIR, COMMAND_OUTPUT_DIR,
 }
+
+# Files a build or a run of the app leaves behind (fnmatch globs).
+_EXCLUDED_OUTPUT_FILE_GLOBS = ("*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log")
+
+# Base names left out of everything a run delivers: the recipe's output_files
+# manifest, the download, the seed of a later run and a GitHub push. One list,
+# so the manifest cannot name a file the user does not receive.
+EXCLUDED_OUTPUT_NAMES = frozenset({*_RECIPE_EXCLUDED_DIRS, *_EXCLUDED_OUTPUT_FILE_GLOBS})
+
+
+def is_excluded_output_file(name: str) -> bool:
+    """True for a file name the delivered output leaves out."""
+    return any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDED_OUTPUT_NAMES)
 
 # Written by a build or by running the app, never authored. Invisible to
 # ``_workspace_revision`` (not even by presence): the frontend build and the

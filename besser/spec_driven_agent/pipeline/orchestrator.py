@@ -255,6 +255,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _runtime_verdict,
     _tool_call_detail,
     _tool_use_blocks,
+    is_excluded_output_file,
 )
 
 
@@ -5145,7 +5146,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for root, dirs, fnames in walk_plain(self.output_dir):
                 dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
                 for f in fnames:
-                    if f.startswith(".besser_"):
+                    if f.startswith(".besser_") or is_excluded_output_file(f):
                         continue
                     full = os.path.join(root, f)
                     rel = os.path.relpath(full, self.output_dir).replace("\\", "/")

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import fnmatch
 import json
 import logging
 import os
@@ -41,7 +40,6 @@ from besser.spec_driven_agent.errors import (
     InvalidApiKeyError,
     UpstreamLLMError,
 )
-from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
 from besser.utilities.workspace_fs import (
@@ -56,6 +54,10 @@ from besser.spec_driven_agent.providers.llm_client import (
     is_free_fallback_choice,
 )
 from besser.llm.catalog import load_model_catalog
+from besser.spec_driven_agent.pipeline.constants import (
+    EXCLUDED_OUTPUT_NAMES,
+    is_excluded_output_file as _is_excluded_output_file,
+)
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
@@ -165,23 +167,9 @@ _MAX_RECIPE_BYTES = 256 * 1024  # 256 KB
 # Build-output dirs + runtime/artifact FILE globs that must never reach the
 # download zip OR a GitHub push. Fed to shutil.ignore_patterns (used by both
 # the modify/continue-from-repo SEED copy and the push copy), which fnmatches
-# base names, so file globs work alongside the directory names. The file
-# globs matter because a run leaves artifacts IN the workspace that the seed
-# would otherwise carry into the next run and the push would commit: the
-# download zip itself (besser_smart_*.zip) and the SQLite DB that seed_data /
-# a validation run creates (*.db) were both landing in the pushed repo.
-_EXCLUDED_OUTPUT_DIRS = {
-    # build-output / dependency directories
-    "target", "node_modules", "__pycache__", ".git", "dist", "build",
-    ".next", ".gradle", "venv", ".venv", ".besser_snapshot", ".pytest_cache",
-    # A rollback that could not complete parks the pre-rollback tree here
-    # rather than deleting it; it is recovery state, not deliverable output.
-    ".besser_rollback_discard",
-    # Untruncated run_command logs: a debugging aid for the agent, not output.
-    COMMAND_OUTPUT_DIR,
-    # runtime / build artifact files (never belong in source or a push)
-    "*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log",
-}
+# base names, so file globs work alongside the directory names. The engine
+# owns the list: its recipe manifest leaves out the same names.
+_EXCLUDED_OUTPUT_DIRS = EXCLUDED_OUTPUT_NAMES
 
 
 def run_download_dir(workspace: str) -> str:
@@ -220,11 +208,6 @@ def _zip_plain_file(zf: zipfile.ZipFile, path: str, arcname: str, root: str) -> 
                 shutil.copyfileobj(src, dst)
     except OSError:
         logger.warning("Left %s out of the download: no longer a plain file", arcname)
-
-
-def _is_excluded_output_file(name: str) -> bool:
-    """True for a file the push's ``ignore_patterns`` would drop too."""
-    return any(fnmatch.fnmatch(name, pattern) for pattern in _EXCLUDED_OUTPUT_DIRS)
 
 
 async def _stop_helper_task(task: asyncio.Task, run_id: str) -> None:

@@ -1,3 +1,4 @@
+import re
 import subprocess
 import os
 import sys
@@ -8,6 +9,7 @@ from besser.generators import GeneratorInterface
 from besser.generators.settings import subprocess_timeout
 from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
+from besser.utilities.generation_trace import FileTrace, TraceRegion
 
 # Marker of the trailing "database connection" section of the SQLAlchemy module.
 # Everything from here on (``create_engine(DATABASE_URL)``, the ``__main__``
@@ -29,6 +31,18 @@ DDL_DIALECT_URLS = {
 }
 
 
+# How the SQLAlchemy module names what the DDL creates: a class or association class by its ``__tablename__``,
+# a many-to-many association by the first argument of its ``Table_(...)``.
+_TABLE_NAME = re.compile(r'__tablename__ = "([^"]+)"|\bTable_\(\s*"([^"]+)"')
+
+# First line of a DDL statement and the name it creates. Every dialect writes a statement's keywords in the
+# first column, and a statement's last line ends with ";".
+_CREATE_STATEMENT = re.compile(r'^CREATE (TABLE|TYPE) (?:IF NOT EXISTS )?[\["`]?([^\s\["`(\]]+)')
+
+# The SQLAlchemy template blocks (their traced rules) whose code creates a table or an enumeration type.
+_TABLE_BLOCKS = ("class", "association_class", "association_table")
+
+
 class SQLGenerator(GeneratorInterface):
     """Generates SQL DDL (``CREATE TABLE`` statements) for a B-UML domain model.
 
@@ -40,6 +54,13 @@ class SQLGenerator(GeneratorInterface):
         ocl_check_constraints (bool, optional): Emit ``CHECK`` constraints for the simple
             OCL invariants of the model (an attribute compared with a literal, optionally
             joined by ``and``). Other constraints are skipped. Defaults to ``True``.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, ``tables_<dialect>.sql`` with the lines of
+            each ``CREATE TABLE`` (of a class, association class or many-to-many association that has an ``id``)
+            and ``CREATE TYPE`` (of an enumeration that has an ``id``) statement. The DDL is produced by running
+            the generated SQLAlchemy module, so a statement is matched back to its element by the name of the
+            table or type the SQLAlchemy generator gave it; a statement that matches no such name is left untraced.
     """
 
     regenerable = True
@@ -88,6 +109,7 @@ class SQLGenerator(GeneratorInterface):
                     "SQL generation failed: could not locate the database connection "
                     "section in the generated SQLAlchemy module."
                 )
+            alchemy_regions = self._table_regions(alchemy_gen, content)
             content = content[:marker_idx]
             dialect = self.sql_dialect
 
@@ -209,3 +231,54 @@ with open(sql_file_path, "w") as f:
             # Copy generated .sql file to final output location
             dst_sql = os.path.join(final_output_dir, f"tables_{self.sql_dialect}.sql")
             shutil.copyfile(src_sql, dst_sql)
+            with open(dst_sql, encoding="utf-8") as ddl:
+                self.traced_files[os.path.basename(dst_sql)] = FileTrace(
+                    tuple(self._statement_regions(ddl.read(), alchemy_regions)))
+
+    @staticmethod
+    def _table_regions(alchemy_gen: SQLAlchemyGenerator, module_code: str) -> dict:
+        """The elements the SQLAlchemy module creates tables and enumeration types for, by lower-cased name.
+
+        Args:
+            alchemy_gen: The SQLAlchemy generator, after ``generate()``.
+            module_code: The module it wrote, before the DDL logic was added.
+
+        Returns:
+            dict: ``name -> (region, "table" | "type")`` where region is the SQLAlchemy ``TraceRegion`` of the
+            element. A class comes before an association table of the same name, which cannot create a table.
+        """
+        lines = module_code.split("\n")
+        regions = alchemy_gen.traced_files.get("sql_alchemy.py", FileTrace()).regions
+        found = {}
+        for block in (*_TABLE_BLOCKS, "enumeration"):
+            for region in regions:
+                if region.rule.rsplit("#", 1)[-1] != block:
+                    continue
+                if block == "enumeration":
+                    # SQLAlchemy names the type after the lower-cased enum class.
+                    found.setdefault(region.element_name.lower(), (region, "type"))
+                    continue
+                match = _TABLE_NAME.search("\n".join(lines[region.start_line - 1:region.end_line]))
+                if match:
+                    found.setdefault((match.group(1) or match.group(2)).lower(), (region, "table"))
+        return found
+
+    @staticmethod
+    def _statement_regions(ddl: str, elements: dict) -> list:
+        """The ``TraceRegion`` of every ``CREATE TABLE``/``CREATE TYPE`` statement of ``ddl`` whose name is
+        in ``elements`` (see :meth:`_table_regions`)."""
+        regions = []
+        start = name = kind = None
+        for number, line in enumerate(ddl.split("\n"), start=1):
+            match = _CREATE_STATEMENT.match(line)
+            if match:
+                start, kind, name = number, match.group(1), match.group(2).lower()
+            if start is not None and line.endswith(";"):
+                entry = elements.get(name)
+                if entry and entry[1] == kind.lower():
+                    source = entry[0]
+                    regions.append(TraceRegion(
+                        source.element_id, source.element_type, source.element_name,
+                        f"sql_generator.py#create_{kind.lower()}", start, number))
+                start = None
+        return regions

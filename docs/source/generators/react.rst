@@ -221,3 +221,22 @@ render their ``css_classes`` as ``className``; tables, charts and metric cards
 forward it through their runtime blocks to the rendered root element.
 Per-element ``Styling`` is still emitted as inline styles. Without a stylesheet
 neither the file nor the import is generated.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` maps each file the generator wrote (path relative to the output
+directory) to what it was generated from, for every GUI element that has an ``id``. Each page file
+``src/pages/<Page>.tsx`` is generated as a whole from its screen; every component rendered in a page is a line
+range (region) of its own, nested in its container's, and ``src/App.tsx`` records the import and the route of
+each page as regions of the screen. The other files (the Jinja templates, copied runtime blocks and
+assets) are file-level only. The generator writes no per-class files: the classes of the domain model only
+appear in the pages through the data bindings of their components, which are not traced separately.
+
+.. note::
+
+   The web editor's GUI converter (``process_gui_diagram``) does not give the GUI elements it builds an ``id``
+   (only a ``component_id``); the class diagram's elements do have one. A model built by the editor therefore has
+   no GUI traces until its elements get ids, and its pages are generated exactly as before.
+
+Recording traces does not change the generated files; see :doc:`traceable_generator`.

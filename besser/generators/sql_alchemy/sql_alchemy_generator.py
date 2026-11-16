@@ -12,6 +12,7 @@ from besser.generators.structural_utils import (
     get_deferred_fk_associations,
     get_foreign_keys,
     is_credential_attribute,
+    is_shadowed_by_association_end,
     normalize_method_code,
     get_pk_py_types,
 )
@@ -280,7 +281,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
         env.globals.update(normalize_code=normalize_method_code,
-                           is_credential_attribute=is_credential_attribute)
+                           is_credential_attribute=is_credential_attribute,
+                           is_shadowed_by_association_end=is_shadowed_by_association_end)
         for cls in classes + asso_classes:
             for attr in sort_by_timestamp(cls.attributes):
                 if is_credential_attribute(attr):

@@ -12,7 +12,9 @@
 
 {# ---------- Attribute Renderer ---------- #}
 {%- macro render_attributes(class, enumerations, types, ids, sort) %}
-    {%- for attribute in sort(class.attributes) %}
+    {#- An attribute named like an association end of the class is left out: the
+        relationship takes the name. #}
+    {%- for attribute in sort(class.attributes) if not is_shadowed_by_association_end(attribute) %}
     {%- set is_pk = attribute.is_id or (attribute.name == ids.get(class.name)) %}
     {%- set _audit_norm = attribute.name | lower | replace('_', '') %}
     {#- A derived attribute is computed by the server, so the client never sends

@@ -2834,11 +2834,10 @@ class DomainModel(Model):
         """Warn about a class reaching an attribute and an association end of the same name.
 
         Generated code gives both the same member name. The Java generator's
-        class does not compile; the SQLAlchemy generator still emits a module
-        that loads, but the relationship replaces the attribute's mapping, so
-        the column is no longer read or written. A warning, since generation
-        itself succeeds. A name inherited on both sides is reported once, on
-        the class that declares one of them.
+        class does not compile; the SQLAlchemy, Pydantic and FastAPI backend
+        generators keep the association end and leave the attribute out. A
+        warning, since generation itself succeeds. A name inherited on both
+        sides is reported once, on the class that declares one of them.
         """
         for cls in sorted(self.get_classes(), key=lambda c: c.name):
             own_names = {attr.name for attr in cls.attributes} | {end.name for end in cls.association_ends()}
@@ -2848,9 +2847,9 @@ class DomainModel(Model):
                 warnings.append(
                     f"Attribute and association end share a name: class '{cls.name}' has an attribute and an "
                     f"association end both named '{name}'. Generated code gives a class one member per name: "
-                    f"the Java class does not compile, and in the SQLAlchemy model the relationship hides the "
-                    f"attribute's column. Rename one; if the attribute stores the related object, delete it and "
-                    f"keep the association."
+                    f"the Java class does not compile, and the SQLAlchemy, Pydantic and FastAPI backend "
+                    f"generators keep the association end and leave the attribute out. Rename one; if the "
+                    f"attribute stores the related object, delete it and keep the association."
                 )
 
     def _validate_python_keyword_names(self, warnings: list[str]):

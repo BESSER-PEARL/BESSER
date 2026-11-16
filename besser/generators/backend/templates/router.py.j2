@@ -7,7 +7,9 @@
     raises AttributeError and every create returns 500. This macro used to
     carry its own copy of the rule with a comment saying it must mirror the
     schema's; the two drifted the moment derived attributes were added. -#}
-{{ not is_server_owned_attribute(attr) }}
+{#- An attribute named like an association end of the class has no column
+    and no schema field: the association takes the name. -#}
+{{ not is_server_owned_attribute(attr) and not is_shadowed_by_association_end(attr) }}
 {%- endmacro -%}
 {#- An enum attribute's member name, as SQLAlchemy's Enum column binds it. An
     optional enum left empty arrives as None, and None.name is a 500. -#}
@@ -330,13 +332,13 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
 {%- set ns_search = namespace(attrs=[]) %}
 {%- for parent in all_parents %}
 {%- for attribute in parent.attributes | sort(attribute='name') %}
-{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) and not attribute.is_derived %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) and not attribute.is_derived and not is_shadowed_by_association_end(attribute) %}
 {%- do ns_search.attrs.append(attribute) %}
 {%- endif %}
 {%- endfor %}
 {%- endfor %}
 {%- for attribute in class.attributes | sort(attribute='name') %}
-{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) and not attribute.is_derived %}
+{%- if attribute.type.name in ['str', 'string', 'int', 'integer', 'float', 'bool', 'boolean'] and not is_credential_attribute(attribute) and not attribute.is_derived and not is_shadowed_by_association_end(attribute) %}
 {%- do ns_search.attrs.append(attribute) %}
 {%- endif %}
 {%- endfor %}

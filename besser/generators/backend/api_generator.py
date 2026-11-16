@@ -50,6 +50,7 @@ from besser.generators.structural_utils import (
     get_pk_py_types,
     is_credential_attribute,
     is_server_owned_attribute,
+    is_shadowed_by_association_end,
     normalize_method_code,
 )
 from besser.utilities.utils import sort_by_timestamp
@@ -208,7 +209,8 @@ def _make_env() -> Environment:
                        # derived attributes, a stale copy here would have read
                        # them off the payload and returned 500 on every create.
                        is_server_owned_attribute=is_server_owned_attribute,
-                       is_credential_attribute=is_credential_attribute)
+                       is_credential_attribute=is_credential_attribute,
+                       is_shadowed_by_association_end=is_shadowed_by_association_end)
     # Method-parameter defaults are unvalidated request JSON rendered into a
     # FastAPI app that /besser_api/deploy-app runs. Same sink the SQLAlchemy
     # template had: emit literals, never expressions.

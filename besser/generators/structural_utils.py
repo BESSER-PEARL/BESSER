@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Dict, List
 
-from besser.BUML.metamodel.structural import DomainModel, Property
+from besser.BUML.metamodel.structural import Class, DomainModel, Property
 
 
 def is_server_owned_attribute(attribute: Property) -> bool:
@@ -37,6 +37,18 @@ def is_credential_attribute(attribute: Property) -> bool:
         return False
     normalized = re.sub(r"[^a-z0-9]", "", attribute.name.lower())
     return any(part in normalized for part in _CREDENTIAL_NAME_PARTS)
+
+
+def is_shadowed_by_association_end(attribute: Property) -> bool:
+    """Whether an attribute has the name of an association end its class reaches.
+
+    Generated Python gives a class one member per name. The association is the
+    richer fact (the attribute usually repeats it as text), so the SQLAlchemy,
+    Pydantic and backend generators emit the association end and leave the
+    attribute out. ``DomainModel.validate()`` warns about the clash.
+    """
+    owner = attribute.owner
+    return isinstance(owner, Class) and attribute.name in {end.name for end in owner.all_association_ends()}
 
 
 def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],

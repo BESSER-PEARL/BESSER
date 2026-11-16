@@ -78,7 +78,7 @@ from besser.utilities.provenance import (
     write_generation_provenance,
 )
 from besser.spec_driven_agent.validation.user_wording import (
-    Finding, plain_check, summary_lines, user_finding, user_sentence,
+    Finding, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
 )
 from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
@@ -639,7 +639,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         if skipped:
             not_verified.append(_item(
                 "check", "", plain_check(skipped.group("check")),
-                why=f"the check did not run ({skipped.group('reason') or 'no reason recorded'}), "
+                why=f"the check did not run ({plain_reason(skipped.group('reason') or 'no reason recorded')}), "
                     "so this result does not cover it",
             ))
         elif message.startswith(_UNCHECKED_PREFIXES):

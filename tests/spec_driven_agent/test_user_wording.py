@@ -107,7 +107,7 @@ CASES = [
      "values with test_api(action='get', scenario_id='order_flow').",
      "The test workflow 'order_flow' ran and failed."),
     (runtime_check_unverified("the constructibility probe", "backend: no sandbox"),
-     "Not run: runtime check (the automatic create test) (backend: no sandbox), so its checks are not covered."),
+     "Not run: the automatic create test (backend: no sandbox), so its checks are not covered."),
     (required_check_unverified("the requirements judge", "it returned no verdicts"),
      "Not run: the check against your request (it returned no verdicts), so its checks are not covered."),
     (_check_did_not_run("ruff", "timed out after 30s"),
@@ -122,7 +122,7 @@ CASES = [
     ("verification setup: the frontend build requires installed project dependencies. Use install_dependencies.",
      "The app's dependencies were not installed, so some checks could not run."),
     ("ruff: backend/main_api.py:3:1: F821 Undefined name `Order`",
-     "The backend code uses a name that is not defined, so it fails when that code runs."),
+     "The backend code uses a name that is undefined or defined twice, so it fails when that code runs."),
     ("something new: an agent-facing text nobody has worded yet; use test_api", GENERIC_SENTENCE),
 ]
 
@@ -162,3 +162,37 @@ def test_more_than_five_lines_merge_by_kind_and_say_how_many_more():
 def test_five_lines_or_fewer_stay_one_per_finding():
     entries = [(Finding(f"Creating {n}.", "create_needs", n), f"Creating {n}.") for n in "AB"]
     assert summary_lines(entries, 8) == (["Creating A.", "Creating B."], 2)
+
+
+TRUE_TO_SEVERITY = [
+    # A redefinition is a blocker, so it is not "a lint finding".
+    ("ruff: backend/main_api.py:12:5: F811 Redefinition of unused `get_order` from line 4",
+     "The backend code uses a name that is undefined or defined twice, so it fails when that code runs."),
+    ("ruff: backend/main_api.py:3:1: F401 `os` imported but unused", "The backend code has a lint finding."),
+    # A truncation note is a count, not a defect.
+    ("ruff: (+12 more issues truncated)", "More findings of the same check were counted but not listed."),
+    ("tsc [frontend]: (+7 more errors truncated)", "More findings of the same check were counted but not listed."),
+    # The text keeps its own parentheses; only the composer's separators and the judge's note end it.
+    (ledger_issues([{"id": 1, "kind": "rule", "text": "Users export orders (CSV) every week", "status": "missing",
+                     "note": "no export route"}])[0],
+     "Requirement R1 is not implemented: Users export orders (CSV) every week"),
+    (ledger_issues([{"id": 2, "kind": "rule", "text": "Only admins delete orders", "status": "partial",
+                     "note": "check in routes.py line 4"}])[0],
+     "Requirement R2 is only partly implemented: Only admins delete orders"),
+    # A server path in a reason is not the user's.
+    (_check_did_not_run("the constructibility probe",
+                        "backend: RuntimeError: Event loop is closed in /srv/runs/besser_llm_ab12_x/backend/main.py"),
+     "Not run: the automatic create test (backend: RuntimeError: Event loop is closed in …), so its checks are "
+     "not covered."),
+    (required_check_unverified("frontend build [frontend]",
+                               r"could not launch build: [Errno 2] No such file: 'C:\runs\besser_llm_ab\frontend'"),
+     "Not run: frontend build [frontend] (could not launch build: [Errno 2] No such file: '…'), so its checks "
+     "are not covered."),
+    (runtime_check_unverified("api scenario order_flow", "boot: probe_error"),
+     "The test workflow 'order_flow' could not be run against the app."),
+]
+
+
+@pytest.mark.parametrize("message, sentence", TRUE_TO_SEVERITY, ids=[s[:40] for _, s in TRUE_TO_SEVERITY])
+def test_each_sentence_stays_true_to_its_finding(message, sentence):
+    assert user_sentence(message) == sentence

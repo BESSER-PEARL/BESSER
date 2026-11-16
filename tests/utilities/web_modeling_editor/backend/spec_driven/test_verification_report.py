@@ -349,7 +349,7 @@ def test_a_runtime_check_that_did_not_run_lands_in_could_not_check():
     report = build_verification_report(recipe)
 
     check = next(i for i in report.notVerified if i.kind == "check")
-    assert check.what == "runtime check (the automatic create test)"
+    assert check.what == "the automatic create test"
     assert "no sandbox" in check.why
 
 

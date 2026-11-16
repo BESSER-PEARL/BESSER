@@ -10,9 +10,11 @@ import tempfile
 import uuid
 import zipfile
 from copy import deepcopy
-from typing import Optional
+from dataclasses import replace
+from functools import partial
+from typing import List, Optional
 
-from besser.generators.agents.baf_generator import GenerationMode
+from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
 from besser.utilities.secret_redaction import sanitize_config
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
@@ -27,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import Val
 from besser.utilities.web_modeling_editor.backend.services.generation.downloads import (
     GeneratedOutput,
     agent_zip_output,
+    delivery_traces,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     extract_openai_api_key,
@@ -48,6 +51,7 @@ def generate_agent_files(
     config,
     generation_mode: GenerationMode = GenerationMode.FULL,
     config_yaml: Optional[str] = None,
+    generators: Optional[List[BAFGenerator]] = None,
 ):
     """
     Generate agent files from an agent model.
@@ -56,6 +60,9 @@ def generate_agent_files(
         agent_model: The agent model to generate files from
         config: Configuration dictionary for the agent generation
         generation_mode: The generation mode to use
+        config_yaml: The ``config.yaml`` text to ship instead of a generated one
+        generators: When given, the generator instance that wrote the ZIP's files is appended to it, so
+            the caller can pass it to :func:`_with_traces`; the ZIP's files are those it wrote.
 
     Returns:
         tuple: (zip_buffer, file_name) containing the zip file buffer and filename
@@ -105,6 +112,8 @@ def generate_agent_files(
             )
 
             generator.generate()
+            if generators is not None:
+                generators.append(generator)
 
             # Prepare user profile bundle when personalization mappings are provided
             user_profiles_path = None
@@ -153,6 +162,21 @@ def generate_agent_files(
         raise
 
 
+def _with_traces(output: GeneratedOutput, generators: List[BAFGenerator]) -> GeneratedOutput:
+    """``output`` (a ZIP of the files one ``generate_agent_files`` call wrote) with the element-level
+    traces its generator recorded; unchanged when no generator wrote it (a bundle of several variants).
+
+    A file an LLM personalization step produced (``BAFGenerator.ai_files``) is not template output, so its
+    regions are left out: it keeps only the file-level link every generated file gets.
+    """
+    if len(generators) != 1:
+        return output
+    (generator,) = generators
+    traces = {path: trace for path, trace in delivery_traces(generators, generator.output_dir).items()
+              if path not in generator.ai_files}
+    return replace(output, traced_files=traces)
+
+
 async def generate_agent_output(json_data: dict) -> GeneratedOutput:
     """Generate an agent diagram's ZIP, dispatching on its config (languages, variations, ...)."""
     config = json_data.get('config', {})
@@ -162,12 +186,15 @@ async def generate_agent_output(json_data: dict) -> GeneratedOutput:
     )
     logger.debug("[Agent generation] config: %s", sanitized_config_log)
 
+    generators: List[BAFGenerator] = []
+    generate_traced = partial(generate_agent_files, generators=generators)
+
     if config is None:
         agent_model = process_agent_diagram(json_data)
         zip_buffer, file_name = await asyncio.to_thread(
-            generate_agent_files, agent_model, config, config_yaml=config_yaml
+            generate_traced, agent_model, config, config_yaml=config_yaml
         )
-        return agent_zip_output(zip_buffer, file_name)
+        return _with_traces(agent_zip_output(zip_buffer, file_name), generators)
 
     is_config_dict = isinstance(config, dict)
 
@@ -204,16 +231,16 @@ async def generate_agent_output(json_data: dict) -> GeneratedOutput:
 
     if is_config_dict and 'personalizationMapping' in config:
         buf, name = await asyncio.to_thread(
-            handle_personalized_agent, json_data, config, generate_agent_files, config_yaml=config_yaml,
+            handle_personalized_agent, json_data, config, generate_traced, config_yaml=config_yaml,
         )
-        return agent_zip_output(buf, name)
+        return _with_traces(agent_zip_output(buf, name), generators)
 
     # Single agent fallback
     agent_model = process_agent_diagram(json_data)
     zip_buffer, file_name = await asyncio.to_thread(
-        generate_agent_files, agent_model, config, config_yaml=config_yaml
+        generate_traced, agent_model, config, config_yaml=config_yaml
     )
-    return agent_zip_output(zip_buffer, file_name)
+    return _with_traces(agent_zip_output(zip_buffer, file_name), generators)
 
 
 def has_agent_components(gui_model) -> bool:

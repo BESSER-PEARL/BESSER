@@ -314,6 +314,25 @@ sent by that GUI.
     #     order_form.py   <- gui_model (BUML code) + gui = AgentGUI(...)
 
 
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` records which lines of the generated files come from which agent
+element: in ``<agent>.py`` the lines of each intent (``intent``), custom entity (``entity``), state (``state``, its
+creation) and the behaviour of each state (``state_behavior``) with its body (``body``), fallback body
+(``fallback_body``) and transitions (``transition``); in ``tools.py`` those of each tool (``tool``). ``config.yaml``,
+``readme.txt`` and the agent script name the agent as their source, a ``skills/`` file its skill and a ``guis/``
+module its GUI model. Only elements with an ``id`` are recorded, and recording them does not change the generated
+files. The web editor's agent processor does not assign ids to the states, intents and transitions it converts, so
+an agent drawn in the editor is traced at file level until it does; an agent built in Python can set them.
+
+``generator.ai_files`` lists the files an LLM produced or modified in the run (see :doc:`agent_personalization`):
+``personalized_agent_model.py``, ``personalized_agent_model.json`` and the agent script when ``configure_agent`` asked
+the LLM to translate or restyle the replies. ``build_generation_trace(..., ai_files=generator.ai_files)`` records them
+with AI evidence and an LLM call instead of a template rule. The web editor delivers the agent ZIP with the element
+traces of its generator, except for a file in ``ai_files`` and for the bundles of several agents (languages,
+variations, configurations), which stay file level. See :doc:`traceable_generator`.
+
 Missing BAF Features
 --------------------
 

@@ -1,0 +1,6 @@
+# Auto-generated tool definitions
+
+{% for tool in tools %}
+{% trace tool, "tool" %}{{ tool.code }}{% endtrace %}{% if not tool.code.endswith("\n") %}{{ "\n" }}{% endif %}
+
+{% endfor %}

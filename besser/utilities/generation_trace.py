@@ -36,7 +36,7 @@ import os
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from jinja2 import BaseLoader, Environment, FileSystemLoader, nodes
 from jinja2.ext import Extension
@@ -44,7 +44,7 @@ from markupsafe import Markup
 
 from besser.BUML.metamodel.structural import Constraint, Model, NamedElement
 from besser.BUML.metamodel.traceability import (
-    CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ExecutionStatus, ModelArtifact, Person,
+    AIEvidence, CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ExecutionStatus, LLM, ModelArtifact, Person,
     RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.BUML.metamodel.traceability.traceability import model_elements
@@ -326,6 +326,8 @@ def build_generation_trace(
     max_stored_content_bytes: int,
     started_at: datetime,
     ended_at: datetime,
+    ai_files: Collection[str] = (),
+    llm: Optional[LLM] = None,
 ) -> TraceModel:
     """The trace fragment of one generation run.
 
@@ -337,6 +339,11 @@ def build_generation_trace(
     element to the fragments rendered from it, with the template rule as evidence and
     confidence 1 (they are made by construction). An element is placed under the input
     model that holds it (the first one when none does).
+
+    ``ai_files`` are the paths of files an LLM produced or modified during the run (a generator's
+    optional LLM step, e.g. ``BAFGenerator.ai_files``). Their links are not deterministic template
+    output, so each is recorded with :class:`AIEvidence` (algorithm: ``llm``'s name) instead of a rule,
+    and the operation also calls ``llm`` (an unnamed ``LLM("llm", "unknown")`` when none is given).
 
     A file's content is kept when it is at most ``max_stored_content_bytes`` (UTF-8), so the
     views can show it and its fragments' lines; its hash always is. The fragment's
@@ -369,8 +376,11 @@ def build_generation_trace(
             reads.append(artifact)
         return artifact
 
-    def link(source, target, rule: str):
-        evidence = RuleEvidence(rule, timestamp=ended_at)
+    ai_paths = frozenset(ai_files)
+    ai_tool = (llm or LLM("llm", "unknown")) if ai_paths else None
+
+    def link(source, target, rule: str, ai: bool = False):
+        evidence = AIEvidence(ai_tool.name, timestamp=ended_at) if ai else RuleEvidence(rule, timestamp=ended_at)
         links.append((source, target, evidence))
 
     for generated in files:
@@ -383,10 +393,11 @@ def build_generation_trace(
         file_artifact = CodeArtifact(generated.path, generated.path, generated.content_hash, content=stored)
         artifacts.append(file_artifact)
         writes.append(file_artifact)
+        ai = generated.path in ai_paths
         for root in roots:
-            link(root, file_artifact, f"generator:{generator}")
+            link(root, file_artifact, f"generator:{generator}", ai)
         for source in generated.trace.sources:
-            link(element(source.element), file_artifact, source.rule)
+            link(element(source.element), file_artifact, source.rule, ai)
         lines = generated.content.split("\n")
         for region in generated.trace.regions:
             snippet = "\n".join(lines[region.start_line - 1:region.end_line])
@@ -396,12 +407,15 @@ def build_generation_trace(
             artifacts.append(fragment)
             writes.append(fragment)
             link(element(ElementRef(region.element_id, region.element_type, region.element_name), region.owner),
-                 fragment, region.rule)
+                 fragment, region.rule, ai)
 
-    run = ToolCall(tool, 0, status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at)
+    calls = [ToolCall(tool, 0, status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at)]
+    if any(generated.path in ai_paths for generated in files):
+        calls.append(ToolCall(ai_tool, 1, status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at))
     operation = CodeGeneration([actor], status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at,
-                               tool_calls=[run], reads=reads, writes=writes)
+                               tool_calls=calls, reads=reads, writes=writes)
     trace_links = [TraceLink(source, target, operation, [evidence], Confidence(1.0, timestamp=ended_at),
                              timestamp=ended_at) for source, target, evidence in links]
-    return TraceModel(actors=[actor], tools=[tool], artifacts=artifacts, operations=[operation],
+    tools = [tool, *(call.tool for call in calls[1:])]
+    return TraceModel(actors=[actor], tools=tools, artifacts=artifacts, operations=[operation],
                       trace_links=trace_links)

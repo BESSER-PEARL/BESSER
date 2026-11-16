@@ -474,7 +474,7 @@ export function MapBlock({ id, title, mapConfig, layers = [], styles }: MapBlock
   }, [layersKey, dataVersion]);
 
   return (
-    <div id={id}>
+    <div id={id} className="bsr-runtime">
       {title && (
         <h3 style={{ marginBottom: "8px", fontWeight: 600 }}>{title}</h3>
       )}

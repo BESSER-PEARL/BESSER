@@ -814,7 +814,7 @@ export const TableComponent: React.FC<Props> = ({
   }));
 
   return (
-    <div id={id} style={containerStyle} className={className ? `table-wrapper ${className}` : "table-wrapper"}>
+    <div id={id} style={containerStyle} className={className ? `table-wrapper bsr-runtime ${className}` : "table-wrapper bsr-runtime"}>
       {title && (
         <h3 style={{ margin: 0, color: "#1e293b", fontSize: "18px" }}>{title}</h3>
       )}

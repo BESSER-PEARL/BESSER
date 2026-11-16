@@ -8,6 +8,7 @@ import os
 from besser.BUML.metamodel.gui import DataBinding, GUIModel, Module, Screen
 from besser.BUML.metamodel.gui.dashboard import FieldColumn, Table
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
+import besser.generators.react as react_package
 from besser.generators.react import ReactGenerator
 
 STYLESHEET = (
@@ -73,7 +74,7 @@ def test_a_bound_table_keeps_its_class_names(tmp_path):
     # ... and the runtime components forward it to the rendered root element.
     assert "className={className}" in _read(src, "components", "runtime", "TableBlock.tsx")
     table_component = _read(src, "components", "table", "TableComponent.tsx")
-    assert "`table-wrapper ${className}`" in table_component
+    assert "`table-wrapper bsr-runtime ${className}`" in table_component
 
 
 def test_browser_defaults_the_reset_removes_are_restored_below_the_design(tmp_path):
@@ -83,12 +84,33 @@ def test_browser_defaults_the_reset_removes_are_restored_below_the_design(tmp_pa
     design_css = _read(src, "design.css")
 
     restore = design_css[design_css.index("@layer base {"):design_css.index(".app-btn{")]
-    headings = restore[restore.index(".app-main :is(h1, h2, h3, h4, h5, h6) {"):]
+    headings = restore[restore.index(".app-main :is(h1, h2, h3, h4, h5, h6):not(.bsr-runtime *) {"):]
     assert "font-size: revert;" in headings and "font-weight: revert;" in headings
-    button = restore[restore.index(".app-main button {"):]
+    button = restore[restore.index(".app-main button:not(.bsr-runtime *) {"):]
     assert "background-color: revert;" in button and "border: revert;" in button
     # Pages render inside .app-main; the reset the block answers is imported first.
     assert '<main className="app-main">' in _read(src, "App.tsx")
     assert '@import "tailwindcss";' in _read(src, "index.css")
     index = _read(src, "index.tsx")
     assert index.index("import './index.css';") < index.index("import './design.css';")
+
+
+def test_the_restored_defaults_leave_runtime_components_and_text_colour_alone(tmp_path):
+    """Tables, charts, maps, the agent widget and method dialogs style their own
+    headings and buttons and let text colour inherit: reverting them made table
+    and chart titles large and bold and the table's buttons black or grey."""
+    src = _generate(tmp_path, STYLESHEET)
+    design_css = _read(src, "design.css")
+
+    restore = design_css[design_css.index("@layer base {"):design_css.index(".app-btn{")]
+    assert "color: revert" not in restore.replace("background-color: revert", "")
+    assert restore.count(":not(.bsr-runtime *)") == 2
+    for parts in (("table", "TableComponent.tsx"), ("charts", "BarChartComponent.tsx"),
+                  ("charts", "LineChartComponent.tsx"), ("charts", "PieChartComponent.tsx"),
+                  ("charts", "RadarChartComponent.tsx"), ("charts", "RadialBarChartComponent.tsx"),
+                  ("MethodButton.tsx",)):
+        assert "bsr-runtime" in _read(src, "components", *parts), parts
+    # Emitted only when a page uses them
+    components = os.path.join(os.path.dirname(react_package.__file__), "templates", "src", "components")
+    for parts in (("runtime", "MapBlock.tsx"), ("AgentComponent.tsx.j2",)):
+        assert "bsr-runtime" in _read(components, *parts), parts

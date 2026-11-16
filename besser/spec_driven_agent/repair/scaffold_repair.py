@@ -168,6 +168,9 @@ _AUTOMATIC_JSX_PACKAGES = frozenset({
     "@rsbuild/plugin-react",
 })
 
+# Where ``vite`` serves when neither its config nor the dev script names a port.
+_VITE_DEFAULT_DEV_PORT = 5173
+
 _PLUGIN_REACT_VERSION = "^4.3.4"
 _VITE_VERSION = "^5.4.8"
 
@@ -312,23 +315,38 @@ docker compose up --build
 
 ## Run it without Docker
 
-```bash
-cd {backend} && pip install -r requirements.txt && python {entry}
-cd {frontend} && npm install && npm run dev
-```
+Use two terminals, each starting in this folder.
 
-## Pointing the frontend somewhere else
-
-The frontend reads its API base from `VITE_API_URL` and falls back to
-`http://localhost:8000`. If port 8000 is taken, start the backend on another
-port and set the variable rather than editing the source:
+The API, on http://localhost:8000:
 
 ```bash
-cd {frontend} && VITE_API_URL=http://localhost:8080 npm run dev
+cd {backend}
+pip install -r requirements.txt
+{start}
 ```
 
-Vite inlines `VITE_*` at build time, so a production image needs it as a
-build argument - `docker-compose.yml` already passes it that way.
+The web app, on http://localhost:{dev_port}:
+
+```bash
+cd {frontend}
+npm install
+npm run dev
+```
+
+## Using another API port
+
+The web app reads the API address from `VITE_API_URL` and falls back to
+`http://localhost:8000`. If port 8000 is taken, start the API with
+`python -m uvicorn {module}:app --port 8080` instead, and create
+`{frontend}/.env.local` holding:
+
+```
+VITE_API_URL=http://localhost:8080
+```
+
+Then restart `npm run dev`. Vite inlines `VITE_*` at build time, so a
+production image needs it as a build argument - `docker-compose.yml` already
+passes it that way.
 """
 
 
@@ -530,8 +548,9 @@ def _repair_frontend_manifest(frontend_dir: str, manifest: dict) -> list:
     return repairs
 
 
-def _backend_entry_command(backend_dir: str):
-    """Docker CMD (JSON-array text) for a generated FastAPI backend."""
+def _backend_entry(backend_dir: str):
+    """A generated FastAPI backend's entry file and whether running the file
+    starts the server, or None when the folder holds no FastAPI app."""
     candidates = []
     try:
         names = sorted(os.listdir(backend_dir))
@@ -549,9 +568,29 @@ def _backend_entry_command(backend_dir: str):
     # run has left several FastAPI modules around.
     candidates.sort(key=lambda item: (item[0] != "main_api.py", item[0]))
     fname, source = candidates[0]
-    if "__main__" in source and "uvicorn.run" in source:
+    return fname, "__main__" in source and "uvicorn.run" in source
+
+
+def _backend_entry_command(backend_dir: str):
+    """Docker CMD (JSON-array text) for a generated FastAPI backend."""
+    entry = _backend_entry(backend_dir)
+    if entry is None:
+        return None
+    fname, starts_server = entry
+    if starts_server:
         return f'["python", "{fname}"]'
     return f'["uvicorn", "{fname[:-3]}:app", "--host", "0.0.0.0", "--port", "8000"]'
+
+
+def _dev_server_port(frontend_dir: str, manifest: dict) -> int:
+    """The port ``npm run dev`` serves on: the script's ``--port``, else the
+    Vite config's ``server.port``, else Vite's default."""
+    script = str((manifest.get("scripts") or {}).get("dev", ""))
+    found = _re.search(r"--port[= ](\d+)", script)
+    if not found:
+        config = _existing_vite_config(frontend_dir)
+        found = config and _re.search(r"\bserver\s*:\s*\{[^}]*?\bport\s*:\s*(\d+)", _read_text(config))
+    return int(found.group(1)) if found else _VITE_DEFAULT_DEV_PORT
 
 
 def _find_backend_dir(output_dir: str):
@@ -571,7 +610,7 @@ def _find_backend_dir(output_dir: str):
     return matches[0] if len(matches) == 1 else None
 
 
-def _ensure_deployment_files(output_dir: str, frontend_dir: str, app_name: str = "") -> list:
+def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict, app_name: str = "") -> list:
     """Dockerfiles + compose + README, only for the plain two-service shape.
 
     Skipped entirely when the app already ships any Docker file: a
@@ -608,12 +647,14 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str, app_name: str =
 
     readme = os.path.join(output_dir, "README.md")
     if not os.path.isfile(readme):
-        entry = _re.search(r'"(\w+\.py)"', cmd)
-        entry_file = entry.group(1) if entry else "main_api.py"
+        entry_file, starts_server = _backend_entry(backend_dir)
+        module = entry_file[:-3]
         if _write_text(readme, _README_TEMPLATE.format(
                 title=_app_title(output_dir, os.path.join(backend_dir, entry_file), app_name),
-                backend=backend_name, frontend=frontend_name,
-                entry=entry_file)):
+                backend=backend_name, frontend=frontend_name, module=module,
+                start=(f"python {entry_file}" if starts_server
+                       else f"python -m uvicorn {module}:app --port 8000"),
+                dev_port=_dev_server_port(frontend_dir, manifest))):
             repairs.append("README.md")
     return repairs
 
@@ -652,5 +693,5 @@ def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
         for rel in _rewrite_api_base(frontend_dir):
             repairs.append(f"{label}{rel}: API base reads VITE_API_URL")
 
-        repairs.extend(_ensure_deployment_files(output_dir, frontend_dir, app_name))
+        repairs.extend(_ensure_deployment_files(output_dir, frontend_dir, manifest, app_name))
     return repairs

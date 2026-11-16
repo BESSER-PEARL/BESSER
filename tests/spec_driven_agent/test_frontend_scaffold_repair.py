@@ -24,6 +24,7 @@ exist and none of these files are ever written.
 """
 import json
 import os
+import re
 
 import pytest
 
@@ -272,6 +273,66 @@ def test_readme_keeps_a_user_chosen_folder_name(tmp_path):
     ensure_frontend_scaffold(str(app_dir))
     first = (app_dir / "README.md").read_text(encoding="utf-8").splitlines()[0]
     assert first == "# library site"
+
+
+def _readme(root):
+    ensure_frontend_scaffold(str(root))
+    return (root / "README.md").read_text(encoding="utf-8")
+
+
+def _shell_blocks(readme):
+    return [block.strip().splitlines() for block in re.findall(r"```bash\n(.*?)```", readme, re.DOTALL)]
+
+
+def test_readme_commands_each_start_from_the_app_folder(tmp_path):
+    """A block that starts a server never returns, so the frontend's steps
+    cannot follow the backend's in one block, relative to its folder."""
+    _flat_app(tmp_path)
+    readme = _readme(tmp_path)
+
+    blocks = [block for block in _shell_blocks(readme) if block[0].startswith("cd ")]
+    assert [block[0] for block in blocks] == ["cd backend", "cd frontend"]
+    for block in blocks:
+        assert (tmp_path / block[0].split()[1]).is_dir()
+        assert sum(line.startswith("cd ") or "&& cd " in line for line in block) == 1
+    assert blocks[0][-1] == "python main_api.py"
+    assert blocks[1][-1] == "npm run dev"
+    assert "two terminals" in readme
+
+
+@pytest.mark.parametrize("vite_config, dev_script, port", [
+    (None, "vite", 3000),                                      # the config this repair writes
+    ("export default {plugins: [], server: { port: 5173 }};\n", "vite", 5173),
+    ("export default {plugins: []};\n", "vite", 5173),         # Vite's default
+    ("export default {server: {port: 5173}};\n", "vite --host 0.0.0.0 --port 4000", 4000),
+])
+def test_readme_names_the_dev_server_address(tmp_path, vite_config, dev_script, port):
+    package_json = dict(_PACKAGE_JSON, scripts={"dev": dev_script, "build": "vite build"})
+    frontend = _flat_app(tmp_path, package_json=package_json)
+    if vite_config:
+        (frontend / "vite.config.js").write_text(vite_config, encoding="utf-8")
+    assert f"The web app, on http://localhost:{port}:" in _readme(tmp_path)
+
+
+def test_readme_starts_a_backend_that_does_not_run_itself_with_uvicorn(tmp_path):
+    _flat_app(tmp_path)
+    (tmp_path / "backend" / "main_api.py").unlink()
+    (tmp_path / "backend" / "server.py").write_text(
+        "from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+    readme = _readme(tmp_path)
+
+    assert "python -m uvicorn server:app --port 8000" in readme
+    assert "python server.py" not in readme and "main_api" not in readme
+
+
+def test_readme_moves_the_api_port_without_editing_source(tmp_path):
+    """The generated entry point hard-codes port 8000; uvicorn takes another."""
+    _flat_app(tmp_path)
+    readme = _readme(tmp_path)
+
+    assert "python -m uvicorn main_api:app --port 8080" in readme
+    assert "frontend/.env.local" in readme
+    assert "VITE_API_URL=http://localhost:8080" in readme
 
 
 def test_frontend_dockerfile_builds_on_node_22(tmp_path):

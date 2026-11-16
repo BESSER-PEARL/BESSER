@@ -228,6 +228,7 @@ class FakeGitHub:
             "sha": full,
             "commit": {"message": message.strip(), "author": {"name": author, "date": date},
                        "tree": {"sha": self.tree_of(repo, full)}},
+            "author": {"login": author},
             "html_url": f"https://github.com/{repo.full_name}/commit/{full}",
             "parents": [{"sha": p} for p in parents.split()],
         }

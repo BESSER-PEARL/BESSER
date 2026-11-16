@@ -138,6 +138,16 @@ class TestOpenAIMessagesToAPI:
         assert tc["function"]["name"] == "read_file"
         assert json.loads(tc["function"]["arguments"]) == {"path": "main.py"}
 
+    def test_empty_assistant_message_is_dropped(self):
+        """No text and no tool calls would be sent as null content -> 400."""
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": []},
+            {"role": "user", "content": "Go on"},
+        ]
+        result = _openai_messages_to_api("sys", messages)
+        assert [m["role"] for m in result] == ["system", "user", "user"]
+
     def test_assistant_message_with_dict_blocks(self):
         """Dict-based content blocks also work."""
         messages = [

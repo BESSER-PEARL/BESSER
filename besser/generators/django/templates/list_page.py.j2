@@ -1,6 +1,6 @@
-{%- for component in screen.view_elements %}
+{%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                     {%- set source_name= source.dataSourceClass%}
                     {% set data_source_name_lower = source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]%}
@@ -49,12 +49,12 @@
                     {%- endif %}
                 {#- End for inheritance #}
 {#- for fields #}
-{%- for component in screen.view_elements %}
+{%- for component in sort_by_timestamp(screen.view_elements) %}
     {%- if component is is_List%}
-        {%- for source in component.list_sources%}
+        {%- for source in sort_by_timestamp(component.list_sources)%}
             {%- if source is is_ModelElement%}
                 {%- set source_name= source.dataSourceClass%}
-                {%- set fieldsList = source.fields|list %}
+                {%- set fieldsList = sort_by_timestamp(source.fields) %}
                     {%- for field in fieldsList%}
 
                     <div class="form-group">
@@ -67,7 +67,7 @@
     {%- endif %}
 {%- endfor %}
 {#- End for fields #}
-                {%- for association in class_obj.associations %}
+                {%- for association in sort_by_timestamp(class_obj.associations) %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                       {%- set ns = namespace(end1=None, end2=None) %}
                         {%- set ends_list = association.ends | sort(attribute='name') | list %}
@@ -137,12 +137,12 @@
     <table class="min-w-full shadow-md rounded-lg overflow-hidden border bg-white">
         <thead class="bg-[#0C4B33] text-white">
             <tr>
-    {%- for component in screen.view_elements %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                    {%- set source_name= source.dataSourceClass%}
-                   {%- set fieldsList = source.fields|list %}
+                   {%- set fieldsList = sort_by_timestamp(source.fields) %}
                        {%- for field in fieldsList%}
                 <th class="w-1/3 text-left py-3 px-4 uppercase font-semibold text-sm">{{ field.name[0].upper() + field.name[1:] }}</th>
                        {%- endfor %}
@@ -156,12 +156,12 @@
         <tbody>
             {% raw %}{% for{% endraw %} {{data_source_name_lower}} in {{data_source_name_lower}}s %}
             <tr class="border-b hover:bg-gray-100 transition">
-    {%- for component in screen.view_elements %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                    {%- set source_name= source.dataSourceClass%}
-                   {%- set fieldsList = source.fields|list %}
+                   {%- set fieldsList = sort_by_timestamp(source.fields) %}
                        {%- for field in fieldsList%}
                 <td class="w-1/3 text-left py-3 px-4">{% raw %}{{{% endraw %} {{data_source_name_lower}}.{{field.name}} }}</td>
                        {%- endfor %}

@@ -39,7 +39,9 @@ Supported Dialects
    * - Dialect
      - Description
    * - ``sqlite``
-     - Default. Generates SQLite-compatible DDL statements.
+     - Default. Generates SQLite-compatible DDL statements. SQLite matches names
+       case-insensitively, so only reserved words (``"order"``) and names with special
+       characters are quoted; ``createdAt`` is written as is.
    * - ``postgresql``
      - PostgreSQL DDL with ``CREATE TYPE`` for enumerations.
    * - ``mysql``

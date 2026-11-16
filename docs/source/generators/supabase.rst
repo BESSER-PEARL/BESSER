@@ -96,7 +96,9 @@ Two terms used throughout:
 **For every other class:**
 
 - ``id UUID PRIMARY KEY DEFAULT gen_random_uuid()`` for any attribute with
-  ``is_id=True``.
+  ``is_id=True``. If the modeler marked no attribute with ``is_id``, an
+  attribute named ``id`` becomes this key; without one, this column is injected
+  automatically so the foreign keys that reference ``(id)`` still resolve.
 - A denormalized ``user_id UUID NOT NULL REFERENCES public.<user_root>(id) ON
   DELETE CASCADE`` column *if* the class is reachable from the user-root via
   associations.

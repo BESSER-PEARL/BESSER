@@ -18,6 +18,9 @@ from besser.utilities.web_modeling_editor.agent_simulator.session_manager import
 
 TOKEN = "test-simulator-token"
 AUTH = {api.API_TOKEN_HEADER: TOKEN}
+# Fixed, not uuid4(): it ends up in parametrize ids, and pytest-xdist aborts
+# when its workers collect different test ids.
+SESSION_ID = "00000000-0000-4000-8000-000000000000"
 
 
 class Client:
@@ -106,8 +109,8 @@ class TestTokenAuthentication:
         "method, path",
         [
             ("post", "/sessions"),
-            ("get", f"/sessions/{uuid.uuid4()}/files"),
-            ("delete", f"/sessions/{uuid.uuid4()}"),
+            ("get", f"/sessions/{SESSION_ID}/files"),
+            ("delete", f"/sessions/{SESSION_ID}"),
         ],
     )
     def test_every_http_endpoint_requires_the_token(self, client, method, path):

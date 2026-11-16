@@ -5,13 +5,14 @@ This endpoint generates a web app and pushes it to a GitHub repository
 in the user's account, enabling one-click deployment to platforms like Render.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
 import tempfile
 import uuid
-from typing import Literal, Optional, List
+from typing import Dict, Literal, Optional, List
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
@@ -19,9 +20,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.secret_redaction import redact_credentials, sanitize_config
+from besser.utilities.provenance import readme_about
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
+from besser.utilities.web_modeling_editor.backend.services.deployment.model_attribution import attribution_records
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
-    create_github_service
+    create_github_service,
 )
 from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token
@@ -39,6 +42,7 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
     agent_model_to_code,
 )
+from besser.generators.docker_compose.agent_dependencies import baf_dependency_extras
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.provenance import write_generation_provenance
@@ -235,7 +239,7 @@ async def deploy_webapp_to_github(
                     openai_api_key=extract_openai_api_key(agent_config),
                     config_yaml=raw_yaml if isinstance(raw_yaml, str) else None,
                 )
-                generator.generate()
+                await asyncio.to_thread(generator.generate)
 
                 _write_personalization_user_profiles(temp_dir, agent_config)
                 _add_chatbot_deployment_configs(
@@ -297,7 +301,7 @@ async def deploy_webapp_to_github(
                 except Exception:
                     logger.warning("Failed to export agent B-UML model — continuing without it", exc_info=True)
 
-                _write_deploy_model(temp_dir, body, diagrams)
+                await _write_deploy_model(temp_dir, body, diagrams, github, username, repo_name, default_branch)
 
                 write_generation_provenance(temp_dir, "agent")
                 readme_path = os.path.join(temp_dir, "README.md")
@@ -308,6 +312,7 @@ async def deploy_webapp_to_github(
                         owner=username,
                         repo_name=repo_name,
                         deployment_type="chatbot",
+                        description=body.get("description", ""),
                     ))
 
                 if custom_commit_message:
@@ -413,7 +418,7 @@ async def deploy_webapp_to_github(
                 # shared disk, so the agent cannot open the backend's SQLite file.
                 link_agent_database=False,
             )
-            generator.generate()
+            await asyncio.to_thread(generator.generate)
 
             # Add deployment configuration files
             _add_deployment_configs(
@@ -477,7 +482,7 @@ async def deploy_webapp_to_github(
             except Exception:
                 logger.warning("Failed to export B-UML models — continuing without them", exc_info=True)
 
-            _write_deploy_model(temp_dir, body, diagrams)
+            await _write_deploy_model(temp_dir, body, diagrams, github, username, repo_name, default_branch)
 
             # Add README before push so everything lands in one commit
             write_generation_provenance(temp_dir, "web_app")
@@ -489,6 +494,7 @@ async def deploy_webapp_to_github(
                     owner=username,
                     repo_name=repo_name,
                     deployment_type="webapp",
+                    description=body.get("description", ""),
                 ))
 
             # Push code to repository
@@ -575,7 +581,9 @@ async def deploy_webapp_to_github(
         )
 
 
-def _write_deploy_model(temp_dir: str, body: dict, diagrams: dict) -> None:
+async def _write_deploy_model(
+    temp_dir: str, body: dict, diagrams: dict, github, owner: str, repo: str, branch: str,
+) -> None:
     """Write the deployed project's model files, credentials redacted, as every repo write does.
 
     The frontend sends the V2 ``projectExport`` envelope, which the editor can
@@ -588,6 +596,7 @@ def _write_deploy_model(temp_dir: str, body: dict, diagrams: dict) -> None:
             "which the editor cannot import again."
         )
         project_export = diagrams
+    project_export = await repo_model.attribute_new_elements(github, owner, repo, project_export, login=owner, branch=branch)
     repo_model.write_model_files(temp_dir, project_export)
 
 
@@ -709,6 +718,28 @@ def _resolve_intent_recognition_technology(agent_config: object) -> str:
     return ""
 
 
+def _agent_needs_torch(base_dir: str, agent_file: str, ic_tech: str) -> bool:
+    """Whether the generated agent at ``agent_file`` (relative to ``base_dir``) builds a PyTorch component.
+
+    The BAF generator also emits the classical (PyTorch) intent classifier for an
+    agent with no intent classifier set and no LLM, so the config alone is not enough.
+    ``agent_file`` is derived from the user's agent name, so a path that resolves
+    outside ``base_dir`` is never opened.
+    """
+    root = os.path.realpath(base_dir)
+    agent_path = os.path.realpath(os.path.join(root, agent_file))
+    if not agent_path.startswith(root + os.sep):
+        logger.warning("Agent file %r is outside the generation directory; installing PyTorch only for classical IC",
+                       agent_file)
+        return ic_tech == "classical"
+    try:
+        with open(agent_path, encoding="utf-8") as agent_source:
+            return "torch" in baf_dependency_extras(agent_source.read())
+    except OSError:
+        logger.warning("Generated agent %s not found; installing PyTorch only for classical IC", agent_file)
+        return ic_tech == "classical"
+
+
 def _write_personalization_user_profiles(directory: str, agent_config: object) -> None:
     """Emit user_profiles.json when personalization mappings are present."""
     if not isinstance(agent_config, dict):
@@ -797,7 +828,16 @@ def _add_chatbot_deployment_configs(
     needs_user_db = _has_personalization(agent_config)
     db_name = _fit_chatbot_db_name(app_name, service_suffix) if needs_user_db else None
 
-    if ic_tech == "classical":
+    # The BAFGenerator writes the agent file as f"{model.name}.py" with the
+    # name normalized through safe_var_name(name, lowercase=False) (case
+    # preserved, spaces and special chars → underscores). agent_slug() lowercases,
+    # which mismatches the actual file on disk: e.g. "Greeting Agent" → file
+    # "Greeting_Agent.py" but agent_slug → "greeting_agent" — Render then fails
+    # to find the script. Mirror the BAFGenerator's transformation here.
+    raw_agent_name = getattr(agent_model, "name", "agent")
+    agent_script = f"{safe_var_name(raw_agent_name, lowercase=False)}.py"
+
+    if _agent_needs_torch(directory, agent_script, ic_tech):
         build_cmd = (
             "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.3.2 "
             "--extra-index-url https://download.pytorch.org/whl/cpu "
@@ -837,14 +877,6 @@ def _add_chatbot_deployment_configs(
         "openai_cfg['api_key'] = api_key if api_key else openai_cfg.get('api_key', ''); "
         "yaml.safe_dump(c, open('config.yaml','w'))"
     )
-    # The BAFGenerator writes the agent file as f"{model.name}.py" with the
-    # name normalized through safe_var_name(name, lowercase=False) (case
-    # preserved, spaces and special chars → underscores). agent_slug() lowercases,
-    # which mismatches the actual file on disk: e.g. "Greeting Agent" → file
-    # "Greeting_Agent.py" but agent_slug → "greeting_agent" — Render then fails
-    # to find the script. Mirror the BAFGenerator's transformation here.
-    raw_agent_name = getattr(agent_model, "name", "agent")
-    agent_script = f"{safe_var_name(raw_agent_name, lowercase=False)}.py"
     start_cmd = f'python -c "{yaml_patch}" && python -u "{agent_script}"'
 
     env_var_lines: list[str] = [
@@ -1049,7 +1081,7 @@ def _add_deployment_configs(
         cfg = agent_configs.get(agent.name) or {}
         ic_tech = cfg.get("intentRecognitionTechnology") if isinstance(cfg, dict) else None
 
-        if ic_tech == "classical":
+        if _agent_needs_torch(directory, os.path.join("agents", slug, agent_script), ic_tech):
             # Classical IC needs PyTorch CPU + scikit-learn, plus [llms] for unconditional imports in generated code
             # Single pip call with --extra-index-url so PyTorch CPU resolves from the wheel index while the rest comes from PyPI.
             # BAFGenerator does NOT emit a requirements.txt, so everything has to be pinned inline here.
@@ -1187,6 +1219,8 @@ class GitHubCommitResponse(ResponseModel):
     sha: str
     message: str
     author: str
+    author_login: Optional[str] = None
+    is_merge: bool = False
     date: str
     html_url: str
     # The BESSER-Origin trailer ("spec-driven-agent", "editor"); None for a person's commit.
@@ -1232,6 +1266,9 @@ class SaveProjectResponse(ResponseModel):
     conflict_branch: Optional[str] = None
     # What the user should know about a merged save (see GitHubService.commit_tree).
     warnings: List[str] = []
+    # Who added each class and attribute of the saved model, by element id:
+    # ``{"addedBy": <login>, "addedAt": <UTC time>}``. Not what a merge brought in.
+    attribution: Dict[str, Dict[str, str]] = {}
 
 
 class LoadProjectResponse(ResponseModel):
@@ -1459,6 +1496,8 @@ def _commit_response(commit: dict) -> "GitHubCommitResponse":
         sha=commit.get("sha", ""),
         message=commit.get("message", ""),
         author=commit.get("author", ""),
+        author_login=commit.get("author_login"),
+        is_merge=len(commit.get("parents") or []) > 1,
         date=commit.get("date", ""),
         html_url=commit.get("html_url", ""),
         origin=repo_model.commit_origin(commit.get("message", "")),
@@ -1469,16 +1508,6 @@ def _checked_model_path(model_path: Optional[str]) -> Optional[str]:
     if model_path is not None and not is_repo_json_path(model_path):
         raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
     return model_path
-
-
-async def _read_project_file(github, owner: str, repo: str, path: str, ref: str) -> Optional[dict]:
-    """``path`` at ``ref`` when it holds a BESSER project, else None."""
-    try:
-        file_data = await github.get_file_content(owner, repo, path, ref=ref)
-        document = json.loads(file_data["content"]) if file_data and file_data.get("content") else None
-    except ValueError:
-        return None
-    return document if repo_model.is_besser_project(document) else None
 
 
 async def _find_models(github, owner: str, repo: str, ref: str, *, first_only: bool) -> list[tuple[str, dict]]:
@@ -1500,7 +1529,7 @@ async def _find_models(github, owner: str, repo: str, ref: str, *, first_only: b
         logger.warning("Could not list %s/%s@%s to look for a saved project", owner, repo, ref[:7], exc_info=True)
         return found
     for path in repo_model.saved_project_candidates(paths):
-        document = await _read_project_file(github, owner, repo, path, ref)
+        document = await repo_model.read_project_file(github, owner, repo, path, ref)
         if document is not None:
             found.append((path, document))
             if first_only:
@@ -1513,7 +1542,7 @@ async def _find_model(
 ) -> Optional[tuple[str, dict]]:
     """The repo's model at commit ``ref`` and its path: ``model_path`` when it holds one, else the first found."""
     if model_path:
-        document = await _read_project_file(github, owner, repo, model_path, ref)
+        document = await repo_model.read_project_file(github, owner, repo, model_path, ref)
         if document is not None:
             return model_path, document
     found = await _find_models(github, owner, repo, ref, first_only=True)
@@ -1564,7 +1593,11 @@ async def save_project_to_github(
     """
     github = _github_for(github_sessions, github_session)
     try:
-        files = repo_model.model_files(request.project_export or request.project_data)
+        export = await repo_model.attribute_new_elements(
+            github, request.owner, request.repo, request.project_export or request.project_data,
+            ref=request.base_commit_sha, branch=request.branch, model_path=request.legacy_file_path,
+        )
+        files = repo_model.model_files(export)
         message = repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR)
         if files:
             await github.ensure_first_commit(
@@ -1582,7 +1615,7 @@ async def save_project_to_github(
             request.owner, request.repo, request.branch, entries, message,
             layer_on_parent=True,
             base_commit_sha=request.base_commit_sha,
-            model_merge=repo_model.ModelMerge(request.project_export or request.project_data),
+            model_merge=repo_model.ModelMerge(export),
         )
         await github.add_topic(request.owner, request.repo, repo_model.BESSER_TOPIC)
         conflict = outcome["status"] == "conflict"
@@ -1596,6 +1629,7 @@ async def save_project_to_github(
             status=outcome["status"],
             conflict_branch=outcome["conflict_branch"],
             warnings=outcome.get("warnings", []),
+            attribution=attribution_records(repo_model.project_of(export)),
         )
     except httpx.HTTPStatusError as exc:
         raise _github_status_error(exc, "save_project_to_github") from exc
@@ -1680,8 +1714,7 @@ async def load_project_from_commit(
 
 _README_TEMPLATE = """# {project_name}
 
-A [BESSER](https://github.com/BESSER-PEARL/BESSER) project.
-
+{about}
 ## Files
 
 - `{model_file}`: the model. Open the repository from the GitHub panel of the
@@ -1720,9 +1753,13 @@ async def create_repository_for_project(
         )
         branch = repo_info.get("default_branch", "main")
         project_name = request.project_data.get("name", "BESSER Project")
-        files = repo_model.model_files(request.project_export or request.project_data)
+        export = await repo_model.attribute_new_elements(
+            github, username, repo_name, request.project_export or request.project_data, login=username, branch=branch,
+        )
+        files = repo_model.model_files(export)
         files["README.md"] = _README_TEMPLATE.format(
             project_name=project_name, model_file=repo_model.MODEL_FILE, model_dir=repo_model.MODEL_DIR,
+            about=readme_about(request.project_data.get("description"), "Created"),
         ).encode("utf-8")
         entries = await _model_tree_entries(github, username, repo_name, files)
         outcome = await github.commit_tree(
@@ -1895,6 +1932,8 @@ class ModelHistoryResponse(ResponseModel):
 
 # Each entry costs one file read; the history panel shows recent changes only.
 _MODEL_HISTORY_LIMIT = 15
+# A file that is not JSON, unlike ``None`` (no file): describe_change reports it as not compared.
+_UNPARSEABLE_MODEL: dict = {}
 
 
 @router.get("/model-history", response_model=ModelHistoryResponse)
@@ -1950,7 +1989,7 @@ async def get_model_history(
                     content = file_data.get("content") if file_data else None
                     models[sha] = json.loads(content) if content else None
                 except json.JSONDecodeError:
-                    models[sha] = None
+                    models[sha] = _UNPARSEABLE_MODEL
             return models[sha]
 
         entries = []

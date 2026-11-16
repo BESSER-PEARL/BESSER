@@ -5,6 +5,7 @@ from besser.BUML.metamodel.gui.dashboard import Map
 from besser.BUML.metamodel.structural import *
 from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
+from besser.utilities.template_escaping import register_escaping_filters
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="sql_helper.dart")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = register_escaping_filters(Environment(loader=FileSystemLoader(templates_path)))
         template = env.get_template('flutterCodeGeneratorSqlHelperFile.py.j2')
         with open(file_path, mode="w") as f:
             generated_code = template.render(BUMLClasses= copy_model.get_classes(), model=copy_model, types=self.TYPES)
@@ -163,7 +164,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
 
         file_path = self.build_generation_path(file_name="main.dart")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = register_escaping_filters(Environment(loader=FileSystemLoader(templates_path)))
         template = env.get_template('flutterCodeGeneratorMainFile.py.j2')
         env.tests['is_Button'] = self.is_Button
         env.tests['is_List'] = self.is_List
@@ -236,7 +237,7 @@ class FlutterPubspecGenerator(GeneratorInterface):
 
         file_path = self.build_generation_path(file_name="pubspec.yaml")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = register_escaping_filters(Environment(loader=FileSystemLoader(templates_path)))
         template = env.get_template('flutterCodeGeneratorPubspecFile.py.j2')
         with open(file_path, mode="w") as f:
             generated_code = template.render(

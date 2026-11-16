@@ -34,7 +34,7 @@ def read_run_json(path: str, max_bytes: int = MAX_RUN_RECORD_BYTES):
             return None
         try:
             return json.loads(fh.read(max_bytes + 1))
-        except ValueError:
+        except (ValueError, RecursionError):
             return None
 
 

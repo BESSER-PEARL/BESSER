@@ -105,6 +105,7 @@ async def {{ class.name | lower }}_{{ clean_name }}(
         params = params or {}
         {% for param in method_params %}
         {% if param[3] %}
+        from routers.{{ param[1] | lower }} import get_{{ param[1] | lower }}
         {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
         {% else %}
         {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
@@ -208,6 +209,7 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     # {{ class.name }}.{{ clean_name }}: parameters
     {% for param in method_params %}
     {% if param[3] %}
+    from routers.{{ param[1] | lower }} import get_{{ param[1] | lower }}
     {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
     {% else %}
     {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})

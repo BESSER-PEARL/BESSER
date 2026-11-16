@@ -1,0 +1,119 @@
+Version 8.9.0
+=============
+
+Minor release: **work on a repository together, and keep your edits in any
+generator**. A project linked to GitHub continues from its code and shows what a
+teammate changed. ``generator.regenerate()`` brings generated code up to a changed
+model and keeps hand edits. The editor gains a Content-Security-Policy, and a
+user's own API key is held more tightly at every step.
+
+Working on a repository together
+--------------------------------
+
+* **Continue from a linked repository.** A project linked to a repository
+  continues from its code after the last run has expired, and the chat recaps
+  the requests, what stayed open and what changed since (#730, editor #257).
+  Every push keeps a marked recap section in ``AGENTS.md``.
+* **See a teammate's changes.** When someone else pushes, a card says who and
+  what, with Get latest, or Save and merge when there are unsaved edits. Preview
+  draws their classes on the canvas before they are taken in, without changing
+  the model.
+* **Who added what.** Each write of the model to GitHub credits what it adds to
+  the signed-in user, and the canvas shows it after a pull and on hover.
+* **Two people can merge their saves.** The project's own id and date no longer
+  conflict, and the open diagram is found again by its id after a merge.
+* **A model from a shared file is treated as untrusted.** Anyone with write access
+  can edit the file, so its icons and colours are sanitised where the editor draws
+  them.
+* **An invalid project is refused on import.** Importing checked less than
+  loading, so an invalid file was stored and then failed with "Project not found"
+  (editor #256). Continue from GitHub left a broken linked project behind that way,
+  and Get latest replaced the working local project.
+
+Generators keep your edits
+--------------------------
+
+* **generator.regenerate()** brings an output folder up to a changed model and
+  keeps hand edits. It runs the generator in a scratch folder and merges three ways
+  against what it generated last time, recorded in ``.besser_generated.json``
+  (#727). ``generate()`` is unchanged. 20 generators opt in; Supabase, Flutter,
+  Terraform, the agent generator and Docker Compose stay out, as do a
+  ``BackendGenerator`` building a Docker image and a ``WebAppGenerator`` with a
+  personalized agent. Details: :doc:`/generators/regenerating`.
+* **Conflicts and secrets.** Only libgit2's own conflict markers block the next run,
+  so a user's own ``<<<<<<< HEAD`` line is left alone. A binary file the model
+  drops is kept and reported. Django's ``SECRET_KEY`` stays out of
+  ``.besser_generated.json``.
+* **Django with a GUI generates valid Python.** ``views.py``, ``urls.py`` and
+  ``forms.py`` did not compile. Its loops over sets are sorted, and ``SECRET_KEY``
+  stays the same across regenerations.
+
+Security
+--------
+
+* **The editor sends a Content-Security-Policy, HSTS and** ``X-Frame-Options``
+  (editor #258). A user's key sits in ``sessionStorage``, which any script on the
+  page can read, and production sent none of these. ``script-src`` allows no inline
+  script and no JavaScript ``eval``, so an HTML injection can no longer run script
+  on the page. The headers come from the frontend image, not from nginx.
+* **Typed keys stay out of the page's HTML** (editor #259). React copied a password
+  field's value into its ``value`` attribute, where injected CSS could read a key as
+  it was typed. Every password field now uses one component that does not, and
+  ESLint rejects a new one. The SQL database password on the agent components page,
+  a plain text field until now, is masked.
+
+Spec-Driven Agent
+-----------------
+
+* **The free tier's cost cap counts real spend** (#726). Two of its models had no
+  rate and counted at the fallback rate, so a run recorded $5.03 and stopped at the
+  $5 cap before Phase 3, where the same tokens cost about $0.12. A model that falls
+  to the fallback rate now logs a warning, and a stream's last reported usage is
+  used, with an estimate and a warning when there is none.
+* **A deployment's model catalog can offer more providers**, and the key dialog
+  lists what the catalog holds.
+* **Architecture diagrams** in :doc:`/spec_driven_agent/how_it_works` show where the
+  LLM sits, the whole system, a new run and the three-way merge (#731).
+
+Behaviour changes
+-----------------
+
+* The Forecaster's ``regenerate`` attribute is now ``regenerate_command``, as it hid
+  the new method.
+* ``SQLAlchemyGenerator`` takes ``dbms`` and ``ocl_check_constraints`` when created.
+  Arguments to ``generate()`` still win.
+
+Dependencies
+------------
+
+* New: the extra ``besser[regen]`` for ``pygit2==1.20.1``, included in
+  ``besser[all]``. pygit2 is GPLv2 with a linking exception.
+* Frontend server: ``helmet==8.3.0``.
+
+Deploying
+---------
+
+* Rebuild the frontend image for the headers to take effect. If a host's nginx adds
+  its own HSTS or ``X-Frame-Options``, remove those copies in the same deploy:
+  browsers honour the first HSTS header.
+
+Modeling agent
+--------------
+
+Deploy the modeling agent ``v8.1.0`` alongside (its own release, from ``develop``).
+
+* **A user's key stays with the socket that armed it** (agent #57). It used to live on
+  the session, which outlives its sockets and is shared by every tab of a browser,
+  so it stayed in memory after the tab closed and a tab with no key could spend it.
+* **A key the provider refuses or limits is named as the cause** (agent #58, #59).
+  A rejected key, a rate limit and an exhausted account each get their own message
+  on every path, instead of "the AI service is unavailable".
+* **A request on a linked repository is a change to its app** (agent #56), and only an
+  explicit discard rebuilds it. Questions about what was built get the recap.
+* **PyMuPDF is replaced by pypdfium2** (agent #63), as PyMuPDF is AGPL-3.0 or commercial
+  and this repository is MIT. PDF uploads and the UML specification index use it. A
+  password-protected file now gets the intended error reply, and a file with no pages
+  gets "could not open". Conversions queue, because PDFium is not thread-safe. On some
+  slide decks word spaces are lost in the extracted text ("massiveamounts ofsoftware"),
+  though every character is correct and in order. Existing RAG stores keep their text
+  until rebuilt.

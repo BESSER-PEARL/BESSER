@@ -499,8 +499,10 @@ Backend-side notes that do not belong in the contract:
 - The pushed ``README.md`` keeps the agent's text and ends with a block between
   ``<!-- besser:begin -->`` and ``<!-- besser:end -->``: a "Built with BESSER"
   badge, a link that opens ``buml/domain_model.py`` in the editor (``?buml=``),
-  the Built with BESSER catalog and ``BESSER_GENERATION.md``. A repo without a
-  README gets one titled with the repo name. Each push renders the block again in
+  the Built with BESSER catalog and ``BESSER_GENERATION.md``. A new repo whose
+  run has no README gets one titled with the repo name, followed by the
+  project's description (left out when blank) and the date it was generated.
+  Each push renders the block again in
   place, and a run seeded from the repo starts without it, so its lines are never
   attributed to a person.
 - ``/spec-driven/push-to-github`` and ``/spec-driven/import-github-run`` require
@@ -635,7 +637,9 @@ Refine KG dialog that precedes it.
 Validation
 ^^^^^^^^^^
 
-- ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints)
+- ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints).
+  OCL invariants are evaluated against an object or user diagram only when
+  ``BESSER_ENABLE_OCL_EVALUATION`` is on; otherwise they are checked for syntax only.
   For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
   consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
@@ -646,7 +650,10 @@ Validation
 Deployment
 ^^^^^^^^^^
 
-- ``POST /deploy-app`` -- Docker Compose deployment for Django projects
+- ``POST /deploy-app`` -- Docker Compose deployment for Django projects, on the backend's own host.
+  Unless ``BESSER_ENABLE_DOCKER_DEPLOY`` says otherwise, served only to a local browser
+  (loopback connection, no proxy headers), 403 otherwise; a failed or timed-out
+  ``docker-compose`` answers 502 or 504 with the details in the server log.
 - ``POST /feedback`` -- User feedback submission
 
 Standalone Chatbot Deployment
@@ -678,10 +685,10 @@ testing against a GitHub stand-in) is described in :doc:`web_editor_github`.
 - ``GET /github/star/status``, ``PUT /github/star``, ``DELETE /github/star`` -- Read / set / clear the signed-in user's star on the BESSER repository
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
 - ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow. ``/repos`` lists every repository the user can open (own, collaborator and organization), most recently updated first, across GitHub's pages up to 1,000, with each one's topics and ``can_push``; ``truncated`` says the account has more. ``/branches`` follows the pages too. ``/commits`` marks each commit's ``origin``.
-- ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit). A save takes an optional ``legacy_file_path`` (a relative ``.json`` path without ``..``; default ``besser-project.json``): the project file the old editor sidebar saved, removed in the same commit when it holds a BESSER project. A merged save lists anything the user should know in ``warnings``
+- ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit). ``create-repo`` makes the first commit with the model files and a README holding the project's description and the date it was created. A save takes an optional ``legacy_file_path`` (a relative ``.json`` path without ``..``; default ``besser-project.json``): the project file the old editor sidebar saved, removed in the same commit when it holds a BESSER project. A merged save lists anything the user should know in ``warnings``
 - ``GET /github/repo-summary`` -- What a repository holds: the model's name, diagrams per type, classes, and the last commit. ``model_path`` says which file the model was read from and ``model_paths`` lists every file in the repository holding a BESSER project, so the editor can let the user pick one; a ``model_path`` query parameter summarizes that file. ``/project/load``, ``/project/load-commit``, ``/model-history`` and ``/spec-driven/import-github-run`` take the same optional ``model_path`` (the first model found when it is omitted or the file is gone)
-- ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced. With ``pending_branch`` (a ``besser/…`` branch a conflict or pull-request push left), ``pending`` says whether that branch still exists and the state of its pull request (``open``, ``closed``, ``merged``, or none yet)
-- ``GET /github/model-history`` -- Recent commits that changed the model file, each with its class-diagram changes. After a save moved the model into ``buml/diagrams.json``, the history continues with the file an older editor had saved it in
+- ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced. Each commit carries ``author_login`` (the GitHub account it matched, or null) and ``is_merge``. With ``pending_branch`` (a ``besser/…`` branch a conflict or pull-request push left), ``pending`` says whether that branch still exists and the state of its pull request (``open``, ``closed``, ``merged``, or none yet)
+- ``GET /github/model-history`` -- Recent commits that changed the model file, each with its class-diagram changes. When a version's class diagram cannot be read, its row and the next newer one carry one "class diagram not compared" line instead of listing changes. After a save moved the model into ``buml/diagrams.json``, the history continues with the file an older editor had saved it in
 - ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge. Without a ``body`` the description lists the model changes between the two branches. Asking again for a branch that already has an open pull request returns that one
 - ``GET /github/app/capabilities``, ``POST /github/app/go-live`` -- "Go live": commit Render deploy files into the project's own repository, for its real folder layout (see below). Off unless ``BESSER_DEPLOY_FROM_REPO=true``.
 - ``POST /github/gist/create`` -- Share a model as a GitHub gist
@@ -912,6 +919,28 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
 - ``BESSER_DEPLOY_FROM_REPO`` (optional, default ``false``) -- offers "Go live"
   (``/github/app/go-live``), which deploys the project's own repository
 
+**Docker deployment:**
+
+- ``BESSER_ENABLE_DOCKER_DEPLOY`` (unset) -- controls ``POST /deploy-app``, which runs
+  ``docker-compose`` on the backend's own host and has no authentication. Unset, it
+  answers only requests from the backend's own machine: a loopback connection carrying
+  no ``Forwarded`` / ``X-Forwarded-For`` / ``X-Real-IP`` header, which is what the
+  editor's "Deploy locally" sends when backend and browser run on one machine.
+  ``true`` allows every caller, ``false`` refuses every caller (403).
+  ``docker-compose.prod.yml`` sets ``false``; a shared server should too.
+
+**OCL evaluation:**
+
+- ``BESSER_ENABLE_OCL_EVALUATION`` (default ``false``) -- ``/validate-diagram``
+  (and ``/check-ocl``) evaluate OCL invariants against object and user diagrams.
+  Off, invariants are checked for syntax only and an object diagram's response
+  carries the warning *OCL invariants were checked for syntax only; evaluation
+  is disabled on this server*. The B-OCL evaluator runs Python text it builds
+  from the diagram's values; the backend accepts only literal and operator
+  expressions from it, but enabling evaluation is **unsafe for untrusted users**:
+  turn it on only on a local install or a server whose users are trusted.
+  ``docker-compose.prod.yml`` sets ``false``.
+
 **Optional:**
 
 - ``OPENAI_API_KEY`` -- OpenAI key consumed by:
@@ -978,6 +1007,13 @@ agent: :doc:`spec_driven_agent/configuration`.
   persistent volume so sign-ins survive a restart
 - ``GITHUB_REDIRECT_URI`` -- OAuth redirect URL (default: ``http://localhost:9000/besser_api/github/auth/callback``)
 - ``DEPLOYMENT_URL`` -- Frontend URL for OAuth redirects (default: ``http://localhost:8080``)
+
+**Code generation** (read per call):
+
+- ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT`` (``120``) -- Seconds a generator's child
+  process may run (Django's ``startproject`` / ``startapp``, the SQL
+  generator's DDL script). Past it the child is killed and the request answers
+  504. A blank, unparsable or non-positive value gives the default.
 
 **SDMX import** (``POST /sdmx-to-domain-model``, read once at startup):
 

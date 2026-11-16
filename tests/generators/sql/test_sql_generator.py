@@ -522,3 +522,58 @@ def test_check_constraints_can_be_disabled(tmpdir):
     SQLGenerator(model=_model_with_ocl_invariants(), output_dir=str(output_dir), sql_dialect="postgresql",
                  ocl_check_constraints=False).generate()
     assert "CHECK" not in _read_sql(output_dir, "postgresql")
+
+
+def _brand_model():
+    """The shape of #751: mixed-case names, a reserved word, and a one-to-many association."""
+    brand = Class(name="Brand", attributes={
+        Property(name="name", type=StringType),
+        Property(name="createdAt", type=DateType),
+        Property(name="order", type=IntegerType),
+    })
+    brand_url = Class(name="BrandURL", attributes={Property(name="url", type=StringType)})
+    owner = Property(name="brand", type=brand, multiplicity=Multiplicity(1, 1))
+    urls = Property(name="urls", type=brand_url, multiplicity=Multiplicity(0, "*"))
+    return DomainModel(name="Brands", types={brand, brand_url},
+                       associations={BinaryAssociation(name="brand_urls", ends={owner, urls})})
+
+
+def test_statements_end_without_blank_line_or_trailing_spaces(tmpdir):
+    """#751: each statement closes with ``);`` and no line ends with a space."""
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=_brand_model(), output_dir=str(output_dir), sql_dialect="sqlite").generate()
+    ddl = _read_sql(output_dir, "sqlite")
+
+    assert ddl.startswith("CREATE TABLE ")
+    assert ddl.count(");\n") == 2
+    assert "\n;" not in ddl
+    assert "\n\n\n" not in ddl and ddl.endswith(");\n")
+    assert all(line == line.rstrip() for line in ddl.splitlines())
+
+
+def test_sqlite_quotes_only_names_that_need_it(tmpdir):
+    """#751: SQLite matches names case-insensitively, so ``createdAt`` needs no quotes; ``order`` still does."""
+    import sqlite3
+
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=_brand_model(), output_dir=str(output_dir), sql_dialect="sqlite").generate()
+    ddl = _read_sql(output_dir, "sqlite")
+
+    assert "\tcreatedAt DATE NOT NULL," in ddl
+    assert '"createdAt"' not in ddl
+    assert '\t"order" INTEGER NOT NULL,' in ddl
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(ddl)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(brand)")}
+        assert {"createdAt", "order"} <= columns
+        conn.execute('INSERT INTO brand (id, name, "createdAt", "order") VALUES (1, \'b\', \'2026-01-01\', 1)')
+    finally:
+        conn.close()
+
+
+def test_postgresql_keeps_quoting_mixed_case_names(tmpdir):
+    """PostgreSQL folds unquoted names to lower case, so ``createdAt`` must stay quoted there."""
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=_brand_model(), output_dir=str(output_dir), sql_dialect="postgresql").generate()
+    assert '\t"createdAt" DATE NOT NULL,' in _read_sql(output_dir, "postgresql")

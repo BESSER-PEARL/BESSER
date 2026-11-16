@@ -54,3 +54,18 @@ def _no_model_catalog(monkeypatch):
     import besser.spec_driven_agent.agent.compaction as compaction
     monkeypatch.setattr(compaction, "_CATALOG", {}, raising=False)
     monkeypatch.setattr(compaction, "_CATALOG_LOADED", True, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_tokenizer_download(monkeypatch):
+    """Never download tiktoken's ``cl100k_base`` vocabulary in tests.
+
+    The first ``_count_tokens`` call fetches it from the network unless it is
+    cached in ``TIKTOKEN_CACHE_DIR``, so counts would depend on the host and
+    an offline run would stall. Pin the tokenizer as loaded and absent: counts
+    use the characters/4 fallback everywhere. A test of the loader itself
+    resets ``_TOKENIZER_LOADED`` and stubs ``tiktoken.get_encoding``.
+    """
+    import besser.spec_driven_agent.agent.compaction as compaction
+    monkeypatch.setattr(compaction, "_TOKENIZER", None)
+    monkeypatch.setattr(compaction, "_TOKENIZER_LOADED", True)

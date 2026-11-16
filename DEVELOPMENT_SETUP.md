@@ -85,9 +85,10 @@ pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
 besser-wme-backend
 ```
 
-Keep the virtual environment activated in every terminal you use. `besser-wme-backend`, `pytest` and the
-`django-admin` command the Django generator calls are installed into it. Without it, they are not on `PATH`, and the
-Django generator tests skip.
+Keep the virtual environment activated in every terminal you use: `besser-wme-backend` and `pytest` are installed
+into it and are on `PATH` only while it is active. Otherwise run them through the environment's interpreter
+(`venv/bin/python -m pytest tests/`). BESSER starts its own child processes (the Django generator's `startproject`,
+the SQL generator's DDL script) with that same interpreter, so they do not depend on `PATH`.
 
 `besser-wme-backend` (installed by `pip install -e .` or `pip install besser`)
 accepts `--host`, `--port` and `--log-level`; run it with `--help` for details.

@@ -31,7 +31,7 @@ pip install -r docs/requirements.txt   # docs toolchain (optional)
 ### Testing
 ```bash
 python -m pytest tests/                                             # ALWAYS scope to tests/
-python -m pytest tests/ -q --tb=short                                 # what CI runs (Python 3.11 + 3.12)
+python -m pytest tests/ -n auto -q --tb=short                         # what CI runs (Python 3.11 + 3.12; -n is pytest-xdist, in the dev extra)
 python -m pytest tests/generators -k sqlalchemy                     # targeted
 python tests/BUML/metamodel/structural/library/library.py           # standalone example, verifies the install
 ```
@@ -293,7 +293,9 @@ and note the merge order.
 - `deploy-wme.yml` — manual (`workflow_dispatch`) build + push of backend, `smartgen_worker`, frontend and
   agent-simulator images, then EC2 deploy. A backend deploy recreates `besser-wme-backend` and
   `besser-wme-smartgen` and verifies the build stamp in both; it aborts before pushing if the host's compose
-  file is missing a service or the worker is not on the `smartgen_worker` image.
+  file is missing a service or the worker is not on the `smartgen_worker` image. Images go through
+  `.github/scripts/publish_image.sh` (Buildx push as an OCI index, then a check that the registry serves that
+  digest): a plain `docker push` to Artifactory does not move a tag that already holds an index.
 
 ## Documentation Sync
 Keep `docs/source/` in step with code:
@@ -311,3 +313,17 @@ Keep `docs/source/` in step with code:
 - **Open pull requests against `development`, not `master`.**
 - `.github/copilot-instructions.md` and `.cursorrules` only point here — edit `CLAUDE.md`, not them.
   See also `CONTRIBUTING.md`, `DEVELOPMENT_SETUP.md`, `GOVERNANCE.md`.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues via `gh` (this repo, plus the web editor and modeling-agent with `--repo`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. See `docs/agents/domain.md`.

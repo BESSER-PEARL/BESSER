@@ -6,11 +6,11 @@ from . import views
 urlpatterns = [
     # Home page
     path('', views.home, name='home'),
-{%- for module in app.modules%}
-    {%- for screen in module.screens %}
-        {%- for component in screen.view_elements %}
+{%- for module in sort_by_timestamp(app.modules)%}
+    {%- for screen in sort_by_timestamp(module.screens) %}
+        {%- for component in sort_by_timestamp(screen.view_elements) %}
             {%- if component is is_List%}
-                {%- for source in component.list_sources%}
+                {%- for source in sort_by_timestamp(component.list_sources)%}
                     {%- if source is is_ModelElement%}
                        {%- set source_name= source.dataSourceClass%}
 
@@ -38,6 +38,7 @@ urlpatterns = [
         {%-endfor%}
     {%- endfor %}
 {%- endfor %}
+
 ]
 
      

@@ -20,24 +20,14 @@ and combines the new output with the app as it is now, file by file, the way
 ``git merge`` combines two branches. The agent is only asked for what cannot
 be combined safely.
 
-.. code-block:: text
+.. container:: besser-diagram
 
-   first run                                 a later modify run, model changed
-   ---------                                 ---------------------------------
+   .. raw:: html
+      :file: ../_static/diagrams/regeneration.svg
 
-   class diagram                             new class diagram
-        |                                          |
-        | generator                                | same generator, scratch folder
-        v                                          v
-   app files  ---- stored as the base ---->   "theirs": the new output
-        |                                          |
-        | edits by the agent, you, GitHub          |
-        v                                          v
-   "ours": the app now  ------------------>  three-way merge, file by file
-                                                   |
-                                                   v
-                                     merged app  +  a short note to the agent
-                                                    for what could not merge
+   A later modify run with a changed model. The base is the generator's stored
+   output, rebuilt after a BESSER upgrade so that a change in the generator itself
+   is not read as an edit.
 
 When it runs
 ------------

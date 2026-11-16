@@ -66,6 +66,18 @@ The generated files land in the ``<<current_directory>>/output`` folder:
 
 Check out the BAF documentation for more details on how to use the generated agent: `BESSER Agentic Framework Documentation <https://besser-agentic-framework.readthedocs.io/latest/>`_.
 
+Intent classifier
+-----------------
+
+The agent's default intent classifier comes from, in order: the model's ``default_ic_config``,
+the config's ``intentRecognitionTechnology`` (``llm-based`` or ``classical``), and otherwise the
+LLM intent classifier on the configured LLM (the config's ``llm`` entry, the model's default
+LLM or its first LLM). An agent with none of these (no classifier set and no LLM) gets BAF's
+classical classifier, ``SimpleIntentClassifierConfiguration()``, which needs PyTorch
+(``pip install besser-agentic-framework[torch]``). The generator then logs a warning and says so
+in the generated script and ``readme.txt``; the Docker Compose and Render deployments install
+PyTorch for it.
+
 
 A2A and authored behavior
 -------------------------

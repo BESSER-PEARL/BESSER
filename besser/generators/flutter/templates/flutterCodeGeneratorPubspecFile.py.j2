@@ -1,5 +1,5 @@
 name: {{ app.name|lower|replace(' ', '_') }}
-description: "{{ app.description }}"
+description: "{{ app.description | yaml_str }}"
 publish_to: 'none'
 version: 0.1.0
 

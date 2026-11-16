@@ -46,6 +46,8 @@ class PytorchGenerator(NNCodeGenerator):
             will have their input and output permuted to match TF
             convention.
     """
+    regenerable = True
+
     def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing",
                  channel_last: bool = False,

@@ -176,8 +176,10 @@ Semantic validation
 -------------------
 
 The condensed metamodel shipped with the Web Modeling Editor carries a small
-set of OCL constraints that the editor evaluates each time a UserDiagram is
-validated. They are intentionally lightweight first-step checks and can be
+set of OCL constraints that the editor checks each time a UserDiagram is
+validated (evaluated against the diagram only on a server with
+``BESSER_ENABLE_OCL_EVALUATION`` on; otherwise checked for syntax only, see
+:ref:`ocl-object-diagram-validation`). They are intentionally lightweight first-step checks and can be
 extended over time.
 
 .. list-table::

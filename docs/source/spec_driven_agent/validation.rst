@@ -143,6 +143,33 @@ endpoint and reads back the identifiable record. Health responses, an isolated
 200, stale results, and evidence from a different route/backend do not qualify.
 Observed server crashes remain failures even if another scenario passes.
 
+.. _spec-driven-model-contract:
+
+Model contract (Phase 0)
+------------------------
+
+Before Phase 1, the run validates the domain model with ``DomainModel.validate()``
+(the checks listed in :ref:`structural-design-checks`) and records findings as
+``model contract:`` blockers. No edit to the generated code can repair the model
+it was generated from, so these are reported, not fed to the auto-fix loop, and
+they survive every Phase 3 pass.
+
+- Every validation **error** is promoted.
+- **Warnings** that make any generated CRUD app unusable are promoted at once:
+  mandatory creation cycles, and class names or attribute names that differ only
+  in case.
+- **Warnings** about what one family of BESSER generators emits are promoted once
+  Phase 1 has run and only when the scaffold came from that family: Python keyword
+  names, empty enumerations, foreign key column clashes and subclasses declaring
+  ``id`` (FastAPI and Django scaffolds), join table name clashes and class-typed
+  attributes (FastAPI), and a root ``id`` attribute that is not the identifier
+  (Django). A modify run knows its scaffold from the seed run and checks
+  everything at Phase 0.
+- Other warnings (an attribute and an association end sharing a name, isolated
+  classes, abstract classes without a concrete subclass, parts with several
+  mandatory owners, duplicate associations) describe an app that is generated but
+  degraded, and stay warnings.
+
 Severities
 ----------
 

@@ -194,6 +194,8 @@ def _check_command_safety(command: str) -> str | None:
 # Maximum output size returned to the LLM (chars).
 # Lower = less context bloat = more turns before compaction needed.
 MAX_OUTPUT_SIZE = 15_000
+# Enough of stderr to show the "not found" line of a missing command.
+_STDERR_TAIL_CHARS = 500
 
 # Per-stream ceiling on a spilled command log (chars). The spill exists to
 # keep what truncation drops, so it is deliberately far above MAX_OUTPUT_SIZE;
@@ -243,9 +245,8 @@ def _normalize_path_for_comparison(path: str) -> str:
 # Stderr fragments that indicate the requested binary isn't installed in
 # the execution container. The runner image has Python +
 # Node + a few essentials; everything else (ruby, go, rustc, dotnet, ...)
-# routinely falls into this bucket. We treat these as soft skips so the
-# LLM doesn't surface "X is not installed" to the user as if it were a
-# real failure — the user can't act on it and it's just noise.
+# routinely falls into this bucket. run_command still reports these as
+# failures, flagged ``missing_command`` so the model knows why.
 _RUNTIME_NOT_INSTALLED_PATTERNS: tuple[str, ...] = (
     "command not found",
     "not recognized as an internal or external command",  # Windows shell
@@ -1485,53 +1486,38 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     def _safe_path(self, rel_path: str) -> str:
-        """Resolve a relative path within the workspace.  Blocks traversal."""
+        """Resolve ``rel_path`` and confine it to the workspace in one step.
+
+        The one containment check for every tool path and working directory.
+        ``realpath`` resolves every ``..`` and symlink before the check, so a
+        ``../`` path, an absolute path elsewhere or a link pointing out of the
+        workspace is rejected. Callers open the returned resolved path, never
+        ``rel_path`` again, so a link planted after the check is not followed
+        through a re-resolution of the original name.
+        """
         full = os.path.realpath(os.path.join(self.workspace, rel_path))
-        # Strip Windows extended-path prefix from BOTH sides — otherwise
-        # a workspace stored as ``C:\...`` and a resolved full path as
-        # ``\\?\C:\...`` (or vice versa) fails the containment check
-        # for legitimate in-workspace paths. See
-        # ``_normalize_path_for_comparison`` for the full rationale.
-        full_cmp = _normalize_path_for_comparison(full)
-        full_norm = os.path.normcase(full_cmp)
-        ws_norm = os.path.normcase(self.workspace)
-        if not (
-            full_norm == ws_norm
-            or full_norm.startswith(ws_norm + os.sep)
-            or full_norm.startswith(ws_norm + "/")
-        ):
-            logger.error(
-                "Path check failed: rel=%s full=%s workspace=%s full_norm=%s ws_norm=%s",
-                rel_path, full, self.workspace, full_norm, ws_norm,
-            )
+        # Strip the Windows extended-path prefix (``\\?\C:\...``): realpath
+        # keeps it when _getfinalpathname fails transiently, and self.workspace
+        # is stored without it, so both the check and every downstream
+        # os.path.relpath(path, self.workspace) need the prefix-free form.
+        full = _normalize_path_for_comparison(full)
+        try:
+            inside = os.path.commonpath(
+                [os.path.normcase(full), os.path.normcase(self.workspace)]
+            ) == os.path.normcase(self.workspace)
+        except ValueError:  # different drives on Windows
+            inside = False
+        if not inside:
+            logger.warning("Path traversal blocked: rel=%s resolved=%s workspace=%s",
+                           rel_path, full, self.workspace)
             raise ValueError(f"Path traversal blocked: {rel_path}")
-        # Return the NORMALISED path, not the raw realpath. self.workspace is
-        # stored prefix-free, so a returned "\\?\C:\..." makes every downstream
-        # os.path.relpath(path, self.workspace) raise "path is on mount
-        # '\\?\C:', start on mount 'C:'". realpath keeps the prefix when
-        # _getfinalpathname fails transiently (e.g. WinError 1450), so the
-        # failure is intermittent. Containment was already proven against
-        # full_cmp, so returning it is also the self-consistent answer.
-        return full_cmp
+        return full
 
     def _safe_cwd(self, rel_dir: str = ".") -> str:
-        """Resolve a working directory within the workspace."""
-        cwd = os.path.realpath(os.path.join(self.workspace, rel_dir))
-        cwd_cmp = _normalize_path_for_comparison(cwd)
-        cwd_norm = os.path.normcase(cwd_cmp)
-        ws_norm = os.path.normcase(self.workspace)
-        if not (
-            cwd_norm == ws_norm
-            or cwd_norm.startswith(ws_norm + os.sep)
-            or cwd_norm.startswith(ws_norm + "/")
-        ):
-            raise ValueError(f"Path traversal blocked: {rel_dir}")
-        if not os.path.isdir(cwd_cmp):
-            os.makedirs(cwd_cmp, exist_ok=True)
-        # Same reason as _safe_path: the raw realpath can carry the Windows
-        # extended prefix, and this value becomes a subprocess cwd and the
-        # sandbox's --chdir.
-        return cwd_cmp
+        """A working directory confined by ``_safe_path``, created if missing."""
+        cwd = self._safe_path(rel_dir)
+        os.makedirs(cwd, exist_ok=True)
+        return cwd
 
     def _resolves_inside(self, abs_path: str) -> bool:
         """False for a link (planted via run_command) that escapes the workspace."""
@@ -3162,30 +3148,6 @@ class ToolExecutor:
         # For stderr (errors), keep the tail where the actual error message is
         stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
 
-        # If the command failed because the runtime isn't installed in
-        # this container (e.g. `ruby -c file.rb` when ruby is absent),
-        # treat it as a soft skip rather than a real error. Otherwise
-        # the LLM dutifully reports "Ruby is not installed in the
-        # execution environment" in its user-facing summary, which is
-        # noise the user can't act on.
-        if result.returncode != 0 and _looks_like_command_not_found(stderr):
-            logger.info(
-                "run_command: runtime not available, treating as soft skip: %s",
-                command,
-            )
-            return {
-                "exit_code": 0,
-                "stdout": "",
-                "stderr": "",
-                "success": True,
-                "skipped": True,
-                "skip_reason": (
-                    "Runtime for this command is not installed in the "
-                    "execution environment; validation skipped."
-                ),
-                **extra,
-            }
-
         payload = {
             "exit_code": result.returncode,
             "stdout": stdout,
@@ -3193,6 +3155,17 @@ class ToolExecutor:
             "success": result.returncode == 0,
             **extra,
         }
+        # A missing binary is a failure like any other: the model must not
+        # read a check whose tool is absent as a passed one.
+        if result.returncode != 0 and _looks_like_command_not_found(stderr):
+            logger.warning("run_command: command not found in the execution environment: %s", command)
+            payload["missing_command"] = True
+            payload["stderr_tail"] = raw_stderr.strip()[-_STDERR_TAIL_CHARS:]
+            payload["note"] = (
+                "A program this command needs is not installed in the execution "
+                "environment, so the command did not run. Treat its check as "
+                "failed, not as passing."
+            )
         spilled = self._spill_command_output(command, raw_stdout, raw_stderr)
         if spilled:
             payload["full_output_path"] = spilled

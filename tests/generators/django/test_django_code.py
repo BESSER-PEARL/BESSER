@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import shutil
 
@@ -8,11 +9,12 @@ from besser.BUML.metamodel.structural import DomainModel, Property, Class, \
     BinaryAssociation, Multiplicity
 from besser.BUML.metamodel.gui import GUIModel, Module, DataList, \
     DataSourceElement, Screen
+from tests.generators.regenerable_builders import library, library_gui
 
-# DjangoGenerator shells out to ``django-admin startproject``.
+# DjangoGenerator runs ``python -m django startproject``.
 pytestmark = pytest.mark.skipif(
-    shutil.which("django-admin") is None,
-    reason="django-admin is not on PATH (activate the virtual environment)",
+    importlib.util.find_spec("django") is None,
+    reason="Django is not installed",
 )
 
 
@@ -465,3 +467,15 @@ def test_Operations_many_to_many():
     assert "models.ForeignKey" in content, "Missing ManyToManyField in the generated file."
 
     shutil.rmtree(project_folder)
+
+
+def test_gui_output_is_valid_python(tmp_path):
+    model = library()
+
+    DjangoGenerator(model, project_name="shelfsite", app_name="shelfapp", gui_model=library_gui(model),
+                    output_dir=str(tmp_path), containerization=False).generate()
+
+    sources = sorted(tmp_path.rglob("*.py"))
+    assert {"views.py", "urls.py", "forms.py", "models.py"} <= {path.name for path in sources}
+    for path in sources:
+        compile(path.read_text(encoding="utf-8"), str(path), "exec")

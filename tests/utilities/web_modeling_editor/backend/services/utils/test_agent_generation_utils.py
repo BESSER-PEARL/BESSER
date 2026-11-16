@@ -41,7 +41,7 @@ def _fake_process_agent_diagram(json_data):
 
 
 def _fake_agent_model_to_code(agent_model, file_path):
-    # No ``agent`` attribute, so the helper falls back to the in-memory model.
+    # The helper ships this file but never imports it.
     with open(file_path, "w", encoding="utf-8") as fh:
         fh.write(f"LANGUAGE = {agent_model.language!r}\n")
 

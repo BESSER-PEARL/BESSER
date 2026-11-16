@@ -21,6 +21,7 @@ from besser.utilities.web_modeling_editor.backend.routers import spec_driven_rou
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api
 from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import GitHubService
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartRunEntry,
@@ -286,6 +287,71 @@ def test_two_people_adding_different_classes_both_keep_theirs(github):
     # The B-UML source is rebuilt from the merged model, not text-merged.
     domain = github.files(repo)["buml/domain_model.py"][1].decode()
     assert "Member" in domain and "Loan" in domain
+
+
+def test_two_people_who_each_opened_the_repo_can_both_save(github):
+    """Live 2026-11-05: opening mints a project id and createdAt, so the second save reported a conflict."""
+    repo, base = _model_repo(github)
+    ben = _envelope(_with_class(CLASS_DIAGRAM_MODEL, "Member"))
+    ben["project"].update(id="project-of-ben", createdAt="2026-11-05T09:00:00Z")
+    github.commit_files(repo, repo_model.model_files(ben),
+                        repo_model.with_origin("Add a class", repo_model.ORIGIN_EDITOR), author="ben")
+    ana = _envelope(_with_class(CLASS_DIAGRAM_MODEL, "Loan"))
+    ana["project"].update(id="project-of-ana", createdAt="2026-11-05T09:30:00Z")
+
+    r = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "ana", "repo": "library", "commit_message": "Add Loan",
+        "project_data": ana["project"], "project_export": ana, "base_commit_sha": base,
+    })
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "merged", r.json()
+    assert _saved_classes(github, repo) == {"Author", "Book", "Member", "Loan"}
+
+
+def _class_diagrams(*ids: str, index: int = 0) -> dict:
+    project = {
+        "id": "proj-1", "type": "BesserProject", "name": "Library", "createdAt": "2026-04-15T00:00:00Z",
+        "diagrams": {"ClassDiagram": [{"id": d, "title": d, "model": CLASS_DIAGRAM_MODEL} for d in ids]},
+        "currentDiagramIndices": {"ClassDiagram": index},
+    }
+    return {"project": project, "exportedAt": "2026-10-26T00:00:00Z", "version": "2.0.0"}
+
+
+def _merged_indices(base: dict, ours: dict, theirs: dict) -> tuple[list[str], int]:
+    files = repo_model.ModelMerge(ours).merge(json.dumps(base), json.dumps(theirs))
+    project = json.loads(files.files[repo_model.MODEL_FILE])["project"]
+    return [d["id"] for d in project["diagrams"]["ClassDiagram"]], project["currentDiagramIndices"]["ClassDiagram"]
+
+
+def test_the_open_diagram_survives_a_merge_that_removes_one_before_it():
+    # Found in review: index 2 of three diagrams stayed 2 after the other side deleted the first.
+    ids, index = _merged_indices(_class_diagrams("a", "b", "c"), _class_diagrams("a", "b", "c", index=2),
+                                 _class_diagrams("b", "c"))
+
+    assert ids == ["b", "c"]
+    assert ids[index] == "c"
+
+
+def test_the_open_diagram_falls_back_when_the_other_side_deleted_it():
+    ids, index = _merged_indices(_class_diagrams("a", "b", "c"), _class_diagrams("a", "b", "c", index=2),
+                                 _class_diagrams("a", "b"))
+
+    assert ids == ["a", "b"]
+    assert index == 1
+
+
+def test_the_sync_status_says_whose_account_a_commit_is_and_whether_it_is_a_merge(github):
+    repo, base = _model_repo(github)
+    _teammate_saves(github, repo, _with_class(CLASS_DIAGRAM_MODEL, "Member"))
+    assert _save(_with_class(CLASS_DIAGRAM_MODEL, "Loan"), base).json()["status"] == "merged"
+
+    commits = _call("GET", f"/besser_api/github/sync-status?owner=ana&repo=library&branch=main&base_sha={base}",
+                    headers=SESSION).json()["commits_since"]
+
+    assert commits[0]["is_merge"] is True
+    assert [c["author_login"] for c in commits if c["message"].startswith("Add a class")] == ["ben"]
+    assert not next(c for c in commits if c["message"].startswith("Add a class"))["is_merge"]
 
 
 def _renamed(model: dict, element_id: str, name: str) -> dict:
@@ -971,3 +1037,411 @@ def test_a_teammates_gitattributes_line_survives_the_next_push(github):
     assert r.status_code == 200, r.text
     assert r.json()["status"] in ("pushed", "merged")
     assert github.files(repo)[".gitattributes"][1].decode() == teammate
+
+
+# ---------------------------------------------------------------------
+# Coming back to a repo days later
+# ---------------------------------------------------------------------
+
+
+RUN_RECIPE = {
+    "instructions": "build a library app",
+    "history": [{"instructions": "build a library app", "saved_at": "2026-11-01T10:00:00+00:00",
+                 "mode": "create", "files_touched": ["src/app.py"]}],
+    "verification": {"notVerified": [{"what": "runtime behaviour"}], "shippedUnenforced": []},
+}
+
+
+def _repo_with_a_pushed_run(github, name: str = "library"):
+    """A repo a finished Spec-Driven run was pushed to."""
+    repo = github.create_repo(name, files={"README.md": "# Library\n", "src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", name)["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+    response = _push(run, name)
+    assert response.status_code == 200, response.text
+    return repo, response.json()
+
+
+def test_a_repo_with_code_is_one_a_run_can_continue_from(github):
+    github.create_repo("shop", files={"README.md": "# shop\n", "src/app.py": "print('v1')\n"})
+    assert _import("ana", "shop")["has_code"] is True
+
+
+def test_a_repo_holding_only_the_saved_model_has_no_code_to_continue_from(github):
+    # "Save it on GitHub" links a project to a repo before any app exists.
+    github.create_repo("model-only", files={
+        "README.md": "# model-only\n", ".gitignore": "*.pyc\n", "LICENSE": "MIT\n",
+        "buml/diagrams.json": json.dumps(_envelope()), "buml/domain_model.py": "x = 1\n",
+        ".besser/project.json": "{}\n",
+    })
+    assert _import("ana", "model-only")["has_code"] is False
+
+
+def test_an_older_editors_saved_model_is_not_code_either(github):
+    github.create_repo("old-save", files={"README.md": "# old\n", "models/library.json": json.dumps(_envelope())})
+    imported = _import("ana", "old-save")
+    assert imported["has_model"] is True
+    assert imported["has_code"] is False
+
+
+def test_a_push_writes_a_recap_into_agents_md_and_returns_it(github):
+    repo, pushed = _repo_with_a_pushed_run(github)
+    assert pushed["recap"]["runs"][-1]["request"] == "build a library app"
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert "<!-- besser:begin -->" in agents
+    assert "build a library app" in agents
+    assert "runtime behaviour" in agents
+
+
+def test_a_push_keeps_what_a_person_wrote_in_agents_md(github):
+    repo = github.create_repo("library", files={
+        "AGENTS.md": "Use tabs here.\n", "README.md": "# Library\n", "src/app.py": "print('v1')\n",
+    })
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+    assert _push(run, "library").status_code == 200
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert agents.startswith("Use tabs here.\n")
+    assert "build a library app" in agents
+
+
+def test_a_fresh_run_adds_to_the_repos_agents_md_rather_than_replacing_it(github, tmp_path):
+    # A run built from the model has no copy of the file; the push used to upload a block-only one over it.
+    repo = github.create_repo("library", files={"AGENTS.md": "Use tabs here.\n", "src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+    response = _push(run_id, "library")
+    assert response.status_code == 200, response.text
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert agents.startswith("Use tabs here.\n")
+    assert "build a library app" in agents
+
+
+def test_an_agents_md_that_is_a_link_stays_a_link(github):
+    repo = github.create_repo("library", files={
+        "CLAUDE.md": "Use tabs here.\n", "AGENTS.md": ("CLAUDE.md", "120000"), "src/app.py": "print('v1')\n",
+    })
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+    response = _push(run, "library")
+    assert response.status_code == 200, response.text
+    assert github.files(repo)["AGENTS.md"][0] == "120000"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_push_lands_without_the_recap_when_github_will_not_show_agents_md(github, monkeypatch, tmp_path):
+    # Replacing a file it could not read would lose it, and the recap is not worth failing the push.
+    repo = github.create_repo("library", files={"AGENTS.md": "Use tabs here.\n", "src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+
+    real_get_file_content = GitHubService.get_file_content
+
+    async def down_for_agents_md(self, owner, repo_name, file_path, *args, **kwargs):
+        if file_path == "AGENTS.md":
+            raise httpx.ConnectError("GitHub is down for this one call")
+        return await real_get_file_content(self, owner, repo_name, file_path, *args, **kwargs)
+
+    monkeypatch.setattr(GitHubService, "get_file_content", down_for_agents_md)
+    response = _push(run_id, "library")
+    assert response.status_code == 200, response.text
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+
+
+def test_an_agents_md_added_after_the_import_does_not_make_the_push_conflict(github):
+    repo = github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: (
+        _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)),
+        _write(workdir, "src/app.py", "print('v2')\n"),
+    ))
+    github.commit_files(repo, {"AGENTS.md": "Use tabs here.\n"}, "Teammate adds notes")
+
+    response = _push(run, "library")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] != "conflict"
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_seeded_run_that_wrote_its_own_agents_md_yields_to_a_teammates(github):
+    repo = github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: (
+        _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)),
+        _write(workdir, "AGENTS.md", "What the run wrote.\n"),
+    ))
+    github.commit_files(repo, {"AGENTS.md": "Use tabs here.\n"}, "Teammate adds notes")
+
+    response = _push(run, "library")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] != "conflict"
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_fresh_run_that_wrote_its_own_agents_md_yields_to_one_added_after_its_base(github):
+    repo = github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    base_sha = github.ref(repo, "main")
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, "AGENTS.md", "What the run wrote.\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+    github.commit_files(repo, {"AGENTS.md": "Use tabs here.\n"}, "Teammate adds notes")
+
+    response = _push(run_id, "library", base_commit_sha=base_sha)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] != "conflict"
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_fresh_run_that_wrote_its_own_agents_md_keeps_the_repos_text(github):
+    repo = github.create_repo("library", files={"AGENTS.md": "Use tabs here.\n", "src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, "AGENTS.md", "What the run wrote.\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+
+    response = _push(run_id, "library")
+
+    assert response.status_code == 200, response.text
+    agents = github.files(repo)["AGENTS.md"][1].decode()
+    assert agents.startswith("Use tabs here.\n")
+    assert "What the run wrote." not in agents
+
+
+def test_a_seeded_agents_md_that_is_not_text_is_left_alone_with_a_warning(github):
+    binary = b"\xff\xfe not text"
+    repo = github.create_repo("library", files={"AGENTS.md": binary, "src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: _write(
+        workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)))
+
+    response = _push(run, "library")
+
+    assert response.status_code == 200, response.text
+    assert github.files(repo)["AGENTS.md"][1] == binary
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_commit_list_planted_in_a_repos_recipe_is_dropped_on_import(github):
+    # With no commit after the recipe the import used to return early, keeping what the repo wrote.
+    forged = {**RUN_RECIPE, "commits_since_run": [{"sha": "abc1234", "message": "Forged", "author": "Linus Torvalds"}]}
+    github.create_repo("library", files={"src/app.py": "print('v1')\n", ".besser_recipe.json": json.dumps(forged)})
+
+    assert _import("ana", "library")["recap"]["commits_since_run"] == []
+
+
+def test_a_push_returns_the_export_it_wrote_with_its_credits(github):
+    github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(), updated_project_export=_envelope(),
+    )))
+
+    response = _push(run_id, "library")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["project_export"]["project"]["attribution"]
+
+
+def test_deploying_an_app_credits_the_classes_it_adds(github, monkeypatch):
+    from types import SimpleNamespace
+
+    class _Generator:
+        def __init__(self, agent_model, output_dir, **_kwargs):
+            self.output_dir = output_dir
+
+        def generate(self):
+            _write(self.output_dir, "agent.py", "# agent\n")
+
+    monkeypatch.setattr(github_deploy_api, "get_generator_info", lambda _name: SimpleNamespace(generator_class=_Generator))
+    agent = {
+        "id": "ag1", "title": "Helper", "model": {
+            "type": "AgentDiagram",
+            "elements": {"init": {"id": "init", "type": "StateInitialNode", "name": ""},
+                         "s1": {"id": "s1", "type": "AgentState", "name": "Greet", "bodies": [], "fallbackBodies": []}},
+            "relationships": {"t": {"type": "AgentStateTransitionInit", "name": "",
+                                    "source": {"element": "init"}, "target": {"element": "s1"}}},
+        },
+    }
+    export = _envelope()
+    export["project"]["diagrams"]["AgentDiagram"] = [agent]
+
+    response = _call("POST", "/besser_api/github/deploy-webapp", headers=SESSION, json={
+        "name": "Helper", "diagrams": {"AgentDiagram": [agent]}, "currentDiagramIndices": {"AgentDiagram": 0},
+        "deploy_config": {"target": "agent", "repo_name": "helper"}, "projectExport": export,
+    })
+
+    assert response.status_code == 200, response.text
+    model = json.loads(github.files(github.repos["ana/helper"])[repo_model.MODEL_FILE][1])
+    assert {record["addedBy"] for record in model["project"]["attribution"].values()} == {"ana"}
+
+
+def test_a_forged_recipe_does_not_stop_a_repo_opening_or_a_push(github):
+    deep = "[" * 5_000 + "]" * 5_000
+    github.create_repo("deep", files={".besser_recipe.json": deep, "src/app.py": "print('v1')\n"})
+    assert _import("ana", "deep")["recap"] is None
+    surrogate = '{"history": [{"instructions": "add \\ud800 search", "saved_at": "\\ud800"}]}'
+    github.create_repo("surrogate", files={".besser_recipe.json": surrogate, "src/app.py": "print('v1')\n"})
+    assert _import("ana", "surrogate")["recap"]["runs"]
+    run = _modify_run(_import("ana", "surrogate")["run_id"],
+                      lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+    assert _push(run, "surrogate").status_code == 200
+
+
+def test_a_run_without_a_recipe_writes_no_recap(github):
+    repo = github.create_repo("library", files={"README.md": "# Library\n", "src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"],
+                      lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+    response = _push(run, "library")
+    assert response.status_code == 200
+    assert response.json()["recap"] is None
+    assert "AGENTS.md" not in github.files(repo)
+
+
+def test_the_next_run_sees_agents_md_without_besser_s_block(github, tmp_path):
+    github.create_repo("library", files={
+        "AGENTS.md": "Use tabs here.\n\n<!-- besser:begin -->\nold\n<!-- besser:end -->\n",
+        "src/app.py": "print('v1')\n",
+    })
+    base = asyncio.run(current_runtime().registry.get(_import("ana", "library")["run_id"]))
+    seeded = tmp_path / "seeded"
+    seeded.mkdir()
+    _seed_workspace_from_base(base.temp_dir, str(seeded))
+    assert (seeded / "AGENTS.md").read_text(encoding="utf-8") == "Use tabs here.\n"
+
+
+def test_an_agents_md_holding_only_the_block_comes_back_on_the_next_push(github):
+    repo, _ = _repo_with_a_pushed_run(github)
+    # The seed drops the file and the agent works without it: the push renders it again, not deletes it.
+    next_run = _modify_run(_import("ana", "library")["run_id"],
+                           lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+    assert _push(next_run, "library").status_code == 200
+    assert "build a library app" in github.files(repo)["AGENTS.md"][1].decode()
+
+
+def test_opening_a_repo_returns_the_recap(github):
+    _repo_with_a_pushed_run(github)
+    recap = _import("ana", "library")["recap"]
+    assert recap["runs"][-1] == {"request": "build a library app", "date": "2026-11-01", "mode": "create",
+                                 "file_count": 1}
+    assert recap["open_items"] == [{"kind": "not_checked", "text": "runtime behaviour"}]
+    assert recap["commits_since_run"] == []
+
+
+def test_a_repo_no_run_was_pushed_to_has_no_recap(github):
+    github.create_repo("shop", files={"src/app.py": "print('v1')\n"})
+    assert _import("ana", "shop")["recap"] is None
+
+
+def test_opening_a_repo_reports_the_commits_made_since_the_last_run(github):
+    repo, _ = _repo_with_a_pushed_run(github)
+    github.commit_files(repo, {"src/extra.py": "EXTRA = 1\n"}, "Teammate adds a helper")
+    imported = _import("ana", "library")
+    commits = imported["recap"]["commits_since_run"]
+    assert [c["message"] for c in commits] == ["Teammate adds a helper"]
+    assert len(commits[0]["sha"]) == 7
+    # The seed the worker reads carries them, for the next run's notes.
+    base = asyncio.run(current_runtime().registry.get(imported["run_id"]))
+    with open(os.path.join(base.temp_dir, ".besser_recipe.json"), encoding="utf-8") as fh:
+        assert json.load(fh)["commits_since_run"][0]["message"] == "Teammate adds a helper"
+
+
+def test_a_repo_read_without_the_commit_history_still_opens(github, monkeypatch):
+    repo, _ = _repo_with_a_pushed_run(github)
+    github.commit_files(repo, {"src/extra.py": "EXTRA = 1\n"}, "Teammate adds a helper")
+
+    async def down(*_args, **_kwargs):
+        raise httpx.ConnectError("GitHub is down for this one call")
+
+    monkeypatch.setattr(GitHubService, "compare_commits", down)
+    assert _import("ana", "library")["recap"]["commits_since_run"] == []
+
+
+def test_recording_the_commits_does_not_read_as_a_change_of_the_run(github):
+    repo, _ = _repo_with_a_pushed_run(github)
+    github.commit_files(repo, {"src/extra.py": "EXTRA = 1\n"}, "Teammate adds a helper")
+    before = github.files(repo)[".besser_recipe.json"][1]
+    # Pushing the imported run as it is: nothing changed, so the note stays out of the repo.
+    assert _push(_import("ana", "library")["run_id"], "library").status_code == 200
+    assert github.files(repo)[".besser_recipe.json"][1] == before
+
+
+# ---------------------------------------------------------------------
+# A Spec-Driven push credits the classes it adds
+# ---------------------------------------------------------------------
+
+
+def test_a_push_of_a_run_seeded_before_a_pull_leaves_the_teammates_credit(github):
+    github.create_repo("shop", files={**IMPORTED_REPO, repo_model.MODEL_FILE: json.dumps(_envelope())})
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda workdir: _write(workdir, "src/new.py", "NEW = 2\n"))
+    with_loan = _with_class(CLASS_DIAGRAM_MODEL, "Loan")
+    github.login = "ben"
+    teammate = _envelope(with_loan)
+    saved = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "ana", "repo": "shop", "commit_message": "Add Loan", "project_data": teammate["project"],
+        "project_export": teammate, "base_commit_sha": imported["commit_sha"],
+    })
+    assert saved.status_code == 200, saved.text
+    github.login = "ana"
+
+    # Ana pressed Get latest, so her export holds Ben's class; her run still starts from the older commit.
+    r = _call("POST", "/besser_api/spec-driven/push-to-github", headers=SESSION, json={
+        "run_id": run_id, "projectExport": _envelope(with_loan),
+        "deploy_config": {"owner": "ana", "repo_name": "shop", "use_existing": True},
+    })
+
+    assert r.status_code == 200, r.text
+    project = json.loads(github.files(github.repos["ana/shop"])[repo_model.MODEL_FILE][1])["project"]
+    assert {record["addedBy"] for record in project["attribution"].values()} == {"ben"}
+
+
+def test_a_spec_driven_push_credits_what_it_adds_to_whoever_pushes(github):
+    repo = github.create_repo("shop", files={
+        **IMPORTED_REPO, repo_model.MODEL_FILE: json.dumps(_envelope()),
+    })
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda workdir: _write(workdir, "src/new.py", "NEW = 2\n"))
+    github.login = "ben"
+
+    r = _call("POST", "/besser_api/spec-driven/push-to-github", headers=SESSION, json={
+        "run_id": run_id, "projectExport": _envelope(_with_class(CLASS_DIAGRAM_MODEL, "Loan")),
+        "deploy_config": {"owner": "ana", "repo_name": "shop", "use_existing": True,
+                          "base_commit_sha": imported["commit_sha"]},
+    })
+
+    assert r.status_code == 200, r.text
+    project = json.loads(github.files(repo)[repo_model.MODEL_FILE][1])["project"]
+    records = project["attribution"]
+    elements = project["diagrams"]["ClassDiagram"][0]["model"]["elements"]
+    assert [elements[element]["name"] for element in records] == ["Loan"]
+    assert [record["addedBy"] for record in records.values()] == ["ben"]

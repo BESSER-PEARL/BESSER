@@ -209,7 +209,15 @@ pushes both images, then recreates ``besser-wme-backend`` and
 ``besser-wme-smartgen``. Before it builds anything, it reads the host's
 compose file and stops, with nothing pushed or restarted, when a service it
 would deploy is not defined there or when ``besser-wme-smartgen`` is not on the
-``smartgen_worker`` image. After the restart it compares ``BESSER_BUILD_SHA``
+``smartgen_worker`` image. Each image is pushed with Buildx as an OCI index,
+and the workflow stops, with nothing restarted, unless the registry then
+serves that digest for ``:latest``: Artifactory serves a tag's existing index
+in preference to a plain manifest, so a plain ``docker push`` reports success
+and leaves ``:latest`` on the previous image. The frontend is built with the
+editor, backend and assistant URLs and the PostHog key baked in; without them
+the assistant connects to ``ws://localhost:8765``. The key comes from the
+repository variable ``FRONTEND_POSTHOG_KEY``, and the workflow stops before
+pushing anything when it is not set. After the restart it compares ``BESSER_BUILD_SHA``
 in both containers with the commit it built, then checks that the API answers
 ``200``.
 

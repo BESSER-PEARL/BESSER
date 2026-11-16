@@ -1,0 +1,19 @@
+Version 8.9.2
+=============
+
+Patch release: **the Spec-Driven Agent no longer stops when the model sends an
+empty reply**. No metamodel, generator or API contract changes.
+
+Highlights
+----------
+
+* **An empty reply no longer ends Phase 2 with an error.** When the model ended
+  its turn with no text and no tool calls while checklist items were still
+  open, the reminder about the open items sent that empty reply back to the
+  model. OpenAI, Mistral and Nebius reject an assistant message with no text
+  and no tool calls (HTTP 400), so Phase 2 stopped with ``api_error`` instead of
+  going back to the open items. The empty reply is no longer sent back, so the
+  model now gets the reminder and can finish the open items. The OpenAI-format
+  request also drops any assistant message with neither text nor tool calls,
+  and logs a warning when it does. Reported in
+  `#739 <https://github.com/BESSER-PEARL/BESSER/issues/739>`_.

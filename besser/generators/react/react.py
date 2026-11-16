@@ -46,6 +46,8 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
     Walks templates, renders them with serialized GUI metadata, and builds pages.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model

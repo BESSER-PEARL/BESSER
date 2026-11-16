@@ -1087,6 +1087,11 @@ def _openai_messages_to_api(system: str, messages: list[dict]) -> list[dict]:
                                 "arguments": _json.dumps(block.get("input", {})),
                             },
                         })
+            if not text_parts and not tool_calls:
+                # Chat Completions accepts null assistant content only next to
+                # tool calls; an empty turn would fail the whole request (400).
+                logger.warning("Dropping an empty assistant message (no text, no tool calls) from the request")
+                continue
             assistant_msg: dict[str, Any] = {"role": "assistant"}
             if text_parts:
                 assistant_msg["content"] = "\n".join(text_parts)

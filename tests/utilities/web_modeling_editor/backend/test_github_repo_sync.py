@@ -12,8 +12,11 @@ Covers the failures behind "BESSER can't keep working on an existing repo":
 """
 
 import asyncio
+import base64
+import copy
 import json
 import os
+import re
 import tempfile
 import time
 
@@ -251,6 +254,9 @@ class _PushGitHub(_ImportGitHub):
     async def add_topic(self, owner, repo_name, topic):
         self.topics.append(topic)
 
+    async def get_tree_entries(self, owner, repo_name, commit_sha):
+        return {}
+
     async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
         return {"content": self.render_yaml} if file_path == "render.yaml" and self.render_yaml else None
 
@@ -376,6 +382,9 @@ class _SidebarGitHub:
         self.legacy_exists = legacy_exists
         self.commit = None
 
+    async def get_authenticated_user(self):
+        return {"login": "ana"}
+
     async def create_blob(self, owner, repo, content):
         return f"blob-{len(content)}"
 
@@ -398,6 +407,9 @@ class _SidebarGitHub:
 
     async def get_branch_head(self, owner, repo, branch):
         return "2" * 40
+
+    async def get_tree_entries(self, owner, repo_name, commit_sha):
+        return {}
 
     async def get_file_content(self, owner, repo, path, branch="main", ref=None):
         if ref is None and self.legacy_exists and path == repo_model.LEGACY_PROJECT_FILE:
@@ -450,6 +462,103 @@ def test_the_model_history_says_what_each_commit_changed_and_who_made_it(monkeyp
     assert newest["changes"] == ["class Loan added"]
     assert newest["origin"] is None  # a person's commit
     assert first["origin"] == repo_model.ORIGIN_EDITOR
+
+
+def _model_with_an_unknown_type() -> dict:
+    """An attribute typed by an enumeration the model does not have."""
+    model = copy.deepcopy(CLASS_DIAGRAM_MODEL)
+    model["elements"]["attr-1"]["name"] = "+ kind: RoomType"
+    return model
+
+
+def _model_with_two_enumerations_of_one_name() -> dict:
+    """Two enumerations left at the palette's default name, as in a repository of a live two-person test."""
+    model = copy.deepcopy(CLASS_DIAGRAM_MODEL)
+    for element_id in ("enum-1", "enum-2"):
+        model["elements"][element_id] = {"type": "Enumeration", "name": "Enumeration", "attributes": []}
+    return model
+
+
+def _as_the_editor_saves_it(class_model) -> dict:
+    """A class diagram beside another diagram, as in every project: that one survives a class diagram that fails."""
+    envelope = _envelope(class_model)
+    envelope["project"]["diagrams"]["StateMachineDiagram"] = [{
+        "id": "sm1", "title": "Empty",
+        "model": {"type": "StateMachineDiagram", "elements": {}, "relationships": {}},
+    }]
+    envelope["project"]["currentDiagramIndices"]["StateMachineDiagram"] = 0
+    return envelope
+
+
+def _history_changes(monkeypatch, newer: str, older: str) -> list[list[str]]:
+    fake = _SidebarGitHub(files_at={
+        (repo_model.MODEL_FILE, "2" * 40): newer,
+        (repo_model.MODEL_FILE, "1" * 40): older,
+    })
+    _sidebar(monkeypatch, fake)
+    r = _call("GET", "/besser_api/github/model-history", headers=SESSION,
+              params={"owner": "me", "repo": "app"})
+    assert r.status_code == 200, r.text
+    return [commit["changes"] for commit in r.json()["commits"]]
+
+
+_UNREADABLE_VERSIONS = {
+    "unknown_type": json.dumps(_as_the_editor_saves_it(_model_with_an_unknown_type())),
+    "duplicate_enumerations": json.dumps(_as_the_editor_saves_it(_model_with_two_enumerations_of_one_name())),
+    "class_diagram_only": json.dumps(_envelope(_model_with_an_unknown_type())),
+    "not_json": "<<<<<<< HEAD {}",
+}
+
+
+@pytest.mark.parametrize("unreadable", _UNREADABLE_VERSIONS.values(), ids=_UNREADABLE_VERSIONS.keys())
+def test_the_history_does_not_call_an_unreadable_newer_version_a_change(monkeypatch, unreadable):
+    """Its row said every class was removed."""
+    newest, first = _history_changes(monkeypatch, unreadable, json.dumps(_as_the_editor_saves_it(CLASS_DIAGRAM_MODEL)))
+    assert newest == [repo_model.VERSION_NOT_COMPARED]
+    assert "class Author added" in first
+
+
+@pytest.mark.parametrize("unreadable", _UNREADABLE_VERSIONS.values(), ids=_UNREADABLE_VERSIONS.keys())
+def test_the_history_does_not_call_a_version_after_an_unreadable_one_a_change(monkeypatch, unreadable):
+    """Its row said every class was added."""
+    newest, first = _history_changes(monkeypatch, json.dumps(_as_the_editor_saves_it(CLASS_DIAGRAM_MODEL)), unreadable)
+    assert newest == [repo_model.VERSION_NOT_COMPARED]
+    assert first == [repo_model.VERSION_NOT_COMPARED]
+
+
+def test_the_history_still_lists_changes_beside_other_diagrams(monkeypatch):
+    with_loan = copy.deepcopy(CLASS_DIAGRAM_MODEL)
+    with_loan["elements"]["loan-class"] = {"type": "Class", "name": "Loan", "attributes": [], "methods": []}
+    newest, first = _history_changes(
+        monkeypatch,
+        json.dumps(_as_the_editor_saves_it(with_loan)),
+        json.dumps(_as_the_editor_saves_it(CLASS_DIAGRAM_MODEL)),
+    )
+    assert newest == ["class Loan added"]
+    assert "class Author added" in first
+
+
+def test_a_pull_request_does_not_list_an_unreadable_head_as_removals():
+    changes = repo_model.describe_change(
+        _as_the_editor_saves_it(CLASS_DIAGRAM_MODEL), _as_the_editor_saves_it(_model_with_an_unknown_type())
+    )
+    body = repo_model.pull_request_body(changes)
+    assert repo_model.VERSION_NOT_COMPARED in body
+    assert "removed" not in body
+
+
+def test_deleting_every_class_is_still_listed_as_removals():
+    empty = {"type": "ClassDiagram", "elements": {}, "relationships": {}}
+    assert "class Author removed" in repo_model.describe_change(
+        _as_the_editor_saves_it(CLASS_DIAGRAM_MODEL), _as_the_editor_saves_it(empty)
+    )
+
+
+def test_a_project_without_a_class_diagram_has_nothing_to_compare():
+    no_class_diagram = _envelope()
+    no_class_diagram["project"]["diagrams"] = {}
+    assert repo_model.describe_change(None, no_class_diagram) == []
+    assert repo_model.describe_change(no_class_diagram, _envelope()) == ["class Author added", "class Book added"]
 
 
 def test_the_origin_trailer_round_trips():
@@ -532,6 +641,77 @@ def test_a_new_project_repo_is_private_unless_the_user_asks_for_public(monkeypat
         r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION, json={**body, **extra})
         assert r.status_code == 200, r.text
     assert fake.created == [True, False]
+
+
+def test_a_new_project_repo_readme_holds_the_project_description_and_date(monkeypatch):
+    """#750: the README said only "A BESSER project"; it now says what the project is and when it was made."""
+    class _ReadmeGitHub(_SidebarGitHub):
+        blobs = {}
+
+        async def get_authenticated_user(self):
+            return {"login": "me"}
+
+        async def create_repository(self, repo_name, description, is_private, auto_init):
+            return {"default_branch": "main", "html_url": f"https://github.com/me/{repo_name}"}
+
+        async def create_blob(self, owner, repo, content):
+            sha = f"blob-{len(self.blobs)}"
+            self.blobs[sha] = content
+            return sha
+
+    def readme_for(project):
+        fake = _ReadmeGitHub(legacy_exists=False)
+        _sidebar(monkeypatch, fake)
+        r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION, json={
+            "repo_name": "library", "project_data": project, "project_export": _envelope(),
+        })
+        assert r.status_code == 200, r.text
+        blob = fake.blobs[fake.commit["paths"]["README.md"]]
+        return (blob if isinstance(blob, bytes) else base64.b64decode(blob)).decode("utf-8")
+
+    described = readme_for({**_project(), "description": "  Loans and members of a city library.\n"})
+    assert "\nLoans and members of a city library.\n\nCreated with [BESSER]" in described
+    assert re.search(r"Created with \[BESSER\]\([^)]+\) on \d{4}-\d{2}-\d{2}\.", described)
+    assert described.index("Loans and members") < described.index("## Files")
+
+    for project in (_project(), {**_project(), "description": "   "}, {**_project(), "description": None}):
+        readme = readme_for(project)
+        assert "Created with [BESSER]" in readme
+        assert "\n\n\n" not in readme
+
+
+def test_the_deploy_readme_holds_the_description_and_the_generation_date():
+    """#750: a generated app's README says what the project is and when BESSER generated it."""
+    github = GitHubService("token")
+    generated = re.compile(r"Generated with \[BESSER\]\(https://github.com/BESSER-PEARL/BESSER\) "
+                           r"on \d{4}-\d{2}-\d{2}\.")
+
+    for kind in ("webapp", "chatbot"):
+        readme = github.generate_readme_content(
+            "Library", owner="me", repo_name="library", deployment_type=kind, description="Loans and members.",
+        )
+        assert "</div>\n\nLoans and members.\n\nGenerated with [BESSER]" in readme
+        assert generated.search(readme)
+        bare = github.generate_readme_content("Library", deployment_type=kind)
+        assert generated.search(bare)
+        assert "\n\n\n" not in bare
+        blank = github.generate_readme_content("Library", deployment_type=kind, description="  \n ")
+        assert blank == bare
+
+
+def test_a_description_holding_the_besser_block_markers_survives_a_push():
+    """The README block markers in a description would make a later push strip or replace the user's text."""
+    from besser.utilities.provenance import (
+        BESSER_BLOCK_BEGIN, BESSER_BLOCK_END, readme_about, strip_besser_block, with_besser_block,
+    )
+
+    description = f"Loans. {BESSER_BLOCK_BEGIN} keep me {BESSER_BLOCK_END} and members."
+    readme = "# Library\n\n" + readme_about(description, "Created")
+    assert BESSER_BLOCK_BEGIN not in readme and BESSER_BLOCK_END not in readme
+    assert strip_besser_block(readme) == readme
+    block = f"{BESSER_BLOCK_BEGIN}\nBuilt with BESSER\n{BESSER_BLOCK_END}"
+    pushed = with_besser_block(readme, block)
+    assert "keep me" in pushed and pushed.rstrip().endswith(BESSER_BLOCK_END)
 
 
 class _FailingGitHub:

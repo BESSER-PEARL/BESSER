@@ -73,6 +73,9 @@ Optional dependencies
    # The B-OCL interpreter, to evaluate OCL constraints on object models
    python -m pip install "besser[ocl]"
 
+   # pygit2, for generator.regenerate() (a model change that keeps your edits)
+   python -m pip install "besser[regen]"
+
    # Django, for the Django generator
    python -m pip install "besser[django]"
 

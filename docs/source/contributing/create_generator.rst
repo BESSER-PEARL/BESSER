@@ -75,6 +75,10 @@ Example test structure:
        generator.generate()
        # Assert output files exist and contain expected content
 
+Every registered generator must also be covered for :doc:`regeneration <../generators/regenerating>`:
+either set ``regenerable = True`` and add a builder to ``tests/generators/regenerable_builders.py``, or
+list it with a reason in ``NOT_REGENERABLE`` in ``tests/generators/test_regenerable_generators.py``.
+
 5. Document and Demo
 --------------------
 

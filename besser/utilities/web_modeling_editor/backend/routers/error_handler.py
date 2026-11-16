@@ -9,6 +9,7 @@ across router modules.
 import functools
 import logging
 import asyncio
+import subprocess
 
 from fastapi import HTTPException
 
@@ -22,6 +23,11 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _timeout_detail(exc: subprocess.TimeoutExpired) -> str:
+    # The command line holds server paths, so the client sees only the limit.
+    return f"Generation timed out: a generator step ran longer than {exc.timeout:g} seconds."
 
 
 def handle_endpoint_errors(endpoint_name: str):
@@ -43,6 +49,8 @@ def handle_endpoint_errors(endpoint_name: str):
         * ``UpstreamError``    -> its ``status_code`` (an external service failed)
         * ``ConfigurationError`` -> HTTP 500 (server set-up, e.g. a missing
           optional dependency), with its message
+        * ``subprocess.TimeoutExpired`` -> HTTP 504 (a generator's child process
+          ran past ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT``)
         * ``HTTPException``    -> re-raised as-is
         * ``Exception``        -> HTTP 500 with generic message
 
@@ -78,6 +86,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConfigurationError as exc:
                 logger.error("Configuration error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except subprocess.TimeoutExpired as exc:
+                logger.error("Subprocess timed out in %s after %ss: %s", endpoint_name, exc.timeout, exc.cmd)
+                raise HTTPException(status_code=504, detail=_timeout_detail(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -111,6 +122,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConfigurationError as exc:
                 logger.error("Configuration error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except subprocess.TimeoutExpired as exc:
+                logger.error("Subprocess timed out in %s after %ss: %s", endpoint_name, exc.timeout, exc.cmd)
+                raise HTTPException(status_code=504, detail=_timeout_detail(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc

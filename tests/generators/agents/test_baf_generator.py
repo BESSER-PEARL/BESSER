@@ -291,3 +291,26 @@ def test_config_yaml_sqlite_database_written_as_file(agent_model, tmpdir):
     assert sql["db1"] == {"dialect": "sqlite", "file": "shop.db"}
     assert sql["db2"]["database"] == "crm" and "file" not in sql["db2"]
     assert sql["db3"] == {"dialect": "sqlite", "file": "kept.db"}
+
+
+def test_baf_generator_escapes_entity_description(agent_model, tmpdir):
+    """A quote, backslash or line break in an entity description keeps the agent file valid Python."""
+    import ast
+
+    description = "the user's city \\ region\nsecond line"
+    agent_model.new_entity("city", entries={"Paris": ["paris"]}, description=description)
+    output_dir = tmpdir.mkdir("output")
+    BAFGenerator(
+        model=agent_model,
+        output_dir=str(output_dir),
+        generation_mode=GenerationMode.CODE_ONLY,
+    ).generate()
+
+    with open(os.path.join(str(output_dir), f"{agent_model.name}.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    descriptions = [
+        kw.value.value
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for kw in node.keywords if kw.arg == "description" and isinstance(kw.value, ast.Constant)
+    ]
+    assert description in descriptions

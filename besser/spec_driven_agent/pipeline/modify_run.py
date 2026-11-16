@@ -41,6 +41,16 @@ from besser.spec_driven_agent.planning.target import (
     Target,
 )
 from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
+from besser.spec_driven_agent.run_recap import (
+    NO_REQUEST,
+    load_recipe,
+    MAX_RUNS,
+    RECORD_NOT_INSTRUCTIONS,
+    next_run_notes,
+    one_line,
+    recorded_requests,
+    repo_notes,
+)
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
@@ -154,6 +164,9 @@ class ModifyRunMixin:
         session_recap = self._render_seed_history()
         if session_recap:
             self._inventory = f"{self._inventory}\n{session_recap}"
+        notes = repo_notes(self.output_dir)
+        if notes:
+            self._inventory = f"{self._inventory}\n\n{notes}"
         model_note = self._render_model_change()
         regeneration_note = self._regeneration.note() if self._regeneration else ""
         if model_note:
@@ -369,11 +382,18 @@ class ModifyRunMixin:
         history = self._load_recipe_history(recipe_path)
         if not history:
             return ""
-        lines = ["\nPrevious work on this app (oldest first):"]
-        for i, entry in enumerate(history, 1):
-            request = (entry.get("instructions") or "").strip().replace("\n", " ")
-            mode = entry.get("mode") or "run"
-            files = entry.get("files_touched") or []
+        recipe = load_recipe(self.output_dir)
+        lines = ["\nPrevious work on this app (oldest first):", RECORD_NOT_INSTRUCTIONS]
+        if len(history) > MAX_RUNS:
+            lines.append(f"({len(history) - MAX_RUNS} earlier runs are not shown.)")
+            history = history[-MAX_RUNS:]
+        requests = recorded_requests(history, recipe)
+        for i, (entry, request) in enumerate(zip(history, requests), 1):
+            request = request or NO_REQUEST
+            # The recipe can come from any repository: nothing of it reaches the prompt as it is.
+            mode = entry.get("mode") if entry.get("mode") in ("create", "modify") else "run"
+            files = entry.get("files_touched")
+            files = [one_line(f) for f in files if isinstance(f, str)] if isinstance(files, list) else []
             file_note = ""
             if files:
                 shown = ", ".join(files[:8])
@@ -381,9 +401,11 @@ class ModifyRunMixin:
                 file_note = f" — touched: {shown}{more}"
             lines.append(f"  {i}. [{mode}] \"{request}\"{file_note}")
         lines.append(
-            "Respect this history: those changes are deliberate and must "
-            "survive your edits unless the new request says otherwise."
+            "Those changes are in the code: keep them working unless the new request says otherwise."
         )
+        notes = next_run_notes(recipe)
+        if notes:
+            lines.append(notes)
         return "\n".join(lines)
 
     def _seed_generator_files_from_recipe(self) -> None:

@@ -1,23 +1,22 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.http import JsonResponse
-{%-  for class_obj in model.classes_sorted_by_inheritance() %}
+{% for class_obj in model.classes_sorted_by_inheritance() %}
 from .models import {{ class_obj.name }}
-{%-  endfor %}
-{%- for module in app.modules%}
-    {%- for screen in module.screens %}
-    {%- for component in screen.view_elements %}
-        {%- if component is is_List%}
-            {%- for source in component.list_sources%}
-                {%- if source is is_ModelElement%}
-                    {%- set source_name= source.dataSourceClass%}
+{% endfor %}
+{% for module in sort_by_timestamp(app.modules) %}
+    {% for screen in sort_by_timestamp(module.screens) %}
+    {% for component in sort_by_timestamp(screen.view_elements) %}
+        {% if component is is_List %}
+            {% for source in sort_by_timestamp(component.list_sources) %}
+                {% if source is is_ModelElement %}
 from .forms import {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form
-                {%-  endif %}
-            {%-  endfor %}
-        {%-  endif %}
-    {%-  endfor %}
-{%-  endfor %}
-{%- endfor %}
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    {% endfor %}
+{% endfor %}
+{% endfor %}
 
 
 def handle_create(request, form_class, success_message):
@@ -31,11 +30,11 @@ def handle_create(request, form_class, success_message):
     return JsonResponse({'success': False})
 
 
-{%- for module in app.modules%}
-    {%- for screen in module.screens %}
-    {%- for component in screen.view_elements %}
+{%- for module in sort_by_timestamp(app.modules)%}
+    {%- for screen in sort_by_timestamp(module.screens) %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                     {%- set source_name= source.dataSourceClass%}
 
@@ -73,11 +72,11 @@ def handle_edit(request, form_class, instance, success_message, redirect_url):
     )
 
 
-{%- for module in app.modules%}
-    {%- for screen in module.screens %}
-    {%- for component in screen.view_elements %}
+{%- for module in sort_by_timestamp(app.modules)%}
+    {%- for screen in sort_by_timestamp(module.screens) %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                     {%- set source_name= source.dataSourceClass%}
 
@@ -100,11 +99,11 @@ def edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[
 {%- endfor %}
 
 
-{%- for module in app.modules%}
-    {%- for screen in module.screens %}
-    {%- for component in screen.view_elements %}
+{%- for module in sort_by_timestamp(app.modules)%}
+    {%- for screen in sort_by_timestamp(module.screens) %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                     {%- set source_name= source.dataSourceClass%}
 
@@ -121,11 +120,11 @@ def delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.nam
 {%-  endfor %}
 {%- endfor %}
 
-{%- for module in app.modules%}
-    {%- for screen in module.screens %}
-    {%- for component in screen.view_elements %}
+{%- for module in sort_by_timestamp(app.modules)%}
+    {%- for screen in sort_by_timestamp(module.screens) %}
+    {%- for component in sort_by_timestamp(screen.view_elements) %}
         {%- if component is is_List%}
-            {%- for source in component.list_sources%}
+            {%- for source in sort_by_timestamp(component.list_sources)%}
                 {%- if source is is_ModelElement%}
                     {%- set source_name= source.dataSourceClass%}
 

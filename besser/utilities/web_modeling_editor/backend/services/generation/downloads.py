@@ -4,6 +4,7 @@ The service builds a :class:`GeneratedOutput`; ``routers/generation_router.py``
 turns it into the HTTP response (ZIPs streamed, single files sent whole).
 """
 
+import asyncio
 import io
 import os
 import zipfile
@@ -52,7 +53,7 @@ def zip_directory(source_dir: str) -> io.BytesIO:
     return zip_buffer
 
 
-def zip_output(
+async def zip_output(
     source_dir: str,
     generator_type: str,
     options: Optional[dict] = None,
@@ -67,9 +68,12 @@ def zip_output(
         options: Generation options recorded in the provenance file.
         file_name: Download filename override; defaults to
             ``get_filename_for_generator(generator_type)``.
+
+    Zipping reads every generated file, so it runs in a worker thread, off
+    the event loop.
     """
-    zip_buffer = zip_directory(source_dir)
-    add_generation_provenance_to_zip(zip_buffer, generator_type, options)
+    zip_buffer = await asyncio.to_thread(zip_directory, source_dir)
+    await asyncio.to_thread(add_generation_provenance_to_zip, zip_buffer, generator_type, options)
     return GeneratedOutput(zip_buffer, file_name or get_filename_for_generator(generator_type), is_zip=True)
 
 

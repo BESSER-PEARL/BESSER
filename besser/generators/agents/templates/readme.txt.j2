@@ -7,6 +7,14 @@ Requirements
 - Install the package: https://pypi.org/project/besser-agentic-framework/
 
     pip install besser-agentic-framework[all]
+{% if classical_ic_fallback %}
+
+This agent has no intent classifier set and no LLM configured, so it matches
+intents with BAF's classical intent classifier, which needs PyTorch. The [all]
+extra installs it; for a smaller install use:
+
+    pip install besser-agentic-framework[extras,llms,torch]
+{% endif %}
 
 To start the agent, run:
     python {{agent.name}}.py

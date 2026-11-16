@@ -1,23 +1,16 @@
-"""Tests for the run_command soft-skip behavior added for #4.
+"""Tests for run_command on a command whose binary is missing.
 
-When the LLM invokes a shell command whose binary isn't installed in the
-generation container (e.g. ``ruby -c file.rb`` on an image without Ruby),
-the tool used to return a real ``exit_code != 0`` with the stderr "ruby:
-command not found". The LLM would dutifully surface that to the user as
-if it were a failure ("I attempted to validate the Ruby syntax with
-ruby -c domain.rb, but Ruby is not installed in the execution
-environment.") — which the user can't act on.
-
-The fix in tool_executor.py treats this as a soft skip: success=True
-plus a ``skipped`` flag and a human-readable ``skip_reason``, so the
-LLM moves on without flagging the missing runtime.
+A missing binary (e.g. ``ruby -c file.rb`` on an image without Ruby, or an
+npm script calling an absent tool) used to come back ``exit_code: 0,
+success: true, skipped: true`` with stderr blanked, so a build that never
+ran read to the model as a passed check. It is now reported as the failure
+it is: the real exit code, stderr, a short ``stderr_tail`` and a
+``missing_command`` flag.
 """
 
 from __future__ import annotations
 
 from unittest.mock import patch
-
-import pytest
 
 from besser.spec_driven_agent.execution.shell_session import ShellResult
 from besser.spec_driven_agent.agent.tool_executor import (
@@ -107,8 +100,7 @@ class TestEnoentIsNotAMissingRuntime:
             "open '/app/package.json'\n"
         )
 
-    def test_exec_prefix_still_skips(self):
-        # The only case the pattern was ever for.
+    def test_exec_prefix_names_a_missing_binary(self):
         assert _looks_like_command_not_found(
             "execve: /usr/local/bin/kotlin: No such file or directory"
         )
@@ -137,7 +129,7 @@ class TestEnoentReachesTheLLM:
 
 
 # ----------------------------------------------------------------------
-# _run_command soft-skip
+# _run_command on a missing binary
 # ----------------------------------------------------------------------
 
 
@@ -161,8 +153,8 @@ def _completed(returncode: int, stdout: str = "", stderr: str = "") -> ShellResu
     return ShellResult(returncode, stdout, stderr)
 
 
-class TestRunCommandSoftSkip:
-    def test_command_not_found_returns_soft_skip(self, tmp_path):
+class TestRunCommandMissingBinary:
+    def test_command_not_found_is_a_failure(self, tmp_path):
         ex = _make_executor(tmp_path)
         completed = _completed(
             returncode=127,
@@ -172,18 +164,15 @@ class TestRunCommandSoftSkip:
         with patch("besser.spec_driven_agent.execution.shell_session.ShellSession.run", return_value=completed):
             result = ex._run_command({"command": "ruby -c file.rb", "working_dir": "."})
 
-        # The LLM sees a clean success so it doesn't escalate this to a
-        # user-facing failure.
-        assert result["success"] is True
-        assert result["exit_code"] == 0
-        assert result["skipped"] is True
-        assert "not installed" in result["skip_reason"]
-        # stderr is scrubbed so the "ruby: command not found" string
-        # doesn't leak into the LLM's context and prompt it to mention
-        # the missing runtime anyway.
-        assert result["stderr"] == ""
+        assert result["success"] is False
+        assert result["exit_code"] == 127
+        assert result["missing_command"] is True
+        assert "ruby: command not found" in result["stderr"]
+        assert result["stderr_tail"] == "/bin/sh: 1: ruby: command not found"
+        assert "failed, not as passing" in result["note"]
+        assert "skipped" not in result
 
-    def test_windows_not_recognized_returns_soft_skip(self, tmp_path):
+    def test_windows_not_recognized_is_a_failure(self, tmp_path):
         ex = _make_executor(tmp_path)
         completed = _completed(
             returncode=1,
@@ -195,8 +184,19 @@ class TestRunCommandSoftSkip:
         )
         with patch("besser.spec_driven_agent.execution.shell_session.ShellSession.run", return_value=completed):
             result = ex._run_command({"command": "cargo check"})
-        assert result["success"] is True
-        assert result.get("skipped") is True
+        assert result["success"] is False
+        assert result["exit_code"] == 1
+        assert result["missing_command"] is True
+
+    def test_stderr_tail_is_bounded(self, tmp_path):
+        ex = _make_executor(tmp_path)
+        noise = "x" * 5000 + "\nsh: 1: tsc: not found\n"
+        completed = _completed(returncode=127, stderr=noise)
+        with patch("besser.spec_driven_agent.execution.shell_session.ShellSession.run", return_value=completed):
+            result = ex._run_command({"command": "npm run build"})
+        assert result["success"] is False
+        assert len(result["stderr_tail"]) <= 500
+        assert result["stderr_tail"].endswith("tsc: not found")
 
     def test_real_command_failure_passes_through(self, tmp_path):
         """A genuine non-zero exit with a real error message is NOT skipped."""
@@ -217,6 +217,7 @@ class TestRunCommandSoftSkip:
         assert result["exit_code"] == 1
         assert "SyntaxError" in result["stderr"]
         assert "skipped" not in result
+        assert "missing_command" not in result
 
     def test_successful_run_passes_through(self, tmp_path):
         ex = _make_executor(tmp_path)

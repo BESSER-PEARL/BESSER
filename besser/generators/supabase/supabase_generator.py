@@ -24,6 +24,8 @@ class SupabaseGenerator(GeneratorInterface):
       - Every attribute with ``is_id=True`` becomes ``UUID PRIMARY KEY DEFAULT
         gen_random_uuid()`` -- except on the user-root class, where the id
         instead ``REFERENCES auth.users(id) ON DELETE CASCADE`` (no default).
+        A class with no ``is_id`` attribute uses its attribute named ``id`` as
+        that key, or gets an ``"id"`` key column added when it has none.
       - FK columns targeting a class with an ``is_id`` PK are emitted as UUID.
       - The user-root class (default: the one named "User") is materialized as
         ``public.<name>`` mirroring ``auth.users`` via a ``handle_new_user``
@@ -151,10 +153,20 @@ class SupabaseGenerator(GeneratorInterface):
         is_user_root = (user_root is not None and cls is user_root)
         cols = []
         emitted_pk = False
+        # Every FK references "<table>"(id) as UUID, so a plain attribute named
+        # id (no is_id) becomes that key instead of a second "id" column.
+        plain_id = None
+        if not any(attr.is_id for attr in cls.attributes):
+            plain_id = next((attr for attr in cls.attributes if attr.name == "id"), None)
+            if plain_id is not None:
+                logger.warning(
+                    "Supabase: class %s has no is_id attribute; using its 'id' "
+                    "attribute as the UUID primary key", cls.name,
+                )
 
         for attr in sort_by_timestamp(cls.attributes):
             attr_name = self._safe_ident(attr.name)
-            if attr.is_id:
+            if attr.is_id or attr is plain_id:
                 if is_user_root:
                     cols.append(
                         f'"{attr_name}" UUID PRIMARY KEY '
@@ -177,6 +189,10 @@ class SupabaseGenerator(GeneratorInterface):
                 0,
                 '"id" UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE',
             )
+        # Every FK and junction column REFERENCES <table>(id), so a class
+        # modelled without is_id still needs that surrogate key.
+        elif not emitted_pk:
+            cols.insert(0, '"id" UUID PRIMARY KEY DEFAULT gen_random_uuid()')
 
         # Denormalized user_id for per-user classes (skip the user-root itself)
         if cls in per_user:

@@ -39,7 +39,6 @@ import hashlib
 import json
 import logging
 import os
-import posixpath
 import stat
 import threading
 import uuid
@@ -47,16 +46,16 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from besser.utilities.workspace_fs import (
+    is_text,
     is_plain_entry,
     open_plain,
     walk_plain,
     write_atomic_plain,
 )
-from besser.utilities.provenance import PROVENANCE_FILENAME
+from besser.utilities.provenance import ATTRIBUTION_FILENAME, PROVENANCE_FILENAME
 
 logger = logging.getLogger(__name__)
 
-ATTRIBUTION_FILENAME = ".besser_attribution.json"
 TRACE_DIRNAME = ".agent-trace"
 AGENT_TRACE_VERSION = "0.1"
 AGENT_TRACE_MIME_TYPE = "application/vnd.agent-trace.record+json"
@@ -140,30 +139,13 @@ def normalize_model_id(provider: Optional[str], model: Optional[str]) -> Optiona
     if "/" in model:
         return model
     provider = (provider or "").strip().lower()
-    if provider in ("", "free", "sponsored", "pia", "local"):
+    if provider in ("", "free", "sponsored", "pia", "gateway", "local"):
         return model
     return f"{provider}/{model}"
 
 
 def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()[:_HASH_LEN]
-
-
-def is_text(content: bytes) -> bool:
-    """What attribution reads as text: UTF-8 without NUL bytes."""
-    if b"\x00" in content:
-        return False
-    try:
-        content.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
-
-
-def is_plain_relpath(rel: str) -> bool:
-    """A plain workspace-relative path, as attribution records them (no ``..``, ``\\``, drive, root or NUL)."""
-    return (isinstance(rel, str) and rel == posixpath.normpath(rel) and not rel.startswith(("/", "../"))
-            and not any(c in rel for c in ("\\", ":", "\x00")))
 
 
 def read_text_bytes(workspace: str, rel: str) -> Optional[bytes]:

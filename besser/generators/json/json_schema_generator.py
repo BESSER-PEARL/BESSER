@@ -29,6 +29,8 @@ class JSONSchemaGenerator(GeneratorInterface):
     TYPES = {"str": "string", "int": "integer", "float": "number", "bool": "boolean",
              "date": "string", "datetime": "string"}
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None, mode: str = 'regular'):
         super().__init__(model, output_dir)
         self.mode = mode

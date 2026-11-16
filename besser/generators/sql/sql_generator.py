@@ -5,6 +5,8 @@ import tempfile
 import shutil
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.settings import subprocess_timeout
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
 # Marker of the trailing "database connection" section of the SQLAlchemy module.
@@ -40,6 +42,8 @@ class SQLGenerator(GeneratorInterface):
             joined by ``and``). Other constraints are skipped. Defaults to ``True``.
     """
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = "sqlite",
                  ocl_check_constraints: bool = True):
         super().__init__(model, output_dir)
@@ -55,6 +59,7 @@ class SQLGenerator(GeneratorInterface):
             ValueError: If the dialect is not supported.
             RuntimeError: If the DDL could not be produced.
         """
+        require_valid_identifiers(self.model)
         if self.sql_dialect not in DDL_DIALECT_URLS:
             raise ValueError(
                 f"Invalid DBMS (SQL dialect '{self.sql_dialect}'). "
@@ -100,6 +105,14 @@ if 'DIALECT_PLACEHOLDER' == 'mssql':
     # predate 2008 (DATE/TIME rendered as DATETIME). Target a current SQL Server.
     _ddl_dialect.server_version_info = (16,)
     _ddl_dialect.deprecate_large_types = True
+if 'DIALECT_PLACEHOLDER' == 'sqlite':
+    # SQLite matches names case-insensitively and keeps them as written, so a mixed-case name
+    # ("createdAt") needs no quotes there; reserved words and illegal characters still get them.
+    # _requires_quotes is private SQLAlchemy API: after an upgrade, test_sqlite_quotes_only_names_that_need_it
+    # says whether it still exists.
+    _preparer = _ddl_dialect.identifier_preparer
+    _requires_quotes = _preparer._requires_quotes
+    _preparer._requires_quotes = lambda value: _requires_quotes(value.lower())
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 sql_file_path = os.path.join(current_directory, "tables_DIALECT_PLACEHOLDER.sql")
@@ -167,9 +180,10 @@ for table in Base.metadata.sorted_tables:
                     print(f"WARNING: Could not inject CHECK constraint for enum column '{col_name}' in table '{table.name}'", file=_sys.stderr)
     ddl_statements.append(ddl)
 
+# CreateTable pads a statement with blank lines and leaves a space after each comma.
+tidy_statements = ["\\n".join(line.rstrip() for line in stmt.strip().splitlines()) + ";" for stmt in ddl_statements]
 with open(sql_file_path, "w") as f:
-    for stmt in ddl_statements:
-        f.write(f"{stmt};\\n\\n")
+    f.write("\\n\\n".join(tidy_statements) + "\\n")
 '''
             content += ddl_dump_code.replace(
                 "DIALECT_URL_PLACEHOLDER", DDL_DIALECT_URLS[dialect]
@@ -181,7 +195,8 @@ with open(sql_file_path, "w") as f:
 
             # Run the temporary Python file (in the temp dir, so it leaves nothing behind)
             result = subprocess.run(
-                [sys.executable, temp_py_path], text=True, capture_output=True, cwd=temp_dir, check=False
+                [sys.executable, temp_py_path], text=True, capture_output=True, cwd=temp_dir, check=False,
+                timeout=subprocess_timeout(),
             )
             src_sql = os.path.join(temp_dir, f"tables_{self.sql_dialect}.sql")
             if result.returncode != 0 or not os.path.isfile(src_sql):

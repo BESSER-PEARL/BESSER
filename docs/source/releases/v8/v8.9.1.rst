@@ -1,0 +1,29 @@
+Version 8.9.1
+=============
+
+Patch release: **Model history and the change preview show exactly what
+changed**. No metamodel, generator or API contract changes.
+
+Highlights
+----------
+
+* **Model history no longer reports classes as removed when they were not.**
+  When a version's class diagram could not be built, for example because two
+  enumerations kept the default name, its row said every class was removed and
+  the next row said they were all added. The history now shows one line, "class
+  diagram not compared: one version could not be read", on both rows, and
+  descriptions of pull requests opened from the editor do the same. A version
+  that is not valid JSON, such as committed conflict markers, is handled the
+  same way.
+* **The change preview marks only what is new on a class.** A new attribute on
+  an existing class used to ring the whole class in the author's colour, as if
+  they had added it. Now only the new or changed row is marked, with the author
+  beside it, as after **Get latest**. New classes are still marked whole.
+* **The preview marks new relationships.** A new relationship is drawn in the
+  author's colour with their name on the line, and the bar names it by its
+  classes (``Guest – Review``) instead of counting it. Each save now records who
+  added a relationship, so after **Get latest** it stays marked and hovering it
+  says who added it and when, as for a class. A relationship saved before this
+  has no author and is not marked.
+* **Dialogs keep wide content inside the window.** This was already live on
+  ``editor.besser-pearl.org`` and is now part of a release.

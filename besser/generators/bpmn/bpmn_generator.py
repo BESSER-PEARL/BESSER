@@ -297,6 +297,8 @@ class BPMNGenerator(GeneratorInterface):
         file_name (str, optional): Output filename (default ``"bpmn_diagram.bpmn"``).
     """
 
+    regenerable = True
+
     def __init__(self, model: BPMNModel, output_dir: Optional[str] = None,
                  file_name: str = "bpmn_diagram.bpmn"):
         super().__init__(model, output_dir)

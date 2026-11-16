@@ -24,7 +24,6 @@ models, which is exactly why the first two shipped.
 
 import ast
 import os
-import shutil
 
 import pytest
 
@@ -79,8 +78,7 @@ def _model_with_enums_and_relationships() -> DomainModel:
 
 def _generate(model: DomainModel, tmp_path) -> str:
     """Run the full DjangoGenerator; return the generated project directory."""
-    if shutil.which("django-admin") is None:
-        pytest.skip("django-admin is not on PATH")
+    pytest.importorskip("django")
 
     DjangoGenerator(
         model=model,

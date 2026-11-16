@@ -1,7 +1,9 @@
+import ast
 import re
 from typing import Optional, Tuple
 
 from antlr4 import InputStream, CommonTokenStream
+from bocl import evaluator as bocl_evaluator
 from bocl.OCLWrapper import OCLWrapper
 from besser.BUML.metamodel.ocl.ocl import LoopExp, PropertyCallExpression, VariableExp
 from besser.BUML.metamodel.ocl.predicates import is_comparison, is_self
@@ -22,6 +24,38 @@ from besser.BUML.notations.ocl.pretty_printer import pretty_print
 _UNEVALUABLE_TEMPORAL_TYPES = {"date", "datetime", "time"}
 
 _NOT_EVALUATED = "not evaluated against the object diagram"
+_EVALUATION_DISABLED = "evaluation is disabled on this server"
+
+# What the Python text built by the B-OCL evaluator may contain: literals,
+# lists, and Boolean, comparison and arithmetic operators. No names, calls,
+# attributes or subscripts, so evaluating it cannot reach any object. ``**``
+# and ``<<`` are left out: OCL has neither, and they make huge numbers.
+_VALUE_EXPRESSION_NODES = (
+    ast.Expression, ast.Constant, ast.List, ast.Tuple, ast.Load,
+    ast.BoolOp, ast.And, ast.Or,
+    ast.UnaryOp, ast.Not, ast.USub, ast.UAdd,
+    ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.BitXor,
+    ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+    ast.In, ast.NotIn, ast.Is, ast.IsNot,
+)
+
+
+def _evaluate_value_expression(source: str):
+    """Evaluate the evaluator's Python text if it is only a value expression.
+
+    Raises ``ValueError`` for anything else, without running it.
+    """
+    tree = ast.parse(source.strip(), mode="eval")
+    for node in ast.walk(tree):
+        if not isinstance(node, _VALUE_EXPRESSION_NODES):
+            raise ValueError(f"unsupported value in the evaluated expression ({type(node).__name__})")
+    return eval(compile(tree, "<ocl>", "eval"), {"__builtins__": {}}, {})  # noqa: S307 - checked above
+
+
+# ``bocl`` (pinned) builds Python text from the constraint and the object
+# model's values and passes it to the builtin ``eval``; its module-level name
+# ``eval`` is the one hook, so every evaluation goes through the check above.
+bocl_evaluator.eval = _evaluate_value_expression
 
 
 def _parse_only(expression: str) -> None:
@@ -216,10 +250,14 @@ def _collect_all_constraints(domain_model):
                 yield (f"[{cls.name}::{method.name} post {c.name}]", "postcondition", c)
 
 
-def check_ocl_constraint(domain_model, object_model = None):
+def check_ocl_constraint(domain_model, object_model = None, evaluate: bool = True):
     """
     Check all OCL constraints in the domain model — class invariants plus
     method preconditions and postconditions.
+
+    Invariants are evaluated against ``object_model`` only when ``evaluate``
+    is true; otherwise every constraint is checked for syntax only, and the
+    invariants' entries say they were not evaluated.
 
     Returns a dict with ``success``, ``message``, ``valid_constraints``,
     ``invalid_constraints`` and ``warnings``. ``warnings`` lists invariants
@@ -258,7 +296,11 @@ def check_ocl_constraint(domain_model, object_model = None):
             # would raise ``NameError: name 'qty' is not defined``). Limit
             # them to a syntax check regardless of whether an object model
             # is available.
-            evaluable = (kind == "invariant") and object_model is not None
+            evaluable = (kind == "invariant") and object_model is not None and evaluate
+            not_evaluated_note = (
+                f" - Syntax valid; {_NOT_EVALUATED}: {_EVALUATION_DISABLED}"
+                if kind == "invariant" and object_model is not None and not evaluate else ""
+            )
             try:
                 if not evaluable:
                     # Syntax-only check — re-parse the stored expression.
@@ -268,7 +310,7 @@ def check_ocl_constraint(domain_model, object_model = None):
                     try:
                         _parse_only(expression)
                         valid_constraints.append(
-                            f"✅ {label} '{expression}'{explanation_suffix}"
+                            f"✅ {label} '{expression}'{not_evaluated_note}{explanation_suffix}"
                         )
                     except BOCLSyntaxError as syntax_err:
                         invalid_constraints.append(

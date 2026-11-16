@@ -82,10 +82,17 @@
     {%- else %}
         {%- set fk_expr = None %}
     {%- endif %}
+    {#- Composition: this class is the whole (its end is composite), so its parts are
+        deleted with it. A part shared by several wholes is not a composition the ORM
+        can cascade. When the whole holds the key of a 1:1 part, SQLAlchemy needs
+        single_parent to delete that part as an orphan. #}
+    {%- set is_whole = other_end.is_composite and not is_secondary %}
+    {%- set whole_holds_fk = fk_needed and fkeys[end.owner.name][1] == end.name %}
+    {%- set cascade = (', cascade="all, delete-orphan"' ~ (', single_parent=True' if whole_holds_fk else '')) if is_whole else '' %}
     {%- if is_many -%}
 {{class.name}}.{{end.name}}: Mapped_[List_["{{end.type.name}}"]] = relationship("{{end.type.name}}"
         {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
-        {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %}{% if is_deferred %}, post_update=True{% endif %})
+        {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
     {%- else -%}
 {#- uselist is spelled out because these relationships are assigned after the class
     body: SQLAlchemy never sees the Mapped_["X"] annotation and would otherwise infer
@@ -96,6 +103,6 @@
     it: it is the reverse, one-to-one side of the same FK. #}
     {%- set owns_fk = fk_needed and fkeys[end.owner.name][1] == end.name %}
     {%- set is_self = end.type.name == other_end.type.name and owns_fk %}
-{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}", uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% if is_self %}, remote_side=[{{ end.type.name }}.{{ ids.get(end.type.name, 'id') }}]{% endif %}{% if is_deferred %}, post_update=True{% endif %})
+{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}", uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% if is_self %}, remote_side=[{{ end.type.name }}.{{ ids.get(end.type.name, 'id') }}]{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
     {%- endif -%}
 {%- endmacro %}

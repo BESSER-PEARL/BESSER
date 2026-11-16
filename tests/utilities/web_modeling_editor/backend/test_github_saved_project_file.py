@@ -93,6 +93,8 @@ def test_the_history_reaches_past_the_move_to_buml_diagrams_json(github):
     assert [entry["message"].split("\n")[0] for entry in history] == [
         "Save OCL_Gen", "Update OCL_Gen", "Initial commit",
     ]
+    # The old sidebar's file has no createdAt, and it is still read.
+    assert history[-1]["changes"] == ["class Author added", "class Book added"]
     oldest = _call("GET", f"/besser_api/github/project/load-commit?owner={github.login}&repo=ocl_gen"
                           f"&commit_sha={first}", headers=SESSION)
     assert oldest.json()["project"]["name"] == "OCL_Gen"

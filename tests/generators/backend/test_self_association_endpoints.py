@@ -369,6 +369,57 @@ def test_a_subclass_handles_both_ends_of_an_inherited_one_to_many(tmp_path):
     assert result["junior"]["engineer"]["manager_id"] == result["lea"]
 
 
+def _tutoring_model() -> DomainModel:
+    """A subclass of a class with a one-to-many and a one-to-one to itself."""
+    person = Class(name="Person", attributes={Property(name="name", type=StringType)})
+    student = Class(name="Student", attributes={Property(name="level", type=StringType)})
+    tutoring = BinaryAssociation(name="Tutoring", ends={
+        Property(name="tutor", type=person, multiplicity=Multiplicity(0, 1)),
+        Property(name="tutees", type=person, multiplicity=Multiplicity(0, "*")),
+    })
+    pairing = BinaryAssociation(name="Pairing", ends={
+        Property(name="partner", type=person, multiplicity=Multiplicity(0, 1)),
+        Property(name="partner_of", type=person, multiplicity=Multiplicity(0, 1)),
+    })
+    return DomainModel(name="Tutoring", types={person, student}, associations={tutoring, pairing},
+                       generalizations={Generalization(general=person, specific=student)})
+
+
+INHERITED_DETAILED_SCRIPT = """
+    with TestClient(main_api.app, raise_server_exceptions=False) as client:
+        ann = client.post("/person/", json={"name": "Ann"}).json()["person"]["id"]
+        bo = client.post("/student/", json={"name": "Bo", "level": "2", "tutor": ann}).json()["student"]["id"]
+        cy = client.post("/student/", json={"name": "Cy", "level": "1", "tutor": bo}).json()["student"]["id"]
+        client.put(f"/person/{ann}/", json={"name": "Ann", "partner": bo})
+        people = client.get("/person/", params={"detailed": True}).json()
+        students = client.get("/student/", params={"detailed": True}).json()
+        # Two students paired with each other
+        client.put(f"/person/{bo}/", json={"name": "Bo", "partner_of": cy})
+        client.put(f"/person/{cy}/", json={"name": "Cy", "partner_of": bo})
+        paired = client.get("/student/", params={"detailed": True})
+        print(json.dumps({"bo": bo, "people": people, "students": students,
+                          "paired": [paired.status_code, paired.json()]}))
+"""
+
+
+def test_a_subclass_lists_both_ends_of_inherited_associations_to_itself(tmp_path):
+    """The detailed list of the subclass lost the to-one end of each inherited association to the class."""
+    result = _run_client(tmp_path, _tutoring_model(), INHERITED_DETAILED_SCRIPT)
+    as_person = next(item for item in result["people"] if item["id"] == result["bo"])
+    as_student = next(item for item in result["students"] if item["id"] == result["bo"])
+    assert set(as_person) <= set(as_student)
+    for end in ("tutor", "partner", "partner_of"):
+        assert as_student[end] == as_person[end], end
+    assert as_student["tutor"]["name"] == "Ann"
+    assert [item["name"] for item in as_student["tutees"]] == ["Cy"]
+    assert as_student["partner_of"]["name"] == "Ann"
+    assert as_student["partner"] is None
+    # A related record of the parent class is serialized by its columns, so a cycle ends there.
+    status, paired = result["paired"]
+    assert status == 200
+    assert {item["name"]: item["partner_of"]["name"] for item in paired} == {"Bo": "Cy", "Cy": "Bo"}
+
+
 def _folder_model() -> DomainModel:
     """A composition from a class to itself: a folder is deleted with the folders in it."""
     folder = Class(name="Folder", attributes={Property(name="name", type=StringType)})

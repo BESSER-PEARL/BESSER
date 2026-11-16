@@ -87,16 +87,16 @@ router = APIRouter()
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end2, name_end1, association.name.lower(), lns.end1.multiplicity.min, lns.end1.multiplicity.max, lns.end2.multiplicity.min)) %}
             {% endif %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
-            {# 1:N relationship - Library has many Books #}
-            {% do ns.one_to_many.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min)) %}
+            {# 1:N relationship - Library has many Books. The last field: a class linked to itself #}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2, lns.end1.multiplicity.min, class1_name == class2_name)) %}
         {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
             {# 1:1 from a class to itself: its other end is the same foreign key, read from
-               the record that points here. (end holding the column, end without it) #}
+               the record that points here. (end holding the column, end without it, class) #}
             {% if class1_name == class2_name and lns.end1.is_navigable %}
-            {% do ns.reverse_one.append((name_end2, name_end1)) %}
+            {% do ns.reverse_one.append((name_end2, name_end1, class1_name)) %}
             {% endif %}
         {% endif %}
         {% endif %}
@@ -144,11 +144,14 @@ router = APIRouter()
             {% endif %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
             {# 1:N inherited relationship #}
-            {% do ns.one_to_many.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min)) %}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2, plns.end1.multiplicity.min, class1_name == class2_name)) %}
         {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+            {% if class1_name == class2_name and plns.end1.is_navigable %}
+            {% do ns.reverse_one.append((name_end2, name_end1, class1_name)) %}
+            {% endif %}
         {% endif %}
         {% endif %}
     {% endif %}
@@ -196,9 +199,9 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {% for x in ns.end_name_one %}
             if {{ class.name | lower}}_item.{{ x[2] }}:
                 related_obj = {{ class.name | lower}}_item.{{ x[2] }}
-                {% if x[0] == class.name %}
-                # Columns only: a related {{ class.name }} carries its own loaded
-                # relationships, which can lead back to this one.
+                {% if x[0] == class.name or x[0] in all_parents | map(attribute='name') %}
+                # Columns only: a related {{ x[0] }} can be a {{ class.name }} that carries
+                # its own loaded relationships, which can lead back to this one.
                 related_dict = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs}
                 {% else %}
                 related_dict = related_obj.__dict__.copy()
@@ -208,14 +211,14 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             else:
                 item_dict['{{ x[2] }}'] = None
             {% endfor %}
-            {# The to-one ends of a self-association, queried so that no relationship is
-               loaded onto the records the lists below serialize #}
-            {% for x in ns.one_to_many if x[0] == class.name %}
-            related_obj = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_item.{{ x[1] }}_id).first()
+            {# The to-one ends of a self-association, own or inherited, queried so that no
+               relationship is loaded onto the records the lists below serialize #}
+            {% for x in ns.one_to_many if x[4] %}
+            related_obj = database.query({{ x[0] }}).filter({{ x[0] }}.{{ x[0] | pk }} == {{ class.name | lower}}_item.{{ x[1] }}_id).first()
             item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs} if related_obj is not None else None
             {% endfor %}
             {% for x in ns.reverse_one %}
-            related_obj = database.query({{ class.name }}).filter({{ class.name }}.{{ x[0] }}_id == {{ class.name | lower}}_item.{{ pk }}).first()
+            related_obj = database.query({{ x[2] }}).filter({{ x[2] }}.{{ x[0] }}_id == {{ class.name | lower}}_item.{{ pk }}).first()
             item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs} if related_obj is not None else None
             {% endfor %}
 
@@ -689,9 +692,9 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {# 1:1 to itself, end without the column: the other record's foreign key points here #}
     {% for x in ns.reverse_one %}
     if {{ class.name | lower }}_data.{{ x[1] }} is not None:
-        related_{{ x[1] }} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_data.{{ x[1] }}).first()
+        related_{{ x[1] }} = database.query({{ x[2] }}).filter({{ x[2] }}.{{ x[2] | pk }} == {{ class.name | lower }}_data.{{ x[1] }}).first()
         if not related_{{ x[1] }}:
-            raise HTTPException(status_code=400, detail="{{ class.name }} not found")
+            raise HTTPException(status_code=400, detail="{{ x[2] }} not found")
         related_{{ x[1] }}.{{ x[0] }}_id = db_{{ class.name | lower }}.{{ pk }}
         database.flush()
     {% endfor %}
@@ -1100,12 +1103,12 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
        untouched; a sent one moves it to this entity. -#}
     {% for x in ns.reverse_one %}
     if {{ class.name | lower }}_data.{{ x[1] }} is not None:
-        related_{{ x[1] }} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_data.{{ x[1] }}).first()
+        related_{{ x[1] }} = database.query({{ x[2] }}).filter({{ x[2] }}.{{ x[2] | pk }} == {{ class.name | lower }}_data.{{ x[1] }}).first()
         if not related_{{ x[1] }}:
-            raise HTTPException(status_code=400, detail="{{ class.name }} not found")
-        database.query({{ class.name }}).filter(
-            ({{ class.name }}.{{ x[0] }}_id == db_{{ class.name | lower }}.{{ pk }}) & ({{ class.name }}.{{ pk }} != related_{{ x[1] }}.{{ pk }})
-        ).update({{"{"}}{{ class.name }}.{{ x[0] }}_id: None{{"}"}}, synchronize_session=False)
+            raise HTTPException(status_code=400, detail="{{ x[2] }} not found")
+        database.query({{ x[2] }}).filter(
+            ({{ x[2] }}.{{ x[0] }}_id == db_{{ class.name | lower }}.{{ pk }}) & ({{ x[2] }}.{{ x[2] | pk }} != related_{{ x[1] }}.{{ x[2] | pk }})
+        ).update({{"{"}}{{ x[2] }}.{{ x[0] }}_id: None{{"}"}}, synchronize_session=False)
         related_{{ x[1] }}.{{ x[0] }}_id = db_{{ class.name | lower }}.{{ pk }}
     {% endfor %}
     {# Reconcile the association class links -#}

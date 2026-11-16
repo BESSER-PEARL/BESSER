@@ -42,7 +42,7 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import AssociationClass, Class, Enumeration
+from besser.BUML.metamodel.structural import Association, AssociationClass, Class, Enumeration
 from besser.generators.structural_utils import (
     create_schema_accepts_end,
     get_foreign_keys,
@@ -373,6 +373,7 @@ class GuiSerializationMixin:
                         }
                     )
                 )
+            inputs.extend(self._required_parent_inputs(element, inputs))
             if inputs:
                 node["inputs"] = inputs
             node["submit_label"] = getattr(element, "submit_label", None) or "Submit"
@@ -647,73 +648,10 @@ class GuiSerializationMixin:
                 }
 
                 is_association_row = isinstance(domain_concept, AssociationClass)
-                ends = list(
-                    domain_concept.association.ends if is_association_row
-                    else domain_concept.all_association_ends()
-                )
-                ends = sort_by_timestamp(ends) if ends else []
-                domain_model = getattr(self, "model", None)
-                fkeys = get_foreign_keys(domain_model) if domain_model is not None else {}
-                link_associations = set(self._association_class_index())
-                for end in ends:
-                    if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
-                        continue
-                    # An end the backend's Create schema has no field for (the
-                    # non-owning side of a 1:1) would be sent and silently dropped.
-                    if not is_association_row and not create_schema_accepts_end(end, fkeys, link_associations):
-                        continue
-
-                    target = getattr(end, "type", None)
-                    target_attrs = []
-                    if target and hasattr(target, "all_attributes"):
-                        target_attrs = sort_by_timestamp(list(target.all_attributes()))
-                    lookup_field = (
-                        configured_lookup_fields.get(end.name)
-                        or self._select_display_field(target_attrs)
+                for end in self._settable_ends(domain_concept):
+                    form_columns.append(
+                        self._lookup_form_column(end, configured_lookup_fields.get(end.name), is_association_row)
                     )
-                    # The identifying attribute of the target class: option values,
-                    # payload ids and edit prefill key on it, while lookup_field
-                    # stays the human-readable label source.
-                    target_field = next(
-                        (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
-                    )
-                    target_attribute = next(
-                        (attr for attr in target_attrs if attr.name == target_field), None
-                    )
-                    target_type = getattr(getattr(target_attribute, "type", None), "name", "int")
-
-                    max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
-                    # One association-class row always selects exactly one entity
-                    # at each end, irrespective of the relationship multiplicity.
-                    is_list = not is_association_row and (
-                        max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
-                    )
-
-                    column_dict = {
-                        "column_type": "lookup",
-                        "path": end.name,
-                        "field": end.name,
-                        "lookup_field": lookup_field,
-                        "target_field": target_field,
-                        "target_type": target_type,
-                        "entity": getattr(target, "name", "") if target else "",
-                        "type": "list" if is_list else "str",
-                        "required": False,
-                    }
-
-                    multiplicity = getattr(end, "multiplicity", None)
-                    if is_association_row or multiplicity and getattr(multiplicity, "min", 0) > 0:
-                        column_dict["required"] = True
-
-                    # List ends whose association is materialized by an association class
-                    # carry the association class attributes so the create/edit form can
-                    # collect them per selected target.
-                    if is_list:
-                        association_class_meta = self._association_class_metadata(end)
-                        if association_class_meta:
-                            column_dict["association_class"] = association_class_meta
-
-                    form_columns.append(column_dict)
 
             if form_columns:
                 node["chart"]["formColumns"] = form_columns
@@ -805,17 +743,131 @@ class GuiSerializationMixin:
 
         return self._clean_dict(node)
 
-    @staticmethod
-    def _form_input_binding(form: Form, input_field: InputField) -> Dict[str, Any]:
-        """The attribute a bound form's input posts (``field``) and its type."""
+    def _settable_ends(self, domain_concept) -> List[Any]:
+        """The association ends a create/edit form of the class can set, oldest first."""
+        is_association_row = isinstance(domain_concept, AssociationClass)
+        ends = list(
+            domain_concept.association.ends if is_association_row
+            else domain_concept.all_association_ends()
+        )
+        ends = sort_by_timestamp(ends) if ends else []
+        domain_model = getattr(self, "model", None)
+        fkeys = get_foreign_keys(domain_model) if domain_model is not None else {}
+        link_associations = set(self._association_class_index())
+        settable = []
+        for end in ends:
+            if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
+                continue
+            # An end the backend's Create schema has no field for (the
+            # non-owning side of a 1:1) would be sent and silently dropped.
+            if not is_association_row and not create_schema_accepts_end(end, fkeys, link_associations):
+                continue
+            settable.append(end)
+        return settable
+
+    def _lookup_form_column(self, end, lookup_field: Optional[str] = None,
+                            is_association_row: bool = False) -> Dict[str, Any]:
+        """The form column of an association end: a select of the related class's
+        records, labelled by ``lookup_field`` (default: its display attribute)."""
+        target = getattr(end, "type", None)
+        target_attrs = []
+        if target and hasattr(target, "all_attributes"):
+            target_attrs = sort_by_timestamp(list(target.all_attributes()))
+        lookup_field = lookup_field or self._select_display_field(target_attrs)
+        # The identifying attribute of the target class: option values,
+        # payload ids and edit prefill key on it, while lookup_field
+        # stays the human-readable label source.
+        target_field = next(
+            (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
+        )
+        target_attribute = next(
+            (attr for attr in target_attrs if attr.name == target_field), None
+        )
+        target_type = getattr(getattr(target_attribute, "type", None), "name", "int")
+
+        max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
+        # One association-class row always selects exactly one entity
+        # at each end, irrespective of the relationship multiplicity.
+        is_list = not is_association_row and (
+            max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
+        )
+
+        column_dict = {
+            "column_type": "lookup",
+            "path": end.name,
+            "field": end.name,
+            "lookup_field": lookup_field,
+            "target_field": target_field,
+            "target_type": target_type,
+            "entity": getattr(target, "name", "") if target else "",
+            "type": "list" if is_list else "str",
+            "required": False,
+        }
+
+        multiplicity = getattr(end, "multiplicity", None)
+        if is_association_row or multiplicity and getattr(multiplicity, "min", 0) > 0:
+            column_dict["required"] = True
+
+        # List ends whose association is materialized by an association class
+        # carry the association class attributes so the create/edit form can
+        # collect them per selected target.
+        if is_list:
+            association_class_meta = self._association_class_metadata(end)
+            if association_class_meta:
+                column_dict["association_class"] = association_class_meta
+
+        return column_dict
+
+    def _form_input_binding(self, form: Form, input_field: InputField) -> Dict[str, Any]:
+        """The attribute a bound form's input posts (``field``) and its type; for
+        an association end, the related record it selects (``lookup``)."""
         if getattr(form, "data_binding", None) is None:
             return {}
         attribute = getattr(getattr(input_field, "data_binding", None), "data_field", None)
         if attribute is None or is_server_owned_attribute(attribute):
             return {}
+        if isinstance(attribute.owner, Association):
+            return self._form_lookup_binding(self._lookup_form_column(attribute))
         attr_type = getattr(attribute, "type", None)
         field_type = "enum" if isinstance(attr_type, Enumeration) else getattr(attr_type, "name", "str")
         return {"field": attribute.name, "field_type": field_type}
+
+    @staticmethod
+    def _form_lookup_binding(column: Dict[str, Any]) -> Dict[str, Any]:
+        """A lookup form column as a bound form posts it: the key of the chosen record."""
+        return {
+            "field": column["path"],
+            "field_type": column["target_type"],
+            "lookup": {
+                "entity": column["entity"],
+                "lookupField": column["lookup_field"],
+                "targetField": column["target_field"],
+                "targetType": column["target_type"],
+            },
+        }
+
+    def _required_parent_inputs(self, form: Form, inputs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """A select for each record a new one must reference (an order's customer)
+        that no input of the bound form supplies: without it every submit is refused."""
+        domain_class = getattr(getattr(form, "data_binding", None), "domain_concept", None)
+        if domain_class is None:
+            return []
+        is_association_row = isinstance(domain_class, AssociationClass)
+        supplied = {field.get("field") for field in inputs}
+        taken = {field.get("id") for field in inputs}
+        selects = []
+        for end in self._settable_ends(domain_class):
+            column = self._lookup_form_column(end, is_association_row=is_association_row)
+            if not column["required"] or column["type"] == "list" or end.name in supplied:
+                continue
+            selects.append({
+                "id": end.name if end.name not in taken else f"{end.name}_ref",
+                **self._form_lookup_binding(column),
+                "label": end.name[:1].upper() + self._humanize(end.name)[1:],
+                "type": "Dropdown",
+                "required": True,
+            })
+        return selects
 
     def _crud_button_target(self, button: Button) -> Optional[Dict[str, Any]]:
         """The table a create/update/delete button acts through.

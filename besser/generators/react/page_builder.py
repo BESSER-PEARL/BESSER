@@ -142,6 +142,8 @@ class PageBuilderMixin:
             imports.append("import { FormBlock } from \"../components/runtime/FormBlock\";")
         if "CrudButton" in context.imports:
             imports.append("import { CrudButton } from \"../components/runtime/CrudButton\";")
+        if "LookupSelect" in context.imports:
+            imports.append("import { LookupSelect } from \"../components/runtime/LookupSelect\";")
 
         # Specialized input / alert components
         all_input_components: List[str] = sorted(context.input_components)
@@ -331,7 +333,7 @@ class PageBuilderMixin:
             bound = bool(binding.get("endpoint") and fields)
             input_lines = []
             for field in inputs:
-                input_lines.append(self._render_form_field(field, indent_str + "  ", named=bound))
+                input_lines.append(self._render_form_field(field, indent_str + "  ", named=bound, context=context))
             inner = "\n".join(input_lines) if input_lines else ""
             if bound:
                 context.imports.add("FormBlock")
@@ -563,6 +565,13 @@ class PageBuilderMixin:
         )
         return f"{indent_str}<AlertBlock{props} />"
 
+    # Look of a generated text input or select
+    _FORM_CONTROL_STYLE = {
+        "padding": "6px 10px", "border": "1px solid #cbd5e1",
+        "borderRadius": "4px", "fontFamily": "inherit",
+        "width": "100%", "boxSizing": "border-box",
+    }
+
     def _render_input(
         self,
         node: Dict[str, Any],
@@ -591,12 +600,7 @@ class PageBuilderMixin:
         def ep(**kw: Any) -> Dict[str, Any]:
             return {k: v for k, v in kw.items() if v is not None and v is not False and v != ""}
 
-        input_style: Dict[str, Any] = {
-            "padding": "6px 10px", "border": "1px solid #cbd5e1",
-            "borderRadius": "4px", "fontFamily": "inherit",
-            "width": "100%", "boxSizing": "border-box",
-            **style,
-        }
+        input_style: Dict[str, Any] = {**self._FORM_CONTROL_STYLE, **style}
 
         def with_label(inner_jsx: str) -> str:
             """Wrap input in label+div when a label is present."""
@@ -886,7 +890,8 @@ class PageBuilderMixin:
         inner = f'{indent_str}<input type={json.dumps(html_type)}{props} />'
         return with_label(inner) if label else inner
 
-    def _render_form_field(self, field: Dict[str, Any], indent_str: str, named: bool = False) -> str:
+    def _render_form_field(self, field: Dict[str, Any], indent_str: str, named: bool = False,
+                           context: Optional[_PageRenderContext] = None) -> str:
         field_id = field.get("id") or ""
         label = field.get("label") or field_id
         field_type = field.get("type") or "Text"
@@ -920,9 +925,21 @@ class PageBuilderMixin:
             "multiple": multiple,
             "default_value": default_value,
         }
-        # A submitting form reads each control by its name (the field id)
-        field_attrs = {"name": field_id} if named and field_id else {}
-        input_jsx = self._render_input(field_node, field_id, [], {}, field_attrs, indent_str)
+        lookup = field.get("lookup")
+        if lookup and named and context is not None:
+            # A related record is chosen from the records of its class
+            context.imports.add("LookupSelect")
+            props = self._build_component_props(
+                component_id=field_id,
+                class_list=[],
+                style=self._FORM_CONTROL_STYLE,
+                extra_props={"name": field_id, **lookup, "required": required or None},
+            )
+            input_jsx = f"{indent_str}<LookupSelect{props} />"
+        else:
+            # A submitting form reads each control by its name (the field id)
+            field_attrs = {"name": field_id} if named and field_id else {}
+            input_jsx = self._render_input(field_node, field_id, [], {}, field_attrs, indent_str)
 
         return (
             f"{indent_str}<div {wrapper_style}>\n"

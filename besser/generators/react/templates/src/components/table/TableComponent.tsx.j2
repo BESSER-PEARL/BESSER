@@ -3,6 +3,7 @@ import axios from "axios";
 import { createPortal } from "react-dom";
 import { useTableContext } from "../../contexts/TableContext";
 import { notifyDataChanged, useDataVersion } from "../runtime/dataVersion";
+import { coerceLookupTarget, fetchLookupOptions, lookupOptionLabel, lookupOptionValue } from "../runtime/lookup";
 import { ColumnFilter } from "./ColumnFilter";
 import { ColumnSort } from "./ColumnSort";
 import "./TableComponent.css";
@@ -108,17 +109,6 @@ const getRowKey = (row: any, keyFields?: string[]): string | undefined => {
   return parts.every((part) => typeof part === 'string' || typeof part === 'number')
     ? JSON.stringify(parts)
     : undefined;
-};
-
-// HTML selects store strings. Convert numeric keys only; e.g. Room.number='001'
-// is a string identifier and must never become the different identifier 1.
-const coerceLookupTarget = (column: TableColumn, value: any): string | number | null => {
-  if (value === undefined || value === null || value === '') return null;
-  const type = (column.targetType ?? 'int').toLowerCase();
-  if (!['int', 'integer', 'float', 'double', 'number'].includes(type)) return String(value);
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || (['int', 'integer'].includes(type) && !Number.isInteger(numeric))) return null;
-  return numeric;
 };
 
 export const TableComponent: React.FC<Props> = ({
@@ -567,27 +557,14 @@ export const TableComponent: React.FC<Props> = ({
     return value;
   };
 
-  // Canonical value of a related record: the target class's identifying
-  // attribute (target_field — not necessarily named `id`, e.g. Room.number).
-  // Falls back to `id`, then to the display field, for older metadata.
-  const getOptionValue = (col: TableColumn, option: any): string => {
-    const candidates = [col.targetField, "id", col.lookupField];
-    for (const key of candidates) {
-      if (key && option?.[key] !== undefined && option?.[key] !== null) {
-        return String(option[key]);
-      }
-    }
-    return "";
-  };
-
   // Label shown for a related record (same fallbacks as the lookup selects)
   const getLookupOptionLabel = (col: TableColumn, targetId: string): string => {
     const options = lookupOptions[(col.entity || "").toLowerCase()] || [];
-    const option = options.find((item: any) => getOptionValue(col, item) === String(targetId));
+    const option = options.find((item: any) => lookupOptionValue(col, item) === String(targetId));
     if (!option) {
       return `ID: ${targetId}`;
     }
-    return (col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`;
+    return lookupOptionLabel(col, option);
   };
 
   // Text of a display-only form field: the edited row's value (a related
@@ -637,7 +614,7 @@ export const TableComponent: React.FC<Props> = ({
               // For list-type lookups (1:N or N:M), get array of IDs from related objects
               const relatedArray = editRowData[col.relationshipKey || col.field];
               if (Array.isArray(relatedArray)) {
-                initialValues[col.field] = relatedArray.map((item: any) => getOptionValue(col, item));
+                initialValues[col.field] = relatedArray.map((item: any) => lookupOptionValue(col, item));
               } else {
                 // Not carried by the row: unknown, not empty
                 initialValues[col.field] = [];
@@ -711,20 +688,14 @@ export const TableComponent: React.FC<Props> = ({
       setLinkAttrValues(initialLinkValues);
 
       // Fetch lookup options for lookup columns
-      const fetchLookupOptions = async () => {
+      const loadLookupOptions = async () => {
         const options: Record<string, any[]> = {};
-        const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-        
+
         for (const col of formColumns) {
           if (col.columnType === 'lookup' && col.entity) {
             const endpoint = col.entity.toLowerCase();
             try {
-              const response = await axios.get(`${backendBase}/${endpoint}/`);
-              if (Array.isArray(response.data)) {
-                options[endpoint] = response.data;
-              } else if (response.data && typeof response.data === 'object') {
-                options[endpoint] = Array.isArray(response.data.results) ? response.data.results : [response.data];
-              }
+              options[endpoint] = await fetchLookupOptions(col.entity);
             } catch (err) {
               console.error(`Error fetching ${endpoint} options:`, err);
               options[endpoint] = [];
@@ -734,7 +705,7 @@ export const TableComponent: React.FC<Props> = ({
         setLookupOptions(options);
       };
 
-      fetchLookupOptions();
+      loadLookupOptions();
     }
   }, [showModal, formColumns, modalMode, editRowData]);
 
@@ -1233,13 +1204,12 @@ export const TableComponent: React.FC<Props> = ({
                     if (col.type === 'list') {
                       const selectedValues = formValues[col.field] || [];
                       const filterText = (lookupFilters[col.field] || "").toLowerCase();
-                      const optionLabel = (option: any) =>
-                        String((col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`);
+                      const optionLabel = (option: any) => lookupOptionLabel(col, option);
                       // Checked options stay visible even when the filter excludes
                       // them, so their inline association panels never disappear.
                       const visibleOptions = filterText
                         ? options.filter((option: any) =>
-                            selectedValues.includes(getOptionValue(col, option)) ||
+                            selectedValues.includes(lookupOptionValue(col, option)) ||
                             optionLabel(option).toLowerCase().includes(filterText))
                         : options;
 
@@ -1286,7 +1256,7 @@ export const TableComponent: React.FC<Props> = ({
                               </div>
                             ) : (
                               visibleOptions.map((option: any) => {
-                                const optionValue = getOptionValue(col, option);
+                                const optionValue = lookupOptionValue(col, option);
                                 const isChecked = selectedValues.includes(optionValue);
                                 const hasLinkFields = Boolean(col.associationClass && col.associationClass.fields.length > 0);
                                 const targetId = optionValue;
@@ -1466,8 +1436,8 @@ export const TableComponent: React.FC<Props> = ({
                         >
                           <option value="">-- Select {col.label} --</option>
                           {options.map((option: any) => (
-                            <option key={getOptionValue(col, option)} value={getOptionValue(col, option)}>
-                              {(col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`}
+                            <option key={lookupOptionValue(col, option)} value={lookupOptionValue(col, option)}>
+                              {lookupOptionLabel(col, option)}
                             </option>
                           ))}
                         </select>

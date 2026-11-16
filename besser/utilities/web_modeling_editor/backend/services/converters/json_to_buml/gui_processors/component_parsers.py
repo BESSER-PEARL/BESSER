@@ -39,14 +39,18 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 
 from .component_helpers import (
     collect_input_fields_recursive,
     extract_menu_items,
     extract_parameters_from_attributes,
 )
-from besser.generators.structural_utils import is_server_owned_attribute
+from besser.generators.structural_utils import (
+    create_schema_accepts_end,
+    get_foreign_keys,
+    is_server_owned_attribute,
+)
 
 from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
 from .utils import css_class_names, extract_text_content, html_attributes, clean_attribute_name, get_element_by_id
@@ -627,7 +631,8 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
     submit button's text the form's ``submit_label``. A form bound to a class
     - by its ``data-source`` (class id or name), else by input names that are
     all attributes of exactly one class - gets a ``data_binding`` on that
-    class, and each input a binding to the attribute it edits.
+    class, and each input a binding to the attribute it edits or, when it is
+    named after a to-one association end, to the related record it selects.
 
     Args:
         component: GrapesJS component dict
@@ -753,6 +758,19 @@ def _attribute_for(input_field, domain_class):
     return next((by_name[key] for key in _input_keys(input_field) if key in by_name), None)
 
 
+def _parent_ends(domain_class, domain_model) -> List[Any]:
+    """The to-one association ends a new record of the class can set (its
+    customer, its category): those the backend's Create schema has a field for."""
+    fkeys = get_foreign_keys(domain_model)
+    link_associations = {
+        type_.association.name for type_ in domain_model.types if isinstance(type_, AssociationClass)
+    }
+    return [
+        end for end in sorted(domain_class.all_association_ends(), key=lambda end: end.name)
+        if end.multiplicity.max == 1 and create_schema_accepts_end(end, fkeys, link_associations)
+    ]
+
+
 def _covers_required(domain_class, inputs) -> bool:
     """Whether the inputs supply every attribute a new record needs (a lookup
     form - booking id + email - names attributes but creates nothing)."""
@@ -796,8 +814,12 @@ def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain
     if domain_class is None:
         return
     form.data_binding = DataBinding(domain_concept=domain_class, name=f"{form.name}_binding")
+    parent_ends = {_normalized(end.name): end for end in _parent_ends(domain_class, domain_model)}
     for input_field in inputs:
-        attribute = _attribute_for(input_field, domain_class)
+        # An input edits the attribute it names, else selects the related record it names
+        attribute = _attribute_for(input_field, domain_class) or next(
+            (parent_ends[key] for key in _input_keys(input_field) if key in parent_ends), None
+        )
         if attribute is not None:
             input_field.data_binding = DataBinding(
                 domain_concept=domain_class, data_field=attribute, name=f"{input_field.name}_binding"

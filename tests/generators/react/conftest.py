@@ -10,9 +10,10 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 )
 
 
-def class_diagram(classes):
+def class_diagram(classes, associations=()):
     """Apollon class diagram JSON. ``classes`` = {Name: [(attr, type), ...]};
-    the class id is ``cls-<Name>`` and an attribute id ``attr-<Name>-<attr>``."""
+    the class id is ``cls-<Name>`` and an attribute id ``attr-<Name>-<attr>``.
+    ``associations`` = [(name, (Class, role, multiplicity), (Class, role, multiplicity)), ...]."""
     elements = {}
     for index, (class_name, attributes) in enumerate(classes.items()):
         class_id = f"cls-{class_name}"
@@ -30,9 +31,17 @@ def class_diagram(classes):
             "bounds": {"x": index * 300, "y": 0, "width": 220, "height": 200},
             "attributes": attribute_ids, "methods": [],
         }
+    relationships = {
+        f"rel-{name}": {
+            "id": f"rel-{name}", "name": name, "type": "ClassBidirectional",
+            **{side: {"element": f"cls-{class_name}", "role": role, "multiplicity": multiplicity}
+               for side, (class_name, role, multiplicity) in (("source", source), ("target", target))},
+        }
+        for name, source, target in associations
+    }
     return {"version": "3.0.0", "type": "ClassDiagram", "size": {"width": 2000, "height": 1000},
             "interactive": {"elements": {}, "relationships": {}}, "elements": elements,
-            "relationships": {}, "assessments": {}}
+            "relationships": relationships, "assessments": {}}
 
 
 def gui_json(pages):
@@ -65,8 +74,8 @@ class GeneratedApp:
 
 @pytest.fixture
 def build_app(tmp_path):
-    def build(classes, pages):
-        class_json = class_diagram(classes)
+    def build(classes, pages, associations=()):
+        class_json = class_diagram(classes, associations)
         project_gui = gui_json(pages)
         domain = process_class_diagram({"title": "Domain", "model": class_json})
         gui_model = process_gui_diagram(project_gui, class_json, domain)

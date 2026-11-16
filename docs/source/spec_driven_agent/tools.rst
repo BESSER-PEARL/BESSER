@@ -445,10 +445,19 @@ upload) lands beside the source. The probe records the files that appear under
 the backend during ``up`` and ``req`` in ``.besser_probe.runtime_files.json``,
 and the run deletes them before it writes the recipe, unless a generator or a
 write tool wrote them; the recipe lists them under ``runtime_files_removed``.
-They are therefore in neither the download nor a GitHub push. A file the app
-writes when the agent starts it some other way (``python main_api.py`` or a
-test run through ``run_command``) is not recorded: only the name-based
-exclusions (databases, logs, caches) apply to it.
+They are therefore in neither the download nor a GitHub push. Only the
+name-based exclusions (databases, logs, caches) apply, and a generated key or
+upload is delivered with the app, when the file is:
+
+- written while the app was started some other way than the probe: ``python
+  main_api.py`` or a test run through ``run_command``, or a script that
+  imports the app's module;
+- written by the running server between two probe calls, for example by a
+  background task or a request sent with ``curl``;
+- written anywhere when the backend is the workspace root: the probe then
+  records nothing and nothing is removed;
+- in a dot-folder or outside the backend folder, an existing file the app
+  rewrote, or a recorded file changed afterwards.
 
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on

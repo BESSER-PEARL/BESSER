@@ -79,7 +79,10 @@ that was already broken is never refused, so it can be repaired.
   ``raise NotImplemented``, a value returned from ``__init__``, a non-string in
   ``__all__``, logging calls whose arguments do not match the format).
   Style rules are not run, and a ``ruff.toml`` or ``pyproject.toml`` inside the app
-  is not read.
+  is not read. A file ``ruff`` cannot read (rule ``E902``, for example one that is
+  not UTF-8) is not a lint finding: it is reported as ``validation: ruff did not
+  run (it could not read N file(s), first: …)``, so the result does not claim the
+  file was linted.
 - Optionally ``tsc --noEmit``, ``cargo check`` and ``kotlinc``, per project.
 
 Every import a generated frontend makes is resolved against the files it
@@ -244,11 +247,32 @@ filled; the finding quotes the 422.
 A login counts only when the refused request then gets past the 401/403. The
 report keeps the first refused request and its status under ``auth`` (evidence
 that authentication is enforced), with the account used. An app that never
-answers 401/403 receives no login requests. When no login works, the refused
+refuses a request receives no login requests. When no login works, the refused
 creates stay ``create unverified`` and the finding gives the reason; a
 ``test_api`` scenario that logs in, creates and reads back the record settles
 them, as above. Saved scenarios are never replayed to log the probe in, so its
 result depends only on the source.
+
+In an app with its own unsecured register and login routes, the probe then
+checks the account table, the table the register route creates. Each ``PUT``,
+``PATCH`` and ``DELETE`` under that table's generic create path gets a fresh
+record. A write that answers 2xx to a request with no credentials is reported as
+``open account writes: <backend>: PUT /user/{user_id}/, DELETE /user/{user_id}/
+changed a User record for a request with no credentials, in an app with its own
+login (POST /auth/login)``. When the anonymous write is refused, a second account
+the probe logs in through the app's own routes sends the update with a new
+password and a new value for a privilege-named field. If a later read of the
+record shows the new privilege value, or logging in as that other record with the new password
+succeeds, it is reported as ``open account writes: <backend>: PUT
+/user/{user_id}/ let one logged-in account change password, role of another User
+record``. Both are warnings. A ``POST`` is never reported, since an open create
+is how a visitor signs up, and an app without register and login routes is not
+checked. The second account is registered under its own username and email,
+after the probe's own account, so it is never the app's first account or an
+admin, and a privilege counts as changed only when a later read of the record
+shows the new value. If the second account cannot log in because the app raises
+an error, the report records ``account_writes_not_checked`` and keeps every
+other result.
 
 .. _spec-driven-model-contract:
 
@@ -314,7 +338,13 @@ Findings are classified into three severities:
        ``...``. An abridged or listed quote ("a ... b", "a; b", "x.py: a and
        y.py: b") passes only when every part is code in the file it names,
        and each part is checked on its own text, so an invented part cannot
-       supply the proof. An explanation after a closed statement or element
+       supply the proof. A part that is exactly one or more whole string literals
+       of a line (``"Booking end date must be after ..."``) counts beside a part that is
+       code; quoted alone it proves nothing, and the note names the line it is in
+       when it is a message (it holds a space) or at least 20 characters long; a
+       short one-word literal (``"ok"``, ``"admin"``) is found in almost any file and
+       counts as code that exists nowhere. A quote that starts or ends inside a string or comment
+       is not code. An explanation after a closed statement or element
        ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
        another file's code leaves the requirement unverified. A Python
        quote that matches no line is also located by syntax tree, so a
@@ -445,6 +475,16 @@ like Phase 2's.
 Evidence-only findings and generated API assertions do not force a source edit.
 The agent can inspect saved scenarios, correct a mistaken expectation with a
 specification-grounded reason, or cite an already-present implementation.
+A correction that leaves out requests which passed in the scenario's last run
+gets them back at the end of the corrected scenario, their ``{{N...}}``
+references renumbered, and the result's ``restored_checks`` names them once the
+scenario ran. Resending the same corrected list later reruns that scenario, the
+restored requests included, with no new reason. It is refused, as before, when
+such a request reads a response it would no longer have, when the scenario would
+exceed 20 requests, when the app did not boot (the restored requests did not run),
+or when a restored request fails at the end (it ran after the corrected requests
+changed the data): the saved scenario is then kept unchanged and the result
+carries the report. A resumed run keeps the corrected list it was sent as.
 Accepted scenario/checklist corrections count as progress; changing a judge's
 opinion alone does not. Cancellation is checked between repair and validation,
 so stopping a run does not trigger another paid coverage judgment.
@@ -463,7 +503,22 @@ the ledger by its id. Validation still records and reports every blocker.
 A fix attempt is skipped when every remaining blocker is a requirement whose
 cited code exists but whose citation is malformed and already had its
 citation-repair round: no edit can change it. A citation of code that exists
-nowhere keeps its attempt.
+nowhere keeps its attempt. The loop also ends when the last attempt faced the same
+blockers (requirements compared by id, status and citation label, since a re-judge
+rewords its note; other blockers by message), its edits were not all rejected,
+and each remaining blocker is a ``requirement unverified`` verdict the
+judge left without a citation (or with a malformed one) after its focused
+re-judge on the current source: another attempt would get the same request. A
+citation of code that exists nowhere, or one whose cited body fails its role (an
+HTTP 501 scaffold, a no-op), keeps its attempts. The blockers keep their severity
+and are reported. ``validate_app`` lists the requirement blockers of the last
+judgment too (no new judge call), so the fix agent is never told the app is
+verified while the run holds one; their message tells it to implement behaviour
+only if it is really absent, since citations are re-judged automatically. A
+judgment of other source than the judge would read now (an edit to a judged file)
+is listed as advisory, "judged before your latest edits; it is re-judged when you
+finish", and does not count as a blocker there; an edit to a file the judge does
+not read (a README) changes nothing.
 Excerpts use the file/line formats emitted by the checks. Unchanged source is not
 counted as repair progress merely because a judge's blocker count changed.
 
@@ -479,6 +534,37 @@ judgment per revision, right after the judgment or on a later pass, may revisit
 only unverified entries without a code change. Evidence must name a real application source file and quote an
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
+
+The judge reads a digest of the app of at most 200,000 characters: the schema
+files first, then the backend code ranked by the share of its lines the agent
+wrote (a module the generator never wrote first, untouched generator output
+last), with 30% reserved for pages and components. When the whole app does not
+fit, a generator file the agent edited in under half of its lines is shown as
+its edits with three lines of context; the unchanged generator lines left out,
+and the places where generator lines were removed, are marked. A file over 1,500
+lines is not compared (its share is unknown) and is shown whole. Files cut, left
+out or shown as edits are listed; a partial, missing or unverified verdict naming
+one is judged once more with that file shown whole. That focused answer replaces
+the verdict only when it is a verified "implemented"; otherwise a missing or
+partial from it proves no absence, so the verdict keeps that status, and it takes
+the focused judge's citation and note, which name the files that judge saw.
+
+The recipe records, for each implemented requirement, ``verification``:
+``verified`` only when it cites backend files alone and a ``test_api`` workflow
+that passed on the final tree called a route one of them declares (under the
+literal ``prefix=`` of its router there; a router whose prefix is not a literal
+verifies nothing);
+``unverified`` otherwise, with a ``verification_note`` saying what did and did
+not run ("an API workflow passed but called no route in the cited files", "the
+frontend builds; its screens were not run", "the frontend was not built"). No
+check renders a screen, so a requirement citing frontend code is never
+``verified``. It is reported, never a blocker. The recipe also records
+``business_rules_stated``: ``false`` only when the ledger ran and extracted no
+requirement at all and the model has no rule, ``null`` when the ledger did not
+run. When it is ``false``, the repository recap and the end-of-run report say
+"Your request stated no business rules, so none were enforced or checked", and
+the ``AGENTS.md`` block carries it as a note outside its "Still open" list; the
+next run's prompt does not get that line, from the recap or from ``AGENTS.md``.
 
 Model conversion losses
 -----------------------

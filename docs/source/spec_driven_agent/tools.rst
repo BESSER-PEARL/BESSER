@@ -122,12 +122,20 @@ characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Valid
 Once the app has frontend files, it also reports the static frontend checks
 (contract, import resolution, create forms) and, without a GUI model, the
 acceptance-matrix findings; a warning among them is marked
-``advisory, not a blocker``.
+``advisory, not a blocker``. When the run has a checklist, a passing result
+also lists its open items (``open_items``: id and a short label, empty when
+none is open), the ids ``task_list`` needs to close them. Ending a turn runs
+the same checks, so the tool's description asks for a call after a code change
+only, not a second one before finishing.
 
 ``test_api`` executes up to 20 declarative requests against a disposable copy of
 one generated FastAPI backend and a fresh SQLite database. Requests share state
 within a scenario; later requests may reference response JSON using
-``{{0.room.id}}``. Assertions specify expected statuses and dotted JSON fields.
+``{{0.room.id}}``. When the path is missing from a response that wraps the record
+under exactly one key (``{"todolist": {"id": 1}, "items_ids": []}``), ``{{0.id}}``
+resolves through that key and the response carries a note such as ``{{0.id}}``
+resolved as ``{{0.todolist.id}}``; ``expected_fields`` paths are matched exactly.
+Assertions specify expected statuses and dotted JSON fields.
 
 A request may carry ``headers``, whose values accept the same references, so a
 scenario can register, log in and send the returned token on later requests:

@@ -104,7 +104,13 @@ The three phases
    as a change, or as removing the scaffold or switching its framework; the
    latter two are dropped, since the scaffold's stack is fixed. Only the
    planner's own empty list skips Phase 2: a list emptied by dropped tasks
-   runs Phase 2 from the request. An HTTP path the request names (``GET
+   runs Phase 2 from the request. The planner is sent the user's verbatim
+   request as the request, and the modeling agent's "Assistant's notes" in a
+   separate block labelled as context that is not the user's words and adds no
+   task the request does not name (the requirements ledger reads the request
+   the same way). It is also told what is being built, from the routing
+   answer: for a web app, that people use it through screens and that the
+   harness already adds the item that builds a missing frontend. An HTTP path the request names (``GET
    /stats``, "a /health/live endpoint") that the FastAPI scaffold does not
    serve becomes a checklist item. Routes are read from the source: method
    decorators and ``add_api_route``, under their router prefixes, the
@@ -142,6 +148,18 @@ The three phases
    variables carry over between commands, and on Linux, where the run has a
    sandbox, a server started in one command answers requests in the next,
    until the run ends.
+
+   On Anthropic the Phase 2 system prompt is sent as two cached blocks, split
+   at ``## Variable context`` (``llm_client.SYSTEM_CACHE_SPLIT``). The first
+   holds the role, the plan and the rules and depends only on the run
+   configuration, so web-app runs of one configuration read it from each
+   other's cache (a non-web target is named in the rules, so that block is
+   shared only between runs for the same target); everything per project or per request (models, data contract,
+   design system, idioms, inventory, routes, requirements, the request) comes
+   after the marker. A Phase 2 request then uses all four cache breakpoints
+   the API allows (tools, the stable block, the end of the system prompt, the
+   rolling message marker), so no other one can be added. Other providers get
+   the prompt as one string.
 
 **Phase 3 — validation and bounded auto-fix.**
    The workspace is snapshotted, then swept by a set of static validators.
@@ -307,9 +325,18 @@ reading a trace and wondering why a run did what it did.
        decision, snapshot, rollback, regeneration and validation finding is
        appended to ``.besser_trace.jsonl`` in the workspace (events
        ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
-       ``tool_call``, ``cost_update``, ``checkpoint``, ``error``, ``target``,
-       ``snapshot``, ``rollback``, ``regeneration``, ``validation_issue``,
-       ``run_end``). Compactions are counted in the checkpoint and the
+       ``tool_call``, ``cost_update``, ``llm_call``, ``checkpoint``, ``error``,
+       ``target``, ``snapshot``, ``rollback``, ``regeneration``,
+       ``validation_issue``, ``run_end``). ``run_start`` holds the start of
+       the user's own request, not the modeling agent's notes. Every Phase 2
+       turn, the closing reply included, and every Phase 3 fix turn
+       (``phase: "phase3_fix"``) writes a ``turn_start`` and a ``cost_update``
+       with the cumulative token counters. Each paid call outside those loops
+       writes one ``llm_call`` with its ``purpose`` (``routing``,
+       ``routing_target``, ``gap_analysis``, ``requirements_extraction``,
+       ``requirements_judge``, ``requirements_rejudge``), ``outcome``, the
+       calls, tokens and ``cost_usd`` it added, and for a judge the verdict
+       count per status. Compactions are counted in the checkpoint and the
        recipe (``compactions``), not traced. A ``tool_call`` record holds
        the input and a ``result`` excerpt (its length and the first 500
        characters), with credential-shaped values redacted before the cut;
@@ -377,7 +404,9 @@ could not run is reported under *Not checked*. The download's
 ``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
 generator and the verification counts, with up to eight items each found missing
 in the code or not checked (a check that could not run, a requirement whose
-evidence did not verify). It leaves out the request itself, because the file
+evidence did not verify). A request that states no business rule adds a *Not
+checked* line saying so, and an implemented requirement that was only found in
+the source says so. It leaves out the request itself, because the file
 also goes into GitHub pushes, and shows model-written values as code, never as
 links or markup.
 

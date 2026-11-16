@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import pathlib
 import zipfile
 from types import SimpleNamespace
 
 from besser.BUML.metamodel.traceability import ExecutionStatus
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.trace_model import TRACE_MODEL_FILENAME
+from besser.utilities.web_modeling_editor.backend.models import ProjectInput
 from besser.utilities.web_modeling_editor.backend.services.converters import process_trace
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
@@ -54,9 +56,9 @@ class _ScriptedClient:
         return {"stop_reason": "end_turn", "content": [_Block("text", text="Done")]}
 
 
-def _run(monkeypatch, **request):
+def _run(monkeypatch, generator="generate_sqlalchemy", **request):
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _ScriptedClient())
-    runner = SmartGenerationRunner(_build_request(target_generator_override="generate_sqlalchemy", **request),
+    runner = SmartGenerationRunner(_build_request(target_generator_override=generator, **request),
                                    runtime=current_runtime())
     frames = [_parse(frame) for frame in asyncio.run(_collect_frames(runner))]
     done = [frame for frame in frames if frame.get("event") == "done"]
@@ -121,3 +123,64 @@ def test_the_operation_status_follows_how_the_loop_ended():
     assert _run_status(False, "cancelled") == ExecutionStatus.CANCELLED
     assert _run_status(False, "timeout") == ExecutionStatus.TIMED_OUT
     assert _run_status(False, "api_error") == ExecutionStatus.FAILED
+
+
+_FIXTURES = pathlib.Path(__file__).parents[4]
+
+
+def _editor_diagram(path: pathlib.Path, diagram_id: str) -> dict:
+    return {"id": diagram_id, **json.loads(path.read_text("utf-8"))}
+
+
+def test_the_run_trace_refers_to_the_elements_of_every_diagram_by_their_editor_ids(monkeypatch):
+    """The editor's Library (Full Stack) diagrams through a web app run: each element the trace records is
+    an element of the diagram sent, by its editor id, under that diagram's root."""
+    class_diagram = _editor_diagram(_FIXTURES / "generators" / "fixtures" / "library_template_class_diagram.json",
+                                    "class-diagram")
+    agent_diagram = _editor_diagram(_FIXTURES / "generators" / "fixtures" / "library_template_agent_diagram.json",
+                                    "agent-diagram")
+    gui_diagram = _editor_diagram(_FIXTURES / "utilities" / "web_modeling_editor" / "backend" / "fixtures"
+                                  / "library_template_gui_diagram.json", "gui-diagram")
+    diagrams = {"class-diagram": class_diagram, "gui-diagram": gui_diagram, "agent-diagram": agent_diagram}
+    project = ProjectInput(id="library", type="BesserProject", name="Library", createdAt="2026-04-15T00:00:00Z",
+                           diagrams={"ClassDiagram": [class_diagram], "GUINoCodeDiagram": [gui_diagram],
+                                     "AgentDiagram": [agent_diagram]})
+
+    def editor_ids(model) -> set:
+        ids, pending = set(), [model]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, dict):
+                for key in ("elements", "relationships", "components"):
+                    if isinstance(value.get(key), dict):
+                        ids.update(value[key])
+                if isinstance(value.get("id"), str):
+                    ids.add(value["id"])
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+        return ids
+
+    try:
+        _, done = _run(monkeypatch, generator="generate_web_app", project=project)
+        trace = done["trace"]
+        process_trace(trace).validate()
+        artifacts = {a["id"]: a for a in trace["artifacts"]}
+
+        def root_of(artifact):
+            while artifact.get("parentId"):
+                artifact = artifacts[artifact["parentId"]]
+            return artifact
+
+        roots = {a["elementId"]: a["elementType"] for a in artifacts.values()
+                 if a["type"] == "ModelArtifact" and not a.get("parentId")}
+        assert roots == {"class-diagram": "DomainModel", "gui-diagram": "GUIModel", "agent-diagram": "Agent"}
+        under = {}
+        for artifact in artifacts.values():
+            if artifact["type"] == "ModelArtifact" and artifact.get("parentId"):
+                under.setdefault(root_of(artifact)["elementId"], set()).add(artifact["elementId"])
+        assert set(under) == set(diagrams), under.keys()
+        for diagram_id, element_ids in under.items():
+            assert element_ids <= editor_ids(diagrams[diagram_id]["model"]), diagram_id
+    finally:
+        _cleanup()

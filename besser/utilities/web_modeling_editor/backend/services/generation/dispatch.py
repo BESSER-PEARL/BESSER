@@ -325,10 +325,18 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             if has_agent_components(gui_model):
                 project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
                 default_cfg = project_agent_config or config
+                agent_diagram_ids: dict = {}
                 agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
                     input_data.diagrams.get("AgentDiagram", []),
                     default_config=default_cfg,
+                    diagram_ids=agent_diagram_ids,
                 )
+                # Each agent's read holds its model, so its traced elements are placed under its diagram.
+                titles = {diagram.id: diagram.title for diagram in input_data.diagrams.get("AgentDiagram", [])}
+                for agent_model in agent_models:
+                    agent_diagram_id = agent_diagram_ids.get(agent_model.name)
+                    reads[agent_diagram_id or f"#{len(reads)}"] = DiagramRead.of(
+                        agent_diagram_id, titles.get(agent_diagram_id), agent_model)
                 for agent_diagram in input_data.diagrams.get("AgentDiagram", []):
                     reads.setdefault(agent_diagram.id or f"#{len(reads)}",
                                      DiagramRead(agent_diagram.id, agent_diagram.title, Agent.__name__))

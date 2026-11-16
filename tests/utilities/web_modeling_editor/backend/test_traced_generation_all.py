@@ -5,6 +5,11 @@ deliver the same download, and return a valid trace fragment with at least file-
 diagram the run read is a root model artifact (its diagram id, its real metaclass) linked to every
 text file of the download with the rule ``generator:<key>``. Generators the plain endpoint refuses
 must be refused the same way.
+
+The diagrams are the editor's own (its templates, as the editor sends them), so the trace is also
+checked at element level: every generator that traces elements has, for each diagram listed in
+``_ELEMENT_LEVEL``, element artifacts under that diagram's root, linked to line ranges, whose ids are
+the editor ids of elements of the diagram sent (the ids the editor's own trace records them by).
 """
 
 import base64
@@ -16,16 +21,11 @@ import zipfile
 
 import pytest
 
-from besser.BUML.metamodel.bpmn import BPMNModel, EndEvent, Process, SequenceFlow, StartEvent, Task, TaskType
-from besser.BUML.metamodel.quantum import HadamardGate, QuantumCircuit
 from besser.utilities.provenance import PROVENANCE_FILENAME
 from besser.utilities.web_modeling_editor.backend.config import SUPPORTED_GENERATORS
-from besser.utilities.web_modeling_editor.backend.services.converters import bpmn_object_to_json, process_trace
+from besser.utilities.web_modeling_editor.backend.services.converters import process_trace
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
     nn_model_to_json,
-)
-from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.quantum_diagram_converter import (
-    quantum_circuit_to_editor_json,
 )
 from tests.forecaster_networks import HORIZON, WINDOW, mlp
 
@@ -46,24 +46,39 @@ GUI_DIAGRAM = {"id": "gui-diagram",
                **json.loads((BACKEND_FIXTURES / "library_template_gui_diagram.json").read_text("utf-8"))}
 
 
-def _bpmn_diagram() -> dict:
-    start, work, end = StartEvent(name="start"), Task(name="work", task_type=TaskType.SERVICE), EndEvent(name="end")
-    process = Process(name="P", flow_nodes={start, work, end},
-                      sequence_flows={SequenceFlow(start, work), SequenceFlow(work, end)})
-    return {"id": "bpmn-diagram", "title": "Orders",
-            "model": bpmn_object_to_json(BPMNModel(name="Orders", processes={process}))}
+def _template(name: str) -> dict:
+    """An editor template (``packages/webapp/src/main/templates/pattern`` of the editor), as it sends it."""
+    return json.loads((BACKEND_FIXTURES / name).read_text("utf-8"))
+
+
+BPMN_DIAGRAM = {"id": "bpmn-diagram", "title": "Pizza store", "model": _template("template_bpmn_pizza_store.json")}
 
 
 def _quantum_diagram() -> dict:
-    circuit = QuantumCircuit(name="bell", qubits=2)
-    circuit.add_operation(HadamardGate(target_qubit=0))
-    return {"id": "quantum-diagram", "title": "Bell", "model": quantum_circuit_to_editor_json(circuit)}
+    """A Bell circuit as the editor's circuit editor (Quirk columns) sends it: H, then a controlled X."""
+    return {"id": "quantum-diagram", "title": "Bell",
+            "model": {"version": "1.0.0", "cols": [["H", 1], ["\u2022", "X"]], "gateMetadata": {}}}
 
 
-NN_DIAGRAM = {"id": "nn-diagram", "title": "Forecast", "model": nn_model_to_json(mlp())}
-DEPLOYMENT_DIAGRAM = {"id": "deployment-diagram", "title": "Cloud", "model": {
-    "type": "DeploymentDiagram", "relationships": {},
-    "elements": {"node-1": {"id": "node-1", "type": "DeploymentNode", "name": "server"}}}}
+NN_DIAGRAM = {"id": "nn-diagram", "title": "Tutorial", "model": _template("template_nn_tutorial_example.json")}
+# The forecaster needs a network of the shape it forecasts with.
+FORECAST_DIAGRAM = {"id": "forecast-diagram", "title": "Forecast", "model": nn_model_to_json(mlp())}
+
+
+def _deployment_diagram(agent_diagram_id=None) -> dict:
+    """A node running two artifacts, one of them the agent of ``agent_diagram_id`` when given."""
+    def element(element_id, element_type, name, owner=None, **extra):
+        return {"id": element_id, "type": element_type, "name": name, "owner": owner,
+                "bounds": {"x": 0, "y": 0, "width": 200, "height": 100}, **extra}
+    agent = {"agentModelRef": agent_diagram_id} if agent_diagram_id else {}
+    return {"id": "deployment-diagram", "title": "Cloud", "model": {
+        "version": "3.0.0", "type": "DeploymentDiagram", "relationships": {},
+        "elements": {"node-1": element("node-1", "DeploymentNode", "server"),
+                     "artifact-api": element("artifact-api", "DeploymentArtifact", "api", "node-1"),
+                     "artifact-bot": element("artifact-bot", "DeploymentArtifact", "librarybot", "node-1", **agent)}}}
+
+
+DEPLOYMENT_DIAGRAM = _deployment_diagram()
 OBJECT_DIAGRAM = {"id": "object-diagram", "title": "Books", "model": {
     "type": "ObjectDiagram", "relationships": {},
     "elements": {"o1": {"id": "o1", "type": "ObjectName", "name": "dune", "className": "Book", "attributes": []}},
@@ -75,11 +90,11 @@ _ON_ONE_DIAGRAM = {
     "jsonobject": (OBJECT_DIAGRAM, None, "ObjectModel"),
     "agent": (AGENT_DIAGRAM, None, "Agent"),
     "qiskit": (_quantum_diagram(), None, "QuantumCircuit"),
-    "bpmn": (_bpmn_diagram(), None, "BPMNModel"),
+    "bpmn": (BPMN_DIAGRAM, None, "BPMNModel"),
     "docker_compose": (DEPLOYMENT_DIAGRAM, None, "DeploymentModel"),
     "pytorch": (NN_DIAGRAM, None, "NN"),
     "tensorflow": (NN_DIAGRAM, None, "NN"),
-    "forecaster": (NN_DIAGRAM, {"window": WINDOW, "horizon": HORIZON}, "NN"),
+    "forecaster": (FORECAST_DIAGRAM, {"window": WINDOW, "horizon": HORIZON}, "NN"),
     "django": (CLASS_DIAGRAM, {"project_name": "library_site", "app_name": "books"}, "DomainModel"),
 }
 # Generators /generate-output refuses (they need a second model); the traced endpoint must too.
@@ -158,9 +173,56 @@ def _assert_same_delivery_and_a_valid_trace(generator, traced_response, plain_re
     return trace
 
 
+def _editor_ids(diagram: dict) -> set:
+    """The ids the editor knows the elements of ``diagram`` by: the keys and ``id`` values its JSON holds
+    at any depth (Apollon elements and relationships, GUI pages and components' ``attributes.id``), and
+    for a quantum circuit, whose cells have no ids, each gate's cell (``<diagram id>:gate:<column>:<wire>``,
+    the editor's ``snapshotQuantumModel``)."""
+    ids, pending = set(), [diagram["model"]]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            for key in ("elements", "relationships", "components"):
+                if isinstance(value.get(key), dict):
+                    ids.update(value[key])
+            if isinstance(value.get("id"), str):
+                ids.add(value["id"])
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    for column, cells in enumerate(diagram["model"].get("cols") or []):
+        ids.update(f"{diagram['id']}:gate:{column}:{wire}" for wire, cell in enumerate(cells) if cell not in (1, None, ""))
+    return ids
+
+
+def _assert_element_level(generator: str, trace: dict, diagrams) -> None:
+    """For each diagram, the trace has element artifacts under the diagram's root, each an element of the
+    diagram sent (by its editor id), and some of them linked to line ranges of the delivery."""
+    artifacts = {a["id"]: a for a in trace["artifacts"]}
+
+    def root_of(artifact):
+        while "parentId" in artifact:
+            artifact = artifacts[artifact["parentId"]]
+        return artifact
+
+    fragments = {link["sourceId"] for link in trace["traceLinks"] if "startLine" in artifacts[link["targetId"]]}
+    for diagram in diagrams:
+        elements = [a for a in artifacts.values() if a["type"] == "ModelArtifact" and "parentId" in a
+                    and root_of(a)["elementId"] == diagram["id"]]
+        unknown = {a["elementId"] for a in elements} - _editor_ids(diagram)
+        assert not unknown, f"{generator}: {diagram['id']} elements the editor does not know: {sorted(unknown)}"
+        assert any(a["id"] in fragments for a in elements), \
+            f"{generator}: no element of {diagram['id']} is linked to a line range"
+
+
 @pytest.fixture(autouse=True)
 def _isolate_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+
+
+# The generators that trace elements of the diagram they read, and the one that stays at file level: the JSON
+# object generator dumps the object model as one document (an ``Object`` has no id to refer to it by).
+_FILE_LEVEL = {"jsonobject"}
 
 
 @pytest.mark.parametrize("generator", sorted(SUPPORTED_GENERATORS))
@@ -172,7 +234,11 @@ def test_every_generator_traces_its_one_diagram_delivery(client, generator):
         assert traced.status_code == plain.status_code == 400
         assert traced.json()["detail"] == plain.json()["detail"]
         return
-    _assert_same_delivery_and_a_valid_trace(generator, traced, plain, roots)
+    trace = _assert_same_delivery_and_a_valid_trace(generator, traced, plain, roots)
+    if generator in _FILE_LEVEL:
+        assert not any(a["type"] == "ModelArtifact" and "parentId" in a for a in trace["artifacts"])
+    else:
+        _assert_element_level(generator, trace, [_ON_ONE_DIAGRAM.get(generator, (CLASS_DIAGRAM,))[0]])
 
 
 def _project(generator: str, diagrams: dict, current: str, config=None) -> dict:
@@ -188,7 +254,7 @@ _PROJECT_CASES = {
                 {"class-diagram": "DomainModel", "gui-diagram": "GUIModel", "agent-diagram": "Agent"}),
     "backend": (_project("backend", {"ClassDiagram": [CLASS_DIAGRAM], "NNDiagram": [NN_DIAGRAM]}, "ClassDiagram"),
                 {"class-diagram": "DomainModel"}),
-    "docker_compose": (_project("docker_compose", {"DeploymentDiagram": [DEPLOYMENT_DIAGRAM],
+    "docker_compose": (_project("docker_compose", {"DeploymentDiagram": [_deployment_diagram(AGENT_DIAGRAM["id"])],
                                                    "AgentDiagram": [AGENT_DIAGRAM]}, "DeploymentDiagram"),
                        {"deployment-diagram": "DeploymentModel", "agent-diagram": "Agent"}),
     "qiskit": (_project("qiskit", {"QuantumCircuitDiagram": [_quantum_diagram()]}, "QuantumCircuitDiagram"),
@@ -205,6 +271,10 @@ def test_project_generations_trace_every_diagram_they_read(client, generator):
     plain = client.post(PLAIN_PROJECT, json=project)
     trace = _assert_same_delivery_and_a_valid_trace(generator, traced, plain, roots)
     assert [a["name"] for a in trace["actors"]] == ["Ada"]
+    # Every diagram the run read has elements traced to lines: the web app's GUI screens and components
+    # (React) and its agent (BAF) as much as its classes; Docker Compose's services and the agent it bakes.
+    read = [diagram for diagrams in project["diagrams"].values() for diagram in diagrams if diagram["id"] in roots]
+    _assert_element_level(generator, trace, read)
 
 
 def test_the_web_app_traces_the_lines_of_its_backend(client):

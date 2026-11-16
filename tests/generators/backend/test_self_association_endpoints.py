@@ -19,7 +19,7 @@ import textwrap
 import pytest
 
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation, Class, DomainModel, Multiplicity, Property, StringType,
+    BinaryAssociation, Class, DomainModel, Generalization, Multiplicity, Property, StringType,
 )
 from besser.generators.backend import BackendGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
@@ -296,3 +296,74 @@ def test_one_to_one_records_pointing_at_each_other_can_be_listed(one_to_one):
     assert one_to_one["circular_status"] == 200
     ada = next(item for item in one_to_one["circular"] if item["id"] == one_to_one["ada"]["id"])
     assert ada["mentor"]["id"] == one_to_one["alan"]["id"]
+
+
+def _cover_model() -> DomainModel:
+    """A many-to-many to itself whose end has the name of the class."""
+    staff = Class(name="Staff", attributes={Property(name="name", type=StringType)})
+    association = BinaryAssociation(name="Cover", ends={
+        Property(name="staff", type=staff, multiplicity=Multiplicity(0, "*")),
+        Property(name="covers", type=staff, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(name="Rota", types={staff}, associations={association})
+
+
+END_NAMED_LIKE_THE_CLASS_SCRIPT = """
+    with TestClient(main_api.app) as client:
+        ann = client.post("/staff/", json={"name": "Ann"}).json()["staff"]["id"]
+        bob = client.post("/staff/", json={"name": "Bob"}).json()["staff"]["id"]
+        created = client.post("/staff/", json={"name": "Cy", "staff": [ann], "covers": [bob]}).json()
+        cy = created["staff"]["id"]
+        updated = client.put(f"/staff/{cy}/", json={"name": "Cy", "staff": [bob], "covers": []}).json()
+        linked = client.post(f"/staff/{cy}/staff/{ann}/").status_code
+        print(json.dumps({
+            "ids": [ann, bob, cy], "created": created, "updated": updated, "linked": linked,
+            "fetched": client.get(f"/staff/{cy}/").json(),
+            "names": [item["name"] for item in client.get("/staff/").json()],
+        }))
+"""
+
+
+def test_an_end_named_like_the_class_does_not_replace_the_entity(tmp_path):
+    """``db_<end>`` was ``db_<class>``: the create returned a related record and linked it to itself."""
+    result = _run_client(tmp_path, _cover_model(), END_NAMED_LIKE_THE_CLASS_SCRIPT)
+    ann, bob, cy = result["ids"]
+    assert result["created"] == {"staff": {"id": cy, "name": "Cy"}, "covers_ids": [bob], "staff_ids": [ann]}
+    assert result["updated"] == {"staff": {"id": cy, "name": "Cy"}, "covers_ids": [], "staff_ids": [bob]}
+    assert result["linked"] == 200
+    assert sorted(result["fetched"]["staff_ids"]) == [ann, bob]
+    assert result["names"] == ["Ann", "Bob", "Cy"]
+
+
+def _engineer_model() -> DomainModel:
+    """A subclass of a class that has a one-to-many to itself."""
+    employee = Class(name="Employee", attributes={Property(name="name", type=StringType)})
+    engineer = Class(name="Engineer", attributes={Property(name="skill", type=StringType)})
+    manages = BinaryAssociation(name="Manages", ends={
+        Property(name="manager", type=employee, multiplicity=Multiplicity(0, 1)),
+        Property(name="subordinates", type=employee, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(name="Org", types={employee, engineer}, associations={manages},
+                       generalizations={Generalization(general=employee, specific=engineer)})
+
+
+INHERITED_SCRIPT = """
+    with TestClient(main_api.app) as client:
+        lea = client.post("/employee/", json={"name": "Lea"}).json()["employee"]["id"]
+        ray = client.post("/employee/", json={"name": "Ray"}).json()["employee"]["id"]
+        lead = client.post("/engineer/", json={"name": "Eve", "skill": "ops", "subordinates": [ray]}).json()
+        junior = client.post("/engineer/", json={"name": "Jo", "skill": "qa", "manager": lea}).json()
+        print(json.dumps({
+            "lea": lea, "ray": ray, "lead": lead, "junior": junior,
+            "ray_after": client.get(f"/employee/{ray}/").json()["employee"],
+        }))
+"""
+
+
+def test_a_subclass_handles_both_ends_of_an_inherited_one_to_many(tmp_path):
+    """The list end was accepted by the subclass's create and ignored."""
+    result = _run_client(tmp_path, _engineer_model(), INHERITED_SCRIPT)
+    lead = result["lead"]
+    assert lead["subordinates_ids"] == [result["ray"]]
+    assert result["ray_after"]["manager_id"] == lead["engineer"]["id"]
+    assert result["junior"]["engineer"]["manager_id"] == result["lea"]

@@ -36,7 +36,11 @@ _BESSER_TEMP_PREFIXES = TEMP_DIR_PREFIXES + _LEGACY_TEMP_PREFIXES
 _CLEANUP_INTERVAL_SECONDS = 3600  # 1 hour
 
 
-def cleanup_old_temp_files(max_age_hours: int = 24) -> None:
+# How long a BESSER temp directory, a spec-driven run's resumable workspace included, is kept.
+TEMP_DIR_MAX_AGE_HOURS = 24
+
+
+def cleanup_old_temp_files(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:
     """Remove BESSER-created temp directories older than *max_age_hours*.
 
     The function iterates over the system temp directory, identifies
@@ -87,7 +91,7 @@ def cleanup_old_temp_files(max_age_hours: int = 24) -> None:
         logger.info("Cleaned up %d stale BESSER temp directories", removed)
 
 
-async def _periodic_cleanup(max_age_hours: int = 24) -> None:
+async def _periodic_cleanup(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:
     """Run :func:`cleanup_old_temp_files` in a loop every hour."""
     while True:
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
@@ -97,7 +101,7 @@ async def _periodic_cleanup(max_age_hours: int = 24) -> None:
             logger.exception("Error during periodic temp-file cleanup")
 
 
-def schedule_cleanup(max_age_hours: int = 24) -> asyncio.Task:
+def schedule_cleanup(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> asyncio.Task:
     """Start the periodic cleanup background task.
 
     Should be called once during application startup (inside the lifespan

@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Callable, Literal, Optional
 
+from besser.utilities.web_modeling_editor.backend.services.cleanup import TEMP_DIR_MAX_AGE_HOURS
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 from .sse_events import ErrorEvent, format_sse
@@ -58,9 +59,9 @@ TERMINAL_RUN_STATUSES = frozenset(
 _NON_TERMINAL_ERROR_CODES = frozenset({"COST_CAP", "TIMEOUT", "INCOMPLETE"})
 _DEFAULT_DB_NAME = "besser_spec_driven_runs.sqlite3"
 _HEARTBEAT_SECONDS = 15.0
-# Run rows outlive their events this long: services/cleanup.py removes a run's
-# (resumable) workspace after 24 h, and a resume must continue its numbering.
-_RUN_RECORD_RETENTION_SECONDS = 24 * 3600
+# Run rows outlive their events as long as services/cleanup.py keeps a run's
+# (resumable) workspace, and a resume must continue its numbering.
+_RUN_RECORD_RETENTION_SECONDS = TEMP_DIR_MAX_AGE_HOURS * 3600
 _INTERRUPTED_MESSAGE = "The server restarted before this run finished."
 
 

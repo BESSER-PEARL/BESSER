@@ -27,7 +27,11 @@ def _shop_app():
     def create_customer(body: dict):
         customer = {"id": 100 + len(customers), "name": body["name"], "api_token": "tok-5f4e3d2c1b0a9f8e"}
         customers.append(customer)
-        return {"customer": customer}
+        return {"customer": customer, "session": {"access_token": "sess-9d8c7b6a5f4e3d2c", "expires_in": 3600}}
+
+    @app.get("/template/")
+    def template():
+        return {"body": "Dear {{9.name}}, your order {{0}} has shipped"}
 
     @app.post("/order/")
     def create_order(body: dict):
@@ -76,6 +80,28 @@ def test_a_credential_referenced_as_an_expected_value_is_not_quoted():
     report = _run([_CUSTOMER, _order({"order.label": "{{0.customer.api_token}}"})])
     assert report["status"] == "failed"
     assert "tok-5f4e3d2c1b0a9f8e" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("expected", ["{{0.session}}", "{{0}}", {"id": "{{0.session}}"}, ["{{0.session}}"],
+                                      {"session": "{{0.session}}"}])
+def test_a_referenced_object_is_quoted_without_its_credentials(expected):
+    """The expected value is quoted in the failure: a whole response or an
+    object in it carries tokens that a reference to one field would not."""
+    report = _run([_CUSTOMER, _order({"owner": expected})])
+    assert report["status"] == "failed"
+    quoted = json.dumps(report)
+    assert "sess-9d8c7b6a5f4e3d2c" not in quoted and "tok-5f4e3d2c1b0a9f8e" not in quoted
+    assert "expires_in" in report["responses"][1]["failures"][0]
+
+
+def test_text_that_only_looks_like_a_reference_is_compared_as_written():
+    """A stored message template holds braces of its own."""
+    template = {"method": "GET", "path": "/template/"}
+    written = "Dear {{9.name}}, your order {{0}} has shipped"
+    assert _run([_CUSTOMER, dict(template, expected_fields={"body": written})])["status"] == "passed"
+
+    report = _run([_CUSTOMER, dict(template, expected_fields={"body": "Dear {{9.name}}"})])
+    assert report["responses"][1]["failures"] == ["response 9 has no preceding JSON value to reference"]
 
 
 def test_a_rejected_request_names_its_unsupported_keys():

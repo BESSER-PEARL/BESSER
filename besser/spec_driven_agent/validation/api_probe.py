@@ -355,6 +355,21 @@ def _resolve_references(value, previous, *, in_path=False, in_header=False, reda
     return _REFERENCE.sub(substitute, value)
 
 
+def _expected_shown(value, previous):
+    """An expected value that resolved, as a failure message may quote it: each
+    referenced value has its credentials hidden under the names the reference gives it."""
+    if isinstance(value, dict):
+        return {key: _expected_shown(item, previous) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expected_shown(item, previous) for item in value]
+    match = _REFERENCE.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        return _resolve_references(value, previous, redact=True)
+    body = previous[int(match.group(1))]
+    read = _reference_path(body, match.group(2) or "")
+    return _scrub(copy.deepcopy(_walk(body, read)), (), _path_names(read))
+
+
 def _same_literal(actual, expected):
     if isinstance(actual, bool) or isinstance(expected, bool):
         return type(actual) is type(expected) and actual == expected
@@ -598,13 +613,21 @@ async def _run_requests(app, requests):
                     expected = expected if isinstance(expected, list) else [expected]
                     if response.status_code not in expected:
                         item["failures"].append(f"expected HTTP {request.get('expected_status', '2xx')}, got {response.status_code}")
-                    for path, expected_value in request.get("expected_fields", {}).items():
+                    for path, written in request.get("expected_fields", {}).items():
                         try:
-                            expected_value = _resolve_references(expected_value, previous)
                             actual = _json_path(body, path)
-                            if not _same_literal(actual, expected_value):
-                                # A message is a string: redact the response value before quoting it.
-                                actual = _scrub(actual, (), _path_names(path))
+                            # Braces that name no earlier value are part of the text: the
+                            # value as written is accepted too.
+                            if _same_literal(actual, written):
+                                continue
+                            if not _same_literal(actual, _resolve_references(written, previous, notes=notes)):
+                                # A message is a string: redact the response values before quoting
+                                # them. An expected value written out in full is the test's own text.
+                                names = _path_names(path)
+                                expected_value = _expected_shown(written, previous)
+                                if expected_value != written:
+                                    expected_value = _scrub(expected_value, (), names)
+                                actual = _scrub(actual, (), names)
                                 item["failures"].append(f"{path}: expected {_bounded(expected_value)!r}, got {_bounded(actual)!r}")
                         except ValueError as exc:
                             item["failures"].append(str(exc))

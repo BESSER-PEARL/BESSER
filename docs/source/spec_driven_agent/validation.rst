@@ -282,6 +282,105 @@ shows the new value. If the second account cannot log in because the app raises
 an error, the report records ``account_writes_not_checked`` and keeps every
 other result.
 
+.. _spec-driven-authorization-check:
+
+Authorization check
+-------------------
+
+For a backend with accounts, a second check
+(``validation/authorization_probe.py``) asks what one account can do to
+another's records. It runs when the probe got past a login wall, and also when
+no create was refused but the backend's source names a registration route. It
+boots the app the same way and uses only its public HTTP API: it registers a
+first account (an app may make that one an administrator), then accounts A and
+B, through the app's own routes, over https so that a login kept in a
+``Secure`` cookie is followed. It overrides no dependency, forges no token and
+never opens the database.
+
+Every finding is a **warning** in the run's report, stated as what was observed.
+None is a blocker: none is sent to repair, ranks a tree, counts for rollback or
+withholds verified completion, and the check runs only in the Phase 3 sweep, so
+the agent's ``validate_app`` never shows them. From outside, a designed feature
+(a shared workspace, a role, a link the request asks for) can look like a hole;
+the user decides.
+
+Account A creates one record of every entity it can, through the entity's plain
+create route. Account B then sends every update method (``PUT`` and ``PATCH``)
+of each record; a reference to an account in B's body names B itself, since an
+app may refuse a request made in another account's name. Where B is refused
+(401, 403 or 404), A sends the same update with the values its record already
+shows: only when A is allowed is the refusal a rule of the app, so a route that
+refuses every caller is not one. B also sends the routes under each record: a
+route whose tail names a relationship links another of A's records to it (since
+attaching one's own record, as a like or a vote does, is what such routes are
+for), and any other route is sent only when it takes the record's own create or
+update body, since an action with a body of its own (a rating, a vote) is what
+other accounts are meant to send. Then every other entity's create and update
+with A's record in each relationship field whose foreign key is stored on A's
+record, and the single and bulk deletes; a single delete that refuses B is a
+rule too. A reads its record back after each request, and that read-back is the
+result: a request counts only when a field now holds the value B sent under
+that name, a link now points at B's record, the record is gone, or A is refused
+its own record right after B's request was accepted. A timestamp, counter or
+derived value that moved on its own does not count. A's own account record is
+tested last. A caller who is not logged in sends every write route a valid
+request and reads every ``GET`` route, and an account that deleted itself sends
+its old token again.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Observation
+     - ``authorization:`` warning
+   * - B changed, linked or deleted A's record through a route, and the app
+       refused B on that record elsewhere (an update A may make, or for a
+       delete, the single delete)
+     - ``another account could change Task.project_id through POST /project/;
+       PUT /task/{task_id}/ refused that account``
+   * - B changed or deleted A's own account record, or A can no longer read it
+       after B's accepted request; a route the probe already reported as
+       ``open account writes:`` is not repeated
+     - ``another account could change Member.email through ...; Member.email
+       identifies the account``. Only an e-mail, username, password or phone
+       field, or an owner locked out, is described as touching the account
+       itself
+   * - B changed or deleted a record on which the app refused B nowhere
+     - nothing: shared data, or a record locked for everyone
+   * - A write route answers a caller who is not logged in with success
+       (register, login, session routes and the account entity's own create
+       are left out, and so are the account routes the probe already reports)
+     - ``a caller who is not logged in could successfully send ...``; only
+       the status was seen
+   * - A ``GET`` route returns A's email or phone to a caller who is not
+       logged in
+     - ``a caller who is not logged in could read an account's email and phone
+       through ...``, unless the request makes profiles or contact details
+       public
+   * - A ``GET`` route returns, beside the value A logs in by (its e-mail, else
+       its username), a credential field holding a credential-shaped value
+       (A's password, a hash or token format, or 20 or more mixed characters)
+     - ``... returned an account's `password` to other callers``. A token that
+       is no password is left out when the request makes profiles public
+   * - A route that refuses anonymous callers accepts the token of an account
+       that deleted itself and whose login is then refused (400, 401, 403, 404)
+     - ``... still accepted the token of an account that had deleted itself
+       and could no longer log in``
+
+What the check did not cover is one ``authorization coverage:`` warning, so that
+no finding does not read as checked: it did not run, two accounts could not be
+registered and logged in (an e-mail that must be verified first, a role the
+sign-up requires), a record could not be set up (each is named with the answer
+its create got), or the check stopped at its limits. It sends at most 1500
+requests and stops 60 seconds after it started, boot included.
+
+Not covered: a record created in another account's name, many-to-many lists in
+another entity's create and update bodies, unlink routes, routes under a record
+whose body is not the record's own (actions such as a rating, and method routes),
+what an anonymous caller's accepted write changed, and data shown to other
+logged-in accounts. Whether the request makes profiles public is recognised in
+English only.
+
 .. _spec-driven-model-contract:
 
 Model contract (Phase 0)
@@ -417,7 +516,9 @@ Findings are classified into three severities:
        when a BESSER generator built the base, such as a BAF chatbot or
        Python classes), ``requirement out of
        scope:`` — a UI requirement on a run that neither has nor asked for a
-       frontend, which a backend-only output has no files to satisfy — and
+       frontend, which a backend-only output has no files to satisfy —
+       ``authorization:`` and ``authorization coverage:`` (see
+       :ref:`spec-driven-authorization-check`) — and
        ``validation unverified:`` — a required check that did not run, such
        as a runtime check (``validation unverified: runtime check (...) did
        not run``) or a requirements judge that returned no verdicts. No edit

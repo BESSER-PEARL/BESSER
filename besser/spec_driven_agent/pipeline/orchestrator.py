@@ -2940,6 +2940,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._runtime_probe_verdict = verdict
         self._runtime_verdict_revision = self._workspace_revision() if verdict is not None else None
 
+    def _authorization_issues(self) -> list[str]:
+        """The two-account check's warnings, for the run's report.
+
+        Phase 3 sweeps only, on the backends the probe booted for this tree, so
+        the agent's ``validate_app`` never shows them and no repair is asked for.
+        """
+        facts = getattr(self, "_runtime_probe_facts", None)
+        if not facts or facts[0] != self._workspace_revision():
+            return []
+        from besser.spec_driven_agent.validation.authorization_probe import authorization_issues
+
+        return self._revision_cached("authorization", (), lambda: authorization_issues(
+            self.output_dir, facts[1], self._instructions, self.domain_model))
+
     def _runtime_probe_issues(self) -> list[str]:
         """Import-smoke + constructibility findings, cached per source revision.
 
@@ -3447,6 +3461,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         raw_issues.extend(self._collect_task_issues())
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(execution_issues)
+        raw_issues.extend(self._authorization_issues())
         # The TS collector reports a relevant disabled check as unknown; it
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.

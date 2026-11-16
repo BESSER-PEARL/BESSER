@@ -15,6 +15,7 @@ from besser.generators.spring.spring_entity_generator import SpringEntityGenerat
 from besser.generators.spring.spring_http_generator import SpringHttpGenerator
 from besser.generators.spring.spring_repository_generator import SpringRepositoryGenerator
 from besser.generators.spring.spring_service_generator import SpringServiceGenerator
+from besser.utilities.generation_trace import prefixed_traces
 
 #: Defaults for the generated project. They live here rather than in the web
 #: editor's constants module so that the generator never has to import the web
@@ -212,8 +213,10 @@ class SpringBackendGenerator(GeneratorInterface):
     def _run_sub_generator(self, sub_generator):
         """Generate with ``sub_generator`` and take over the traces of the files it wrote."""
         sub_generator.generate()
-        # Its traces are relative to its own folder: put them under that folder of the project.
-        self._merge_traced_files(sub_generator, sub_generator.output_dir.relative_to(self.project_dir).as_posix())
+        # Its traces are relative to its own folder: put them under that folder of the project. A
+        # sub-generator is not a GeneratorInterface and has no LLM step, so only its traces are merged.
+        folder = sub_generator.output_dir.relative_to(self.project_dir).as_posix()
+        self.traced_files.update(prefixed_traces(sub_generator.traced_files, folder))
 
     def _generate_entities(self):
         self._run_sub_generator(SpringEntityGenerator(

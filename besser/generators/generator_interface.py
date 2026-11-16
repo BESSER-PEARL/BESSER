@@ -206,13 +206,12 @@ class GeneratorInterface(ABC):
             prefix: The folder, relative to this generator's output directory, the child wrote
                 into (``"backend"``); empty when it wrote into the same one.
         """
-        # Read leniently: a part need not be a GeneratorInterface (the Spring generator's parts are not).
-        ai_files = set(prefixed_traces(dict.fromkeys(getattr(child, "ai_files", ())), prefix))
+        ai_files = set(prefixed_traces(dict.fromkeys(child.ai_files), prefix))
         self.traced_files.update({path: trace for path, trace in prefixed_traces(child.traced_files, prefix).items()
                                   if path not in ai_files})
         if ai_files:
             self.ai_files.update(ai_files)
-            self.ai_llm = getattr(child, "ai_llm", None) or self.ai_llm
+            self.ai_llm = child.ai_llm or self.ai_llm
 
     @property
     def model(self) -> Model:

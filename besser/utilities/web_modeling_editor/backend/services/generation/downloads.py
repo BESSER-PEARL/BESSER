@@ -113,10 +113,10 @@ def delivery_ai_files(generators: Iterable[GeneratorInterface],
     root = os.path.realpath(delivery_root)
     paths, llm = set(), None
     for generator in generators:
-        delivered = {_delivered_path(generator, path, root) for path in getattr(generator, "ai_files", ())} - {None}
+        delivered = {_delivered_path(generator, path, root) for path in generator.ai_files} - {None}
         if delivered:
             paths |= delivered
-            llm = getattr(generator, "ai_llm", None) or llm
+            llm = generator.ai_llm or llm
     return frozenset(paths), llm
 
 

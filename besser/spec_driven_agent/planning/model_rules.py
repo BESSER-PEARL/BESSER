@@ -33,6 +33,10 @@ RENAMED = "renamed_in_model"
 _INVARIANT_NAME = re.compile(r"(\binv)\s+\w+\s*:", re.IGNORECASE)
 # "Owner.end[0..1]" in a model_summary association.
 _END = re.compile(r"(\w+)\.(\w+)\[")
+# A rule that is one minimum on one collection: "self.lines->size() >= 1", "self.lines->notEmpty()".
+_COLLECTION_MINIMUM = re.compile(
+    r"self\s*\.\s*(\w+)\s*->\s*(?:notEmpty\s*\(\s*\)|size\s*\(\s*\)\s*(?:>=\s*[1-9]\d*|>\s*\d+))")
+_INVARIANT_HEADER = re.compile(r"^.*?\binv\b[^:]*:", re.IGNORECASE | re.DOTALL)
 
 
 def is_dropped_by_model_change(issue) -> bool:
@@ -53,6 +57,22 @@ def converted_rule_fingerprints(domain_model) -> list[str]:
             rules.extend(method.pre)
             rules.extend(method.post)
     return sorted({rule_fingerprint(r.expression) for r in rules if isinstance(r.expression, str)})
+
+
+def deferred_collection_minimum(constraint):
+    """The association end ``constraint`` only sets a minimum on, when each record
+    at that end needs the context record to exist first; ``None`` for any other rule.
+
+    Such a rule cannot hold while the context record is created (nothing can be
+    linked to it yet), which is why a mandatory end is modeled this way.
+    """
+    body = _INVARIANT_HEADER.sub("", str(constraint.expression or ""), count=1).strip()
+    match = _COLLECTION_MINIMUM.fullmatch(body)
+    if match is None:
+        return None
+    end = next((e for e in constraint.context.all_association_ends() if e.name == match.group(1)), None)
+    opposite = end.opposite_end() if end is not None else None
+    return end if opposite is not None and opposite.multiplicity.min >= 1 else None
 
 
 def _ends(summary: dict) -> dict[str, str]:

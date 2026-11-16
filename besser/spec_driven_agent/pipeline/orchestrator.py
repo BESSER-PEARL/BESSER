@@ -3837,6 +3837,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._scaffold_family() != "fastapi" or self.domain_model is None:
             return []
         from besser.generators.pydantic_classes.ocl_utils import parse_ocl_constraint
+        from besser.spec_driven_agent.planning.model_rules import deferred_collection_minimum
         tasks: list[str] = []
         for constraint in list(getattr(self.domain_model, "constraints", None) or []):
             context = getattr(constraint, "context", None)
@@ -3849,6 +3850,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if not (isinstance(parsed, dict) and parsed.get("skipped")):
                 continue
             cls = context.name
+            deferred = deferred_collection_minimum(constraint)
+            if deferred is not None:
+                # Refused at creation, the record could never be created; refused
+                # at removal, its related records could never be deleted or moved.
+                tasks.append(
+                    f"Report the modeled rule '{constraint.name}' of {cls} - OCL: "
+                    f"{constraint.expression}. Every {deferred.type.name} needs its {cls} first, "
+                    f"so a new {cls} has no {deferred.name} yet: never refuse creating, updating "
+                    f"or deleting a record because of this rule. Instead show a {cls} that "
+                    "does not meet it as incomplete wherever it is listed."
+                )
+                continue
             tasks.append(
                 f"Enforce the modeled rule '{constraint.name}' of {cls} - OCL: "
                 f"{constraint.expression}. The generators could not express it "

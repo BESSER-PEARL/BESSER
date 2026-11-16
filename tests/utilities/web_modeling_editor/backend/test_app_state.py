@@ -104,15 +104,18 @@ def test_two_apps_do_not_share_sign_in_simulator_or_import_state(quiet_lifespan,
                 pass
             while one.sdmx_import_slots.acquire(blocking=False):
                 pass
+            while one.semantic_check_slots.acquire(blocking=False):
+                pass
             session_id = one.agent_simulator.sessions.reserve("ip:1.2.3.4")
             return (
                 one, two,
                 two.kg_consistency_slots.acquire(blocking=False),
                 two.sdmx_import_slots.acquire(blocking=False),
+                two.semantic_check_slots.acquire(blocking=False),
                 two.agent_simulator.sessions.is_owner(session_id, "ip:1.2.3.4"),
             )
 
-    one, two, kg_free, sdmx_free, second_knows_session = asyncio.run(scenario())
+    one, two, kg_free, sdmx_free, semantic_free, second_knows_session = asyncio.run(scenario())
     try:
         assert one.github_sessions is not two.github_sessions
         assert one.agent_simulator is not two.agent_simulator
@@ -120,7 +123,7 @@ def test_two_apps_do_not_share_sign_in_simulator_or_import_state(quiet_lifespan,
         assert one.github_sessions.user_tokens._store_path == tmp_path / "user_tokens.enc"
         assert one.github_sessions.oauth_states._store_path == tmp_path / "oauth_states.enc"
         # Saturating or using the first app's state leaves the second's untouched.
-        assert kg_free and sdmx_free
+        assert kg_free and sdmx_free and semantic_free
         assert not second_knows_session
     finally:
         one.spec_driven.durable_runs.store.close()

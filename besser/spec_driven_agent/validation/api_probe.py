@@ -620,11 +620,19 @@ async def _run_requests(app, requests):
                             # value as written is accepted too.
                             if _same_literal(actual, written):
                                 continue
-                            if not _same_literal(actual, _resolve_references(written, previous, notes=notes)):
+                            resolved_notes: list[str] = []
+                            try:
+                                resolved = _resolve_references(written, previous, notes=resolved_notes)
+                                unresolved = False
+                            except ValueError:
+                                # Braces that resolve to nothing: the expectation is the text as written.
+                                resolved, unresolved = written, True
+                            notes.extend(resolved_notes)
+                            if not _same_literal(actual, resolved):
                                 # A message is a string: redact the response values before quoting
                                 # them. An expected value written out in full is the test's own text.
                                 names = _path_names(path)
-                                expected_value = _expected_shown(written, previous)
+                                expected_value = written if unresolved else _expected_shown(written, previous)
                                 if expected_value != written:
                                     expected_value = _scrub(expected_value, (), names)
                                 actual = _scrub(actual, (), names)

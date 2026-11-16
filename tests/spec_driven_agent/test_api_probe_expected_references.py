@@ -72,8 +72,7 @@ def test_a_referenced_expectation_still_fails_on_a_different_value():
 
 def test_an_unresolvable_expected_reference_fails_that_assertion_only():
     report = _run([_CUSTOMER, _order({"customer_ids.0": "{{0.customer.missing}}", "order.id": 1})])
-    failures = report["responses"][1]["failures"]
-    assert len(failures) == 1 and "'customer.missing' was not present" in failures[0]
+    assert report["responses"][1]["failures"] == ["customer_ids.0: expected '{{0.customer.missing}}', got 100"]
 
 
 def test_a_credential_referenced_as_an_expected_value_is_not_quoted():
@@ -100,8 +99,18 @@ def test_text_that_only_looks_like_a_reference_is_compared_as_written():
     written = "Dear {{9.name}}, your order {{0}} has shipped"
     assert _run([_CUSTOMER, dict(template, expected_fields={"body": written})])["status"] == "passed"
 
-    report = _run([_CUSTOMER, dict(template, expected_fields={"body": "Dear {{9.name}}"})])
-    assert report["responses"][1]["failures"] == ["response 9 has no preceding JSON value to reference"]
+
+@pytest.mark.parametrize("written", [
+    "Dear {{9.name}}",                     # names no earlier response
+    "Dear {{0.customer}}, shipped",        # an object inside text
+    "{{1.order.id}}",                      # the response it checks
+])
+def test_text_with_braces_that_does_not_match_fails_as_a_mismatch(written):
+    """Braces that resolve to nothing are text: a wrong expectation is reported
+    as the mismatch it is, not as a reference error."""
+    report = _run([_CUSTOMER, {"method": "GET", "path": "/template/", "expected_fields": {"body": written}}])
+    assert report["responses"][1]["failures"] == [
+        f"body: expected {written!r}, got 'Dear {{{{9.name}}}}, your order {{{{0}}}} has shipped'"]
 
 
 def test_a_rejected_request_names_its_unsupported_keys():

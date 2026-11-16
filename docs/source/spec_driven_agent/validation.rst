@@ -349,7 +349,9 @@ Findings are classified into three severities:
        another file's code leaves the requirement unverified. A Python
        quote that matches no line is also located by syntax tree, so a
        formatter's wrapping parentheses, adjacent string literals merged or
-       split, and a statement quoted on one line still match. A quoted
+       split, an ``if``, ``for``, ``while`` or ``with`` header quoted on one line, and a
+       statement quoted on one line still match; so does a string split by a formatter
+       into ``"..." f"..."`` pieces quoted as one. A quoted
        decorator is located but proves nothing alone; quoted with a ``def``,
        it must be on that definition. A line quoted from the wrong file is
        rejected, and the note names the file it is in. Every citation of a
@@ -544,21 +546,28 @@ its edits with three lines of context; the unchanged generator lines left out,
 and the places where generator lines were removed, are marked. A file over 1,500
 lines is not compared (its share is unknown) and is shown whole. Files cut, left
 out or shown as edits are listed; a partial, missing or unverified verdict naming
-one is judged once more with that file shown whole. That focused answer replaces
-the verdict only when it is a verified "implemented"; otherwise a missing or
-partial from it proves no absence, so the verdict keeps that status, and it takes
-the focused judge's citation and note, which name the files that judge saw.
+one is judged once more with that file shown whole. The focused round shows up to
+ten distinct files, taken from each requirement's files in turn, so one
+requirement's files cannot crowd out another's. That focused answer replaces the
+verdict only when it is a verified "implemented"; otherwise a missing or partial
+from it proves no absence, so the checked verdict keeps its status, and it takes
+the focused judge's citation (when it gave one), note and inspection paths, which
+name the files that judge saw. An answer naming a file that round left out gets
+one more round with that file shown. An empty citation fails as "no source line is
+cited", never as a citation of code that exists nowhere.
 
-The recipe records, for each implemented requirement, ``verification``:
-``verified`` only when it cites backend files alone and a ``test_api`` workflow
-that passed on the final tree called a route one of them declares (under the
-literal ``prefix=`` of its router there; a router whose prefix is not a literal
-verifies nothing);
-``unverified`` otherwise, with a ``verification_note`` saying what did and did
-not run ("an API workflow passed but called no route in the cited files", "the
-frontend builds; its screens were not run", "the frontend was not built"). No
-check renders a screen, so a requirement citing frontend code is never
-``verified``. It is reported, never a blocker. The recipe also records
+The recipe records, for each implemented requirement, ``verification`` and a
+``verification_note`` giving its API half and its screens half apart. The API half
+is exercised when a ``test_api`` call that passed on the final tree hit the route
+a cited line is on (its decorator or handler), or, when no cited line is on a route,
+any route of a cited backend file (under the literal ``prefix=`` of its router there;
+a router whose prefix is not a literal verifies nothing); the note names that call
+("API: a passing workflow called GET /x/, the cited route"). No check renders a
+screen, so a cited frontend file is never exercised, and the note says why: "screens:
+not run (the frontend builds)", "(the frontend build failed)", "(the frontend build
+check did not run)" or "(no frontend)". ``verified`` means every cited half was
+exercised, ``api_verified`` that the API half was and screens are cited,
+``unverified`` anything else. It is reported, never a blocker. The recipe also records
 ``business_rules_stated``: ``false`` only when the ledger ran and extracted no
 requirement at all and the model has no rule, ``null`` when the ledger did not
 run. When it is ``false``, the repository recap and the end-of-run report say

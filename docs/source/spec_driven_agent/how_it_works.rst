@@ -336,7 +336,10 @@ reading a trace and wondering why a run did what it did.
        ``routing_target``, ``gap_analysis``, ``requirements_extraction``,
        ``requirements_judge``, ``requirements_rejudge``), ``outcome``, the
        calls, tokens and ``cost_usd`` it added, and for a judge the verdict
-       count per status. Compactions are counted in the checkpoint and the
+       count per status, how many "implemented" citations the check verified
+       (``citations``) and why each other failed (``failures``, by requirement
+       id). Each also names ``model`` (and ``planning_model``, which gap analysis
+       and the judge try first). Compactions are counted in the checkpoint and the
        recipe (``compactions``), not traced. A ``tool_call`` record holds
        the input and a ``result`` excerpt (its length and the first 500
        characters), with credential-shaped values redacted before the cut;

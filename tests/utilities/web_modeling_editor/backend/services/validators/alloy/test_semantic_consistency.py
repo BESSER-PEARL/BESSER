@@ -259,7 +259,8 @@ def test_cancelling_the_stream_stops_the_analyzer(monkeypatch, consistent_diagra
                 break
         await stream.aclose()  # the client went away
         deadline = time.monotonic() + 5
-        while started[0].poll() is None and time.monotonic() < deadline:
+        # The first heartbeat can come before the process has started
+        while (not started or started[0].poll() is None) and time.monotonic() < deadline:
             await asyncio.sleep(0.1)
         return started[0].poll()
 

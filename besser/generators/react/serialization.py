@@ -81,6 +81,7 @@ class GuiSerializationMixin:
             "module_name": meta.get("module_name"),
             "all_table_fields": all_table_fields,
             "used_components": used_component_types,
+            "app_title": self._humanize(self.app_name) or "BESSER App",
         }
 
     def _serialize_gui_model(self) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
@@ -1747,6 +1748,8 @@ class GuiSerializationMixin:
                 used_types.add('MetricCard')
             elif isinstance(element, Map):
                 used_types.add('Map')
+            elif isinstance(element, AgentComponent):
+                used_types.add('AgentComponent')
 
             # Recursively scan children if this is a ViewContainer
             if isinstance(element, ViewContainer):

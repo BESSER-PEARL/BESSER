@@ -664,7 +664,7 @@ class NNCodeGenerator(GeneratorInterface):
         """
         code, regions = extract_trace_regions(rendered)
         cleaned = clean(code)
-        self._write_traced(file_name, cleaned, trace_source(self.model, f"{template or self.template_name}#network"))
+        self._write_file(file_name, cleaned, trace_source(self.model, f"{template or self.template_name}#network"))
         trace = self.traced_files[file_name]
         self.traced_files[file_name] = FileTrace(tuple(remap_regions(regions, code, cleaned)), trace.sources)
         return cleaned

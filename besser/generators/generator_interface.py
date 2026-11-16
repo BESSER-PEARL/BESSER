@@ -1,9 +1,12 @@
+import functools
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict, Optional, Set
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Sequence, Set
 
 from besser.BUML.metamodel.structural import DomainModel, Model
-from besser.utilities.generation_trace import FileTrace, TraceSource, extract_trace_regions, prefixed_traces
+from besser.utilities.generation_trace import (
+    FileTrace, TraceRegion, TraceSource, extract_trace_regions, prefixed_traces, trace_run,
+)
 
 if TYPE_CHECKING:
     from besser.BUML.metamodel.traceability import LLM
@@ -28,6 +31,24 @@ def require_valid_identifiers(model: DomainModel) -> None:
         raise InvalidIdentifierError("Cannot generate code from this model:\n" + "\n".join(errors))
 
 
+def _one_run(generate: Callable) -> Callable:
+    """``generate`` as one run: its trace markers carry a nonce of their own (``trace_run``).
+
+    A ``generate()`` that calls its base class's is part of the same run.
+    """
+    @functools.wraps(generate)
+    def run(self, *args, **kwargs):
+        if self.__dict__.get("_in_run"):
+            return generate(self, *args, **kwargs)
+        self._in_run = True
+        try:
+            with trace_run():
+                return generate(self, *args, **kwargs)
+        finally:
+            self._in_run = False
+    return run
+
+
 class GeneratorInterface(ABC):
     """A code generator: ``generate()`` writes code derived from ``model`` into ``output_dir``.
 
@@ -44,6 +65,11 @@ class GeneratorInterface(ABC):
     # Opt-in for regenerate(): the output must be byte-identical for one model, or a merge
     # could not tell a model change from noise (tests/generators/test_regenerable_generators.py).
     regenerable = False
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "generate" in cls.__dict__:
+            cls.generate = _one_run(cls.__dict__["generate"])
 
     @abstractmethod
     def __init__(self, model: Model, output_dir: str = None):
@@ -138,6 +164,24 @@ class GeneratorInterface(ABC):
             str: The text written (the render without markers).
         """
         code, regions = extract_trace_regions(rendered)
+        self._record_file(relative_path, code, regions, sources, output_dir)
+        return code
+
+    def _write_file(self, relative_path: str, text: str, *sources: Optional[TraceSource],
+                    output_dir: Optional[str] = None) -> str:
+        """Write text that is not a template render (a user's own config or skill) as :meth:`_write_traced` does.
+
+        Nothing is extracted from it: it holds no trace markers, and what looks like one is
+        written as it is. Only its whole-file ``sources`` are recorded.
+
+        Returns:
+            str: ``text``.
+        """
+        self._record_file(relative_path, text, (), sources, output_dir)
+        return text
+
+    def _record_file(self, relative_path: str, code: str, regions: Sequence[TraceRegion],
+                     sources: Sequence[Optional[TraceSource]], output_dir: Optional[str]) -> None:
         base = output_dir if output_dir is not None else self.build_generation_dir()
         file_path = os.path.join(base, relative_path)
         os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
@@ -145,7 +189,6 @@ class GeneratorInterface(ABC):
             f.write(code)
         key = relative_path.replace(os.sep, "/")
         self.traced_files[key] = FileTrace(tuple(regions), tuple(s for s in sources if s is not None))
-        return code
 
     def _merge_traced_files(self, child: "GeneratorInterface", prefix: str = "") -> None:
         """Add the traces of a generator this one ran into its output (a composite's part).

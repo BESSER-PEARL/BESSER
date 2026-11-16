@@ -679,7 +679,7 @@ class BAFGenerator(GeneratorInterface):
                 config_yaml = sqlite_database_to_file(self.config_yaml)
                 if self.default_db:
                     config_yaml = link_default_database(config_yaml, self.default_db)
-                self._write_traced("config.yaml", config_yaml, trace_source(self.model, "config.yaml#agent"))
+                self._write_file("config.yaml", config_yaml, trace_source(self.model, "config.yaml#agent"))
             else:
                 config_template = env.get_template('baf_config_template.py.j2')
                 properties = sorted(self.model.properties, key=lambda prop: prop.section)
@@ -708,7 +708,7 @@ class BAFGenerator(GeneratorInterface):
                 skills_dir = os.path.join(self.build_generation_dir(), "skills")
                 os.makedirs(skills_dir, exist_ok=True)
                 for skill in skills:
-                    self._write_traced(f"skills/{skill.name}.md", skill.content,
+                    self._write_file(f"skills/{skill.name}.md", skill.content,
                                        trace_source(skill, "skill.md#skill"))
                 logger.info("Skills directory generated at %s", skills_dir)
 

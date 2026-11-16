@@ -14,7 +14,7 @@ What a traceable generator provides
 -----------------------------------
 
 ``traced_files`` (a ``GeneratorInterface`` property, always present, empty by default): after
-``generate()``, for each file the generator wrote with ``_write_traced``, its path relative to the
+``generate()``, for each file the generator wrote in that run with ``_write_traced`` or ``_write_file``, its path relative to the
 generator's output directory (``/``-separated, e.g. ``routers/book.py``) mapped to a ``FileTrace``:
 
 - ``regions`` -- ``TraceRegion`` line ranges (1-based, inclusive) rendered from one element by one
@@ -66,7 +66,10 @@ Instrumenting a generator, step by step
        {% endtrace %}{% endfor %}
 
    The tag goes around the text a block renders, not inside a Python string or comment the
-   template builds: its markers are invisible control characters, removed before writing.
+   template builds: its markers are invisible control characters, removed before writing. Each marker
+   carries a random nonce of the run that rendered it (``generate()`` runs inside ``trace_run()``, which
+   ``GeneratorInterface`` opens), and only markers with that nonce are removed: text of the model that
+   holds the same control characters (a method body) is written as it is and cannot forge a region.
 
 3. **Write through the helper.** Write each render with ``self._write_traced`` instead of
    ``open(...).write(...)``:
@@ -83,7 +86,9 @@ Instrumenting a generator, step by step
    ``self._write_traced(f"routers/{name}.py", rendered, trace_source(cls, "router.py.j2#router"))``.
    A helper function outside the class takes the bound method as a parameter
    (``functools.partial(self._write_traced, output_dir=...)``), as
-   ``besser.generators.backend.api_generator.generate_modular_api`` does.
+   ``besser.generators.backend.api_generator.generate_modular_api`` does. Text that is not a template
+   render (a user's own config file or skill, a JSON dump) goes through ``self._write_file`` (same
+   arguments): it is written as it is, with its whole-file sources and no regions.
 
 4. **Composites merge their parts.** A generator that runs others into its output calls
    ``self._merge_traced_files(child, prefix)`` after each ``child.generate()``; ``prefix`` is the

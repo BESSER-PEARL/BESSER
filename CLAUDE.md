@@ -267,7 +267,8 @@ traced endpoints, with no code. Instrumenting adds which lines come from which e
    `<template>#<label>`; label defaults to the metaclass). Elements without an `id` render untraced.
 3. Write each render with `self._write_traced(relative_path, rendered, *sources, output_dir=None)`: strips the
    markers, writes UTF-8 with `\n` endings and records `self.traced_files[relative_path]` (a `FileTrace`). A file
-   generated as a whole from one element passes `trace_source(element, rule)` as a source. Never assign
+   generated as a whole from one element passes `trace_source(element, rule)` as a source. Text that is not a
+   render (a user's own config) goes through `self._write_file` (no extraction). Never assign
    `traced_files` (a property, always present, `{}` by default).
 4. A composite calls `self._merge_traced_files(child, prefix)` after `child.generate()` (`prefix` = the child's
    folder relative to the composite's output dir, `""` if the same). Files an LLM step wrote go in `ai_files`

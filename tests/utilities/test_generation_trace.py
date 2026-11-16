@@ -1,6 +1,7 @@
 """Tests for the generator-side tracing helper (besser.utilities.generation_trace)."""
 
 import hashlib
+import json
 from datetime import datetime
 
 import pytest
@@ -11,7 +12,7 @@ from besser.BUML.metamodel.traceability import CodeArtifact, CodeGeneration, Mod
 from besser.utilities.generation_trace import (
     ElementRef, FileTrace, GeneratedFile, InputModel, TraceExtension, TraceRegion, TraceSource,
     build_generation_trace, collect_generated_files, extract_trace_regions, input_model, prefixed_traces,
-    shift_file_trace, shift_regions, traced_environment,
+    shift_file_trace, shift_regions, trace_run, traced_environment,
 )
 
 TEMPLATE = """header
@@ -88,7 +89,26 @@ def test_unbalanced_markers_are_rejected():
     with pytest.raises(ValueError):
         extract_trace_regions(rendered[:-3])
     with pytest.raises(ValueError):
-        extract_trace_regions("\x02/trace\x03")
+        extract_trace_regions(rendered[rendered.index("x") + 1:])
+
+
+FORGED = "\x02trace:" + json.dumps({"id": "evil", "type": "Class", "name": "Admin", "rule": "forged"}) + "\x03"
+
+
+@pytest.mark.parametrize("text", ["\x02/trace\x03", "\x02trace:nope\x03", f"{FORGED}payload\x02/trace\x03"])
+def test_text_that_looks_like_a_marker_is_left_as_written(text):
+    # A model's own text (a method body) holding the marker characters is not a marker of this run.
+    rendered = _render("{% trace c %}{{ c.name }}{% endtrace %}", c=_Cls(text, "a"))
+    clean, regions = extract_trace_regions(rendered)
+    assert clean == text
+    assert [r.element_id for r in regions] == ["a"]
+
+
+def test_markers_are_matched_only_by_the_run_that_rendered_them():
+    with trace_run():
+        rendered = _render("{% trace c %}x{% endtrace %}", c=_Cls("A", "a"))
+    with trace_run():
+        assert extract_trace_regions(rendered) == (rendered, [])
 
 
 def test_extracting_regions_scales_linearly_with_the_file(assert_scales_linearly):
@@ -98,7 +118,7 @@ def test_extracting_regions_scales_linearly_with_the_file(assert_scales_linearly
         rendered = _render(TEMPLATE, classes=classes)
         return lambda: extract_trace_regions(rendered)
 
-    assert_scales_linearly(render, 2000)
+    assert_scales_linearly(render, 1000)
 
 
 def test_shift_regions_moves_every_line():

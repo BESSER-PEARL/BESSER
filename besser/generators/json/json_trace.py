@@ -88,9 +88,9 @@ class JsonTraceBuilder:
 
 def write_json_traced(generator, relative_path: str, text: str, document: Any, builder: Optional[JsonTraceBuilder],
                       *sources, output_dir: Optional[str] = None) -> str:
-    """Write ``text`` (the dump of ``document``) through ``generator._write_traced`` and record the regions
+    """Write ``text`` (the dump of ``document``) through ``generator._write_file`` and record the regions
     ``builder`` collected for it next to the whole-file ``sources``."""
-    written = generator._write_traced(relative_path, text, *sources, output_dir=output_dir)
+    written = generator._write_file(relative_path, text, *sources, output_dir=output_dir)
     if builder is not None and builder.entries:
         key = relative_path.replace("\\", "/")
         trace = generator.traced_files[key]

@@ -34,11 +34,14 @@ import json
 import logging
 import os
 import re
+import secrets
 from bisect import bisect_left
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
-from typing import Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Collection, Dict, FrozenSet, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from jinja2 import BaseLoader, Environment, FileSystemLoader, nodes
 from jinja2.ext import Extension
@@ -53,11 +56,42 @@ from besser.BUML.metamodel.traceability.traceability import model_elements_by_de
 
 logger = logging.getLogger(__name__)
 
-# Control characters never emitted by a template; json.dumps escapes them inside the payload.
+# Control characters around a marker; json.dumps escapes them inside the payload. A marker also
+# carries the nonce of the run that rendered it (:func:`trace_run`), and extraction matches that
+# nonce only: a model's own text holding these characters (a method body, an uploaded config)
+# stays in the output as written and cannot open, close or forge a region.
 _START, _END = "\x02", "\x03"
-_CLOSE = f"{_START}/trace{_END}"
-_MARKER = re.compile(f"{_START}(/trace|trace:[^{_END}]*){_END}")
+_NONCE_BYTES = 16
+_RUN_NONCE: ContextVar[str] = ContextVar("besser_trace_nonce", default=secrets.token_hex(_NONCE_BYTES))
 _NEWLINE = re.compile("\n")
+
+
+@contextmanager
+def trace_run() -> Iterator[None]:
+    """Render and extract trace markers with a fresh nonce for the duration of the block.
+
+    ``GeneratorInterface`` opens one around every ``generate()``, so markers are matched only by
+    the run that rendered them. Outside one, the process's own nonce applies.
+    """
+    token = _RUN_NONCE.set(secrets.token_hex(_NONCE_BYTES))
+    try:
+        yield
+    finally:
+        _RUN_NONCE.reset(token)
+
+
+def _open_marker(payload: str) -> str:
+    return f"{_START}trace:{_RUN_NONCE.get()}:{payload}{_END}"
+
+
+def _close_marker() -> str:
+    return f"{_START}/trace:{_RUN_NONCE.get()}{_END}"
+
+
+@lru_cache(maxsize=8)
+def _marker_pattern(nonce: str) -> "re.Pattern[str]":
+    """The markers of the run with ``nonce``: group 1 is the payload of a start marker, None for an end."""
+    return re.compile(f"{_START}(?:/trace:{nonce}|trace:{nonce}:([^{_END}]*)){_END}")
 
 
 @dataclass(frozen=True)
@@ -255,10 +289,10 @@ class TraceExtension(Extension):
             "rule": f"{template}#{label or ref.element_type}",
             **({"owner": [owner.element_id, owner.element_type, owner.element_name]} if owner else {}),
         })
-        start = f"{_START}trace:{payload}{_END}"
+        start, close = _open_marker(payload), _close_marker()
         if isinstance(body, Markup):
-            return Markup(start) + body + Markup(_CLOSE)
-        return f"{start}{body}{_CLOSE}"
+            return Markup(start) + body + Markup(close)
+        return f"{start}{body}{close}"
 
 
 def traced_environment(templates: Union[str, BaseLoader], **options) -> Environment:
@@ -275,7 +309,9 @@ def traced_environment(templates: Union[str, BaseLoader], **options) -> Environm
 
 
 def extract_trace_regions(rendered: str) -> Tuple[str, List[TraceRegion]]:
-    """Remove the trace markers from ``rendered``.
+    """Remove the trace markers of the current run (:func:`trace_run`) from ``rendered``.
+
+    Anything else, including text that only looks like a marker, is left as it is.
 
     Returns:
         The text without markers, and the regions it holds sorted by position. A
@@ -287,18 +323,18 @@ def extract_trace_regions(rendered: str) -> Tuple[str, List[TraceRegion]]:
     open_regions: list = []  # (payload, start offset in the clean text)
     spans: list = []
     last = 0
-    for match in _MARKER.finditer(rendered):
+    for match in _marker_pattern(_RUN_NONCE.get()).finditer(rendered):
         pieces.append(rendered[last:match.start()])
         length += match.start() - last
         last = match.end()
-        token = match.group(1)
-        if token == "/trace":
+        payload = match.group(1)
+        if payload is None:
             if not open_regions:
                 raise ValueError("Unbalanced trace markers: an end marker has no start.")
-            payload, start = open_regions.pop()
-            spans.append((payload, start, length))
+            opened, start = open_regions.pop()
+            spans.append((opened, start, length))
         else:
-            open_regions.append((json.loads(token[len("trace:"):]), length))
+            open_regions.append((json.loads(payload), length))
     if open_regions:
         raise ValueError("Unbalanced trace markers: a start marker has no end.")
     pieces.append(rendered[last:])

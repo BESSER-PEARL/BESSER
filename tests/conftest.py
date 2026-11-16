@@ -204,34 +204,45 @@ def player_team_domain_model(player_class, team_class):
 # Scaling: whether work grows linearly with its input, without a wall-clock bound
 # ---------------------------------------------------------------------------
 
-# time(2n) / time(n) is about 2 for linear work and 4 for quadratic work. A ratio, not a
-# duration, so a slow or busy CI host does not fail the test.
-LINEAR_SCALING_MAX_RATIO = 3.0
+# time(4n) / time(n) is about 4 for linear work and 16 for quadratic work; the bound sits between
+# them, far enough from both that load on a shared CI host does not decide it (doubling, 2 against
+# 4, did). A ratio, not a duration, so a slow host does not fail the test either.
+SCALING_FACTOR = 4
+LINEAR_SCALING_MAX_RATIO = 8.0
 
 
 @pytest.fixture
 def assert_scales_linearly():
-    """``check(make, n)``: assert time(2n) / time(n) of the work ``make(size)`` returns is at most
+    """``check(make, n)``: assert time(4n) / time(n) of the work ``make(size)`` returns is at most
     ``LINEAR_SCALING_MAX_RATIO``.
 
     ``make(size)`` builds the input (not timed) and returns a no-argument callable doing the
-    work (timed). Each size keeps its best of ``repeats`` runs, so one slow run does not count.
+    work (timed). Each size keeps its best of ``repeats`` runs, so a slow run does not count;
+    the garbage collector is off while timing (as in ``timeit``), since a collection costs what
+    the whole process holds, not what the work does.
     """
+    import gc
     import time
 
-    def best(make, size, repeats):
-        timings = []
-        for _ in range(repeats):
-            work = make(size)
+    def timed(make, size):
+        work = make(size)
+        gc.collect()
+        gc.disable()
+        try:
             started = time.perf_counter()
             work()
-            timings.append(time.perf_counter() - started)
-        return min(timings)
+            return time.perf_counter() - started
+        finally:
+            gc.enable()
 
-    def check(make, n, repeats=3):
-        small, large = best(make, n, repeats), best(make, 2 * n, repeats)
+    def check(make, n, repeats=5):
+        # The two sizes alternate, so a burst of load on a shared host slows both alike.
+        small, large = float("inf"), float("inf")
+        for _ in range(repeats):
+            small = min(small, timed(make, n))
+            large = min(large, timed(make, SCALING_FACTOR * n))
         assert large / small <= LINEAR_SCALING_MAX_RATIO, (
-            f"doubling the input from {n} took {large / small:.1f}x as long ({small:.3f}s -> {large:.3f}s): "
+            f"{SCALING_FACTOR}x the input ({n}) took {large / small:.1f}x as long ({small:.3f}s -> {large:.3f}s): "
             "not linear")
 
     return check

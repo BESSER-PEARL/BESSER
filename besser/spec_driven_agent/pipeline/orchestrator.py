@@ -275,6 +275,13 @@ from besser.spec_driven_agent.settings import AgentSettings
 _HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 
 
+# Told to a run resumed after packaging removed what it had installed.
+DEPENDENCIES_REMOVED_NOTE = (
+    "The installed dependencies (node_modules, virtual environments, build output) were removed after "
+    "the previous run finished; install them again with the install_dependencies tool before validating."
+)
+
+
 class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     """
     Three-phase orchestrator for LLM-augmented code generation.
@@ -602,6 +609,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._resume_from_turn: int = 0
         self._resume_messages: list[dict] | None = None
+        # DEPENDENCIES_REMOVED_NOTE when a resume finds them removed, else "".
+        self._dependencies_note = ""
         self._checkpoint_phase = "phase2"
         self._phase3_interrupted = False
         # Phase 2 ended on an exhausted provider quota: every Phase 3 call
@@ -948,6 +957,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.debug("Could not seed resumed cost", exc_info=True)
         self._checkpoint_phase = checkpoint.phase
         self._resume_from_turn = checkpoint.turn if checkpoint.phase == "phase2" else 0
+        if checkpoint.dependencies_removed:
+            logger.warning("Resuming run %s: its installed dependencies were removed after it was packaged; "
+                           "the agent is told to install them again", self.run_id)
+            self._dependencies_note = DEPENDENCIES_REMOVED_NOTE
         # The resumed prompt is rebuilt from the workspace as it is now, so the
         # checkpoint's thinking blocks belong to a conversation that is gone.
         self._resume_messages = (
@@ -4688,7 +4701,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             domain_model=self.domain_model,
             gui_model=self.gui_model,
             agent_model=self.agent_model,
-            inventory=self._inventory,
+            inventory=f"{self._inventory}\n\n{self._dependencies_note}" if self._dependencies_note else self._inventory,
             instructions=instructions,
             scoped_issues=scoped_issues or [],
             gap_tasks=gap_tasks or [],

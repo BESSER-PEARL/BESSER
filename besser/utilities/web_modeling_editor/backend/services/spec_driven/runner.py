@@ -1137,20 +1137,18 @@ class SmartGenerationRunner:
     async def release_disk(self) -> None:
         """Drop what a packaged run installed and built; called once its slot is free.
 
-        A run that kept its checkpoint can be resumed, and nothing in a resume
-        installs dependencies again before validating (only the agent can, on
-        a ``verification setup:`` finding), so it keeps them until it expires.
+        A run that kept its checkpoint loses them too (nothing in the editor
+        resumes a packaged run): its checkpoint records it, and a resume tells
+        the agent to install them again.
         """
-        from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+        from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
 
         workspace = self._packaged_workspace
         if not workspace:
             return
-        if os.path.isfile(os.path.join(workspace, CHECKPOINT_FILENAME)):
-            logger.info("Run %s can be resumed: its installed dependencies are kept", self.run_id)
-            return
         try:
             await self._runtime.run_blocking(drop_installed_dependencies, workspace)
+            await self._runtime.run_blocking(mark_dependencies_removed, workspace)
         except OSError:
             logger.warning("Run %s: its installed dependencies could not be removed", self.run_id, exc_info=True)
 

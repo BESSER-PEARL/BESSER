@@ -293,10 +293,13 @@ Storage and lifecycle
   run has freed its concurrency slot, what it installed and built (the folders
   the download leaves out: ``node_modules``, virtual environments, ``dist``,
   ``build``, ``target``, ``.next``, ...) and its sandbox ``$HOME`` are removed,
-  so what stays is the source tree and the run's own files, a few MB. A run
-  that kept its checkpoint keeps them, since a resume does not install them
-  again before it validates. The run's status record is kept for 24 hours, as
-  long as its workspace can be resumed.
+  so what stays is the source tree and the run's own files, a few MB. This
+  includes a run that kept its checkpoint: its checkpoint records the removal,
+  and if it is resumed (``POST /spec-driven/resume``, which the editor does not
+  call for a finished run) the worker logs a warning and the agent is told to
+  install them again with ``install_dependencies`` before validating. A run
+  interrupted before packaging keeps them. The run's status record is kept for
+  24 hours, as long as its workspace can be resumed.
 - ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (86400, 24 hours) -- How long the
   output stays downloadable (``archive_ttl_seconds`` in the config). The
   archive is small, so it outlives the workspace; it is never shorter than

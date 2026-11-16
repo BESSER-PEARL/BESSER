@@ -549,15 +549,20 @@ class TestInstalledDependencies:
         entry = asyncio.run(current_runtime().registry.get(runner.run_id))
         assert entry is not None and os.path.isfile(entry.file_path)
 
-    def test_a_resumable_run_keeps_what_a_resume_needs(self, monkeypatch):
-        """No resume step reinstalls: the frontend build and the API probe would report it missing."""
+    def test_a_resumable_run_drops_them_too_and_says_so_for_a_resume(self, monkeypatch):
+        """Nothing in the editor resumes a packaged run; its checkpoint records the removal."""
+        from besser.spec_driven_agent.state.checkpoint import load_checkpoint
+
         runner, out = self._run(monkeypatch, resumable=True)
+        with open(os.path.join(runner.temp_dir, CHECKPOINT_FILENAME), "w", encoding="utf-8") as fh:
+            json.dump({"schema_version": 1, "instructions": "x", "phase": "phase2"}, fh)
 
         asyncio.run(runner.release_disk())
 
         for folder in _INSTALLED:
-            assert os.path.isdir(os.path.join(out, *folder)), folder
-        assert os.path.isdir(sandbox_home(runner.temp_dir))
+            assert not os.path.exists(os.path.join(out, *folder)), folder
+        assert not os.path.exists(sandbox_home(runner.temp_dir))
+        assert load_checkpoint(runner.temp_dir).dependencies_removed is True
 
 
 class TestRegistrySweep:

@@ -111,6 +111,9 @@ class Checkpoint:
     # The routing answer's ``unsupported_stack`` (``None``: no routing answer);
     # it picks the prompt's stack idioms.
     routed_stack: str | None = None
+    # Set once the packaged run's installed and built folders were removed
+    # (``mark_dependencies_removed``): a resume must install them again.
+    dependencies_removed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,6 +147,7 @@ class Checkpoint:
             "write_evidence": self.write_evidence,
             "requirements": self.requirements,
             "routed_stack": self.routed_stack,
+            "dependencies_removed": self.dependencies_removed,
         }
 
 
@@ -427,10 +431,20 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
                 [r for r in data["requirements"] if isinstance(r, dict)]
                 if isinstance(data.get("requirements"), list) else None),
             routed_stack=data.get("routed_stack") if isinstance(data.get("routed_stack"), str) else None,
+            dependencies_removed=data.get("dependencies_removed") is True,
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)
         return None
+
+
+def mark_dependencies_removed(output_dir: str) -> bool:
+    """Record in the checkpoint that the run's installed dependencies were removed; False when it has none."""
+    checkpoint = load_checkpoint(output_dir)
+    if checkpoint is None:
+        return False
+    checkpoint.dependencies_removed = True
+    return save_checkpoint(output_dir, checkpoint) is not None
 
 
 def delete_checkpoint(output_dir: str) -> None:

@@ -331,8 +331,9 @@ SSE event types
        could not verify, and shipped unenforced, with true totals in
        ``counts``), ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
        when a cancel request was honoured after the run had written files, so
-       the output is what it had made by then; it is stored with the event, so
-       a replay carries it),
+       the output is what it had made by then; a run the server stopped because
+       nobody followed it reads the same; it is stored with the event, so a
+       replay carries it),
        a three-way authorship split of the output tree, and ``aiShare``, the
        AI-written share of the lines from the run's Agent Trace record (see
        :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;

@@ -185,7 +185,7 @@ Sandbox and network
   ``/app/incidents``, which names other runs) are masked from every run.
   Deleting a run removes its sandbox ``$HOME`` along with its workspace; a
   packaged run loses its sandbox ``$HOME`` and what it installed and built once
-  it has freed its slot, unless it can be resumed (see :doc:`configuration`).
+  it has freed its slot, a resumable one included (see :doc:`configuration`).
 - A finished run's download (its ZIP or single file, and a manifest naming the
   run) is kept in ``<run dir>.download``, which the run's shell cannot see, and
   is opened without following links. A manifest inside a workspace or a

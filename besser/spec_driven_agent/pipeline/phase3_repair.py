@@ -1054,7 +1054,8 @@ class Phase3RepairMixin:
         # what depends on the current tree and blockers.
         requirements = self._requirements_for_validation()
         system = self._phase3_fix_system_prompt(requirements)
-        prompt_parts: list[str] = [
+        prompt_parts: list[str] = [self._dependencies_note, ""] if self._dependencies_note else []
+        prompt_parts += [
             "## Current files and symbols (use these paths; do not invent models/ or schemas/ folders)",
             build_inventory(self.output_dir, self.domain_model, self._generator_used or "existing workspace"),
             "",

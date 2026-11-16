@@ -22,7 +22,7 @@ from besser.spec_driven_agent.state.checkpoint import (
     load_checkpoint,
 )
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
-from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.pipeline.orchestrator import DEPENDENCIES_REMOVED_NOTE, LLMOrchestrator, ValidationIssue
 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
 
 
@@ -783,3 +783,40 @@ def test_resume_does_not_replay_the_checkpoints_thinking_blocks(simple_model, tm
             if isinstance(message["content"], list) for block in message["content"]]
     assert [b["type"] for b in sent if b["type"] == "tool_use"]  # the calls are replayed
     assert not [b for b in sent if b["type"] == "thinking"]
+
+
+def _resume_recording_the_prompt(model, tmp_path):
+    class _Recording(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            self.systems = [*getattr(self, "systems", []), system]
+            return super().chat(system, messages, tools)
+
+    client = _Recording([_end_turn()])
+    LLMOrchestrator(
+        llm_client=client, domain_model=model, output_dir=str(tmp_path), max_turns=10, use_streaming=False,
+    ).resume("Build a blog")
+    return client.systems[0]
+
+
+def test_a_resume_after_packaging_says_the_dependencies_must_be_installed_again(simple_model, tmp_path, caplog):
+    """Packaging removes what the run installed; a resume must not find out from a failing check."""
+    from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
+
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert mark_dependencies_removed(str(tmp_path))
+    caplog.set_level("WARNING")
+
+    system = _resume_recording_the_prompt(simple_model, tmp_path)
+
+    assert DEPENDENCIES_REMOVED_NOTE in system and "install_dependencies" in DEPENDENCIES_REMOVED_NOTE
+    assert [r for r in caplog.records if "dependencies were removed" in r.getMessage()]
+
+
+def test_a_resume_of_an_interrupted_run_says_nothing_about_dependencies(simple_model, tmp_path, caplog):
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    caplog.set_level("WARNING")
+
+    system = _resume_recording_the_prompt(simple_model, tmp_path)
+
+    assert DEPENDENCIES_REMOVED_NOTE not in system
+    assert not [r for r in caplog.records if "dependencies were removed" in r.getMessage()]

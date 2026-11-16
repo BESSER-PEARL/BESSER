@@ -782,24 +782,40 @@ def _covers_required(domain_class, inputs) -> bool:
     )
 
 
-def _infer_form_class(inputs, domain_model):
+def _infer_form_class(inputs, domain_model, form_name: str):
     """The one class whose attributes name every input (own attributes first,
-    so a ``name``/``email`` form binds to Person, not to each subclass; an
-    input may also be named after a to-one association end) and that the
-    inputs can create a record of."""
+    so a ``name``/``email`` form binds to Person, not to each subclass; only
+    when no class matches that way, inputs may also name to-one association
+    ends, as long as one names an attribute) and that the inputs can create a
+    record of."""
     if not inputs or domain_model is None:
         return None
     classes = sorted(domain_model.get_classes(), key=lambda c: c.name)
-    for attributes_of in (lambda c: c.attributes, lambda c: c.all_attributes()):
-        matches = []
-        for domain_class in classes:
-            names = {_normalized(attr.name) for attr in attributes_of(domain_class)}
-            names.update(_normalized(end.name) for end in _parent_ends(domain_class, domain_model))
-            if all(any(key in names for key in _input_keys(i)) for i in inputs):
-                matches.append(domain_class)
+    keys = [_input_keys(input_field) for input_field in inputs]
+
+    def names_every_input(names) -> bool:
+        return all(any(key in names for key in input_keys) for input_keys in keys)
+
+    def attribute_names(attributes):
+        return {_normalized(attr.name) for attr in attributes}
+
+    def through_parents(domain_class) -> bool:
+        names = attribute_names(domain_class.all_attributes())
+        parents = {_normalized(end.name) for end in _parent_ends(domain_class, domain_model)}
+        return names_every_input(names | parents) and any(key in names for k in keys for key in k)
+
+    for matches_inputs in (lambda c: names_every_input(attribute_names(c.attributes)),
+                           lambda c: names_every_input(attribute_names(c.all_attributes())),
+                           through_parents):
+        matches = [domain_class for domain_class in classes if matches_inputs(domain_class)]
         if len(matches) == 1:
             return matches[0] if _covers_required(matches[0], inputs) else None
         if matches:
+            logger.warning(
+                "The inputs of form %r match the classes %s: it is not bound to any. "
+                "Set the form's data source to choose one.",
+                form_name, ", ".join(c.name for c in matches),
+            )
             return None
     return None
 
@@ -812,7 +828,7 @@ def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain
         class_el = get_element_by_id(class_model, class_ref)
         domain_class = domain_model.get_class_by_name(class_el.get("name") if class_el else class_ref)
     else:
-        domain_class = _infer_form_class(inputs, domain_model)
+        domain_class = _infer_form_class(inputs, domain_model, form.name)
     if domain_class is None:
         return
     form.data_binding = DataBinding(domain_concept=domain_class, name=f"{form.name}_binding")

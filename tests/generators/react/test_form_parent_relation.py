@@ -125,3 +125,39 @@ def test_a_designed_parent_control_does_not_stop_the_form_from_being_bound(build
 
     assert _gui_form(app.gui_model).data_binding.domain_concept.name == "OrderLine"
     assert page.count("<LookupSelect") == 1 and 'entity="Order"' in jsx(page, "LookupSelect")
+
+
+def _unbound_form(*controls):
+    return {"tagName": "form", "components": [
+        *controls, {"tagName": "button", "components": [{"type": "textnode", "content": "Save"}]},
+    ]}
+
+
+def test_a_class_matched_by_attributes_wins_over_one_matched_through_a_parent(build_app, jsx, caplog):
+    """``author`` is an attribute of Book and a parent of Review: the inputs name Book's attributes."""
+    classes = {"Book": [("title", "str"), ("author", "str")], "Review": [("title", "str")],
+               "Writer": [("name", "str")]}
+    associations = [("wrote", ("Review", "reviews", "0..*"), ("Writer", "author", "1"))]
+    app = build_app(classes, {"New": [_unbound_form(_input("title"), _input("author"))]}, associations)
+
+    assert _gui_form(app.gui_model).data_binding.domain_concept.name == "Book"
+    assert 'endpoint="/book/"' in jsx(app.page("New"), "FormBlock")
+    assert "match the classes" not in caplog.text
+
+
+def test_a_form_matching_two_classes_is_left_unbound_with_a_warning(build_app, caplog):
+    classes = {"Book": [("title", "str")], "Album": [("title", "str")]}
+    app = build_app(classes, {"New": [_unbound_form(_input("title"))]})
+
+    assert _gui_form(app.gui_model).data_binding is None
+    assert "match the classes Album, Book" in caplog.text
+
+
+def test_an_input_naming_only_a_parent_does_not_make_a_create_form(build_app):
+    """A search box called ``order`` is not a form creating a record of a class whose parent is ``order``
+    (and that needs no attribute to be created)."""
+    classes = {"Order": [("reference", "str")], "Note": []}
+    associations = [("notes", ("Note", "notes", "0..*"), ("Order", "order", "0..1"))]
+    app = build_app(classes, {"Search": [_unbound_form(_input("order"))]}, associations)
+
+    assert _gui_form(app.gui_model).data_binding is None

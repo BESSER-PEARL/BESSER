@@ -381,3 +381,13 @@ Customization
 .. note::
    The Full Web App Generator saves time by automating repetitive tasks. 
    You can always customize and extend the generated code.
+
+Trace Links
+-----------
+
+The generator runs the React, backend and agent generators into its own output directory and merges their traces
+under the folder each one wrote to: after ``generate()``, ``generator.traced_files`` holds the React generator's
+traces under ``frontend/`` (``frontend/src/pages/<Page>.tsx``, ``frontend/src/App.tsx``), the backend's under
+``backend/`` and each agent's under ``agents/<name>/``, so every path is the one of the delivered project. See
+:doc:`react`, :doc:`backend` and :doc:`traceable_generator`. The ``docker-compose.yml`` and the Dockerfiles are
+file-level only.

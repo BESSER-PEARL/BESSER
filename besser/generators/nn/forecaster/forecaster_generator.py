@@ -27,7 +27,6 @@ values. With the calendar features on, the first layer is one of:
 """
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -342,9 +341,6 @@ class TimeSeriesForecasterGenerator(PytorchGenerator):
             network=self._describe_network(),
             regenerate=self.regenerate_command,
         )
-        code = self._tidy(code)
         path = self.build_generation_path(file_name=self.file_name_for())
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(code)
+        self._write_cleaned(self.file_name_for(), code, self._tidy, template="forecaster.py.j2")
         return path

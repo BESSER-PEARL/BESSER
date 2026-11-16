@@ -222,3 +222,15 @@ The backend reads the ``config`` with ``ForecastConfig.from_dict``:
 An unknown key, a value of the wrong type, or a network that does not fit the settings (its first
 layer must read the window, its last return the horizon) is answered with a 400 that names every
 problem.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files["forecaster_<model name>.py"]`` names the network as the source of the
+file and lists the line ranges rendered from each layer (or tensor operation, or sub-network) that has an ``id``: its
+definition in ``__init__`` (``layer``) and its call in ``forward`` (``layer_forward``, the call of its activation
+included). The lines are those of the final file: the forecaster's own tidy-up (duplicated imports, blank lines) runs
+on the text without the trace markers and the ranges are moved to the lines it keeps, so the generated code is the
+same with or without ids. The pipeline code, the training settings (the ``Configuration`` has no ``id``) and the
+forecast settings have no region. The web editor's neural network processor assigns no ids to layers, so a network
+drawn there is traced at file level until it does. See :doc:`traceable_generator`.

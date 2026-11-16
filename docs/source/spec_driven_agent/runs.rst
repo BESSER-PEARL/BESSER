@@ -227,3 +227,50 @@ else's lines to the AI; the next run on that code then starts from
 ``unknown``. The record carries no ``vcs`` revision:
 it is part of the commit it would have to name. Older traces in the repository
 are kept, and their ranges refer to the revision they were written for.
+
+.. _spec-driven-run-record:
+
+The run record
+--------------
+
+Packaging adds a ``run`` section to the run's ``.besser_recipe.json``, so a
+downloaded folder or a pushed repository says what kind of run produced it. Its
+keys, always in this order:
+
+- ``mode`` (``generate`` or ``modify``) and ``mode_reason``: ``fresh project``,
+  ``edit of a previous result``, ``previous result expired, rebuilt from
+  scratch``, ``previous result could not be copied, rebuilt from scratch`` or
+  ``resumed``; ``base_run_id`` when the request named a previous run.
+- ``target`` (the selector's kind: ``web_app``, ``backend`` or ``other``, or
+  ``null``), ``target_decided_by`` (``selector``, ``approved plan`` or ``not
+  decided``), ``frontend_requested`` (whether the run had to ship a web
+  frontend, from the target or, without one, from the request's wording) and
+  ``generator``.
+- ``key_tier`` (``own key``, ``free`` or ``sponsored``, never the key) and
+  ``models``: the public model labels of the models that ran, by the rule the
+  recipe's ``llm_model`` follows (the route name for the keyless tiers and the
+  gateways).
+- ``limits`` (``time_seconds``, ``cost_usd``, ``turns``), ``stopped_by``
+  (``finished``, ``time limit``, ``cost limit``, ``turn limit``, ``provider
+  error`` or ``cancelled``), ``stop_message`` (the sentence the run card shows
+  for an incomplete run) and ``outcome``.
+- ``warnings``: the warnings shown to the user during the run (at most eight).
+- ``duration_seconds``, ``phase_seconds`` (``select``, ``generate``, ``plan``,
+  ``customise``, ``validate``; the Phase 3 fix loop is part of ``validate``)
+  and ``estimated_cost_usd``.
+- ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
+  ``blockers``.
+- ``besser_version``, ``besser_build`` and ``request_chars`` (the request itself
+  is ``instructions``).
+
+The section holds no key, no user e-mail, no server path and no host name; its
+texts are redacted like the rest of the recipe. ``BESSER_GENERATION.md`` shows
+its mode, end and model in the *This run* section.
+
+The worker logs one line when a run starts and one when it ends, with the same
+names: ``spec-driven run start run_id=... mode=... base_run_id=... key_tier=...
+model=... generator=...`` (``generator=auto`` unless the request bound one; the
+target is decided later) and ``spec-driven run end run_id=... outcome=...
+duration_seconds=... blockers=... estimated_cost_usd=... archive_written=...``.
+``outcome`` is ``completed``, ``completed_with_blockers``, ``cancelled``,
+``budget_stop`` or ``failed``. Neither line carries the request or the key.

@@ -104,6 +104,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     telemetry,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
@@ -156,6 +157,9 @@ GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 # generator's stored output (the base a model change is merged against).
 CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
+
+# Error codes a run that goes on to deliver output is shown as warnings.
+_WARNING_CODES = frozenset({"INCOMPLETE", "COST_CAP", "TIMEOUT"})
 
 # Upper bound on queued SSE events so a runaway worker can't exhaust
 # memory. 2048 is comfortably above the steady-state queue depth (one
@@ -431,6 +435,11 @@ def run_summary_markdown(
         lines.append(f"- Built as: {one_line(target.get('description') or target.get('kind'))}")
     generator = recipe.get("generator_used")
     lines.append(f"- Base generator: {one_line(generator) if generator else 'none, written from scratch'}")
+    run = recipe.get("run") if isinstance(recipe.get("run"), dict) else None
+    if run:
+        lines.append(f"- Run: {run.get('mode')}, {run.get('mode_reason')}; ended: {run.get('stopped_by')}")
+        if run.get("models"):
+            lines.append(f"- Model: {', '.join(map(one_line, run['models']))} ({run.get('key_tier')})")
     if readme:
         lines.append("- How to run it: see `README.md`")
     lines.append(
@@ -1077,6 +1086,11 @@ class SmartGenerationRunner:
         self._attribution_ok = True
         self._t_blockers_found: Optional[int] = None
         self._t_stream_aborted: Optional[str] = None
+        # What the run's recipe section and log lines report; see run_record.
+        self._facts = run_record.RunFacts(
+            mode=mode, base_run_id=base_run_id,
+            mode_reason=run_record.RESUMED if resume_run_id else run_record.FRESH,
+        )
 
     async def generate_and_stream(
         self,
@@ -1094,9 +1108,12 @@ class SmartGenerationRunner:
         # aclosing: closing this stream closes the run, which stops its worker.
         inner = contextlib.aclosing(self._generate_and_stream_impl(http_request=http_request))
         if not self._is_study_run():
-            async with inner as frames:
-                async for frame in frames:
-                    yield frame
+            try:
+                async with inner as frames:
+                    async for frame in frames:
+                        yield frame
+            finally:
+                logger.info(run_record.end_line(self.run_id, self._facts))
             return
         try:
             async with inner as frames:
@@ -1112,6 +1129,7 @@ class SmartGenerationRunner:
             self._t_stream_aborted = "STREAM_CRASH"
             raise
         finally:
+            logger.info(run_record.end_line(self.run_id, self._facts))
             self._record_run_summary()
 
     def _is_study_run(self) -> bool:
@@ -1144,7 +1162,26 @@ class SmartGenerationRunner:
         return free_pilot_model() or self.request.llm_model
 
     def _sse(self, event) -> bytes:
-        """``format_sse`` that also redacts this run's own key, whatever its shape."""
+        """``format_sse`` that also redacts this run's own key, whatever its shape.
+
+        Every frame passes here, so this is also where the run's facts see its
+        phases, the warnings the user was shown, and how it ended.
+        """
+        if isinstance(event, StartEvent):
+            logger.info(run_record.start_line(
+                self.run_id, self._facts, provider=self.request.provider, model=event.llmModel,
+                generator=getattr(self.request, "target_generator_override", None)))
+        elif isinstance(event, PhaseEvent):
+            self._facts.saw_phase(event.phase)
+        elif isinstance(event, ErrorEvent):
+            if event.code in _WARNING_CODES:
+                self._facts.saw_warning(event.message)
+            if event.code in ("COST_CAP", "TIMEOUT"):
+                self._facts.outcome = "budget_stop"
+            elif event.code == "CANCELLED":
+                self._facts.outcome = "cancelled"
+            elif event.code not in _WARNING_CODES:
+                self._facts.outcome = "failed"
         return format_sse(event, secrets=(self.request.resolved_api_key(),))
 
     async def _generate_and_stream_impl(
@@ -1280,6 +1317,7 @@ class SmartGenerationRunner:
                         "falling back to from-scratch generation",
                         self._base_run_id, self.run_id,
                     )
+                    self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_EXPIRED
                     # ``_seeded`` stays False → run_orchestrator uses run().
                 else:
                     try:
@@ -1289,6 +1327,7 @@ class SmartGenerationRunner:
                             self.temp_dir,
                         )
                         self._seeded = True
+                        self._facts.mode_reason = run_record.EDIT
                         # Lines that changed since the base run (a person
                         # editing the pushed repo) are attributed to a human.
                         self._attribution_ok = await self._runtime.run_blocking(
@@ -1311,6 +1350,7 @@ class SmartGenerationRunner:
                             self.run_id, self._base_run_id,
                         )
                         self._reset_temp_dir_after_failed_seed()
+                        self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_NOT_COPIED
                         yield self._sse(ErrorEvent(
                             code="INCOMPLETE",
                             message=(
@@ -2228,6 +2268,12 @@ class SmartGenerationRunner:
                     message=_late_err + " You can run the generation again to continue.",
                 ))
 
+            self._facts.stop(
+                stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=_cap_breach,
+                timed_out=elapsed > effective_runtime_cap, message=incomplete_reason_msg, incomplete=incomplete,
+                blocker_count=len(_unfixed_blockers) if exited_cleanly else 0, cost=final_cost,
+            )
+
             # ---- 10. Package the result and emit `done` ---------------
             try:
                 done_event, entry = await self._runtime.run_blocking(
@@ -2263,6 +2309,9 @@ class SmartGenerationRunner:
                     orchestrator, "_updated_project_export", None
                 )
                 await self._runtime.registry.put(self.run_id, entry)
+                self._facts.archive_written = is_plain_file(
+                    os.path.join(run_download_dir(entry.temp_dir), _DOWNLOAD_ARTIFACT_NAME),
+                    root=run_download_dir(entry.temp_dir))
                 yield self._sse(done_event)
                 try:
                     await self._runtime.run_blocking(drop_installed_dependencies, entry.temp_dir)
@@ -2390,6 +2439,11 @@ class SmartGenerationRunner:
                 kind="check", what="everything this run did",
                 why="the run's verification report could not be built",
             )], counts=VerificationCounts(notVerified=1))
+        recipe["run"] = run_record.run_section(
+            self._facts, recipe, self._t_orchestrator, provider=self.request.provider,
+            models=[recipe.get("llm_model"), getattr(getattr(self._t_client, "usage", None), "served_model", None)],
+            request_chars=len(self.request.instructions), secrets=(self.request.resolved_api_key(),),
+        )
         redact_recipe_models(recipe, self.request.provider)
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()

@@ -41,7 +41,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
-from typing import Collection, Dict, FrozenSet, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Callable, Collection, Dict, FrozenSet, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from jinja2 import BaseLoader, Environment, FileSystemLoader, nodes
 from jinja2.ext import Extension
@@ -373,7 +373,12 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def stored_content(generated: GeneratedFile) -> Optional[str]:
+# The regions one generation keeps (a large web app has thousands); the files past it keep
+# file-level links only. With ContentBudget, this bounds the trace the editor keeps.
+MAX_TRACED_REGIONS = 10_000
+
+
+def _redacted_content(path: str, content: str) -> Optional[str]:
     """The content a trace keeps of a generated file: the file with its credentials redacted
     (``secret_redaction.redact_shared_file``), since a trace is exported and shared while the
     delivered file keeps its keys. ``contentHash`` stays the hash of the delivered file, so a
@@ -381,15 +386,91 @@ def stored_content(generated: GeneratedFile) -> Optional[str]:
     that would move lines (a private key spanning several) keeps no content, so the line ranges of
     the file's fragments always point at the content kept.
     """
-    redacted, findings = redact_shared_file(generated.path, generated.content)
+    redacted, findings = redact_shared_file(path, content)
     if not findings:
-        return generated.content
-    if redacted.count("\n") != generated.content.count("\n"):
-        logger.warning("Generated file %s holds a credential over several lines; the trace keeps only its hash.",
-                       generated.path)
+        return content
+    if redacted.count("\n") != content.count("\n"):
+        logger.warning("Generated file %s holds a credential over several lines; the trace keeps only its hash.", path)
         return None
-    logger.warning("Generated file %s holds %d credential(s); the trace keeps it redacted.", generated.path, findings)
+    logger.warning("Generated file %s holds %d credential(s); the trace keeps it redacted.", path, findings)
     return redacted
+
+
+class ContentBudget:
+    """Which file contents a trace keeps, in the order they are asked for: each file up to
+    ``max_file_bytes`` (UTF-8), and ``max_total_bytes`` in all (None: no total), with its
+    credentials redacted. A file past either keeps only its hash.
+
+    The generation trace and the Spec-Driven run trace both keep contents through it, so a
+    trace stays small enough to ship next to its ZIP and to keep in the editor.
+    """
+
+    def __init__(self, max_file_bytes: int, max_total_bytes: Optional[int] = None):
+        self.max_file_bytes = max_file_bytes
+        self.remaining = max_total_bytes
+        self.max_total_bytes = max_total_bytes
+        self.withheld: List[str] = []
+
+    def keep(self, path: str, content: str) -> Optional[str]:
+        """The content to store for the file at ``path``, or None when only its hash is kept."""
+        size = len(content.encode("utf-8"))
+        if size > self.max_file_bytes or (self.remaining is not None and size > self.remaining):
+            self.withheld.append(path)
+            return None
+        kept = _redacted_content(path, content)
+        if kept is not None and self.remaining is not None:
+            self.remaining -= size
+        return kept
+
+    def report(self, trace: str) -> None:
+        """Log, once, the files ``trace`` keeps only the hash of because of the caps."""
+        if self.withheld:
+            total = f", {self.max_total_bytes} in all" if self.max_total_bytes is not None else ""
+            logger.warning("%s keeps only the hash of %d file(s) over its content caps (%d bytes per file%s), "
+                           "e.g. %s", trace, len(self.withheld), self.max_file_bytes, total,
+                           ", ".join(self.withheld[:5]))
+
+
+def holding_model(models: Sequence[InputModel], element_id: str) -> Optional[int]:
+    """The index in ``models`` of the model that holds ``element_id`` most directly (the first of
+    those equally direct), or None when none holds it."""
+    holders = [(model.element_depths.get(element_id, 0), index)
+               for index, model in enumerate(models) if element_id in model.element_ids]
+    return min(holders)[1] if holders else None
+
+
+class ElementArtifacts:
+    """The :class:`ModelArtifact` of each traced element, made once: under its owner's artifact
+    when it has an owner, else under the root of the model that holds it most directly
+    (:func:`holding_model`; the first root when none does).
+
+    Args:
+        roots: The root artifact of each input model, in the order of ``models``.
+        models: The input models.
+        add: Called with each artifact made, to record it in the trace.
+    """
+
+    def __init__(self, roots: Sequence[ModelArtifact], models: Sequence[InputModel],
+                 add: Callable[[ModelArtifact], object]):
+        self._roots, self._models, self._add = list(roots), list(models), add
+        self._by_id: Dict[str, ModelArtifact] = {}
+
+    def root_for(self, element_id: str) -> Optional[ModelArtifact]:
+        """The root of the model that holds ``element_id``; the first root when none does."""
+        index = holding_model(self._models, element_id)
+        if index is not None:
+            return self._roots[index]
+        return self._roots[0] if self._roots else None
+
+    def artifact(self, ref: ElementRef, owner: Optional[ElementRef] = None) -> ModelArtifact:
+        """The artifact of the element ``ref``, made under ``owner``'s (or its model's root) the first time."""
+        found = self._by_id.get(ref.element_id)
+        if found is None:
+            parent = self.artifact(owner) if owner else self.root_for(ref.element_id)
+            found = ModelArtifact(ref.element_name, ref.element_id, ref.element_type, parent=parent)
+            self._by_id[ref.element_id] = found
+            self._add(found)
+        return found
 
 
 def build_generation_trace(
@@ -404,6 +485,7 @@ def build_generation_trace(
     ended_at: datetime,
     ai_files: Collection[str] = (),
     llm: Optional[LLM] = None,
+    max_total_content_bytes: Optional[int] = None,
 ) -> TraceModel:
     """The trace fragment of one generation run.
 
@@ -421,9 +503,12 @@ def build_generation_trace(
     output, so each is recorded with :class:`AIEvidence` (algorithm: ``llm``'s name) instead of a rule,
     and the operation also calls ``llm`` (an unnamed ``LLM("llm", "unknown")`` when none is given).
 
-    A file's content is kept when it is at most ``max_stored_content_bytes`` (UTF-8), so the
-    views can show it and its fragments' lines, with its credentials redacted
-    (:func:`stored_content`); its hash, that of the delivered file, always is. The fragment's
+    A file's content is kept when it is at most ``max_stored_content_bytes`` (UTF-8) and the
+    contents kept before it, in path order, leave room in ``max_total_content_bytes`` (None: no
+    total), so the views can show it and its fragments' lines, with its credentials redacted
+    (:class:`ContentBudget`); its hash, that of the delivered file, always is. The first
+    ``MAX_TRACED_REGIONS`` regions, in path order, get fragments; the files past them keep their
+    file-level links. The fragment's
     ``project_id`` is None: the caller merges it into the project trace.
 
     Raises:
@@ -438,23 +523,15 @@ def build_generation_trace(
     reads = list(roots)
     writes: list = []
     links: list = []
-    elements: Dict[str, ModelArtifact] = {}
 
-    def root_of(element_id: str) -> ModelArtifact:
-        # The model that holds the element most directly; the first such, and the first model when none does.
-        holders = [(m.element_depths.get(element_id, 0), index)
-                   for index, m in enumerate(models) if element_id in m.element_ids]
-        return roots[min(holders)[1]] if holders else roots[0]
+    def read(artifact: ModelArtifact) -> None:
+        artifacts.append(artifact)
+        reads.append(artifact)
 
-    def element(ref: ElementRef, owner: Optional[ElementRef] = None) -> ModelArtifact:
-        artifact = elements.get(ref.element_id)
-        if artifact is None:
-            parent = element(owner) if owner else root_of(ref.element_id)
-            artifact = ModelArtifact(ref.element_name, ref.element_id, ref.element_type, parent=parent)
-            elements[ref.element_id] = artifact
-            artifacts.append(artifact)
-            reads.append(artifact)
-        return artifact
+    elements = ElementArtifacts(roots, models, read)
+    element = elements.artifact
+    contents = ContentBudget(max_stored_content_bytes, max_total_content_bytes)
+    region_budget, capped = MAX_TRACED_REGIONS, []
 
     ai_paths = frozenset(ai_files)
     ai_tool = (llm or LLM("llm", "unknown")) if ai_paths else None
@@ -464,13 +541,8 @@ def build_generation_trace(
         links.append((source, target, evidence))
 
     for generated in files:
-        stored = None
-        if len(generated.content.encode("utf-8")) <= max_stored_content_bytes:
-            stored = stored_content(generated)
-        else:
-            logger.warning("Generated file %s is over %d bytes; the trace keeps only its hash.",
-                           generated.path, max_stored_content_bytes)
-        file_artifact = CodeArtifact(generated.path, generated.path, generated.content_hash, content=stored)
+        file_artifact = CodeArtifact(generated.path, generated.path, generated.content_hash,
+                                     content=contents.keep(generated.path, generated.content))
         artifacts.append(file_artifact)
         writes.append(file_artifact)
         ai = generated.path in ai_paths
@@ -479,7 +551,11 @@ def build_generation_trace(
         for source in generated.trace.sources:
             link(element(source.element), file_artifact, source.rule, ai)
         lines = generated.content.split("\n")
-        for region in generated.trace.regions:
+        regions = generated.trace.regions[:max(region_budget, 0)]
+        if len(regions) < len(generated.trace.regions):
+            capped.append(generated.path)
+        region_budget -= len(regions)
+        for region in regions:
             snippet = "\n".join(lines[region.start_line - 1:region.end_line])
             fragment = CodeArtifact(f"{region.element_name} ({region.start_line}-{region.end_line})", generated.path,
                                     _sha256(snippet), start_line=region.start_line, end_line=region.end_line,
@@ -489,6 +565,10 @@ def build_generation_trace(
             link(element(ElementRef(region.element_id, region.element_type, region.element_name), region.owner),
                  fragment, region.rule, ai)
 
+    contents.report(f"The trace of {generator}")
+    if capped:
+        logger.warning("The trace of %s keeps %d regions; %d file(s) past them keep file-level links only, e.g. %s",
+                       generator, MAX_TRACED_REGIONS, len(capped), ", ".join(capped[:5]))
     calls = [ToolCall(tool, 0, status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at)]
     if any(generated.path in ai_paths for generated in files):
         calls.append(ToolCall(ai_tool, 1, status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at))

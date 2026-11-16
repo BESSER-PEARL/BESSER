@@ -21,7 +21,10 @@ from besser.utilities.generation_trace import (
     ElementRef, GeneratedFile, InputModel, build_generation_trace, generated_text_files, input_model,
 )
 from besser.utilities.provenance import PROVENANCE_FILENAME, get_besser_version
-from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_MAX_STORED_CONTENT_BYTES
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    TRACE_MAX_STORED_CONTENT_BYTES,
+    TRACE_MAX_TOTAL_CONTENT_BYTES,
+)
 from besser.utilities.web_modeling_editor.backend.models import DiagramInput, ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.traceability import (
     TracedGenerationInput,
@@ -122,6 +125,7 @@ def _trace_json(output: GeneratedOutput, delivered: bytes, models: List[InputMod
         generator_version=get_besser_version(),
         actor_name=actor_name,
         max_stored_content_bytes=TRACE_MAX_STORED_CONTENT_BYTES,
+        max_total_content_bytes=TRACE_MAX_TOTAL_CONTENT_BYTES,
         started_at=started_at,
         ended_at=ended_at,
         ai_files=output.ai_files,

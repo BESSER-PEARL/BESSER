@@ -84,8 +84,8 @@ from besser.spec_driven_agent.validation.issues import (
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_TEMP_DIR_PREFIX,
-    SPEC_DRIVEN_TRACE_MAX_CONTENT_BYTES,
     TRACE_MAX_STORED_CONTENT_BYTES,
+    TRACE_MAX_TOTAL_CONTENT_BYTES,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import trace_buml_to_json
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
@@ -2444,7 +2444,7 @@ class SmartGenerationRunner:
                 status=self._trace_status,
                 excluded=_EXCLUDED_OUTPUT_DIRS,
                 max_stored_content_bytes=TRACE_MAX_STORED_CONTENT_BYTES,
-                max_total_content_bytes=SPEC_DRIVEN_TRACE_MAX_CONTENT_BYTES,
+                max_total_content_bytes=TRACE_MAX_TOTAL_CONTENT_BYTES,
             )
             if trace is None:
                 return None

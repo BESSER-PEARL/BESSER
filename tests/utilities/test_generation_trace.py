@@ -9,6 +9,7 @@ from jinja2 import DictLoader, Environment
 
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.metamodel.traceability import CodeArtifact, CodeGeneration, ModelArtifact
+from besser.utilities import generation_trace
 from besser.utilities.generation_trace import (
     ElementRef, FileTrace, GeneratedFile, InputModel, TraceExtension, TraceRegion, TraceSource,
     build_generation_trace, collect_generated_files, extract_trace_regions, input_model, prefixed_traces,
@@ -324,3 +325,23 @@ def test_a_trace_keeps_only_the_hash_when_redaction_would_move_lines():
     key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(["A" * 64] * 3) + "\n-----END PRIVATE KEY-----\n"
     _, file = _trace("h\nclass Book:\n  x\n\nrel\n" + key, cap=10_000).artifacts[:2]
     assert file.content is None and file.content_hash
+
+
+def test_a_trace_keeps_contents_up_to_its_total_budget_in_path_order():
+    files = [GeneratedFile(f"f{i}.py", "x" * 10) for i in range(3)]
+    now = datetime(2026, 10, 1)
+    trace = build_generation_trace(files, models=[InputModel(ElementRef("d", "DomainModel", "L"))], generator="g",
+                                   generator_version=None, actor_name="Ada", max_stored_content_bytes=100,
+                                   max_total_content_bytes=25, started_at=now, ended_at=now)
+    kept = {a.path: a.content for a in trace.artifacts if isinstance(a, CodeArtifact)}
+    assert kept == {"f0.py": "x" * 10, "f1.py": "x" * 10, "f2.py": None}
+
+
+def test_files_past_the_region_cap_keep_file_level_links(monkeypatch):
+    monkeypatch.setattr(generation_trace, "MAX_TRACED_REGIONS", 3)
+    region = TraceRegion("c1", "Class", "Book", "t#class", 1, 1)
+    files = [GeneratedFile(f"f{i}.py", "class Book\n", FileTrace((region, region))) for i in range(3)]
+    trace = _build(files)
+    fragments = sorted(a.path for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is not None)
+    assert fragments == ["f0.py", "f0.py", "f1.py"]
+    assert len([a for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is None]) == 3

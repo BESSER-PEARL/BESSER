@@ -69,7 +69,9 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_ERROR, EVENT_GENERATOR_OUTPUT, EVENT_PHASE_ENTER, EVENT_PHASE_EXIT, EVENT_REQUIREMENTS, EVENT_ROLLBACK,
     EVENT_RUN_END, EVENT_TOOL_CALL, EVENT_TURN_START, EVENT_VALIDATION_ISSUE, TRACE_FILENAME,
 )
-from besser.utilities.generation_trace import FileTrace, InputModel, prefixed_traces
+from besser.utilities.generation_trace import (
+    MAX_TRACED_REGIONS, ContentBudget, ElementArtifacts, ElementRef, FileTrace, InputModel, prefixed_traces,
+)
 from besser.utilities.secret_redaction import redact_trace_text
 from besser.utilities.workspace_fs import open_plain
 
@@ -92,8 +94,9 @@ MAX_LOG_CHARS = 500
 MAX_LOGS_PER_CALL = 40
 # A file the LLM rewrote line by line can split into many runs; above this the link is file level.
 MAX_AI_RANGES_PER_FILE = 50
-# The regions one generator call logs (a large web app has thousands); the rest stay file level.
-MAX_REGIONS_PER_GENERATOR_CALL = 10_000
+# The regions one generator call logs: the cap of a traced generation (a large web app has
+# thousands); the rest stay file level.
+MAX_REGIONS_PER_GENERATOR_CALL = MAX_TRACED_REGIONS
 
 # Confidence of a judge's verdict link: it read the code and its citation was re-checked.
 _VERDICT_CONFIDENCE = {"implemented": 1.0, "partial": 0.5}
@@ -152,6 +155,11 @@ def _read_bytes(workspace: str, rel: str) -> Optional[bytes]:
             return handle.read()
     except OSError:
         return None
+
+
+def _element_ref(ref: Mapping[str, Any]) -> ElementRef:
+    """The run log's record of an element (``element_id``, ``element_type``, ``element_name``)."""
+    return ElementRef(ref["element_id"], ref.get("element_type") or "Element", ref.get("element_name") or ref["element_id"])
 
 
 def _ref_dict(element_id: str, element_type: str, element_name: str) -> dict:
@@ -318,8 +326,7 @@ class _RunTraceBuilder:
         self.workspace, self.run_id, self.provider = workspace, run_id, (provider or "unknown")
         self.version = agent_version
         self.excluded = list(excluded)
-        self.max_content = max_stored_content_bytes
-        self.content_budget = max_total_content_bytes
+        self.contents = ContentBudget(max_stored_content_bytes, max_total_content_bytes)
         self.agent = Agent(SPEC_DRIVEN_AGENT_NAME, agent_version)
         self.actors = [self.agent] + ([Person(actor_name)] if actor_name and actor_name.strip() else [])
         self.tools: dict[tuple, Tool] = {}
@@ -332,7 +339,8 @@ class _RunTraceBuilder:
                                              m.model.ref.element_type), m.model) for m in models]
         for _, root, _ in self.roots:
             self._add(root, read=True)
-        self.elements: dict[str, ModelArtifact] = {}
+        self.elements = ElementArtifacts([root for _, root, _ in self.roots], [model for _, _, model in self.roots],
+                                         lambda artifact: self._add(artifact, read=True))
         self.prompt: Optional[PromptArtifact] = None
         if instructions and instructions.strip():
             self.prompt = PromptArtifact("Spec-Driven instructions", instructions,
@@ -374,24 +382,11 @@ class _RunTraceBuilder:
     def _link(self, source, target, evidence, confidence: Optional[Confidence], when: datetime):
         self.links.append((source, target, evidence, confidence, when))
 
-    def _root_for(self, element_id: str) -> Optional[ModelArtifact]:
-        for _, root, model in self.roots:
-            if element_id in model.element_ids:
-                return root
-        return self.roots[0][1] if self.roots else None
-
     def _element(self, ref: Mapping[str, Any], owner: Optional[Mapping[str, Any]] = None) -> Optional[ModelArtifact]:
-        element_id = ref.get("element_id")
-        if not element_id:
+        if not ref.get("element_id"):
             return None
-        artifact = self.elements.get(element_id)
-        if artifact is None:
-            parent = self._element(owner) if owner else self._root_for(element_id)
-            artifact = ModelArtifact(ref.get("element_name") or element_id, element_id,
-                                     ref.get("element_type") or "Element", parent=parent)
-            self.elements[element_id] = artifact
-            self._add(artifact, read=True)
-        return artifact
+        return self.elements.artifact(_element_ref(ref), _element_ref(owner) if owner and owner.get("element_id")
+                                      else None)
 
     # -- run log --------------------------------------------------------------------------------
 
@@ -561,7 +556,7 @@ class _RunTraceBuilder:
             versions = self.generated.get(rel)
             generated = versions[-1][0] if versions else None
             if generated is not None and generated.content_hash == digest:
-                generated.content = self._kept(rel, content, len(data))
+                generated.content = self.contents.keep(rel, content)
                 final[rel] = generated
                 continue
             lines = content.splitlines()
@@ -571,7 +566,7 @@ class _RunTraceBuilder:
                 ranges = _runs(owners, this_run | {-1})
             if generated is None and rel not in self.llm_touched and not ranges:
                 continue  # not written by this run (a seeded file left as it was)
-            version = CodeArtifact(rel, rel, digest, content=self._kept(rel, content, len(data)),
+            version = CodeArtifact(rel, rel, digest, content=self.contents.keep(rel, content),
                                    revision_of=generated, timestamp=when)
             self._add(version, write=True)
             final[rel] = version
@@ -589,16 +584,6 @@ class _RunTraceBuilder:
             for target in targets:
                 self._link(self.prompt, target, AIEvidence(self._algorithm(None), timestamp=when), None, when)
         return final
-
-    def _kept(self, rel: str, content: str, size: int) -> Optional[str]:
-        """``content`` when the file is under the per-file cap and the run's budget allows it, else None
-        (the version keeps only its hash)."""
-        if size > self.max_content or (self.content_budget is not None and size > self.content_budget):
-            logger.info("Run trace keeps only the hash of %s (%d bytes)", rel, size)
-            return None
-        if self.content_budget is not None:
-            self.content_budget -= size
-        return content
 
     # -- requirements -------------------------------------------------------------------------
 
@@ -775,7 +760,8 @@ def build_run_trace_model(
         status: How the run ended.
         excluded: Directory names and file globs left out of the delivery (as packaging skips them).
         max_stored_content_bytes: A file's content is kept up to this size; above it only its hash is.
-        max_total_content_bytes: The contents kept in all, in file order (None: no limit).
+        max_total_content_bytes: The contents kept in all, in file order (None: no limit). A content
+            kept has its credentials redacted (``generation_trace.ContentBudget``).
         ended_at: When the run ended (the last run-log record's time when None).
 
     Returns:
@@ -791,6 +777,7 @@ def build_run_trace_model(
     end = ended_at or (_when(records[-1].get("ts")) if records else datetime.now(timezone.utc))
     start = _when(records[0].get("ts")) if records else end
     files = builder.files(end)
+    builder.contents.report(f"The trace of run {run_id}")
     requirements, extraction = builder.requirement_artifacts(recipe, end)
     builder.findings(recipe, end)
     builder.verdicts(recipe, requirements, files, end)

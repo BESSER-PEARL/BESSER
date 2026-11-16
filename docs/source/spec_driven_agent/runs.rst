@@ -190,7 +190,8 @@ resumed run.
        500 characters each, redacted.
    * - Code versions
      - Every file version the run produced, with its SHA-256 (content kept up to
-       1 MB per file, 4 MB in all). A file the LLM wrote is linked from the prompt
+       1 MB per file, 4 MB in all, with its credentials redacted as in a traced
+       generation). A file the LLM wrote is linked from the prompt
        with ``AIEvidence``, at the line ranges the attribution gives to this run's
        LLM; a generated file the LLM then edited is a new version whose
        ``revisionOfId`` is the generator's version, which keeps the generator's links.

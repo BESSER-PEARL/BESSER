@@ -245,9 +245,10 @@ TRACE_SCHEMA_VERSION = 6  # 6: code revisions; 5: requirement artifacts; 4: oper
 # show its lines; above it only its hash is. The editor keeps traces in IndexedDB, with the
 # newest 5 runs per generator, so a run stores at most this much per file.
 TRACE_MAX_STORED_CONTENT_BYTES = 1_000_000
-# The file contents a Spec-Driven run's trace keeps in all (its `done` event carries the
-# trace and the durable run store keeps that frame); the files after it keep only their hash.
-SPEC_DRIVEN_TRACE_MAX_CONTENT_BYTES = 4_000_000
+# The file contents one run's trace keeps in all, traced generation or Spec-Driven run: the trace
+# ships next to the run's ZIP (a Spec-Driven `done` event, kept by the durable run store) and the
+# editor keeps it in IndexedDB; the files after it keep only their hash.
+TRACE_MAX_TOTAL_CONTENT_BYTES = 4_000_000
 # Longest actor name accepted on a traced generation (the project owner field).
 TRACE_MAX_ACTOR_NAME_LENGTH = 200
 # Actor recorded when the project has no owner.

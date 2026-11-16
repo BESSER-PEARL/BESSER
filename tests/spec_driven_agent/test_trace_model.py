@@ -459,3 +459,33 @@ def test_the_trace_of_an_orchestrated_run(tmp_path):
     assert notes.content == "NOTES = 1\n"
     assert any(isinstance(link.evidence[0], AIEvidence) and link.target.parent is notes for link in trace.trace_links)
     _round_trip(trace)
+
+
+def test_an_element_two_models_reach_sits_under_the_model_that_holds_it(tmp_path):
+    # A GUI listed first that shows the class reaches it less directly than the domain model holding it.
+    gui = InputModel(ElementRef("gui-1", "GUIModel", "Screens"), frozenset({"class-book"}), {"class-book": 2})
+    domain = InputModel(ElementRef("diagram-1", "DomainModel", "Library"), frozenset({"class-book", "prop-title"}),
+                        {"class-book": 0, "prop-title": 1})
+    log = _Log(tmp_path)
+    log.write(EVENT_RUN_START)
+    _generator_event(log, tmp_path)
+    log.write(EVENT_RUN_END)
+    _recipe(tmp_path)
+    _reconcile(tmp_path)
+
+    trace = _build(tmp_path, models=[RunModel("gui", gui), RunModel("domain", domain)])
+    book = next(a for a in trace.artifacts if isinstance(a, ModelArtifact) and a.element_id == "class-book")
+    assert book.parent.element_id == "diagram-1"
+
+
+def test_a_run_trace_keeps_contents_with_their_credentials_redacted(tmp_path):
+    settings = 'DEBUG = True\nSECRET_KEY = "django-insecure-0123456789abcdef"\n'
+    log = _Log(tmp_path)
+    log.write(EVENT_RUN_START)
+    _generator_event(log, tmp_path, rel="site/settings.py", text=settings)
+    log.write(EVENT_RUN_END)
+    _recipe(tmp_path)
+    _reconcile(tmp_path)
+
+    file = _file(_build(tmp_path), "site/settings.py")
+    assert file.content == 'DEBUG = True\nSECRET_KEY = "[REDACTED]"\n' and file.content_hash == _sha(settings)

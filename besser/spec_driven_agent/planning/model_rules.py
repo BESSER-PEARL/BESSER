@@ -33,9 +33,18 @@ RENAMED = "renamed_in_model"
 _INVARIANT_NAME = re.compile(r"(\binv)\s+\w+\s*:", re.IGNORECASE)
 # "Owner.end[0..1]" in a model_summary association.
 _END = re.compile(r"(\w+)\.(\w+)\[")
-# A rule that is one minimum on one collection: "self.lines->size() >= 1", "self.lines->notEmpty()".
-_COLLECTION_MINIMUM = re.compile(
-    r"self\s*\.\s*(\w+)\s*->\s*(?:notEmpty\s*\(\s*\)|size\s*\(\s*\)\s*(?:>=\s*[1-9]\d*|>\s*\d+))")
+# One minimum on one collection, in each of its spellings (spaces around . -> ( ) removed):
+# "self.lines->size() >= 1", "1 <= self.lines->size()", "self.lines->notEmpty()", "not self.lines->isEmpty()".
+_NOT_EMPTY = tuple(re.compile(pattern) for pattern in (
+    r"self\.(\w+)->notEmpty\(\)",
+    r"not\s*(?:self\.(\w+)->isEmpty\(\)|\(self\.(\w+)->isEmpty\(\)\))",
+    r"self\.(\w+)->isEmpty\(\)\s*=\s*false",
+))
+_SIZE_COMPARED = re.compile(
+    r"self\.(?P<end>\w+)->size\(\)\s*(?P<op>>=|>|=)\s*(?P<n>\d+)"
+    r"|(?P<n2>\d+)\s*(?P<op2><=|<|=)\s*self\.(?P<end2>\w+)->size\(\)")
+_TIGHT = re.compile(r"\s*(\.|->|\(|\))\s*")
+_AND_OR_PARENTHESIS = re.compile(r"\(|\)|\band\b")
 _INVARIANT_HEADER = re.compile(r"^.*?\binv\b[^:]*:", re.IGNORECASE | re.DOTALL)
 
 
@@ -59,20 +68,68 @@ def converted_rule_fingerprints(domain_model) -> list[str]:
     return sorted({rule_fingerprint(r.expression) for r in rules if isinstance(r.expression, str)})
 
 
-def deferred_collection_minimum(constraint):
-    """The association end ``constraint`` only sets a minimum on, when each record
-    at that end needs the context record to exist first; ``None`` for any other rule.
+def _unwrapped(text: str) -> str:
+    """``text`` without the parentheses that enclose all of it."""
+    text = text.strip()
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        for index, char in enumerate(text):
+            depth += {"(": 1, ")": -1}.get(char, 0)
+            if depth == 0 and index < len(text) - 1:
+                return text
+        text = text[1:-1].strip()
+    return text
 
-    Such a rule cannot hold while the context record is created (nothing can be
-    linked to it yet), which is why a mandatory end is modeled this way.
-    """
-    body = _INVARIANT_HEADER.sub("", str(constraint.expression or ""), count=1).strip()
-    match = _COLLECTION_MINIMUM.fullmatch(body)
+
+def _conditions(body: str) -> list[str]:
+    """The conditions a rule joins with ``and`` outside any parentheses."""
+    conditions, depth, start = [], 0, 0
+    for token in _AND_OR_PARENTHESIS.finditer(body):
+        if token.group() == "and":
+            if depth == 0:
+                conditions.append(_unwrapped(body[start:token.start()]))
+                start = token.end()
+        else:
+            depth += 1 if token.group() == "(" else -1
+    return conditions + [_unwrapped(body[start:])]
+
+
+def _minimum(condition: str) -> tuple[str, str | None] | None:
+    """``(collection, upper bound)`` when ``condition`` sets a minimum on a collection; the
+    upper bound is what an exact size also says (``= 3``: ``size() <= 3``), else None."""
+    tight = _TIGHT.sub(r"\1", condition)
+    for pattern in _NOT_EMPTY:
+        match = pattern.fullmatch(tight)
+        if match:
+            return next(name for name in match.groups() if name), None
+    match = _SIZE_COMPARED.fullmatch(tight)
     if match is None:
         return None
-    end = next((e for e in constraint.context.all_association_ends() if e.name == match.group(1)), None)
-    opposite = end.opposite_end() if end is not None else None
-    return end if opposite is not None and opposite.multiplicity.min >= 1 else None
+    end, op, n = match["end"] or match["end2"], match["op"] or match["op2"], int(match["n"] or match["n2"])
+    if (n + 1 if op in (">", "<") else n) < 1:
+        return None
+    return end, (f"self.{end}->size() <= {n}" if op == "=" else None)
+
+
+def deferred_collection_minimum(constraint):
+    """``(end, other conditions)`` when ``constraint`` sets a minimum on an association end
+    whose records each belong to one context record and need it to exist first; ``None``
+    for any other rule. ``other conditions`` are what the rule joins to it with ``and``,
+    and the upper bound of an exact size.
+
+    Such a minimum cannot hold while the context record is created: no record at that end
+    can exist yet, and the generated create schemas nest only many-to-many records. A
+    record of a many-to-many end can exist first, so the create can link it.
+    """
+    body = _unwrapped(_INVARIANT_HEADER.sub("", str(constraint.expression or ""), count=1))
+    conditions = _conditions(body)
+    for index, condition in enumerate(conditions):
+        name, upper = _minimum(condition) or (None, None)
+        end = next((e for e in constraint.context.all_association_ends() if e.name == name), None)
+        opposite = end.opposite_end() if end is not None else None
+        if opposite is not None and opposite.multiplicity.min >= 1 and opposite.multiplicity.max == 1:
+            return end, conditions[:index] + ([upper] if upper else []) + conditions[index + 1:]
+    return None
 
 
 def _ends(summary: dict) -> dict[str, str]:

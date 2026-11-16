@@ -3854,25 +3854,35 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 continue
             cls = context.name
             deferred = deferred_collection_minimum(constraint)
+            enforced = constraint.expression
+            if deferred is not None:
+                end, others = deferred
+                if not others:
+                    enforced = None
+                else:
+                    enforced = (f"{' and '.join(others)} (the rest of the rule; its minimum on "
+                                f"{end.name} is reported, not enforced)")
+            if enforced is not None:
+                tasks.append(
+                    f"Enforce the modeled rule '{constraint.name}' of {cls} - OCL: "
+                    f"{enforced}. The generators could not express it "
+                    "(it spans relationships), so nothing enforces it yet: implement "
+                    f"the check in the create and update endpoints of routers/{cls.lower()}.py "
+                    "and in every modeled method that changes the values involved, and "
+                    "refuse a violating request with HTTP 400 naming the rule."
+                )
             if deferred is not None:
                 # Refused at creation, the record could never be created; refused
                 # at removal, its related records could never be deleted or moved.
                 tasks.append(
                     f"Report the modeled rule '{constraint.name}' of {cls} - OCL: "
-                    f"{constraint.expression}. Every {deferred.type.name} needs its {cls} first, "
-                    f"so a new {cls} has no {deferred.name} yet: never refuse creating, updating "
-                    f"or deleting a record because of this rule. Instead show a {cls} that "
-                    "does not meet it as incomplete wherever it is listed."
+                    f"{constraint.expression}. Each {end.type.name} belongs to one {cls} and needs it "
+                    f"first, so a {cls} exists before any of its {end.name}: never refuse creating or "
+                    f"editing a {cls}, or deleting or moving one of its {end.name}, because of this "
+                    f"minimum, and show a {cls} below it as incomplete wherever it is listed. A later "
+                    f"step that needs a complete {cls} (submitting, confirming or starting it) may "
+                    "refuse an incomplete one with HTTP 400 naming the rule."
                 )
-                continue
-            tasks.append(
-                f"Enforce the modeled rule '{constraint.name}' of {cls} - OCL: "
-                f"{constraint.expression}. The generators could not express it "
-                "(it spans relationships), so nothing enforces it yet: implement "
-                f"the check in the create and update endpoints of routers/{cls.lower()}.py "
-                "and in every modeled method that changes the values involved, and "
-                "refuse a violating request with HTTP 400 naming the rule."
-            )
         return tasks
 
     def _collect_missing_frontend_issue(self) -> list[str]:

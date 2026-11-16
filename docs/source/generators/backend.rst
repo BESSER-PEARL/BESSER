@@ -207,6 +207,30 @@ CRUD Operations
      - ``/{entity}/bulk/``
      - Bulk delete by IDs
 
+How the model shapes these endpoints:
+
+* An **abstract class** gets the ``GET`` endpoints only. They answer across its
+  subclasses; records are created, changed and deleted through the endpoints of
+  the concrete subclasses.
+* The **search filters** are the text, number and boolean attributes of the
+  class and its parents, except derived attributes (their stored value is not
+  kept up to date by the generated code) and credentials.
+* An attribute that stores a **credential** is accepted on create and update
+  and is never returned or offered as a filter. The model has no marker for
+  it, so the name decides: a text attribute whose name contains ``password``,
+  ``passwd``, ``secret``, ``token`` or ``api key`` (any case, any separator).
+* An association **from a class to itself** has a field, and for a
+  many-to-many a link endpoint, for each of its two ends. The id lists of a
+  many-to-many are returned as ``<target class>_ids``; when that does not tell
+  two ends apart (an association to the same class, or two many-to-many
+  associations to one class) each list is named after its end, ``<end>_ids``.
+* When an attribute and an **association end share a name**, the association
+  end is generated and the attribute is left out (model validation warns about
+  the clash).
+* A ``DELETE`` that would leave another record without a link it requires is
+  refused with ``409`` and a message naming that record, including when the
+  record is required by a part that would be deleted with its whole.
+
 .. versionchanged:: 8.0.0
    The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``
    schemas) no longer accept fields the server owns: an attribute named ``id``

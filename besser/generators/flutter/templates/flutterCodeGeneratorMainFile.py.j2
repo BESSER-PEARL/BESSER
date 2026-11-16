@@ -41,7 +41,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class MyHomePage extends StatefulWidget {
+{% trace screen, "main_screen" %}class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
 
   @override
@@ -113,12 +113,13 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 }
+{%- endtrace %}
 
 {%- for screen in screens%}
   {%- set is_primary = false %}
   {%- set name_of_the_column = ''%}
 
-//for {{screen.name}} screen
+{% trace screen, "screen" %}//for {{screen.name}} screen
 class {{screen.name}} extends StatefulWidget {
   const {{screen.name}}({super.key});
 
@@ -1435,4 +1436,5 @@ class _{{screen.name}}State extends State<{{screen.name}}> {
      {%- endfor %}
    {%- endif %}
   {%- endfor %}
+{%- endtrace %}
 {%- endfor %}

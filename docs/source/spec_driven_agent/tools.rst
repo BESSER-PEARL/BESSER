@@ -135,7 +135,9 @@ within a scenario; later requests may reference response JSON using
 under exactly one key (``{"todolist": {"id": 1}, "items_ids": []}``), ``{{0.id}}``
 resolves through that key and the response carries a note such as ``{{0.id}}``
 resolved as ``{{0.todolist.id}}``; ``expected_fields`` paths are matched exactly.
-Assertions specify expected statuses and dotted JSON fields.
+Assertions specify expected statuses and dotted JSON fields;
+an expected field value accepts the same references, so a check can name an id
+an earlier request returned.
 
 A request may carry ``headers``, whose values accept the same references, so a
 scenario can register, log in and send the returned token on later requests:

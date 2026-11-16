@@ -29,6 +29,7 @@ from urllib.parse import quote, unquote, urlsplit
 _MARKER = "BESSER_API_SCENARIO_REPORT:"
 _PROBE_TIMEOUT_SECONDS = 60
 _MAX_REQUESTS = 20
+_REQUEST_KEYS = frozenset({"method", "path", "json", "headers", "expected_status", "expected_fields"})
 _MAX_INPUT_BYTES = 64_000
 _BODY_CHARS = 2000
 _MAX_REPORTED_FAILURES = 5
@@ -189,9 +190,10 @@ def _credential_reference(match):
 
 
 def _sent_credentials(request, previous):
-    """Credential-named response values ``request`` sends back by reference, e.g. /reset/{{1.reset_token}}."""
+    """Credential-named response values ``request`` names by reference, e.g. /reset/{{1.reset_token}}."""
     sent = set()
-    for match in _REFERENCE.finditer(json.dumps([request.get(key) for key in ("path", "headers", "json")])):
+    for match in _REFERENCE.finditer(json.dumps(
+            [request.get(key) for key in ("path", "headers", "json", "expected_fields")])):
         if _credential_reference(match) and int(match.group(1)) < len(previous):
             body = previous[int(match.group(1))]
             value = _walk(body, _reference_path(body, match.group(2) or ""))
@@ -222,14 +224,21 @@ def _scrub(value, secrets, names=()):
 
 
 def _validate_requests(requests):
-    if not isinstance(requests, list) or not 1 <= len(requests) <= _MAX_REQUESTS:
-        raise ValueError(f"requests must contain 1 to {_MAX_REQUESTS} request objects")
+    if not isinstance(requests, list):
+        raise ValueError("requests must be a list of request objects")
+    if not 1 <= len(requests) <= _MAX_REQUESTS:
+        raise ValueError(f"requests must contain 1 to {_MAX_REQUESTS} request objects, got {len(requests)}; "
+                         "split a longer workflow into scenarios with their own scenario_id")
     serialized = json.dumps(requests, allow_nan=False)
     if len(serialized.encode("utf-8")) > _MAX_INPUT_BYTES:
         raise ValueError(f"scenario exceeds {_MAX_INPUT_BYTES} bytes")
     for index, request in enumerate(requests):
-        if not isinstance(request, dict) or set(request) - {"method", "path", "json", "headers", "expected_status", "expected_fields"}:
-            raise ValueError(f"request {index} has an invalid shape or unsupported keys")
+        if not isinstance(request, dict):
+            raise ValueError(f"request {index} must be an object")
+        unsupported = sorted(set(request) - _REQUEST_KEYS, key=str)
+        if unsupported:
+            raise ValueError(f"request {index}: unsupported key(s) {', '.join(map(repr, unsupported))}; "
+                             f"a request takes {', '.join(sorted(_REQUEST_KEYS))}")
         if request.get("method") not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise ValueError(f"request {index}: method must be GET, POST, PUT, PATCH or DELETE")
         _local_path(request.get("path"))
@@ -591,6 +600,7 @@ async def _run_requests(app, requests):
                         item["failures"].append(f"expected HTTP {request.get('expected_status', '2xx')}, got {response.status_code}")
                     for path, expected_value in request.get("expected_fields", {}).items():
                         try:
+                            expected_value = _resolve_references(expected_value, previous)
                             actual = _json_path(body, path)
                             if not _same_literal(actual, expected_value):
                                 # A message is a string: redact the response value before quoting it.

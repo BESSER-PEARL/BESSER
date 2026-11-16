@@ -125,7 +125,7 @@ def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 
     model_actions = _model_actions(domain_model)
-    abstract = _abstract_entities(domain_model)
+    abstract = abstract_entities(domain_model)
     issues: list[str] = []
     backends: list[dict] = []
     for folder in _fastapi_backends(output_dir):
@@ -142,7 +142,7 @@ def collect_constructibility_issues(output_dir: str, domain_model=None) -> list[
     return collect_constructibility_report(output_dir, domain_model)["issues"]
 
 
-def _abstract_entities(domain_model) -> list[str]:
+def abstract_entities(domain_model) -> list[str]:
     """Class names the model marks ``is_abstract``.
 
     Read defensively: an older serializer, or a model with no such notion,

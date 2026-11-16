@@ -38,7 +38,7 @@ import bisect
 import functools
 import os
 import re
-from besser.spec_driven_agent.validation.constructibility import _abstract_entities
+from besser.spec_driven_agent.validation.constructibility import abstract_entities
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.utilities.workspace_fs import walk_plain
 
@@ -873,7 +873,7 @@ def build_acceptance_matrix(
         return None
     if not classes:
         return None
-    abstract = set(_abstract_entities(domain_model))
+    abstract = set(abstract_entities(domain_model))
 
     if not endpoint_manifest:
         try:

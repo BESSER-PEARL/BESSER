@@ -64,6 +64,7 @@ Parameters
 - ``output_dir``: Output directory (optional, default: ``output/`` in the current directory).
 - ``package_name``: Java package declared at the top of every generated file (optional).
   When omitted, no ``package`` line is emitted.
+
 Trace Links
 -----------
 

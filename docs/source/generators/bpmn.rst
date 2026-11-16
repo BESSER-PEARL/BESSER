@@ -184,9 +184,8 @@ model element by reading the written file back: after ``generate()``, ``generato
 holds the line range of each XML element (flow nodes, sequence and message flows, data object references, data
 associations, participants, the collaboration, lanes, annotations and groups, and the ``BPMNShape`` / ``BPMNEdge`` of
 each, rule ``bpmn_generator#<xml tag>``, ``#shape`` or ``#edge``) matched to its model element through the id the
-generator gave it, so a renamed id is matched exactly. An element is recorded when it has a persistent id: its own
-``id`` or, for a model converted from the web editor, the editor element id kept in ``layout["id"]`` (the id the XML
-reuses). Processes, the lane set and the derived data store and data object definitions have no editor id and no
-region; elements without an id are not traced. Recording the trace does not change the written file. Models from the
-editor place every traced element under the BPMN diagram, as the editor's ids refer to it. See
-:doc:`traceable_generator`.
+generator gave it, so a renamed id is matched exactly. An element is recorded when it has an ``id``: the web editor's
+processor gives every element and flow its editor element id, which it also keeps in ``layout["id"]`` for the XML to
+reuse (``layout["id"]`` alone names the XML element but does not trace it). Processes, the lane set and the derived
+data store and data object definitions have no editor id and no region; elements without an id are not traced.
+Recording the trace does not change the written file. See :doc:`traceable_generator`.

@@ -232,5 +232,6 @@ definition in ``__init__`` (``layer``) and its call in ``forward`` (``layer_forw
 included). The lines are those of the final file: the forecaster's own tidy-up (duplicated imports, blank lines) runs
 on the text without the trace markers and the ranges are moved to the lines it keeps, so the generated code is the
 same with or without ids. The pipeline code, the training settings (the ``Configuration`` has no ``id``) and the
-forecast settings have no region. The web editor's neural network processor assigns no ids to layers, so a network
-drawn there is traced at file level until it does. See :doc:`traceable_generator`.
+forecast settings have no region. The web editor's neural network processor gives each layer, tensor operation,
+network (container) and dataset its editor element id, so a network drawn there is traced by layer. See
+:doc:`traceable_generator`.

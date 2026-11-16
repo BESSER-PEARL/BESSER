@@ -244,7 +244,8 @@ of the deployment model: in ``docker-compose.yml`` the lines of each service (``
 each node's network (``network``); each ``<service>/Dockerfile`` names its artifact as source; and the traces of the
 BAF generator that baked an agent (see :doc:`baf`) are merged under ``<service>/``. Only elements with an ``id``
 are recorded, and recording them does not change the generated files. The bridging ``*_link`` networks come from
-communication paths, which have no region. The web editor's deployment processor does not assign ids to nodes and
-artifacts, so a diagram drawn there is traced at file level until it does. ``generator.ai_files`` lists the baked
-files an LLM personalization wrote (``<service>/<file>``); their element traces are left out. See
-:doc:`traceable_generator`.
+communication paths, which have no region. The web editor's deployment processor gives every node, artifact,
+interface and drawn relationship its editor element id, so a diagram drawn there is traced by element.
+``generator.ai_files`` lists the baked files an LLM personalization wrote (``<service>/<file>``), and
+``generator.ai_llm`` that LLM: their element traces are left out, and a trace links them by the LLM's AI evidence.
+See :doc:`traceable_generator`.

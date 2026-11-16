@@ -21,6 +21,7 @@ folder and it will look as follows.
 .. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/vocabulary.ttl
    :language: console
    :linenos:
+
 Trace Links
 -----------
 

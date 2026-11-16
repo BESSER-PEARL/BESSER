@@ -110,12 +110,13 @@ OpenStreetMap tiles (no API key required).
         zoom=12,
         layers=[store_layer],
     )
+
 Trace Links
 -----------
 
 After ``generate()``, ``generator.traced_files`` records which lines of the files the generator rendered come from
 which model element, for every element that has an ``id`` (as every class and attribute drawn in the web editor
-does). ``sql_helper.dart`` has a region for each class's table-name constant and ``CREATE TABLE`` statement and for
+does, and every screen, by its page id). ``sql_helper.dart`` has a region for each class's table-name constant and ``CREATE TABLE`` statement and for
 each attribute's column-name constant; ``main.dart`` has a region for the main screen's home widget and one for
 each other screen's widgets. ``pubspec.yaml`` is file-level only. Recording traces does not change the generated
 files; see :doc:`traceable_generator`.

@@ -64,9 +64,8 @@ Traceability
 
 The *Traceability* page (in the project section of the sidebar, next to *Settings*)
 records and shows what happened to the project's models and the code generated from
-them. Class diagrams and GUI diagrams are recorded today; the page is project-wide so that
-other model types can join. Recording is on for a new project; *Record traces for this project*
-on that page turns it off or on.
+them, for every diagram type. Recording is on for a new project; *Record traces for this
+project* on that page turns it off or on.
 
 * **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
   class, attribute, method, enumeration, association, generalization or OCL
@@ -84,9 +83,14 @@ on that page turns it off or on.
   one modeling session of the *BESSER GUI generator*, recorded once the generator is done:
   every page it replaced and every element it made, each page linked from the class it was
   generated for. Its links stay current until the GUI is edited again. A GUI the assistant
-  writes is its edit, linked from the request. A SQLAlchemy
-  or *Full Backend* generation records which files and lines each class,
-  enumeration, association, attribute, method and OCL constraint produced. A chat
+  writes is its edit, linked from the request. Edits of the other diagrams (object, user,
+  state machine, agent, BPMN, neural network, quantum circuit, component, deployment,
+  knowledge graph) are recorded element by element the same way, layout aside. A
+  generation with any generator records which files each diagram it read produced and,
+  for the generators that trace elements, which lines each element produced (a class
+  and its attributes, a page and its components, an agent state, a BPMN task, a network
+  layer, a quantum gate, ...; see :ref:`traceable-generator-coverage`). A file the
+  agent personalization's LLM rewrote is recorded as the LLM's work. A chat
   with the modeling assistant is a conversation: each request is a turn holding the
   request, the assistant's progress messages and its answer or error (a message is
   kept up to 10,000 characters). The assistant does not report the model it answers

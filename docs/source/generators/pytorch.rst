@@ -58,10 +58,10 @@ forward pass (``layer_forward``, the call of its activation included), a tensor 
 sub-network's definition (``sub_nn``, its layers inside it) and call (``sub_nn_forward``), and the dataset loading
 function (``train_dataset`` and ``test_dataset``, both over ``prepare_datasets``). The lines are those of the final
 file: the clean-up of blank lines runs on the text without the trace markers and the ranges are moved to the lines it
-keeps, so the generated code is the same with or without ids. The ``Configuration`` (loss, optimizer, epochs) has no
-``id`` in the metamodel and the web editor's neural network processor assigns none to layers, tensor operations or
-datasets, so a network drawn there is traced at file level until it does; the layer added to turn an activation or a
-permutation into a call has no region of its own. See :doc:`traceable_generator`.
+keeps, so the generated code is the same with or without ids. The web editor's neural network processor gives each
+layer, tensor operation, network (container) and dataset its editor element id, so a network drawn there is traced
+by element. The ``Configuration`` (loss, optimizer, epochs) has no ``id`` in the metamodel, and the layer added to turn
+an activation or a permutation into a call has no region of its own. See :doc:`traceable_generator`.
 
 Output
 ------

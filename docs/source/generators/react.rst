@@ -235,8 +235,9 @@ appear in the pages through the data bindings of their components, which are not
 
 .. note::
 
-   The web editor's GUI converter (``process_gui_diagram``) does not give the GUI elements it builds an ``id``
-   (only a ``component_id``); the class diagram's elements do have one. A model built by the editor therefore has
-   no GUI traces until its elements get ids, and its pages are generated exactly as before.
+   The web editor's GUI converter (``process_gui_diagram``) gives each screen its page id and each component the
+   editor's trace records (tables, charts, metric cards, maps, agent components, forms, inputs, buttons, menus) its
+   persistent ``attributes.id``, the ids the editor records them by. Text, images, links and layout containers get
+   none: they render untraced, inside the region of the traced component that holds them, if any.
 
 Recording traces does not change the generated files; see :doc:`traceable_generator`.

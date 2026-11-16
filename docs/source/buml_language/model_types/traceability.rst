@@ -191,20 +191,24 @@ blocks, with the template rule as evidence and confidence 1. A generator that re
 nothing still gets the links from its models to its files. A file's content is kept when it is under the size
 cap, so the views can show it and its blocks' lines; above it only its hash is.
 Elements without an ``id`` (a model built in Python rather than in the editor) are
-rendered untraced. An OCL box of the editor holding one constraint gives the
-constraint the box's ``id``; a box holding several is split into constraints without
-one. The :doc:`SQLAlchemy <../../generators/alchemy>` and
-:doc:`backend <../../generators/backend>` generators record traces of classes,
-enumerations, associations, attributes, methods and OCL constraints.
+rendered untraced. The editor's processors give each element they build the id the
+editor records it by (see :ref:`traceable-generator-coverage` for what each
+generator traces and which elements have no id). An OCL box of the editor holding
+one constraint gives the constraint the box's ``id``; a box holding several is split
+into constraints without one. A file an LLM step of a generator wrote (the agent
+personalization) is linked by ``AIEvidence`` of that LLM, which the operation also
+calls, rather than by a rule.
 
 In the web editor
 -----------------
 
-The editor records traces per project when *Record traces for this project* is
-turned on (off by default) on the project's *Traceability* page. Class
-diagram edits are recorded as modeling sessions (each with one call to the
-editor), SQLAlchemy and backend generations as generation runs (one call to the
-generator), and the exchange with the modeling assistant as conversations. A
+The editor records traces per project while *Record traces for this project* is
+on, on the project's *Traceability* page (on for a new project). Edits of every
+diagram type are recorded as modeling sessions (each with one call to the editor),
+under the B-UML metaclasses of the elements; every generation, with any generator,
+as a generation run (one call to the generator), its links reaching the generated
+lines where the generator traces elements; and the exchange with the modeling
+assistant as conversations. A
 Spec-Driven Agent run is recorded from the trace its ``done`` event carries: one generation run
 with a call per generator run and per LLM turn, the files the LLM wrote or edited (an edited
 generated file as a new version), and the judge's links from the requirements to the code (see

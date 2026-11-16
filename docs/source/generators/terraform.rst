@@ -110,6 +110,7 @@ To run the setup script, use the following command in your terminal:
     setup.bat
 
 This script will initialize and apply your Terraform configuration, deploying your resources to the specified cloud provider.
+
 Trace Links
 -----------
 

@@ -67,6 +67,8 @@ lists the line ranges rendered from each quantum register (``quantum_register``)
 (``classical_register``), function gate definition (``function_gate``) and operation (``operation``: a gate, a
 measurement, an input or a display operation; an operation that expands to several lines, such as an input value,
 covers them all) that has an ``id``. A classical register the generator adds for measurements has no region. Elements
-without an ``id`` are rendered untraced, and recording the trace does not change the generated file. The web editor's
-quantum circuit processor does not assign ids to the registers and gates it converts, so a circuit drawn there is
-traced at file level until it does. See :doc:`traceable_generator`.
+without an ``id`` are rendered untraced, and recording the trace does not change the generated file. A circuit drawn
+in the web editor has no element ids (its cells have none), so its processor gives each gate the id the editor's
+trace knows its cell by, ``<diagram id>:gate:<column>:<wire>`` (a gate over several wires by its first); a circuit
+is traced by operation. Its registers get none (the editor draws wires, not registers), so they render untraced. See
+:doc:`traceable_generator`.

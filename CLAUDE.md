@@ -105,7 +105,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api, traceability): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` (`GeneratorInfo`, derived from `besser/generators/registry.py`) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
-| `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
+| `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`, `traceability.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
 | `…/backend/services/generation/` | Generator dispatch behind `/generate-output*` and the traced `/traceability/generate-output*`: `dispatch.py` (path from the registry entry, per-generator option builders; every path returns a `Generation`: download + diagrams read), `agents.py` (BAF), `downloads.py` (`GeneratedOutput`: ZIP + provenance, or one file + version comment, with the generators' `traced_files` by delivered path) |
@@ -270,10 +270,14 @@ traced endpoints, with no code. Instrumenting adds which lines come from which e
    generated as a whole from one element passes `trace_source(element, rule)` as a source. Never assign
    `traced_files` (a property, always present, `{}` by default).
 4. A composite calls `self._merge_traced_files(child, prefix)` after `child.generate()` (`prefix` = the child's
-   folder relative to the composite's output dir, `""` if the same).
+   folder relative to the composite's output dir, `""` if the same). Files an LLM step wrote go in `ai_files`
+   (with `ai_llm`); merging moves a child's there too, and a trace links them by `AIEvidence`, not a rule.
 5. Test that `traced_files` points at the right lines and that a model with ids generates the same bytes as
    one without (`tests/generators/backend/test_backend_trace.py`). The backend needs no change: it reads
    `traced_files` from the generator instance after any run.
+6. Elements drawn in the editor get their ids from the `json_to_buml` processors (`converters/element_ids.py`:
+   `EditorIds` gives each element the id the editor's trace records it by, once per model). A new element kind a
+   generator traces needs its processor to set it, and `test_traced_generation_all.py` to check it.
 
 ### Pitfalls
 1. **Keep converters symmetric**: if `json_to_buml` supports a feature, `buml_to_json` must too

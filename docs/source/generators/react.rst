@@ -46,7 +46,9 @@ Executes class and instance methods with:
 
 - Parameter input modal for methods with parameters
 - Automatic type handling (int, float, bool, string, date, time)
-- Detailed error display for 500 errors
+- Detailed error display for 500 errors; a method modeled without an
+  implementation (the backend answers 501) shows "This action is not
+  available yet."
 - Modal stays open on error for retry
 - A reload of the data shown on the page after execution (see `Data refresh`_)
 

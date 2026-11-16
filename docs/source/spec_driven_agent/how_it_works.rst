@@ -413,5 +413,14 @@ the source says so. It leaves out the request itself, because the file
 also goes into GitHub pushes, and shows model-written values as code, never as
 links or markup.
 
+Every output says how to run it. When the output has no README at its root,
+packaging writes one from the files delivered: for a FastAPI backend beside a
+Vite frontend, the Dockerfiles, compose file and README of the scaffold repair;
+for an app started by one compose file, ``docker compose up --build`` in its
+folder and the ports it publishes; for a FastAPI backend on its own, the virtual
+environment, ``pip install -r requirements.txt``, the start command of its entry
+file and the address of its API documentation. A README the output already has
+is kept. The *This run* section then points to it.
+
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

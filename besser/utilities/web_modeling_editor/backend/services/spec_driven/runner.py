@@ -63,7 +63,7 @@ from besser.spec_driven_agent.pipeline.constants import (
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
-from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
+from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold, ensure_run_instructions
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
@@ -402,7 +402,7 @@ def redact_recipe_models(recipe: dict, provider: str) -> None:
 
 
 def run_summary_markdown(
-    recipe: dict, verification: VerificationReport, secrets: Iterable[str] = (),
+    recipe: dict, verification: VerificationReport, secrets: Iterable[str] = (), *, readme: bool = False,
 ) -> list[str]:
     """The run section of ``BESSER_GENERATION.md``: target and verification.
 
@@ -423,6 +423,8 @@ def run_summary_markdown(
         lines.append(f"- Built as: {one_line(target.get('description') or target.get('kind'))}")
     generator = recipe.get("generator_used")
     lines.append(f"- Base generator: {one_line(generator) if generator else 'none, written from scratch'}")
+    if readme:
+        lines.append("- How to run it: see `README.md`")
     lines.append(
         f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
         f"{counts.shippedUnenforced} checked and missing in the code")
@@ -2313,6 +2315,7 @@ class SmartGenerationRunner:
         # tree feeds the download zip and the GitHub push.
         try:
             frontend_repairs = ensure_frontend_scaffold(result_path, app_name=self.request.project.name)
+            frontend_repairs += ensure_run_instructions(result_path, app_name=self.request.project.name)
             if frontend_repairs:
                 logger.info(
                     "spec-driven run %s frontend scaffold repairs: %s",
@@ -2386,7 +2389,8 @@ class SmartGenerationRunner:
         provenance_path = write_generation_provenance(result_path, "spec_driven_agent", {
             "base_generator": recipe.get("generator_used"),
             "llm_model": recipe.get("llm_model"),
-        }, run_summary_markdown(recipe, verification, (self.request.resolved_api_key(),)))
+        }, run_summary_markdown(recipe, verification, (self.request.resolved_api_key(),),
+                                readme=os.path.isfile(os.path.join(result_path, "README.md"))))
 
         # Collect every user file. Skips internal artefacts
         # (.besser_recipe.json etc.) AND build-output directories —

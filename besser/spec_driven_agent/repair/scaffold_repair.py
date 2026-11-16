@@ -19,6 +19,8 @@ import json
 import os
 import re as _re
 
+import yaml
+
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 from besser.spec_driven_agent.repair.dependency_pins import pin_known_incompatible
@@ -384,6 +386,57 @@ Then restart `npm run dev`. Vite inlines `VITE_*` at build time, so a
 production image needs it as a build argument - `docker-compose.yml` already
 passes it that way.
 """
+
+
+_BACKEND_README_TEMPLATE = """\
+# {title}
+
+A FastAPI backend{where}: a REST API over the model's classes, with interactive
+API documentation.
+
+## Run it
+
+From this folder:
+
+```bash
+{cd}python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\\Scripts\\activate
+pip install -r requirements.txt
+{start}
+```
+
+The API is then on http://localhost:{port}, and its documentation on
+http://localhost:{port}/docs.
+
+## Using another port
+
+If port {port} is taken, start it with `python -m uvicorn {module}:app --port 8080`
+instead; the documentation is then on http://localhost:8080/docs.
+"""
+
+_COMPOSE_README_TEMPLATE = """\
+# {title}
+
+The services of this app and how they are built are described in
+`{compose}`; Docker Compose builds and starts them together.
+
+## Run it
+
+From this folder, with Docker running:
+
+```bash
+{cd}docker compose up --build
+```
+{addresses}
+## Using other ports
+
+Each service's `ports` entry in `{compose}` reads `"<port on this machine>:<port in
+the container>"`. Change the first number to publish a service on another port.{vite_note}
+"""
+
+_COMPOSE_VITE_NOTE = """ The web
+app's API address is fixed when its image is built (`VITE_API_URL` in the same
+file), so change it too when you move the API."""
 
 
 def _read_text(path: str) -> str:
@@ -756,6 +809,98 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict,
                 dev_address=_dev_server_address(frontend_dir, manifest))):
             repairs.append("README.md")
     return repairs
+
+
+def _has_readme(output_dir: str) -> bool:
+    try:
+        return any(name.lower().startswith("readme") for name in os.listdir(output_dir))
+    except OSError:
+        return False
+
+
+def _served_port(source: str):
+    """The port an entry file that runs itself passes to ``uvicorn.run``, or None."""
+    found = _re.search(r"uvicorn\.run\([^)]*\bport\s*=\s*(\d+)", source)
+    return int(found.group(1)) if found else None
+
+
+def _backend_readme(output_dir: str, app_name: str):
+    """README text for an output that is one FastAPI backend, or None."""
+    if os.path.isfile(os.path.join(output_dir, "requirements.txt")) and _backend_entry(output_dir):
+        backend_dir = output_dir
+    else:
+        backend_dir = _find_backend_dir(output_dir)
+    if backend_dir is None:
+        return None
+    entry_file, starts_server = _backend_entry(backend_dir)
+    module = entry_file[:-3]
+    port = _served_port(_read_text(os.path.join(backend_dir, entry_file))) if starts_server else None
+    start = f"python {entry_file}" if port else f"python -m uvicorn {module}:app --port 8000"
+    folder = "" if backend_dir == output_dir else os.path.basename(backend_dir)
+    return _BACKEND_README_TEMPLATE.format(
+        title=_app_title(output_dir, os.path.join(backend_dir, entry_file), app_name),
+        where=f" (`{folder}/`)" if folder else "",
+        cd=f"cd {folder}\n" if folder else "", start=start, port=port or 8000, module=module)
+
+
+def _published_ports(compose_path: str) -> list:
+    """(service, port on this machine) for each ``ports`` entry that names one."""
+    try:
+        services = (yaml.safe_load(_read_text(compose_path)) or {}).get("services")
+    except (yaml.YAMLError, AttributeError):
+        return []
+    found = []
+    for name, service in services.items() if isinstance(services, dict) else ():
+        for entry in service.get("ports") or [] if isinstance(service, dict) else []:
+            if isinstance(entry, dict):
+                published = entry.get("published")
+            else:  # "8000:8000", "127.0.0.1:8000:8000"; a bare container port publishes none
+                parts = str(entry).split(":")
+                published = parts[-2] if len(parts) > 1 else None
+            if str(published or "").isdigit():
+                found.append((str(name), int(published)))
+    return found
+
+
+def _compose_readme(output_dir: str, app_name: str):
+    """README text for an output that one Compose file starts, or None."""
+    candidates = [os.path.join(output_dir, name) for name in _COMPOSE_NAMES]
+    for folder, files in _iter_project_dirs(output_dir):
+        if os.path.dirname(os.path.abspath(folder)) == os.path.abspath(output_dir):
+            candidates += [os.path.join(folder, name) for name in files if name in _COMPOSE_NAMES]
+    found = [path for path in candidates if os.path.isfile(path)]
+    if len(found) != 1:
+        return None
+    compose_dir = os.path.dirname(found[0])
+    folder = "" if os.path.abspath(compose_dir) == os.path.abspath(output_dir) else os.path.basename(compose_dir)
+    backend_dir = _find_backend_dir(compose_dir)
+    entry = _backend_entry(backend_dir) if backend_dir else None
+    ports = _published_ports(found[0])
+    rows = "".join(f"| {name} | http://localhost:{port} |\n" for name, port in ports)
+    compose = (f"{folder}/" if folder else "") + os.path.basename(found[0])
+    return _COMPOSE_README_TEMPLATE.format(
+        title=_app_title(output_dir, os.path.join(backend_dir, entry[0]) if entry else "", app_name),
+        compose=compose, cd=f"cd {folder}\n" if folder else "",
+        addresses=f"\n| Service | Address |\n| --- | --- |\n{rows}" if rows else "",
+        vite_note=_COMPOSE_VITE_NOTE if "VITE_API_URL" in _read_text(found[0]) else "")
+
+
+def ensure_run_instructions(output_dir: str, app_name: str = "") -> list:
+    """A README saying how to run the output, when it has none at its root.
+
+    Covers what the two-service writer of ``ensure_frontend_scaffold`` does not:
+    an app started by one Compose file, and a FastAPI backend on its own. The
+    commands come from the files delivered. Other outputs are left as they are.
+    Returns ``["README.md"]`` when it wrote one.
+    """
+    if _has_readme(output_dir):
+        return []
+    text = _compose_readme(output_dir, app_name)
+    if text is None and not _find_vite_react_frontends(output_dir):
+        text = _backend_readme(output_dir, app_name)
+    if text and _write_text(os.path.join(output_dir, "README.md"), text):
+        return ["README.md"]
+    return []
 
 
 def _ensure_dockerignores(output_dir: str) -> list:

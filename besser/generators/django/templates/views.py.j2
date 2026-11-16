@@ -39,9 +39,11 @@ def handle_create(request, form_class, success_message):
                     {%- set source_name= source.dataSourceClass%}
 
 
+{% trace source.dataSourceClass, "create_view" %}
 def create_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}(request):
     """Create a new {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} record."""
     return handle_create(request, {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form, '{{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}} created successfully')
+{%- endtrace %}
                 {%-  endif %}
             {%-  endfor %}
         {%-  endif %}
@@ -81,6 +83,7 @@ def handle_edit(request, form_class, instance, success_message, redirect_url):
                     {%- set source_name= source.dataSourceClass%}
 
 
+{% trace source.dataSourceClass, "edit_view" %}
 def edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}(request, {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id):
     """Edit an existing {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} record."""
     {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} = get_object_or_404({{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}, id={{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id)
@@ -91,6 +94,7 @@ def edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[
         '{{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}} updated successfully',
         '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list'
     )
+{%- endtrace %}
                 {%-  endif %}
             {%-  endfor %}
         {%-  endif %}
@@ -108,11 +112,13 @@ def edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[
                     {%- set source_name= source.dataSourceClass%}
 
 
+{% trace source.dataSourceClass, "delete_view" %}
 def delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}(request, {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id):
     """Delete an existing {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} record."""
     {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} = get_object_or_404({{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}, id={{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id)
     {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.delete()
     return redirect('{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list')
+{%- endtrace %}
                 {%-  endif %}
             {%-  endfor %}
         {%-  endif %}
@@ -129,6 +135,7 @@ def delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.nam
                     {%- set source_name= source.dataSourceClass%}
 
 
+{% trace source.dataSourceClass, "list_view" %}
 def {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list(request):
     """Display the list of {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s."""
     {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s = {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}.objects.all()
@@ -137,6 +144,7 @@ def {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}
         request, '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list.html',
         {'{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s': {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s, 'form': form, 'is_default': True}
     )
+{%- endtrace %}
                 {%-  endif %}
             {%-  endfor %}
         {%-  endif %}

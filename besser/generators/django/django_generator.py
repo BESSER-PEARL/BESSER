@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 import sys
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators.default_literals import register_default_literals
@@ -18,6 +17,7 @@ from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
+from besser.utilities.generation_trace import traced_environment, trace_source
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +64,8 @@ class DjangoGenerator(GeneratorInterface):
         self.many_to_many = {}
         # Jinja environment configuration
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
-                               lstrip_blocks=True, extensions=['jinja2.ext.do'])
+        self.env = traced_environment(templates_path, trim_blocks=True,
+                                      lstrip_blocks=True, extensions=['jinja2.ext.do'])
         self.env.globals.update(normalize_code=normalize_method_code, sort_by_timestamp=sort_by_timestamp)
         register_default_literals(self.env)
         # Register custom Jinja2 tests once for all methods
@@ -120,6 +120,16 @@ class DjangoGenerator(GeneratorInterface):
     def _app_dir(self) -> str:
         """Absolute path of the generated Django app directory."""
         return os.path.join(self._project_dir(), self.app_name)
+
+    def _write_rendered(self, file_path: str, rendered: str, *sources) -> None:
+        """Write a render (without its trace markers) and record what it was rendered from."""
+        base = self._base_dir()
+        self._write_traced(os.path.relpath(file_path, base), rendered, *sources, output_dir=base)
+
+    def _write_page(self, file_path: str, rendered: str, source: DataSourceElement, screen, template: str) -> None:
+        """Write the page of a class listed on a screen: it is generated from both."""
+        self._write_rendered(file_path, rendered, trace_source(source.dataSourceClass, f"{template}#class"),
+                             trace_source(screen, f"{template}#screen"))
 
     def _templates_dir(self) -> str:
         """Absolute path of the app templates directory (created on demand)."""
@@ -224,14 +234,13 @@ class DjangoGenerator(GeneratorInterface):
         # as PydanticGenerator; see ocl_utils.py for the extraction logic).
         constraints_map = build_constraints_map(self.model)
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(model=self.model,
-                                            sort_by_timestamp=sort_by_timestamp,
-                                            one_to_one = self.one_to_one,
-                                            many_to_many = self.many_to_many,
-                                            fkeys = self.fkeys,
-                                            constraints_map = constraints_map)
-            f.write(generated_code)
+        generated_code = template.render(model=self.model,
+                                         sort_by_timestamp=sort_by_timestamp,
+                                         one_to_one = self.one_to_one,
+                                         many_to_many = self.many_to_many,
+                                         fkeys = self.fkeys,
+                                         constraints_map = constraints_map)
+        self._write_rendered(file_path, generated_code)
 
     ## DjangoGeneratorURLsFile:
     def generate_urls(self):
@@ -268,14 +277,13 @@ class DjangoGenerator(GeneratorInterface):
         else:
             logger.warning("No main page found.")
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
-                app=self.gui_model,
-                screens=screens,
-                screen=main_page,
-                model=self.model,
-            )
-            f.write(generated_code)
+        generated_code = template.render(
+            app=self.gui_model,
+            screens=screens,
+            screen=main_page,
+            model=self.model,
+        )
+        self._write_rendered(file_path, generated_code)
 
 
     ## DjangoGeneratorFormsFile:
@@ -314,19 +322,18 @@ class DjangoGenerator(GeneratorInterface):
             logger.warning("No main page found.")
             screens = list(screens)  # Convert set to list
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
-                app=self.gui_model,
-                sort_by_timestamp=sort_by_timestamp,
-                screens=screens,
-                screen=main_page,
-                model=self.model,
-                associations=self.model.associations,
-                one_to_one = one_to_one,
-                many_to_many = many_to_many,
-                fkeys = fkeys
-            )
-            f.write(generated_code)
+        generated_code = template.render(
+            app=self.gui_model,
+            sort_by_timestamp=sort_by_timestamp,
+            screens=screens,
+            screen=main_page,
+            model=self.model,
+            associations=self.model.associations,
+            one_to_one = one_to_one,
+            many_to_many = many_to_many,
+            fkeys = fkeys
+        )
+        self._write_rendered(file_path, generated_code)
 
 
     ##  views Generator:
@@ -363,16 +370,15 @@ class DjangoGenerator(GeneratorInterface):
             logger.warning("No main page found.")
             screens = list(screens)  # Convert set to list
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
-                app=self.gui_model,
-                screens=screens,
-                screen=main_page,
-                BUMLClasses=self.model.get_classes(),
-                model=self.model,
-                associations=self.model.associations
-            )
-            f.write(generated_code)
+        generated_code = template.render(
+            app=self.gui_model,
+            screens=screens,
+            screen=main_page,
+            BUMLClasses=self.model.get_classes(),
+            model=self.model,
+            associations=self.model.associations
+        )
+        self._write_rendered(file_path, generated_code)
 
 
   ##  Home Page Template Generator:
@@ -409,13 +415,12 @@ class DjangoGenerator(GeneratorInterface):
             logger.warning("Main page not found in the screens list.")
             screens = list(screens)  # Convert set to list
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
-                app=self.gui_model,
-                screens=screens,
-                screen=main_page,
-            )
-            f.write(generated_code)
+        generated_code = template.render(
+            app=self.gui_model,
+            screens=screens,
+            screen=main_page,
+        )
+        self._write_rendered(file_path, generated_code, trace_source(main_page, "home_page.py.j2#screen"))
 
     ## base Pages Template Generator:
     def generate_base_pages(self):
@@ -457,8 +462,7 @@ class DjangoGenerator(GeneratorInterface):
 
 
                                 # Write to the HTML file
-                                with open(file_path, mode="w", encoding="utf-8") as f:
-                                    f.write(rendered_html)
+                                self._write_page(file_path, rendered_html, source, screen, "basePageFile.py.j2")
 
 
     # List Pages Template Generator
@@ -505,8 +509,7 @@ class DjangoGenerator(GeneratorInterface):
                                 )
 
                                 # Write to the HTML file
-                                with open(file_path, mode="w", encoding="utf-8") as f:
-                                    f.write(rendered_html)
+                                self._write_page(file_path, rendered_html, source, screen, "list_page.py.j2")
 
 
     ## Form Pages Template Generator:
@@ -555,8 +558,7 @@ class DjangoGenerator(GeneratorInterface):
                                 )
 
                                 # Write to the HTML file
-                                with open(file_path, mode="w", encoding="utf-8") as f:
-                                    f.write(rendered_html)
+                                self._write_page(file_path, rendered_html, source, screen, "form_page.py.j2")
 
 
     ## project urls file Generator:
@@ -577,19 +579,17 @@ class DjangoGenerator(GeneratorInterface):
         file_path = os.path.join(project_pkg_dir, "urls.py")
         template = self.env.get_template('project_urls.py.j2')
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(app=self.app_name)
-            f.write(generated_code)
+        generated_code = template.render(app=self.app_name)
+        self._write_rendered(file_path, generated_code)
 
     def create_file_from_template(self, template_name, output_name):
         """Create a file from a Jinja2 template."""
         template = self.env.get_template(template_name)
         file_path = os.path.join(self._project_dir(), output_name)
-        with open(file_path, mode="w", newline='\n', encoding='utf-8') as f:
-            f.write(template.render(app_name=self.app_name,
-                                    project_name=self.project_name,
-                                    model=self.model,
-                                    sort=sort_by_timestamp))
+        self._write_rendered(file_path, template.render(app_name=self.app_name,
+                                                        project_name=self.project_name,
+                                                        model=self.model,
+                                                        sort=sort_by_timestamp))
 
     def update_settings(self):
         """Update the configuration in settings.py."""

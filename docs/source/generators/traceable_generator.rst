@@ -110,6 +110,27 @@ Instrumenting a generator, step by step
 Nothing else is needed: the editor backend reads ``traced_files`` from the generator instance after
 the run, whatever generator it is.
 
+Rendering BESSER's templates with your own environment
+------------------------------------------------------
+
+The templates of the instrumented generators use the ``{% trace %}`` tag. Code that loads them
+into its own Jinja ``Environment`` (to render a template outside its generator, or to override
+one) must add ``TraceExtension``, or Jinja refuses the template with
+``Encountered unknown tag 'trace'``:
+
+.. code-block:: python
+
+    from jinja2 import Environment, FileSystemLoader
+    from besser.utilities.generation_trace import TraceExtension, extract_trace_regions
+
+    env = Environment(loader=FileSystemLoader(templates_path), extensions=[TraceExtension])
+    # or: env = traced_environment(templates_path)
+    code, regions = extract_trace_regions(env.get_template("sql_alchemy_template.py.j2").render(...))
+
+A model whose elements have ids renders with the invisible markers: write ``code``, the render
+without them (``regions`` are its traced line ranges), never the raw render. A model without ids
+renders no markers.
+
 Building the trace of a run yourself
 ------------------------------------
 

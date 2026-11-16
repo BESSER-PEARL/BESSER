@@ -309,7 +309,7 @@ def test_a_store_with_a_lone_surrogate_is_read_as_no_store(tmp_path):
     store.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(GeneratorOutputError):
         load_generator_output(str(tmp_path), "backend")
-    assert ledger._untouched_generator_files(str(tmp_path), ledger._source_files(str(tmp_path))) == frozenset()
+    assert ledger._written_shares(str(tmp_path), ledger._source_files(str(tmp_path))) == {}
     assert ledger.judged_source_fingerprint(str(tmp_path)) and "### backend/risk_engine.py" in ledger.build_app_digest(
         str(tmp_path))
 
@@ -724,7 +724,7 @@ def test_unresolved_requirements_block_completion_without_inventing_missing_code
     assert _classify_issue(issues[2]).severity == "blocker"
     assert issues[1].startswith("requirement partial:")
     assert issues[2].startswith("requirement unverified:")
-    assert "implementing behaviour only if it is absent" in issues[2]
+    assert "implement the behaviour only if it is really absent" in issues[2]
 
 
 # ---------------------------------------------------------------- the run

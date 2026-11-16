@@ -47,6 +47,7 @@ from typing import Any, Callable
 
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
+from besser.spec_driven_agent.planning.target import Target
 from besser.llm import clean_json_response, extract_json, parse_json_safely
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,8 @@ def analyze_gaps_via_llm(
     modify_mode: bool = False,
     workspace_files: list[str] | None = None,
     action_endpoints: list[ActionEndpoint] | None = None,
-    target_description: str = "",
+    target: Target | None = None,
+    assistant_notes: str = "",
     can_call: Callable[[], bool] | None = None,
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
@@ -155,8 +157,10 @@ def analyze_gaps_via_llm(
         action_endpoints: Source-derived operation routes and their handler
             locations. Presence in the domain model is not an implementation;
             this inventory identifies the actual executable extension points.
-        target_description: What the run builds when it is not a web app
-            (``planning/target.py``), named in the from-scratch task.
+        target: What the run builds (``planning/target.py``): named to the
+            planner, and, when it is not a web app, in the from-scratch task.
+        assistant_notes: The modeling agent's notes that came with the request:
+            shown apart from it, as context and never as the user's words.
         can_call: The run's stop and spend gate, asked before every paid
             planner call; ``None`` sends them all.
 
@@ -193,9 +197,9 @@ def analyze_gaps_via_llm(
                 "write). Every entity, attribute, type, and relationship in "
                 "your code must match the model."
             ]
-        elif target_description:
+        elif target is not None and not target.is_web_app and target.description:
             fallback = [
-                f"No BESSER generator was used. Build the {target_description} "
+                f"No BESSER generator was used. Build the {target.description} "
                 "from scratch, in the stack the user asked for, using the domain "
                 "model as your specification. "
                 "Every entity, attribute, type, and relationship in your code "
@@ -229,6 +233,8 @@ def analyze_gaps_via_llm(
         action_inventory=(format_action_inventory(action_endpoints)
                           if action_endpoints is not None
                           else "Action handlers were not inventoried; inspect their implementations."),
+        target_line=_target_line(target),
+        assistant_notes=assistant_notes,
     )
 
     tasks = _call_planner(llm_client, user_prompt, can_call)
@@ -1407,18 +1413,39 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _target_line(target: Target | None) -> str:
+    """What the user wants built, for the planner; empty when the target is unknown."""
+    if target is None or not target.description:
+        return ""
+    if target.is_web_app:
+        # The harness seeds that item itself (orchestrator._deterministic_gap_tasks).
+        return (f"WHAT THE USER WANTS BUILT: {target.description} (a web app used through screens). "
+                "If the inventory has no frontend, the coding agent already has a task to build it with "
+                "a screen per entity: add UI tasks only for what the request names beyond that.\n\n")
+    ui = "used through screens" if target.has_user_interface else "no user interface"
+    return f"WHAT THE USER WANTS BUILT: {target.description} ({ui}).\n\n"
+
+
 def _build_user_prompt(
     instructions: str,
     generator_used: str,
     model_json: str,
     inventory: str,
     action_inventory: str = "",
+    target_line: str = "",
+    assistant_notes: str = "",
 ) -> str:
     # Only derived inventories are clipped; user requirements must not disappear.
     inventory_clipped = _clip(inventory, _MAX_INVENTORY_CHARS, "inventory")
     actions_clipped = _clip(action_inventory, _MAX_ACTION_INVENTORY_CHARS, "action inventory")
+    # Not the user's words: a feature named only here is no task (r9/r11/r12-p61 got auth tasks from them).
+    notes = (f"ASSISTANT'S NOTES (context for how to build what the request names; NOT the user's words "
+             f"and never a source of tasks the request does not name):\n{assistant_notes}\n\n"
+             if assistant_notes else "")
     return (
         f"USER REQUEST:\n{instructions}\n\n"
+        f"{notes}"
+        f"{target_line}"
         f"DETERMINISTIC GENERATOR THAT RAN: {generator_used}\n\n"
         f"DOMAIN MODEL (JSON):\n{model_json}\n\n"
         f"FILE INVENTORY (paths + sizes):\n{inventory_clipped}\n\n"

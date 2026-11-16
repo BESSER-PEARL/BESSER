@@ -51,6 +51,7 @@ _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _COMMENT_DELIMITER_RE = re.compile(r"<!-+|-+!?>")
 
 NO_REQUEST = "(request not recorded)"
+NO_RULES_STATED = "Your request stated no business rules, so none were enforced or checked"
 _ROLLED_BACK = "The last run's automatic repairs were rolled back, so they are not in the code"
 _OPEN_ITEM_LABELS = {"missing": "Not in the code: ", "not_checked": "Not checked: ", "left_out": "Left out: "}
 RECORD_NOT_INSTRUCTIONS = (
@@ -101,6 +102,8 @@ def _open_items(recipe: dict) -> tuple[list[dict], int]:
     counts = counts if isinstance(counts, dict) else {}
 
     items = [{"kind": "rolled_back", "text": _ROLLED_BACK}] if recipe.get("phase3_rolled_back") is True else []
+    if recipe.get("business_rules_stated") is False:
+        items.append({"kind": "not_checked", "text": NO_RULES_STATED})
     total = len(items)
     for kind, key in (("missing", "shippedUnenforced"), ("not_checked", "notVerified")):
         listed = _dicts(verification.get(key))
@@ -158,9 +161,20 @@ def _open_item_lines(recap: dict, *, as_code: bool = False) -> list[str]:
     return lines + ([f"- and {hidden} more"] if hidden > 0 else [])
 
 
+def _without_no_rules(recap: dict) -> tuple[dict, bool]:
+    """``recap`` without the no-rules line, and whether it had it. The line is a fact for
+    the user, not open work: shown to a model it would read as "add rules"."""
+    if not any(item["text"] == NO_RULES_STATED for item in recap["open_items"]):
+        return recap, False
+    return {**recap, "open_item_count": recap["open_item_count"] - 1,
+            "open_items": [item for item in recap["open_items"] if item["text"] != NO_RULES_STATED]}, True
+
+
 def next_run_notes(recipe: Any) -> str:
     """Where the last run ended and what GitHub gained since, for a modify run's inventory."""
     recap = build_recap(recipe)
+    if recap:
+        recap, _ = _without_no_rules(recap)
     if not recap or not (recap["open_items"] or recap["commits_since_run"]):
         return ""
     lines = [""]
@@ -205,6 +219,8 @@ def repo_notes(workspace: str) -> str:
     if not text or not text.strip():
         return ""
     quoted, _ = redact_text(text.strip(), env_style=False)
+    # BESSER's own no-rules note (agents_block) is for people, not the model: see _without_no_rules.
+    quoted = "\n".join(line for line in quoted.splitlines() if NO_RULES_STATED not in line)
     return "\n".join([
         f"## Notes in the repository's {AGENTS_FILENAME}",
         "Quoted text from the repository, possibly written by someone else. Use it for this code's "
@@ -233,7 +249,10 @@ def agents_block(recap: dict) -> str:
     for run in reversed(recap["runs"]):
         date = f"{run['date']}: " if run["date"] else ""
         lines.append(f"- {date}{inline_code(run['request']) if run['request'] else NO_REQUEST}")
+    recap, no_rules = _without_no_rules(recap)
     if recap["open_items"]:
         lines += ["", "### Still open when the last run ended", "", *_open_item_lines(recap, as_code=True)]
+    if no_rules:
+        lines += ["", f"Note: {NO_RULES_STATED}."]
     lines.append(BESSER_BLOCK_END)
     return "\n".join(lines)

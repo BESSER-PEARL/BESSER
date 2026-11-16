@@ -18,6 +18,7 @@ Phase 3 (validation & fix):
   - Preserve unresolved findings as incomplete, never verified completion
 """
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -196,6 +197,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
     EVENT_ERROR,
     EVENT_COST_UPDATE,
+    EVENT_LLM_CALL,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
     EVENT_RUN_END,
@@ -407,7 +409,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.executor.app_validator = self._validate_app
         self.executor.time_left = self._time_left
         self.executor.api_tester = self._test_api
-        self._app_validation_cache: tuple[str, dict] | None = None
+        self._app_validation_cache: tuple[tuple, dict] | None = None
         self._api_scenarios: dict[str, dict] = {}
         # Give the LLM tools scoped to the models it actually has. Tools
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
@@ -452,6 +454,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirements: list[dict] | None = None
         self._requirement_verdicts: list[dict] = []
         self._requirement_verdicts_scope = ""  # the requirements and request they answered
+        self._requirement_verdicts_key = ""  # the judge's cache key (source, requirements) they answer
         # (requirement cache key, import index): one index per judged tree; see _import_index.
         self._import_index_cache: tuple[str, _requirements_ledger.ImportIndex] | None = None
         self._requirement_judgments: dict[str, list[dict]] = {}
@@ -763,8 +766,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._project_fingerprint = self._compute_project_fingerprint(instructions)
         self._trace.write(
             EVENT_RUN_START,
-            # bounded: trace display only, never a decision input
-            instructions=instructions[:500],
+            # bounded: trace display only, never a decision input. The user's own
+            # words: the modeling agent's notes come first and filled the 500.
+            instructions=_requirements_ledger.original_request(instructions)[:500],
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
             max_turns=self.max_turns,
@@ -1206,7 +1210,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
             return self.target_generator
 
-        llm_result = self._select_generator_with_llm(instructions)
+        with self._traced_llm_call("routing"):
+            llm_result = self._select_generator_with_llm(instructions)
         if self.target is None and self._can_route():
             logger.warning(
                 "Phase 1: the generator selector did not decide the target; "
@@ -1533,11 +1538,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """
         if self.target is not None or not self._can_route():
             return
-        routing = self._select_generator_structured(
-            f"User request: {user_request(instructions)}\n\n{TARGET_RULES}\n{STACK_RULES}\n"
-            "The generator is already settled: answer generator=NONE.",
-            [],
-        )
+        with self._traced_llm_call("routing_target") as call:
+            routing = self._select_generator_structured(
+                f"User request: {user_request(instructions)}\n\n{TARGET_RULES}\n{STACK_RULES}\n"
+                "The generator is already settled: answer generator=NONE.",
+                [],
+            )
+            call["outcome"] = "ok" if routing is not None else "failed"
         if routing is not None:
             self._record_routing(routing)
 
@@ -1876,23 +1883,27 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             gap_tasks = None
             messages = [self._kickoff_message(instructions)]
         else:
-            gap_tasks = analyze_gaps_via_llm(
-                instructions=self._planner_instructions(instructions),
-                generator_used=self._generator_used,
-                domain_model=self.domain_model,
-                inventory=self._inventory,
-                llm_client=self.client,
-                on_progress=self.on_progress,
-                on_phase_details=self.on_phase_details,
-                generator_failure=self._phase1_failure_reason,
-                modify_mode=self._modify_mode,
-                workspace_files=self._workspace_file_list(),
-                action_endpoints=self._expected_action_endpoints(),
-                target_description=(
-                    self.target.description
-                    if self.target is not None and not self.target.is_web_app else ""),
-                can_call=self._verification_call_allowed,
-            )
+            planner_instructions = self._planner_instructions(instructions)
+            with self._traced_llm_call("gap_analysis") as call:
+                gap_tasks = analyze_gaps_via_llm(
+                    # The user's words; the notes go apart, as the ledger reads them.
+                    instructions=_requirements_ledger.original_request(planner_instructions),
+                    assistant_notes=_requirements_ledger.assistant_notes(planner_instructions),
+                    generator_used=self._generator_used,
+                    domain_model=self.domain_model,
+                    inventory=self._inventory,
+                    llm_client=self.client,
+                    on_progress=self.on_progress,
+                    on_phase_details=self.on_phase_details,
+                    generator_failure=self._phase1_failure_reason,
+                    modify_mode=self._modify_mode,
+                    workspace_files=self._workspace_file_list(),
+                    action_endpoints=self._expected_action_endpoints(),
+                    target=self.target,
+                    can_call=self._verification_call_allowed,
+                )
+                call["outcome"] = "failed" if gap_tasks is None else "ok"
+                call["tasks"] = len(gap_tasks or [])
             # The planning call may have switched the client to its
             # outage fallback model — surface that before Phase 2 turns.
             self._notify_model_switch()
@@ -2050,6 +2061,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
             # -- Cost cap check (after each API call) ---------------------
             current_cost = self.client.usage.estimated_cost
+            # Every turn's cost, the closing end_turn reply included. The token
+            # counters show a run that re-bills its history (a low cache hit rate).
+            self._trace_cost_update(turn + 1)
             if not _cost_warning_fired and current_cost > self.max_cost_usd * 0.8:
                 logger.warning(
                     "Cost at 80%% of cap: $%.4f / $%.4f",
@@ -2207,16 +2221,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # re-execute the same tool calls on resume. We save
                 # after appending results so the rehydrated message
                 # list starts cleanly with the next assistant turn.
-                # The cost event carries the tracker's token counters so a
-                # run that re-bills its history (a low cache hit rate) is
-                # visible per turn, not only in the final recipe.
-                self._trace.write(
-                    EVENT_COST_UPDATE,
-                    turn=turn + 1,
-                    estimated_cost_usd=float(current_cost),
-                    **{k: v for k, v in self.client.usage.summary().items()
-                       if k.endswith("_tokens")},
-                )
                 self._save_checkpoint_for_turn(
                     turn=turn + 1,
                     messages=messages,
@@ -3042,13 +3046,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _validate_app(self) -> dict:
         """Model-facing, revision-bound diagnostics with no additional LLM cost."""
+        # Phase 3's last requirement judgment (no new call): a blocker the run holds is
+        # never answered with "verified". Empty until the judge has run.
+        ledger = [issue for issue in _requirements_ledger.ledger_issues(self._requirement_verdicts)
+                  if _classify_issue(issue).severity == "blocker"]
         revision = self._workspace_revision()
-        if self._app_validation_cache and self._app_validation_cache[0] == revision:
+        key = (revision, tuple(ledger))
+        if self._app_validation_cache and self._app_validation_cache[0] == key:
             return self._app_validation_cache[1]
         raw = self._collect_execution_issues()
         # A static frontend warning (e.g. an entity with no page) is reported, not refused: say so.
         raw += [issue if _classify_issue(issue).severity == "blocker" else f"{_ADVISORY_PREFIX}{issue}"
                 for issue in dict.fromkeys(self._static_frontend_issues()) if issue not in raw]
+        if ledger and self._requirement_cache_key(self._requirements_to_judge()) != self._requirement_verdicts_key:
+            # Judged on other source than the judge would read now: the edit may have settled
+            # it, and finishing judges it again. An edit the judge does not read changes nothing.
+            ledger = [f"{_ADVISORY_PREFIX}judged before your latest edits; it is re-judged when you finish: {issue}"
+                      for issue in ledger]
+        raw += ledger
         issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
         blockers = [issue for issue in issues if issue.severity == "blocker"]
         # A required check that did not run is a warning, not a pass.
@@ -3071,7 +3086,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                           "user requirements and business workflows before completion.") if unverified else
                          "These checks pass. Verify the remaining user requirements and business workflows before completion.",
         }
-        self._app_validation_cache = (revision, result)
+        self._app_validation_cache = (key, result)
         return result
 
     def _test_api(self, args: dict) -> dict:
@@ -3109,8 +3124,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             }))
         if not self.enable_import_smoke_check:
             return {"error": "Runtime execution is disabled; API workflows have not been verified."}
+        from besser.spec_driven_agent.validation.api_probe import _MAX_REQUESTS as _MAX_SCENARIO_REQUESTS
         from besser.spec_driven_agent.validation.api_probe import probe_api_scenario
 
+        if args.get("requests") == []:
+            return {"error": "A scenario needs at least one request; to rerun a saved one, give only its scenario_id."}
         if "requests" not in args:
             if previous is None:
                 return {"error": "Provide requests for a new workflow, or scenario_id to replay a retained one."}
@@ -3126,34 +3144,65 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         scenario_id = scenario_id or "scenario-" + hashlib.sha256(json.dumps(scenario, sort_keys=True).encode()).hexdigest()[:16]
         key = "named:" + scenario_id
         previous = self._api_scenarios.get(key)
+        if (previous is not None and previous.get("submitted_requests") == scenario["requests"]
+                and previous["scenario"].get("backend") == scenario["backend"]):
+            # The model's own list again after a restore: the same scenario, restored checks kept.
+            scenario = json.loads(json.dumps(previous["scenario"]))
         changed = previous is not None and previous["scenario"] != scenario
         reason = args.get("correction_reason")
         if changed and (not isinstance(reason, str) or not reason.strip()):
             return {"error": "Changing a saved scenario requires correction_reason explaining the mistaken test; do not relax the original specification."}
-        dropped = _dropped_passing_requests(previous["scenario"]["requests"], previous["report"],
-                                            scenario["requests"]) if changed else []
+        old_requests = previous["scenario"]["requests"] if changed else []
+        dropped = _dropped_passing_requests(old_requests, previous["report"], scenario["requests"]) if changed else []
+        restored = [_scenario_request_label(old_requests[index]) for index in dropped]
+        shown = "; ".join(restored[:self._DROPPED_CHECKS_SHOWN]) + (
+            f" (+{len(restored) - self._DROPPED_CHECKS_SHOWN} more)"
+            if len(restored) > self._DROPPED_CHECKS_SHOWN else "")
+        refused = (f"Correction refused: it drops checks that passed in this scenario's last run: "
+                   f"{shown}. Resubmit the full scenario with only the failing requests fixed, or "
+                   "run those checks under their own scenario_id.")
+        submitted = scenario["requests"]
         if dropped:
-            shown = "; ".join(dropped[:self._DROPPED_CHECKS_SHOWN]) + (
-                f" (+{len(dropped) - self._DROPPED_CHECKS_SHOWN} more)"
-                if len(dropped) > self._DROPPED_CHECKS_SHOWN else "")
-            return {"error": (f"Correction refused: it drops checks that passed in this scenario's last run: {shown}. "
-                              "Resubmit the full scenario with only the failing requests fixed, or run those "
-                              "checks under their own scenario_id.")}
+            # The checks that passed go back at the end, so the correction costs no turn (r12-p61).
+            requests = _with_requests_appended(submitted, old_requests, dropped)
+            if requests is None or len(requests) > _MAX_SCENARIO_REQUESTS:
+                return {"error": refused}
+            scenario["requests"] = requests
         if key not in self._api_scenarios and len(self._api_scenarios) >= 10:
             return {"error": "Ten workflow scenarios are already retained. Rerun an existing scenario or use validate_app."}
         revision = self._workspace_revision()
         report = probe_api_scenario(self.output_dir, scenario["requests"], backend=scenario["backend"])
+        ran = report.get("boot") != "not_started"
+        if dropped and ran and report.get("boot") != "ok":
+            # The re-added checks did not run (the app did not boot): saved, they would read
+            # as failing and the next correction could drop them. Keep the saved scenario.
+            return {"error": f"{refused} The app did not boot, so the re-added checks did not run and the "
+                             "correction was not saved.", "report": report}
+        if dropped and _failed_requests(report) & set(range(len(submitted), len(scenario["requests"]))):
+            # Re-added after the corrected requests changed the state, a check that passed in
+            # its own place can fail on a correct app; saving that would let the next correction
+            # drop it as failing. Keep the saved scenario, as before the restore existed.
+            return {"error": f"{refused} Re-added at the end they failed, so the correction was not saved.",
+                    "report": report}
         # Invalid tool arguments must not become impossible-to-repair app failures.
-        if report.get("boot") != "not_started":
+        if ran:
             history = list(previous.get("correction_history", [])) if previous else []
             if changed:
                 report["correction"] = {"reason": reason[:1000], "previous_status": previous["report"].get("status")}
                 history.append(report["correction"])
             self._api_scenarios[key] = {"scenario": scenario, "scenario_id": scenario_id, "revision": revision,
                                         "report": report, "correction_history": history[-5:]}
+            if dropped:
+                self._api_scenarios[key]["submitted_requests"] = submitted
+            elif previous is not None and not changed and previous.get("submitted_requests") is not None:
+                self._api_scenarios[key]["submitted_requests"] = previous["submitted_requests"]
             self._app_validation_cache = None
         if scenario_id:
             report["scenario_id"] = scenario_id
+        if dropped and ran:  # ran here means it booted: anything else returned above
+            report["restored_checks"] = (f"Your correction left out checks that passed last run; they were "
+                                         f"added back at the end and passed: {shown}. Rerun this scenario "
+                                         "by scenario_id alone; resending your own list keeps them too.")
         return report
 
     def _collect_api_scenario_issues(self) -> list[str]:
@@ -3991,10 +4040,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "revisions and is not asked again this run."]
             kept = self._requirements_still_verified(scope, imports)
             to_judge = [item for item in requirements if item["id"] not in kept]
-            verdicts = _requirements_ledger.judge_coverage(
-                to_judge, digest, self.client, original_spec=self._instructions,
-                can_call=self._verification_call_allowed,
-            ) if to_judge else []
+            with self._traced_llm_call("requirements_judge") as call:
+                verdicts = _requirements_ledger.judge_coverage(
+                    to_judge, digest, self.client, original_spec=self._instructions,
+                    can_call=self._verification_call_allowed,
+                ) if to_judge else []
+                call.update(_judge_outcome(to_judge, verdicts))
             if verdicts is not None and kept:
                 logger.info("Requirements ledger: %d verdict(s) kept, their cited files are unchanged; "
                             "%d judged again", len(kept), len(to_judge))
@@ -4012,10 +4063,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts = _requirements_ledger.verify_evidence(
             verdicts, self.output_dir, imports,
         )
-        # A partial/missing verdict about a file the digest left out or cut was
-        # not judged on the code; it joins the focused round with that file shown.
+        # A partial/missing/unverified verdict about a file the digest left out or cut
+        # was not judged on the code; it joins the focused round with that file shown
+        # (the judge is told to answer unverified for code it was not shown).
         unseen = {item["id"]: _requirements_ledger.named_digest_gaps(item, digest_gaps)
-                  for item in self._requirement_verdicts if item["status"] in ("partial", "missing")}
+                  for item in self._requirement_verdicts if item["status"] in ("partial", "missing", "unverified")}
         unseen = {rid: paths for rid, paths in unseen.items() if paths}
         unknown_ids = {item["id"] for item in self._requirement_verdicts
                        if item["status"] == "unverified"} | set(unseen)
@@ -4034,18 +4086,33 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             focused_digest = _requirements_ledger.build_app_digest(
                 self.output_dir, focus_paths=focus_paths,
             )
-            repair = _requirements_ledger.judge_coverage(
-                [item for item in requirements if item["id"] in unknown_ids],
-                focused_digest, self.client, original_spec=self._instructions,
-                previous_verdicts=[item for item in self._requirement_verdicts
-                                   if item["id"] in unknown_ids],
-                can_call=self._verification_call_allowed,
-            )
+            to_rejudge = [item for item in requirements if item["id"] in unknown_ids]
+            with self._traced_llm_call("requirements_rejudge") as call:
+                repair = _requirements_ledger.judge_coverage(
+                    to_rejudge, focused_digest, self.client, original_spec=self._instructions,
+                    previous_verdicts=[item for item in self._requirement_verdicts
+                                       if item["id"] in unknown_ids],
+                    can_call=self._verification_call_allowed,
+                )
+                call.update(_judge_outcome(to_rejudge, repair))
             # Only a verified 'implemented' replaces a verdict: the focused digest
             # omits most of the app, so a 'missing' from it proves nothing.
             repaired = _requirements_ledger.verify_evidence(repair or [], self.output_dir, imports)
             valid_ids = {item["id"] for item in repaired if item["status"] == "implemented"}
             replacements = {item["id"]: item for item in repair or [] if item["id"] in valid_ids}
+            # Otherwise a missing/partial from the focused digest proves no absence, so that
+            # status stands; the evidence and note are the judge's that saw the files: the
+            # first one's ("risk_service.py was not provided") is stale (r12-p81). Its own
+            # "implemented" is kept and re-checked, so the reason given is about its citation.
+            shown = ", ".join(_requirements_ledger.resolved_focus_paths(
+                _requirements_ledger._source_files(self.output_dir), focus_paths))
+            where = f"Judged again with {shown} shown" if shown else "Judged again on the whole app"
+            replacements.update({
+                item["id"]: {**previous, "evidence": item.get("evidence", previous.get("evidence")),
+                             "status": "implemented" if item.get("status") == "implemented" else previous["status"],
+                             "note": f"{where}: {item.get('note') or 'no note'}"}
+                for previous in verdicts for item in repair or []
+                if item["id"] == previous["id"] and item["id"] not in valid_ids})
             if replacements:
                 verdicts = [replacements.get(item["id"], item) for item in verdicts]
                 self._requirement_judgments[cache_key] = verdicts
@@ -4053,6 +4120,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
             self._requirement_verdicts, self._ui_in_scope())
         self._requirement_verdicts_scope = scope
+        self._requirement_verdicts_key = cache_key
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
     def _requirements_still_verified(self, scope: str,
@@ -4129,8 +4197,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
             return
         self._requirement_extraction_attempts += 1
-        self._requirements = _requirements_ledger.extract_requirements(
-            instructions, self.client, can_call=self._verification_call_allowed)
+        with self._traced_llm_call("requirements_extraction") as call:
+            self._requirements = _requirements_ledger.extract_requirements(
+                instructions, self.client, can_call=self._verification_call_allowed)
+            call["outcome"] = "failed" if self._requirements is None else "ok"
+            call["requirements"] = len(self._requirements or [])
         if self._requirements is None:
             # extract_requirements has five silent None paths; an empty list
             # in the recipe would read as "the user asked for nothing" rather
@@ -4951,6 +5022,70 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "files_touched": touched[:20],
         }]
 
+    def _usage_counters(self) -> dict:
+        """The client's cumulative call, token and cost counters (empty without a tracker)."""
+        usage = getattr(self.client, "usage", None)
+        if usage is None or not hasattr(usage, "summary"):
+            return {}
+        counters = {key: value for key, value in usage.summary().items()
+                    if key == "api_calls" or key.endswith("_tokens")}
+        return {**counters, "cost_usd": float(usage.estimated_cost)}
+
+    def _trace_cost_update(self, turn: int, **extra) -> None:
+        """A ``cost_update`` with the cumulative cost and token counters after a loop turn."""
+        counters = self._usage_counters()
+        cost = counters.pop("cost_usd", None)
+        if cost is None and getattr(getattr(self.client, "usage", None), "estimated_cost", None) is not None:
+            cost = float(self.client.usage.estimated_cost)
+        self._trace.write(EVENT_COST_UPDATE, turn=turn, estimated_cost_usd=cost, **extra,
+                          **{key: value for key, value in counters.items() if key.endswith("_tokens")})
+
+    @contextlib.contextmanager
+    def _traced_llm_call(self, purpose: str):
+        """One ``llm_call`` trace event for the provider calls made inside the block.
+
+        The caller may set ``outcome`` and counts on the yielded dict. Nothing is
+        written when the block made no call and reports no failure.
+        """
+        before = self._usage_counters()
+        call: dict = {"outcome": "ok"}
+        try:
+            yield call
+        except Exception:
+            call["outcome"] = "error"
+            raise
+        finally:
+            after = self._usage_counters()
+            delta = {key: value - before.get(key, 0) for key, value in after.items()}
+            if "cost_usd" in delta:
+                delta["cost_usd"] = round(delta["cost_usd"], 6)
+            if delta.get("api_calls") or call["outcome"] != "ok":
+                self._trace.write(EVENT_LLM_CALL, purpose=purpose, **call, **delta)
+
+    def _checks_that_ran(self) -> dict:
+        """What ran on the delivered tree: a passing frontend build, and the calls of the
+        API workflows that passed on it."""
+        revision = self._workspace_revision()
+        passed = [record["report"] for record in self._api_scenarios.values()
+                  if record["revision"] == revision and record["report"].get("status") == "passed"]
+        return {
+            # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
+            "frontend_built": any(key[1] == revision and verdict is None
+                                  for key, verdict in self._frontend_build_verdicts.items()),
+            "exercised": {(str(response.get("method", "")).upper(), str(response.get("path", "")))
+                          for report in passed for response in report.get("responses") or []
+                          if isinstance(response, dict) and response.get("path")},
+            "workflows_passed": len(passed),
+        }
+
+    def _business_rules_stated(self) -> bool | None:
+        """False only when the ledger ran and found nothing to check: no requirement in the
+        request and no rule in the model. None when the ledger did not run. Kind labels
+        are not read: they differ between runs of one request."""
+        if not self.enable_requirements_ledger or self._requirements is None:
+            return None
+        return bool(getattr(self.domain_model, "constraints", None) or self._requirements_for_validation())
+
     def _save_recipe(self, instructions: str, elapsed: float) -> None:
         # Build file manifest. Dependency / build directories are pruned:
         # an LLM-run ``npm install`` would otherwise put thousands of
@@ -5083,7 +5218,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # The user's requirements with the last Phase 3 verdict on each:
             # what was NOT built is read here, not inferred from the code.
             # The file hashes stay out: only this run's kept-verdict check reads them.
-            "requirements": _requirements_ledger.without_fingerprints(self._requirement_verdicts),
+            "requirements": _requirements_ledger.with_verification_levels(
+                _requirements_ledger.without_fingerprints(self._requirement_verdicts), self.output_dir,
+                **self._checks_that_ran()),
+            # False: the request and the model state no business rule, so none was checked.
+            "business_rules_stated": self._business_rules_stated(),
             "api_scenarios": api_scenario_snapshot(self._api_scenarios.values(), include_reports=True),
             "model_conversion_issues": getattr(self.domain_model, "conversion_issues", []) or [],
             "model_assembly_issues": self._assembly_issues,
@@ -5159,6 +5298,16 @@ _FRONTEND_SOURCE_MAX_BYTES = 1_000_000
 _ADVISORY_PREFIX = "advisory, not a blocker: "
 
 
+def _judge_outcome(requirements: list[dict], verdicts: list[dict] | None) -> dict:
+    """A judge call's trace outcome: failed, or the verdict count per status."""
+    if verdicts is None:
+        return {"outcome": "failed", "requirements": len(requirements)}
+    statuses: dict[str, int] = {}
+    for item in verdicts:
+        statuses[item.get("status", "?")] = statuses.get(item.get("status", "?"), 0) + 1
+    return {"outcome": "ok", "requirements": len(requirements), "verdicts": statuses}
+
+
 def _scenario_request_label(request: dict) -> str:
     """``METHOD path -> expected status`` for one test_api request."""
     expected = request.get("expected_status")
@@ -5167,8 +5316,33 @@ def _scenario_request_label(request: dict) -> str:
     return f"{request.get('method')} {request.get('path')} -> {shown}"
 
 
-def _dropped_passing_requests(old: list, report: dict, new: list) -> list[str]:
-    """Labels of ``old`` requests that passed in ``report`` and whose route ``new`` no longer calls.
+def _failed_requests(report: dict) -> set[int]:
+    """Indices of a test_api report's requests that errored, answered no status or failed an assertion."""
+    failed = {item.get("index") for item in report.get("responses") or [] if isinstance(item, dict)
+              and (not isinstance(item.get("status"), int) or item.get("failures") or "error" in item)}
+    failed |= {item.get("index") for item in report.get("assertion_failures") or [] if isinstance(item, dict)}
+    return failed
+
+
+def _with_requests_appended(new: list, old: list, indices: list[int]) -> list | None:
+    """``new`` with ``old[i]`` for each of ``indices`` appended, references renumbered;
+    None when one of them reads a response of a request that is not appended with it."""
+    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
+
+    position = {index: len(new) + offset for offset, index in enumerate(indices)}
+    appended = []
+    for index in indices:
+        text = json.dumps(old[index])
+        if not {int(ref) for ref, _ in _REFERENCE.findall(text)} <= position.keys():
+            return None
+        appended.append(json.loads(_REFERENCE.sub(
+            lambda match: "{{" + str(position[int(match.group(1))])
+            + (f".{match.group(2)}" if match.group(2) else "") + "}}", text)))
+    return [*new, *appended]
+
+
+def _dropped_passing_requests(old: list, report: dict, new: list) -> list[int]:
+    """Indices of ``old`` requests that passed in ``report`` and whose route ``new`` no longer calls.
 
     A request that failed, or reads (``{{N...}}``) a response that failed, may be
     dropped. Requests match on method and normalised path only (references and
@@ -5190,7 +5364,7 @@ def _dropped_passing_requests(old: list, report: dict, new: list) -> list[str]:
                 or {int(ref) for ref, _ in _REFERENCE.findall(json.dumps(request))} & failed):
             failed.add(index)
     kept = {route(request) for request in new if isinstance(request, dict)}
-    return [_scenario_request_label(request) for index, request in enumerate(old)
+    return [index for index, request in enumerate(old)
             if index not in failed and isinstance(request, dict) and route(request) not in kept]
 
 

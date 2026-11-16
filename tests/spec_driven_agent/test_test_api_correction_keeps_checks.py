@@ -104,19 +104,20 @@ def _correct(orch, requests):
     return result, probe
 
 
-def test_the_r9_p61_correction_is_refused_naming_the_dropped_auth_checks(tmp_path):
+def test_the_r9_p61_correction_keeps_the_dropped_auth_checks(tmp_path):
+    """They go back at the end of the corrected scenario (see test_test_api_correction_restores_checks.py)."""
     orch = _orch(tmp_path, FIRST, FAILED)
     result, probe = _correct(orch, CORRECTION)
-    assert not probe.called
-    error = result["error"]
+    assert probe.called
+    message = result["restored_checks"]
     # Matched by method and route only: the routes the correction no longer calls.
     for check in ("GET /treatmentplant/ -> 401", "POST /auth/login -> 401", "POST /auth/login -> 200",
                   "GET /auth/me -> 2xx", "GET /dashboard/plants/geojson/ -> 2xx", "GET /dashboard/geojson/ -> 2xx",
                   "POST /auth/logout -> 200", "GET /auth/me -> 401"):
-        assert check in error
-    assert "more)" not in error and "own scenario_id" in error
-    assert len(error) < 600
-    assert orch._api_scenarios["named:flow"]["scenario"]["requests"] == FIRST
+        assert check in message
+    assert "more)" not in message and len(message) < 600
+    kept = orch._api_scenarios["named:flow"]["scenario"]["requests"]
+    assert kept[:len(CORRECTION)] == CORRECTION and len(kept) == len(CORRECTION) + 8
 
 
 def test_fixing_only_the_failing_reference_is_accepted(tmp_path):
@@ -137,7 +138,7 @@ def test_failing_requests_and_those_reading_them_may_be_dropped(tmp_path):
     assert probe.called and "error" not in result
     orch = _orch(tmp_path, old, {0: {"status": 422, "failures": ["expected HTTP 2xx, got 422"]}})
     result, probe = _correct(orch, old[:2])
-    assert not probe.called and "GET /virus/ -> 200" in result["error"]
+    assert probe.called and "GET /virus/ -> 200" in result["restored_checks"]
 
 
 TODO_CREATE = {"method": "POST", "path": "/todoitem/", "json": {"title": "a"}}

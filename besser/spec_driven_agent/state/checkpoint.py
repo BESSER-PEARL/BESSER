@@ -180,6 +180,15 @@ def api_scenario_snapshot(records, *, include_reports: bool = False) -> list[dic
              "previous_status": str(item.get("previous_status", ""))[:40]}
             for item in history[-10:] if isinstance(item, dict)
         ]
+        submitted = record.get("submitted_requests")
+        if submitted is not None:
+            # The model's own list of a correction the harness added passing checks to: a
+            # convenience, so an invalid one is dropped, never a reason to lose the checkpoint.
+            try:
+                _validate_requests(submitted)
+                saved["submitted_requests"] = copy.deepcopy(submitted)
+            except ValueError as exc:
+                logger.warning("Saved API scenario %r: its submitted_requests are dropped: %s", identifier, exc)
         if include_reports:
             saved["report"] = copy.deepcopy(record.get("report") or {"status": "unverified"})
         output.append(saved)

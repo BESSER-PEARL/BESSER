@@ -62,6 +62,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_EXIT,
     EVENT_ROLLBACK,
     EVENT_SNAPSHOT,
+    EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
 )
 from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
@@ -171,6 +172,16 @@ def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
     tools = ", ".join(f"{tool} x{n}" for tool, n in counts.items())
     return (f"no edit attempted (attempt {attempt} made {len(calls)} tool call{plural}, "
             f"none an edit{failed_note}: {tools})")
+
+
+def _judge_left_unverified(verdict: dict) -> bool:
+    """The judge gave no citation to reject, or only a malformed one (real code misquoted):
+    no rejected citation of absent or role-failing code."""
+    label = verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED)
+    if label == _requirements_ledger.CITATION_MALFORMED:
+        return True
+    # Any other citation the verifier rejected is absent or fails its role.
+    return not label and not any(_requirements_ledger.cited_paths(verdict.get("evidence")))
 
 
 class Phase3RepairMixin:
@@ -394,6 +405,8 @@ class Phase3RepairMixin:
         # guard histogram is the only way to tell a tight guard from a weak
         # model. Report-only: nothing reads it back as a decision input.
         exit_reason = "attempt cap"
+        faced_last: frozenset | None = None
+        last_edits_rejected = False
         for _ in range(max_attempts):
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
@@ -405,8 +418,17 @@ class Phase3RepairMixin:
                                "locate after its citation-repair round; no fix attempt can change it")
                 exit_reason = "only unlocated requirement citations remain"
                 break
+            # The last attempt faced these very blockers, so it had this request. Not after
+            # an attempt whose edits were all rejected: the rejections reach the next prompt.
+            if (faced_last == self._blocker_identity(current_blockers) and not last_edits_rejected
+                    and self._only_rejudged_requirements_remain(current_blockers)):
+                logger.warning("Phase 3: every blocker is a requirement the judge still could not verify "
+                               "after its focused re-judge on this source; another attempt cannot change it")
+                exit_reason = "only requirements unverified after their re-judge remain"
+                break
             is_first_attempt = attempts_run == 0
             attempts_run += 1
+            faced_last = self._blocker_identity(current_blockers)
             self._trace.write(
                 EVENT_PHASE_ENTER,
                 phase="phase3_fix_attempt",
@@ -436,6 +458,7 @@ class Phase3RepairMixin:
                 if entry["tool"] in _WRITE_TOOLS_ON_RECORD
             )
             source_changed = revision_before != self._workspace_revision()
+            last_edits_rejected = bool(attempted_writes) and not edits and not source_changed
             source_ever_changed = source_ever_changed or source_changed
             obligations_changed = obligations_before != self._repair_obligations_revision()
             checkpoint_progress()
@@ -664,6 +687,34 @@ class Phase3RepairMixin:
                      if verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED) == _requirements_ledger.CITATION_MALFORMED
                      for issue in _requirements_ledger.ledger_issues([verdict])}
         if not blockers or any(issue.message not in unlocated for issue in blockers):
+            return False
+        return self._requirement_cache_key(self._requirements_to_judge()) in self._requirement_evidence_retries
+
+    def _blocker_identity(self, blockers: list[ValidationIssue]) -> frozenset:
+        """What blocks, as the stop compares rounds: a requirement by id, status and unlocated
+        label (its message holds the judge's note, re-worded by every re-judge), anything
+        else by its message."""
+        by_message = {message: ("requirement", verdict.get("id"), verdict.get("status"),
+                                verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED))
+                      for verdict in self._requirement_verdicts
+                      for message in _requirements_ledger.ledger_issues([verdict])}
+        return frozenset(by_message.get(issue.message, issue.message) for issue in blockers)
+
+    def _only_rejudged_requirements_remain(self, blockers: list[ValidationIssue]) -> bool:
+        """Every blocker is a requirement the judge itself left ``unverified`` (no citation
+        the verifier rejected, or only a malformed one), after its focused re-judge on this
+        exact source.
+
+        Asked only when the last attempt faced the same blockers: it had this request and
+        could not change it (r12-p81 attempt 3: four turns, no edit). A citation of code
+        that exists nowhere, or one whose cited body fails its role (a 501 scaffold, a
+        no-op), keeps its attempts: implementing it is the fix. Severity is kept.
+        """
+        unverified = {issue for verdict in self._requirement_verdicts
+                      if verdict.get("status") == "unverified" and verdict.get("kind") != "verification"
+                      and _judge_left_unverified(verdict)
+                      for issue in _requirements_ledger.ledger_issues([verdict])}
+        if not blockers or any(issue.message not in unverified for issue in blockers):
             return False
         return self._requirement_cache_key(self._requirements_to_judge()) in self._requirement_evidence_retries
 
@@ -1155,6 +1206,7 @@ class Phase3RepairMixin:
                 })
             turn += 1
             self.total_turns += 1
+            self._trace.write(EVENT_TURN_START, turn=self.total_turns, phase="phase3_fix")
             # Recovery is shared with Phase 2. Do not force the failing text
             # strategy again after the executor requested a fresh read/range edit.
             force = self._force_tool_next or force_next
@@ -1193,6 +1245,7 @@ class Phase3RepairMixin:
                 return edits
             # Repair calls can trigger the outage fallback too, as in Phase 2.
             self._notify_model_switch()
+            self._trace_cost_update(self.total_turns, phase="phase3_fix")
             # A stop can arrive while a provider request is in flight. Do not
             # apply its returned mutations after cancellation. The final allowed
             # turn may still execute its tools; it is not a new provider call.

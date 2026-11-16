@@ -603,7 +603,7 @@ def _breaks_module_import(path: str, before: str, after: str,
     try:
         from besser.spec_driven_agent.repair.import_repair import repair_missing_imports
 
-        repaired, _notes = repair_missing_imports(path, after)
+        repaired, _notes = repair_missing_imports(path, after, root=workspace)
     except Exception:
         repaired = after
     now_ok, reason = imports(repaired)
@@ -1577,7 +1577,7 @@ class ToolExecutor:
         try:
             from besser.spec_driven_agent.repair.import_repair import repair_missing_imports
 
-            repaired, notes = repair_missing_imports(rel_path, content)
+            repaired, notes = repair_missing_imports(rel_path, content, root=self.workspace)
             if not notes or repaired == content:
                 return content, []
             return repaired, notes
@@ -3822,7 +3822,13 @@ class ToolExecutor:
     def _validate_app(self, args: dict) -> dict:
         if self.app_validator is None:
             return {"error": "Application verification is unavailable in this executor; do not claim the app was verified."}
-        return self.app_validator()
+        result = self.app_validator()
+        if isinstance(result, dict) and result.get("verified") is True and self._tasks:
+            # The ids task_list(done) needs: without them the next turn was a task_list 'list' alone.
+            # A copy: the orchestrator caches and re-serves its result.
+            result = {**result, "open_items": [
+                {"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]}
+        return result
 
     def _test_api(self, args: dict) -> dict:
         if self.api_tester is None:

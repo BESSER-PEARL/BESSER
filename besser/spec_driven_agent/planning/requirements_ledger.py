@@ -28,13 +28,19 @@ from typing import Callable, NamedTuple
 import re
 import time
 
-from pygments.token import Comment
+from pygments.token import Comment, String
 
 from besser.spec_driven_agent.planning.code_text import _lexer_for, code_only
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
+from besser.spec_driven_agent.planning.requested_routes import _ANY_VERB as _ROUTE_ANY_VERB
+from besser.spec_driven_agent.planning.requested_routes import _PARAM_RE as _ROUTE_PARAM_RE
+from besser.spec_driven_agent.planning.requested_routes import _VERBS as _ROUTE_VERBS
+from besser.spec_driven_agent.planning.requested_routes import _literal as _route_literal
+from besser.spec_driven_agent.planning.requested_routes import _methods as _route_methods
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
 from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
+from besser.spec_driven_agent.state.agent_trace import matching_lines
 from besser.spec_driven_agent.state.generator_output import GeneratorOutputError, load_generator_output
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
@@ -204,16 +210,63 @@ class _Source(NamedTuple):
     diagnostics: list[dict]
     comments: set[int]
     bare: list[str]  # normalised lines without comments; strings kept
+    # normalised lines with each string and comment character replaced by _MASK
+    # (same length); empty when the file could not be lexed line for line
+    masked: list[str]
 
 
-def _in_code(quoted: str, source: _Source, index: int) -> bool:
-    """The quote is verbatim in the line, and not inside its strings or comment.
+_MASK = "\uffff"  # a noncharacter: never in source text
 
-    Both tests are needed: removing strings alone makes CheckConstraint("a > 0")
-    and CheckConstraint("b > 0") the same text.
+
+def _masked_lines(source: str, path: str, normalised: list[str]) -> list[str]:
+    """``normalised``, with the characters of strings and comments replaced by ``_MASK``."""
+    lexer = _lexer_for(Path(path).suffix.lower())
+    if lexer is None:
+        return normalised
+    masked = "".join(re.sub(r"\S", _MASK, value) if token in Comment or token in String else value
+                     for token, value in lexer.get_tokens(source))
+    lines = [_normalise_line(line) for line in masked.splitlines()]
+    return lines if [len(line) for line in lines] == [len(line) for line in normalised] else []
+
+
+def _in_code(quoted: str, source: _Source, index: int, min_code: int = 1) -> bool:
+    """The quote is verbatim in the line, holds at least ``min_code`` characters of its
+    code (not of its strings or comment), and starts and ends outside a string or comment.
+
+    Verbatim, strings included: removing strings alone makes CheckConstraint("a > 0")
+    and CheckConstraint("b > 0") the same text. The quote itself is not lexed:
+    collapsed, ``<th className="num">`` lexed differently from its line (r12-p21).
+    A string's text with its closing ``")`` is not code (review: ``...stored.";``).
     """
-    return (quoted in source.normalised[index]
-            and _collapse(code_only(quoted, source.path)) in source.code[index])
+    line = source.normalised[index]
+    if not source.masked:
+        code = _collapse(code_only(quoted, source.path))
+        return len(code) >= min_code and quoted in line and code in source.code[index]
+    mask = source.masked[index]
+    at = line.find(quoted)
+    while at >= 0:
+        end = at + len(quoted)
+        inside = (at > 0 and mask[at - 1] == mask[at] == _MASK) or (
+            end < len(mask) and mask[end - 1] == mask[end] == _MASK)
+        if not inside and len(mask[at:end].replace(_MASK, "")) >= min_code:
+            return True
+        at = line.find(quoted, at + 1)
+    return False
+
+
+def _string_literal_at(quoted: str, source: _Source, index: int) -> bool:
+    """The quote is exactly one or more whole string literals of the line, quotes included."""
+    if not source.masked or len(quoted) < 3 or quoted[0] not in "\"`" or quoted[-1] not in "\"`":
+        return False
+    line, mask = source.normalised[index], source.masked[index]
+    at = line.find(quoted)
+    while at >= 0:
+        end = at + len(quoted)
+        if (not mask[at:end].strip(_MASK) and (at == 0 or mask[at - 1] != _MASK)
+                and (end == len(mask) or mask[end] != _MASK)):
+            return True
+        at = line.find(quoted, at + 1)
+    return False
 
 
 def _is_complete_call(quoted: str) -> bool:
@@ -233,7 +286,8 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False) -> list[tuple[
 
 def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):
     target = _joined_strings(quoted)
-    inline = _is_complete_call(quoted) or len(_collapse(code_only(quoted, source.path))) >= _MIN_INLINE_QUOTE
+    # Counted on the line's own code, not on the quote lexed alone.
+    min_code = 1 if _is_complete_call(quoted) else _MIN_INLINE_QUOTE
     for start, first in enumerate(normalised):
         # A line may end in the block it opens ("Card(...) {", "def f():"), which
         # the judge leaves off; nothing else may be missing. A complete call
@@ -242,7 +296,7 @@ def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):
         if (first == quoted
                 or (first.startswith(quoted) and set(first[len(quoted):]) <= _BLOCK_PUNCTUATION)
                 or (cut and len(quoted) >= _MIN_CUT_QUOTE and first.startswith(quoted))
-                or (inline and _in_code(quoted, source, start))):
+                or _in_code(quoted, source, start, min_code)):
             yield start + 1, start + 1
             continue
         if not first or not target.startswith(_joined_strings(first)):
@@ -526,6 +580,13 @@ def original_request(instructions: str) -> str:
     return tail
 
 
+def assistant_notes(instructions: str) -> str:
+    """The modeling agent's notes before the verbatim request; "" when there is no marker."""
+    text = instructions or ""
+    idx = text.find(VERBATIM_MARKER)
+    return text[:idx].strip() if idx > 0 else ""
+
+
 def latest_user_message(instructions: str) -> str:
     """The user's newest message: the text after the last later-request
     heading of :func:`original_request`, else the whole original request."""
@@ -649,36 +710,114 @@ def render_requirements(requirements: list[dict] | None) -> str:
     return "\n".join(f"R{r['id']}. {r['text']}" for r in requirements or [])
 
 
-def _digest_priority(rel: str, untouched: frozenset[str] = frozenset()) -> tuple[int, str]:
+def _digest_priority(rel: str, shares: dict[str, float | None] | None = None) -> tuple[int, float, str]:
+    """Digest order: schemas, backend code by the share of it the agent wrote, untouched
+    generator output, pages and components, the rest. With no stored generator output
+    (``shares`` empty) routers come before the other Python modules."""
     if rel.endswith(("pydantic_classes.py", "sql_alchemy.py")):
-        return (0, rel)
+        return (0, 0.0, rel)
     router = "/routers/" in rel or rel.startswith("routers/")
     if router or rel.endswith(".py"):
-        # A CRUD router as generated holds no hand-written logic; a service module does.
-        return (3 if rel in untouched else 1 if router else 2, rel)
+        if not shares:
+            return (1 if router else 2, 0.0, rel)
+        # A file the generator did not write is wholly the agent's; an unknown share is edited.
+        share = shares.get(rel, 1.0)
+        share = _UNKNOWN_SHARE if share is None else share
+        return (3 if share == 0 else 1, -share, rel)
     if "/pages/" in f"/{rel}" or "/components/" in f"/{rel}":
-        return (4, rel)
-    return (5, rel)
+        return (4, 0.0, rel)
+    return (5, 0.0, rel)
 
 
-def _untouched_generator_files(output_dir: str, files: dict[str, str]) -> frozenset[str]:
-    """The judged files still byte-identical to the stored generator output."""
+def _generator_baselines(output_dir: str, files: dict[str, str]) -> dict[str, str]:
+    """The stored generator output of each judged file it holds; empty when there is no store."""
     for out_dir in sorted({rel.split("/", 1)[0] for rel in files if "/" in rel}):
         try:
             stored = load_generator_output(output_dir, out_dir)
         except GeneratorOutputError:
             continue
         if stored is None:
-            return frozenset()
-        untouched = set()
-        for rel, content in stored.files.items():
-            try:
-                if rel in files and Path(files[rel]).read_bytes() == content:
-                    untouched.add(rel)
-            except OSError:
-                continue
-        return frozenset(untouched)
-    return frozenset()
+            return {}
+        return {rel: content.decode("utf-8", "replace") for rel, content in stored.files.items() if rel in files}
+    return {}
+
+
+# Over this many lines a file's share is not computed: a line diff of a repetitive file
+# grows fast (2,000 lines with a 3- and a 5-line period: 14 s). Generated files run to ~750.
+_MAX_SHARE_DIFF_LINES = 1_500
+# Where a file whose share is not computed ranks among the edited ones.
+_UNKNOWN_SHARE = 0.5
+
+
+@lru_cache(maxsize=256)
+def _written_share(current: str, generated: str) -> float | None:
+    """The share of ``current``'s lines that are not in ``generated`` (0 when untouched);
+    None (edited, share unknown) for a file over ``_MAX_SHARE_DIFF_LINES``. Cached: the
+    judge's cache key asks for every file's share on each validation."""
+    if current == generated:
+        return 0.0
+    lines, old = current.splitlines(), generated.splitlines()
+    if max(len(lines), len(old)) > _MAX_SHARE_DIFF_LINES:
+        return None
+    kept = sum(size for _, _, size in matching_lines(old, lines))
+    return round((len(lines) - kept) / len(lines), 4) if lines else 0.0
+
+
+def _written_shares(output_dir: str, files: dict[str, str],
+                    baselines: dict[str, str] | None = None) -> dict[str, float | None]:
+    """For each judged file the stored generator output holds, the share of its lines
+    the agent wrote (0 for untouched); empty when there is no store."""
+    shares: dict[str, float | None] = {}
+    for rel, generated in (_generator_baselines(output_dir, files) if baselines is None else baselines).items():
+        try:
+            current = Path(files[rel]).read_bytes().decode("utf-8", "replace")
+        except OSError:
+            continue
+        shares[rel] = _written_share(current, generated)
+    return shares
+
+
+# An edited generator file under this share is shown as its changed regions (r12-p81:
+# seven routers 1-16% edited took 130K of the digest and pushed the rules module out).
+_REGION_VIEW_MAX_SHARE = 0.5
+# Unchanged lines kept around each changed one, so a changed line keeps its route or def.
+_REGION_CONTEXT_LINES = 3
+
+
+def _changed_regions(compacted: str, generated: str) -> str:
+    """``compacted`` (a :func:`_compact` file) without its runs of lines unchanged from
+    ``generated`` beyond ``_REGION_CONTEXT_LINES`` of a change; each run left out is
+    marked, and so is each place where generator lines were removed."""
+    lines = compacted.splitlines()
+    changed = [True] * len(lines)
+    removed: dict[int, int] = {}  # index in ``lines`` -> generator lines removed just before it
+    old_end = 0
+    for old_start, start, size in matching_lines(_compact(generated).splitlines(), lines):
+        if old_start > old_end:
+            removed[start] = removed.get(start, 0) + old_start - old_end
+        changed[start:start + size] = [False] * size
+        old_end = old_start + size
+    shown = [False] * len(lines)
+    windows = [(i, i + 1) for i, flag in enumerate(changed) if flag] + [(i, i) for i in removed]
+    for first, last in windows:  # a change's lines, or the gap a removal left
+        low, high = max(0, first - _REGION_CONTEXT_LINES), last + _REGION_CONTEXT_LINES
+        shown[low:high] = [True] * len(shown[low:high])
+    parts: list[str] = []
+    skipped = 0
+    for index in range(len(lines) + 1):
+        keep = index < len(lines) and shown[index]
+        if skipped and (keep or index in removed or index == len(lines)):
+            parts.append(f"[{skipped} unchanged generator lines left out]")
+            skipped = 0
+        if index in removed:
+            parts.append(f"[{removed[index]} generator lines removed here]")
+        if index == len(lines):
+            break
+        if keep:
+            parts.append(lines[index])
+        else:
+            skipped += 1
+    return "\n".join(parts)
 
 
 def _source_files(output_dir: str) -> dict[str, str]:
@@ -713,8 +852,8 @@ def judged_source_fingerprint(output_dir: str) -> str:
     """
     fingerprint = hashlib.sha256()
     files = _source_files(output_dir)
-    # Which files are untouched generator output orders the digest.
-    fingerprint.update(json.dumps(sorted(_untouched_generator_files(output_dir, files))).encode("utf-8"))
+    # How much of each generated file the agent wrote orders the digest.
+    fingerprint.update(json.dumps(sorted(_written_shares(output_dir, files).items())).encode("utf-8"))
     for rel, full in sorted(files.items()):
         try:
             content = Path(full).read_bytes()
@@ -769,6 +908,21 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     return build_app_digest_and_gaps(output_dir, focus_paths=focus_paths)[0]
 
 
+def resolved_focus_paths(files: dict[str, str], focus_paths: list | None) -> list[str]:
+    """The judged files the first ten focus paths name, each unambiguously (a path or a suffix)."""
+    resolved: list[str] = []
+    for path in (focus_paths or [])[:10]:
+        if not isinstance(path, str):
+            continue
+        path = path.strip().replace("\\", "/")
+        while path.startswith("./"):
+            path = path[2:]
+        candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
+        if path and len(candidates) == 1 and candidates[0] not in resolved:
+            resolved.append(candidates[0])
+    return resolved
+
+
 def build_app_digest_and_gaps(output_dir: str, *,
                               focus_paths: list[str] | None = None) -> tuple[str, frozenset[str]]:
     """:func:`build_app_digest`, and the source files it left out or cut for the budget.
@@ -778,23 +932,17 @@ def build_app_digest_and_gaps(output_dir: str, *,
     focused digest leaves out on purpose are not gaps.
     """
     files = _source_files(output_dir)
-    untouched = _untouched_generator_files(output_dir, files)
-    focused = set()
-    for path in (focus_paths or [])[:10]:
-        if not isinstance(path, str):
-            continue
-        path = path.strip().replace("\\", "/")
-        while path.startswith("./"):
-            path = path[2:]
-        candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
-        if path and len(candidates) == 1:
-            focused.add(candidates[0])
+    baselines = _generator_baselines(output_dir, files)
+    shares = _written_shares(output_dir, files, baselines)
+    focused = set(resolved_focus_paths(files, focus_paths))
     if focus_paths and not focused:
         logger.warning("Requirements ledger: no cited path resolved for citation repair; "
                        "the repair reads the whole app")
     footer_budget = min(6000, max(256, _DIGEST_MAX_TOTAL_CHARS // 10), _DIGEST_MAX_TOTAL_CHARS)
     source_budget = _DIGEST_MAX_TOTAL_CHARS - footer_budget
     entries = []
+    regions: set[str] = set()
+    contents: list[tuple[str, str]] = []
     unreadable = []
     omitted_by_focus: list[str] = []
     for rel, full in files.items():
@@ -812,6 +960,16 @@ def build_app_digest_and_gaps(output_dir: str, *,
             continue
         if not content:  # an empty __init__.py: nothing to show
             continue
+        contents.append((rel, content))
+    # Only when the whole app does not fit: shown whole, generated code a requirement
+    # relies on (a CRUD route) stays citable.
+    whole = sum(len(rel) + min(len(content), _DIGEST_MAX_FILE_CHARS) + 7 for rel, content in contents)
+    for rel, content in contents:
+        if (whole > source_budget and rel not in focused and rel in baselines
+                and _digest_priority(rel)[0] != 0 and shares[rel] is not None
+                and 0 < shares[rel] < _REGION_VIEW_MAX_SHARE):
+            content = _changed_regions(content, baselines[rel])
+            regions.add(rel)
         header = f"### {rel}\n"
         # The cited files share the budget: one large file must not crowd out the next.
         cap = (max(0, source_budget // len(focused) - len(header) - 200) if rel in focused
@@ -821,7 +979,7 @@ def build_app_digest_and_gaps(output_dir: str, *,
         if truncated:
             chunk += (f"\n[DIGEST TRUNCATED: {rel}; showing {cap} of {len(content)} code characters. "
                       "Do not infer absence from omitted code.]\n")
-        entries.append(((0 if rel in focused else 1, *_digest_priority(rel, untouched)), rel, chunk, truncated))
+        entries.append(((0 if rel in focused else 1, *_digest_priority(rel, shares)), rel, chunk, truncated))
     entries.sort(key=lambda e: e[0])
     reserved: set[str] = set()
     total = 0
@@ -843,7 +1001,7 @@ def build_app_digest_and_gaps(output_dir: str, *,
                 continue
             total += len(chunk) + 2
         parts.append(chunk)
-        if truncated:
+        if truncated or rel in regions:
             truncated_paths.append(rel)
     footer = (
         "\n\n## Digest coverage (not application source)\n"
@@ -853,6 +1011,9 @@ def build_app_digest_and_gaps(output_dir: str, *,
         + ("This is a focused excerpt: only the cited files and the schema files are shown; "
            "the rest of the application is omitted, not absent.\n" if omitted_by_focus else "")
         + ("Truncated files: " + ", ".join(truncated_paths) + "\n" if truncated_paths else "")
+        + ("Of these, shown as their edits only (unchanged generator lines left out, and lines the agent "
+           "removed, are marked where they were): "
+           + ", ".join(sorted(regions & set(truncated_paths))) + "\n" if regions & set(truncated_paths) else "")
         + ("Omitted files: " + ", ".join(omitted) + "\n" if omitted else "")
     )
     if len(footer) > footer_budget:
@@ -1239,7 +1400,7 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
             with open(candidate, "r", encoding="utf-8-sig", errors="ignore") as fh:
                 source = fh.read()
         except OSError:
-            parsed[candidate] = _Source(candidate, [], [], [], None, [], set(), [])
+            parsed[candidate] = _Source(candidate, [], [], [], None, [], set(), [], [])
             return parsed[candidate]
         tree = None
         if candidate.endswith(".py"):
@@ -1256,6 +1417,7 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
             python_structural_diagnostics(tree, sqlite=sqlite) if tree else [],
             _comment_only_lines(source, Path(candidate).suffix.lower()),
             bare if len(bare) == len(lines) else normalised,
+            _masked_lines(source, candidate, normalised),
         )
     return parsed[candidate]
 
@@ -1342,6 +1504,15 @@ def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str, cac
     when it follows no line. The flag says a near match was found: the cited
     code is there, the quote of it is malformed."""
     lines = source.normalised
+    # Verbatim inside a line, in its code: the line is there, the quote is only part of it.
+    # A whole message literal ("Room already booked") is this file's text at any length; a
+    # one-word one ("ok", "admin") is in almost any file, so it needs the minimum, like code.
+    message = any(char.isspace() for char in _as_written(raw, part, len(raw) + 3))
+    inside = next((i for i, line in enumerate(lines) if line.find(part) > 0 and (
+        (_string_literal_at(part, source, i) and (message or len(part) >= _MIN_CUT_QUOTE))
+        or (len(part) >= _MIN_CUT_QUOTE and _in_code(part, source, i)))), None)
+    if inside is not None:
+        return f"the part is inside {path} line {inside + 1}; cite that whole line", True
     best = (0, 0, 0, 0)  # characters followed, first line, line where it leaves, whole-line characters
     for start, first in enumerate(lines):
         if not first or not part.startswith(first[:_MIN_CUT_QUOTE]):
@@ -1643,17 +1814,25 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
     unmatched, unmatched_in = quoted, (source, path)
     if not spans:
         located = []
+        literals: list[str] = []
         for part_path, part, cut in _citation_parts(raw_quote, path, files):
             homes = _resolve_cited_path(part_path, part, files, quote_cache)
             part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
             spans = list(_quote_spans(part, part_source, cut)) if part_source else []
             # A part need not be a whole statement ("{ save(n); done = true }"
-            # splits at its ";"), but it must be code in that file.
-            if not spans and not (part_source and any(
-                    _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
+            # splits at its ";"), but it must be code in that file, or a whole string
+            # literal of it beside another part that is ("if end < start: ... "msg"").
+            lines = range(len(part_source.lines)) if part_source else range(0)
+            if not spans and not any(_in_code(part, part_source, i) for i in lines):
+                if any(_string_literal_at(part, part_source, i) for i in lines):
+                    literals.append(part)
+                    continue
                 located, unmatched, unmatched_in = [], part, (part_source, part_path)
                 break
             located.append((part_source, part, spans))
+        if literals and not located and unmatched_in == (source, path):
+            # Only string literals: real text of the file, but no code proves anything.
+            unmatched = literals[0]
     if any(spans for _, _, spans in located):
         return located, "", False
     syntax = _syntax_spans(raw_quote, source, quote_cache)
@@ -1876,6 +2055,111 @@ def _ancestors(folder: str) -> list[str]:
     return chain
 
 
+# Cited code no harness check runs (no screen is rendered); any other cited file is backend code.
+_FRONTEND_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", ".css")
+
+
+def _path_segments(path: str) -> tuple[str, ...]:
+    """A route or a called path as segments, each parameter or numeric id as ``{}``."""
+    path = _ROUTE_PARAM_RE.sub("{}", str(path).split("?", 1)[0])
+    return tuple("{}" if part.isdigit() else part for part in path.split("/") if part)
+
+
+def _declared_routes(full: str) -> set[tuple[frozenset[str] | None, tuple[str, ...]]]:
+    """The routes a Python file's decorators and ``add_api_route`` calls declare: (methods or
+    None for any, segments), under the literal ``prefix=`` of the router they are on. A
+    router whose prefix is not a literal declares nothing that can be matched. Prefixes
+    added where the router is included are not known: calls are matched by suffix."""
+    try:
+        tree = ast.parse(Path(full).read_text(encoding="utf-8-sig", errors="ignore"))
+    except (OSError, SyntaxError, ValueError, RecursionError):
+        return set()
+    prefixes: dict[str, str | None] = {}  # router name -> its literal prefix, None when not literal
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Call):
+            prefix = next((kw.value for kw in node.value.keywords if kw.arg == "prefix"), None)
+            for target in getattr(node, "targets", None) or [node.target]:
+                if isinstance(target, ast.Name) and prefix is not None:
+                    prefixes[target.id] = _route_literal(prefix)
+    routes = set()
+    for node in ast.walk(tree):
+        calls = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            calls = [d for d in node.decorator_list if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                     and d.func.attr in _ROUTE_VERBS | _ROUTE_ANY_VERB]
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_api_route":
+            calls = [node]
+        for call in calls:
+            route = _route_literal(call.args[0] if call.args else next(
+                (kw.value for kw in call.keywords if kw.arg == "path"), None))
+            receiver = getattr(call.func.value, "id", None)
+            if route is None or (receiver in prefixes and prefixes[receiver] is None):
+                continue
+            prefix = prefixes.get(receiver) or ""
+            routes.add((_route_methods(call, call.func.attr), _path_segments(f"{prefix}/{route}")))
+    return routes
+
+
+def _route_called(routes: set, method: str, path: str) -> bool:
+    """A call ends with one of ``routes`` (the router prefix is not known), method included.
+    A route of parameters only (``/{id}``) proves nothing about which file served it."""
+    called = _path_segments(path)
+    for methods, segments in routes:
+        if (not any(part != "{}" for part in segments) or len(segments) > len(called)
+                or (methods is not None and method.upper() not in methods)):
+            continue
+        tail = called[len(called) - len(segments):]
+        if all(want == "{}" or want == got for want, got in zip(segments, tail)):
+            return True
+    return False
+
+
+def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_built: bool,
+                             exercised: set[tuple[str, str]], workflows_passed: int) -> list[dict]:
+    """Each implemented verdict with what besides its citation checked it.
+
+    ``verified`` only when a passing ``test_api`` workflow called (``exercised``: method,
+    path) a route declared in a cited backend file and no frontend file is cited: no
+    harness check renders a screen, and a frontend that builds has not been run.
+    ``unverified`` otherwise, the note saying what did and did not run. Never a blocker.
+    """
+    files = _source_files(output_dir)
+    routes_cache: dict[str, set] = {}
+    leveled = []
+    for item in verdicts:
+        if item.get("status") != "implemented":
+            leveled.append(item)
+            continue
+        paths = [path.strip().replace("\\", "/") for path in cited_paths(item.get("evidence")) if path.strip()]
+        ran, missing = [], []
+        if any(path.lower().endswith(_FRONTEND_SUFFIXES) for path in paths):
+            missing.append("the frontend builds; its screens were not run" if frontend_built
+                           else "the frontend was not built")
+        backend = [path for path in paths if not path.lower().endswith(_FRONTEND_SUFFIXES)]
+        if backend:
+            routes = set()
+            for path in backend:
+                full = files.get(path) or next((v for k, v in files.items() if k.endswith("/" + path)), None)
+                if full and full.endswith(".py"):
+                    routes |= routes_cache.setdefault(full, _declared_routes(full))
+            call = next((f"{method} {path}" for method, path in sorted(exercised) if _route_called(routes, method, path)),
+                        None)
+            if call:
+                ran.append(f"a passing API workflow called {call}, a route in the cited files")
+            else:
+                missing.append("an API workflow passed but called no route in the cited files" if workflows_passed
+                               else "no API workflow passed against the app")
+        verified = bool(paths) and not missing
+        if verified:
+            note = "Cited in the source; " + " and ".join(ran)
+        elif ran:
+            note = "Found in the source; " + " and ".join(ran + missing)
+        else:
+            note = "Found in the source only; " + " and ".join(missing or ["nothing cited"])
+        leveled.append({**item, "verification": "verified" if verified else "unverified", "verification_note": note})
+    return leveled
+
+
 def without_fingerprints(verdicts: list[dict]) -> list[dict]:
     """The verdicts without the file hashes only a kept verdict's check reads."""
     return [{key: value for key, value in item.items() if key not in VERDICT_FINGERPRINT_KEYS}
@@ -1931,7 +2215,7 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         elif status == "unverified":
             issues.append(
                 f"requirement unverified: {label} — the cited evidence "
-                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; inspect the actual source "
-                "and correct the citation, implementing behaviour only if it is absent"
+                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; implement the behaviour only if it is really absent: "
+                "the citation is re-judged automatically"
             )
     return issues

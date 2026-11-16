@@ -31,7 +31,7 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
-from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
+from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message, original_request
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
@@ -186,7 +186,7 @@ class ModifyRunMixin:
             EVENT_RUN_START,
             mode="modify",
             # bounded: trace display only, never a decision input
-            instructions=instructions[:500],
+            instructions=original_request(instructions)[:500],
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
             max_turns=self.max_turns,

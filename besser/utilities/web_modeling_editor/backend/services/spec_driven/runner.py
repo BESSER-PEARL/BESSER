@@ -61,6 +61,7 @@ from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by
 from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
+from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
@@ -493,11 +494,13 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         what = str(verdict.get("text") or "")
         note = str(verdict.get("note") or "")
         if status == "implemented":
-            verified.append(_item(
-                "requirement", ident, what,
-                how="implementation cited and re-checked against the delivered "
-                    f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}",
-            ))
+            how = ("implementation cited and re-checked against the delivered "
+                   f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}")
+            level = str(verdict.get("verification_note") or "") if verdict.get("verification") == "unverified" else ""
+            if level:
+                # Clip the citation, not the note: a bare "implemented" would read as checked.
+                how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
+            verified.append(_item("requirement", ident, what, how=how))
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
                       else "the delivered code implements it only partly")
@@ -508,6 +511,10 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             not_verified.append(_item(
                 "requirement", ident, what, why=note or "no verdict was reached",
             ))
+
+    # 2b. An empty ledger is not a clean one: the request stated no rule to check.
+    if recipe.get("business_rules_stated") is False:
+        not_verified.append(_item("check", "", NO_RULES_STATED))
 
     # 3. API workflows — the only evidence in the recipe that something was
     #    actually RUN against the app rather than read.

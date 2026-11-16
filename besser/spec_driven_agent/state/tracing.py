@@ -52,6 +52,10 @@ EVENT_PHASE_EXIT = "phase_exit"
 EVENT_TURN_START = "turn_start"
 EVENT_TOOL_CALL = "tool_call"
 EVENT_COST_UPDATE = "cost_update"
+# One LLM call outside the Phase 2 tool loop (planner, requirements judge,
+# repair, ...). Payload: ``purpose``, ``outcome``, the call's ``*_tokens``
+# counters and ``cost_usd``, so a run's whole cost is visible in the trace.
+EVENT_LLM_CALL = "llm_call"
 EVENT_COMPACTION = "compaction"
 EVENT_SNAPSHOT = "snapshot"
 EVENT_ROLLBACK = "rollback"

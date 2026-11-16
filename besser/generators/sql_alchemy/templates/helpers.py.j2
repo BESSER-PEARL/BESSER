@@ -40,9 +40,6 @@
     {%- if is_pk and attribute.name == 'id' and attribute.type.name in ('str', 'string') and attribute.default_value is none %}, default=_new_str_id{% endif %}
     {%- if unique_needed %}, unique=True{% endif %}
     {%- if nullable %}, nullable=True{% endif %}
-    {#- A credential is read only where code asks for it by name: whatever
-        serializes a loaded record (an API response) does not carry it. #}
-    {%- if is_credential_attribute(attribute) %}, deferred=True{% endif %}
     {%- if derived_unset and derived_zero %}, default={{ derived_zero }}{% endif %}
     {#- Server-owned audit timestamps: stamp createdAt/updatedAt on the server
         (and re-stamp updatedAt on every update) so the client never supplies

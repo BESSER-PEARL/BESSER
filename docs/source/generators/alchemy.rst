@@ -37,6 +37,17 @@ folder and it will look as follows.
    :language: python
    :linenos:
 
+Records as Mappings
+-------------------
+
+The generated ``Base`` class makes a record convertible with ``dict(record)``: the loaded
+attributes by name, without SQLAlchemy's internal state and without the attributes that store a
+credential. A web framework that serializes a returned record this way (FastAPI does) therefore
+never sends a credential. A text attribute is treated as a credential because of its name
+(``password``, ``passwordHash``, ``apiToken``, ``secretKey``, ``salt``, ``pin``, ...; the rule is
+described in :doc:`backend`); each class lists its own in ``__credentials__``. The attribute
+itself is an ordinary column: code reads and writes ``record.passwordHash`` as usual.
+
 Creating the Database
 ---------------------
 

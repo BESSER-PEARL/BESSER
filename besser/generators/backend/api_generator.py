@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
-from besser.BUML.metamodel.structural import AssociationClass, DomainModel
+from besser.BUML.metamodel.structural import AssociationClass, DomainModel, is_credential_attribute
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators.default_literals import register_default_literals
 from besser.generators.action_language.RESTGenerator import bal_to_rest
@@ -48,7 +48,6 @@ from besser.generators.structural_utils import (
     get_deferred_fk_associations,
     get_foreign_keys,
     get_pk_py_types,
-    is_credential_attribute,
     is_server_owned_attribute,
     is_shadowed_by_association_end,
     normalize_method_code,

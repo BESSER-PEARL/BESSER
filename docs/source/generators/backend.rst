@@ -217,9 +217,20 @@ How the model shapes these endpoints:
   class and its parents, except derived attributes (their stored value is not
   kept up to date by the generated code) and credentials.
 * An attribute that stores a **credential** is accepted on create and update
-  and is never returned or offered as a filter. The model has no marker for
-  it, so the name decides: a text attribute whose name contains ``password``,
-  ``passwd``, ``secret``, ``token`` or ``api key`` (any case, any separator).
+  and is never returned or offered as a filter. Since a client never receives
+  it, an update that leaves it out, ``null`` or empty keeps the stored value;
+  it is required on create when the model requires it. The model has no marker
+  for it, so the name of a text attribute decides, read as camelCase or
+  snake_case words: its last word is ``password``, ``passwd``, ``pwd``,
+  ``passphrase``, ``passcode``, ``secret``, ``token``, ``salt``, ``otp``,
+  ``pin``, ``cvv`` or ``credential``, or its last two are ``api``,
+  ``private``, ``access``, ``auth``, ``signing`` or ``secret`` followed by
+  ``key``; ``hash`` and ``digest`` are ignored (``passwordHash``). A word that
+  follows makes it ordinary data (``passwordHint``, ``tokenCount``). Model
+  validation lists the attributes treated this way; rename an attribute that
+  holds ordinary data. The records themselves leave credentials out when
+  serialized (see :doc:`alchemy`), so a route added by hand that returns a
+  record does not send them either.
 * An association **from a class to itself** has a field, and for a
   many-to-many a link endpoint, for each of its two ends. The id lists of a
   many-to-many are returned as ``<target class>_ids``; when that does not tell
@@ -231,6 +242,10 @@ How the model shapes these endpoints:
 * A ``DELETE`` that would leave another record without a link it requires is
   refused with ``409`` and a message naming that record, including when the
   record is required by a part that would be deleted with its whole.
+
+Known limits for an association from a class to itself: one carried by an
+association class is not supported (the generated app does not start
+serving), and neither is ``nested_creations=True`` with a many-to-many.
 
 .. versionchanged:: 8.0.0
    The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``

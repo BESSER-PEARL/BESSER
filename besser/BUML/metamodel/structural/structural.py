@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
 import logging
+import re
 import threading
 
 if TYPE_CHECKING:
@@ -1192,6 +1193,41 @@ class BehaviorDeclaration(NamedElement):
 
     def __repr__(self):
         return f'BehaviorDeclaration({self.name}, {self.implementations})'
+
+
+# Final word of an attribute name that marks a stored credential, and the words
+# that make a credential of a final "key". "hash" words only qualify another word.
+_CREDENTIAL_WORDS = frozenset({
+    "password", "passwd", "pwd", "passphrase", "passcode", "secret", "token", "salt", "otp", "pin", "cvv",
+    "credential", "credentials", "apikey",
+})
+_CREDENTIAL_KEY_WORDS = frozenset({"api", "private", "access", "auth", "signing", "secret"})
+_HASH_WORDS = frozenset({"hash", "hashed", "digest"})
+
+
+def is_credential_attribute(attribute: "Property") -> bool:
+    """Whether a text attribute stores a credential: a password or its hash, a secret, a token, a key.
+
+    The metamodel has no marker for sensitive data, so the name decides, read
+    as camelCase / snake_case words: the last word names a credential
+    (``password``, ``apiToken``, ``clientSecret``, ``salt``, ``pin``) or the
+    last two a key (``api_key``, ``privateKey``); ``hash`` words are ignored
+    (``passwordHash``). A word that follows makes it ordinary data
+    (``passwordHint``, ``tokenCount``, ``secretQuestion``), as does a boolean
+    prefix (``isSecret``). Generated APIs accept a credential on write and
+    never return it or filter by it.
+    """
+    # An unresolved type is kept as its name.
+    type_name = attribute.type.name if isinstance(attribute.type, Type) else str(attribute.type)
+    if attribute.is_id or type_name not in ("str", "string"):
+        return False
+    words = [word.lower() for word in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", attribute.name)]
+    words = [word for word in words if word not in _HASH_WORDS]
+    if not words or words[0] in ("is", "has"):
+        return False
+    if words[-1] == "key":
+        return len(words) > 1 and words[-2] in _CREDENTIAL_KEY_WORDS
+    return words[-1] in _CREDENTIAL_WORDS
 
 
 def _stem_candidates(role_name: str) -> list[tuple[str, str]]:
@@ -2585,6 +2621,7 @@ class DomainModel(Model):
         self._validate_mandatory_cycles(warnings)
         self._validate_duplicate_associations(warnings)
         self._validate_attribute_end_collisions(warnings)
+        self._validate_credential_attributes(warnings)
         self._validate_python_keyword_names(warnings)
         self._validate_case_only_class_names(warnings)
         self._validate_case_only_attribute_names(warnings)
@@ -2851,6 +2888,18 @@ class DomainModel(Model):
                     f"generators keep the association end and leave the attribute out. Rename one; if the "
                     f"attribute stores the related object, delete it and keep the association."
                 )
+
+    def _validate_credential_attributes(self, warnings: list[str]):
+        """Say which attributes the generated API treats as credentials (see ``is_credential_attribute``)."""
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if is_credential_attribute(attr):
+                    warnings.append(
+                        f"Credential attribute: attribute '{attr.name}' of class '{cls.name}' is treated as a "
+                        f"credential because of its name. The generated FastAPI backend accepts it on create and "
+                        f"update, keeps the stored value when an update leaves it empty, and never returns it or "
+                        f"filters by it. Rename it if it holds ordinary data."
+                    )
 
     def _validate_python_keyword_names(self, warnings: list[str]):
         """Warn about a name that is a Python keyword (``from``, ``class``, ``None``).

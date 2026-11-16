@@ -133,13 +133,15 @@ async def {{ class.name | lower }}_{{ clean_name }}(
             result_data = []
             for item in result:
                 if hasattr(item, '__dict__'):
-                    item_dict = {k: v for k, v in item.__dict__.items() if not k.startswith('_')}
+                    item_dict = {k: v for k, v in item.__dict__.items()
+                                 if not k.startswith('_') and k not in getattr(item, '__credentials__', ())}
                     result_data.append(item_dict)
                 else:
                     result_data.append(str(item))
             result = result_data
         elif hasattr(result, '__dict__'):
-            result = {k: v for k, v in result.__dict__.items() if not k.startswith('_')}
+            result = {k: v for k, v in result.__dict__.items()
+                      if not k.startswith('_') and k not in getattr(result, '__credentials__', ())}
 
         return {
             "class": "{{ class.name }}",

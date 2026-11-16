@@ -91,7 +91,10 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         {#- An attribute named like an association end of the class is left
             out: the association field below takes the name. #}
         {%- if attribute.name not in inherited_attr_names and not _is_server_owned and not is_shadowed_by_association_end(attribute) %}
-        {%- set is_opt = attribute.is_optional and not attribute.is_id %}
+        {#- A credential is never sent back to the client, so an update cannot
+            repeat it: the body may leave it out (the router keeps the stored
+            value) and the create route asks for it when the model requires it. #}
+        {%- set is_opt = (attribute.is_optional and not attribute.is_id) or (backend and is_credential_attribute(attribute)) %}
         {%- set attr_type_name = 'Any' if attribute.type.name == 'any' else attribute.type.name %}
         {%- if is_opt and attribute.default_value is not none %}
     {{ attribute.name }}: Optional[{{ attr_type_name }}] = {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ enum_default(attribute.default_value, attr_type_name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}{% else %}{{ attribute.default_value | python_default(attribute.type.name, owner=class.name ~ '.' ~ attribute.name) }}{% endif %}

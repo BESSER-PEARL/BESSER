@@ -173,6 +173,15 @@ router = APIRouter()
     {% do mn_var.update({x[3]: ('related_' if mn_name[x[3]] | lower == class.name | lower else '') ~ mn_name[x[3]]}) %}
 {% endfor %}
 
+{# Credentials the model requires. The Create schema makes every credential optional so
+   that an update can leave it out; the create routes ask for these. #}
+{% set ns_credentials = namespace(required=[]) %}
+{% for attribute in class.all_attributes() | sort(attribute='name') %}
+    {% if is_credential_attribute(attribute) and not attribute.is_optional and attribute.default_value is none and _client_supplied(attribute) | trim == 'True' %}
+        {% do ns_credentials.required.append(attribute) %}
+    {% endif %}
+{% endfor %}
+
 {% if "GET" in http_methods %}
 @router.get("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
 def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = Depends(get_db)) -> list:
@@ -189,8 +198,7 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
         # Serialize with relationships included
         result = []
         for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
-            item_dict = {{ class.name | lower}}_item.__dict__.copy()
-            item_dict.pop('_sa_instance_state', None)
+            item_dict = dict({{ class.name | lower}}_item)
 
             # Add many-to-one relationships (foreign keys for lookup columns)
             {% for x in ns.end_name_one %}
@@ -199,10 +207,9 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
                 {% if x[0] == class.name %}
                 # Columns only: a related {{ class.name }} carries its own loaded
                 # relationships, which can lead back to this one.
-                related_dict = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if not attr.deferred}
+                related_dict = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if attr.key not in related_obj.__credentials__}
                 {% else %}
-                related_dict = related_obj.__dict__.copy()
-                related_dict.pop('_sa_instance_state', None)
+                related_dict = dict(related_obj)
                 {% endif %}
                 item_dict['{{ x[2] }}'] = related_dict
             else:
@@ -212,11 +219,11 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
                loaded onto the records the lists below serialize #}
             {% for x in ns.one_to_many if x[0] == class.name %}
             related_obj = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_item.{{ x[1] }}_id).first()
-            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if not attr.deferred} if related_obj is not None else None
+            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if attr.key not in related_obj.__credentials__} if related_obj is not None else None
             {% endfor %}
             {% for x in ns.reverse_one %}
             related_obj = database.query({{ class.name }}).filter({{ class.name }}.{{ x[0] }}_id == {{ class.name | lower}}_item.{{ pk }}).first()
-            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if not attr.deferred} if related_obj is not None else None
+            item_dict['{{ x[1] }}'] = {attr.key: getattr(related_obj, attr.key) for attr in related_obj.__mapper__.column_attrs if attr.key not in related_obj.__credentials__} if related_obj is not None else None
             {% endfor %}
 
             {% if ns.end_name_multiple or ns.one_to_many %}
@@ -225,16 +232,14 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {{ mn_var[x[3]] }}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.{{ x[1] | pk }} == {{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == {{ class.name | lower}}_item.{{ pk }}).all()
             item_dict['{{x[3]}}'] = []
             for {{ mn_var[x[3]] }}_obj in {{ mn_var[x[3]] }}_list:
-                {{ mn_var[x[3]] }}_dict = {{ mn_var[x[3]] }}_obj.__dict__.copy()
-                {{ mn_var[x[3]] }}_dict.pop('_sa_instance_state', None)
+                {{ mn_var[x[3]] }}_dict = dict({{ mn_var[x[3]] }}_obj)
                 item_dict['{{x[3]}}'].append({{ mn_var[x[3]] }}_dict)
             {% endfor %}
             {% for x in ns.one_to_many %}
             related_{{x[0] | lower}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
             item_dict['{{x[2]}}'] = []
             for related_{{x[0] | lower}}_obj in related_{{x[0] | lower}}_list:
-                related_{{x[0] | lower}}_dict = related_{{x[0] | lower}}_obj.__dict__.copy()
-                related_{{x[0] | lower}}_dict.pop('_sa_instance_state', None)
+                related_{{x[0] | lower}}_dict = dict(related_{{x[0] | lower}}_obj)
                 item_dict['{{x[2]}}'].append(related_{{x[0] | lower}}_dict)
             {% endfor %}
             {% endif %}
@@ -244,13 +249,11 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {{x[3]}}_link_rows = database.query({{x[4]}}).filter({{x[4]}}.{{x[2]}}_id == {{ class.name | lower}}_item.{{ pk }}).all()
             item_dict['{{x[3]}}_links'] = []
             for link_row in {{x[3]}}_link_rows:
-                link_dict = link_row.__dict__.copy()
-                link_dict.pop('_sa_instance_state', None)
+                link_dict = dict(link_row)
                 item_dict['{{x[3]}}_links'].append(link_dict)
             item_dict['{{x[3]}}'] = []
             for {{x[1] | lower}}_obj in database.query({{x[1]}}).filter({{x[1]}}.{{ x[1] | pk }}.in_([getattr(link_row, '{{x[3]}}_id') for link_row in {{x[3]}}_link_rows])).all():
-                {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
-                {{x[1] | lower}}_dict.pop('_sa_instance_state', None)
+                {{x[1] | lower}}_dict = dict({{x[1] | lower}}_obj)
                 item_dict['{{x[3]}}'].append({{x[1] | lower}}_dict)
             {% endfor %}
             {% endif %}
@@ -584,6 +587,10 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endif %}
 
+    {% for attribute in ns_credentials.required %}
+    if not {{ class.name | lower}}_data.{{ attribute.name }}:
+        raise HTTPException(status_code=422, detail="{{ attribute.name }} is required")
+    {% endfor %}
     {# Collect all constructor arguments. A surrogate `id` is server-owned
        (autoincrement PK) and is absent from the Create schema, so it must never
        be read off the payload. A PK the user declared (is_id) — including one
@@ -865,6 +872,10 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% endfor %}
             {% endfor %}
 
+            {% for attribute in ns_credentials.required %}
+            if not item_data.{{ attribute.name }}:
+                raise ValueError("{{ attribute.name }} is required")
+            {% endfor %}
             {# Collect all constructor arguments for bulk create #}
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}
@@ -1024,17 +1035,29 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     {# Inherited attributes are part of the entity too (joined-table inheritance):
        an Employee's last_name lives on Person and must be updatable here.
        Enum attributes append `.name` here too - see the create endpoint above
-       for why (not `.value`, even though every literal's value equals its name). #}
+       for why (not `.value`, even though every literal's value equals its name).
+       A credential is not part of any response, so the client cannot send it back:
+       an update that leaves it empty keeps the stored value. #}
     {% for parent in all_parents %}
     {% for attribute in parent.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
+    {% if is_credential_attribute(attribute) %}
+    if {{ class.name | lower }}_data.{{ attribute.name }}:
+        setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }})
+    {% else %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
+    {% endif %}
     {% endif %}
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
+    {% if is_credential_attribute(attribute) %}
+    if {{ class.name | lower }}_data.{{ attribute.name }}:
+        setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }})
+    {% else %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ _enum_name(class.name | lower ~ '_data.' ~ attribute.name, attribute) }}{% else %}{{ class.name | lower }}_data.{{ attribute.name }}{% endif %})
+    {% endif %}
     {% endif %}
     {% endfor %}
     {# Update foreign key relationships -#}
@@ -1290,7 +1313,8 @@ async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.g
     # back-references, which would make the JSON encoder recurse endlessly.
     deleted_{{ class.name | lower}} = {
         attr.key: getattr(db_{{ class.name | lower}}, attr.key)
-        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs if not attr.deferred
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+        if attr.key not in db_{{ class.name | lower}}.__credentials__
     }
     database.delete(db_{{ class.name | lower}})
     database.commit()
@@ -1309,7 +1333,8 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types
     # the JSON encoder recurse endlessly on the live object.
     deleted_{{ class.name | lower}} = {
         attr.key: getattr(db_{{ class.name | lower}}, attr.key)
-        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs if not attr.deferred
+        for attr in db_{{ class.name | lower}}.__mapper__.column_attrs
+        if attr.key not in db_{{ class.name | lower}}.__credentials__
     }
     database.delete(db_{{ class.name | lower}})
     database.commit()

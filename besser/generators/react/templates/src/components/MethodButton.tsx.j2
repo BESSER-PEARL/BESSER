@@ -316,8 +316,12 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       // Handle different error response formats
       let errorMessage = "Error executing method";
       const statusCode = err.response?.status;
+      // 501: the method is modeled without an implementation; the backend's detail addresses developers
+      const notImplemented = statusCode === 501;
       
-      if (err.response?.data) {
+      if (notImplemented) {
+        errorMessage = "This action is not available yet.";
+      } else if (err.response?.data) {
         const data = err.response.data;
         
         // Try to extract error message from various formats
@@ -359,7 +363,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       }
       
       // Add status code prefix for server errors if not already included
-      if (statusCode && statusCode >= 500 && !errorMessage.includes(String(statusCode))) {
+      if (!notImplemented && statusCode && statusCode >= 500 && !errorMessage.includes(String(statusCode))) {
         errorMessage = `Server Error (${statusCode}): ${errorMessage}`;
       }
       

@@ -91,6 +91,16 @@ def test_unbalanced_markers_are_rejected():
         extract_trace_regions("\x02/trace\x03")
 
 
+def test_extracting_regions_scales_linearly_with_the_file(assert_scales_linearly):
+    # Line numbers once took a count over the file per region: 600 classes took 19 s, 300 took 5.
+    def render(size):
+        classes = [_Cls(f"C{i}", f"c{i}", [_Attr(f"a{j}", f"c{i}a{j}") for j in range(5)]) for i in range(size)]
+        rendered = _render(TEMPLATE, classes=classes)
+        return lambda: extract_trace_regions(rendered)
+
+    assert_scales_linearly(render, 2000)
+
+
 def test_shift_regions_moves_every_line():
     region = TraceRegion("a", "Class", "A", "r", 3, 5)
     assert shift_regions([region], 1) == [TraceRegion("a", "Class", "A", "r", 4, 6)]

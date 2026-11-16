@@ -34,8 +34,10 @@ import json
 import logging
 import os
 import re
+from bisect import bisect_left
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import lru_cache
 from typing import Collection, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from jinja2 import BaseLoader, Environment, FileSystemLoader, nodes
@@ -55,6 +57,7 @@ logger = logging.getLogger(__name__)
 _START, _END = "\x02", "\x03"
 _CLOSE = f"{_START}/trace{_END}"
 _MARKER = re.compile(f"{_START}(/trace|trace:[^{_END}]*){_END}")
+_NEWLINE = re.compile("\n")
 
 
 @dataclass(frozen=True)
@@ -76,8 +79,13 @@ def element_ref(element) -> Optional[ElementRef]:
     if not element_id:
         return None
     name = element.name if isinstance(element, NamedElement) else element_id
-    metaclass = next((base for base in _TRACED_AS if isinstance(element, base)), type(element))
-    return ElementRef(element_id, metaclass.__name__, name)
+    return ElementRef(element_id, _traced_type_name(type(element)), name)
+
+
+@lru_cache(maxsize=None)
+def _traced_type_name(cls: type) -> str:
+    """The metaclass name a trace records an element of class ``cls`` by (cached: a render asks per element)."""
+    return next((base for base in _TRACED_AS if issubclass(cls, base)), cls).__name__
 
 
 @dataclass(frozen=True)
@@ -296,19 +304,23 @@ def extract_trace_regions(rendered: str) -> Tuple[str, List[TraceRegion]]:
     pieces.append(rendered[last:])
     clean = "".join(pieces)
 
+    # Offsets of every newline, found once: a line number is then a binary search, so the cost
+    # stays linear in the file however many regions it holds.
+    newlines = [match.start() for match in _NEWLINE.finditer(clean)]
     regions = []
     for payload, start, end in spans:
-        block = clean[start:end]
-        stripped = block.strip()
-        if not stripped:
-            continue
-        first = start + (len(block) - len(block.lstrip()))
-        last_char = first + len(stripped) - 1
+        first, last_char = start, end - 1
+        while first < end and clean[first].isspace():
+            first += 1
+        if first == end:
+            continue  # the block rendered only whitespace
+        while clean[last_char].isspace():
+            last_char -= 1
         regions.append(TraceRegion(
             element_id=payload["id"], element_type=payload["type"], element_name=payload["name"],
             rule=payload["rule"],
-            start_line=clean.count("\n", 0, first) + 1,
-            end_line=clean.count("\n", 0, last_char) + 1,
+            start_line=bisect_left(newlines, first) + 1,
+            end_line=bisect_left(newlines, last_char) + 1,
             owner=ElementRef(*payload["owner"]) if "owner" in payload else None,
         ))
     regions.sort(key=lambda r: (r.start_line, -r.end_line))

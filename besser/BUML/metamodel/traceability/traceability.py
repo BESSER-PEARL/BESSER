@@ -255,6 +255,57 @@ class TraceElement(Element, ABC):
         return f"{type(self).__name__}(id={self.id!r})"
 
 
+_FRAGMENT_OF_ITSELF = "Artifact {id!r} cannot be a fragment of itself."
+_REVISION_OF_ITSELF = "CodeArtifact {id!r} cannot be a revision of itself."
+
+
+def link_artifacts(parents: Iterable[Tuple["Artifact", Optional["Artifact"]]] = (),
+                   revisions: Iterable[Tuple["CodeArtifact", Optional["CodeArtifact"]]] = ()) -> None:
+    """Set the parents and revised versions of many artifacts at once, as loading a trace does.
+
+    The ``parent`` and ``revision_of`` setters each walk the chain above the artifact, which over
+    a long chain set link by link is quadratic. This checks the types, walks every chain once
+    (linear), and only then sets the links: on an error nothing has changed.
+
+    Args:
+        parents: (artifact, its parent) pairs.
+        revisions: (code artifact, the version it revises) pairs.
+
+    Raises:
+        TypeError: If a link is not of the type its setter accepts.
+        ValueError: If a chain, with the new links, would contain an artifact twice.
+    """
+    parents, revisions = list(parents), list(revisions)
+    for artifact, parent in parents:
+        _instance(artifact, Artifact, "link_artifacts", "artifact")
+        _instance(parent, Artifact, type(artifact).__name__, "parent", optional=True)
+    for artifact, earlier in revisions:
+        _instance(artifact, CodeArtifact, "link_artifacts", "artifact")
+        _instance(earlier, CodeArtifact, "CodeArtifact", "revision_of", optional=True)
+    _refuse_cycles(parents, lambda artifact: artifact.parent, _FRAGMENT_OF_ITSELF)
+    _refuse_cycles(revisions, lambda artifact: artifact.revision_of, _REVISION_OF_ITSELF)
+    for artifact, parent in parents:
+        artifact._set_parent(parent)
+    for artifact, earlier in revisions:
+        artifact._set_revision_of(earlier)
+
+
+def _refuse_cycles(links: List[Tuple["Artifact", Optional["Artifact"]]], current, message: str) -> None:
+    """Raise ValueError when following ``links`` (else the ``current`` link) from any artifact comes back
+    to one on the way. Each artifact is walked once: an artifact already cleared ends a walk."""
+    following = {id(artifact): target for artifact, target in links}
+    cleared: set = set()
+    for start, _ in links:
+        on_path: set = set()
+        artifact = start
+        while artifact is not None and id(artifact) not in cleared:
+            if id(artifact) in on_path:
+                raise ValueError(message.format(id=artifact.id))
+            on_path.add(id(artifact))
+            artifact = following[id(artifact)] if id(artifact) in following else current(artifact)
+        cleared |= on_path
+
+
 class Artifact(TraceElement, ABC):
     """Something an operation reads, writes or changes.
 
@@ -268,7 +319,8 @@ class Artifact(TraceElement, ABC):
     def __init__(self, name: str, parent: "Artifact" = None, id: str = None, timestamp: datetime = None):
         super().__init__(id, timestamp)
         self.name: str = name
-        self.parent: Optional[Artifact] = parent
+        # A new artifact is nobody's parent yet, so its parent's chain cannot hold it: nothing to walk.
+        self._set_parent(parent)
 
     @property
     def name(self) -> str:
@@ -301,9 +353,13 @@ class Artifact(TraceElement, ABC):
         ancestor = parent
         while ancestor is not None:
             if ancestor is self:
-                raise ValueError(f"Artifact {self.id!r} cannot be a fragment of itself.")
+                raise ValueError(_FRAGMENT_OF_ITSELF.format(id=self.id))
             ancestor = ancestor.parent
         self.__parent = parent
+
+    def _set_parent(self, parent: Optional["Artifact"]):
+        """Set the parent without walking its chain: the caller has ruled out a cycle."""
+        self.__parent = _instance(parent, Artifact, type(self).__name__, "parent", optional=True)
 
 
 class ModelArtifact(Artifact):
@@ -492,7 +548,8 @@ class CodeArtifact(Artifact):
         self.content_hash: str = content_hash
         self.content: Optional[str] = content
         self.set_line_range(start_line, end_line)
-        self.revision_of: Optional[CodeArtifact] = revision_of
+        # A new version is nobody's revision yet, so the chain it revises cannot hold it.
+        self._set_revision_of(revision_of)
 
     @property
     def revision_of(self) -> Optional["CodeArtifact"]:
@@ -511,9 +568,13 @@ class CodeArtifact(Artifact):
         earlier = revision_of
         while earlier is not None:
             if earlier is self:
-                raise ValueError(f"CodeArtifact {self.id!r} cannot be a revision of itself.")
+                raise ValueError(_REVISION_OF_ITSELF.format(id=self.id))
             earlier = earlier.revision_of
         self.__revision_of = revision_of
+
+    def _set_revision_of(self, revision_of: Optional["CodeArtifact"]):
+        """Set the revised version without walking its chain: the caller has ruled out a cycle."""
+        self.__revision_of = _instance(revision_of, CodeArtifact, "CodeArtifact", "revision_of", optional=True)
 
     @property
     def path(self) -> str:

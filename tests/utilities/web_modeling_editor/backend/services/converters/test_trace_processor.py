@@ -4,6 +4,7 @@ import pytest
 
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.converters import process_trace, trace_buml_to_json
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml import trace_processor
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 T = "2026-10-29T09:30:00.000Z"
@@ -88,3 +89,36 @@ def test_a_large_trace_is_read_in_linear_time(assert_scales_linearly):
 
     assert_scales_linearly(read, LARGE_TRACE_LINKS)
     assert len(process_trace(_trace(6, links=LARGE_TRACE_LINKS)).trace_links) == LARGE_TRACE_LINKS
+
+
+def _chain(length: int, field: str) -> dict:
+    """A trace whose artifacts form one ``field`` chain (each the revision, or fragment, of the one before)."""
+    data = _trace(6, links=length)
+    for index, artifact in enumerate(data["artifacts"][2:], start=1):
+        artifact[field] = f"f{index - 1}"
+    data["operations"][0]["writes"] = ["f0"]
+    data["traceLinks"] = data["traceLinks"][:1]
+    return data
+
+
+@pytest.mark.parametrize("field", ["revisionOfId", "parentId"])
+def test_a_long_chain_is_read_in_linear_time(assert_scales_linearly, field):
+    # Each link once walked the chain above it: 30k versions took 15 s, inline in the export endpoint.
+    def read(length):
+        data = _chain(length, field)
+        return lambda: process_trace(data)
+
+    assert_scales_linearly(read, 2000)
+
+
+def test_a_cycle_through_many_artifacts_is_a_conversion_error():
+    data = _chain(50, "revisionOfId")
+    data["artifacts"][1]["revisionOfId"] = "f49"
+    with pytest.raises(ConversionError, match="revision of itself"):
+        process_trace(data)
+
+
+def test_a_trace_over_the_element_cap_is_refused(monkeypatch):
+    monkeypatch.setattr(trace_processor, "TRACE_MAX_ELEMENTS", 3)
+    with pytest.raises(ConversionError, match="holds 4 artifacts, more than the 3"):
+        process_trace(_trace(6, links=3))

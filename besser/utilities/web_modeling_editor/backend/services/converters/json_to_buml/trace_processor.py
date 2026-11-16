@@ -15,8 +15,9 @@ from besser.BUML.metamodel.traceability import (
     ModelingSession, Person, PromptArtifact,
     RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
+from besser.BUML.metamodel.traceability.traceability import link_artifacts
 from besser.utilities.utils import parse_iso_timestamp
-from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
+from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_MAX_ELEMENTS, TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 _ACTOR_TYPES = {"Person": Person, "Agent": Agent}
@@ -120,6 +121,10 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
         ConversionError: If the JSON is not a valid trace of a supported schema version.
     """
     data = _migrated(data)
+    for key in ("actors", "tools", "artifacts", "operations", "traceLinks"):
+        count = len(_list(data, key, "Trace"))
+        if count > TRACE_MAX_ELEMENTS:
+            raise ConversionError(f"The trace holds {count} {key}, more than the {TRACE_MAX_ELEMENTS} a trace may hold.")
 
     actors, tools, artifacts, logs, operations = {}, {}, {}, {}, {}
 
@@ -167,7 +172,9 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
         if artifact.id in artifacts:
             raise ConversionError(f"Artifact id {artifact.id!r} is used twice.")
         artifacts[artifact.id] = artifact
-    # Parents and revised versions can come later in the list, so they are wired once every artifact exists.
+    # Parents and revised versions can come later in the list, so they are wired once every artifact exists,
+    # all at once: set one by one, each would walk the chain above it (quadratic over a long chain).
+    parents, revisions = [], []
     for raw in raw_artifacts:
         where = f"Artifact {raw['id']!r}"
         artifact = artifacts[raw["id"]]
@@ -175,13 +182,14 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
         revision_of_id = raw.get("revisionOfId")
         if revision_of_id is not None and not isinstance(artifact, CodeArtifact):
             raise ConversionError(f"{where} is a {type(artifact).__name__}: only a CodeArtifact has revisionOfId.")
-        try:
-            if parent_id is not None:
-                artifact.parent = _resolve(artifacts, parent_id, "artifact", where)
-            if revision_of_id is not None:
-                artifact.revision_of = _resolve(artifacts, revision_of_id, "artifact", where)
-        except (TypeError, ValueError) as error:
-            raise ConversionError(f"{where}: {error}") from error
+        if parent_id is not None:
+            parents.append((artifact, _resolve(artifacts, parent_id, "artifact", where)))
+        if revision_of_id is not None:
+            revisions.append((artifact, _resolve(artifacts, revision_of_id, "artifact", where)))
+    try:
+        link_artifacts(parents, revisions)
+    except (TypeError, ValueError) as error:
+        raise ConversionError(f"Trace artifacts: {error}") from error
 
     trace = TraceModel(project_id=data.get("projectId"), actors=list(actors.values()),
                        tools=list(tools.values()), artifacts=list(artifacts.values()))

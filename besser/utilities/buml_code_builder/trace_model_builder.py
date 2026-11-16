@@ -299,20 +299,27 @@ class _TraceWriter:
 
 def _parents_first(artifacts: List[Artifact]) -> List[Artifact]:
     """``artifacts`` reordered so that each comes after its parent and the version it revises,
-    which its constructor call references."""
+    which its constructor call references. Iterative: a chain can be thousands long."""
     ordered: List[Artifact] = []
     placed = set()
 
-    def place(artifact: Artifact):
-        if artifact.id in placed:
-            return
-        if artifact.parent is not None:
-            place(artifact.parent)
-        if isinstance(artifact, CodeArtifact) and artifact.revision_of is not None:
-            place(artifact.revision_of)
-        placed.add(artifact.id)
-        ordered.append(artifact)
+    def before(artifact: Artifact) -> List[Artifact]:
+        earlier = [artifact.parent]
+        if isinstance(artifact, CodeArtifact):
+            earlier.append(artifact.revision_of)
+        return [a for a in earlier if a is not None and a.id not in placed]
 
     for artifact in artifacts:
-        place(artifact)
+        stack = [artifact]
+        while stack:
+            top = stack[-1]
+            if top.id in placed:
+                stack.pop()
+                continue
+            waiting = before(top)
+            if waiting:
+                stack.extend(reversed(waiting))  # the parent first, as written before
+                continue
+            placed.add(top.id)
+            ordered.append(stack.pop())
     return ordered

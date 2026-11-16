@@ -249,6 +249,10 @@ TRACE_MAX_STORED_CONTENT_BYTES = 1_000_000
 # ships next to the run's ZIP (a Spec-Driven `done` event, kept by the durable run store) and the
 # editor keeps it in IndexedDB; the files after it keep only their hash.
 TRACE_MAX_TOTAL_CONTENT_BYTES = 4_000_000
+# Most actors, tools, artifacts, operations or trace links a trace read from JSON may hold, each:
+# what a request (MAX_REQUEST_SIZE) holds of a real trace, about 200 bytes per element. A trace
+# past it is refused with a 400 before anything is built.
+TRACE_MAX_ELEMENTS = 250_000
 # Response header of a download that was changed to stay usable (a B-UML project export whose
 # trace was left out): its value says what and why. Exposed to the browser (backend.py CORS).
 EXPORT_WARNING_HEADER = "X-BESSER-Warning"

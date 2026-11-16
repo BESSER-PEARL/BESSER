@@ -12,6 +12,7 @@ from besser.BUML.metamodel.traceability import (
     Person, PromptArtifact, RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall,
     TraceLink, TraceModel, Transformation,
 )
+from besser.BUML.metamodel.traceability.traceability import link_artifacts
 
 T0 = datetime(2026, 10, 1, 12, 0, 0)
 
@@ -488,3 +489,14 @@ def test_resolve_finds_states_of_a_state_machine_and_stays_inside_the_model():
     # An element of another model is not found in this one.
     library = DomainModel("Library", types={Class("Book")})
     assert ModelArtifact(element=closed).resolve(library) is None
+
+
+def test_link_artifacts_refuses_a_cycle_and_changes_nothing():
+    first, second, third = (CodeArtifact(f"f{i}.py", "f.py", "h") for i in range(3))
+    with pytest.raises(ValueError, match="revision of itself"):
+        link_artifacts(revisions=[(second, first), (third, second), (first, third)])
+    assert (first.revision_of, second.revision_of, third.revision_of) == (None, None, None)
+    link_artifacts(parents=[(second, first)], revisions=[(third, second)])
+    assert second.parent is first and third.revision_of is second
+    with pytest.raises(ValueError, match="fragment of itself"):
+        first.parent = second  # the setter still guards a link set by hand

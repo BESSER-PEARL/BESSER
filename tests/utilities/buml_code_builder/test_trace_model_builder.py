@@ -153,3 +153,12 @@ def test_a_trace_section_as_large_as_a_project_file_loads(tmp_path):
     code = _code(TraceModel(artifacts=files), tmp_path)
     assert 1_000_000 < len(code) <= MAX_BUML_SIZE
     assert len(parse_trace_code(code).artifacts) == 6000
+
+
+def test_a_long_revision_chain_is_written_and_loaded_back(tmp_path):
+    # Writing it once recursed per version (RecursionError at 1500); loading set each link with a walk.
+    versions = [CodeArtifact("f.py", "f.py", "a" * 64, timestamp=_at(1))]
+    for _ in range(3000):
+        versions.append(CodeArtifact("f.py", "f.py", "a" * 64, revision_of=versions[-1], timestamp=_at(1)))
+    loaded = parse_trace_code(_code(TraceModel(artifacts=list(reversed(versions))), tmp_path))
+    assert len(loaded.artifacts) == 3001

@@ -204,11 +204,14 @@ def player_team_domain_model(player_class, team_class):
 # Scaling: whether work grows linearly with its input, without a wall-clock bound
 # ---------------------------------------------------------------------------
 
-# time(4n) / time(n) is about 4 for linear work and 16 for quadratic work; the bound sits between
-# them, far enough from both that load on a shared CI host does not decide it (doubling, 2 against
-# 4, did). A ratio, not a duration, so a slow host does not fail the test either.
+# time(4n) / time(n) is about 4 for linear work and 16 for quadratic work. Under xdist on a busy
+# host the larger input misses the caches more and linear work measured up to 9, so the bound is
+# 10 (doubling, 2 against 4, could not be told apart at all). A ratio, not a duration, so a slow
+# host does not fail the test either.
 SCALING_FACTOR = 4
-LINEAR_SCALING_MAX_RATIO = 8.0
+LINEAR_SCALING_MAX_RATIO = 10.0
+# The smaller input is grown until its work takes this long: a few milliseconds are mostly noise.
+SCALING_MIN_SECONDS = 0.05
 
 
 @pytest.fixture
@@ -217,7 +220,7 @@ def assert_scales_linearly():
     ``LINEAR_SCALING_MAX_RATIO``.
 
     ``make(size)`` builds the input (not timed) and returns a no-argument callable doing the
-    work (timed). Each size keeps its best of ``repeats`` runs, so a slow run does not count;
+    work (timed); ``n`` is doubled until that work takes ``SCALING_MIN_SECONDS``. Each size keeps its best of ``repeats`` runs, so a slow run does not count;
     the garbage collector is off while timing (as in ``timeit``), since a collection costs what
     the whole process holds, not what the work does.
     """
@@ -236,6 +239,8 @@ def assert_scales_linearly():
             gc.enable()
 
     def check(make, n, repeats=5):
+        while timed(make, n) < SCALING_MIN_SECONDS:
+            n *= 2
         # The two sizes alternate, so a burst of load on a shared host slows both alike.
         small, large = float("inf"), float("inf")
         for _ in range(repeats):

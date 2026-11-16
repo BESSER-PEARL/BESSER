@@ -13,8 +13,9 @@ import logging
 import os
 import zipfile
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, FrozenSet, Iterable, Mapping, Optional, Sequence, Tuple, Union
 
+from besser.BUML.metamodel.traceability import LLM
 from besser.generators import GeneratorInterface
 from besser.utilities.generation_trace import FileTrace, shift_file_trace
 from besser.utilities.provenance import add_generation_provenance_to_zip, get_besser_version
@@ -36,6 +37,8 @@ class GeneratedOutput:
     ``traced_files`` is what the generators recorded about the delivered files
     (``GeneratorInterface.traced_files``), by path in the download (inside the ZIP, or the
     single file's download name) and with the line numbers of the delivered text.
+    ``ai_files`` are the delivered files an LLM wrote or changed (``GeneratorInterface.ai_files``,
+    same paths) and ``ai_llm`` that LLM, so a trace records them with AI evidence.
     """
 
     content: Union[io.BytesIO, bytes]
@@ -45,6 +48,8 @@ class GeneratedOutput:
     # ``filename*``; ZIP names and the neural-network file name go out as is.
     encode_file_name: bool = False
     traced_files: Mapping[str, FileTrace] = field(default_factory=dict)
+    ai_files: FrozenSet[str] = frozenset()
+    ai_llm: Optional[LLM] = None
 
     @property
     def media_type(self) -> str:
@@ -76,6 +81,14 @@ class Generation:
     diagrams: Tuple[DiagramRead, ...]
 
 
+def _delivered_path(generator: GeneratorInterface, path: str, root: str) -> Optional[str]:
+    """``path`` (relative to ``generator``'s output folder) relative to the delivery ``root``, or None
+    when the file is outside it."""
+    base = os.path.realpath(generator.output_dir or generator.build_generation_dir())
+    relative = os.path.relpath(os.path.join(base, path), root).replace(os.sep, "/")
+    return None if relative == ".." or relative.startswith("../") else relative
+
+
 def delivery_traces(generators: Iterable[GeneratorInterface], delivery_root: str) -> Dict[str, FileTrace]:
     """The ``traced_files`` of ``generators``, by path relative to ``delivery_root`` (the folder whose
     content is delivered). A generator records paths relative to its own output folder, which can
@@ -84,16 +97,27 @@ def delivery_traces(generators: Iterable[GeneratorInterface], delivery_root: str
     root = os.path.realpath(delivery_root)
     traces: Dict[str, FileTrace] = {}
     for generator in generators:
-        if not generator.traced_files:
-            continue
-        base = os.path.realpath(generator.output_dir or generator.build_generation_dir())
         for path, trace in generator.traced_files.items():
-            relative = os.path.relpath(os.path.join(base, path), root).replace(os.sep, "/")
-            if relative == ".." or relative.startswith("../"):
+            relative = _delivered_path(generator, path, root)
+            if relative is None:
                 logger.debug("Traced file %s is outside the delivery; its trace is dropped.", path)
                 continue
             traces[relative] = trace
     return traces
+
+
+def delivery_ai_files(generators: Iterable[GeneratorInterface],
+                      delivery_root: str) -> Tuple[FrozenSet[str], Optional[LLM]]:
+    """The ``ai_files`` of ``generators`` by path relative to ``delivery_root`` (as
+    :func:`delivery_traces`), and the LLM that wrote them (the last generator's that names one)."""
+    root = os.path.realpath(delivery_root)
+    paths, llm = set(), None
+    for generator in generators:
+        delivered = {_delivered_path(generator, path, root) for path in getattr(generator, "ai_files", ())} - {None}
+        if delivered:
+            paths |= delivered
+            llm = getattr(generator, "ai_llm", None) or llm
+    return frozenset(paths), llm
 
 
 def zip_directory(source_dir: str) -> io.BytesIO:
@@ -136,8 +160,9 @@ async def zip_output(
     """
     zip_buffer = await asyncio.to_thread(zip_directory, source_dir)
     await asyncio.to_thread(add_generation_provenance_to_zip, zip_buffer, generator_type, options)
+    ai_files, ai_llm = delivery_ai_files(generators, source_dir)
     return GeneratedOutput(zip_buffer, file_name or get_filename_for_generator(generator_type), is_zip=True,
-                           traced_files=delivery_traces(generators, source_dir))
+                           traced_files=delivery_traces(generators, source_dir), ai_files=ai_files, ai_llm=ai_llm)
 
 
 def agent_zip_output(zip_buffer: io.BytesIO, file_name: str) -> GeneratedOutput:

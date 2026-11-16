@@ -1,7 +1,9 @@
 """The agent (BAF) ZIP carries the element-level traces of its generator to the traced endpoint.
 
-The editor's agent processor assigns no element ids, so the converted model is replaced by one whose
-elements have ids; the rest is the real path (``generate_agent_output``, packaging, the trace builder).
+The converted model is replaced by a small one whose elements, its body included, have ids (the editor's
+agent processor gives a state's body none: it is built from several editor actions), so each kind of
+region can be checked line by line; the rest is the real path (``generate_agent_output``, packaging, the
+trace builder). ``test_traced_generation_all.py`` runs the editor's own agent diagram.
 """
 
 import base64
@@ -126,3 +128,30 @@ def test_the_regions_of_a_file_an_llm_wrote_are_not_delivered_as_template_output
     output = agent_generation._with_traces(agent_generation.agent_zip_output(zip_buffer, name), generators)
     assert "library_agent.py" not in output.traced_files
     assert "config.yaml" in output.traced_files
+
+
+def test_the_traced_endpoint_records_what_the_personalization_llm_wrote_as_its_work(client):
+    """A file the personalization LLM rewrote is linked by AI evidence of that LLM, not by a rule."""
+    rewritten = "\n".join(f"{n}. rewritten" for n in range(1, 30))
+    with patch.object(agent_personalization, "call_openai_chat", side_effect=lambda *_a, **_k: rewritten) as llm:
+        response = client.post(TRACED, json=_payload(config={"agentStyle": "formal", "openaiApiKey": "k"}))
+    assert response.status_code == 200, response.text
+    assert llm.called
+    trace = response.json()["trace"]
+    artifacts = {a["id"]: a for a in trace["artifacts"]}
+    root = next(a for a in trace["artifacts"] if a.get("elementId") == "agent-diagram")
+    evidence_of = {artifacts[link["targetId"]]["path"]: link["evidence"][0] for link in trace["traceLinks"]
+                   if link["sourceId"] == root["id"]}
+    for path in ("library_agent.py", "personalized_agent_model.py"):
+        assert evidence_of[path]["type"] == "AIEvidence"
+        assert evidence_of[path]["algorithm"] == agent_personalization.DEFAULT_OPENAI_MODEL
+    assert evidence_of["config.yaml"] == {**evidence_of["config.yaml"], "type": "RuleEvidence",
+                                          "rule": "generator:agent"}
+    # The LLM is a tool of the run, called after the generator, with the provider that served it.
+    tools = {tool["id"]: tool for tool in trace["tools"]}
+    (operation,) = trace["operations"]
+    called = [tools[call["toolId"]] for call in sorted(operation["toolCalls"], key=lambda c: c["sequenceNumber"])]
+    assert [(t["type"], t["name"], t.get("provider")) for t in called] == [
+        ("CodeGenerator", "agent", None), ("LLM", agent_personalization.DEFAULT_OPENAI_MODEL, "openai")]
+    # No region of the rewritten file is presented as template output.
+    assert not any(a.get("path") == "library_agent.py" and "startLine" in a for a in trace["artifacts"])

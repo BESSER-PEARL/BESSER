@@ -1,11 +1,12 @@
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional, Set
 
 from besser.BUML.metamodel.structural import DomainModel, Model
 from besser.utilities.generation_trace import FileTrace, TraceSource, extract_trace_regions, prefixed_traces
 
 if TYPE_CHECKING:
+    from besser.BUML.metamodel.traceability import LLM
     from besser.generators.regeneration import RegenerationReport
 
 class InvalidIdentifierError(ValueError):
@@ -35,6 +36,9 @@ class GeneratorInterface(ABC):
     :class:`~besser.utilities.generation_trace.FileTrace` of what it was rendered from. It is
     always present and empty for a generator that records nothing, whose files still get
     file-level links (``besser.utilities.generation_trace.collect_generated_files``).
+    ``ai_files`` are the files (same paths) an LLM wrote or changed during the run, with
+    ``ai_llm`` the LLM that did: a trace records them with AI evidence, not a rule
+    (``build_generation_trace(ai_files=..., llm=...)``). Both are empty for a deterministic run.
     """
 
     # Opt-in for regenerate(): the output must be byte-identical for one model, or a merge
@@ -93,6 +97,27 @@ class GeneratorInterface(ABC):
             self._traced_files: Dict[str, FileTrace] = {}
         return self._traced_files
 
+    @property
+    def ai_files(self) -> Set[str]:
+        """set[str]: The files, by path relative to the output directory, an LLM wrote or changed in the
+        last run (a generator's optional LLM step). Empty for a deterministic run."""
+        if "_ai_files" not in self.__dict__:
+            self._ai_files: Set[str] = set()
+        return self._ai_files
+
+    @ai_files.setter
+    def ai_files(self, paths: Set[str]):
+        self._ai_files = set(paths)
+
+    @property
+    def ai_llm(self) -> Optional["LLM"]:
+        """LLM: The LLM that wrote ``ai_files`` (None when there are none, or it is unknown)."""
+        return self.__dict__.get("_ai_llm")
+
+    @ai_llm.setter
+    def ai_llm(self, llm: Optional["LLM"]):
+        self._ai_llm = llm
+
     def _write_traced(self, relative_path: str, rendered: str, *sources: Optional[TraceSource],
                       output_dir: Optional[str] = None) -> str:
         """Write a template render without its trace markers, and record what it was rendered from.
@@ -125,12 +150,21 @@ class GeneratorInterface(ABC):
     def _merge_traced_files(self, child: "GeneratorInterface", prefix: str = "") -> None:
         """Add the traces of a generator this one ran into its output (a composite's part).
 
+        A file the child's LLM wrote (``child.ai_files``) joins this generator's ``ai_files``
+        instead, without its regions: they are not template output.
+
         Args:
             child: The generator, after its ``generate()``.
             prefix: The folder, relative to this generator's output directory, the child wrote
                 into (``"backend"``); empty when it wrote into the same one.
         """
-        self.traced_files.update(prefixed_traces(child.traced_files, prefix))
+        # Read leniently: a part need not be a GeneratorInterface (the Spring generator's parts are not).
+        ai_files = set(prefixed_traces(dict.fromkeys(getattr(child, "ai_files", ())), prefix))
+        self.traced_files.update({path: trace for path, trace in prefixed_traces(child.traced_files, prefix).items()
+                                  if path not in ai_files})
+        if ai_files:
+            self.ai_files.update(ai_files)
+            self.ai_llm = getattr(child, "ai_llm", None) or self.ai_llm
 
     @property
     def model(self) -> Model:

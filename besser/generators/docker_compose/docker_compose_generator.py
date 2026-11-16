@@ -592,6 +592,7 @@ class DockerComposeGenerator(GeneratorInterface):
         self._runtime_by_service = {}
         # Files (relative to output_dir) a baked agent's LLM personalization wrote; see BAFGenerator.ai_files.
         self.ai_files = set()
+        self.ai_llm = None
         # The model elements the last _build_view turned into each service / network, by compose name.
         self._service_elements = {}
         self._network_elements = {}
@@ -762,11 +763,8 @@ class DockerComposeGenerator(GeneratorInterface):
                 bind_host=CONTAINER_BIND_HOST,
             )
             baf.generate()
+            # A file the agent's LLM personalization wrote joins ai_files, without its regions.
             self._merge_traced_files(baf, svc_name)
-            for path in baf.ai_files:
-                # LLM-written: kept at file level, as the delivery cannot tell it from template output.
-                self.ai_files.add(f"{svc_name}/{path}")
-                self.traced_files.pop(f"{svc_name}/{path}", None)
             if has_boundaries:
                 logger.info("[docker_compose] A2A-wired (%s): %s -> to_peers=%s",
                             descriptor['role'], svc_name, descriptor['to_peers'])

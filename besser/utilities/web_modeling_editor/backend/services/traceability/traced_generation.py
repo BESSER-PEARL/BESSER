@@ -124,5 +124,7 @@ def _trace_json(output: GeneratedOutput, delivered: bytes, models: List[InputMod
         max_stored_content_bytes=TRACE_MAX_STORED_CONTENT_BYTES,
         started_at=started_at,
         ended_at=ended_at,
+        ai_files=output.ai_files,
+        llm=output.ai_llm,
     )
     return trace_buml_to_json(trace)

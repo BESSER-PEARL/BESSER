@@ -12,10 +12,11 @@ import re
 from besser.BUML.metamodel.state_machine.agent import Agent, GUIReplyAction
 from besser.utilities.template_escaping import register_escaping_filters
 from besser.BUML.metamodel.structural import Method
+from besser.BUML.metamodel.traceability import LLM
 from besser.generators import GeneratorInterface
 
 from besser.generators.agents.agent_personalization import (
-    configure_agent, flatten_agent_config_structure, personalization_uses_llm,
+    DEFAULT_OPENAI_MODEL, configure_agent, flatten_agent_config_structure, personalization_uses_llm,
 )
 from besser.generators.agents.deployment_components import materialize_deployment_components
 
@@ -387,6 +388,8 @@ class BAFGenerator(GeneratorInterface):
             (``personalization_uses_llm``). Their regions are not deterministic template output:
             pass this set as ``ai_files`` to ``build_generation_trace``, which records them as AI
             evidence of an LLM call instead of a rule. Empty when no LLM was involved.
+        ai_llm (LLM): The LLM the personalization step asked (OpenAI's ``DEFAULT_OPENAI_MODEL``), when
+            ``ai_files`` is not empty; pass it as ``llm`` to ``build_generation_trace``.
     """
     def __init__(
         self,
@@ -562,6 +565,7 @@ class BAFGenerator(GeneratorInterface):
         gui_modules = collect_gui_modules(self.model)
         agent_file = f"{self.model.name}.py"
         self.ai_files = set()
+        self.ai_llm = None
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         config_for_personalization = dict(self.config) if self.config else None
@@ -586,6 +590,7 @@ class BAFGenerator(GeneratorInterface):
             if llm_personalized:
                 # The model now holds LLM-written text: record it, so a trace does not call it deterministic.
                 self.ai_files.update((agent_file, "personalized_agent_model.py"))
+                self.ai_llm = LLM(DEFAULT_OPENAI_MODEL, "openai")
 
             # Persist personalized agent python for downstream conversion.
             agent_model_to_code(self.model, personalized_agent_path)

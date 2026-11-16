@@ -29,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import Val
 from besser.utilities.web_modeling_editor.backend.services.generation.downloads import (
     GeneratedOutput,
     agent_zip_output,
+    delivery_ai_files,
     delivery_traces,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
@@ -166,15 +167,17 @@ def _with_traces(output: GeneratedOutput, generators: List[BAFGenerator]) -> Gen
     """``output`` (a ZIP of the files one ``generate_agent_files`` call wrote) with the element-level
     traces its generator recorded; unchanged when no generator wrote it (a bundle of several variants).
 
-    A file an LLM personalization step produced (``BAFGenerator.ai_files``) is not template output, so its
-    regions are left out: it keeps only the file-level link every generated file gets.
+    A file an LLM personalization step produced (``BAFGenerator.ai_files``) is not template output: its
+    regions are left out, and it is listed in the output's ``ai_files`` with the LLM that wrote it, so
+    its file-level links are recorded as the LLM's, not as a rule's.
     """
     if len(generators) != 1:
         return output
     (generator,) = generators
+    ai_files, ai_llm = delivery_ai_files(generators, generator.output_dir)
     traces = {path: trace for path, trace in delivery_traces(generators, generator.output_dir).items()
-              if path not in generator.ai_files}
-    return replace(output, traced_files=traces)
+              if path not in ai_files}
+    return replace(output, traced_files=traces, ai_files=ai_files, ai_llm=ai_llm)
 
 
 async def generate_agent_output(json_data: dict) -> GeneratedOutput:

@@ -3256,7 +3256,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # nor pays to repair a defect we can settle for free - and, unlike
         # the packaging-time hook, it puts back a config a Phase 3 edit
         # deleted. Idempotent; it never overwrites what a project already has.
-        for repair in ensure_frontend_scaffold(self.output_dir):
+        project_name = (self._source_project_export or {}).get("name") or ""
+        for repair in ensure_frontend_scaffold(self.output_dir, app_name=project_name):
             logger.info("Auto-fixed: %s", repair)
         build_contexts = compose_build_contexts(self.output_dir)
         self._restore_scaffold_requirements(build_contexts)

@@ -2274,7 +2274,7 @@ class SmartGenerationRunner:
         # deterministically before anything leaves the workspace — the same
         # tree feeds the download zip and the GitHub push.
         try:
-            frontend_repairs = ensure_frontend_scaffold(result_path)
+            frontend_repairs = ensure_frontend_scaffold(result_path, app_name=self.request.project.name)
             if frontend_repairs:
                 logger.info(
                     "spec-driven run %s frontend scaffold repairs: %s",

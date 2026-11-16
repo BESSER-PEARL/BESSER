@@ -14,6 +14,7 @@ rather than under ``validation/``.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re as _re
@@ -342,16 +343,38 @@ def _read_text(path: str) -> str:
 # Run workspaces are temp folders named after the run, never the app.
 _RUN_DIR_PREFIX = "besser_llm_"
 
+# ``FastAPI(title=<string literal>``: the backend generator writes the title
+# with ``repr()``, so the quote character depends on the text.
+_API_TITLE_RE = _re.compile(
+    r"""FastAPI\(\s*title\s*=\s*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")""")
 
-def _app_title(output_dir: str, backend_entry: str) -> str:
-    """The app's name for the README: the model name the backend generator put
-    in ``FastAPI(title="<Name> API")``, else a user-chosen folder name."""
-    found = _re.search(r'FastAPI\(\s*title\s*=\s*"([^"]+?)(?: API)?"', _read_text(backend_entry))
-    if found and found.group(1).strip():
-        return found.group(1).strip()
+# The editor's name for a class diagram tab nobody renamed ("Class Diagram",
+# "Class Diagram 2"), which is also the model's name then: it names no app.
+_DEFAULT_DIAGRAM_NAME_RE = _re.compile(r"class diagram(?: \d+)?", _re.IGNORECASE)
+
+
+def _api_title(backend_entry: str) -> str:
+    """The model name the backend generator put in ``FastAPI(title='<Name> API')``."""
+    found = _API_TITLE_RE.search(_read_text(backend_entry))
+    if not found:
+        return ""
+    try:
+        title = ast.literal_eval(found.group(1))
+    except (ValueError, SyntaxError):
+        return ""
+    return title.removesuffix(" API") if isinstance(title, str) else ""
+
+
+def _app_title(output_dir: str, backend_entry: str, app_name: str = "") -> str:
+    """The app's name for the README: the project's name, else the model's
+    (unless it is a default tab name), else a user-chosen folder name."""
     folder = os.path.basename(os.path.abspath(output_dir))
-    if folder and not folder.startswith(_RUN_DIR_PREFIX):
-        return folder.replace("_", " ").strip() or "Generated app"
+    candidates = (app_name, _api_title(backend_entry),
+                  "" if folder.startswith(_RUN_DIR_PREFIX) else folder)
+    for candidate in candidates:
+        title = " ".join((candidate or "").replace("_", " ").split())
+        if title and not _DEFAULT_DIAGRAM_NAME_RE.fullmatch(title):
+            return title
     return "Generated app"
 
 
@@ -548,7 +571,7 @@ def _find_backend_dir(output_dir: str):
     return matches[0] if len(matches) == 1 else None
 
 
-def _ensure_deployment_files(output_dir: str, frontend_dir: str) -> list:
+def _ensure_deployment_files(output_dir: str, frontend_dir: str, app_name: str = "") -> list:
     """Dockerfiles + compose + README, only for the plain two-service shape.
 
     Skipped entirely when the app already ships any Docker file: a
@@ -588,14 +611,14 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str) -> list:
         entry = _re.search(r'"(\w+\.py)"', cmd)
         entry_file = entry.group(1) if entry else "main_api.py"
         if _write_text(readme, _README_TEMPLATE.format(
-                title=_app_title(output_dir, os.path.join(backend_dir, entry_file)),
+                title=_app_title(output_dir, os.path.join(backend_dir, entry_file), app_name),
                 backend=backend_name, frontend=frontend_name,
                 entry=entry_file)):
             repairs.append("README.md")
     return repairs
 
 
-def ensure_frontend_scaffold(output_dir: str) -> list:
+def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
     """Make an LLM-authored React frontend actually render, deterministically.
 
     Writes the build configuration the frontend checklist never asks for: a
@@ -605,6 +628,7 @@ def ensure_frontend_scaffold(output_dir: str) -> list:
 
     Idempotent, and never overwrites an existing Vite config, Dockerfile,
     compose file or README - a project that already has one keeps it.
+    ``app_name`` is the project's name, for the README title.
     Returns one description per repair, for the run log.
     """
     repairs: list = []
@@ -628,5 +652,5 @@ def ensure_frontend_scaffold(output_dir: str) -> list:
         for rel in _rewrite_api_base(frontend_dir):
             repairs.append(f"{label}{rel}: API base reads VITE_API_URL")
 
-        repairs.extend(_ensure_deployment_files(output_dir, frontend_dir))
+        repairs.extend(_ensure_deployment_files(output_dir, frontend_dir, app_name))
     return repairs

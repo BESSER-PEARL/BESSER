@@ -25,6 +25,8 @@ exist and none of these files are ever written.
 import json
 import os
 
+import pytest
+
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 
 
@@ -204,6 +206,54 @@ def test_readme_is_titled_after_the_model_not_the_run_folder(tmp_path):
     ensure_frontend_scaffold(str(run_dir))
     first = (run_dir / "README.md").read_text(encoding="utf-8").splitlines()[0]
     assert first == "# Todo"
+
+
+def _run_dir_app(tmp_path, title_literal):
+    """A run workspace whose backend declares ``FastAPI(title=<title_literal>)``."""
+    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    run_dir.mkdir()
+    _flat_app(run_dir)
+    (run_dir / "backend" / "main_api.py").write_text(
+        _MAIN_API_PY.replace("FastAPI()", f"FastAPI(\n    title={title_literal},\n)"), encoding="utf-8")
+    return run_dir
+
+
+def _readme_title(run_dir, **kwargs):
+    ensure_frontend_scaffold(str(run_dir), **kwargs)
+    return (run_dir / "README.md").read_text(encoding="utf-8").splitlines()[0]
+
+
+@pytest.mark.parametrize("model_name", ["Library", "Author's_Shelf", 'The "Big" Library'])
+def test_readme_title_reads_the_title_the_backend_generator_writes(tmp_path, model_name):
+    """The generator emits the title with repr(), so the quote character
+    follows the text: single quotes unless the name holds one."""
+    assert _readme_title(_run_dir_app(tmp_path, repr(f"{model_name} API"))) == (
+        "# " + model_name.replace("_", " "))
+
+
+def test_readme_title_matches_the_generated_backend(tmp_path, library_book_author_model):
+    from besser.generators.backend import BackendGenerator
+
+    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    _flat_app(run_dir, with_backend=False)
+    BackendGenerator(library_book_author_model, output_dir=str(run_dir / "backend")).generate()
+    assert _readme_title(run_dir) == "# " + library_book_author_model.name.replace("_", " ")
+
+
+def test_readme_title_prefers_the_project_name(tmp_path):
+    run_dir = _run_dir_app(tmp_path, "'Library_Model API'")
+    assert _readme_title(run_dir, app_name="City_Library") == "# City Library"
+
+
+@pytest.mark.parametrize("default_name", ["Class_Diagram", "Class_Diagram_2", "Class Diagram"])
+def test_readme_title_is_never_a_default_diagram_tab_name(tmp_path, default_name):
+    run_dir = _run_dir_app(tmp_path, repr(f"{default_name} API"))
+    assert _readme_title(run_dir) == "# Generated app"
+
+
+def test_readme_title_skips_a_default_tab_name_for_the_project_name(tmp_path):
+    run_dir = _run_dir_app(tmp_path, "'Class_Diagram API'")
+    assert _readme_title(run_dir, app_name="City_Library") == "# City Library"
 
 
 def test_readme_never_uses_a_run_folder_name(tmp_path):

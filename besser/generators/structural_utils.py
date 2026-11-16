@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from besser.BUML.metamodel.structural import DomainModel, Property
+from besser.BUML.metamodel.structural import AssociationClass, Class, DomainModel, Property
+from besser.utilities import sort_by_timestamp
 
 
 def is_server_owned_attribute(attribute: Property) -> bool:
@@ -44,6 +45,24 @@ def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],
     if end.multiplicity.max > 1:
         return True
     return fkeys.get(association.name, [""])[0] == near.type.name
+
+
+def form_parent_ends(domain_class: Class, model: DomainModel) -> List[Property]:
+    """The ends through which a new record of ``domain_class`` references exactly
+    one record (an order line's order), oldest first: both ends of the
+    association an association class materializes, else each navigable to-one
+    end the ``<Class>Create`` schema has a field for."""
+    if isinstance(domain_class, AssociationClass):
+        return sort_by_timestamp(set(domain_class.association.ends))
+    fkeys = get_foreign_keys(model)
+    link_associations = frozenset(
+        type_.association.name for type_ in model.types if isinstance(type_, AssociationClass)
+    )
+    return [
+        end for end in sort_by_timestamp(domain_class.all_association_ends())
+        if end.is_navigable and end.multiplicity.max == 1
+        and create_schema_accepts_end(end, fkeys, link_associations)
+    ]
 
 
 def _sorted_association_ends(association) -> list:

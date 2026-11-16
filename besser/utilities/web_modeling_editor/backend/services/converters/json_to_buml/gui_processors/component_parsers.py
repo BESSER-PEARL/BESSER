@@ -39,18 +39,14 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import AssociationClass, DomainModel
+from besser.BUML.metamodel.structural import DomainModel
 
 from .component_helpers import (
     collect_input_fields_recursive,
     extract_menu_items,
     extract_parameters_from_attributes,
 )
-from besser.generators.structural_utils import (
-    create_schema_accepts_end,
-    get_foreign_keys,
-    is_server_owned_attribute,
-)
+from besser.generators.structural_utils import form_parent_ends, is_server_owned_attribute
 
 from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
 from .utils import css_class_names, extract_text_content, html_attributes, clean_attribute_name, get_element_by_id
@@ -758,17 +754,14 @@ def _attribute_for(input_field, domain_class):
     return next((by_name[key] for key in _input_keys(input_field) if key in by_name), None)
 
 
-def _parent_ends(domain_class, domain_model) -> List[Any]:
-    """The to-one association ends a new record of the class can set (its
-    customer, its category): those the backend's Create schema has a field for."""
-    fkeys = get_foreign_keys(domain_model)
-    link_associations = {
-        type_.association.name for type_ in domain_model.types if isinstance(type_, AssociationClass)
-    }
-    return [
-        end for end in sorted(domain_class.all_association_ends(), key=lambda end: end.name)
-        if end.multiplicity.max == 1 and create_schema_accepts_end(end, fkeys, link_associations)
-    ]
+def _parent_end_keys(domain_class, domain_model) -> Dict[str, Any]:
+    """The records a new record of the class references (see ``form_parent_ends``),
+    by the names an input selecting one may carry: ``order``, ``order_id``, ``orderId``."""
+    keys: Dict[str, Any] = {}
+    for end in form_parent_ends(domain_class, domain_model):
+        keys.setdefault(_normalized(end.name), end)
+        keys.setdefault(_normalized(end.name) + "id", end)
+    return keys
 
 
 def _covers_required(domain_class, inputs) -> bool:
@@ -801,8 +794,7 @@ def _infer_form_class(inputs, domain_model, form_name: str):
 
     def through_parents(domain_class) -> bool:
         names = attribute_names(domain_class.all_attributes())
-        parents = {_normalized(end.name) for end in _parent_ends(domain_class, domain_model)}
-        return names_every_input(names | parents) and any(key in names for k in keys for key in k)
+        return names_every_input(names | set(_parent_end_keys(domain_class, domain_model))) and any(key in names for k in keys for key in k)
 
     for matches_inputs in (lambda c: names_every_input(attribute_names(c.attributes)),
                            lambda c: names_every_input(attribute_names(c.all_attributes())),
@@ -832,7 +824,7 @@ def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain
     if domain_class is None:
         return
     form.data_binding = DataBinding(domain_concept=domain_class, name=f"{form.name}_binding")
-    parent_ends = {_normalized(end.name): end for end in _parent_ends(domain_class, domain_model)}
+    parent_ends = _parent_end_keys(domain_class, domain_model)
     for input_field in inputs:
         # An input edits the attribute it names, else selects the related record it names
         attribute = _attribute_for(input_field, domain_class) or next(

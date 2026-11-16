@@ -45,6 +45,7 @@ from besser.BUML.metamodel.gui.events_actions import (
 from besser.BUML.metamodel.structural import Association, AssociationClass, Class, Enumeration
 from besser.generators.structural_utils import (
     create_schema_accepts_end,
+    form_parent_ends,
     get_foreign_keys,
     is_server_owned_attribute,
 )
@@ -356,16 +357,17 @@ class GuiSerializationMixin:
                 placeholder = getattr(input_field, "placeholder", None) or (
                     getattr(input_field, "custom_attributes", None) or {}
                 ).get("placeholder")
+                binding = self._form_input_binding(element, input_field)
                 inputs.append(
                     self._clean_dict(
                         {
                             "id": getattr(input_field, "name", None),
-                            **self._form_input_binding(element, input_field),
+                            **binding,
                             "label": (getattr(input_field, "label", None) or placeholder
                                       or self._humanize(getattr(input_field, "name", ""))),
                             "type": self._enum_value(getattr(input_field, "field_type", None)),
                             "placeholder": placeholder,
-                            "required": getattr(input_field, "required", False) or None,
+                            "required": getattr(input_field, "required", False) or binding.get("required"),
                             "default_value": getattr(input_field, "default_value", None),
                             "options": [{"value": o.value, "label": o.label} for o in field_options] if field_options else None,
                             "min_value": getattr(input_field, "min_value", None),
@@ -830,7 +832,10 @@ class GuiSerializationMixin:
         if attribute is None or is_server_owned_attribute(attribute):
             return {}
         if isinstance(attribute.owner, Association):
-            return self._form_lookup_binding(self._lookup_form_column(attribute))
+            column = self._lookup_form_column(
+                attribute, is_association_row=isinstance(form.data_binding.domain_concept, AssociationClass)
+            )
+            return {**self._form_lookup_binding(column), "required": column["required"] or None}
         attr_type = getattr(attribute, "type", None)
         field_type = "enum" if isinstance(attr_type, Enumeration) else getattr(attr_type, "name", "str")
         return {"field": attribute.name, "field_type": field_type}
@@ -859,9 +864,9 @@ class GuiSerializationMixin:
         supplied = {field.get("field") for field in inputs}
         taken = {field.get("id") for field in inputs}
         selects = []
-        for end in self._settable_ends(domain_class):
+        for end in form_parent_ends(domain_class, self.model):
             column = self._lookup_form_column(end, is_association_row=is_association_row)
-            if not column["required"] or column["type"] == "list" or end.name in supplied:
+            if not column["required"] or end.name in supplied:
                 continue
             selects.append({
                 "id": end.name if end.name not in taken else f"{end.name}_ref",

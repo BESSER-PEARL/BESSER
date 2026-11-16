@@ -76,7 +76,7 @@ def test_a_designed_parent_control_is_used_instead_of_a_second_one(build_app, js
     assert bound == {"quantity": "quantity", "line_order": "order", "line_product": "product"}
     assert page.count("<LookupSelect") == 2
     assert 'name="line_order"' in jsx(page, "LookupSelect", 'entity="Order"')
-    assert '{"Belongs to"}</label>' in page
+    assert '{"Belongs to"}<span' in page  # the order is mandatory: its label is marked
     assert "required" not in jsx(page, "LookupSelect", 'entity="Product"')
     fields = _fields(jsx(page, "FormBlock"))
     assert {"name": "line_order", "field": "order", "type": "int"} in fields
@@ -161,3 +161,37 @@ def test_an_input_naming_only_a_parent_does_not_make_a_create_form(build_app):
     app = build_app(classes, {"Search": [_unbound_form(_input("order"))]}, associations)
 
     assert _gui_form(app.gui_model).data_binding is None
+
+
+def test_a_designed_parent_control_may_be_named_after_the_key_it_posts(build_app, jsx):
+    """``order_id`` and ``orderId`` are the order's control: no second, automatic select is added."""
+    for name in ("order_id", "orderId"):
+        form = _form(_input("quantity", "number"), {"tagName": "select", "attributes": {"name": name}})
+        app = build_app(CLASSES, {"Lines": [form]}, ASSOCIATIONS)
+        page = app.page("Lines")
+
+        assert {i.data_binding.data_field.name for i in _gui_form(app.gui_model).inputFields} == {
+            "quantity", "order"}, name
+        assert page.count("<LookupSelect") == 1 and "<select" not in page, name
+        assert f'name="{name}"' in jsx(page, "LookupSelect", 'entity="Order"')
+
+
+def test_a_designed_control_of_a_mandatory_parent_is_required(build_app, jsx):
+    form = _form(_input("quantity", "number"), {"tagName": "select", "attributes": {"name": "order"}})
+    app = build_app(CLASSES, {"Lines": [form]}, ASSOCIATIONS)
+
+    assert "required={true}" in jsx(app.page("Lines"), "LookupSelect", 'entity="Order"')
+
+
+def test_the_designed_selects_of_an_association_class_form_are_its_two_ends(build_app, jsx):
+    classes = {"Student": [("name", "str")], "Course": [("title", "str")], "Enrolment": [("grade", "int")]}
+    associations = [("enrols", ("Student", "students", "0..*"), ("Course", "courses", "0..*"))]
+    form = _form(_input("grade", "number"), {"tagName": "select", "attributes": {"name": "students"}},
+                 {"tagName": "select", "attributes": {"name": "courses"}}, data_source="cls-Enrolment")
+    app = build_app(classes, {"Enrol": [form]}, associations, link_classes={"enrols": "Enrolment"})
+    page = app.page("Enrol")
+
+    assert page.count("<LookupSelect") == 2 and "<select" not in page
+    for entity, name in (("Student", "students"), ("Course", "courses")):
+        select = jsx(page, "LookupSelect", f'entity="{entity}"')
+        assert f'name="{name}"' in select and "required={true}" in select

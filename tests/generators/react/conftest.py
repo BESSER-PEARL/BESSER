@@ -74,8 +74,15 @@ class GeneratedApp:
 
 @pytest.fixture
 def build_app(tmp_path):
-    def build(classes, pages, associations=()):
+    def build(classes, pages, associations=(), link_classes=None):
+        """``link_classes`` = {association name: class name} makes that class the
+        association class of that association."""
         class_json = class_diagram(classes, associations)
+        for association, class_name in (link_classes or {}).items():
+            class_json["relationships"][f"link-{class_name}"] = {
+                "id": f"link-{class_name}", "name": "", "type": "ClassLinkRel",
+                "source": {"element": f"rel-{association}"}, "target": {"element": f"cls-{class_name}"},
+            }
         project_gui = gui_json(pages)
         domain = process_class_diagram({"title": "Domain", "model": class_json})
         gui_model = process_gui_diagram(project_gui, class_json, domain)

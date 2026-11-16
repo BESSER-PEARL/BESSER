@@ -44,6 +44,9 @@ router = APIRouter()
 
 {% set pk = class.name | pk %}
 {% set is_assoc_class = class.name in assoc_classes %}
+{# An abstract class has no instances of its own: its router reads across the
+   subclasses and offers no route that creates, changes or deletes a record. #}
+{% set http_methods = (http_methods | select('equalto', 'GET') | list) if class.is_abstract else http_methods %}
 {% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[], assoc_links=[], lower_bound_guards=[], reverse_one=[], parts=[]) %}
 {% set all_parents = class.all_parents() | sort(attribute='name') %}
 {% for association in class.associations|sort(attribute='name') %}
@@ -1285,6 +1288,7 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types
 {# Handle self-referential relationships by using different parameter names #}
 {% set related_param_name = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
 {% set related_path_param = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
+{% if not class.is_abstract %}
 @router.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_path_param }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
 async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, database: Session = Depends(get_db)):
     """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship"""
@@ -1349,6 +1353,7 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
     database.commit()
 
     return {"message": "{{x[1]}} removed from {{x[3]}} successfully"}
+{% endif %}
 
 
 @router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
@@ -1374,6 +1379,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 {% for x in ns.assoc_links %}
 {# Handle self-referential relationships by using different parameter names #}
 {% set related_param_name = 'related_' ~ x[1]|lower ~ '_id' if class.name|lower == x[1]|lower else x[1]|lower ~ '_id' %}
+{% if not class.is_abstract %}
 @router.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{ related_param_name }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
 async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, link: dict = Body(default=None), database: Session = Depends(get_db)):
     """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship.
@@ -1441,6 +1447,7 @@ async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_i
     database.commit()
 
     return {"message": "{{x[1]}} removed from {{x[3]}} successfully"}
+{% endif %}
 
 
 @router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])

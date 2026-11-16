@@ -141,3 +141,14 @@ def test_a_users_own_agent_config_is_written_as_it_is(tmp_path):
     generator.generate()
     assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == config
     assert generator.traced_files["config.yaml"].regions == ()
+
+
+def test_a_reused_generator_describes_its_last_run_only(tmp_path):
+    model = _library()
+    generator = _Instrumented(model, output_dir=str(tmp_path))
+    generator.generate()
+    generator.ai_files = {"models/book.py"}  # as an LLM step of that run would record
+    model.types = {Class("Shelf", {Property("place", StringType)})}
+    generator.generate()
+    assert set(generator.traced_files) == {"models/shelf.py"}
+    assert generator.ai_files == set() and generator.ai_llm is None

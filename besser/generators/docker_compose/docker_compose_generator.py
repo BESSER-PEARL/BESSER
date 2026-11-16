@@ -590,9 +590,6 @@ class DockerComposeGenerator(GeneratorInterface):
         self.agent_configs_by_id = deepcopy(agent_configs_by_id or {})
         self.agent_config_yamls_by_id = dict(agent_config_yamls_by_id or {})
         self._runtime_by_service = {}
-        # Files (relative to output_dir) a baked agent's LLM personalization wrote; see BAFGenerator.ai_files.
-        self.ai_files = set()
-        self.ai_llm = None
         # The model elements the last _build_view turned into each service / network, by compose name.
         self._service_elements = {}
         self._network_elements = {}

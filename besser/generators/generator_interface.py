@@ -32,7 +32,8 @@ def require_valid_identifiers(model: DomainModel) -> None:
 
 
 def _one_run(generate: Callable) -> Callable:
-    """``generate`` as one run: its trace markers carry a nonce of their own (``trace_run``).
+    """``generate`` as one run: ``traced_files``, ``ai_files`` and ``ai_llm`` start empty, so they
+    describe this run only, and its trace markers carry a nonce of their own (``trace_run``).
 
     A ``generate()`` that calls its base class's is part of the same run.
     """
@@ -40,6 +41,9 @@ def _one_run(generate: Callable) -> Callable:
     def run(self, *args, **kwargs):
         if self.__dict__.get("_in_run"):
             return generate(self, *args, **kwargs)
+        self.traced_files.clear()
+        self.ai_files = set()
+        self.ai_llm = None
         self._in_run = True
         try:
             with trace_run():
@@ -116,8 +120,9 @@ class GeneratorInterface(ABC):
 
     @property
     def traced_files(self) -> Dict[str, FileTrace]:
-        """dict[str, FileTrace]: What each file written so far was rendered from, by path relative to the
-        output directory (``/``-separated). Empty until ``generate()`` writes a traced file."""
+        """dict[str, FileTrace]: What each file the last run wrote was rendered from, by path relative to the
+        output directory (``/``-separated). Empty until ``generate()`` writes a traced file, and
+        emptied when it starts again."""
         # Created on first use: a subclass need not call this __init__ for its traces to be kept.
         if "_traced_files" not in self.__dict__:
             self._traced_files: Dict[str, FileTrace] = {}

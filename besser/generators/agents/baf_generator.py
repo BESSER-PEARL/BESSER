@@ -564,8 +564,6 @@ class BAFGenerator(GeneratorInterface):
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
         agent_file = f"{self.model.name}.py"
-        self.ai_files = set()
-        self.ai_llm = None
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         config_for_personalization = dict(self.config) if self.config else None

@@ -2305,6 +2305,7 @@ class SmartGenerationRunner:
                 )
                 done_event.incomplete = incomplete
                 done_event.incompleteReason = incomplete_reason_msg
+                done_event.cancelled = self._facts.stopped_by == run_record.CANCELLED
                 # Completed-with-blockers vs cut-short need different
                 # client framing: a run whose loop finished but left
                 # completion-blocking issues did NOT "stop early". Only set

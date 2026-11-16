@@ -222,6 +222,9 @@ class DoneEvent(BaseSseEvent):
     # may be incomplete rather than report an unqualified success.
     incomplete: bool = False
     incompleteReason: Optional[str] = None
+    # True when the run ended because a cancel request was honoured after it
+    # had written files: the output is what it had made by then.
+    cancelled: bool = False
     # Number of unresolved blocker-severity validation issues left by a run
     # whose customization loop COMPLETED. Lets the client distinguish
     # "finished, but with issues that may stop the app from running" from a

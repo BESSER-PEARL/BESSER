@@ -372,3 +372,31 @@ def test_a_run_frees_its_slot_before_it_frees_its_disk():
         return held_at_release
 
     assert asyncio.run(exercise()) == [0]
+
+
+class _StoppedOrchestrator(_FakeOrchestrator):
+    """Honours a cancel request after writing files: the run ends with output."""
+
+    def run(self, instructions: str) -> str:
+        out = super().run(instructions)
+        self._phase2_exited_cleanly, self._phase2_stop_reason = False, "cancelled"
+        return out
+
+
+@pytest.mark.parametrize("orchestrator, cancelled", [(_FakeOrchestrator, False), (_StoppedOrchestrator, True)])
+def test_done_says_whether_a_cancel_ended_the_run_also_on_replay(monkeypatch, orchestrator, cancelled):
+    """A stopped run with output ends in ``done``; the client cannot tell it from another early end."""
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", orchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    status, events = asyncio.run(_post_sse(_build_project_body()))
+    assert status == 200 and events[-1]["event"] == "done"
+    assert events[-1]["cancelled"] is cancelled
+
+    run_id, cursor = events[0]["runId"], events[0]["sequence"]
+
+    async def replay():
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            response = await client.get(f"/besser_api/spec-driven/runs/{run_id}/events", params={"after": cursor})
+            return _parse_sse_stream(response.content)
+
+    assert asyncio.run(replay())[-1]["cancelled"] is cancelled

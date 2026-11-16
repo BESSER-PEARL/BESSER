@@ -68,6 +68,11 @@ def test_a_failure_hidden_by_a_later_command_is_named(tmp_path, command):
     ("echo 'a; b'", _ENOENT),                              # the ; is text
     ("npm ci; npm run build", "npm warn deprecated x\n"),  # stderr reports no failure
     ("npm ci; npm run build", ""),
+    ('python seed.py ""', _ENOENT),                       # an empty argument is no second command
+    ("sed -i '' s/a/b/ seed.py", _ENOENT),
+    ("python seed.py\n", _ENOENT),                        # a trailing new line
+    ("python seed.py;", _ENOENT),
+    ("\npython seed.py ;\n\n", _ENOENT),
 ])
 def test_other_lines_get_no_note(tmp_path, command, stderr):
     assert "note" not in _run(_executor(tmp_path), command, stderr=stderr)

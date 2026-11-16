@@ -437,6 +437,11 @@ prints only their names. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
 session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
+A command without ``working_dir`` starts where an earlier ``cd`` left the
+shell; when that is not the workspace root, the result's first field,
+``ran_in``, names that directory. A line that joins two commands with ``;`` or
+a new line, exits 0 and reports a failure in stderr gets a ``note`` that
+``exit_code`` is the last command's alone.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
 
 The probe runs the app inside the workspace, so what the app writes on startup

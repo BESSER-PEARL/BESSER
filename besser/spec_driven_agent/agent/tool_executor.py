@@ -451,10 +451,17 @@ def _joins_commands_unconditionally(command: str) -> bool:
     """Whether the line runs a later command whatever an earlier one returned (``a; b``, a new line)."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
     lexer.whitespace = " \t\r"
+    commands, words = 0, 0
     try:
-        return any(set(token) <= {";", "\n"} for token in lexer)
+        for token in lexer:
+            # A quoted empty argument (`echo ""`) is a word, not a separator.
+            if token and set(token) <= {";", "\n"}:
+                commands, words = commands + bool(words), 0
+            else:
+                words += 1
     except ValueError:
         return False  # unbalanced quotes: the shell reports that itself
+    return commands + bool(words) >= 2
 
 
 def ends_shell_session(method):

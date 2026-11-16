@@ -377,7 +377,7 @@ class ModifyRunMixin:
             not_restored=regeneration.not_restored, not_checked=regeneration.not_checked,
             upgraded_from=regeneration.upgraded_from, base_rebuilt=regeneration.base_rebuilt,
             merge_warning=regeneration.merge_warning or None)
-        # The regenerated and merged files, as a generator call of the run's TraceModel
+        # The regenerated and merged files, as a generator call of the run trace
         # (file level: a merged file's lines are no longer the template's).
         regenerated = regeneration.written + regeneration.merged + [new for _, new in regeneration.moved]
         if regenerated:

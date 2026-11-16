@@ -1,7 +1,5 @@
 """``process_trace``: reading trace file JSON of the current schema version and of older ones."""
 
-import time
-
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
@@ -79,13 +77,14 @@ def test_only_a_code_artifact_has_a_revision():
         process_trace(data)
 
 
-LARGE_TRACE_LINKS = 5000
-LARGE_TRACE_SECONDS = 2.0  # generous: it takes a fraction of this; a quadratic collection took minutes
+LARGE_TRACE_LINKS = 2000
 
 
-def test_a_large_trace_is_read_in_linear_time():
-    data = _trace(6, links=LARGE_TRACE_LINKS)
-    started = time.perf_counter()
-    trace = process_trace(data)
-    assert time.perf_counter() - started < LARGE_TRACE_SECONDS
-    assert len(trace.trace_links) == LARGE_TRACE_LINKS
+def test_a_large_trace_is_read_in_linear_time(assert_scales_linearly):
+    # A quadratic collection once took minutes for 5000 links.
+    def read(links):
+        data = _trace(6, links=links)
+        return lambda: process_trace(data)
+
+    assert_scales_linearly(read, LARGE_TRACE_LINKS)
+    assert len(process_trace(_trace(6, links=LARGE_TRACE_LINKS)).trace_links) == LARGE_TRACE_LINKS

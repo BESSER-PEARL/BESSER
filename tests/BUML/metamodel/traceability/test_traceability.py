@@ -389,28 +389,30 @@ def test_a_code_generation_calls_a_generator_or_an_llm(generation_trace):
 
 # ------------------------------------------------------------ size: building and checking a large trace
 
-LARGE_TRACE_LINKS = 5000
-# Generous: the run takes well under a tenth of this; a quadratic collection took minutes.
-LARGE_TRACE_SECONDS = 2.0
+LARGE_TRACE_LINKS = 2000
 
 
-def test_a_large_trace_builds_and_validates_in_linear_time():
-    import time
+def _large_trace(links: int):
+    """Building and checking a trace of one model linked to ``links`` files, to time."""
+    def build():
+        owner, generator = Person("BESSER User"), CodeGenerator("sqlalchemy")
+        model = ModelArtifact("Library", "diagram-1", "DomainModel")
+        generation = CodeGeneration([owner], tool_calls=[ToolCall(generator, 0)], reads=[model])
+        trace = TraceModel(artifacts=[model], operations=[generation], actors=[owner], tools=[generator])
+        for index in range(links):
+            file = trace.add_artifact(CodeArtifact(f"f{index}.py", f"f{index}.py", "h"))
+            trace.add_trace_link(TraceLink(model, file, generation))
+        generation.writes = trace.artifacts[1:]
+        rebuilt = TraceModel(artifacts=trace.artifacts, operations=trace.operations, trace_links=trace.trace_links,
+                             actors=trace.actors, tools=trace.tools)
+        assert rebuilt.validate()["success"]
+        assert len(rebuilt.trace_links) == links
+    return build
 
-    started = time.perf_counter()
-    owner, generator = Person("BESSER User"), CodeGenerator("sqlalchemy")
-    model = ModelArtifact("Library", "diagram-1", "DomainModel")
-    generation = CodeGeneration([owner], tool_calls=[ToolCall(generator, 0)], reads=[model])
-    trace = TraceModel(artifacts=[model], operations=[generation], actors=[owner], tools=[generator])
-    for index in range(LARGE_TRACE_LINKS):
-        file = trace.add_artifact(CodeArtifact(f"f{index}.py", f"f{index}.py", "h"))
-        trace.add_trace_link(TraceLink(model, file, generation))
-    generation.writes = trace.artifacts[1:]
-    rebuilt = TraceModel(artifacts=trace.artifacts, operations=trace.operations, trace_links=trace.trace_links,
-                         actors=trace.actors, tools=trace.tools)
-    assert rebuilt.validate()["success"]
-    assert time.perf_counter() - started < LARGE_TRACE_SECONDS
-    assert len(rebuilt.trace_links) == LARGE_TRACE_LINKS
+
+def test_a_large_trace_builds_and_validates_in_linear_time(assert_scales_linearly):
+    # A quadratic collection once took minutes for 5000 links.
+    assert_scales_linearly(_large_trace, LARGE_TRACE_LINKS)
 
 
 def test_collections_keep_the_first_of_duplicates_in_order():

@@ -392,7 +392,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.executor.app_validator = self._validate_app
         self.executor.time_left = self._time_left
         # Each generator call's files and traced regions go to the run log, which
-        # the run's TraceModel is built from (state/trace_model.py).
+        # the run trace is built from (state/trace_model.py).
         self.executor.on_generated = self._record_generator_output
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[str, dict] | None = None
@@ -3885,7 +3885,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._requirements is not None:
             self._requirements_source = "extracted"
             after = self._safe_usage_counters()
-            # The extraction's own tokens, so the run's TraceModel can give the
+            # The extraction's own tokens, so the run trace can give the
             # RequirementExtraction its LLM call (and not count them twice).
             self._trace.write(
                 EVENT_REQUIREMENTS, source="extracted", items=self._requirements,

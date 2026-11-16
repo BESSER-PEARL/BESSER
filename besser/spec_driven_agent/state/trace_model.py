@@ -1,4 +1,4 @@
-"""The run's TraceModel: what a Spec-Driven run did, in the B-UML traceability metamodel.
+"""The run trace: what a Spec-Driven run did, as a B-UML traceability ``TraceModel``.
 
 A run keeps three records of itself. They have three names, and only this one is a
 :class:`~besser.BUML.metamodel.traceability.TraceModel`:
@@ -9,7 +9,7 @@ A run keeps three records of itself. They have three names, and only this one is
 * the **Agent Trace record** -- ``.agent-trace/<run id>.json``, kept up to date in
   ``.besser_attribution.json`` (:mod:`.agent_trace`): who wrote each line of the delivered files,
   in the `agent-trace.dev <https://agent-trace.dev/>`_ format;
-* the **run TraceModel** -- this module: a fragment of the project's trace (``projectId`` None)
+* the **run trace** -- this module: a fragment of the project's trace (``projectId`` None)
   that the editor merges into the project trace, as it merges the fragment of a traced
   generation.
 
@@ -79,7 +79,7 @@ SPEC_DRIVEN_AGENT_NAME = agent_trace.TOOL_NAME
 """The Agent a run is performed by (the editor records runs under the same name)."""
 
 TRACE_MODEL_FILENAME = ".besser_trace_model.json"
-"""The run TraceModel as trace-file JSON, delivered in the ZIP beside the Agent Trace record."""
+"""The run trace as trace-file JSON, delivered in the ZIP beside the Agent Trace record."""
 
 MODEL_KINDS = ("domain", "gui", "agent", "object", "bpmn", "nn", "quantum", "state_machine")
 """The kinds of model a run reads; the first seven are the names generator tools require them by

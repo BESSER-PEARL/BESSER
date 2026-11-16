@@ -56,7 +56,14 @@ from .component_parsers import (
 )
 from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
 from .styling import build_style_map, build_stylesheet, resolve_component_styling
-from .utils import css_class_names, html_attributes, sanitize_name, get_element_by_id, clean_method_name
+from .utils import (
+    clean_method_name,
+    css_class_names,
+    extract_text_content,
+    get_element_by_id,
+    html_attributes,
+    sanitize_name,
+)
 
 # An href that cannot name a page of the app: a URL with a scheme
 # (https:, mailto:), a protocol-relative URL, or a fragment of the current page.
@@ -66,6 +73,14 @@ _NOT_A_PAGE_HREF = re.compile(r"\s*(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
 def _page_key(reference: Any) -> str:
     """A page reference (id, name, route or slug) in one comparable form."""
     return re.sub(r"[^a-z0-9]+", "-", str(reference or "").lower()).strip("-")
+
+
+def _holds_only_text(component: Dict[str, Any]) -> bool:
+    """Whether the element has text and no child element (``<div>128</div>``)."""
+    children = component.get("components") or []
+    if any(not isinstance(child, dict) or child.get("type") != "textnode" for child in children):
+        return False
+    return bool(extract_text_content(component))
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -461,6 +476,13 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             data_list = parse_data_list(component, styling, name, meta, domain_model)
             attach_meta(data_list, meta)
             return data_list
+
+        # === TEXT-ONLY ELEMENT (a div holding just text, not a container) ===
+        if _holds_only_text(component):
+            name = get_unique_name(component, "Text")
+            text_element = parse_text(component, styling, name, meta)
+            attach_meta(text_element, meta)
+            return text_element
 
         # === CONTAINER PARSER ===
         if comp_type in CONTAINER_TYPES or tag in CONTAINER_TAGS or comp_name in CONTAINER_TYPES:

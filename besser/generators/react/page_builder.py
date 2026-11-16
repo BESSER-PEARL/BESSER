@@ -1257,7 +1257,10 @@ class PageBuilderMixin:
 
     @staticmethod
     def _select_text_tag(tag: Optional[str]) -> str:
-        valid_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li", "text", "tspan"}
+        valid_tags = {
+            "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li", "text", "tspan",
+            "section", "article", "header", "footer", "aside", "main",
+        }
         tag_value = (tag or "").lower()
         return tag_value if tag_value in valid_tags else "p"
 

@@ -212,6 +212,16 @@ def test_a_bare_required_attribute_makes_the_input_required(build_app, jsx):
     assert "required" not in jsx(page, "input", 'id="gf_email"')
 
 
+def test_only_a_required_value_meaning_yes_makes_the_input_required(build_app):
+    values = {"a": True, "b": "true", "c": "required", "d": "", "e": None, "f": 0, "g": False, "h": "false"}
+    form = {"tagName": "form", "components": [_input(name, required=value) for name, value in values.items()]}
+    app = build_app(CLASSES, {"Register": [form]})
+
+    required = {i.custom_attributes["name"]: i.required for i in _form(app.gui_model).inputFields}
+    assert required == {"a": True, "b": True, "c": True, "d": True,
+                        "e": False, "f": False, "g": False, "h": False}
+
+
 def test_the_submit_button_keeps_its_design_classes(build_app, jsx):
     form = _editor_form()
     form["components"][-1]["attributes"]["class"] = "btn btn-primary"

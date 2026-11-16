@@ -417,8 +417,9 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
         if req_raw:
             required = str(req_raw).lower() in ("true", "1", "yes")
         elif "required" in attributes:
-            # HTML boolean attribute: present means required, whatever its value
-            required = str(attributes["required"]).lower() != "false"
+            # HTML boolean attribute: present (saved as "" or true) or set to "required"
+            value = attributes["required"]
+            required = value is True or (isinstance(value, str) and value.lower() in ("", "true", "required"))
 
         # Default value (Toggle's "Default On" / "default-checked")
         default_raw = (

@@ -14,7 +14,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List
 
-from besser.utilities.generation_trace import FileTrace, GeneratedFile, build_generation_trace, shift_regions
+from besser.utilities.generation_trace import (
+    FileTrace, GeneratedFile, build_generation_trace, input_model, shift_regions,
+)
 from besser.utilities.provenance import add_generation_provenance_to_zip, get_besser_version
 from besser.utilities.web_modeling_editor.backend.config import get_filename_for_generator, get_generator_info
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
@@ -81,8 +83,7 @@ async def generate_with_trace(input_data: TracedGenerationInput) -> TracedGenera
 
     trace = build_generation_trace(
         files,
-        model_id=input_data.id,
-        model_name=input_data.title.strip() or domain_model.name,
+        models=[input_model(domain_model, input_data.id, input_data.title.strip() or domain_model.name)],
         generator=generator_type,
         generator_version=get_besser_version(),
         actor_name=input_data.actorName,

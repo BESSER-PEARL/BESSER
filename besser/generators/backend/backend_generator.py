@@ -1,4 +1,5 @@
 import configparser
+import functools
 import logging
 import os
 from besser.BUML.metamodel.structural import DomainModel
@@ -62,7 +63,6 @@ class BackendGenerator(GeneratorInterface):
         self.api_version = api_version
         self.config = self.load_config()
         self.has_nn_methods = False
-        self.traced_files: dict = {}
 
     def load_config(self):
         """
@@ -121,12 +121,13 @@ class BackendGenerator(GeneratorInterface):
 
         # main_api.py (slim app + router includes) + database.py + bal_stdlib.py
         # + routers/<class>.py, one router per resource.
-        api_files = generate_modular_api(
+        generate_modular_api(
             model=self.model,
             http_methods=self.http_methods,
             nested_creations=self.nested_creations,
             port=docker_port,
             output_dir=backend_folder_path,
+            write=functools.partial(self._write_traced, output_dir=backend_folder_path),
             api_title=self.api_title,
             api_description=self.api_description,
             api_version=self.api_version,
@@ -139,7 +140,8 @@ class BackendGenerator(GeneratorInterface):
         pydantic_model.generate()
 
         # The files of the generators this one is built from, by path in the output folder.
-        self.traced_files = {**api_files, **sql_alchemy.traced_files, **pydantic_model.traced_files}
+        self._merge_traced_files(sql_alchemy)
+        self._merge_traced_files(pydantic_model)
 
         # Methods implemented by a neural network: PyTorch modules + runtime + torch requirement.
         self.has_nn_methods = generate_nn_methods(self.model, backend_folder_path)

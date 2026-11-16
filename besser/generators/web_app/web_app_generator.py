@@ -153,12 +153,14 @@ class WebAppGenerator(GeneratorInterface):
         frontend_dir = os.path.join(self.output_dir, "frontend") if self.output_dir else "frontend"
         frontend_gen = ReactGenerator(self.model, self.gui_model, output_dir=frontend_dir)
         frontend_gen.generate()
+        self._merge_traced_files(frontend_gen, "frontend")
 
     def _generate_backend(self, env):
         # Generate backend code in 'backend' subfolder
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
         backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
         backend_gen.generate()
+        self._merge_traced_files(backend_gen, "backend")
 
     def _generate_agent(self, env):
         """Generate agent code for every configured agent model.
@@ -187,8 +189,10 @@ class WebAppGenerator(GeneratorInterface):
             os.makedirs(agent_dir, exist_ok=True)
             cfg = self.agent_configs.get(getattr(agent, "name", None))
             cfg_yaml = self.agent_config_yamls.get(getattr(agent, "name", None))
-            BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml,
-                         default_db=default_db).generate()
+            agent_gen = BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml,
+                                     default_db=default_db)
+            agent_gen.generate()
+            self._merge_traced_files(agent_gen, f"agents/{slug}")
 
     def agent_default_db(self):
         """The ``db1`` entry pointing the agents at the web app's SQLite database.

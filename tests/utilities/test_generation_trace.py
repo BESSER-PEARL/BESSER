@@ -1,5 +1,6 @@
 """Tests for the generator-side tracing helper (besser.utilities.generation_trace)."""
 
+import hashlib
 from datetime import datetime
 
 import pytest
@@ -8,8 +9,9 @@ from jinja2 import DictLoader, Environment
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.metamodel.traceability import CodeArtifact, CodeGeneration, ModelArtifact
 from besser.utilities.generation_trace import (
-    ElementRef, FileTrace, GeneratedFile, TraceExtension, TraceRegion, TraceSource, build_generation_trace,
-    extract_trace_regions, shift_regions,
+    ElementRef, FileTrace, GeneratedFile, InputModel, TraceExtension, TraceRegion, TraceSource,
+    build_generation_trace, collect_generated_files, extract_trace_regions, input_model, prefixed_traces,
+    shift_file_trace, shift_regions, traced_environment,
 )
 
 TEMPLATE = """header
@@ -97,7 +99,8 @@ def test_shift_regions_moves_every_line():
 def _build(files, cap: int = 1000):
     now = datetime(2026, 10, 1)
     return build_generation_trace(
-        files, model_id="diagram-1", model_name="Library", generator="sqlalchemy", generator_version="8.5.0",
+        files, models=[InputModel(ElementRef("diagram-1", "DomainModel", "Library"))], generator="sqlalchemy",
+        generator_version="8.5.0",
         actor_name="BESSER User", max_stored_content_bytes=cap, started_at=now, ended_at=now)
 
 
@@ -177,3 +180,77 @@ def test_a_parsed_constraint_is_recorded_as_a_constraint():
     positive.id = "ocl-1"
     _, (region,) = extract_trace_regions(_render("{% trace c %}check{% endtrace %}", c=positive))
     assert (region.element_type, region.rule.split("#")[1]) == ("Constraint", "Constraint")
+
+
+# ------------------------------------------------------------ file-level traces for every generator
+
+def test_collect_generated_files_reads_text_files_and_leaves_binary_ones_out(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "b.py").write_text("b\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+    (tmp_path / "weights.bin").write_bytes(b"\xff\xfe\x00")
+    traced = {"pkg/b.py": FileTrace((TraceRegion("c1", "Class", "B", "t#class", 1, 1),))}
+    files = collect_generated_files(str(tmp_path), traced)
+    assert [(f.path, f.content) for f in files] == [("a.txt", "a\n"), ("pkg/b.py", "b\n")]
+    assert files[1].trace is traced["pkg/b.py"] and files[0].trace == FileTrace()
+    assert files[0].content_hash == hashlib.sha256(b"a\n").hexdigest()
+
+
+def test_every_input_model_is_linked_to_every_file_and_elements_sit_under_their_model():
+    """A web app run reads a class diagram and a GUI: both are roots, each element under its own."""
+    domain = InputModel(ElementRef("class-diagram", "DomainModel", "Library"), frozenset({"c1"}))
+    gui = InputModel(ElementRef("gui-diagram", "GUIModel", "Library GUI"), frozenset({"page-1"}))
+    files = [GeneratedFile("app.py", "x\ny\n", FileTrace((TraceRegion("page-1", "Screen", "Books", "t#page", 2, 2),))),
+             GeneratedFile("models.py", "m\n", FileTrace((TraceRegion("c1", "Class", "Book", "t#class", 1, 1),))),
+             GeneratedFile("README.md", "r\n")]
+    now = datetime(2026, 10, 1)
+    trace = build_generation_trace(files, models=[domain, gui], generator="web_app", generator_version=None,
+                                   actor_name="Ada", max_stored_content_bytes=1000, started_at=now, ended_at=now)
+    assert trace.validate()["success"]
+    class_root, gui_root = trace.model_artifact_for("class-diagram"), trace.model_artifact_for("gui-diagram")
+    assert (class_root.element_type, gui_root.element_type) == ("DomainModel", "GUIModel")
+    assert trace.model_artifact_for("page-1").parent is gui_root
+    assert trace.model_artifact_for("c1").parent is class_root
+    whole_files = {a.path for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is None}
+    for root in (class_root, gui_root):
+        links = [link for link in trace.trace_links if link.source is root]
+        assert {link.target.path for link in links} == whole_files
+        assert {link.evidence[0].rule for link in links} == {"generator:web_app"}
+    assert set(trace.operations[0].reads) >= {class_root, gui_root}
+
+
+def test_a_generation_trace_needs_an_input_model():
+    now = datetime(2026, 10, 1)
+    with pytest.raises(ValueError):
+        build_generation_trace([], models=[], generator="g", generator_version=None, actor_name="Ada",
+                               max_stored_content_bytes=1, started_at=now, ended_at=now)
+
+
+def test_input_model_records_the_metaclass_and_the_element_ids():
+    from besser.BUML.metamodel.structural import DomainModel, Property, StringType
+
+    title = Property("title", StringType)
+    book = Class("Book", {title})
+    book.id, title.id = "c1", "a1"
+    model = DomainModel("Library", types={book})
+    assert input_model(model, "diagram-1") == InputModel(ElementRef("diagram-1", "DomainModel", "Library"),
+                                                         frozenset({"c1", "a1"}))
+    assert input_model(model, "diagram-1", "My library").ref.element_name == "My library"
+    with pytest.raises(ValueError, match="no id"):
+        input_model(model)
+
+
+def test_traced_environment_adds_the_trace_tag_to_the_given_options():
+    env = traced_environment(DictLoader({"t.j2": "{% do items.append(1) %}{% trace c %}x{% endtrace %}"}),
+                             extensions=["jinja2.ext.do"], trim_blocks=True)
+    assert env.trim_blocks
+    _, (region,) = extract_trace_regions(env.get_template("t.j2").render(items=[], c=_Cls("A", "a")))
+    assert region.element_id == "a"
+
+
+def test_shift_and_prefix_helpers():
+    trace = FileTrace((TraceRegion("a", "Class", "A", "r", 1, 2),), (TraceSource(ElementRef("a", "Class", "A"), "r"),))
+    assert shift_file_trace(trace, 2) == FileTrace((TraceRegion("a", "Class", "A", "r", 3, 4),), trace.sources)
+    assert shift_file_trace(trace, 0) is trace
+    assert prefixed_traces({"x.py": trace}, "backend/") == {"backend/x.py": trace}
+    assert prefixed_traces({"x.py": trace}, "") == {"x.py": trace}

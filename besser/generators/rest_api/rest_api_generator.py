@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 
@@ -103,11 +104,13 @@ class RESTAPIGenerator(GeneratorInterface):
                 nested_creations=self.nested_creations,
                 port=self.port,
                 output_dir=api_output_dir,
+                write=functools.partial(self._write_traced, output_dir=api_output_dir),
             )
 
         else:
             pydantic_model = PydanticGenerator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)
             pydantic_model.generate()
+            self._merge_traced_files(pydantic_model)
 
             file_path = self.build_generation_path(file_name="rest_api.py")
             templates_path = os.path.join(os.path.dirname(

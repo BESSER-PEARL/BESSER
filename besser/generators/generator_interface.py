@@ -1,8 +1,9 @@
 import os
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Optional
 
 from besser.BUML.metamodel.structural import DomainModel, Model
+from besser.utilities.generation_trace import FileTrace, TraceSource, extract_trace_regions, prefixed_traces
 
 if TYPE_CHECKING:
     from besser.generators.regeneration import RegenerationReport
@@ -26,8 +27,15 @@ def require_valid_identifiers(model: DomainModel) -> None:
         raise InvalidIdentifierError("Cannot generate code from this model:\n" + "\n".join(errors))
 
 
-# Interface for code generators
 class GeneratorInterface(ABC):
+    """A code generator: ``generate()`` writes code derived from ``model`` into ``output_dir``.
+
+    Tracing: ``traced_files`` maps each file the generator wrote with :meth:`_write_traced`
+    (by path relative to its output directory, ``/``-separated) to the
+    :class:`~besser.utilities.generation_trace.FileTrace` of what it was rendered from. It is
+    always present and empty for a generator that records nothing, whose files still get
+    file-level links (``besser.utilities.generation_trace.collect_generated_files``).
+    """
 
     # Opt-in for regenerate(): the output must be byte-identical for one model, or a merge
     # could not tell a model change from noise (tests/generators/test_regenerable_generators.py).
@@ -75,6 +83,54 @@ class GeneratorInterface(ABC):
     def _without_secrets(self, files: dict[str, bytes]) -> dict[str, bytes]:
         """``files`` as the record holds them: it stays with the code, even once a secret has moved out of it."""
         return files
+
+    @property
+    def traced_files(self) -> Dict[str, FileTrace]:
+        """dict[str, FileTrace]: What each file written so far was rendered from, by path relative to the
+        output directory (``/``-separated). Empty until ``generate()`` writes a traced file."""
+        # Created on first use: a subclass need not call this __init__ for its traces to be kept.
+        if "_traced_files" not in self.__dict__:
+            self._traced_files: Dict[str, FileTrace] = {}
+        return self._traced_files
+
+    def _write_traced(self, relative_path: str, rendered: str, *sources: Optional[TraceSource],
+                      output_dir: Optional[str] = None) -> str:
+        """Write a template render without its trace markers, and record what it was rendered from.
+
+        The file is written as UTF-8 with ``\\n`` line endings, whatever the platform, so its
+        lines are the ones the trace counts. Folders on the way are created.
+
+        Args:
+            relative_path: Where to write, relative to ``output_dir``; also the key in ``traced_files``.
+            rendered: The render of a template (of an environment from
+                ``besser.utilities.generation_trace.traced_environment``), with its trace markers.
+            *sources: The elements the whole file was generated from (``trace_source(element, rule)``);
+                None entries (an element without an id) are skipped.
+            output_dir: The folder the generator writes its output to; defaults to
+                :meth:`build_generation_dir`. Pass it when the generator has its own default.
+
+        Returns:
+            str: The text written (the render without markers).
+        """
+        code, regions = extract_trace_regions(rendered)
+        base = output_dir if output_dir is not None else self.build_generation_dir()
+        file_path = os.path.join(base, relative_path)
+        os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
+        with open(file_path, mode="w", encoding="utf-8", newline="\n") as f:
+            f.write(code)
+        key = relative_path.replace(os.sep, "/")
+        self.traced_files[key] = FileTrace(tuple(regions), tuple(s for s in sources if s is not None))
+        return code
+
+    def _merge_traced_files(self, child: "GeneratorInterface", prefix: str = "") -> None:
+        """Add the traces of a generator this one ran into its output (a composite's part).
+
+        Args:
+            child: The generator, after its ``generate()``.
+            prefix: The folder, relative to this generator's output directory, the child wrote
+                into (``"backend"``); empty when it wrote into the same one.
+        """
+        self.traced_files.update(prefixed_traces(child.traced_files, prefix))
 
     @property
     def model(self) -> Model:

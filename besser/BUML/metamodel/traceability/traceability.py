@@ -38,9 +38,10 @@ inherit :class:`Element`, not :class:`NamedElement`; every one has an ``id``
 
 import uuid
 from abc import ABC
+from collections import deque
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Iterable, Iterator, List, Optional, Set
+from typing import Deque, Iterable, Iterator, List, Optional, Set, Tuple
 
 from besser.BUML.metamodel.structural import Element, Model
 
@@ -419,17 +420,27 @@ def model_elements(model: Model) -> Iterator[Element]:
     references its domain model), so it yields the model's own elements and those it
     references directly (the class a table shows), not a referenced model's whole content.
     """
+    for element, _ in model_elements_by_depth(model):
+        yield element
+
+
+def model_elements_by_depth(model: Model) -> Iterator[Tuple[Element, int]]:
+    """Every element of ``model``, as :func:`model_elements` walks them, with its depth: how many
+    objects it is reached through from the model (1 for an element the model holds itself, as a
+    domain model holds its classes; more for an element held by one of them, or only referenced,
+    as a GUI's table references the class it shows). Elements come shallowest first, and each at
+    the smallest depth it is reached at."""
     seen: Set[int] = {id(model)}
-    pending: list = [model]
+    pending: Deque[Tuple[object, int]] = deque([(model, 0)])
     while pending:
-        current = pending.pop()
+        current, depth = pending.popleft()
         for value in _held_values(current):
             if id(value) in seen or isinstance(value, Model) or not _is_buml_object(value):
                 continue
             seen.add(id(value))
             if isinstance(value, Element):
-                yield value
-            pending.append(value)
+                yield value, depth + 1
+            pending.append((value, depth + 1))
 
 
 _BUML_PACKAGE = "besser.BUML."

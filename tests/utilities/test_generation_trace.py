@@ -219,6 +219,33 @@ def test_every_input_model_is_linked_to_every_file_and_elements_sit_under_their_
     assert set(trace.operations[0].reads) >= {class_root, gui_root}
 
 
+def test_an_element_two_models_reach_sits_under_the_model_that_holds_it():
+    """A GUI's table references the class it shows; the class is the domain model's, whatever the order."""
+    from besser.BUML.metamodel.gui import DataBinding, GUIModel, Module, Screen
+    from besser.BUML.metamodel.gui.dashboard import Table
+    from besser.BUML.metamodel.structural import DomainModel
+
+    book = Class("Book")
+    book.id = "c1"
+    domain_model = DomainModel("Library", types={book})
+    table = Table("books", data_binding=DataBinding(domain_concept=book))
+    table.id = "table-1"
+    screen = Screen("Books", "Books", view_elements={table})
+    screen.id = "page-1"
+    gui_model = GUIModel("GUI", "", "1.0", "1.0", modules={Module("M", screens={screen})}, description="GUI")
+    gui, domain = input_model(gui_model, "gui-diagram"), input_model(domain_model, "class-diagram")
+    assert {"c1", "table-1", "page-1"} <= gui.element_ids and domain.element_ids == {"c1"}
+    assert domain.element_depths["c1"] < gui.element_depths["c1"]
+
+    files = [GeneratedFile("app.py", "a\nb\n", FileTrace((TraceRegion("c1", "Class", "Book", "t#class", 1, 1),
+                                                           TraceRegion("table-1", "Table", "books", "t#table", 2, 2))))]
+    now = datetime(2026, 10, 1)
+    trace = build_generation_trace(files, models=[gui, domain], generator="web_app", generator_version=None,
+                                   actor_name="Ada", max_stored_content_bytes=1000, started_at=now, ended_at=now)
+    assert trace.model_artifact_for("c1").parent is trace.model_artifact_for("class-diagram")
+    assert trace.model_artifact_for("table-1").parent is trace.model_artifact_for("gui-diagram")
+
+
 def test_a_generation_trace_needs_an_input_model():
     now = datetime(2026, 10, 1)
     with pytest.raises(ValueError):

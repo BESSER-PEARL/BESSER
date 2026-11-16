@@ -47,7 +47,7 @@ from besser.BUML.metamodel.traceability import (
     AIEvidence, CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ExecutionStatus, LLM, ModelArtifact, Person,
     RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
-from besser.BUML.metamodel.traceability.traceability import model_elements
+from besser.BUML.metamodel.traceability.traceability import model_elements_by_depth
 
 logger = logging.getLogger(__name__)
 
@@ -184,10 +184,15 @@ class InputModel:
 
     ``ref`` is the model itself: its persistent id (the editor's diagram id), metaclass
     (``DomainModel``, ``GUIModel``, ``Agent``, ...) and name. ``element_ids`` are the ids of
-    its elements, so an element a template traced is placed under the model it belongs to.
+    its elements, so an element a template traced is placed under the model it belongs to;
+    ``element_depths`` gives, for each, how directly the model holds it (see
+    :func:`~besser.BUML.metamodel.traceability.traceability.model_elements_by_depth`), so an
+    element two models of a run reach (a class a GUI shows, a network a method runs) is placed
+    under the model that holds it most directly.
     """
     ref: ElementRef
     element_ids: FrozenSet[str] = frozenset()
+    element_depths: Mapping[str, int] = field(default_factory=dict, compare=False, hash=False)
 
 
 def input_model(model: Model, model_id: Optional[str] = None, name: Optional[str] = None) -> InputModel:
@@ -204,8 +209,11 @@ def input_model(model: Model, model_id: Optional[str] = None, name: Optional[str
     model_id = model_id or getattr(model, "id", None)
     if not model_id:
         raise ValueError(f"Model {model.name!r} has no id: a trace refers to a model by its id.")
-    ids = frozenset(e.id for e in model_elements(model) if getattr(e, "id", None))
-    return InputModel(ElementRef(model_id, type(model).__name__, name or model.name), ids)
+    depths: Dict[str, int] = {}
+    for element, depth in model_elements_by_depth(model):
+        if getattr(element, "id", None):
+            depths.setdefault(element.id, depth)
+    return InputModel(ElementRef(model_id, type(model).__name__, name or model.name), frozenset(depths), depths)
 
 
 
@@ -338,7 +346,7 @@ def build_generation_trace(
     ``generator:<generator>``), from each whole-file source to its file, and from each
     element to the fragments rendered from it, with the template rule as evidence and
     confidence 1 (they are made by construction). An element is placed under the input
-    model that holds it (the first one when none does).
+    model that holds it most directly (the first one when none does).
 
     ``ai_files`` are the paths of files an LLM produced or modified during the run (a generator's
     optional LLM step, e.g. ``BAFGenerator.ai_files``). Their links are not deterministic template
@@ -364,7 +372,10 @@ def build_generation_trace(
     elements: Dict[str, ModelArtifact] = {}
 
     def root_of(element_id: str) -> ModelArtifact:
-        return next((root for root, m in zip(roots, models) if element_id in m.element_ids), roots[0])
+        # The model that holds the element most directly; the first such, and the first model when none does.
+        holders = [(m.element_depths.get(element_id, 0), index)
+                   for index, m in enumerate(models) if element_id in m.element_ids]
+        return roots[min(holders)[1]] if holders else roots[0]
 
     def element(ref: ElementRef, owner: Optional[ElementRef] = None) -> ModelArtifact:
         artifact = elements.get(ref.element_id)

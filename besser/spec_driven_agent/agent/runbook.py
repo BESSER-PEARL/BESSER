@@ -29,16 +29,21 @@ traceback.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 from besser.spec_driven_agent.settings import AgentSettings
-from besser.utilities.workspace_fs import open_plain_write, walk_plain
+from besser.utilities.workspace_fs import open_plain, open_plain_write, remove_plain, walk_plain
 
 logger = logging.getLogger(__name__)
 
 PROBE_FILENAME = ".besser_probe.py"
+# Written by the probe: the files that appeared under the backend while it ran the app.
+RUNTIME_FILES_FILENAME = ".besser_probe.runtime_files.json"
+# The record comes from the sandbox; a longer one is cut, so it fails to parse and is ignored.
+_MAX_RUNTIME_RECORD_CHARS = 1_000_000
 
 # Environment kill switch (BESSER_LLM_SHELL_RUNBOOK). Default on whenever
 # shell tools are enabled; ``0`` gives the shell without the procedure (an
@@ -86,6 +91,46 @@ def install_probe(output_dir: str) -> bool:
         return False
 
 
+def remove_app_runtime_files(output_dir: str, written: set[str]) -> list[str]:
+    """Delete what the app wrote while the probe ran it, and the probe's record of it.
+
+    A database, a generated signing key or an upload is state of that test
+    run, not part of the app: shipped, every deployment would share it.
+    ``written`` holds the absolute, case-normalised paths a generator or a
+    write tool produced; those stay, whatever the record says, since the
+    sandbox the record comes from is not trusted. Returns the paths removed,
+    workspace-relative. Never raises.
+    """
+    record = os.path.join(output_dir, RUNTIME_FILES_FILENAME)
+    try:
+        with open_plain(record, "r", root=output_dir, encoding="utf-8") as handle:
+            recorded = json.loads(handle.read(_MAX_RUNTIME_RECORD_CHARS))
+    except OSError:
+        return []
+    except (ValueError, RecursionError):
+        logger.warning("runbook: %s is unreadable; files the app wrote in its test run may remain",
+                       RUNTIME_FILES_FILENAME)
+        return []
+    removed: list[str] = []
+    for rel in recorded if isinstance(recorded, list) else []:
+        if not isinstance(rel, str) or os.path.basename(rel).startswith(".besser_"):
+            continue
+        path = os.path.normpath(os.path.join(output_dir, rel))
+        if os.path.normcase(path) in written:
+            continue
+        try:
+            # ``root`` refuses a recorded path that leaves the workspace.
+            remove_plain(path, root=output_dir)
+        except OSError:
+            continue
+        removed.append(os.path.relpath(path, output_dir).replace("\\", "/"))
+    try:
+        remove_plain(record, root=output_dir)
+    except OSError:
+        logger.debug("runbook: could not remove the runtime-file record", exc_info=True)
+    return sorted(removed)
+
+
 def runbook_section(output_dir: str) -> str:
     """The runbook block for the system prompt, or "" when it does not apply.
 
@@ -131,7 +176,9 @@ running between commands: `routes` and `req` reach that same server, and `down`
 stops it. If the session was restarted in between (a result's notes say so),
 `req` and `routes` boot a fresh server themselves; the SQLite file keeps
 records either way. The probe path is relative: if you `cd`-ed elsewhere, pass
-`working_dir="."`.
+`working_dir="."`. Files the app writes while it runs here (its database, a key
+it generates, uploads) are not delivered with the app: its own code has to
+create whatever it needs at startup.
 
 ### The procedure — every outcome has exactly one next step
 
@@ -203,6 +250,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(ROOT, ".besser_probe.state.json")
 LOG = os.path.join(ROOT, ".besser_probe.server.log")
+RUNTIME_FILES = os.path.join(ROOT, ".besser_probe.runtime_files.json")
 SKIP = {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build"}
 MAX_LIFETIME = 1800          # a forgotten server reaps itself after 30 minutes
 BOOT_WAIT = 45
@@ -242,6 +290,35 @@ def log_tail(lines=40):
     except OSError:
         return "(no server log yet)"
     return "".join(content[-lines:]).rstrip() or "(server log is empty)"
+
+
+def app_files(backend):
+    found = set()
+    for root, dirs, files in os.walk(backend):
+        dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".besser_")]
+        found.update(os.path.relpath(os.path.join(root, name), ROOT).replace("\\", "/")
+                     for name in files if not name.startswith(".besser_"))
+    return found
+
+
+def recording(action):
+    """Run `action` (a boot or a request) and note the files that appeared
+    under the backend meanwhile: the running app wrote them (a database, a
+    generated key, an upload), so they are left out of the delivered app."""
+    backend = find_backend()
+    before = app_files(backend) if backend else set()
+    try:
+        return action()
+    finally:
+        created = (app_files(backend) - before) if backend else set()
+        if created:
+            try:
+                with open(RUNTIME_FILES, encoding="utf-8") as handle:
+                    known = [path for path in json.load(handle) if isinstance(path, str)]
+            except (OSError, ValueError, TypeError):
+                known = []
+            with open(RUNTIME_FILES, "w", encoding="utf-8") as handle:
+                json.dump(sorted(created.union(known)), handle)
 
 
 def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None):
@@ -340,7 +417,7 @@ def cmd_down(quiet=False):
 
 
 def cmd_up(quiet=False):
-    return boot(quiet)[0]
+    return recording(lambda: boot(quiet))[0]
 
 
 def boot(quiet=False):
@@ -423,7 +500,7 @@ def ensure_up():
     port = state.get("port")
     if port and is_probe_server(state.get("pid"), port) and is_up(port):
         return port
-    code, port = boot(quiet=True)
+    code, port = recording(lambda: boot(quiet=True))
     return port if code == 0 else None
 
 
@@ -525,7 +602,7 @@ def cmd_req(argv):
     port = ensure_up()
     if not port:
         return 1
-    status, text = request(method, path, body, port, extra_headers=headers)
+    status, text = recording(lambda: request(method, path, body, port, extra_headers=headers))
     # Header names only: a value can be a credential.
     sent = ("  (headers: %s)" % ", ".join(sorted(headers))) if headers else ""
     print("%s %s %s%s" % (status or "CONNECTION_FAILED", method.upper(), path, sent))

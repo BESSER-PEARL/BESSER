@@ -133,6 +133,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     pre_generate_metadata,
     stack_label,
 )
+from besser.spec_driven_agent.agent.runbook import remove_app_runtime_files
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
@@ -5128,7 +5129,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return None
         return bool(getattr(self.domain_model, "constraints", None) or self._requirements_for_validation())
 
+    # Paths of removed runtime files the recipe names; it travels in the done event.
+    _MAX_RECIPE_RUNTIME_FILES = 50
+
+    def _remove_app_runtime_files(self) -> list[str]:
+        """Delete what the app wrote while the agent test-ran it in the workspace."""
+        self.executor.stop_shell_processes()
+        written = self._llm_edited_paths() | {
+            os.path.normcase(os.path.normpath(os.path.join(self.output_dir, rel)))
+            for rel in self.executor._generator_files
+        }
+        removed = remove_app_runtime_files(self.output_dir, written)
+        if removed:
+            logger.warning("Removed %d file(s) the app wrote while it was test-run; they are not "
+                           "part of the output: %s", len(removed), ", ".join(removed[:20]))
+        return removed
+
     def _save_recipe(self, instructions: str, elapsed: float) -> None:
+        runtime_files_removed = self._remove_app_runtime_files()
         # Build file manifest. Dependency / build directories are pruned:
         # an LLM-run ``npm install`` would otherwise put thousands of
         # node_modules entries in the manifest, ballooning the recipe
@@ -5280,6 +5298,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # The Phase 3 edits in tool_calls are on disk only when this is
             # False; a rollback discarded them and kept the Phase 2 output.
             "phase3_rolled_back": self._phase3_rolled_back,
+            # Written by the app while the agent test-ran it, and deleted: not output.
+            "runtime_files_removed": runtime_files_removed[:self._MAX_RECIPE_RUNTIME_FILES],
             "output_files": sorted(output_files, key=lambda f: f["path"]),
             "output_summary": {
                 "total_files": len(output_files),

@@ -438,6 +438,17 @@ session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
 
+The probe runs the app inside the workspace, so what the app writes on startup
+or while answering a request (its database, a signing key it generates, an
+upload) lands beside the source. The probe records the files that appear under
+the backend during ``up`` and ``req`` in ``.besser_probe.runtime_files.json``,
+and the run deletes them before it writes the recipe, unless a generator or a
+write tool wrote them; the recipe lists them under ``runtime_files_removed``.
+They are therefore in neither the download nor a GitHub push. A file the app
+writes when the agent starts it some other way (``python main_api.py`` or a
+test run through ``run_command``) is not recorded: only the name-based
+exclusions (databases, logs, caches) apply to it.
+
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on
 a developer laptop or a single-tenant on-prem box, and not on a shared one.

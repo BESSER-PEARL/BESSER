@@ -74,3 +74,21 @@ def test_a_bound_table_keeps_its_class_names(tmp_path):
     assert "className={className}" in _read(src, "components", "runtime", "TableBlock.tsx")
     table_component = _read(src, "components", "table", "TableComponent.tsx")
     assert "`table-wrapper ${className}`" in table_component
+
+
+def test_browser_defaults_the_reset_removes_are_restored_below_the_design(tmp_path):
+    """Tailwind's reset gives headings the body's size and weight and strips a
+    plain button; a design that sets neither expects the browser's defaults."""
+    src = _generate(tmp_path, STYLESHEET)
+    design_css = _read(src, "design.css")
+
+    restore = design_css[design_css.index("@layer base {"):design_css.index(".app-btn{")]
+    headings = restore[restore.index(".app-main :is(h1, h2, h3, h4, h5, h6) {"):]
+    assert "font-size: revert;" in headings and "font-weight: revert;" in headings
+    button = restore[restore.index(".app-main button {"):]
+    assert "background-color: revert;" in button and "border: revert;" in button
+    # Pages render inside .app-main; the reset the block answers is imported first.
+    assert '<main className="app-main">' in _read(src, "App.tsx")
+    assert '@import "tailwindcss";' in _read(src, "index.css")
+    index = _read(src, "index.tsx")
+    assert index.index("import './index.css';") < index.index("import './design.css';")

@@ -787,8 +787,13 @@ broken artifact as a green success is worse than spending a few more turns.
    entity. The ``page`` and ``create`` cells are stack-independent and still
    apply. The ``create`` cell of an abstract class is *not expected*: its
    records are created through its subclasses.
-   An entry of a page's metadata object that declares no create form
-   (``allowCreate: false``, ``readOnly: true``) is not credited with one.
+   A create whose path is read off a metadata entry the page hands down
+   through components (``<EntityPage entity={ENTITIES.order} />`` passing its
+   ``entity`` prop on to a form that calls ``api.post(entity.path, ...)``) is
+   credited to that entry's entity. An entry of a page's metadata object that
+   declares no create form (``allowCreate: false``, ``readOnly: true``), or a
+   page that renders the component with ``readOnly`` or
+   ``allowCreate={false}``, is not credited with one.
 
 .. warning::
    Validation includes isolated backend execution, not a deployment or full

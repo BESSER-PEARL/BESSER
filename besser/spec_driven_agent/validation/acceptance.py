@@ -663,12 +663,38 @@ def _prop_read(arg_text: str, code: str) -> tuple[str, str] | None:
     return name, read.group("prop")
 
 
+# The JSX attributes, and the value of each, that switch a component's create form off.
+_NO_CREATE_ATTRS = (("readOnly", "true"), ("readonly", "true"),
+                    ("allowCreate", "false"), ("canCreate", "false"), ("creatable", "false"))
+
+
+def _turns_create_off(attrs: str, top: str) -> bool:
+    """Whether a JSX tag switches its create form off: `readOnly`, `readOnly={true}`, `allowCreate={false}`."""
+    return (re.search(r"(?<![\w$.-])(?:readOnly|readonly)(?![\w$-])(?!\s*=)", top) is not None
+            or any((_attr(attrs, name) or "").strip() == value for name, value in _NO_CREATE_ATTRS))
+
+
+def _forwarded_props(source: str, binding: str, prop: str) -> list[str]:
+    """The component's own props ``source`` hands on to ``binding`` as ``prop``:
+    `<EntityForm entity={entity} />` in `function EntityPage({ entity })`."""
+    code = _blank_literals(source)
+    names = []
+    for _, attrs, top in _jsx_tags(_blank_comments(source), re.escape(binding)):
+        value = (_attr(attrs, re.escape(prop)) or "").strip()
+        if (not _turns_create_off(attrs, top) and re.fullmatch(r"[A-Za-z_$][\w$]*", value)
+                and re.search(_PROPS_PARAMETER.format(name=re.escape(value)), code)):
+            names.append(value)
+    return names
+
+
 def _rendered_entry_values(source: str, binding: str, prop: str, entry_property: str,
                            bindings: dict[str, str], files: dict[str, str]) -> list[str]:
     """The literal values of ``entry_property`` in the metadata entries ``source``
     hands to the component ``binding`` as ``prop``: `<EntityPage entity={ENTITIES.order} />`."""
     values: list[str] = []
-    for _, attrs, _ in _jsx_tags(_blank_comments(source), re.escape(binding)):
+    for _, attrs, top in _jsx_tags(_blank_comments(source), re.escape(binding)):
+        if _turns_create_off(attrs, top):
+            continue
         entry = _ENTRY_EXPRESSION_RE.fullmatch(_attr(attrs, re.escape(prop)) or "")
         if entry:
             key = entry["key"] or entry["quoted"]
@@ -911,9 +937,22 @@ def build_acceptance_matrix(
     client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache, used_clients,
                                               traced[rel], prop_reads[rel], handed[rel])
                     for rel, content in frontend_files}
+    imports = {rel: _import_targets(rel, content, by_path) for rel, content in frontend_files}
+    # A component handing its own prop on to one that reads the create path off
+    # it reads that path too; repeated until no chain grows.
+    changed = True
+    while changed:
+        changed = False
+        for rel, content in frontend_files:
+            for binding, target in imports[rel].items():
+                for prop, entry_property in list(prop_reads[target]):
+                    for own in _forwarded_props(content, binding, prop):
+                        if (own, entry_property) not in prop_reads[rel]:
+                            prop_reads[rel].append((own, entry_property))
+                            changed = True
     # A create path read off a prop is that of the entry each rendering file hands the component.
     for rel, content in frontend_files:
-        bindings = _import_targets(rel, content, by_path)
+        bindings = imports[rel]
         for binding, target in bindings.items():
             for prop, entry_property in prop_reads[target]:
                 traced[rel] += _rendered_entry_values(content, binding, prop, entry_property, bindings, by_path)

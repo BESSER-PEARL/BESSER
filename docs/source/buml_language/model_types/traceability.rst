@@ -174,13 +174,15 @@ block nests under its class). A specialisation is recorded under the metaclass t
 editor names it by: an ``OCLConstraint`` parsed from an OCL box is a ``Constraint``. A file generated as a whole from one element -- a backend router from
 its class -- records it as a ``TraceSource`` instead (``trace_source(element, rule)``).
 A generator exposes both per file as ``traced_files``, a ``FileTrace`` by path in
-its output folder.
+its output folder (see :doc:`../../generators/traceable_generator`).
 
 ``build_generation_trace`` takes the files of a run (``GeneratedFile``: path,
-content, ``FileTrace``) and builds its ``TraceModel``: one ``CodeGeneration``
-operation, a link from the model to every file, from each whole-file source to its
-file, and from each element to each of its blocks, with the template rule as
-evidence and confidence 1. A file's content is kept when it is under the size
+content, ``FileTrace``; ``collect_generated_files`` reads them from an output folder)
+and the models it read (``input_model``: id, metaclass, name), and builds its
+``TraceModel``: one ``CodeGeneration`` operation, a link from every model to every
+file, from each whole-file source to its file, and from each element to each of its
+blocks, with the template rule as evidence and confidence 1. A generator that records
+nothing still gets the links from its models to its files. A file's content is kept when it is under the size
 cap, so the views can show it and its blocks' lines; above it only its hash is.
 Elements without an ``id`` (a model built in Python rather than in the editor) are
 rendered untraced. An OCL box of the editor holding one constraint gives the

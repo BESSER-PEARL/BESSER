@@ -270,3 +270,4 @@ Create custom code generators:
    :maxdepth: 1
 
    generators/build_generator
+   generators/traceable_generator

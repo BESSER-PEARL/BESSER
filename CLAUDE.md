@@ -108,7 +108,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
-| `…/backend/services/generation/` | Generator dispatch behind `/generate-output*`: `dispatch.py` (path from the registry entry, per-generator option builders), `agents.py` (BAF), `downloads.py` (`GeneratedOutput`: ZIP + provenance, or one file + version comment) |
+| `…/backend/services/generation/` | Generator dispatch behind `/generate-output*` and the traced `/traceability/generate-output*`: `dispatch.py` (path from the registry entry, per-generator option builders; every path returns a `Generation`: download + diagrams read), `agents.py` (BAF), `downloads.py` (`GeneratedOutput`: ZIP + provenance, or one file + version comment, with the generators' `traced_files` by delivered path) |
 | `…/backend/services/deployment/` | Docker Compose deploy, the GitHub API client (`github_service.py`), repo model files, model merge, Render blueprints |
 | `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py` (endpoints under `/besser_api/kg`): request parsing, Refine-KG decisions, the user's-own-LLM adapter, the consistency check under its concurrency cap |
 | `…/backend/services/spec_driven/` | Spec-Driven service layer (see below) |
@@ -250,8 +250,27 @@ in one response. (Spec-Driven code validation is a separate, fourth layer; see a
    snapshots of `test_generator_registry.py`
 
 Walkthrough: `docs/source/generators/build_generator.rst` and `docs/source/contributing/create_generator.rst`.
+
 The NN generators register like any other: their modules do not import `torch` / `tensorflow`. The Spec-Driven
 Agent is not in `SUPPORTED_GENERATORS`; it has its own router rather than `/generate-output`.
+
+### Making a generator traceable
+Every generator already gets file-level trace links (each input model -> each text file it writes) from the
+traced endpoints, with no code. Instrumenting adds which lines come from which element; full guide:
+`docs/source/generators/traceable_generator.rst`. Helpers: `besser/utilities/generation_trace.py` and
+`GeneratorInterface`.
+1. Build the Jinja env with `traced_environment(templates_dir_or_loader, **env_options)` (adds `TraceExtension`).
+2. In templates wrap an element's block in `{% trace element, "label" %}…{% endtrace %}` (rule
+   `<template>#<label>`; label defaults to the metaclass). Elements without an `id` render untraced.
+3. Write each render with `self._write_traced(relative_path, rendered, *sources, output_dir=None)`: strips the
+   markers, writes UTF-8 with `\n` endings and records `self.traced_files[relative_path]` (a `FileTrace`). A file
+   generated as a whole from one element passes `trace_source(element, rule)` as a source. Never assign
+   `traced_files` (a property, always present, `{}` by default).
+4. A composite calls `self._merge_traced_files(child, prefix)` after `child.generate()` (`prefix` = the child's
+   folder relative to the composite's output dir, `""` if the same).
+5. Test that `traced_files` points at the right lines and that a model with ids generates the same bytes as
+   one without (`tests/generators/backend/test_backend_trace.py`). The backend needs no change: it reads
+   `traced_files` from the generator instance after any run.
 
 ### Pitfalls
 1. **Keep converters symmetric**: if `json_to_buml` supports a feature, `buml_to_json` must too

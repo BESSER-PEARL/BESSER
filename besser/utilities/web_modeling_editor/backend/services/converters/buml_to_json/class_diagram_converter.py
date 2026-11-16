@@ -35,7 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers.mu
     format_multiplicity_label,
 )
 from besser.utilities.utils import explicit_timestamp_iso, sort_by_timestamp
-from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import is_valid_element_id
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import element_id_taker
 
 
 def _set_timestamp(target: dict, element) -> dict:
@@ -50,34 +50,6 @@ def _set_timestamp(target: dict, element) -> dict:
     if iso is not None:
         target["timestamp"] = iso
     return target
-
-
-def _make_id_taker():
-    """Return ``take(element)``: the element's own ``id`` while valid and unused, else a fresh uuid.
-
-    Reusing the id keeps it stable across round trips; the uniqueness check
-    keeps two elements that share an id (a copied element, a merged model)
-    from overwriting each other in the JSON maps.
-    """
-    used = set()
-
-    def take(element) -> str:
-        element_id = getattr(element, "id", None)
-        if element_id is not None:
-            if not is_valid_element_id(element_id):
-                reason = "invalid"
-            elif element_id in used:
-                reason = "duplicate"
-            else:
-                used.add(element_id)
-                return element_id
-            logger.warning("Replacing %s element id %.60r of %s %r with a new one.",
-                           reason, element_id, type(element).__name__, getattr(element, "name", ""))
-        element_id = str(uuid.uuid4())
-        used.add(element_id)
-        return element_id
-
-    return take
 
 
 def fresh_primitive_types() -> dict:
@@ -266,7 +238,7 @@ def class_buml_to_json(domain_model):
 
     # First pass: Create all class and enumeration elements
     class_id_map = {}  # Store mapping between Class objects and their IDs
-    take_id = _make_id_taker()
+    take_id = element_id_taker()
 
     # Sort types/constraints by name for deterministic output across runs.
     for type_obj in sorted(

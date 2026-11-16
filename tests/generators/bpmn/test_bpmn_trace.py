@@ -1,5 +1,5 @@
 """BPMNGenerator records which lines of the .bpmn file serialise which model element, by the ids the
-elements have (``BPMNElement.id``, or the editor id the web editor's processor keeps in ``layout``)."""
+elements have (``BPMNElement.id``; the web editor's processor gives each element its editor id)."""
 
 from __future__ import annotations
 
@@ -144,9 +144,10 @@ def test_collaboration_participants_message_flows_lanes_and_annotations_are_trac
 
 def test_an_id_that_is_not_a_valid_xml_id_is_still_matched_to_its_element(tmp_path):
     task = Task(name="odd")
-    task.layout = {"id": "1 not an NCName"}
+    task.id = "1-not-an-NCName"
+    task.layout = {"id": "1-not-an-NCName"}
     generator, text = _generate(BPMNModel(name="M", processes={Process(name="P", flow_nodes={task})}), tmp_path)
-    (region,) = _regions(generator)[("1 not an NCName", "task")]
+    (region,) = _regions(generator)[("1-not-an-NCName", "task")]
     assert 'id="Task_1"' in _lines(text, region)[0]
 
 
@@ -164,14 +165,25 @@ def test_elements_without_ids_are_untraced_and_the_file_is_the_same(tmp_path):
     assert "\x02" not in traced_text
 
 
-def test_editor_elements_without_a_layout_id_are_untraced(tmp_path):
+def test_the_processor_gives_each_element_its_editor_id():
+    model = process_bpmn_diagram(_editor_diagram())
+    (process,) = model.processes
+    elements = (*process.flow_nodes, *process.sequence_flows, *process.data_objects, *process.data_associations)
+    assert {element.id for element in elements} == {element.layout["id"] for element in elements}
+    assert {element.id for element in elements} == {"start", "t0", "t1", "d0", "d1", "end",
+                                                    "f0", "f1", "f_end", "a0", "a1"}
+
+
+def test_a_layout_id_alone_does_not_trace_an_element(tmp_path):
+    """The XML id comes from ``layout["id"]``; only ``Element.id`` makes an element traceable."""
     model = process_bpmn_diagram(_editor_diagram())
     for process in model.processes:
         for element in (*process.flow_nodes, *process.sequence_flows, *process.data_objects,
                         *process.data_associations):
-            element.layout = {key: value for key, value in element.layout.items() if key != "id"}
-    generator, _ = _generate(model, tmp_path)
+            element.id = None
+    generator, text = _generate(model, tmp_path)
     assert generator.traced_files["bpmn_diagram.bpmn"].regions == ()
+    assert '<bpmn:task id="t0" name="Step 1">' in text
 
 
 def test_the_trace_key_is_the_name_of_the_file_written(tmp_path):

@@ -42,12 +42,12 @@ def _models(with_ids: bool):
     class_json = class_diagram(CLASSES)
     domain = process_class_diagram({"title": "Domain", "model": class_json})
     gui = process_gui_diagram(gui_json(PAGES), class_json, domain)
-    if with_ids:
-        # The editor converter gives GUI elements no id (only a component_id): set them as a caller that has them would.
-        # Elements of the domain model and the shared primitive types are left alone.
-        gui_elements = [e for e in model_elements(gui) if type(e).__module__.startswith("besser.BUML.metamodel.gui")]
-        for count, element in enumerate(gui_elements):
-            element.id = element.id or f"gui-{count}"
+    # The editor converter gives the screens and the components the editor's trace records (the table, the
+    # button) their editor ids; give the other GUI elements (text, containers) ids as a caller that has them would,
+    # or take every id away. Elements of the domain model and the shared primitive types are left alone.
+    gui_elements = [e for e in model_elements(gui) if type(e).__module__.startswith("besser.BUML.metamodel.gui")]
+    for count, element in enumerate(gui_elements):
+        element.id = (element.id or f"gui-{count}") if with_ids else None
     return domain, gui
 
 

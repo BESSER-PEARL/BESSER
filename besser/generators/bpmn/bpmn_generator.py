@@ -49,7 +49,7 @@ from besser.BUML.metamodel.bpmn import (
     Transaction,
 )
 from besser.generators import GeneratorInterface
-from besser.utilities.generation_trace import FileTrace, TraceRegion, trace_source
+from besser.utilities.generation_trace import FileTrace, TraceRegion, element_ref, trace_source
 from besser.utilities.utils import sort_by_timestamp
 
 
@@ -300,9 +300,9 @@ class BPMNGenerator(GeneratorInterface):
 
     Attributes:
         traced_files (dict[str, FileTrace]): After ``generate()``, the ``.bpmn`` file with the model as source
-            and the lines of each XML element emitted for a model element that has a persistent id: its own
-            ``id`` (``BPMNElement.id``) or, for a model converted from the web editor, the editor element id
-            the processor keeps in ``layout["id"]``. Regions are rule ``bpmn_generator#<xml tag>``, and
+            and the lines of each XML element emitted for a model element that has an ``id`` (a model converted
+            from the web editor gives each element its editor id; ``layout["id"]`` only names its XML element).
+            Regions are rule ``bpmn_generator#<xml tag>``, and
             ``bpmn_generator#shape`` / ``#edge`` for the diagram-interchange shape or edge of the element.
             A process, a lane set or a derived data-store/object definition has no editor id and no region.
     """
@@ -392,11 +392,6 @@ class BPMNGenerator(GeneratorInterface):
 
     # --- tracing ------------------------------------------------------------
 
-    @staticmethod
-    def _persistent_id(obj) -> Optional[str]:
-        """The id a trace refers to ``obj`` by: its ``id``, else the web editor's element id kept in ``layout``."""
-        return getattr(obj, "id", None) or (getattr(obj, "layout", None) or {}).get("id") or None
-
     def _record_trace(self, output_path: str) -> None:
         """Map each XML element emitted for a model element back to it, by line range of the written file.
 
@@ -411,11 +406,11 @@ class BPMNGenerator(GeneratorInterface):
         open_elements: List[Tuple[str, Optional[object], int]] = []
 
         def region_of(tag: str, obj, start: int, end: int) -> None:
-            persistent_id = self._persistent_id(obj)
-            if persistent_id is None:
+            ref = element_ref(obj)
+            if ref is None:
                 return
             rule = {"BPMNShape": "shape", "BPMNEdge": "edge"}.get(tag, tag)
-            regions.append(TraceRegion(persistent_id, type(obj).__name__, obj.name or persistent_id,
+            regions.append(TraceRegion(ref.element_id, ref.element_type, obj.name or ref.element_id,
                                        f"bpmn_generator#{rule}", start, end))
 
         parser = expat.ParserCreate()

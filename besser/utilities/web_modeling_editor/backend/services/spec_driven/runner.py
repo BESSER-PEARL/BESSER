@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -69,6 +70,7 @@ from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
+from besser.spec_driven_agent.state.recipe_size import MAX_RECIPE_BYTES
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
@@ -167,11 +169,6 @@ _WARNING_CODES = frozenset({"INCOMPLETE", "COST_CAP", "TIMEOUT"})
 # each event in well under that), while still capping worst-case
 # memory at a few MB.
 _EVENT_QUEUE_MAXSIZE = 2048
-
-# Max size in bytes of the .besser_recipe.json file that's embedded in
-# the final DoneEvent. A malformed or maliciously huge recipe would
-# otherwise bloat the last SSE frame beyond any reasonable size.
-_MAX_RECIPE_BYTES = 256 * 1024  # 256 KB
 
 # Build-output dirs + runtime/artifact FILE globs that must never reach the
 # download zip OR a GitHub push. Fed to shutil.ignore_patterns (used by both
@@ -286,7 +283,7 @@ def _dir_has_user_output(path: Optional[str]) -> bool:
 # ----------------------------------------------------------------------
 # What the run verified, could not verify, and shipped unenforced
 # ----------------------------------------------------------------------
-# Per list, so a large model can't push the recipe past _MAX_RECIPE_BYTES on
+# Per list, so a large model can't push the recipe past MAX_RECIPE_BYTES on
 # the next run that reads it back. counts carries the true totals.
 _MAX_VERIFICATION_ITEMS = 25
 
@@ -500,11 +497,12 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         recipe.get(key) for key in
         ("requirements", "api_scenarios", "model_conversion_issues", "validation_issues")
     ):
-        # _read_recipe dropped an oversized/unreadable recipe. Empty lists here
-        # would read as "there was nothing to verify".
+        # _read_recipe could not read the recipe. Empty lists here would read
+        # as "there was nothing to verify".
         not_verified.append(_item(
-            "check", "", "everything this run did",
-            why=f"the run's own report could not be read ({recipe['warning']})",
+            "check", "", "the results of this run's checks",
+            why=f"the run's record could not be read ({recipe['warning']}), so they cannot be shown; "
+                "the record is kept unchanged",
         ))
 
     verdicts = [v for v in (recipe.get("requirements") or []) if isinstance(v, dict)]
@@ -2431,7 +2429,13 @@ class SmartGenerationRunner:
                 list(scrub.redacted_files),
             )
 
-        recipe = self._read_recipe(result_path)
+        # This run's own record when its orchestrator wrote one; else the file, which is the
+        # base run's when this run failed before writing its own.
+        saved = getattr(self._t_orchestrator, "saved_recipe", None)
+        if isinstance(saved, dict):
+            recipe, rewritable = copy.deepcopy(saved), True
+        else:
+            recipe, rewritable = self._read_recipe(result_path)
         recipe["secret_findings"] = scrub.findings
         recipe.update(runtime_files)
 
@@ -2470,7 +2474,7 @@ class SmartGenerationRunner:
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
-        if is_plain_file(recipe_path, root=result_path):
+        if rewritable and is_plain_file(recipe_path, root=result_path):
             try:
                 write_atomic_plain(recipe_path, json.dumps(recipe, indent=2), root=result_path)
             except OSError:
@@ -2618,26 +2622,31 @@ class SmartGenerationRunner:
             logger.exception("Agent Trace record failed for run %s", self.run_id)
             return None
 
-    def _read_recipe(self, result_path: str) -> dict:
+    def _read_recipe(self, result_path: str) -> tuple[dict, bool]:
+        """The recipe on disk, and whether packaging may rewrite it.
+
+        A file that cannot be read is kept as it is, so the record it holds is
+        never replaced by the packaging annotations alone.
+        """
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
         # Not a plain file (absent, or a link the model planted): never read through.
         if not is_plain_file(recipe_path, root=result_path):
-            return {}
+            return {}, False
         try:
             size = os.path.getsize(recipe_path)
         except OSError:
-            return {}
-        if size > _MAX_RECIPE_BYTES:
+            return {}, False
+        if size > MAX_RECIPE_BYTES:
             logger.warning(
-                "Skipping .besser_recipe.json for run %s: size %d exceeds %d bytes",
-                self.run_id, size, _MAX_RECIPE_BYTES,
+                "Skipping .besser_recipe.json for run %s: size %d exceeds %d bytes; the file is kept unchanged",
+                self.run_id, size, MAX_RECIPE_BYTES,
             )
-            return {"warning": "recipe file exceeded size limit and was dropped"}
-        data = read_run_json(recipe_path, _MAX_RECIPE_BYTES)
+            return {"warning": f"it is {size} bytes, over the {MAX_RECIPE_BYTES}-byte limit"}, False
+        data = read_run_json(recipe_path, MAX_RECIPE_BYTES)
         if isinstance(data, dict):
-            return data
-        logger.warning("Ignoring unreadable .besser_recipe.json for run %s", self.run_id)
-        return {}
+            return data, True
+        logger.warning("Ignoring unreadable .besser_recipe.json for run %s; the file is kept unchanged", self.run_id)
+        return {"warning": "it is not a JSON object"}, False
 
     def _reset_temp_dir_after_failed_seed(self) -> None:
         """Wipe a partially-seeded temp dir and re-allocate a clean one.

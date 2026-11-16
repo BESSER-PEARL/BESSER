@@ -195,6 +195,7 @@ from besser.spec_driven_agent.validation.python_source import (
     _CREATE_FIELD_RE as _CREATE_FIELD_RE,
     _ROUTER_READ_RE as _ROUTER_READ_RE,
 )
+from besser.spec_driven_agent.state.recipe_size import bounded_recipe
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
     EVENT_ERROR,
@@ -705,6 +706,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._files_at_start: frozenset[str] = frozenset(self._workspace_file_list())
         # Files the app wrote in its test runs that this run deleted from the output.
         self._runtime_files = RuntimeFileRemoval()
+        # The recipe this run wrote, as written; None until _save_recipe ran.
+        self.saved_recipe: dict | None = None
 
         # Fix/modify success gate (modify() only). When a modify run is
         # seeded by a user-reported error (a pasted traceback, a broken
@@ -5064,7 +5067,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         history = prior.get("history")
         if isinstance(history, list) and history:
-            return [h for h in history if isinstance(h, dict)]
+            # Each run rewrites the earlier entries: bound them as a new one is bounded.
+            return [_bounded_history_entry(h) for h in history if isinstance(h, dict)]
         # Legacy recipe — synthesize the seed entry.
         instructions = prior.get("instructions")
         if not isinstance(instructions, str) or not instructions.strip():
@@ -5078,10 +5082,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         })
         return [{
             # bounded: recipe history display only
-            "instructions": instructions[:300],
+            "instructions": instructions[:_MAX_HISTORY_REQUEST_CHARS],
             "saved_at": "",
             "mode": "create",
-            "files_touched": touched[:20],
+            "files_touched": touched[:_MAX_HISTORY_FILES],
         }]
 
     def _usage_counters(self) -> dict:
@@ -5288,10 +5292,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             and isinstance((tc.get("input") or {}).get("path"), str)
         })
         entry = {
-            "instructions": request_text(instructions)[:300],  # bounded: one history line
+            "instructions": request_text(instructions)[:_MAX_HISTORY_REQUEST_CHARS],  # bounded: one history line
             "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "mode": "modify" if self._modify_mode else "create",
-            "files_touched": touched[:20],
+            "files_touched": touched[:_MAX_HISTORY_FILES],
         }
         if self.run_id:
             entry["run_id"] = self.run_id
@@ -5301,7 +5305,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             history[-1] = entry
         else:
             history.append(entry)
-        history = history[-10:]
+        history = history[-_MAX_HISTORY_ENTRIES:]
 
         from besser.spec_driven_agent.state.checkpoint import api_scenario_snapshot
         recipe = {
@@ -5393,8 +5397,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             }
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
+            self.saved_recipe, text = bounded_recipe(recipe)
             with open_plain_write(recipe_path, "w", root=self.output_dir, encoding="utf-8") as f:
-                json.dump(recipe, f, indent=2, default=str)
+                f.write(text)
         except Exception as e:
             logger.warning("Failed to save recipe: %s", e)
 
@@ -5403,6 +5408,27 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 # Helpers
 # ======================================================================
 
+
+# The recipe's session history: runs kept, request characters and files per run.
+_MAX_HISTORY_ENTRIES = 10
+_MAX_HISTORY_REQUEST_CHARS = 300
+_MAX_HISTORY_FILES = 20
+
+
+def _bounded_history_entry(entry: dict) -> dict:
+    """A history entry read back from a recipe, with the bounds a new entry has.
+
+    The recipe can come from any repository, so an entry may hold anything.
+    """
+    bounded = {key: entry[key] for key in ("saved_at", "mode", "run_id")
+               if isinstance(entry.get(key), str) and len(entry[key]) <= _MAX_HISTORY_REQUEST_CHARS}
+    if isinstance(entry.get("instructions"), str):
+        bounded["instructions"] = entry["instructions"][:_MAX_HISTORY_REQUEST_CHARS]
+    files = entry.get("files_touched")
+    if isinstance(files, list):
+        bounded["files_touched"] = [f[:_MAX_HISTORY_REQUEST_CHARS] for f in files
+                                    if isinstance(f, str)][:_MAX_HISTORY_FILES]
+    return {key: bounded[key] for key in entry if key in bounded}
 
 
 # Frontend source larger than this is a bundle, not a screen (frontend_contract's cap).

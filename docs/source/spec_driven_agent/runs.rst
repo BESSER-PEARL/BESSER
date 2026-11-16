@@ -281,3 +281,43 @@ duration_seconds=... blockers=... estimated_cost_usd=... archive_written=...``.
 ``budget_stop`` or ``failed``. Neither line carries the request or the key.
 They are written by the ``besser.spec_driven.runs`` logger, which the backend
 gives a handler of its own at startup: its other ``INFO`` records have none.
+
+.. _spec-driven-recipe-size:
+
+The recipe's size
+-----------------
+
+Packaging reads ``.besser_recipe.json`` back from the run's workspace and sends
+it in the ``done`` event, so it refuses one over 256 KiB: the run's own tools can
+write to the workspace, and a planted or runaway file is not read into memory.
+A run's recipe grows with the work it did (every tool call and API workflow), so
+the orchestrator keeps it under 128 KiB when it writes it, which leaves room for
+the sections packaging adds. A recipe within that budget is written in full.
+Over it, these cuts apply in order until it fits:
+
+1. Each tool call's ``input`` keeps its ``path`` and values of at most 80
+   characters that are not lists or objects. The trace holds every call with its
+   input as the recipe recorded it, and ``.besser_tool_inputs.jsonl`` the whole
+   input of every write tool.
+2. API workflows lose their request and response bodies (``json``, ``text``);
+   methods, paths, statuses and failures stay.
+3. ``tool_calls`` keeps only the last call of each file-changing tool
+   (``write_file``, ``modify_file``, ``replace_file_lines``, ``delete_file``) on
+   each file, so the files the run changed are all still listed.
+4. Each API workflow keeps its id, each request's method and path, and its
+   status.
+
+``tool_calls_count`` and every other total stay true, and nothing a later reader
+uses is cut: the model, ``output_files``, ``generator_used``, ``target``,
+``validation_issues``, ``requirements``, ``tasks``, ``history`` and the
+acceptance matrix. A cut recipe has a ``recipe_shortened`` section,
+``{bytes_before, budget_bytes, tool_call_inputs_cut, api_bodies_cut,
+tool_calls_dropped, api_workflows_cut}``, and the cut is logged as a warning.
+The history keeps the last ten runs, each with at most 300 characters of its
+request and 20 files; entries read from an earlier recipe are cut the same way.
+
+Packaging builds the ``verification`` report from the recipe the orchestrator
+wrote in this run. When the run ended before writing one, it reads the file;
+a file it cannot read (over the limit, or not a JSON object) is left as it is,
+and the report says the run's record could not be read rather than reporting
+nothing to verify.

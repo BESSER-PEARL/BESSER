@@ -376,23 +376,78 @@ def _docker_ignores(patterns, rel):
     )
 
 
+_LEFT_BY_A_LOCAL_RUN = {
+    "backend": ("data/app.db", "data/app.db-wal", ".venv/lib/site.py", "venv/pyvenv.cfg",
+                "routers/__pycache__/order.cpython-311.pyc", ".env", ".env.local", "server.log"),
+    "frontend": ("node_modules/react/index.js", "dist/index.html", "build/index.html",
+                 ".env.local", ".env.production.local", "npm-debug.log"),
+}
+# A Vite .env and .env.production are read by the build inside the image.
+_NEEDED_BY_THE_IMAGE = {
+    "backend": ("main_api.py", "database.py", "routers/order.py", "requirements.txt", ".env.example"),
+    "frontend": ("package.json", "package-lock.json", "index.html", "src/App.jsx", "src/environment.js",
+                 "vite.config.mjs", ".env", ".env.production"),
+}
+
+
+def _assert_ignores_only_leftovers(folder, service):
+    assert "COPY . ." in (folder / "Dockerfile").read_text(encoding="utf-8")
+    patterns = (folder / ".dockerignore").read_text(encoding="utf-8").split()
+    for leftover in _LEFT_BY_A_LOCAL_RUN[service]:
+        assert _docker_ignores(patterns, leftover), leftover
+    for needed in _NEEDED_BY_THE_IMAGE[service]:
+        assert not _docker_ignores(patterns, needed), needed
+
+
 @pytest.mark.parametrize("service", ["backend", "frontend"])
 def test_each_dockerfile_has_a_dockerignore_for_what_a_local_run_leaves(tmp_path, service):
     """Both Dockerfiles ``COPY . .``: without it a host node_modules, virtualenv
     or database file is copied into the image built after a local run."""
     _flat_app(tmp_path)
     ensure_frontend_scaffold(str(tmp_path))
+    _assert_ignores_only_leftovers(tmp_path / service, service)
 
-    assert "COPY . ." in (tmp_path / service / "Dockerfile").read_text(encoding="utf-8")
-    patterns = (tmp_path / service / ".dockerignore").read_text(encoding="utf-8").split()
-    for leftover in ("node_modules/react/index.js", "data/app.db", ".venv/lib/site.py",
-                     "venv/pyvenv.cfg", "routers/__pycache__/order.cpython-311.pyc",
-                     "dist/index.html", ".env", ".env.local", "server.log"):
-        assert _docker_ignores(patterns, leftover), leftover
-    for source in ("main_api.py", "database.py", "routers/order.py", "requirements.txt",
-                   "package.json", "package-lock.json", "index.html", "src/App.jsx",
-                   "src/environment.js", "vite.config.mjs"):
-        assert not _docker_ignores(patterns, source), source
+
+@pytest.mark.parametrize("service", ["backend", "frontend"])
+def test_the_web_app_generators_dockerfiles_get_a_dockerignore_too(tmp_path, service):
+    """generate_web_app writes its own Dockerfiles, also with ``COPY . .``, and no .dockerignore."""
+    import besser.generators.web_app as web_app
+
+    templates = os.path.join(os.path.dirname(web_app.__file__), "templates")
+    for name in ("backend", "frontend"):
+        (tmp_path / "web_app" / name).mkdir(parents=True)
+        with open(os.path.join(templates, f"{name}.Dockerfile.j2"), encoding="utf-8") as template:
+            (tmp_path / "web_app" / name / "Dockerfile").write_text(template.read(), encoding="utf-8")
+
+    repairs = ensure_frontend_scaffold(str(tmp_path))
+
+    assert f"web_app/{service}/.dockerignore" in repairs
+    _assert_ignores_only_leftovers(tmp_path / "web_app" / service, service)
+    assert ensure_frontend_scaffold(str(tmp_path)) == []
+
+
+@pytest.mark.parametrize("dockerfile", [
+    "FROM python:3.11-slim\nCOPY main_api.py /app\nCOPY routers/ /app/routers/\n",   # named paths only
+    "FROM nginx:alpine\nCOPY --from=build /app/dist /usr/share/nginx/html\n",          # from a build stage
+])
+def test_a_dockerfile_that_copies_named_paths_gets_no_dockerignore(tmp_path, dockerfile):
+    (tmp_path / "service").mkdir()
+    (tmp_path / "service" / "Dockerfile").write_text(dockerfile, encoding="utf-8")
+    assert ensure_frontend_scaffold(str(tmp_path)) == []
+
+
+def test_a_dockerfile_that_serves_what_the_host_built_keeps_it_in_the_context(tmp_path):
+    """No install and no build step inside: the image needs the host's node_modules and dist."""
+    (tmp_path / "site").mkdir()
+    (tmp_path / "site" / "Dockerfile").write_text(
+        'FROM node:22-alpine\nWORKDIR /app\nCOPY --chown=node:node . .\nCMD ["node", "dist/server.js"]\n',
+        encoding="utf-8")
+
+    assert ensure_frontend_scaffold(str(tmp_path)) == ["site/.dockerignore"]
+    patterns = (tmp_path / "site" / ".dockerignore").read_text(encoding="utf-8").split()
+    assert not _docker_ignores(patterns, "node_modules/express/index.js")
+    assert not _docker_ignores(patterns, "dist/server.js")
+    assert _docker_ignores(patterns, "data/app.db")
 
 
 def test_keeps_an_existing_dockerignore(tmp_path):

@@ -270,26 +270,31 @@ EXPOSE 8000
 CMD {cmd}
 """
 
-# Written beside both Dockerfiles: their ``COPY . .`` otherwise takes what a
-# local run left in the folder (installed packages, the database, an env
-# file) into the image. Patterns are relative to the build context.
-_DOCKERIGNORE = """\
-**/node_modules
-**/__pycache__
-**/*.py[cod]
-**/.venv
-**/venv
-dist
-build
-**/*.db
-**/*.db-journal
-**/*.sqlite
-**/*.sqlite3
-**/*.log
-**/.env
-**/.env.*
-.git
-"""
+# Written beside a Dockerfile that copies its whole folder: ``COPY . .``
+# otherwise takes what a local run left there (a virtualenv, the database,
+# local env overrides) into the image. Patterns are relative to the build context.
+_DOCKERIGNORE_ALWAYS = (
+    "**/__pycache__", "**/*.py[cod]", "**/.venv", "**/venv",
+    "**/*.db", "**/*.db-journal", "**/*.db-wal", "**/*.db-shm", "**/*.sqlite", "**/*.sqlite3",
+    "**/*.log", "**/.env.local", "**/.env.*.local", ".git",
+)
+# Left out only when the Dockerfile makes its own: one that installs packages
+# does not need the host's, one that builds does not need the host's output.
+# A Python service's ``.env`` holds its secrets; a Vite ``.env`` is build input.
+_DOCKERIGNORE_WHEN = (
+    (_re.compile(r"\b(?:npm\s+(?:ci|install)|yarn\s+install|pnpm\s+install)\b"), ("**/node_modules",)),
+    (_re.compile(r"(?m)^\s*RUN\b.*\b(?:run\s+build|yarn\s+build|vite\s+build)\b"), ("dist", "build")),
+    (_re.compile(r"\bpip3?\s+install\b"), ("**/.env",)),
+)
+_COPIES_WHOLE_FOLDER_RE = _re.compile(r"(?im)^\s*(?:COPY|ADD)\s+(?:--(?!from)\S+\s+)*\.\s+\S")
+
+
+def _dockerignore_for(dockerfile: str) -> str:
+    """The ``.dockerignore`` for a Dockerfile, or "" when it copies named paths only."""
+    if not _COPIES_WHOLE_FOLDER_RE.search(dockerfile):
+        return ""
+    extra = [pattern for when, patterns in _DOCKERIGNORE_WHEN if when.search(dockerfile) for pattern in patterns]
+    return "\n".join((*extra, *_DOCKERIGNORE_ALWAYS)) + "\n"
 
 _COMPOSE_TEMPLATE = """\
 services:
@@ -682,8 +687,7 @@ def _find_backend_dir(output_dir: str):
 
 
 def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict, app_name: str = "") -> list:
-    """Dockerfiles (each with a .dockerignore) + compose + README, only for
-    the plain two-service shape.
+    """Dockerfiles + compose + README, only for the plain two-service shape.
 
     Skipped entirely when the app already ships any Docker file: a
     hand-written deployment belongs to its author, and a second one would be
@@ -713,10 +717,6 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict,
     if _write_text(os.path.join(backend_dir, "Dockerfile"),
                    _BACKEND_DOCKERFILE_TEMPLATE.format(cmd=cmd)):
         repairs.append(f"{backend_name}/Dockerfile")
-    for folder, name in ((frontend_dir, frontend_name), (backend_dir, backend_name)):
-        ignore_file = os.path.join(folder, ".dockerignore")
-        if not os.path.exists(ignore_file) and _write_text(ignore_file, _DOCKERIGNORE):
-            repairs.append(f"{name}/.dockerignore")
     if _write_text(os.path.join(output_dir, "docker-compose.yml"),
                    _COMPOSE_TEMPLATE.format(backend=backend_name, frontend=frontend_name)):
         repairs.append("docker-compose.yml")
@@ -735,6 +735,19 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict,
     return repairs
 
 
+def _ensure_dockerignores(output_dir: str) -> list:
+    """A ``.dockerignore`` beside every ``Dockerfile`` that copies its whole
+    folder and has none: the ones written here and a generator's alike."""
+    written: list = []
+    for folder, files in _iter_project_dirs(output_dir):
+        if "Dockerfile" not in files or ".dockerignore" in files:
+            continue
+        content = _dockerignore_for(_read_text(os.path.join(folder, "Dockerfile")))
+        if content and _write_text(os.path.join(folder, ".dockerignore"), content):
+            written.append(os.path.relpath(os.path.join(folder, ".dockerignore"), output_dir).replace("\\", "/"))
+    return written
+
+
 def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
     """Make an LLM-authored React frontend actually render, deterministically.
 
@@ -742,9 +755,11 @@ def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
     Vite config with ``@vitejs/plugin-react`` (which is also what makes a
     missing ``import React`` harmless), an env-driven API base, a working
     ``build`` script, the two Dockerfiles and a compose file, and a README.
+    Any Dockerfile in the output that copies its whole folder gets a
+    ``.dockerignore``, whoever wrote it.
 
     Idempotent, and never overwrites an existing Vite config, Dockerfile,
-    compose file or README - a project that already has one keeps it.
+    ``.dockerignore``, compose file or README - a project that already has one keeps it.
     ``app_name`` is the project's name, for the README title.
     Returns one description per repair, for the run log.
     """
@@ -770,4 +785,5 @@ def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
             repairs.append(f"{label}{rel}: API base reads VITE_API_URL")
 
         repairs.extend(_ensure_deployment_files(output_dir, frontend_dir, manifest, app_name))
+    repairs.extend(_ensure_dockerignores(output_dir))
     return repairs

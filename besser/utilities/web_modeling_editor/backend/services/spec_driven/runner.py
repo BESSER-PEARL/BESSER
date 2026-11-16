@@ -1115,7 +1115,7 @@ class SmartGenerationRunner:
                     async for frame in frames:
                         yield frame
             finally:
-                logger.info(run_record.end_line(self.run_id, self._facts))
+                run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
             return
         try:
             async with inner as frames:
@@ -1131,7 +1131,7 @@ class SmartGenerationRunner:
             self._t_stream_aborted = "STREAM_CRASH"
             raise
         finally:
-            logger.info(run_record.end_line(self.run_id, self._facts))
+            run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
             self._record_run_summary()
 
     async def release_disk(self) -> None:
@@ -1188,7 +1188,7 @@ class SmartGenerationRunner:
         phases, the warnings the user was shown, and how it ended.
         """
         if isinstance(event, StartEvent):
-            logger.info(run_record.start_line(
+            run_record.run_log.info(run_record.start_line(
                 self.run_id, self._facts, provider=self.request.provider, model=event.llmModel,
                 generator=getattr(self.request, "target_generator_override", None)))
         elif isinstance(event, PhaseEvent):

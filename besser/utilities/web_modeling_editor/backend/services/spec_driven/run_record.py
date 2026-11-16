@@ -12,12 +12,27 @@ public model label only.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from besser.spec_driven_agent.state import agent_trace
 from besser.utilities.provenance import get_besser_version, get_build_sha
+
+# The two lines per run. A logger of its own: the backend installs no handler for
+# the package's loggers, so an INFO record on them is written nowhere.
+run_log = logging.getLogger("besser.spec_driven.runs")
+
+
+def enable_run_log() -> None:
+    """Write the run log to stderr, in the server's line format. Called at backend startup."""
+    if not any(getattr(handler, "is_run_log", False) for handler in run_log.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+        handler.is_run_log = True
+        run_log.addHandler(handler)
+    run_log.setLevel(logging.INFO)
 
 # ``mode_reason`` values.
 FRESH = "fresh project"

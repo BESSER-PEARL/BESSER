@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartGenerationRunner,
@@ -158,15 +159,13 @@ def test_the_section_is_small_and_holds_no_key_path_or_request(orchestrator):
 
 
 def test_a_free_run_publishes_its_route_not_the_served_model(monkeypatch, orchestrator):
-    from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
-
     section = run_record.run_section(run_record.RunFacts(), None, provider="free",
                                      models=["vendor-x/private-model:free"], request_chars=3)
     assert section["key_tier"] == "free" and section["models"] == ["free"]
 
 
 def test_the_log_says_when_a_run_starts_and_ends_without_its_request(orchestrator, caplog):
-    caplog.set_level(logging.INFO, logger=runner_module.__name__)
+    caplog.set_level(logging.INFO, logger=run_record.run_log.name)
     runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     _run(runner)
 
@@ -233,7 +232,7 @@ def test_a_run_that_fails_before_any_recipe_still_logs_its_end(monkeypatch, capl
         def run(self, instructions):
             raise RuntimeError("provider down")
 
-    caplog.set_level(logging.INFO, logger=runner_module.__name__)
+    caplog.set_level(logging.INFO, logger=run_record.run_log.name)
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _Crashing)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
     runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
@@ -245,10 +244,33 @@ def test_a_run_that_fails_before_any_recipe_still_logs_its_end(monkeypatch, capl
 
 
 def test_validation_is_timed_from_where_it_starts():
-    from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
-
     facts = run_record.RunFacts()
     facts.phase_started = {"customize": 100.0, "validate": 160.0}  # Phase 3 reported 60 s after it began
     orchestrator = SimpleNamespace(phase3_started_at=130.0)
     section = run_record.run_section(facts, orchestrator, provider="openai", models=[], request_chars=1)
     assert section["phase_seconds"]["customise"] == 30.0
+
+
+def test_the_run_log_has_its_own_handler_once_the_backend_enables_it():
+    """The backend sets up no handler for the package's loggers, so an INFO record on them is
+    written nowhere; the run log gets one of its own at startup, and only one."""
+    import io
+
+    before = (list(run_record.run_log.handlers), run_record.run_log.level)
+    try:
+        run_record.enable_run_log()
+        run_record.enable_run_log()
+        [handler] = [h for h in run_record.run_log.handlers if getattr(h, "is_run_log", False)]
+        handler.setStream(written := io.StringIO())
+        run_record.run_log.info("spec-driven run start run_id=abc")
+        assert written.getvalue().splitlines() == ["INFO:     spec-driven run start run_id=abc"]
+    finally:
+        run_record.run_log.handlers[:], run_record.run_log.level = before
+
+
+def test_the_backend_enables_the_run_log_at_startup():
+    import inspect
+
+    from besser.utilities.web_modeling_editor.backend import backend
+
+    assert "enable_run_log()" in inspect.getsource(backend.lifespan)

@@ -279,3 +279,5 @@ target is decided later) and ``spec-driven run end run_id=... outcome=...
 duration_seconds=... blockers=... estimated_cost_usd=... archive_written=...``.
 ``outcome`` is ``completed``, ``completed_with_blockers``, ``cancelled``,
 ``budget_stop`` or ``failed``. Neither line carries the request or the key.
+They are written by the ``besser.spec_driven.runs`` logger, which the backend
+gives a handler of its own at startup: its other ``INFO`` records have none.

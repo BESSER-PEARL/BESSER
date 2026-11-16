@@ -1257,14 +1257,24 @@ class PageBuilderMixin:
             return tag_value
         return _SVG_TAGS.get(tag_value, "div")
 
-    @staticmethod
-    def _select_text_tag(tag: Optional[str]) -> str:
-        valid_tags = {
-            "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li", "text", "tspan",
-            "section", "article", "header", "footer", "aside", "main",
-        }
+    # Tags a text element keeps (``label`` stays a ``p``: its ``for`` is not a React prop)
+    _TEXT_ELEMENT_TAGS = {
+        "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "li", "text", "tspan",
+        "strong", "em", "b", "i", "u", "s", "strike", "small", "mark", "del", "ins", "sub", "sup",
+        "code", "kbd", "samp", "var", "abbr", "cite", "q", "dfn", "time",
+        "blockquote", "pre", "figcaption", "summary", "dt", "dd", "address",
+    }
+
+    @classmethod
+    def _select_text_tag(cls, tag: Optional[str]) -> str:
+        """The tag of a text element: its own, else the one a container of that tag
+        gets (``nav`` stays, ``td`` becomes ``div``); ``p`` when it has none."""
         tag_value = (tag or "").lower()
-        return tag_value if tag_value in valid_tags else "p"
+        if not tag_value or tag_value == "label":
+            return "p"
+        if tag_value in cls._TEXT_ELEMENT_TAGS:
+            return tag_value
+        return cls._select_container_tag(tag_value)
 
     @staticmethod
     def _react_svg_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:

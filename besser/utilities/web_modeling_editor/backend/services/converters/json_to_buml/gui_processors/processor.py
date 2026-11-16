@@ -2,6 +2,7 @@
 Main GUI diagram processor - orchestrates the conversion of GrapesJS JSON to BUML GUI model.
 """
 
+import html
 import logging
 import re
 from typing import Any, Dict, List, Optional, Set
@@ -71,17 +72,22 @@ from besser.generators.react.routes import page_route
 _NOT_A_PAGE_HREF = re.compile(r"\s*(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
 
 
+_TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
+
+
 def _page_key(reference: Any) -> str:
     """A page reference (id, name, route or slug) in one comparable form."""
     return re.sub(r"[^a-z0-9]+", "-", str(reference or "").lower()).strip("-")
 
 
 def _holds_only_text(component: Dict[str, Any]) -> bool:
-    """Whether the element has text and no child element (``<div>128</div>``)."""
+    """Whether the element has text and no child element (``<div>128</div>``).
+    Whitespace (``&nbsp;`` included) and template placeholders (``{{ name }}``) are not text."""
     children = component.get("components") or []
     if any(not isinstance(child, dict) or child.get("type") != "textnode" for child in children):
         return False
-    return bool(extract_text_content(component))
+    text = html.unescape(extract_text_content(component)).strip()
+    return bool(text) and not _TEMPLATE_PLACEHOLDER.search(text)
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -480,6 +486,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
         # === TEXT-ONLY ELEMENT (a div holding just text, not a container) ===
         if _holds_only_text(component):
+            meta["tagName"] = meta["tagName"] or "div"  # GrapesJS's default tag
             name = get_unique_name(component, "Text")
             text_element = parse_text(component, styling, name, meta)
             attach_meta(text_element, meta)

@@ -2989,8 +2989,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         blocker instead of a warning nothing consumes.
         """
         from besser.spec_driven_agent.planning.mutation_inventory import route_serves
-        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
-        from besser.spec_driven_agent.validation.constructibility import _declared_failure
+        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths, declares_failure
 
         revision = self._workspace_revision()
         current = [record for record in self._api_scenarios.values()
@@ -2999,7 +2998,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                      for record in current
                      for path in confirmed_create_paths(record["report"])}
         # An action route a passing current scenario exercised end-to-end: a
-        # 2xx whose body says the call did not act is not such a call.
+        # 2xx whose body says the call did not act, or was cut, is not such a call.
         exercised = {
             (record["report"].get("backend"), str(response.get("path", "")))
             for record in current if record["report"].get("status") == "passed"
@@ -3007,7 +3006,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if response.get("method") == "POST"
             and isinstance(response.get("status"), int)
             and 200 <= response["status"] < 300
-            and not _declared_failure(json.dumps(response.get("json")))
+            and not response.get("truncated")
+            and not declares_failure(response.get("json"))
         }
 
         def settled(match, evidence) -> bool:

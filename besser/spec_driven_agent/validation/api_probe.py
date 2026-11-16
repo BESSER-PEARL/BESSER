@@ -424,6 +424,31 @@ def confirmed_create_paths(report: dict) -> set[str]:
     return confirmed
 
 
+# Keys that make a body a record: whatever else it holds (a status, an error field) is its data.
+_RECORD_KEYS = ("id", "pk", "uuid", "_id")
+_FAILURE_FLAGS = ("success", "ok", "succeeded")
+_FAILURE_KEYS = ("error", "errors", "detail")
+_FAILURE_STATUSES = frozenset({"error", "failed", "failure"})
+
+
+def declares_failure(body) -> bool:
+    """Whether a response body is a failure envelope: no record, and an explicit flag that
+    the call did not act (``success``/``ok``/``result`` false, an ``error`` or ``detail``,
+    ``status: "error"``), at the top or in a wrapper. A list fails when all its items do."""
+    if isinstance(body, list):
+        return bool(body) and all(declares_failure(item) for item in body)
+    if not isinstance(body, dict) or any(body.get(key) not in (None, "") for key in _RECORD_KEYS):
+        return False
+    # ``result: false`` is the scaffold's "declined to act"; a result of 0 is a value.
+    if any(body.get(key, True) == 0 or str(body.get(key)).strip().lower() == "false" for key in _FAILURE_FLAGS)             or str(body.get("result")).strip().lower() == "false":
+        return True
+    status = body.get("status")
+    if any(body.get(key) for key in _FAILURE_KEYS) or (
+            isinstance(status, str) and status.strip().lower() in _FAILURE_STATUSES):
+        return True
+    return any(declares_failure(value) for value in body.values() if isinstance(value, (dict, list)))
+
+
 def _records(value):
     if isinstance(value, dict):
         if type(value.get("id")) in (int, str):

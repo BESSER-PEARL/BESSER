@@ -365,6 +365,57 @@ def test_a_scenario_that_did_not_run_the_action_leaves_it_unsettled(orch, monkey
     assert [i for i in issues if i.startswith("runtime unverified: action unverified:")]
 
 
+_CANCEL = "/booking/1/methods/cancel/"
+
+
+@pytest.mark.parametrize("body", [
+    {"success": 0},
+    {"ok": False},
+    {"detail": "This booking cannot be cancelled"},
+    {"error": "not allowed"},
+    {"status": "error", "message": "refused"},
+    {"result": False},                                            # the scaffold's "declined to act"
+    {"data": {"success": False}},
+    [{"success": False, "message": "refused"}],
+])
+def test_a_body_that_says_the_action_did_not_act_leaves_it_unsettled(orch, monkeypatch, body):
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": _CANCEL, "json": body})
+
+    issues = orch._collect_execution_issues()
+
+    assert [i for i in issues if i.startswith("runtime unverified: action unverified:")]
+
+
+def test_a_truncated_body_is_no_evidence_either_way(orch, monkeypatch):
+    """Over the report's size limit the body is kept as a cut string, which no reader can judge."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": _CANCEL, "truncated": True,
+                                         "json": '{"success": false, "message": "' + "x" * 60 + " [truncated]"})
+
+    issues = orch._collect_execution_issues()
+
+    assert [i for i in issues if i.startswith("runtime unverified: action unverified:")]
+
+
+@pytest.mark.parametrize("response", [
+    {"json": {"id": 1, "status": "rejected"}},                    # a reject action returns the rejected record
+    {"json": {"id": 1, "status": "DECLINED", "reason": "late"}},
+    {"json": {"id": 1, "error": None}},
+    {"json": [{"id": 1, "status": "failed"}, {"id": 2, "status": "failed"}]},
+    {"json": {"message": "cancel executed"}},
+    {},
+])
+def test_a_record_in_any_state_is_a_successful_action(orch, monkeypatch, response):
+    """A record's own status is domain data, not a refusal."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": _CANCEL, **response})
+
+    issues = orch._collect_execution_issues()
+
+    assert not [i for i in issues if "action unverified:" in i]
+
+
 def test_a_read_back_under_a_nested_create_route_retires_its_unverified_create(orch, monkeypatch):
     _probe_recorder(monkeypatch, orch, findings=[
         "create unverified: web_app/backend: POST /booking/{booking_id}/guest/ - "

@@ -191,12 +191,20 @@ Generated create probes use distinct fixture values and native association-link
 payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
 that every valid request fails. An unresolved create probe can be discharged by
 a current-revision ``test_api`` scenario on the same backend in which the app
-booted and a successful ``POST`` to the exact endpoint is followed by a
+booted and a successful ``POST`` to that endpoint (a path its route template
+serves: ``/order/7/line/`` for ``/order/{order_id}/line/``) is followed by a
 successful ``GET`` of that path (or a path under it) returning the same record:
 the same ``id`` and at least one other equal, unredacted scalar field. The
 scenario as a whole need not pass; a failing negative check in it does not
 discard a create that was read back. Health responses, an isolated
 200, stale results, and evidence from a different route/backend do not qualify.
+An ``action unverified:`` finding is discharged by a passing current scenario
+whose 2xx ``POST`` called that action route, unless the response body was cut at
+the report's size limit or is a failure envelope: no record ``id`` and an explicit
+flag that the call did not act (``success``/``ok``/``result`` false, an
+``error`` or ``detail``, ``"status": "error"``), at the top level, in a wrapper
+object or in every item of a list. A record in any state, such as an offer
+returned with ``"status": "rejected"`` by its reject action, shows the action ran.
 Observed server crashes remain failures even if another scenario passes.
 The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
 where ``<Name>`` is a mapped ORM class the model does not mark abstract. A

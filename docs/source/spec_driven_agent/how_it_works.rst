@@ -405,9 +405,18 @@ so Phase 3 validates the layout that ships; a file it only edited, generator
 files and the files of a modify run keep their own layout. A formatter that
 could not run is reported under *Not checked*. The download's
 ``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
-generator and the verification counts, with up to eight items each found missing
-in the code or not checked (a check that could not run, a requirement whose
-evidence did not verify). A request that states no business rule adds a *Not
+generator and the verification counts, with up to eight lines each for what was
+found missing in the code or not checked (a check that could not run, a
+requirement whose evidence did not verify), and how many more there are. A list
+of more than five lines puts findings of one kind on one line ("5 create
+operations could not be tested automatically, because each needs an existing
+record first: ..."). These items, the run card's verification report and the
+first issue named in an incomplete notice are one plain sentence per finding
+(``validation/user_wording.py``): a validator's message is written for the
+agent, with the request it sent, the file and line to edit and what to call
+next, so it stays in the agent's prompt, the trace and the recipe's
+``validation_issues``. A finding with no sentence of its own reads as a generic
+one, never as the agent's text. A request that states no business rule adds a *Not
 checked* line saying so, and an implemented requirement that was only found in
 the source says so. It leaves out the request itself, because the file
 also goes into GitHub pushes, and shows model-written values as code, never as

@@ -206,7 +206,7 @@ def test_a_ledger_that_produced_no_verdict_at_all_is_not_silence():
     report = build_verification_report(recipe)
 
     coverage = next(i for i in report.notVerified if i.what == "original-specification coverage")
-    assert "extraction failed" in coverage.why
+    assert coverage.why.startswith("Your request could not be turned into checkable requirements")
     assert report.verified == [i for i in report.verified if i.kind == "api_workflow"]
 
 
@@ -225,13 +225,13 @@ def test_an_unimplemented_modeled_operation_is_missing_not_merely_unchecked():
     ])
     report = build_verification_report(recipe)
 
-    missing = [i for i in report.shippedUnenforced if "execute_booking_cancel" in i.what]
+    missing = [i for i in report.shippedUnenforced if "POST /booking/{booking_id}/methods/cancel/" in i.what]
     assert len(missing) == 1
-    assert "does not implement it" in missing[0].why
+    assert "is not implemented" in missing[0].what and "line 72" not in missing[0].what
 
-    unknown = [i for i in report.notVerified if "task 1 remains unresolved" in i.what]
+    unknown = [i for i in report.notVerified if "Implement POST /bill/{bill_id}" in i.what]
     assert len(unknown) == 1
-    assert "unknown, not absent" in unknown[0].why
+    assert unknown[0].what.startswith("A planned change could not be confirmed as done")
 
     # Style noise stays out of all three lists.
     everything = report.verified + report.notVerified + report.shippedUnenforced
@@ -349,7 +349,7 @@ def test_a_runtime_check_that_did_not_run_lands_in_could_not_check():
     report = build_verification_report(recipe)
 
     check = next(i for i in report.notVerified if i.kind == "check")
-    assert check.what == "runtime check (the constructibility probe)"
+    assert check.what == "runtime check (the automatic create test)"
     assert "no sandbox" in check.why
 
 

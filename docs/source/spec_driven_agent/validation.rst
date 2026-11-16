@@ -425,6 +425,13 @@ finding, at its first use, ending ``(+N more uses)``: ``ruff`` ``F821`` /
 ``F811``, the python contract's undefined names and ``tsc``'s ``TS2304``. One
 forgotten import in a 40-endpoint router is two blockers, not 105.
 
+A finding's message is written for the agent. Where the user reads about it (the
+run card, ``BESSER_GENERATION.md``, an incomplete notice) it is said in one
+sentence that ``validation/user_wording.py`` builds from the same prefix, for
+example ``Creating order (POST /order/) could not be tested automatically: it
+needs an existing Customer first.``. A new prefix gets its sentence there;
+without one it reads as a generic sentence.
+
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps
 still standing when the run ended. A non-zero value means the downloaded output

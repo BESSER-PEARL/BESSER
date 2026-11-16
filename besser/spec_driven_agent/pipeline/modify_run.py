@@ -62,6 +62,7 @@ from besser.spec_driven_agent.state.tracing import (
 )
 from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run, unresolved_defects
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
+from besser.spec_driven_agent.validation.user_wording import user_sentence
 from besser.utilities.workspace_fs import open_plain
 
 logger = logging.getLogger(__name__)
@@ -732,7 +733,7 @@ class ModifyRunMixin:
             self._fix_target_message = (
                 "I changed the app, but could not confirm the reported "
                 f"failure is fixed ({self._fix_target.descriptor}). "
-                f"Outstanding issue: {detail}"
+                f"Outstanding issue: {user_sentence(detail)}"
             )
             logger.warning(
                 "Fix run: reported target NOT confirmed fixed — %s",

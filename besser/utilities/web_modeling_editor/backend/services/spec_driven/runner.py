@@ -77,6 +77,9 @@ from besser.utilities.provenance import (
     remove_readme_block,
     write_generation_provenance,
 )
+from besser.spec_driven_agent.validation.user_wording import (
+    Finding, plain_check, summary_lines, user_finding, user_sentence,
+)
 from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
     required_check_unverified,
@@ -309,6 +312,11 @@ _SKIPPED_CHECK_RE = re.compile(
 # prefixes (ruff, frontend/data contract, create contract) describe code that
 # was built and is defective, which is a different question.
 _UNENFORCED_PREFIXES = ("action contract:", "model contract:")
+# The ``why`` of a requirement the check could not confirm, and of a workflow that failed.
+_UNCONFIRMED = "the check could not confirm it in the delivered code"
+_WORKFLOW_FAILED = "it ran against the app and failed"
+# A judge note's citation annotation: a file path and a remark for the agent.
+_CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 _UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
 
 
@@ -436,13 +444,34 @@ def run_summary_markdown(
             f"- Left out: {removed} file(s) the app wrote while it was test-run"
             + (f"; {kept} more could not be removed and are still in the output" if kept else "")
             + (f" ({one_line(note)})" if note else ""))
-    for title, items in (("Missing in the code", verification.shippedUnenforced),
-                         ("Not checked", verification.notVerified)):
+    findings = {finding.sentence: finding for finding in map(user_finding, _issue_messages(recipe))}
+    for title, items, total in (("Missing in the code", verification.shippedUnenforced, counts.shippedUnenforced),
+                                ("Not checked", verification.notVerified, counts.notVerified)):
         if items:
+            entries = [(_summary_finding(item, findings),
+                        one_line(item.what) + (f": {one_line(item.why)}" if item.why else "")) for item in items]
+            shown, covered = summary_lines(entries, _SUMMARY_ITEMS_PER_STATE, quote=one_line)
             lines += ["", f"### {title}", ""]
-            lines += [f"- {one_line(item.what)}" + (f": {one_line(item.why)}" if item.why else "")
-                      for item in items[:_SUMMARY_ITEMS_PER_STATE]]
+            lines += [f"- {line}" for line in shown]
+            if max(total, len(items)) > covered:
+                lines.append(f"- and {max(total, len(items)) - covered} more")
     return lines
+
+
+def _issue_messages(recipe: dict) -> list[str]:
+    return [str(issue.get("message") or "") for issue in recipe.get("validation_issues") or []
+            if isinstance(issue, dict)]
+
+
+def _summary_finding(item: VerificationItem, findings: dict) -> Finding:
+    """The group a report item merges into in the summary: by its sentence, else by its kind."""
+    if item.what in findings:
+        return findings[item.what]
+    if item.kind == "requirement" and item.id and item.why == _UNCONFIRMED:
+        return Finding(item.what, "requirement_unconfirmed", item.id)
+    if item.kind == "api_workflow" and item.why == _WORKFLOW_FAILED:
+        return Finding(item.what, "workflow_failed", item.id)
+    return Finding(item.what)
 
 
 def build_verification_report(recipe: dict) -> VerificationReport:
@@ -544,13 +573,13 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
                       else "the delivered code implements it only partly")
+            note = _CITATION_NOTE_RE.sub("", note).strip()
             unenforced.append(_item(
                 "requirement", ident, what, why=f"{reason}{f'; {note}' if note else ''}",
             ))
         else:
-            not_verified.append(_item(
-                "requirement", ident, what, why=note or "no verdict was reached",
-            ))
+            # The judge's note argues about citations with the agent; the user needs the outcome.
+            not_verified.append(_item("requirement", ident, what, why=_UNCONFIRMED))
 
     # 2b. An empty ledger is not a clean one: the request stated no rule to check.
     if recipe.get("business_rules_stated") is False:
@@ -564,7 +593,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         report = scenario.get("report") or {}
         requests = (scenario.get("scenario") or {}).get("requests") or []
         ident = str(scenario.get("scenario_id") or "")
-        what = f"API workflow '{ident}'"
+        what = f"Test workflow '{ident}'"
         ran = ", ".join(
             f"{r.get('method', '?')} {r.get('path', '?')}"
             for r in requests if isinstance(r, dict)
@@ -576,16 +605,9 @@ def build_verification_report(recipe: dict) -> VerificationReport:
                 how=f"{len(requests)} request(s) run against the app: {ran}",
             ))
         elif status == "failed":
-            unenforced.append(_item(
-                "api_workflow", ident, what,
-                why="exercised and failed: "
-                    + str(report.get("error") or "see the run report"),
-            ))
+            unenforced.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
         else:
-            not_verified.append(_item(
-                "api_workflow", ident, what,
-                why=str(report.get("error") or f"workflow status '{status}'"),
-            ))
+            not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
 
     # 3b. A run that judged its requirements but never ran the app has no
     #     runtime evidence at all. Silence here reads as "it works".
@@ -603,24 +625,18 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         if not isinstance(issue, dict):
             continue
         message = str(issue.get("message") or "")
-        match = _SKIPPED_CHECK_RE.match(message)
-        if match:
+        # The message is written for the agent; the report says it in the user's words.
+        skipped = _SKIPPED_CHECK_RE.match(message)
+        if skipped:
             not_verified.append(_item(
-                "check", "", match.group("check"),
-                why=f"the check did not run ({match.group('reason') or 'no reason recorded'}), "
+                "check", "", plain_check(skipped.group("check")),
+                why=f"the check did not run ({skipped.group('reason') or 'no reason recorded'}), "
                     "so this result does not cover it",
             ))
-        elif message.startswith(_UNENFORCED_PREFIXES):
-            unenforced.append(_item(
-                "requirement", "", message.partition(": ")[2] or message,
-                why="the model states this operation and the delivered code "
-                    "does not implement it",
-            ))
         elif message.startswith(_UNCHECKED_PREFIXES):
-            not_verified.append(_item(
-                "check", "", message.partition(": ")[2] or message,
-                why="verification never established it; this is unknown, not absent",
-            ))
+            not_verified.append(_item("check", "", user_sentence(message)))
+        elif message.startswith(_UNENFORCED_PREFIXES):
+            unenforced.append(_item("requirement", "", user_sentence(message)))
 
     # 5. The requirements ledger can fail before producing a single verdict
     #    (extraction failed, verification budget exhausted). Its finding then
@@ -631,7 +647,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             message = str((issue or {}).get("message") or "")
             if message.startswith(("requirement unverified:", "requirement:")):
                 not_verified.append(_item(
-                    "check", "", "original-specification coverage", why=message,
+                    "check", "", "original-specification coverage", why=user_sentence(message),
                 ))
                 break
 
@@ -2142,7 +2158,7 @@ class SmartGenerationRunner:
                         f"The app was generated, but {len(_unfixed_blockers)} unresolved "
                         "implementation or verification issue(s) remain. "
                         "The generated app is not verified complete. First: "
-                        + _unfixed_blockers[0][:160]
+                        + user_sentence(_unfixed_blockers[0])
                     )
                     yield self._sse(ErrorEvent(
                         code="INCOMPLETE",

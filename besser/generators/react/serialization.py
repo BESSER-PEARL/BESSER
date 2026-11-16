@@ -50,6 +50,8 @@ from besser.generators.structural_utils import (
 )
 from besser.utilities import sort_by_timestamp
 
+from .routes import page_route
+
 logger = logging.getLogger(__name__)
 
 _CHARTS = (LineChart, BarChart, PieChart, RadarChart, RadialBarChart)
@@ -135,7 +137,7 @@ class GuiSerializationMixin:
             "name": screen.description or self._humanize(screen_name),
             "description": screen.description or "",
             "is_main": bool(screen.is_main_page),
-            "route_path": screen.route_path or f"/{screen_name}".lower().replace(' ', '-'),
+            "route_path": screen.route_path or page_route(screen_name),
             "components": [],
         }
 
@@ -912,7 +914,7 @@ class GuiSerializationMixin:
             return None
         target_path = None
         if table_screen is not None and table_screen is not current:
-            target_path = table_screen.route_path or f"/{table_screen.name}".lower().replace(" ", "-")
+            target_path = table_screen.route_path or page_route(table_screen.name)
         return self._clean_dict(
             {
                 "action": action,

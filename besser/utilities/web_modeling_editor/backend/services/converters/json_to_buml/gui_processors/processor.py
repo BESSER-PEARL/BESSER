@@ -64,6 +64,7 @@ from .utils import (
     html_attributes,
     sanitize_name,
 )
+from besser.generators.react.routes import page_route
 
 # An href that cannot name a page of the app: a URL with a scheme
 # (https:, mailto:), a protocol-relative URL, or a fragment of the current page.
@@ -535,6 +536,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     pages = gui_model_json.get("pages", [])
     screen_list: List[Screen] = []
     page_id_to_screen: Dict[str, Screen] = {}  # Map page IDs to Screen objects
+    used_routes: Set[str] = set()
 
     for page_index, page in enumerate(pages):
         page_id = page.get("id")  # Get the page ID for target-screen resolution
@@ -558,8 +560,15 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 x_dpi = str(page_attrs.get("x-dpi") or page_attrs.get("dpi") or "")
                 y_dpi = str(page_attrs.get("y-dpi") or page_attrs.get("dpi") or "")
 
-            # Derive route path from page name or ID
-            route_path = f"/{(page.get('name') or screen_fallback).lower().replace(' ', '-')}"
+            # Route from the page name, unique among the pages
+            route_path = page_route(page.get("name") or screen_fallback)
+            if route_path == "/":
+                route_path = f"/page-{page_index + 1}"
+            base_route, suffix = route_path, 1
+            while route_path in used_routes:
+                suffix += 1
+                route_path = f"{base_route}-{suffix}"
+            used_routes.add(route_path)
 
             screen = Screen(
                 name=screen_name,

@@ -6,6 +6,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set
 
+from .routes import page_route
+
 logger = logging.getLogger(__name__)
 
 # Inline SVG elements, by lowercase name, with the casing React needs.
@@ -1229,7 +1231,7 @@ class PageBuilderMixin:
     def _path_from_name(name: Optional[str]) -> Optional[str]:
         if not name:
             return None
-        return "/" + str(name).strip().lower().replace(" ", "-")
+        return page_route(name)
 
     # ------------------------------------------------------------------ #
     # Tag helpers

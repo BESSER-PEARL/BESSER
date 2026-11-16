@@ -153,8 +153,11 @@ class BackendSettings(BaseSettings):
 
     # -- Spec-Driven Agent: runs, downloads and concurrency ----------------
     llm_download_ttl_seconds: _PositiveInt = Field(
-        1800, validation_alias="BESSER_LLM_DOWNLOAD_TTL_SECONDS",
-        description="How long a finished run's download stays available.")
+        10800, validation_alias="BESSER_LLM_DOWNLOAD_TTL_SECONDS",
+        description="How long a finished run's workspace stays: what a modify run, a push and the events need.")
+    llm_archive_ttl_seconds: _PositiveInt = Field(
+        86400, validation_alias="BESSER_LLM_ARCHIVE_TTL_SECONDS",
+        description="How long a finished run's download stays available; never shorter than its workspace.")
     llm_cost_emitter_interval_seconds: _PositiveFloat = Field(
         2.0, validation_alias="BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS",
         description="Seconds between two cost events on a run's stream.")
@@ -341,6 +344,7 @@ class BackendSettings(BaseSettings):
         self.llm_default_max_runtime_seconds = min(
             self.llm_default_max_runtime_seconds, self.llm_max_runtime_seconds_hard_cap)
         self.llm_default_max_turns = min(self.llm_default_max_turns, self.llm_max_turns_hard_cap)
+        self.llm_archive_ttl_seconds = max(self.llm_archive_ttl_seconds, self.llm_download_ttl_seconds)
         return self
 
 

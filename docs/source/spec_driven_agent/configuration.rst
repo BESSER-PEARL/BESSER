@@ -286,9 +286,20 @@ Storage and lifecycle
   Point it at a persistent volume so runs survive a container restart.
 - ``BESSER_LLM_RUN_WORKSPACE_ROOT`` -- Persistent parent directory for run
   workspaces and checkpoints (default: the OS temp directory).
-- ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (1800) -- How long an output stays
-  downloadable, and how long a finished run's events stay replayable. The run's
-  status record is kept for 24 hours, as long as its workspace can be resumed.
+- ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (10800, 3 hours) -- How long a finished
+  run's workspace stays: the window in which a modify run can edit it, a push
+  can send it to GitHub and its events stay replayable. The editor reads it as
+  ``download_ttl_seconds`` from ``GET /spec-driven/config``. When a run is
+  packaged its installed dependencies (``node_modules``, virtual environments)
+  and its sandbox ``$HOME`` are removed, so what stays is the source tree and
+  the run's own files, a few MB. The run's status record is kept for 24 hours,
+  as long as its workspace can be resumed.
+- ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (86400, 24 hours) -- How long the
+  output stays downloadable (``archive_ttl_seconds`` in the config). The
+  archive is small, so it outlives the workspace; it is never shorter than
+  ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``. The hourly cleanup of BESSER temp
+  folders also removes run folders older than 24 hours, so a longer value has
+  no effect.
 - ``BESSER_LLM_CANCEL_ABANDONED_RUNS`` (on) and
   ``BESSER_LLM_DISCONNECTED_GRACE_SECONDS`` (``300``) -- How long a run with no
   subscribers keeps going before it is cooperatively cancelled through the

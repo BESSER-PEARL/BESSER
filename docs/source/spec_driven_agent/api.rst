@@ -31,7 +31,8 @@ Endpoints
        (see :ref:`spec-driven-preview-model-change`).
    * - ``/spec-driven/config``
      - GET
-     - Caps, download TTL, cost-tick interval, concurrency, feature flags,
+     - Caps, the workspace and download lifetimes (``download_ttl_seconds``,
+       ``archive_ttl_seconds``), cost-tick interval, concurrency, feature flags,
        the model catalog's providers and models (``providers``), provider
        default models, and free-tier availability.
    * - ``/spec-driven/runs/{run_id}``
@@ -63,7 +64,8 @@ Endpoints
      - Cancel an in-flight run at its next turn boundary.
    * - ``/spec-driven/download/{run_id}``
      - GET
-     - Download the generated ZIP/file (re-fetchable within a TTL).
+     - Download the generated ZIP/file (re-fetchable for
+       ``BESSER_LLM_ARCHIVE_TTL_SECONDS``).
    * - ``/spec-driven/push-to-github``
      - POST
      - Push a finished run's code — plus the re-importable model under
@@ -382,7 +384,8 @@ The response is a Server-Sent Events stream::
    data: {"event":"done","runId":"4f3c9a1d8e2b47c6905af1e3d7b28c40","downloadUrl":"/besser_api/spec-driven/download/4f3c9a1d8e2b47c6905af1e3d7b28c40","fileName":"besser_smart_4f3c9a1d8e2b47c6905af1e3d7b28c40.zip","isZip":true,"blockerCount":0}
 
 Then issue a ``GET`` to the ``downloadUrl`` to retrieve the ZIP — it is
-re-fetchable within the run's TTL.
+re-fetchable for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours by default),
+longer than the run's workspace, which a modify run or a push needs.
 
 .. note::
    The frames above are shown without their sequence number for readability.

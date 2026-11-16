@@ -15,6 +15,7 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartGenerationRunner,
 )
@@ -496,6 +497,38 @@ class TestEmptyOutput:
         assert not any(p["event"] == "done" for p in parsed)
         # Temp dir should be cleaned up
         assert runner.temp_dir is None or not os.path.isdir(runner.temp_dir)
+
+
+class _InstallingOrchestrator(_FakeOrchestrator):
+    """Leaves what Phase 3 installs: a frontend's node_modules and the sandbox $HOME's caches."""
+
+    def run(self, instructions: str) -> str:
+        out = super().run(instructions)
+        os.makedirs(os.path.join(out, "frontend", "node_modules", "react"))
+        os.makedirs(os.path.join(out, "backend", ".venv", "lib"))
+        os.makedirs(os.path.join(sandbox_home(self.workspace), ".npm"))
+        return out
+
+
+class TestInstalledDependencies:
+    def test_a_packaged_run_keeps_its_files_and_drops_what_it_installed(self, monkeypatch):
+        """Hundreds of MB per run that nothing reads once the download exists."""
+        monkeypatch.setattr(runner_module, "LLMOrchestrator", _InstallingOrchestrator)
+        monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+        _InstallingOrchestrator.workspace = property(lambda self: runner.temp_dir)
+
+        frames = asyncio.run(_collect_frames(runner))
+        assert _parse_frame(frames[-1])["event"] == "done"
+
+        out = _LAST_ORCHESTRATORS[-1].output_dir
+        assert os.path.isfile(os.path.join(out, "main.py"))
+        assert os.path.isfile(os.path.join(out, ".besser_recipe.json"))
+        assert not os.path.exists(os.path.join(out, "frontend", "node_modules"))
+        assert not os.path.exists(os.path.join(out, "backend", ".venv"))
+        assert not os.path.exists(sandbox_home(runner.temp_dir))
+        entry = asyncio.run(current_runtime().registry.get(runner.run_id))
+        assert entry is not None and os.path.isfile(entry.file_path)
 
 
 class TestRegistrySweep:

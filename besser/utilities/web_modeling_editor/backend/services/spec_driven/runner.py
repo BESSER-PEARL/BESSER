@@ -43,7 +43,8 @@ from besser.spec_driven_agent.errors import (
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
 from besser.utilities.workspace_fs import (
-    copy_plain_file, copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, write_atomic_plain,
+    copy_plain_file, copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, walk_plain,
+    write_atomic_plain,
 )
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
@@ -55,6 +56,7 @@ from besser.spec_driven_agent.providers.llm_client import (
 )
 from besser.llm.catalog import load_model_catalog
 from besser.spec_driven_agent.pipeline.constants import (
+    _SNAPSHOT_IGNORED_DIRS,
     EXCLUDED_OUTPUT_NAMES,
     is_excluded_output_file as _is_excluded_output_file,
 )
@@ -177,13 +179,48 @@ def run_download_dir(workspace: str) -> str:
     return workspace.rstrip("/\\") + _DOWNLOAD_DIR_SUFFIX
 
 
-def _remove_run_dir(path: str) -> None:
-    """Delete a run's workspace and the sandbox ``$HOME`` and download beside it,
+def _remove_run_workspace(path: str) -> None:
+    """Delete a run's workspace and the sandbox ``$HOME`` beside it, keeping its download,
     ending the run's shell session first so none of its processes outlive the folder."""
     close_sessions_for(path)
     shutil.rmtree(path, ignore_errors=True)
     shutil.rmtree(sandbox_home(path), ignore_errors=True)
+
+
+def _remove_run_dir(path: str) -> None:
+    """Delete a run's workspace, its sandbox ``$HOME`` and its download."""
+    _remove_run_workspace(path)
     shutil.rmtree(run_download_dir(path), ignore_errors=True)
+
+
+def drop_installed_dependencies(workspace: str) -> None:
+    """Remove what a finished run installed: its dependency folders and its sandbox ``$HOME``.
+
+    Hundreds of MB that nothing reads once the run is packaged: the download, a
+    push and a modify run's seed leave them out, and a resumed run installs again.
+    """
+    close_sessions_for(workspace)
+    shutil.rmtree(sandbox_home(workspace), ignore_errors=True)
+    for root, dirs, _files in walk_plain(workspace):
+        for name in [d for d in dirs if d in _SNAPSHOT_IGNORED_DIRS]:
+            dirs.remove(name)
+            shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+
+
+def _expire_run(path: str, age: float) -> bool:
+    """Apply a finished run's two lifetimes; True when its download is gone too.
+
+    The workspace (what a modify run, a push and resume read) goes after
+    ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``; the download, a small archive, stays
+    for ``BESSER_LLM_ARCHIVE_TTL_SECONDS``.
+    """
+    settings = get_settings()
+    if age > settings.llm_archive_ttl_seconds:
+        _remove_run_dir(path)
+        return True
+    if age > settings.llm_download_ttl_seconds and os.path.isdir(path):
+        _remove_run_workspace(path)
+    return False
 
 
 
@@ -645,9 +682,9 @@ class SmartRunRegistry:
 
     The sibling ``GET /spec-driven/download/{run_id}`` endpoint reads entries
     non-destructively (``get``) so a failed blob fetch can be retried.
-    Cleanup is owned by the periodic sweep: anything older than
-    ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` is removed (entry + temp dir) by the
-    task started from the backend's lifespan.
+    Cleanup is owned by the periodic sweep started from the backend's
+    lifespan: a run's workspace goes after ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``,
+    its entry and download after ``BESSER_LLM_ARCHIVE_TTL_SECONDS``.
     """
 
     def __init__(self) -> None:
@@ -687,13 +724,8 @@ class SmartRunRegistry:
         }, separators=(",", ":")), root=download_dir)
         return dataclass_replace(entry, file_path=artifact)
 
-    async def restore_persisted(
-        self,
-        ttl_seconds: Optional[int] = None,
-    ) -> int:
+    async def restore_persisted(self) -> int:
         """Rehydrate downloadable artifacts from the run root's download dirs."""
-        if ttl_seconds is None:
-            ttl_seconds = get_settings().llm_download_ttl_seconds
         root = _run_workspace_root()
         now = time.time()
         restored: dict[str, SmartRunEntry] = {}
@@ -704,7 +736,7 @@ class SmartRunRegistry:
             return 0
 
         for name in names:
-            entry = self._entry_from_download_dir(root, name, now, ttl_seconds)
+            entry = self._entry_from_download_dir(root, name, now)
             if entry is not None:
                 restored[entry[0]] = entry[1]
 
@@ -722,7 +754,6 @@ class SmartRunRegistry:
         root: str,
         name: str,
         now: float,
-        ttl_seconds: int,
     ) -> Optional[tuple[str, "SmartRunEntry"]]:
         """Parse one ``<run dir>.download`` into a registry entry.
 
@@ -747,8 +778,7 @@ class SmartRunRegistry:
         workspace = download_dir[: -len(_DOWNLOAD_DIR_SUFFIX)]
         try:
             created_at = float(data["createdAt"])
-            if max(0.0, now - created_at) > max(1, ttl_seconds):
-                _remove_run_dir(workspace)
+            if _expire_run(workspace, max(0.0, now - created_at)):
                 return None
             artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
             if not is_plain_file(artifact, root=download_dir):
@@ -796,9 +826,7 @@ class SmartRunRegistry:
             return None
 
         for name in names:
-            found = self._entry_from_download_dir(
-                root, name, now, get_settings().llm_download_ttl_seconds
-            )
+            found = self._entry_from_download_dir(root, name, now)
             if found is None:
                 continue
             found_id, found_entry = found
@@ -810,7 +838,6 @@ class SmartRunRegistry:
 
     async def periodic_sweep(
         self,
-        ttl_seconds: Optional[int] = None,
         interval_seconds: int = _REGISTRY_SWEEP_INTERVAL_SECONDS,
     ) -> None:
         """Loop forever, sweeping expired entries every ``interval_seconds``.
@@ -818,8 +845,6 @@ class SmartRunRegistry:
         Caller is expected to start this as an ``asyncio.Task`` in the
         FastAPI lifespan and cancel it on shutdown.
         """
-        if ttl_seconds is None:
-            ttl_seconds = get_settings().llm_download_ttl_seconds
         while True:
             try:
                 await asyncio.sleep(interval_seconds)
@@ -827,7 +852,8 @@ class SmartRunRegistry:
                 raise
 
             now = time.time()
-            expired: list[tuple[str, SmartRunEntry]] = []
+            workspace_ttl = get_settings().llm_download_ttl_seconds
+            aged: list[tuple[str, SmartRunEntry, float]] = []
             async with self._lock:
                 for run_id, entry in list(self._entries.items()):
                     # Clamp against backwards clock movements: if the
@@ -836,23 +862,28 @@ class SmartRunRegistry:
                     # is treated as 0 rather than a negative value that
                     # would let the entry live forever.
                     age = max(0.0, now - entry.created_at)
-                    if age > ttl_seconds:
-                        expired.append((run_id, entry))
-                        self._entries.pop(run_id, None)
+                    if age > workspace_ttl:
+                        aged.append((run_id, entry, age))
 
-            for run_id, entry in expired:
+            swept = 0
+            for run_id, entry, age in aged:
                 try:
                     # Off the loop: a large workspace or a busy shell session
                     # takes seconds to remove and would stall every stream.
-                    await asyncio.to_thread(_remove_run_dir, entry.temp_dir)
+                    gone = await asyncio.to_thread(_expire_run, entry.temp_dir, age)
                 except Exception:
                     logger.exception(
                         "Failed to remove temp dir for expired run %s", run_id
                     )
-            if expired:
+                    continue
+                if gone:
+                    swept += 1
+                    async with self._lock:
+                        self._entries.pop(run_id, None)
+            if swept:
                 logger.info(
                     "SmartRunRegistry: swept %d expired spec-driven run(s)",
-                    len(expired),
+                    swept,
                 )
 
 
@@ -2215,6 +2246,11 @@ class SmartGenerationRunner:
                 )
                 await self._runtime.registry.put(self.run_id, entry)
                 yield self._sse(done_event)
+                try:
+                    await self._runtime.run_blocking(drop_installed_dependencies, entry.temp_dir)
+                except OSError:
+                    logger.warning("Run %s: its installed dependencies could not be removed", self.run_id,
+                                   exc_info=True)
             except _EmptyGenerationError as exc:
                 # Raised inside _package_result when the orchestrator
                 # returned but produced zero user files. Surfaced with

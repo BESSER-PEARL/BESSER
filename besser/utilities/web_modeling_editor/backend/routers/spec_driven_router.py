@@ -555,6 +555,7 @@ async def smart_gen_config(settings: SettingsDep) -> dict:
             "default_max_turns": settings.llm_default_max_turns,
         },
         "download_ttl_seconds": settings.llm_download_ttl_seconds,
+        "archive_ttl_seconds": settings.llm_archive_ttl_seconds,
         "cost_emitter_interval_seconds": settings.llm_cost_emitter_interval_seconds,
         "concurrency": {
             "max_concurrent_runs": settings.llm_max_concurrent_runs,
@@ -826,7 +827,7 @@ async def download_smart(
     """Download the output produced by a completed run.
 
     Re-downloadable until the TTL sweep expires the entry
-    (``BESSER_LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
+    (``BESSER_LLM_ARCHIVE_TTL_SECONDS``, default 24 hours) — a transient network
     failure during the blob fetch must not permanently lose an artifact
     the user paid minutes and dollars to produce. Cleanup is owned
     entirely by ``SmartRunRegistry.periodic_sweep``; this endpoint no

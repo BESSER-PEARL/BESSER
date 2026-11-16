@@ -122,12 +122,55 @@ def test_a_malformed_run_id_is_rejected_without_scanning(workspace, monkeypatch)
 
 def test_an_expired_run_is_not_resurrected(workspace):
     reg = SmartRunRegistry()
-    _write_run(str(workspace), age_seconds=get_settings().llm_download_ttl_seconds + 60)
+    temp_dir = _write_run(str(workspace), age_seconds=get_settings().llm_archive_ttl_seconds + 60)
 
     async def exercise():
         assert await reg.get(RUN_ID) is None, "a run past its TTL must stay gone"
 
     asyncio.run(exercise())
+    assert not os.path.exists(runner_module.run_download_dir(temp_dir))
+
+
+def test_a_download_outlives_the_workspace(workspace):
+    """Past the workspace lifetime the heavy folders go; the small archive is still served."""
+    settings = get_settings()
+    assert settings.llm_archive_ttl_seconds > settings.llm_download_ttl_seconds
+    reg = SmartRunRegistry()
+    temp_dir = _write_run(str(workspace), age_seconds=settings.llm_download_ttl_seconds + 60)
+    os.makedirs(os.path.join(sandbox_home(temp_dir), ".cache"))
+
+    async def exercise():
+        return await reg.get(RUN_ID)
+
+    entry = asyncio.run(exercise())
+    assert entry is not None and os.path.isfile(entry.file_path)
+    assert not os.path.exists(temp_dir), "a modify run or push must see the base as expired"
+    assert not os.path.exists(sandbox_home(temp_dir))
+
+
+def test_the_sweep_keeps_a_download_past_the_workspace_lifetime(workspace):
+    settings = get_settings()
+    reg = SmartRunRegistry()
+    young = _write_run(str(workspace), run_id="b" * 32, age_seconds=settings.llm_download_ttl_seconds + 60)
+    old = _write_run(str(workspace), run_id="c" * 32, age_seconds=settings.llm_archive_ttl_seconds + 60)
+
+    async def exercise():
+        for run_id, temp_dir, age in (("b" * 32, young, settings.llm_download_ttl_seconds + 60),
+                                      ("c" * 32, old, settings.llm_archive_ttl_seconds + 60)):
+            reg._entries[run_id] = SmartRunEntry(
+                file_path=os.path.join(runner_module.run_download_dir(temp_dir), "artifact"),
+                file_name="x.zip", is_zip=True, temp_dir=temp_dir, created_at=time.time() - age)
+        task = asyncio.create_task(reg.periodic_sweep(interval_seconds=0))
+        for _ in range(500):
+            if "c" * 32 not in reg._entries and not os.path.exists(young):
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+
+    asyncio.run(exercise())
+    assert "b" * 32 in reg._entries and "c" * 32 not in reg._entries
+    assert not os.path.exists(young) and os.path.isdir(runner_module.run_download_dir(young))
+    assert not os.path.exists(runner_module.run_download_dir(old))
 
 
 def test_a_manifest_that_disagrees_with_its_directory_is_ignored(workspace):

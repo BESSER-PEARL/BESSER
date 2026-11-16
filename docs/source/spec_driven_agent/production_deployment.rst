@@ -183,7 +183,8 @@ Sandbox and network
   ``/usr/local`` and ``/root`` are read-only. The telemetry folder and the
   incident log folder (``BESSER_INCIDENT_LOG_DIR``, default
   ``/app/incidents``, which names other runs) are masked from every run.
-  Deleting a run removes its sandbox ``$HOME`` along with its workspace.
+  Deleting a run removes its sandbox ``$HOME`` along with its workspace; a
+  packaged run loses its sandbox ``$HOME`` and installed dependencies at once.
 - A finished run's download (its ZIP or single file, and a manifest naming the
   run) is kept in ``<run dir>.download``, which the run's shell cannot see, and
   is opened without following links. A manifest inside a workspace or a

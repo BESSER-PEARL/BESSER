@@ -178,6 +178,17 @@ def test_object_diagram_of_a_consistent_diagram(consistent_diagram, slots):
 
 
 @needs_alloy
+def test_object_diagram_of_a_class_named_class(consistent_diagram, slots):
+    """Class is the editor's default class name; its objects used to be dropped silently."""
+    consistent_diagram.model["elements"]["cls-book"]["name"] = "Class"
+    consistent_diagram.model["elements"]["ocl-pages"]["constraint"] = "context Class inv pages: self.pages > 0"
+    events = _events(generate_object_diagram(consistent_diagram, slots=slots))
+    elements = events[-1]["object_model"]["elements"].values()
+    assert events[-1]["isValid"] is True
+    assert "Class_0" in [element["name"] for element in elements if element["type"] == "ObjectName"]
+
+
+@needs_alloy
 def test_contradictory_diagram(contradictory_diagram, slots):
     events = _events(check_semantic_consistency(contradictory_diagram, slots=slots))
     not_found = [event for event in events if event["message"].startswith("No instance within")]

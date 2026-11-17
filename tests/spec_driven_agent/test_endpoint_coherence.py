@@ -72,3 +72,52 @@ def test_external_and_static_asset_fetches_are_ignored(tmp_path):
 def test_no_backend_manifest_means_not_applicable(tmp_path):
     _seed(tmp_path, "frontend/src/api.ts", "fetch('/books')\n")
     assert collect_endpoint_coherence_issues(str(tmp_path)) == []
+
+
+# The shared client's wrapper (Sonnet 5.5, a hotel app and a todo app): its
+# options are a variable, so the URL used to run on past its closing backtick
+# to the next one and was reported as `GET /{param}`, opts); } catch ...`.
+WRAPPER = (
+    "async function request(method, path, body) {\n"
+    "  let res;\n"
+    "  try {\n"
+    "    res = await fetch(`${BASE}${path}`, opts);\n"
+    "  } catch (e) {\n"
+    "    throw new Error('Cannot reach the server. Is the backend running on ' + BASE + '?');\n"
+    "  }\n"
+    "  return res.json();\n"
+    "}\n"
+    "export const api = {\n"
+    "  list: (entity) => request('GET', `/${entity}/`),\n"
+    "};\n"
+)
+
+
+def test_a_wrapper_with_variable_options_is_not_a_call(tmp_path):
+    _backend(tmp_path)
+    _seed(tmp_path, "frontend/src/api.js", WRAPPER)
+    assert collect_endpoint_coherence_issues(str(tmp_path)) == []
+
+
+def test_a_literal_path_after_an_interpolated_base_is_still_reported(tmp_path):
+    _backend(tmp_path)
+    _seed(tmp_path, "frontend/src/api.js", WRAPPER + "export const all = () => fetch(`${BASE}/books/`);\n")
+    issues = collect_endpoint_coherence_issues(str(tmp_path))
+    assert len(issues) == 1, issues
+    assert "line 13 calls GET /books/," in issues[0]
+
+
+def test_a_router_prefix_is_part_of_the_route(tmp_path):
+    _seed(tmp_path, "backend/routers/books.py", (
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/api')\n"
+        '@router.get("/book/")\n'
+        "def list_books(): ...\n"
+    ))
+    _seed(tmp_path, "frontend/src/api.js", (
+        "export const all = () => fetch(`${BASE}/api/book/`);\n"
+        "export const bad = () => fetch(`${BASE}/book/`);\n"
+    ))
+    issues = collect_endpoint_coherence_issues(str(tmp_path))
+    assert len(issues) == 1, issues
+    assert "line 2 calls GET /book/," in issues[0]

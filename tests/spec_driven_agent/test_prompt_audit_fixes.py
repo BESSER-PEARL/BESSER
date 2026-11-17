@@ -58,7 +58,7 @@ def test_the_search_glob_contract_matches_the_executor():
 
 def test_run_command_documents_truncation_and_the_skipped_result():
     doc = TOOLS["run_command"]["description"]
-    for fact in ("full_output_path", "skipped=true", "120-second", "refused"):
+    for fact in ("full_output_path", "missing_command=true", "120-second", "refused"):
         assert fact in doc
 
 

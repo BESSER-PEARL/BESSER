@@ -49,7 +49,9 @@ from besser.generators.structural_utils import (
     get_deferred_fk_associations,
     get_foreign_keys,
     get_pk_py_types,
+    is_secret_attribute,
     is_server_owned_attribute,
+    is_shadowed_by_association_end,
     normalize_method_code,
 )
 from besser.utilities.utils import sort_by_timestamp
@@ -138,6 +140,7 @@ def get_association_classes(model: DomainModel) -> Dict[str, dict]:
                     "is_enum": attribute.type.__class__.__name__ == "Enumeration",
                     "is_id": attribute.is_id,
                     "is_optional": attribute.is_optional,
+                    "is_required": not attribute.is_optional and attribute.default_value is None,
                 }
                 for attribute in sort_by_timestamp(cls.attributes)
                 if not is_server_owned_attribute(attribute)
@@ -207,7 +210,9 @@ def _make_env() -> Environment:
                        # how they drift: when the schema learned to exclude
                        # derived attributes, a stale copy here would have read
                        # them off the payload and returned 500 on every create.
-                       is_server_owned_attribute=is_server_owned_attribute)
+                       is_server_owned_attribute=is_server_owned_attribute,
+                       is_secret_attribute=is_secret_attribute,
+                       is_shadowed_by_association_end=is_shadowed_by_association_end)
     # Method-parameter defaults are unvalidated request JSON rendered into a
     # FastAPI app that /besser_api/deploy-app runs. Same sink the SQLAlchemy
     # template had: emit literals, never expressions.

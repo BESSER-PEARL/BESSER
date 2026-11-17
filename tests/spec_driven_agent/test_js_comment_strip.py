@@ -53,15 +53,17 @@ def test_each_file_version_is_lexed_once(tmp_path, monkeypatch):
     import besser.spec_driven_agent.validation.frontend_resolution as resolution
 
     calls = []
-    real = resolution._strip_comments
-    monkeypatch.setattr(resolution, "_strip_comments", lambda text, name: calls.append(name) or real(text, name))
-    resolution._stripped_file.cache_clear()
+    real = resolution._tokens
+    monkeypatch.setattr(resolution, "_tokens", lambda text, name: calls.append(name) or real(text, name))
+    resolution._lexed_file.cache_clear()
     source = tmp_path / "App.jsx"
     source.write_text("import a from './a';\n", encoding="utf-8")
 
     assert resolution._stripped_source(str(source)) == resolution._stripped_source(str(source))
+    assert resolution._lexed_source(str(source)).specs == ("./a",)
     assert calls == ["App.jsx"]
     source.write_text("import b from './b'; // changed\n", encoding="utf-8")
     os.utime(source, ns=(1, 2_000_000_000))
     assert "./b" in resolution._stripped_source(str(source))
+    assert resolution._lexed_source(str(source)).specs == ("./b",)
     assert calls == ["App.jsx", "App.jsx"]

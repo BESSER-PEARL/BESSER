@@ -27,6 +27,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _TRUTHY = ("1", "true", "yes", "on")
 
 
+# How long a BESSER temp directory, a spec-driven run's folders included, is kept (services/cleanup.py).
+TEMP_DIR_MAX_AGE_HOURS = 24
+
+
 def _positive(parse):
     """A blank, unparsable or non-positive value gives the default."""
     def validate(value):
@@ -118,6 +122,12 @@ class BackendSettings(BaseSettings):
         None, validation_alias="BESSER_ENABLE_DOCKER_DEPLOY",
         description="POST /deploy-app (docker-compose on this host): true allows, false answers 403, "
                     "unset allows loopback requests only.")
+    # The B-OCL evaluator runs Python text built from the object diagram's
+    # values, so evaluating invariants is for servers whose users are trusted.
+    ocl_evaluation_enabled: _Flag = Field(
+        False, validation_alias="BESSER_ENABLE_OCL_EVALUATION",
+        description="/validate-diagram evaluates OCL invariants against object and user diagrams; "
+                    "off, it checks their syntax only.")
 
     # -- Spec-Driven Agent: per-run caps -----------------------------------
     # The UI reads the hard caps from /spec-driven/config, so they are what a
@@ -147,8 +157,11 @@ class BackendSettings(BaseSettings):
 
     # -- Spec-Driven Agent: runs, downloads and concurrency ----------------
     llm_download_ttl_seconds: _PositiveInt = Field(
-        1800, validation_alias="BESSER_LLM_DOWNLOAD_TTL_SECONDS",
-        description="How long a finished run's download stays available.")
+        10800, validation_alias="BESSER_LLM_DOWNLOAD_TTL_SECONDS",
+        description="How long a finished run's workspace stays: what a modify run, a push and the events need.")
+    llm_archive_ttl_seconds: _PositiveInt = Field(
+        86400, validation_alias="BESSER_LLM_ARCHIVE_TTL_SECONDS",
+        description="How long a finished run's download stays available: at least its workspace, at most a day.")
     llm_cost_emitter_interval_seconds: _PositiveFloat = Field(
         2.0, validation_alias="BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS",
         description="Seconds between two cost events on a run's stream.")
@@ -238,6 +251,16 @@ class BackendSettings(BaseSettings):
     sdmx_allow_custom_url: _Flag = Field(
         False, validation_alias="BESSER_SDMX_ALLOW_CUSTOM_URL",
         description="Accept an SDMX API that is not one of the presets.")
+
+    # -- Semantic check (the Alloy Analyzer) ----------------------------------
+    # Behind /semantic-consistency-check and /generate-object-diagram.
+    alloy_max_concurrent_checks: _PositiveInt = Field(
+        1, validation_alias="BESSER_ALLOY_MAX_CONCURRENT_CHECKS",
+        description="Semantic checks running at once, each in its own JVM; more are refused with 503.")
+    alloy_max_heap_mb: _PositiveInt = Field(
+        1024, validation_alias="BESSER_ALLOY_MAX_HEAP_MB",
+        description="Maximum heap of each Alloy Analyzer JVM (-Xmx), in MB, so that a large search "
+                    "cannot exhaust the host's memory.")
 
     # -- Agent simulation ----------------------------------------------------
     # The rate limiter is per process: the backend runs one uvicorn worker.
@@ -335,6 +358,9 @@ class BackendSettings(BaseSettings):
         self.llm_default_max_runtime_seconds = min(
             self.llm_default_max_runtime_seconds, self.llm_max_runtime_seconds_hard_cap)
         self.llm_default_max_turns = min(self.llm_default_max_turns, self.llm_max_turns_hard_cap)
+        # The hourly temp cleanup deletes run folders older than it allows, downloads included.
+        self.llm_archive_ttl_seconds = min(max(self.llm_archive_ttl_seconds, self.llm_download_ttl_seconds),
+                                           TEMP_DIR_MAX_AGE_HOURS * 3600)
         return self
 
 

@@ -2,7 +2,7 @@ How it works
 ============
 
 A run is a three-phase pipeline (``LLMOrchestrator.run`` in
-``besser/spec_driven_agent/orchestrator.py``).
+``besser/spec_driven_agent/pipeline/orchestrator.py``).
 
 .. container:: besser-diagram
 
@@ -104,7 +104,13 @@ The three phases
    as a change, or as removing the scaffold or switching its framework; the
    latter two are dropped, since the scaffold's stack is fixed. Only the
    planner's own empty list skips Phase 2: a list emptied by dropped tasks
-   runs Phase 2 from the request. An HTTP path the request names (``GET
+   runs Phase 2 from the request. The planner is sent the user's verbatim
+   request as the request, and the modeling agent's "Assistant's notes" in a
+   separate block labelled as context that is not the user's words and adds no
+   task the request does not name (the requirements ledger reads the request
+   the same way). It is also told what is being built, from the routing
+   answer: for a web app, that people use it through screens and that the
+   harness already adds the item that builds a missing frontend. An HTTP path the request names (``GET
    /stats``, "a /health/live endpoint") that the FastAPI scaffold does not
    serve becomes a checklist item. Routes are read from the source: method
    decorators and ``add_api_route``, under their router prefixes, the
@@ -121,7 +127,9 @@ The three phases
    backend-only, and in a modify run a bare "app" names the existing project
    rather than asking for a UI. Such a request also puts "build the frontend"
    on the checklist, and Phase 3 reports a blocker if the output ends with no
-   frontend files. A new project with both a class model and an agent model
+   frontend files. With no GUI model, the item names the classes that have
+   backend routes, says that a narrower UI scope in the request wins, and
+   closes only once a routed app with at least one entity screen exists. A new project with both a class model and an agent model
    gets a checklist item to connect them: the agent's intents about the
    model's records must read and write them, not answer with canned text.
    The item also keeps Phase 2 from being skipped, and the agent may drop it
@@ -131,21 +139,39 @@ The three phases
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime
-   verification runbook (see :ref:`spec-driven-shell-tools`). The shell is
+   verification runbook (see :ref:`spec-driven-shell-tools`). For a scaffold
+   from the FastAPI backend generator, the endpoint manifest in the system
+   prompt states what create, update and get-by-id return. The relationship
+   mutation coverage block is left out only when the requirements ledger is
+   known to be empty and the model has no constraint. The shell is
    one session for the whole run, like a terminal: ``cd`` and exported
    variables carry over between commands, and on Linux, where the run has a
    sandbox, a server started in one command answers requests in the next,
    until the run ends.
 
+   On Anthropic the Phase 2 system prompt is sent as two cached blocks, split
+   at ``## Variable context`` (``llm_client.SYSTEM_CACHE_SPLIT``). The first
+   holds the role, the plan and the rules and depends only on the run
+   configuration, so web-app runs of one configuration read it from each
+   other's cache (a non-web target is named in the rules, so that block is
+   shared only between runs for the same target); everything per project or per request (models, data contract,
+   design system, idioms, inventory, routes, requirements, the request) comes
+   after the marker. A Phase 2 request then uses all four cache breakpoints
+   the API allows (tools, the stable block, the end of the system prompt, the
+   rolling message marker), so no other one can be added. Other providers get
+   the prompt as one string.
+
 **Phase 3 — validation and bounded auto-fix.**
    The workspace is snapshotted, then swept by a set of static validators.
    Findings are classified by severity, and **blocker**-level issues drive a
    bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
-   and as many as the turns Phase 2 left over. The loop stops when blockers
+   and as many as the turns Phase 2 left over, each round up to ten LLM turns. The loop stops when blockers
    reach zero, after two consecutive rounds without progress, or after three
    rounds that change the tree without improving it. Every strictly better
-   tree is re-snapshotted, ranked by whether the app boots, then entities it
-   cannot create, then actions it cannot run, then the blocker count. A
+   tree is re-snapshotted, ranked by whether the app boots, then backends the
+   runtime probe could not measure (a startup that hangs ranks behind every
+   measured tree), then entities it cannot create, then actions it cannot
+   run, then the blocker count. A
    repair that ends worse is rolled back to the best snapshot, not merely to
    the last round; the pre-Phase-3 tree is the first snapshot, so a failed
    repair can never cost you the Phase 2 work. Non-blocker findings are recorded but never burn fix turns.
@@ -224,12 +250,19 @@ reading a trace and wondering why a run did what it did.
        the first.
    * - Context compaction
      - Above ``BESSER_LLM_COMPACT_THRESHOLD`` estimated tokens (default
-       80,000) everything but the last six messages is replaced by a summary:
-       a model recap, a tool-call histogram, and the lists of files written and
-       read. The cut never lands between a tool call and its result. For models
+       80,000) everything but the most recent turns (about 30% of the
+       threshold, in tokens) is replaced by a summary: a model recap, a
+       tool-call histogram, the lists of files written and read, the project's
+       files (dependency and build directories left out) and the open
+       checklist items and blockers. The cut never lands between a tool call
+       and its result, and the kept turns lose their thinking blocks (see
+       :doc:`models`). A compaction that would not shrink the history (the
+       kept turns alone fill the budget) is skipped with a warning. For models
        with a known small context window the threshold is lowered to that
-       window minus a 16,000-token reserve, so a small model compacts instead
-       of overflowing.
+       window minus a reserve for the reply (the run's output-token ceiling,
+       at least 16,000 tokens), so a small model compacts instead of
+       overflowing; a model with a known large window gets 80% of that
+       difference, capped at ``BESSER_LLM_MAX_COMPACT_THRESHOLD``.
    * - Truncation recovery
      - When a response is cut off at the output-token limit, the partial turn
        is discarded rather than executed — nothing lands half-written on disk —
@@ -239,17 +272,21 @@ reading a trace and wondering why a run did what it did.
        per-run total that does NOT reset after a clean turn, so it is sized
        against the whole turn budget, not against a single bad patch.
    * - Per-file modify loop
-     - Three consecutive ``modify_file`` calls on the same path that all
-       fail to match inject a reminder to read the file and copy
-       ``old_text`` verbatim, never to rewrite it from memory. Successful
-       edits do not count; it fires once per path, and any other tool in
-       between breaks the streak.
+     - Three consecutive ``modify_file`` or ``replace_file_lines`` calls on
+       the same path that were all refused inject a reminder naming the
+       refusal (a text that did not match, or an edit the syntax guard
+       rejected) and how to recover, never to rewrite the file from memory.
+       Successful edits do not count; it fires once per path. A
+       ``read_file`` of that same file does not break the streak; any other
+       tool, or a read of another file, does.
    * - Checklist gate
      - The run does not finish while ``task_list`` items are open: an
        ``end_turn`` with open items is sent back with the list, twice — four
        times when an open item carries a machine check. Some items are verified
        before they are accepted (the "build the frontend" item checks that
-       frontend files exist); an item whose check fails three times is recorded
+       frontend files exist). Ending the turn also runs ``validate_app``; a
+       blocker from its static frontend checks is sent back to the model once
+       before Phase 2 ends. An item whose check fails three times is recorded
        as *blocked* and stops holding the gate, so a task the model cannot
        satisfy can no longer livelock the run. An item the user did not ask
        for is closed honestly with ``task_list(action='drop', id=N,
@@ -261,13 +298,20 @@ reading a trace and wondering why a run did what it did.
        any finding comes back in the same tool result, while the file is still
        in context. An edit that would turn a file the harness can parse into
        one it cannot is refused outright and never reaches disk, in those same
-       languages. Data-contract violations ride along the same way. Toggle with
-       ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (default on).
+       languages. Data-contract violations ride along the same way. A
+       cross-file finding (a router reading a field its create schema lacks, a
+       form field the request schema refuses) comes back on a write to a file
+       it names, and otherwise once per content of those files, with the other
+       files under ``in_other_files``; it is not repeated on unrelated writes.
+       Toggle with ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (default on).
    * - Checkpointing
      - A checkpoint is written to ``.besser_checkpoint.json`` in the workspace
-       after every tool-use turn, and deleted only when Phase 2 ends cleanly. A
-       run cut short by an error, a cap, or a cancellation therefore leaves one
-       behind for :ref:`resume <spec-driven-durable-runs>`, which refuses to
+       after every tool-use turn and again when Phase 3 starts and as its
+       repair progresses. It is deleted only when Phase 2 ended cleanly,
+       Phase 3 was not interrupted and no blocker or ``validation
+       unverified:`` finding remains. A run cut short by an error, a cap, or
+       a cancellation, or one that ends with open findings, therefore leaves
+       one behind for :ref:`resume <spec-driven-durable-runs>`, which refuses to
        resume against a project whose fingerprint has changed and seeds the
        already-spent cost so a crash-and-resume cycle cannot double the bill.
        Because the file's *absence* is what marks a clean finish, a write that
@@ -276,11 +320,31 @@ reading a trace and wondering why a run did what it did.
        trace so a post-mortem can tell the two apart.
        Toggle with ``BESSER_LLM_ENABLE_CHECKPOINTING`` (default on).
    * - Tracing
-     - Every phase transition, turn, tool call, cost update, compaction,
-       snapshot, rollback, regeneration and validation finding is appended to
-       ``.besser_trace.jsonl`` in the workspace. A ``tool_call`` record holds
+     - Every run start and end, phase transition, turn, tool call, cost
+       update, checkpoint write (or the ``error`` of a failed one), target
+       decision, snapshot, rollback, regeneration and validation finding is
+       appended to ``.besser_trace.jsonl`` in the workspace (events
+       ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
+       ``tool_call``, ``cost_update``, ``llm_call``, ``checkpoint``, ``error``,
+       ``target``, ``snapshot``, ``rollback``, ``regeneration``,
+       ``validation_issue``, ``run_end``). ``run_start`` holds the start of
+       the user's own request, not the modeling agent's notes. Every Phase 2
+       turn, the closing reply included, and every Phase 3 fix turn
+       (``phase: "phase3_fix"``) writes a ``turn_start`` and a ``cost_update``
+       with the cumulative token counters. Each paid call outside those loops
+       writes one ``llm_call`` with its ``purpose`` (``routing``,
+       ``routing_target``, ``gap_analysis``, ``requirements_extraction``,
+       ``requirements_judge``, ``requirements_rejudge``), ``outcome``, the
+       calls, tokens and ``cost_usd`` it added, and for a judge the verdict
+       count per status, how many "implemented" citations the check verified
+       (``citations``) and why each other failed (``failures``, by requirement
+       id). Each also names ``model`` (and ``planning_model``, which gap analysis
+       and the judge try first). Compactions are counted in the checkpoint and the
+       recipe (``compactions``), not traced. A ``tool_call`` record holds
        the input and a ``result`` excerpt (its length and the first 500
-       characters), with credential-shaped values redacted before the cut. A
+       characters), with credential-shaped values redacted before the cut;
+       each input value is cut at 500 characters, and the untruncated input
+       of every write tool goes to ``.besser_tool_inputs.jsonl``. A
        ``generator_output`` record holds each generator call's files (SHA-256,
        traced line ranges), a ``requirements`` record the requirements ledger,
        and the run, phase and turn records carry the client's cumulative token
@@ -317,14 +381,17 @@ reading a trace and wondering why a run did what it did.
        skipped, never opened.
 
        The rules live in one module, ``besser.utilities.secret_redaction``,
-       which the trace (above), the LLM clients' error logs and the editor
+       which the trace (above), the shared OpenAI chat client's error logs
+       (``besser.llm.openai_chat``) and the editor
        backend's generator-config logs use as well. A log line masks a local
        host's database password too: only the generated app needs it.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
-       GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,
-       ``*.zip`` and ``*.pyc`` files, plus dependency and build directories
-       such as ``node_modules`` and ``target``.
+       GitHub push: ``*.log``, ``*.db``, ``*.db-journal``, ``*.sqlite`` /
+       ``*.sqlite3``, ``*.zip`` and ``*.pyc`` files, plus dependency and build
+       directories such as ``node_modules`` and ``target``, and the run's own
+       ``.besser_*`` bookkeeping except the files a later run carries forward
+       (the recipe, the attribution and generator-output records).
    * - Link-free workspace access
      - The workspace is written by model-authored code, so a symbolic link in
        it could point at a file outside the run. The download ZIP, the seed
@@ -343,11 +410,36 @@ so Phase 3 validates the layout that ships; a file it only edited, generator
 files and the files of a modify run keep their own layout. A formatter that
 could not run is reported under *Not checked*. The download's
 ``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
-generator and the verification counts, with up to eight items each found missing
-in the code or not checked (a check that could not run, a requirement whose
-evidence did not verify). It leaves out the request itself, because the file
+generator and the verification counts, with up to eight lines each for what was
+found missing in the code or not checked (a check that could not run, a
+requirement whose evidence did not verify), and how many more there are. A list
+of more than five lines puts findings of one kind on one line ("5 create
+operations could not be tested automatically, because each needs an existing
+record first: ..."). These items, the run card's verification report and the
+first issue named in an incomplete notice are one plain sentence per finding
+(``validation/user_wording.py``): a validator's message is written for the
+agent, with the request it sent, the file and line to edit and what to call
+next, so it stays in the agent's prompt, the trace and the recipe's
+``validation_issues``. A finding with no sentence of its own reads as a generic
+one, never as the agent's text. A request that states no business rule adds a *Not
+checked* line saying so, and an implemented requirement that was only found in
+the source says so. It leaves out the request itself, because the file
 also goes into GitHub pushes, and shows model-written values as code, never as
 links or markup.
+
+Every output says how to run it. When the output has no README at its root,
+packaging writes one from the files delivered: for a FastAPI backend beside a
+Vite frontend, the Dockerfiles, compose file and README of the scaffold repair;
+for an app started by one compose file, ``docker compose up --build`` in its
+folder and the ports it publishes; for a FastAPI backend on its own, the virtual
+environment, ``pip install -r requirements.txt``, the start command of its entry
+file and the address of its API documentation. Nothing is written for other
+shapes, such as a backend beside a frontend of another framework, or an entry
+file Python cannot import by name. The README BESSER writes ends with an HTML
+comment line saying so: a later run rewrites that README to match its output (a
+modify run that adds a frontend gets the two-service README) and removes it when
+no shape fits any more. A README without that line is the user's and is never
+touched. The *This run* section then points to the README.
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

@@ -79,6 +79,22 @@ def _deployment_diagram(agent_diagram_id=None) -> dict:
 
 
 DEPLOYMENT_DIAGRAM = _deployment_diagram()
+
+
+def _alloy_class_diagram() -> dict:
+    """The library diagram without the attribute types the Alloy translation refuses (float, datetime, ...)."""
+    diagram = json.loads(json.dumps(CLASS_DIAGRAM))
+    elements = diagram["model"]["elements"]
+    refused = {key for key, element in elements.items() if element.get("type") == "ClassAttribute"
+               and str(element.get("attributeType", "")).lower() in {"float", "datetime", "time", "timedelta", "any"}}
+    for key in refused:
+        del elements[key]
+    for element in elements.values():
+        if isinstance(element.get("attributes"), list):
+            element["attributes"] = [key for key in element["attributes"] if key not in refused]
+    return diagram
+
+
 OBJECT_DIAGRAM = {"id": "object-diagram", "title": "Books", "model": {
     "type": "ObjectDiagram", "relationships": {},
     "elements": {"o1": {"id": "o1", "type": "ObjectName", "name": "dune", "className": "Book", "attributes": []}},
@@ -96,6 +112,7 @@ _ON_ONE_DIAGRAM = {
     "tensorflow": (NN_DIAGRAM, None, "NN"),
     "forecaster": (FORECAST_DIAGRAM, {"window": WINDOW, "horizon": HORIZON}, "NN"),
     "django": (CLASS_DIAGRAM, {"project_name": "library_site", "app_name": "books"}, "DomainModel"),
+    "alloy": (_alloy_class_diagram(), None, "DomainModel"),
 }
 # Generators /generate-output refuses (they need a second model); the traced endpoint must too.
 _REFUSED_ON_ONE_DIAGRAM = {key for key, info in SUPPORTED_GENERATORS.items() if info.needs_beyond_one_diagram}
@@ -222,7 +239,7 @@ def _isolate_cwd(tmp_path, monkeypatch):
 
 # The generators that trace elements of the diagram they read, and the one that stays at file level: the JSON
 # object generator dumps the object model as one document (an ``Object`` has no id to refer to it by).
-_FILE_LEVEL = {"jsonobject"}
+_FILE_LEVEL = {"jsonobject", "alloy"}
 
 
 @pytest.mark.parametrize("generator", sorted(SUPPORTED_GENERATORS))

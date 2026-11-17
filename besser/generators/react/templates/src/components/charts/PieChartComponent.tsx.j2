@@ -131,7 +131,7 @@ export const PieChartComponent: React.FC<Props> = ({
   // Early return if no data or empty data array
   if (!chartData || chartData.length === 0) {
     return (
-      <div id={id} className={className} style={containerStyle}>
+      <div id={id} className={className ? `bsr-runtime ${className}` : "bsr-runtime"} style={containerStyle}>
         {title && <h3 style={{ textAlign: "center" }}>{title}</h3>}
         <div style={{ textAlign: "center", paddingTop: "160px" }}>No data available</div>
       </div>
@@ -139,7 +139,7 @@ export const PieChartComponent: React.FC<Props> = ({
   }
 
   return (
-    <div id={id} className={className} style={containerStyle}>
+    <div id={id} className={className ? `bsr-runtime ${className}` : "bsr-runtime"} style={containerStyle}>
       {title && <h3 style={{ textAlign: "center" }}>{title}</h3>}
       <ResponsiveContainer width="100%" height={350}>
         <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>

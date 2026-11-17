@@ -20,8 +20,10 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import time
+from collections import Counter
 
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
@@ -34,10 +36,11 @@ from besser.spec_driven_agent.planning.action_inventory import (
 )
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_inventory
 from besser.spec_driven_agent.planning.model_rules import DROPPED
-from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest
-from besser.spec_driven_agent.model_serializer import serialize_domain_model
+from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest, route_serves
+from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
+    _PHASE3_CREATE_EVIDENCE_REMINDER,
     _PHASE3_FIX_TURNS,
     _PHASE3_NO_EDIT_REMINDER,
     _PHASE3_NO_PROGRESS_ROUNDS,
@@ -51,6 +54,7 @@ from besser.spec_driven_agent.pipeline.constants import (
     _SNAPSHOT_IGNORED_DIRS,
     _SNAPSHOT_STAGING_DIR,
     _WRITE_TOOLS_ON_RECORD,
+    _tool_use_blocks,
 )
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.state.tracing import (
@@ -62,7 +66,9 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
 )
+from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 from besser.spec_driven_agent.validation.issues import (
+    RUNTIME_CHECK_UNVERIFIED,
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
@@ -75,6 +81,78 @@ from besser.spec_driven_agent.validation.toolchain import (
 from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
 
 logger = logging.getLogger(__name__)
+
+
+# Blockers one fix prompt lists. One missing import was reported as 105; a
+# round repairs a few causes and the next validation lists what is left.
+_FIX_PROMPT_MAX_BLOCKERS = 30
+# A longer blocker is cut in the fix prompt. Tracebacks ran to 3,300 chars; a
+# create contract with its fix site and remedy runs to about 1,000, kept whole.
+# The tail survives the cut: a traceback ends with the error itself.
+_FIX_PROMPT_BLOCKER_CHARS = 1_200
+_FIX_PROMPT_BLOCKER_TAIL_CHARS = 300
+# Same shape ``_apply_scenario_evidence`` matches: (backend, path).
+_CREATE_UNVERIFIED = re.compile(r"create unverified: (.+?): POST (\S+) -")
+
+
+def clip_finding(text: str) -> str:
+    """*text* cut to ``_FIX_PROMPT_BLOCKER_CHARS``, keeping its head and its tail."""
+    if len(text) <= _FIX_PROMPT_BLOCKER_CHARS:
+        return text
+    head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
+    cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
+    return f"{text[:head]} [... {cut} chars cut ...] {text[-_FIX_PROMPT_BLOCKER_TAIL_CHARS:]}"
+
+
+def _blocker_kind(message: str) -> str:
+    """The blocker's prefix, e.g. ``tsc [frontend]`` or ``Syntax error in``."""
+    head = message.split(":", 1)[0]
+    words = head.split()
+    return " ".join(words[:3]) if len(words) > 3 else head
+
+
+# Blockers about source that does not parse, compile or import. Any other
+# blocker - an observed failure, a contract, a requirement, or a kind added
+# later - keeps the behaviour sections in the fix prompt.
+_SOURCE_DEFECT_PREFIXES = _RUNTIME_FATAL_SOURCE_PREFIXES + (
+    "ruff:", "tsc [", "cargo [", "kotlinc [", "frontend build [", "dependency conflict in",
+)
+
+# A requirement text at least this long is cited by id wherever a blocker
+# quotes it; a shorter one could match unrelated text and saves little.
+_CITED_REQUIREMENT_MIN_CHARS = 60
+
+
+def _cite_ledger_requirements(message: str, requirements: list[dict]) -> str:
+    """Name a requirement the ledger already quotes by its id, not its text again.
+
+    A conversion-recovery requirement runs to ~900 chars and was pasted three
+    times per prompt: the ledger, its ``requirement:`` blocker and its
+    ``task unverified:`` blocker. The ledger keeps the one full copy.
+    """
+    for requirement in requirements:
+        rid, text = f"R{requirement['id']}", requirement["text"]
+        message = message.replace(f"{rid} — {text}", rid)
+        if len(text) >= _CITED_REQUIREMENT_MIN_CHARS:
+            message = message.replace(text, f"{rid} (text in the requirements ledger)")
+    return message
+
+
+def _fix_prompt_blocker_lines(ranked: list[ValidationIssue], requirements: list[dict]) -> list[str]:
+    """The fix prompt's blocker bullets, in priority order, capped in count and length.
+
+    Only the prompt is capped; Phase 3 records and reports every blocker.
+    """
+    lines = []
+    for issue in ranked[:_FIX_PROMPT_MAX_BLOCKERS]:
+        lines.append(f"- {clip_finding(_cite_ledger_requirements(issue.message, requirements))}")
+    rest = ranked[_FIX_PROMPT_MAX_BLOCKERS:]
+    if rest:
+        kinds = Counter(_blocker_kind(issue.message) for issue in rest)
+        summary = ", ".join(f"{kind} x{count}" for kind, count in kinds.most_common())
+        lines.append(f"- (+{len(rest)} more blockers of these kinds: {summary}; "
+                     "the next validation lists them again)")
+    return lines
 
 
 def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
@@ -97,8 +175,21 @@ def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
             f"none an edit{failed_note}: {tools})")
 
 
+def _judge_left_unverified(verdict: dict) -> bool:
+    """The judge gave no citation to reject, or only a malformed one (real code misquoted):
+    no rejected citation of absent or role-failing code."""
+    label = verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED)
+    if label == _requirements_ledger.CITATION_MALFORMED:
+        return True
+    # Any other citation the verifier rejected is absent or fails its role.
+    return not label and not any(_requirements_ledger.cited_paths(verdict.get("evidence")))
+
+
 class Phase3RepairMixin:
     """_run_phase3_validation and friends; see the module docstring."""
+
+    #: When the run's first Phase 3 validation started (``time.monotonic``): the run record's phase timing.
+    phase3_started_at: float | None = None
 
     def _complete_repair_if_verified(self) -> None:
         if self._phase2_stop_reason == "validation_required":
@@ -157,6 +248,8 @@ class Phase3RepairMixin:
         budget-exhausted or crashed - so a dead app cannot leave through any
         of them quietly. See ``_apply_runtime_gate``.
         """
+        if self.phase3_started_at is None:
+            self.phase3_started_at = time.monotonic()
         try:
             self._run_phase3_repair_cycle()
         finally:
@@ -245,8 +338,8 @@ class Phase3RepairMixin:
             self._phase3_exit_reason = "auto-fix disabled"
             return
 
-        # Auto-fix only consumes BLOCKER issues. Style warnings (unused
-        # imports, line length) and soft warnings (tsc type hints) are
+        # Auto-fix only consumes BLOCKER issues. Style notes (truncation
+        # counts) and soft warnings (tsc type hints) are
         # left as-is; they don't justify burning LLM turns.
         if not blockers_before:
             self._phase3_exit_reason = "no blocker-class issues"
@@ -256,6 +349,12 @@ class Phase3RepairMixin:
                 len(warnings_before) + len(styles_before),
             )
             return
+
+        # Validation itself rewrites files (npm ci -> npm install, dependency
+        # pins, the vite config). Re-snapshot so the rollback target is the
+        # tree ``issues`` describe, not the one before those rewrites.
+        if self._create_snapshot():  # a failed one keeps the previous target, and is no trace event
+            self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_fix_loop")
 
         # Repair within the remaining budgets. Fixing an upstream failure can
         # expose downstream failures, so blocker counts are not a progress
@@ -303,7 +402,8 @@ class Phase3RepairMixin:
                 "last_validated_revision": last_validated_revision,
                 "last_obligations_revision": last_obligations_revision,
             }
-            self._save_phase3_checkpoint()
+            if self._may_save_phase3_checkpoint():
+                self._save_phase3_checkpoint()
 
         max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self.max_turns - self.total_turns)
         # Which guard ends this loop, for the trace. Reconstructing it from
@@ -311,14 +411,30 @@ class Phase3RepairMixin:
         # guard histogram is the only way to tell a tight guard from a weak
         # model. Report-only: nothing reads it back as a decision input.
         exit_reason = "attempt cap"
+        faced_last: frozenset | None = None
+        last_edits_rejected = False
         for _ in range(max_attempts):
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
                 logger.warning("Phase 3: %s; preserving unresolved findings", stop_reason)
                 exit_reason = stop_reason
                 break
+            if self._only_unlocated_citations_remain(current_blockers):
+                logger.warning("Phase 3: every blocker is a requirement citation the judge could not "
+                               "locate after its citation-repair round; no fix attempt can change it")
+                exit_reason = "only unlocated requirement citations remain"
+                break
+            # The last attempt faced these very blockers, so it had this request. Not after
+            # an attempt whose edits were all rejected: the rejections reach the next prompt.
+            if (faced_last == self._blocker_identity(current_blockers) and not last_edits_rejected
+                    and self._only_rejudged_requirements_remain(current_blockers)):
+                logger.warning("Phase 3: every blocker is a requirement the judge still could not verify "
+                               "after its focused re-judge on this source; another attempt cannot change it")
+                exit_reason = "only requirements unverified after their re-judge remain"
+                break
             is_first_attempt = attempts_run == 0
             attempts_run += 1
+            faced_last = self._blocker_identity(current_blockers)
             self._trace.write(
                 EVENT_PHASE_ENTER,
                 phase="phase3_fix_attempt",
@@ -348,6 +464,7 @@ class Phase3RepairMixin:
                 if entry["tool"] in _WRITE_TOOLS_ON_RECORD
             )
             source_changed = revision_before != self._workspace_revision()
+            last_edits_rejected = bool(attempted_writes) and not edits and not source_changed
             source_ever_changed = source_ever_changed or source_changed
             obligations_changed = obligations_before != self._repair_obligations_revision()
             checkpoint_progress()
@@ -373,11 +490,20 @@ class Phase3RepairMixin:
             # Re-validate: re-running the checks is the only evidence that
             # the repair actually compiles.
             issues_after = self._collect_validation_issues()
+            blockers_after = [i for i in issues_after if i.severity == "blocker"]
+            if (self._phase3_tree_score(blockers_after)[1] > best_score[1]
+                    and not self._phase3_stop_requested(check_turn_budget=False)):
+                # One probe that did not run can be a slow machine, not a hung
+                # startup: measure the same tree once more before ranking it.
+                logger.warning("Phase 3: attempt %d: the runtime probe did not measure a backend it "
+                               "measured before; measuring the same tree again.", attempts_run)
+                self._runtime_probe_cache = None
+                issues_after = self._collect_validation_issues()
+                blockers_after = [i for i in issues_after if i.severity == "blocker"]
             last_issues = issues_after
             self._validation_issues = self._with_model_contract(issues_after)
             last_validated_revision = self._workspace_revision()
             last_obligations_revision = self._repair_obligations_revision()
-            blockers_after = [i for i in issues_after if i.severity == "blocker"]
             self._trace.write(
                 EVENT_PHASE_EXIT,
                 phase="phase3_fix_attempt",
@@ -387,6 +513,18 @@ class Phase3RepairMixin:
                 successful_writes=edits or 0,
             )
 
+            # A probe that did not run is a warning, so a repair that made
+            # startup hang leaves no blocker. Not "all fixed": fall through to
+            # the rollback check, which ranks an unmeasured tree behind a
+            # measured one (see _phase3_tree_score).
+            lost_measurement = (not blockers_after
+                                and self._phase3_tree_score(blockers_after)[1] > best_score[1])
+            if lost_measurement:
+                logger.warning(
+                    "Phase 3: attempt %d left no blocker, but the runtime probe could not "
+                    "measure a backend it measured before; checking for rollback.", attempts_run)
+                exit_reason = "runtime probe lost its measurement"
+                break
             if not blockers_after:
                 logger.info(
                     "Phase 3: All blockers fixed after %d attempt(s) "
@@ -400,15 +538,15 @@ class Phase3RepairMixin:
                 return
 
             # Keep the best tree, not the last one. Strictly better only, so a
-            # flat round never overwrites the snapshot it would restore.
+            # flat round never overwrites the snapshot it would restore. The
+            # best findings move only with the snapshot: they must describe it.
             score_after = self._phase3_tree_score(blockers_after)
-            if score_after < best_score:
+            if score_after < best_score and self._create_snapshot():
                 logger.info(
                     "Phase 3: attempt %d is the best tree so far %s -> %s; "
-                    "re-snapshotting it as the rollback target.",
+                    "re-snapshotted it as the rollback target.",
                     attempts_run, best_score, score_after,
                 )
-                self._create_snapshot()
                 self._trace.write(
                     EVENT_SNAPSHOT, before_phase="phase3_best",
                     attempt=attempts_run, score=list(score_after),
@@ -490,7 +628,13 @@ class Phase3RepairMixin:
             # purpose: fixing one import legitimately exposes the errors behind
             # it, and 11 -> 45 -> 40 -> 35 is a repair converging, not a stall.
             # Oscillation is the best-tree snapshot's problem, not this guard's.
-            if score_after >= prev_score:
+            # A round that only added evidence and left a strict subset of the
+            # blockers neither counts nor resets: the score keys on probe facts
+            # evidence cannot move, and the shrinking set bounds such rounds.
+            retired_by_evidence = (
+                obligations_changed and not source_changed
+                and {i.message for i in blockers_after} < {i.message for i in current_blockers})
+            if score_after >= prev_score and not retired_by_evidence:
                 plateau_streak += 1
                 if plateau_streak >= _PHASE3_PLATEAU_ROUNDS:
                     logger.warning(
@@ -500,7 +644,7 @@ class Phase3RepairMixin:
                     )
                     exit_reason = "plateau"
                     break
-            else:
+            elif score_after < prev_score:
                 plateau_streak = 0
 
             # Progress this round: reset the stall counter and keep going.
@@ -535,23 +679,73 @@ class Phase3RepairMixin:
             for issue in last_issues:
                 logger.warning("  [%s] %s", issue.severity, issue.message)
 
+    def _only_unlocated_citations_remain(self, blockers: list[ValidationIssue]) -> bool:
+        """Every blocker is a requirement whose cited code exists but whose citation the
+        verifier could not locate (malformed), and the judge already had its
+        citation-repair round on this source.
+
+        A fix attempt cannot clear such a blocker: the fix agent has no tool to change a
+        citation, and on unchanged source the next validation re-verifies the same cached
+        verdict (run r9-p81 spent 3 turns that way). A citation of code that exists
+        nowhere keeps its attempt: implementing the behaviour may be the fix.
+        """
+        unlocated = {issue for verdict in self._requirement_verdicts
+                     if verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED) == _requirements_ledger.CITATION_MALFORMED
+                     for issue in _requirements_ledger.ledger_issues([verdict])}
+        if not blockers or any(issue.message not in unlocated for issue in blockers):
+            return False
+        return self._requirement_cache_key(self._requirements_to_judge()) in self._requirement_evidence_retries
+
+    def _blocker_identity(self, blockers: list[ValidationIssue]) -> frozenset:
+        """What blocks, as the stop compares rounds: a requirement by id, status and unlocated
+        label (its message holds the judge's note, re-worded by every re-judge), anything
+        else by its message."""
+        by_message = {message: ("requirement", verdict.get("id"), verdict.get("status"),
+                                verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED))
+                      for verdict in self._requirement_verdicts
+                      for message in _requirements_ledger.ledger_issues([verdict])}
+        return frozenset(by_message.get(issue.message, issue.message) for issue in blockers)
+
+    def _only_rejudged_requirements_remain(self, blockers: list[ValidationIssue]) -> bool:
+        """Every blocker is a requirement the judge itself left ``unverified`` (no citation
+        the verifier rejected, or only a malformed one), after its focused re-judge on this
+        exact source.
+
+        Asked only when the last attempt faced the same blockers: it had this request and
+        could not change it (r12-p81 attempt 3: four turns, no edit). A citation of code
+        that exists nowhere, or one whose cited body fails its role (a 501 scaffold, a
+        no-op), keeps its attempts: implementing it is the fix. Severity is kept.
+        """
+        unverified = {issue for verdict in self._requirement_verdicts
+                      if verdict.get("status") == "unverified" and verdict.get("kind") != "verification"
+                      and _judge_left_unverified(verdict)
+                      for issue in _requirements_ledger.ledger_issues([verdict])}
+        if not blockers or any(issue.message not in unverified for issue in blockers):
+            return False
+        return self._requirement_cache_key(self._requirements_to_judge()) in self._requirement_evidence_retries
+
     @classmethod
     def _startup_blockers(cls, issues: list[ValidationIssue]) -> set[str]:
         """The startup-class blocker messages present in ``issues``."""
         return {i.message for i in issues
                 if i.message.lower().startswith(cls._STARTUP_BLOCKER_PREFIXES)}
 
-    def _phase3_tree_score(self, issues: list[ValidationIssue]) -> tuple[int, int, int, int]:
+    def _phase3_tree_score(self, issues: list[ValidationIssue]) -> tuple[int, int, int, int, int]:
         """Rank one tree. LOWER is better; compare lexicographically.
 
-        ``(boot broken, entities not confirmed created, actions not confirmed
-        effective, hard blockers)`` - the runtime evidence, with the blocker
-        count last because it is the weakest signal: it correlates only at
-        noise level with whether the delivered app works. Boot dominates on
-        purpose, so a tree that starts can never be discarded for one that
-        does not.
+        ``(boot broken, backends not measured, entities not confirmed created,
+        actions not confirmed effective, hard blockers)`` - the runtime
+        evidence, with the blocker count last because it is the weakest
+        signal: it correlates only at noise level with whether the delivered
+        app works. Boot dominates on purpose, so a tree that starts can never
+        be discarded for one that does not.
 
-        The middle two come from the probe's own per-entity and per-action
+        A backend the probe ran on THIS tree but could not measure (it timed
+        out, could not launch, lacked a dependency) is counted next: a hung
+        startup yields one ``did not run`` finding and nothing else, and
+        without this component that tree would outrank every measured one.
+
+        The next two come from the probe's own per-entity and per-action
         records where it measured THIS tree. Counting issue strings instead
         would re-derive facts already held and count what was rendered: an
         action the probe silently confirmed effective and one it never reached
@@ -561,10 +755,12 @@ class Phase3RepairMixin:
         boot_broken = int(bool(self._startup_blockers(issues)))
         facts = getattr(self, "_runtime_probe_facts", None)
         measured = None
+        unmeasured = 0
         if facts and facts[0] == self._workspace_revision():
             entities = actions = 0
             for backend in facts[1]:
                 if backend.get("boot") != "ok":
+                    unmeasured += 1
                     continue
                 measured = True
                 for entry in (backend.get("entities") or {}).values():
@@ -579,7 +775,7 @@ class Phase3RepairMixin:
                     entities += 1
                 elif "action call:" in message or "action unverified:" in message:
                     actions += 1
-        return boot_broken, entities, actions, len(_hard_blockers(issues))
+        return boot_broken, unmeasured, entities, actions, len(_hard_blockers(issues))
 
     def _runtime_gate_finding(self) -> str | None:
         """The gate's refusal text, or None when the app is clear to ship.
@@ -623,7 +819,7 @@ class Phase3RepairMixin:
                 + "; ".join(sorted(observed or fatal_source)[:3])[:1200]
             )
         if verdict is None and not any(
-            i.message.lower().startswith("runtime unverified:")
+            i.message.lower().startswith(("runtime unverified:", RUNTIME_CHECK_UNVERIFIED))
             for i in self._validation_issues
         ):
             return (
@@ -702,7 +898,7 @@ class Phase3RepairMixin:
         self, entry_blockers: list[ValidationIssue],
         final_issues: list[ValidationIssue],
         source_changed: bool,
-        entry_score: tuple[int, int, int, int] | None = None,
+        entry_score: tuple[int, int, int, int, int] | None = None,
     ) -> bool:
         """Ship the pre-Phase-3 tree when repair ended worse than it began.
 
@@ -829,8 +1025,8 @@ class Phase3RepairMixin:
         Tool calls run through ``_execute_tool_blocks`` so they are
         recorded like Phase 2's.
 
-        The prompt always reproduces the current blocker list verbatim
-        — including any ``tsc [...]:`` / ``cargo [...]:`` /
+        The prompt lists the current blockers in priority order, capped
+        in count and length (``_fix_prompt_blocker_lines``) — including any ``tsc [...]:`` / ``cargo [...]:`` /
         ``kotlinc [...]:`` lines. When toolchain blockers are present,
         a high-salience reminder is appended instructing the LLM to
         re-run the toolchain via ``run_command`` after each edit, so
@@ -849,48 +1045,36 @@ class Phase3RepairMixin:
         )) for issue in blockers)
 
         # Only the toolchain half is needed: it drives the re-run reminder
-        # below. Every blocker, toolchain or not, is listed in the prompt.
+        # below. Every blocker, toolchain or not, is in the prompt's list.
         toolchain_blockers = [
             i for i in blockers
             if i.message.startswith(("tsc [", "cargo [", "kotlinc ["))
         ]
 
-        prompt_parts: list[str] = []
-        if self._instructions:
-            prompt_parts.extend([
-                "## Original request (the authority for required behavior)",
-                self._instructions, "",
-            ])
-        if self._phase2_inspection_handoff:
-            prompt_parts.extend(["## Prior inspection handoff", self._phase2_inspection_handoff, ""])
-        if self.domain_model is not None:
-            serialized = serialize_domain_model(self.domain_model)
-            prompt_parts.extend([
-                "## Domain model and conversion losses",
-                "conversion_issues are NOT implemented constraints. Recover their "
-                "intended behavior using actual relationship names; the original "
-                "request takes precedence over conflicting model expressions.",
-                *([DROPPED_RULES_NOTE] if DROPPED in serialized else []),
-                json.dumps(serialized, ensure_ascii=False), "",
-            ])
+        # The run-constant sections go in ``system``; this message holds only
+        # what depends on the current tree and blockers.
         requirements = self._requirements_for_validation()
-        if requirements:
-            prompt_parts.extend([
-                "## Requirements to verify (including conversion recovery)",
-                _requirements_ledger.render_requirements(requirements), "",
-            ])
-        prompt_parts.extend([
+        system = self._phase3_fix_system_prompt(requirements)
+        prompt_parts: list[str] = [self._dependencies_note, ""] if self._dependencies_note else []
+        prompt_parts += [
             "## Current files and symbols (use these paths; do not invent models/ or schemas/ folders)",
             build_inventory(self.output_dir, self.domain_model, self._generator_used or "existing workspace"),
-            "", "## Actual action handlers",
-            format_action_inventory(collect_action_endpoints(self.output_dir)), "",
-        ])
-        mutation_manifest = build_mutation_manifest(
-            self.output_dir, scenario_records=self._api_scenarios.values(),
-            current_revision=self._workspace_revision(),
-        )
-        if mutation_manifest:
-            prompt_parts.extend([mutation_manifest, ""])
+            "",
+        ]
+        # The action handlers and the model-wide mutation manifest describe
+        # behaviour (a third of a measured prompt); a round that only has to
+        # make the source compile or import does not need them.
+        if not all(i.message.lower().startswith(_SOURCE_DEFECT_PREFIXES) for i in blockers):
+            prompt_parts.extend([
+                "## Actual action handlers",
+                format_action_inventory(collect_action_endpoints(self.output_dir)), "",
+            ])
+            mutation_manifest = build_mutation_manifest(
+                self.output_dir, scenario_records=self._api_scenarios.values(),
+                current_revision=self._workspace_revision(),
+            )
+            if mutation_manifest:
+                prompt_parts.extend([mutation_manifest, ""])
         if self._recent_tool_failures:
             prompt_parts.extend([
                 "## Recent rejected operations (do not repeat unchanged requests)",
@@ -924,7 +1108,7 @@ class Phase3RepairMixin:
             "Do not invent authentication, new roles, or destructive data deletion "
             "from a generic usability or release requirement."
         )
-        prompt_parts.extend(f"- {i.message}" for i in sorted(blockers, key=self._repair_priority))
+        prompt_parts.extend(_fix_prompt_blocker_lines(sorted(blockers, key=self._repair_priority), requirements))
 
         # Show the offending lines: with only "file line N" a model spends a
         # turn on read_file; with the excerpt it calls modify_file immediately.
@@ -989,18 +1173,9 @@ class Phase3RepairMixin:
             )
 
         fix_prompt = "\n".join(prompt_parts)
-        system = (
-            "You are fixing validation errors in generated code. "
-            "Fix each issue concisely. Call validate_app to recheck startup and "
-            "data entry after a coherent repair. When shell tools are unavailable, "
-            "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs. When shell tools "
-            "are available and the report contains "
-            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
-            "re-running that toolchain with run_command; the diff alone does "
-            "not show that it compiles."
-        )
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
+        # A fresh conversation: nothing read in an earlier round is in it.
+        self.executor.forget_shown_results()
 
         # Inject a high-salience reminder as a separate user message
         # right after the prompt. Matches the pattern used by the
@@ -1015,6 +1190,7 @@ class Phase3RepairMixin:
 
         edits = 0                 # successful write-tool calls this attempt
         nudged = False            # the one re-prompt an edit-less attempt gets
+        unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
         force_next: str | None = None
         turn_cap = _PHASE3_FIX_TURNS
@@ -1037,7 +1213,7 @@ class Phase3RepairMixin:
                 })
             turn += 1
             self.total_turns += 1
-            self._trace.write(EVENT_TURN_START, turn=self.total_turns, phase="phase3")
+            self._trace.write(EVENT_TURN_START, turn=self.total_turns, phase="phase3_fix")
             # Recovery is shared with Phase 2. Do not force the failing text
             # strategy again after the executor requested a fresh read/range edit.
             force = self._force_tool_next or force_next
@@ -1074,19 +1250,39 @@ class Phase3RepairMixin:
                 self._phase3_interrupted = True
                 self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
                 return edits
-            self._trace.write(EVENT_TURN_END, turn=self.total_turns, phase="phase3")
+            # Repair calls can trigger the outage fallback too, as in Phase 2.
+            self._notify_model_switch()
+            self._trace_cost_update(self.total_turns, phase="phase3_fix")
+            self._trace.write(EVENT_TURN_END, turn=self.total_turns, phase="phase3_fix")
             # A stop can arrive while a provider request is in flight. Do not
             # apply its returned mutations after cancellation. The final allowed
             # turn may still execute its tools; it is not a new provider call.
             if self._phase3_stop_requested(check_turn_budget=False):
                 return edits
             if response["stop_reason"] == "end_turn":
-                if edits or nudged or verification_only:
+                # An owed edit is nudged first: one made after the read-backs
+                # would leave them stale. Then listed creates still unread get
+                # a test_api turn while each reminder confirms at least one.
+                owes_edit = not (edits or nudged or verification_only)
+                unconfirmed = set() if owes_edit else self._unconfirmed_creates(blockers)
+                if unconfirmed and (unconfirmed_at_reminder is None
+                                    or unconfirmed < unconfirmed_at_reminder):
+                    unconfirmed_at_reminder, force_next = unconfirmed, "test_api"
+                    turn_cap = max(turn_cap, turn + 1)
+                    if response["content"]:
+                        messages.append({"role": "assistant", "content": response["content"]})
+                    paths = ", ".join(f"POST {path}" for _, path in sorted(unconfirmed))
+                    messages.append({"role": "user", "content": [{
+                        "type": "text", "text": _PHASE3_CREATE_EVIDENCE_REMINDER.format(paths=paths)}]})
+                    continue
+                if not owes_edit:
                     return edits
                 # Ended in prose with nothing written. Say so once, force the
                 # edit where tool_choice is honoured, and let the reminder
                 # carry it where the gateway ignores tool_choice.
                 nudged, force_next = True, "modify_file"
+                # Prose on the cap's own turn still gets the forced turn.
+                turn_cap = max(turn_cap, turn + 1)
                 if response["content"]:
                     messages.append({"role": "assistant", "content": response["content"]})
                 messages.append({
@@ -1115,11 +1311,7 @@ class Phase3RepairMixin:
                     f"unexpected stop_reason {response['stop_reason']!r}")
                 return edits
             messages.append({"role": "assistant", "content": response["content"]})
-            tool_blocks = [
-                block for block in response["content"]
-                if hasattr(block, "type") and block.type == "tool_use"
-                and getattr(block, "name", None)
-            ]
+            tool_blocks = _tool_use_blocks(response["content"])
             # Through the Phase 2 path, so the trace, recipe and sidecar see
             # these calls; the raw executor would leave no record of them.
             logged_before = len(self.tool_calls_log)
@@ -1137,7 +1329,72 @@ class Phase3RepairMixin:
                 # that DID write would report zero writes to the outer cycle,
                 # the trace and the log.
                 return edits
-            self._save_phase3_checkpoint()
+            if self._may_save_phase3_checkpoint():
+                self._save_phase3_checkpoint()
+
+    def _unconfirmed_creates(self, blockers: list[ValidationIssue]) -> set[tuple[str, str]]:
+        """Listed ``create unverified`` (backend, path) pairs no current scenario read back."""
+        revision = self._workspace_revision()
+        confirmed = {(record["report"].get("backend"), path)
+                     for record in self._api_scenarios.values()
+                     if record["revision"] == revision
+                     for path in confirmed_create_paths(record["report"])}
+        listed = (_CREATE_UNVERIFIED.search(issue.message) for issue in blockers)
+        return {(match.group(1), match.group(2)) for match in listed
+                if match and not any(backend == match.group(1) and route_serves(match.group(2), path)
+                                     for backend, path in confirmed)}
+
+    def _may_save_phase3_checkpoint(self) -> bool:
+        """Whether a repair checkpoint may be written now.
+
+        It holds no conversation, so it must not replace the checkpoint of a
+        Phase 2 that stopped early (provider error, turn cap, edit loop): that
+        run stays resumable as Phase 2.
+        """
+        return (self._checkpoint_phase == "phase3" or self._phase2_exited_cleanly
+                or self._phase2_stop_reason == "validation_required")
+
+    def _phase3_fix_system_prompt(self, requirements: list[dict]) -> str:
+        """The fix prompt's run-constant part: instructions, request, handoff, model, ledger.
+
+        Byte-identical in every round of a run, so the provider reads it from
+        its prompt cache instead of re-writing it with each round's blockers.
+        The handoff is set by Phase 2 only, so it is constant here too.
+        """
+        parts = [
+            "You are fixing validation errors in generated code. "
+            "Fix each issue concisely. Call validate_app to recheck startup and "
+            "data entry after a coherent repair. When shell tools are unavailable, "
+            "validate_app and test_api are the supported verification tools. Use test_api "
+            "for specification-based workflow assertions and invalid inputs. When shell tools "
+            "are available and the report contains "
+            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
+            "re-running that toolchain with run_command; the diff alone does "
+            "not show that it compiles.", "",
+        ]
+        if self._instructions:
+            parts.extend([
+                "## Original request (the authority for required behavior)",
+                self._instructions, "",
+            ])
+        if self._phase2_inspection_handoff:
+            parts.extend(["## Prior inspection handoff", self._phase2_inspection_handoff, ""])
+        if self.domain_model is not None:
+            serialized = serialize_domain_model(self.domain_model)
+            parts.extend([
+                "## Domain model and conversion losses",
+                "conversion_issues are NOT implemented constraints. Recover their "
+                "intended behavior using actual relationship names; the original "
+                "request takes precedence over conflicting model expressions.",
+                *([DROPPED_RULES_NOTE] if DROPPED in serialized else []),
+                to_prompt_json(serialized), "",
+            ])
+        if requirements:
+            parts.extend([
+                "## Requirements to verify (including conversion recovery)",
+                _requirements_ledger.render_requirements(requirements),
+            ])
+        return "\n".join(parts).rstrip("\n")
 
     def _excerpts_for(
         self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3
@@ -1179,7 +1436,7 @@ class Phase3RepairMixin:
 
     def _toolchain_commands_for(self, toolchain_blockers: list[ValidationIssue]) -> list[str]:
         """Delegate to the toolchain module."""
-        return _toolchain_commands_for(toolchain_blockers)
+        return _toolchain_commands_for(toolchain_blockers, shell_tools=self.allow_shell_tools)
 
     def _build_toolchain_reminder(self, toolchain_blockers: list[ValidationIssue]) -> str:
         """Delegate to the toolchain module."""
@@ -1196,18 +1453,19 @@ class Phase3RepairMixin:
             "missing module:", "create contract:", "action call:",
         )):
             return 0, message
-        if message.startswith(("data contract:", "undefined name:", "runtime unverified:")):
+        if message.startswith(("data contract:", "runtime unverified:")):
             return 1, message
         if message.startswith(("requirement", "task unverified:")):
             return 3, message
         return 2, message
 
-    def _create_snapshot(self) -> None:
-        """Snapshot the output directory as the rollback target.
+    def _create_snapshot(self) -> bool:
+        """Snapshot the output directory as the rollback target; True on success.
 
-        Taken once before Phase 3 and again after any repair attempt that
-        reaches a strictly better tree, so the snapshot always holds the BEST
-        state the run has reached rather than its first one.
+        Taken before Phase 3, again once entry validation has applied its own
+        rewrites, and after any repair attempt that reaches a strictly better
+        tree, so the snapshot always holds the BEST validated state the run
+        has reached rather than its first one.
 
         Built in a staging directory and swapped in by rename: deleting the
         existing snapshot first and copying after leaves the run with no
@@ -1239,9 +1497,11 @@ class Phase3RepairMixin:
                 shutil.rmtree(snapshot_path)
             os.replace(staging_path, snapshot_path)
             logger.info("Snapshot created at %s", snapshot_path)
+            return True
         except Exception as e:
-            logger.warning("Failed to create snapshot: %s", e)
+            logger.warning("Failed to create snapshot; the previous rollback target stays: %s", e)
             shutil.rmtree(staging_path, ignore_errors=True)
+            return False
 
     def _restore_snapshot(self) -> bool:
         """Restore the output directory from the post-Phase-1 snapshot.

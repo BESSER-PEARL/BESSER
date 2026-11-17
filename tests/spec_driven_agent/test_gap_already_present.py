@@ -43,6 +43,8 @@ verifying the recipes of recorded runs:
 """
 from __future__ import annotations
 
+import pytest
+
 from besser.BUML.metamodel.structural import (
     BinaryAssociation,
     Class,
@@ -204,6 +206,21 @@ class TestDropPresentAttributes:
         assert task in noted, "the requirement itself must survive"
         assert "already declares this attribute" in noted
         assert "focus on the requested BEHAVIOUR" in noted
+
+    @pytest.mark.parametrize("task", [
+        "Add a unique constraint on the 'maxOccupancy' attribute of the Room class "
+        "so a duplicate value is rejected with HTTP 409.",
+        "Add a 'maxOccupancy' attribute check to RoomCreate: reject values below 1 with HTTP 422.",
+        "Add an index and a case-insensitive search on the 'email' attribute of Person to GET /person.",
+        # The rule sits in the task's second sentence.
+        "Add the 'settled' attribute to Bill. Refuse a payment on a settled bill with HTTP 409.",
+    ])
+    def test_a_rule_about_a_present_attribute_is_annotated_not_dropped(self, task):
+        """Naming an existing attribute does not make its rule present: the
+        rule is the work, and dropping it pushes it to Phase 3's judge."""
+        [noted] = _drop_present_attributes([task], _hotel_model())
+        assert noted.startswith(task)
+        assert "already declares this attribute" in noted
 
     # ---- negative tests -------------------------------------------------
 
@@ -467,3 +484,32 @@ class TestWiredIntoTheAnalyser:
         assert rejected_constraint_task in tasks
         assert all(t == rejected_constraint_task or t.startswith("Enforce the ")
                    for t in tasks), "nothing but harness enforcement tasks may be added"
+
+
+def _order_model() -> DomainModel:
+    """Order -- Invoice through an association named after Order itself, and Order -- Customer."""
+    order, invoice, customer = Class(name="Order"), Class(name="Invoice"), Class(name="Customer")
+    billing = BinaryAssociation(name="order", ends={
+        Property(name="order", type=order, multiplicity=Multiplicity(1, 1)),
+        Property(name="invoices", type=invoice, multiplicity=Multiplicity(0, "*"))})
+    buying = BinaryAssociation(name="customer", ends={
+        Property(name="orders", type=order, multiplicity=Multiplicity(0, "*")),
+        Property(name="customer", type=customer, multiplicity=Multiplicity(0, 1))})
+    return DomainModel(name="Shop", types={order, invoice, customer}, associations={billing, buying})
+
+
+class TestAssociationNamedAfterItsClass:
+
+    def test_the_class_own_name_is_not_one_of_its_relationships(self):
+        task = "Show the relationship summary on the Order page."
+        assert _note_present_relationships([task], _order_model()) == [task]
+
+    def test_the_note_names_the_relationship_the_task_is_about(self):
+        task = "Return the customer name through the Order.customer relationship in the API response."
+        [noted] = _note_present_relationships([task], _order_model())
+        assert "'customer' is a relationship the model already declares on Order" in noted
+
+    def test_the_other_class_still_reaches_it_by_that_name(self):
+        task = "Ensure the 'order' relationship in Invoice references a valid order."
+        [noted] = _note_present_relationships([task], _order_model())
+        assert "'order' is a relationship the model already declares on Invoice" in noted

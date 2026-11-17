@@ -15,6 +15,8 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.spec_driven_agent.execution.sandbox import sandbox_home
+from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartGenerationRunner,
 )
@@ -189,8 +191,7 @@ def clear_registry_and_orchestrators():
 async def _clear_registry():
     async with current_runtime().registry._lock:
         for entry in list(current_runtime().registry._entries.values()):
-            import shutil
-            shutil.rmtree(entry.temp_dir, ignore_errors=True)
+            runner_module._remove_run_dir(entry.temp_dir)  # and the download dir beside it
         current_runtime().registry._entries.clear()
 
 
@@ -499,6 +500,98 @@ class TestEmptyOutput:
         assert runner.temp_dir is None or not os.path.isdir(runner.temp_dir)
 
 
+class _InstallingOrchestrator(_FakeOrchestrator):
+    """Leaves what Phase 3 installs and builds: dependencies, build output and the sandbox $HOME's caches."""
+
+    resumable = False
+
+    def run(self, instructions: str) -> str:
+        out = super().run(instructions)
+        for folder in (("frontend", "node_modules", "react"), ("backend", ".venv", "lib"),
+                       ("frontend", "dist", "assets"), ("crate", "target", "debug"), ("site", ".next", "cache")):
+            os.makedirs(os.path.join(out, *folder))
+        os.makedirs(os.path.join(sandbox_home(self.workspace), ".npm"))
+        if type(self).resumable:
+            with open(os.path.join(self.workspace, CHECKPOINT_FILENAME), "w", encoding="utf-8") as fh:
+                fh.write("{}")
+        return out
+
+
+_INSTALLED = (("frontend", "node_modules"), ("backend", ".venv"), ("frontend", "dist"), ("crate", "target"),
+              ("site", ".next"))
+
+
+class TestInstalledDependencies:
+    def _run(self, monkeypatch, resumable=False):
+        monkeypatch.setattr(runner_module, "LLMOrchestrator", _InstallingOrchestrator)
+        monkeypatch.setattr(_InstallingOrchestrator, "resumable", resumable)
+        monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+        monkeypatch.setattr(_InstallingOrchestrator, "workspace", property(lambda self: runner.temp_dir),
+                            raising=False)
+        frames = asyncio.run(_collect_frames(runner))
+        assert _parse_frame(frames[-1])["event"] == "done"
+        return runner, _LAST_ORCHESTRATORS[-1].output_dir
+
+    def test_a_packaged_run_drops_what_it_installed_and_built_once_released(self, monkeypatch):
+        """Hundreds of MB per run that nothing reads once the download exists."""
+        runner, out = self._run(monkeypatch)
+        # Still there while the run holds its slot: the stream does not wait on a large delete.
+        assert os.path.isdir(os.path.join(out, "frontend", "node_modules"))
+
+        asyncio.run(runner.release_disk())
+
+        assert os.path.isfile(os.path.join(out, "main.py"))
+        assert os.path.isfile(os.path.join(out, ".besser_recipe.json"))
+        for folder in _INSTALLED:
+            assert not os.path.exists(os.path.join(out, *folder)), folder
+        assert not os.path.exists(sandbox_home(runner.temp_dir))
+        entry = asyncio.run(current_runtime().registry.get(runner.run_id))
+        assert entry is not None and os.path.isfile(entry.file_path)
+
+    def test_a_resumable_run_drops_them_too_and_says_so_for_a_resume(self, monkeypatch):
+        """Nothing in the editor resumes a packaged run; its checkpoint records the removal."""
+        from besser.spec_driven_agent.state.checkpoint import load_checkpoint
+
+        runner, out = self._run(monkeypatch, resumable=True)
+        with open(os.path.join(runner.temp_dir, CHECKPOINT_FILENAME), "w", encoding="utf-8") as fh:
+            json.dump({"schema_version": 1, "instructions": "x", "phase": "phase2"}, fh)
+
+        asyncio.run(runner.release_disk())
+
+        for folder in _INSTALLED:
+            assert not os.path.exists(os.path.join(out, *folder)), folder
+        assert not os.path.exists(sandbox_home(runner.temp_dir))
+        assert load_checkpoint(runner.temp_dir).dependencies_removed is True
+
+    @pytest.mark.parametrize("resume", [False, True])
+    def test_a_failed_run_kept_for_resume_drops_them_too(self, tmp_path, resume):
+        """A failed run is not in the registry, so release_disk never reaches it: only the
+        24 h temp cleanup would have removed what it installed."""
+        from besser.spec_driven_agent.state.checkpoint import load_checkpoint
+
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+        workspace = tmp_path / "besser_llm_run"
+        for folder in _INSTALLED:
+            (workspace / "out" / os.path.join(*folder)).mkdir(parents=True)
+        (workspace / "out" / "main.py").write_text("print('app')\n", encoding="utf-8")
+        os.makedirs(os.path.join(sandbox_home(str(workspace)), ".npm"))
+        (workspace / CHECKPOINT_FILENAME).write_text(
+            json.dumps({"schema_version": 1, "instructions": "x", "phase": "phase2"}), encoding="utf-8")
+        runner.temp_dir = str(workspace)
+        if resume:
+            runner._resume_run_id = "an-interrupted-run"
+
+        runner._cleanup_temp_dir()
+
+        assert runner.temp_dir == str(workspace)
+        assert (workspace / "out" / "main.py").is_file()
+        for folder in _INSTALLED:
+            assert not (workspace / "out" / os.path.join(*folder)).exists(), folder
+        assert not os.path.exists(sandbox_home(str(workspace)))
+        assert load_checkpoint(str(workspace)).dependencies_removed is True
+
+
 class TestRegistrySweep:
     def test_sweep_expires_entries_older_than_ttl(self):
         """Periodic sweep removes entries past their TTL and rmtrees their temp dirs."""
@@ -586,7 +679,6 @@ class TestRegistrySweep:
                 # max(0, negative) == 0, so the entry is treated as age 0
                 assert age == 0.0
             finally:
-                import shutil as _sh
-                _sh.rmtree(tmp, ignore_errors=True)
+                runner_module._remove_run_dir(tmp)
 
         asyncio.run(_test())

@@ -360,7 +360,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             generators.append(await _run_web_app_generator(
                 buml_model, gui_model, generator_class, out_dir,
                 agent_models=agent_models, agent_configs=agent_configs,
-                agent_config_yamls=agent_config_yamls,
+                agent_config_yamls=agent_config_yamls, app_name=input_data.name,
             ))
 
         options = {"versions": ", ".join(slug for slug, _ in version_specs)} if multi else None
@@ -861,7 +861,8 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
 
 
 async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir: str,
-                                 agent_models=None, agent_configs=None, agent_config_yamls=None):
+                                 agent_models=None, agent_configs=None, agent_config_yamls=None,
+                                 app_name=None):
     """Run the web app generator into ``out_dir`` WITHOUT zipping, and return it (its traces).
 
     Each personalization version is generated into its own subdirectory
@@ -871,7 +872,7 @@ async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir
     generator_instance = generator_class(
         buml_model, gui_model, output_dir=out_dir,
         agent_models=agent_models, agent_configs=agent_configs,
-        agent_config_yamls=agent_config_yamls,
+        agent_config_yamls=agent_config_yamls, app_name=app_name,
     )
     await asyncio.to_thread(generator_instance.generate)
     return generator_instance

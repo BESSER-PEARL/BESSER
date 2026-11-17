@@ -10,38 +10,52 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 )
 
 
-def class_diagram(classes):
-    """Apollon class diagram JSON. ``classes`` = {Name: [(attr, type), ...]};
-    the class id is ``cls-<Name>`` and an attribute id ``attr-<Name>-<attr>``."""
+def class_diagram(classes, associations=()):
+    """Apollon class diagram JSON. ``classes`` = {Name: [(attr, type), ...]}, an
+    attribute optionally with a dict of extra fields (``{"isExternalId": True}``);
+    the class id is ``cls-<Name>`` and an attribute id ``attr-<Name>-<attr>``.
+    ``associations`` = [(name, (Class, role, multiplicity), (Class, role, multiplicity)), ...]."""
     elements = {}
     for index, (class_name, attributes) in enumerate(classes.items()):
         class_id = f"cls-{class_name}"
         attribute_ids = []
-        for attr_name, attr_type in attributes:
+        for attr_name, attr_type, *extra in attributes:
             attr_id = f"attr-{class_name}-{attr_name}"
             attribute_ids.append(attr_id)
             elements[attr_id] = {
                 "id": attr_id, "name": attr_name, "type": "ClassAttribute", "owner": class_id,
                 "bounds": {"x": 0, "y": 0, "width": 200, "height": 30}, "visibility": "public",
                 "attributeType": attr_type, "isOptional": False, "isDerived": False, "isId": False,
+                **(extra[0] if extra else {}),
             }
         elements[class_id] = {
             "id": class_id, "name": class_name, "type": "Class", "owner": None,
             "bounds": {"x": index * 300, "y": 0, "width": 220, "height": 200},
             "attributes": attribute_ids, "methods": [],
         }
+    relationships = {
+        f"rel-{name}": {
+            "id": f"rel-{name}", "name": name, "type": "ClassBidirectional",
+            **{side: {"element": f"cls-{class_name}", "role": role, "multiplicity": multiplicity}
+               for side, (class_name, role, multiplicity) in (("source", source), ("target", target))},
+        }
+        for name, source, target in associations
+    }
     return {"version": "3.0.0", "type": "ClassDiagram", "size": {"width": 2000, "height": 1000},
             "interactive": {"elements": {}, "relationships": {}}, "elements": elements,
-            "relationships": {}, "assessments": {}}
+            "relationships": relationships, "assessments": {}}
 
 
 def gui_json(pages):
-    """GrapesJS project JSON; ``pages`` = {Name: [component, ...]}."""
-    return {"pages": [
-        {"id": f"page-{name.lower()}", "name": name,
-         "frames": [{"component": {"type": "wrapper", "components": components}}]}
-        for name, components in pages.items()
-    ], "styles": []}
+    """GrapesJS project JSON; ``pages`` = {Name: [component, ...]}, or {Name: {"components":
+    [...], other page keys such as "id" or "route_path"}}."""
+    project_pages = []
+    for name, content in pages.items():
+        page = dict(content) if isinstance(content, dict) else {"components": content}
+        components = page.pop("components")
+        project_pages.append({"id": f"page-{name.lower()}", "name": name, **page,
+                              "frames": [{"component": {"type": "wrapper", "components": components}}]})
+    return {"pages": project_pages, "styles": []}
 
 
 def _read(path):
@@ -65,8 +79,15 @@ class GeneratedApp:
 
 @pytest.fixture
 def build_app(tmp_path):
-    def build(classes, pages):
-        class_json = class_diagram(classes)
+    def build(classes, pages, associations=(), link_classes=None):
+        """``link_classes`` = {association name: class name} makes that class the
+        association class of that association."""
+        class_json = class_diagram(classes, associations)
+        for association, class_name in (link_classes or {}).items():
+            class_json["relationships"][f"link-{class_name}"] = {
+                "id": f"link-{class_name}", "name": "", "type": "ClassLinkRel",
+                "source": {"element": f"rel-{association}"}, "target": {"element": f"cls-{class_name}"},
+            }
         project_gui = gui_json(pages)
         domain = process_class_diagram({"title": "Domain", "model": class_json})
         gui_model = process_gui_diagram(project_gui, class_json, domain)

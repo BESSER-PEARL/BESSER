@@ -306,6 +306,12 @@ def test_an_observed_action_500_is_a_blocker():
     assert issue.severity == "blocker"
 
 
+# The route as the action probe prints it: the OpenAPI path template.
+_UNSETTLED_CANCEL = (
+    "action unverified: web_app/backend: POST /booking/{booking_id}/methods/cancel/ - "
+    "cancel on Booking refused every state this probe could construct")
+
+
 def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch, monkeypatch):
     """``action unverified:`` had no promotion at all, so it stayed a warning.
 
@@ -313,10 +319,7 @@ def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch,
     unconditional blocker: the probe legitimately cannot construct every
     state, so a passing ``test_api`` workflow must be able to retire it.
     """
-    _probe_recorder(monkeypatch, orch, findings=[
-        "action unverified: web_app/backend: POST /booking/1/methods/cancel/ - "
-        "cancel on Booking refused every state this probe could construct",
-    ])
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
 
     issues = orch._collect_execution_issues()
     promoted = [i for i in issues if i.startswith("runtime unverified: action unverified:")]
@@ -325,23 +328,116 @@ def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch,
     assert _classify_issue(promoted[0]).severity == "blocker"
 
 
-def test_a_passing_scenario_retires_an_unsettled_action(orch, monkeypatch):
-    _probe_recorder(monkeypatch, orch, findings=[
-        "action unverified: web_app/backend: POST /booking/1/methods/cancel/ - "
-        "cancel on Booking refused every state this probe could construct",
-    ])
+def _cancel_scenario(orch, monkeypatch, response):
+    """Record a passing current scenario whose only response is ``response``."""
     monkeypatch.setattr(orch, "_workspace_revision", lambda: "rev-1")
     orch._api_scenarios["named:cancel"] = {
         "scenario": {"requests": [], "backend": "web_app/backend"},
         "scenario_id": "cancel", "revision": "rev-1",
         "report": {"status": "passed", "boot": "ok", "backend": "web_app/backend",
-                   "responses": [{"method": "POST", "status": 200,
-                                  "path": "/booking/1/methods/cancel/"}]},
+                   "responses": [{"method": "POST", "status": 200, **response}]},
     }
+
+
+def test_a_passing_scenario_retires_an_unsettled_action(orch, monkeypatch):
+    """The finding names the route template; the scenario called a concrete path."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": "/booking/1/methods/cancel/"})
 
     issues = orch._collect_execution_issues()
 
     assert not [i for i in issues if "action unverified:" in i]
+
+
+@pytest.mark.parametrize("response", [
+    {"path": "/booking/1/methods/confirm/"},                      # another action
+    {"path": "/room/1/methods/cancel/"},                          # another entity
+    {"path": "/booking/1/methods/cancel/extra/"},                 # a longer route
+    {"path": "/booking/1/methods/cancel/", "json": {"success": False, "message": "refused"}},
+])
+def test_a_scenario_that_did_not_run_the_action_leaves_it_unsettled(orch, monkeypatch, response):
+    """A 2xx elsewhere, or one whose body says the call did not act, proves nothing."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, response)
+
+    issues = orch._collect_execution_issues()
+
+    assert [i for i in issues if i.startswith("runtime unverified: action unverified:")]
+
+
+_CANCEL = "/booking/1/methods/cancel/"
+
+
+@pytest.mark.parametrize("body", [
+    {"success": 0},
+    {"ok": False},
+    {"detail": "This booking cannot be cancelled"},
+    {"error": "not allowed"},
+    {"status": "error", "message": "refused"},
+    {"result": False},                                            # the scaffold's "declined to act"
+    {"data": {"success": False}},
+    [{"success": False, "message": "refused"}],
+])
+def test_a_body_that_says_the_action_did_not_act_leaves_it_unsettled(orch, monkeypatch, body):
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": _CANCEL, "json": body})
+
+    issues = orch._collect_execution_issues()
+
+    assert [i for i in issues if i.startswith("runtime unverified: action unverified:")]
+
+
+def test_a_truncated_body_is_no_evidence_either_way(orch, monkeypatch):
+    """Over the report's size limit the body is kept as a cut string, which no reader can judge."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": _CANCEL, "truncated": True,
+                                         "json": '{"success": false, "message": "' + "x" * 60 + " [truncated]"})
+
+    issues = orch._collect_execution_issues()
+
+    assert [i for i in issues if i.startswith("runtime unverified: action unverified:")]
+
+
+@pytest.mark.parametrize("response", [
+    {"json": {"id": 1, "status": "rejected"}},                    # a reject action returns the rejected record
+    {"json": {"id": 1, "status": "DECLINED", "reason": "late"}},
+    {"json": {"id": 1, "error": None}},
+    {"json": [{"id": 1, "status": "failed"}, {"id": 2, "status": "failed"}]},
+    {"json": {"message": "cancel executed"}},
+    {},
+])
+def test_a_record_in_any_state_is_a_successful_action(orch, monkeypatch, response):
+    """A record's own status is domain data, not a refusal."""
+    _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
+    _cancel_scenario(orch, monkeypatch, {"path": _CANCEL, **response})
+
+    issues = orch._collect_execution_issues()
+
+    assert not [i for i in issues if "action unverified:" in i]
+
+
+def test_a_read_back_under_a_nested_create_route_retires_its_unverified_create(orch, monkeypatch):
+    _probe_recorder(monkeypatch, orch, findings=[
+        "create unverified: web_app/backend: POST /booking/{booking_id}/guest/ - "
+        "autogenerated input was refused (422)",
+    ])
+    monkeypatch.setattr(orch, "_workspace_revision", lambda: "rev-1")
+    orch._api_scenarios["named:guest"] = {
+        "scenario": {"requests": [], "backend": "web_app/backend"},
+        "scenario_id": "guest", "revision": "rev-1",
+        "report": {"status": "passed", "boot": "ok", "backend": "web_app/backend", "responses": [
+            {"index": 0, "method": "POST", "status": 201, "path": "/booking/3/guest/",
+             "json": {"id": 5, "name": "Ada"}},
+            {"index": 1, "method": "GET", "status": 200, "path": "/booking/3/guest/5/",
+             "json": {"id": 5, "name": "Ada"}}]},
+    }
+
+    issues = orch._collect_execution_issues()
+
+    assert not [i for i in issues if "create unverified:" in i]
+    assert orch._unconfirmed_creates([_classify_issue(
+        "runtime unverified: create unverified: web_app/backend: POST /booking/{booking_id}/guest/ - "
+        "autogenerated input was refused (422)")]) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -497,18 +593,24 @@ def test_compaction_carries_the_checklist_blockers_and_contract(orch, monkeypatc
     assert any("server-owned" in rule for rule in state["contract_rules"])
 
 
+def _refuse(orch, times):
+    """The same edit on routers/booking.py refused ``times`` times."""
+    for _ in range(times):
+        orch.executor._note_rejection("routers/booking.py", "old", "new")
+
+
 def test_seven_refusals_at_one_target_end_the_phase(orch):
     """``tool_executor`` now counts refusals per TARGET through the same
     ``last_repeat`` channel, so the stop threshold governs redrafts too."""
     assert orch._TARGET_REFUSAL_STOP_AT == orch._REPEAT_STOP_AT == 7
-    orch.executor.last_repeat = ("routers/booking.py", 7)
+    _refuse(orch, 7)
 
     assert orch._escalate_repeat_rejection([]) is True
     assert orch._phase2_stop_reason == "stuck_edit_loop"
 
 
 def test_six_refusals_at_one_target_do_not_end_the_phase(orch):
-    orch.executor.last_repeat = ("routers/booking.py", 6)
+    _refuse(orch, 6)
     messages: list[dict] = []
 
     assert orch._escalate_repeat_rejection(messages) is False
@@ -520,7 +622,7 @@ def test_a_phase3_stuck_edit_loop_does_not_block_a_later_verified_repair(orch):
     ``stuck_edit_loop`` into the Phase 2 stop reason from there meant a later
     attempt that cleared every blocker still reported the run incomplete."""
     orch._phase2_stop_reason = "validation_required"
-    orch.executor.last_repeat = ("routers/booking.py", 7)
+    _refuse(orch, 7)
 
     assert orch._apply_edit_loop_guards([], where="phase 3 repair") is True
     orch._complete_repair_if_verified()

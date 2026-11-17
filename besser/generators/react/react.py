@@ -47,9 +47,11 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
 
     regenerable = True
 
-    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None):
+    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None, app_name: str = None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
+        # The application's name as its users see it (browser tab, README)
+        self.app_name = app_name
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = traced_environment(
             templates_path,
@@ -114,6 +116,10 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
         # GUI model actually contains a Map component.
         if os.path.basename(rel_path) == "MapBlock.tsx":
             return "Map" in used_component_types
+
+        # The agent chat widget and its background image only ship with an agent component.
+        if os.path.basename(rel_path) in ("AgentComponent.tsx.j2", "agent_back.png"):
+            return "AgentComponent" in used_component_types
 
         # design.css (and its import in index.tsx) only ship with a stylesheet.
         if os.path.basename(rel_path) == "design.css.j2":

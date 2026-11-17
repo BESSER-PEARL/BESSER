@@ -101,3 +101,18 @@ def test_a_modify_run_keeps_the_edits_of_earlier_runs(orchestrator, tmp_path):
 
     assert files["scaffold_a.py"]["llm_modified"] is True
     assert "llm_modified" not in files["scaffold_b.py"]
+
+
+def test_the_manifest_lists_only_files_the_download_carries(orchestrator, tmp_path):
+    """The download leaves out what a run of the app writes; so must output_files."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "app.db").write_bytes(b"SQLite format 3\x00")
+    (tmp_path / "data" / "app.db-journal").write_bytes(b"")
+    (tmp_path / "server.log").write_text("started\n", encoding="utf-8")
+    (tmp_path / ".pytest_cache").mkdir()
+    (tmp_path / ".pytest_cache" / "README.md").write_text("cache\n", encoding="utf-8")
+    (tmp_path / "database.py").write_text("engine = None\n", encoding="utf-8")
+
+    listed = sorted(entry["path"] for entry in _recipe(orchestrator, tmp_path)["output_files"])
+
+    assert listed == ["database.py", "scaffold_a.py", "scaffold_b.py", "written_by_llm.py"]

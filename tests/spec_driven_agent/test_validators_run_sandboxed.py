@@ -99,7 +99,7 @@ def _frontend_issues(root):
     from besser.spec_driven_agent.validation.frontend_build import collect_frontend_build_issues
     return collect_frontend_build_issues(
         str(root), enabled=True, allow_shell=True, source_revision=lambda: "r",
-        successful_builds={}, can_run=lambda: True)
+        build_verdicts={}, can_run=lambda: True)
 
 
 # --------------------------------------------------------------------------- #

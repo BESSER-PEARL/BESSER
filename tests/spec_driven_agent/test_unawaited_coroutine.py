@@ -87,6 +87,51 @@ async def caller():
 ''') == []
 
 
+def test_a_coroutine_collected_then_awaited_or_gathered_is_not_flagged():
+    assert codes('''
+import asyncio
+
+async def send(user_id):
+    return True
+
+async def send_all(user_ids):
+    tasks = [send(u) for u in user_ids]
+    return await asyncio.gather(*tasks)
+
+async def send_some(user_ids):
+    pending = []
+    for u in user_ids:
+        pending.append(send(u))
+    done = [await c for c in asyncio.as_completed(pending)]
+    return done
+
+async def one(user_id):
+    coro = send(user_id)
+    return await coro
+
+async def typed(user_id):
+    job: asyncio.Future = send(user_id)
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(job)
+''') == []
+
+
+def test_a_collected_coroutine_that_is_never_awaited_is_still_flagged():
+    found = [f["line"] for f in diagnose_written_content("r.py", '''
+async def send(user_id):
+    return {"ok": True}
+
+async def one(user_id):
+    result = send(user_id)
+    return result["ok"]
+
+async def many(user_ids):
+    results = [send(u) for u in user_ids]
+    return [r["ok"] for r in results]
+''') if f["code"] == "unawaited-coroutine"]
+    assert found == [6, 10]
+
+
 def test_a_bare_function_reference_is_not_a_call():
     assert codes('''
 from fastapi import Depends

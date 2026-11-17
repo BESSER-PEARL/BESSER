@@ -109,8 +109,11 @@ join table:
 
 - The Create/Update payload of each navigable end carries **link objects** instead of
   bare ids: ``"rooms": [{"target": 101, "agreed_price": 95.0, "additional_charges": 5.0}]``
-  (``target`` is the primary key of the linked entity; plain ids are still accepted, in
-  which case the association attributes are left unset). To-one ends through an
+  (``target`` is the primary key of the linked entity). A plain id is accepted too: it
+  keeps a link that exists, and creates one with the association attributes left unset.
+  When the association class has an attribute that is required and has no default, a
+  plain id cannot create a link: the request is answered ``422`` naming the missing
+  attributes. To-one ends through an
   association class are optional at creation time — the link can be established later
   from the other side or via the association class's own endpoint.
 - ``PUT`` reconciles links: removed targets delete the association row, new targets

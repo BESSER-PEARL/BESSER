@@ -355,6 +355,24 @@ def test_seed_unresolved_blockers_are_loaded_from_recipe(tmp_path):
     ]
 
 
+def test_seed_blockers_no_code_edit_can_fix_are_not_forwarded(tmp_path):
+    """The model contract is re-checked on the current model, the runtime gate
+    re-runs, and an unknown is not a defect: forwarding them spent prompt
+    tokens on a model cycle the user had already removed."""
+    defect = "create contract: backend: POST /booking/ - observed a server/persistence failure"
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({"validation_issues": [
+        {"severity": "blocker", "message": "model contract: Mandatory creation cycle: Booking -> Room -> Booking"},
+        {"severity": "blocker", "message": "requirement unverified: Phase 3 validation did not run: "
+                                           "cost budget exhausted."},
+        {"severity": "blocker", "message": "runtime gate: the delivered application has no runtime evidence"},
+        {"severity": "blocker", "message": "validation unverified: tsc did not run completely (timeout)"},
+        {"severity": "blocker", "message": defect},
+    ]}), encoding="utf-8")
+    orch = _make_orchestrator(tmp_path, _ScriptedClient([]))
+    orch._seed_generator_files_from_recipe()
+    assert orch._seed_unresolved_issues == [f"Unresolved from the previous run: {defect}"]
+
+
 def test_modify_forwards_seed_blockers_into_phase2(tmp_path, monkeypatch):
     """modify() hands the seed's unresolved blockers to Phase 2 alongside
     the fresh Phase 1.5 findings."""
@@ -424,6 +442,20 @@ def test_save_recipe_accumulates_history(tmp_path):
     assert history[0]["files_touched"] == ["a.py"]  # read_file not counted
     assert history[1]["mode"] == "modify"
     assert history[1]["instructions"] == "add a search bar"
+
+
+def test_only_the_same_run_replaces_its_history_entry(tmp_path):
+    """A resume after a hard crash finds the seed run's entry last: it adds its own.
+    Without a run id nothing says two entries are one run."""
+    for run_id, request in (("seed", "build a library app"), ("run-2", "add a search bar"),
+                            ("run-2", "add a search bar"), ("", "add a map"), ("", "add a map")):
+        orch = _make_orchestrator(tmp_path, _ScriptedClient([]))
+        orch.run_id = run_id
+        orch._save_recipe(request, elapsed=1.0)
+
+    history = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))["history"]
+    assert [h["instructions"] for h in history] == [
+        "build a library app", "add a search bar", "add a map", "add a map"]
 
 
 def test_load_recipe_history_synthesizes_from_legacy_recipe(tmp_path):

@@ -83,7 +83,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | Shared findings and source contracts | `parsed_source.py`, `validation/issues.py`, `validation/python_source.py`, `validation/python_imports.py`, `validation/frontend_schema.py`, `validation/frontend_source.py`, `validation/frontend_resolution.py`, `validation/frontend_build.py`, `validation/frontend_contract.py`, `validation/toolchain.py` |
 | Immediate source/model contracts | `validation/write_diagnostics.py`, `validation/contract_checks.py`, `validation/frontend_bindings.py`, `validation/endpoint_coherence.py` |
 | Deterministic repair (no model, no LLM) | `repair/import_repair.py`, `repair/scaffold_repair.py` |
-| Runtime probes | `validation/constructibility.py`, `validation/api_probe.py` |
+| Runtime probes | `validation/constructibility.py`, `validation/api_probe.py`, `validation/authorization_probe.py` (two accounts and an anonymous caller against an app with accounts) |
 | Requirements and scoped acceptance | `planning/requirements_ledger.py`, `planning/fix_target.py`, `validation/acceptance.py` |
 | Persistence, tracing, context | `state/checkpoint.py`, `state/tracing.py`, `state/agent_trace.py`, `state/trace_model.py`, `agent/compaction.py`, `agent/history_eviction.py`, `run_report.py` |
 | Providers, routing, usage | `providers/llm_client.py`, `providers/model_settings.py`, `providers/tool_input.py`; prices and model catalog in `besser/llm/` (`pricing.py`, `catalog.py`, `data/`) |

@@ -15,10 +15,12 @@ Features:
 - **Factory function** — ``create_llm_client()`` to instantiate the right provider
 """
 
+import json
 import logging
 import os
 import re
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
@@ -44,9 +46,11 @@ from besser.spec_driven_agent.providers.model_settings import (
     sampling_kwargs,
     thinking_can_be_disabled,
 )
-from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
+from besser.spec_driven_agent.agent.history_eviction import _THINKING_BLOCK_TYPES
+from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY, dumps_for_model
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 from besser.spec_driven_agent.settings import AgentSettings
+from besser.utilities.secret_redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +300,15 @@ class LLMProvider(ABC):
     ``usage`` tracker so that the orchestrator can monitor cost.
     """
 
+    # The credentials this provider sends; its constructor sets them.
+    _secrets: tuple[str, ...] = ()
+
+    def _redacted(self, error: BaseException) -> str:
+        """``error``'s text for a log line or an error message, without this
+        provider's keys or any credential-shaped value: a gateway may echo the
+        request, headers included, in the error body the SDK quotes."""
+        return redact_text(str(error), env_style=False, secrets=self._secrets)[0]
+
     @property
     @abstractmethod
     def model(self) -> str:
@@ -340,7 +353,7 @@ class LLMProvider(ABC):
     def _request_max_tokens(self, model_override: str | None) -> int:
         """Output ceiling for one call. A planning call on a cheaper sibling
         keeps to that model's own ceiling: the agent loop's raised ceiling
-        (32768) is a 400 on gpt-4o-mini, which allows 16384."""
+        (32768) is a 400 on a model that allows less (gpt-4o-mini: 16384)."""
         if not model_override:
             return self._max_tokens
         return min(self._max_tokens, max_output_tokens(model_override))
@@ -588,6 +601,7 @@ class ClaudeLLMClient(LLMProvider):
             client_kwargs["base_url"] = resolved_base
 
         self._client = anthropic_client(**client_kwargs)
+        self._secrets = (api_key,)
         self._max_retries = _resolve_max_retries(max_retries)
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
@@ -625,9 +639,13 @@ class ClaudeLLMClient(LLMProvider):
     ) -> dict[str, Any]:
         """Send a message with tools. Retries on transient errors."""
         effective_model = model_override or self._model
+        # A forced call on a single message is a one-shot planning call
+        # (routing, gap analysis, the requirements judge): its prompt is
+        # unique, so a cache write is a 25% surcharge nothing reads back.
+        cache_prefix = not (force_tool and len(messages) == 1)
         if force_tool and not forced_tool_choice_supported(effective_model):
             return self._chat_forced_via_auto(
-                system, messages, tools, force_tool, model_override)
+                system, messages, tools, force_tool, model_override, cache_prefix)
         extra: dict[str, Any] = {}
         if force_tool:
             extra["tool_choice"] = {"type": "tool", "name": force_tool}
@@ -635,7 +653,11 @@ class ClaudeLLMClient(LLMProvider):
             # where the model allows turning it off at all.
             if thinking_can_be_disabled(effective_model):
                 extra["thinking"] = {"type": "disabled"}
-        return self._create(system, messages, tools, tools, model_override, extra)
+        # A forced tool_choice does not read the conversation cache, and what
+        # it would write only an identical forced call could read: the tools
+        # and system entries are the ones that survive it.
+        return self._create(system, messages, tools, tools, model_override, extra,
+                            cache_prefix=cache_prefix, cache_messages=not force_tool)
 
     def _chat_forced_via_auto(
         self,
@@ -644,6 +666,7 @@ class ClaudeLLMClient(LLMProvider):
         tools: list[dict],
         force_tool: str,
         model_override: str | None,
+        cache_prefix: bool = True,
     ) -> dict[str, Any]:
         """A forced call on a model that 400s on tool_choice tool/any.
 
@@ -662,12 +685,18 @@ class ClaudeLLMClient(LLMProvider):
                        "Do not answer in plain text.")
         extra = {"tool_choice": {"type": "auto"}}
         result: dict[str, Any] = {}
+        # The instruction is for this request only, so the next one never
+        # sends it. Mark the last block of the real history as well: a
+        # breakpoint only on the instruction caches a prefix nothing reads
+        # back, and the whole conversation is then written twice.
+        history = _with_message_cache(messages) if cache_prefix else messages
         for text in (instruction,
                      instruction + " Your previous reply did not call it."):
-            request_messages = _with_trailing_instruction(messages, text)
+            request_messages = _with_trailing_instruction(history, text)
             try:
                 result = self._create(system, request_messages, request_tools,
-                                      tools, model_override, extra)
+                                      tools, model_override, extra,
+                                      cache_prefix=cache_prefix, cache_messages=False)
             except UpstreamLLMError as exc:
                 # strict:true is unverified live for these models; a schema
                 # it rejects must not cost the call.
@@ -679,16 +708,17 @@ class ClaudeLLMClient(LLMProvider):
                                "strict: %s", force_tool, exc)
                 request_tools = tools
                 result = self._create(system, request_messages, tools, tools,
-                                      model_override, extra)
+                                      model_override, extra,
+                                      cache_prefix=cache_prefix, cache_messages=False)
             if result["stop_reason"] == "refusal" or any(
                 getattr(b, "type", None) == "tool_use"
                 and getattr(b, "name", None) == force_tool
                 for b in result["content"]
             ):
-                return result
+                break
             logger.info("Model answered without calling %s under "
                         "tool_choice=auto", force_tool)
-        return result
+        return _without_reasoning(result)
 
     def _create(
         self,
@@ -698,9 +728,16 @@ class ClaudeLLMClient(LLMProvider):
         tools: list[dict],
         model_override: str | None,
         extra: dict[str, Any],
+        *,
+        cache_prefix: bool = True,
+        cache_messages: bool = True,
     ) -> dict[str, Any]:
         """One ``messages.create`` with retries. ``tools`` (the caller's
-        definitions) drive input coercion; ``request_tools`` is what is sent."""
+        definitions) drive input coercion; ``request_tools`` is what is sent.
+
+        ``cache_prefix`` marks the tools and the system prompt for the prompt
+        cache; ``cache_messages`` marks the end of the conversation as well.
+        """
         last_error = None
         effective_model = model_override or self._model
 
@@ -709,13 +746,15 @@ class ClaudeLLMClient(LLMProvider):
                 request_kwargs: dict[str, Any] = {
                     "model": effective_model,
                     "max_tokens": self._request_max_tokens(model_override),
-                    "system": _with_cache_control(system),
-                    "messages": _with_message_cache(messages),
+                    "system": _with_cache_control(system) if cache_prefix else system,
+                    "messages": (_with_message_cache(messages)
+                                 if cache_prefix and cache_messages else messages),
                     **extra,
                 }
                 # A text-only call (no tools) must not send an empty list.
                 if request_tools:
-                    request_kwargs["tools"] = _with_tool_cache(request_tools)
+                    request_kwargs["tools"] = (
+                        _with_tool_cache(request_tools) if cache_prefix else request_tools)
                 response = self._client.messages.create(**request_kwargs)
                 # Track usage (billed at the effective model's pricing)
                 self.usage.record(response.usage, model=model_override)
@@ -724,19 +763,19 @@ class ClaudeLLMClient(LLMProvider):
                     "content": normalize_tool_blocks(response.content, tools),
                 }, response)
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
                         and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "API call failed (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, self._max_retries + 1, backoff, e,
+                        attempt + 1, self._max_retries + 1, backoff, last_error,
                     )
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
-                    raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
-                raise UpstreamLLMError(f"Claude API call failed: {e}") from None
+                    raise InvalidApiKeyError(f"Claude API rejected the key: {last_error}") from None
+                raise UpstreamLLMError(f"Claude API call failed: {last_error}") from None
 
         raise UpstreamLLMError(f"Claude API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -771,16 +810,16 @@ class ClaudeLLMClient(LLMProvider):
                 return  # Success — exit retry loop
 
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
                         and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
-                    logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, e)
+                    logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
-                    raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
-                raise UpstreamLLMError(f"Claude API streaming failed: {e}") from None
+                    raise InvalidApiKeyError(f"Claude API rejected the key: {last_error}") from None
+                raise UpstreamLLMError(f"Claude API streaming failed: {last_error}") from None
 
         raise UpstreamLLMError(f"Streaming failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -817,6 +856,24 @@ def _with_refusal_detail(result: dict, response) -> dict:
     if result.get("stop_reason") == "refusal":
         details = getattr(response, "stop_details", None)
         result["refusal_category"] = getattr(details, "category", None)
+    return result
+
+
+def _without_reasoning(result: dict) -> dict:
+    """``result`` minus the thinking blocks of a reply to a one-off instruction.
+
+    A thinking block is bound to every message before it, and the trailing
+    instruction is never sent again: replayed next turn behind the history
+    without it, the block is a 400 on the models that take the forced-via-auto
+    path ("The block is bound to a different conversation"). Removing the
+    newest blocks keeps every earlier one valid; text and tool calls stay.
+    """
+    content = result.get("content") or []
+    kept = [b for b in content if getattr(b, "type", None) not in _THINKING_BLOCK_TYPES]
+    if len(kept) != len(content):
+        logger.info("Dropped %d thinking block(s) bound to a one-off tool instruction",
+                    len(content) - len(kept))
+        result = {**result, "content": kept}
     return result
 
 
@@ -882,9 +939,23 @@ def _strict_tool(tool: dict) -> dict | None:
     return {**tool, "input_schema": schema, "strict": True}
 
 
+# Everything before this heading in a Phase 2 system prompt is the same for every
+# web-app run of one configuration (prompt_builder.build_system_prompt), so it is
+# cached as its own block and read across runs. A non-web target, or a modify run
+# that changes the target, names that target in the rules: stable per request only.
+SYSTEM_CACHE_SPLIT = "\n## Variable context"
+
+
 def _with_cache_control(system: str) -> list[dict]:
-    """Wrap system prompt for prompt caching."""
-    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+    """The system prompt as cached text blocks: the shared part, then the per-run part.
+
+    Two breakpoints: with the tools and the rolling message markers that is the
+    API's limit of 4. The second keeps the whole prompt readable when the
+    message cache misses (a compaction rewrites the history).
+    """
+    stable, marker, tail = system.partition(SYSTEM_CACHE_SPLIT)
+    parts = [stable, marker + tail] if marker and stable.strip() else [system]
+    return [{"type": "text", "text": part, "cache_control": {"type": "ephemeral"}} for part in parts]
 
 
 def _with_tool_cache(tools: list[dict]) -> list[dict]:
@@ -1065,26 +1136,24 @@ def _openai_messages_to_api(system: str, messages: list[dict]) -> list[dict]:
                     if block.type == "text":
                         text_parts.append(block.text)
                     elif block.type == "tool_use":
-                        import json as _json
                         tool_calls.append({
                             "id": block.id,
                             "type": "function",
                             "function": {
                                 "name": block.name,
-                                "arguments": _json.dumps(block.input),
+                                "arguments": dumps_for_model(block.input),
                             },
                         })
                 elif isinstance(block, dict):
                     if block.get("type") == "text":
                         text_parts.append(block.get("text", ""))
                     elif block.get("type") == "tool_use":
-                        import json as _json
                         tool_calls.append({
                             "id": block.get("id", ""),
                             "type": "function",
                             "function": {
                                 "name": block.get("name", ""),
-                                "arguments": _json.dumps(block.get("input", {})),
+                                "arguments": dumps_for_model(block.get("input", {})),
                             },
                         })
             if not text_parts and not tool_calls:
@@ -1132,17 +1201,19 @@ class _ToolUseBlock:
         self.input = arguments
 
 
-def _openai_stop_reason(finish_reason: str | None, complete_tool_calls: bool) -> str:
-    """Native complete calls beat a normal stop label, never a safety/length stop.
+def _openai_stop_reason(finish_reason: str | None, has_tool_calls: bool) -> str:
+    """Native calls beat a normal stop label, never a safety/length stop.
 
     Observed with Nebius Qwen forced tool_choice: a valid read_file call plus
     finish_reason='stop'. Treating that as end_turn silently discarded the call.
+    An unusable call is ``tool_use`` too: the executor answers it with an error,
+    and an unanswered call in the history fails the next request.
     Do not infer calls from prose or execute a truncated/refused response.
     """
     if finish_reason == "tool_calls":
         return "tool_use"
     if finish_reason in (None, "stop"):
-        return "tool_use" if complete_tool_calls else "end_turn"
+        return "tool_use" if has_tool_calls else "end_turn"
     if finish_reason == "content_filter":
         return "refusal"  # OpenAI's safety stop; the loop handles "refusal"
     return finish_reason
@@ -1165,6 +1236,30 @@ def _canonical_tool_name(name: str | None, index: dict[str, str]) -> str:
     return index.get((name or "").casefold(), name or "")
 
 
+# Name given to a returned call with none, so its replay is a valid request; the
+# executor answers it "Unknown tool" like any other name it does not know.
+_MISSING_TOOL_NAME = "missing_tool_name"
+
+
+def _openai_tool_use_block(call_id: str | None, name: str | None, raw_arguments: str | None,
+                           index: dict[str, str]) -> _ToolUseBlock:
+    """One returned call as a block every later request can replay.
+
+    Chat Completions needs a non-empty id and name on each replayed call; a
+    missing id is generated, a missing name gets ``_MISSING_TOOL_NAME``, and
+    unparseable arguments become the ``INVALID_ARGUMENTS_KEY`` error input.
+    """
+    try:
+        arguments = json.loads(raw_arguments)
+    except (ValueError, TypeError) as exc:
+        arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
+    return _ToolUseBlock(
+        tool_id=call_id or f"call_{uuid.uuid4().hex}",
+        name=_canonical_tool_name(name, index) or _MISSING_TOOL_NAME,
+        arguments=arguments,
+    )
+
+
 def _openai_response_to_common(response, tools: list[dict] | None = None) -> dict[str, Any]:
     """
     Convert an OpenAI chat completion response to the common format
@@ -1185,28 +1280,12 @@ def _openai_response_to_common(response, tools: list[dict] | None = None) -> dic
     if message.content:
         content.append(_TextBlock(text=message.content))
 
-    # Tool calls
-    complete_tool_calls = bool(message.tool_calls)
-    if message.tool_calls:
-        import json as _json
-        for tc in message.tool_calls:
-            try:
-                arguments = _json.loads(tc.function.arguments)
-            except (ValueError, TypeError) as exc:
-                arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
-                complete_tool_calls = False
-            name = _canonical_tool_name(tc.function.name, tool_index)
-            if not isinstance(arguments, dict) or not tc.id or not name:
-                complete_tool_calls = False
-            content.append(_ToolUseBlock(
-                tool_id=tc.id,
-                name=name,
-                arguments=arguments,
-            ))
+    for tc in message.tool_calls or []:
+        content.append(_openai_tool_use_block(tc.id, tc.function.name, tc.function.arguments, tool_index))
 
     # Map OpenAI finish_reason to our stop_reason
     finish_reason = choice.finish_reason
-    stop_reason = _openai_stop_reason(finish_reason, complete_tool_calls)
+    stop_reason = _openai_stop_reason(finish_reason, bool(message.tool_calls))
 
     return {"stop_reason": stop_reason, "content": normalize_tool_blocks(content, tools),
             "provider_finish_reason": finish_reason}
@@ -1334,35 +1413,39 @@ class OpenAIProvider(LLMProvider):
             self._fallback_chain = [fallback]
         else:
             self._fallback_chain = list(fallback)
+        # Each fallback step sends its own token.
+        self._secrets = (api_key, *(step[1] for step in self._fallback_chain if step[1]))
         self._fallback_step = 0
         self._on_fallback = False
         self.fallback_reason: str | None = None
-        self._warned_no_stream_usage = False
+        self._warned_no_usage = False
 
     # True on a vendor that only serves paid API models (Mistral, Nebius).
     _PAID_VENDOR = False
 
-    def _record_stream_usage(self, usage: Any, api_messages: list, text: str, tool_calls: dict) -> None:
-        """Record a finished stream's usage, or estimate it when the endpoint sent none.
+    def _record_usage(
+        self, usage: Any, api_messages: list, text: str, arguments: str,
+        model: str | None = None,
+    ) -> None:
+        """Record a finished call's usage, or estimate it when the endpoint sent none.
 
         Unrecorded calls would leave the run's cost cap blind. The estimate has
         no cache information, so it bills the whole history as fresh input and
-        errs high.
+        errs high. ``model`` is the per-call override, billed at its own rate.
         """
         if usage:
-            self._usage.record(_OpenAIUsageAdapter(usage))
+            self._usage.record(_OpenAIUsageAdapter(usage), model=model)
             return
-        if not self._warned_no_stream_usage:
-            self._warned_no_stream_usage = True
+        if not self._warned_no_usage:
+            self._warned_no_usage = True
             logger.warning(
-                "Model %s reported no usage on a stream: estimating its tokens against the cost cap.",
-                self._model,
+                "Model %s reported no usage: estimating its tokens against the cost cap.",
+                model or self._model,
             )
-        arguments = "".join(call["arguments"] for call in tool_calls.values())
         self._usage.record(_EstimatedUsage(
             input_tokens=len(str(api_messages)) // _CHARS_PER_TOKEN,
             output_tokens=(len(text) + len(arguments)) // _CHARS_PER_TOKEN,
-        ))
+        ), model=model)
 
     def _is_billed_route(self, base_url: str | None) -> bool:
         """Paid vendor API rather than a gateway / self-hosted endpoint."""
@@ -1402,7 +1485,7 @@ class OpenAIProvider(LLMProvider):
         logger.warning(
             "Model %s unavailable after all retries (%s) — switching to "
             "fallback %d/%d: %s",
-            self._model, error, self._fallback_step,
+            self._model, self._redacted(error), self._fallback_step,
             len(self._fallback_chain), fb_model,
         )
         self._client = openai_client(**client_kwargs)
@@ -1500,17 +1583,22 @@ class OpenAIProvider(LLMProvider):
                 # from served-model tracking — otherwise every run logs a
                 # spurious "served model changed mid-run" warning when the
                 # primary call follows a planning call.
-                if response.usage:
-                    self._usage.record(
-                        _OpenAIUsageAdapter(response.usage), model=model_override
-                    )
+                # Before anything reads ``choices``: a reply without one still
+                # spent the tokens its usage reports.
+                reply = response.choices[0].message if response.choices else None
+                self._record_usage(
+                    response.usage, api_messages, getattr(reply, "content", None) or "",
+                    "".join(call.function.arguments or ""
+                            for call in getattr(reply, "tool_calls", None) or []),
+                    model=model_override,
+                )
                 if not model_override:
                     self._usage.set_served_model(getattr(response, "model", None))
 
                 return _openai_response_to_common(response, tools)
 
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 # A daily-quota exhaustion (Command Code: "used all 100 free
                 # requests for today") cannot recover inside the retry window;
                 # 5 retries just burn ~15-40s of backoff per call. Skip straight
@@ -1518,14 +1606,14 @@ class OpenAIProvider(LLMProvider):
                 if _is_quota_exhausted(e):
                     logger.warning(
                         "OpenAI API call hit a daily quota limit — not retrying: %s",
-                        str(e)[:200],
+                        last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
                       and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, self._max_retries + 1, backoff, e,
+                        attempt + 1, self._max_retries + 1, backoff, last_error,
                     )
                     time.sleep(backoff)
                     continue
@@ -1539,7 +1627,7 @@ class OpenAIProvider(LLMProvider):
                             system, messages, tools,
                             force_tool=force_tool, model_override=model_override,
                         )
-                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
                 if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
@@ -1548,7 +1636,7 @@ class OpenAIProvider(LLMProvider):
                         system, messages, tools,
                         force_tool=force_tool, model_override=model_override,
                     )
-                raise UpstreamLLMError(f"OpenAI API call failed: {e}") from None
+                raise UpstreamLLMError(f"OpenAI API call failed: {last_error}") from None
 
         raise UpstreamLLMError(f"OpenAI API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -1651,33 +1739,23 @@ class OpenAIProvider(LLMProvider):
                         except Exception:
                             pass
 
-                self._record_stream_usage(stream_usage, api_messages, collected_text, tool_calls_accum)
+                self._record_usage(
+                    stream_usage, api_messages, collected_text,
+                    "".join(call["arguments"] for call in tool_calls_accum.values()),
+                )
 
                 # Build final content blocks
                 content: list[Any] = []
                 if collected_text:
                     content.append(_TextBlock(text=collected_text))
-                complete_tool_calls = bool(tool_calls_accum)
                 tool_index = _tool_name_index(tools)
                 for _idx in sorted(tool_calls_accum.keys()):
                     tc_data = tool_calls_accum[_idx]
-                    import json as _json
-                    try:
-                        arguments = _json.loads(tc_data["arguments"])
-                    except (ValueError, TypeError) as exc:
-                        arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
-                        complete_tool_calls = False
-                    name = _canonical_tool_name(tc_data["name"], tool_index)
-                    if not isinstance(arguments, dict) or not tc_data["id"] or not name:
-                        complete_tool_calls = False
-                    content.append(_ToolUseBlock(
-                        tool_id=tc_data["id"],
-                        name=name,
-                        arguments=arguments,
-                    ))
+                    content.append(_openai_tool_use_block(
+                        tc_data["id"], tc_data["name"], tc_data["arguments"], tool_index))
 
                 # Map finish_reason
-                stop_reason = _openai_stop_reason(finish_reason, complete_tool_calls)
+                stop_reason = _openai_stop_reason(finish_reason, bool(tool_calls_accum))
 
                 yield {
                     "type": "message_done",
@@ -1688,18 +1766,18 @@ class OpenAIProvider(LLMProvider):
                 return  # Success — exit retry loop
 
             except Exception as e:
-                last_error = e
+                last_error = self._redacted(e)
                 # Daily-quota exhaustion won't recover within the retry window —
                 # skip the backoff and go straight to the fallback check below.
                 if _is_quota_exhausted(e):
                     logger.warning(
                         "OpenAI stream hit a daily quota limit — not retrying: %s",
-                        str(e)[:200],
+                        last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
                       and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
-                    logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, e)
+                    logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
@@ -1707,7 +1785,7 @@ class OpenAIProvider(LLMProvider):
                     if self._activate_fallback(e, past_endpoint=self._base_url):
                         yield from self.chat_stream(system, messages, tools)
                         return
-                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
+                    raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
                 if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
@@ -1717,7 +1795,7 @@ class OpenAIProvider(LLMProvider):
                     # semantics as the in-loop stream retry above.
                     yield from self.chat_stream(system, messages, tools)
                     return
-                raise UpstreamLLMError(f"OpenAI API streaming failed: {e}") from None
+                raise UpstreamLLMError(f"OpenAI API streaming failed: {last_error}") from None
 
         raise UpstreamLLMError(f"OpenAI streaming failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -1878,7 +1956,7 @@ class NebiusProvider(OpenAIProvider):
         if env:
             return None if env.lower() == "primary" else env
         # None => use the primary model. Inheriting OpenAIProvider's
-        # ``gpt-4o-mini`` would send an id Nebius does not serve.
+        # ``gpt-6-luna`` would send an id Nebius does not serve.
         return self.PLANNING_MODEL
 
 

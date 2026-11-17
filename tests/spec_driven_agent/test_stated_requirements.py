@@ -120,7 +120,7 @@ def test_the_run_uses_the_editor_requirements_without_extracting(hotel_model, tm
 
 def test_a_follow_up_request_falls_back_to_extraction(hotel_model, tmp_path, monkeypatch):
     extracted = [{"id": 1, "text": "Bookings can be cancelled", "kind": "action"}]
-    monkeypatch.setattr(ledger, "extract_requirements", lambda instructions, client: list(extracted))
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instructions, client, **_kwargs: list(extracted))
     orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=hotel_model, output_dir=str(tmp_path),
                            stated_requirements=STATED)
     orch._planner_instructions(SPEC + LATER)
@@ -130,7 +130,7 @@ def test_a_follow_up_request_falls_back_to_extraction(hotel_model, tmp_path, mon
 
 def test_without_editor_requirements_the_run_extracts_as_before(hotel_model, tmp_path, monkeypatch):
     extracted = [{"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"}]
-    monkeypatch.setattr(ledger, "extract_requirements", lambda instructions, client: list(extracted))
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instructions, client, **_kwargs: list(extracted))
     orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=hotel_model, output_dir=str(tmp_path))
     orch._planner_instructions(SPEC)
     assert orch._requirements == extracted

@@ -29,22 +29,39 @@ import json
 import os
 import re
 from functools import lru_cache
+from typing import NamedTuple
 
 from pygments.lexer import Lexer
 from pygments.lexers import JavascriptLexer, get_lexer_for_filename
-from pygments.token import Comment
+from pygments.token import Comment, String, _TokenType
 from pygments.util import ClassNotFound
 
 _EXCLUDED_DIRS = {"node_modules", ".git", ".venv", "venv", "__pycache__",
                   "dist", "build", ".next", "out", "coverage", "target"}
 _SOURCE_EXT = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
-_RESOLVE_EXT = ("", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json",
-                ".css", ".scss", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+# ".d.ts": `import type { Book } from './types'` is erased before anything loads it.
+_RESOLVE_EXT = ("", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".d.ts",
+                ".json", ".css", ".scss", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+# A JS specifier that a TS project writes for its TS source (NodeNext style).
+_TS_SOURCE_FOR = {".js": (".ts", ".tsx"), ".jsx": (".ts", ".tsx"), ".mjs": (".mts",), ".cjs": (".cts",)}
 
-# from/import/require/dynamic-import specifiers
+# from/import/require/dynamic-import specifiers; one followed by "+" is only
+# the prefix of a path built at runtime (``import('./pages/' + name)``).
+# Fallback only: it also matches inside strings and JSX text (see _token_specs).
 _SPEC_RE = re.compile(
     r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)"""
-    r"""(['"])([^'"\n]+)\1""")
+    r"""(['"])([^'"\n]+)\1(?!\s*\+)""")
+# Tokens allowed between a statement-start import/export and its ``from``,
+# besides quoted names (``import { "a-b" as ab }``).
+_CLAUSE_PUNCTUATION = {"{", "}", ",", "*"}
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*\Z")
+# A quoted JS string cannot hold a raw line break; one that does means the lexer
+# opened a string at an apostrophe in JSX text and read code as string content.
+_RAW_LINE_BREAK = re.compile(r"(?<!\\)\n")
+# Import statements inside template-literal text: the lexer opened a template at
+# a lone backtick in JSX text and read the code after it as template content.
+_SWALLOWED_IMPORT = re.compile(
+    r"""\n\s*(?:import|export)\b[^\n]*\bfrom\s*['"]|\n\s*import\s*['"]|\b(?:import|require)\s*\(\s*['"]""")
 
 _NODE_BUILTINS = {
     "assert", "buffer", "child_process", "cluster", "console", "constants",
@@ -57,6 +74,9 @@ _NODE_BUILTINS = {
 # Packages a bundler or framework provides without a package.json entry.
 _IMPLICIT_PACKAGES = {"react/jsx-runtime", "react/jsx-dev-runtime", "vite/client"}
 
+# The JSX-without-React finding names this many files; the fix is one config line.
+_JSX_FILES_LISTED = 8
+
 @lru_cache(maxsize=16)
 def _lexer_for(suffix: str) -> Lexer:
     try:
@@ -65,33 +85,121 @@ def _lexer_for(suffix: str) -> Lexer:
         return JavascriptLexer(stripnl=False, ensurenl=False)
 
 
-def _strip_comments(text: str, filename: str) -> str:
-    """``text`` without its comments, keeping every line break.
+def _tokens(text: str, filename: str) -> list[tuple[_TokenType, str]]:
+    return list(_lexer_for(os.path.splitext(filename)[1].lower()).get_tokens(text))
+
+
+def _without_comments(tokens: list[tuple[_TokenType, str]]) -> str:
+    """The lexed text without its comments, keeping every line break.
 
     Lexed rather than matched: a ``//`` or ``/*`` inside a string, template
     or regex literal (``"/api/*"``, `` `${base}//v1` ``) is not a comment.
     """
-    lexer = _lexer_for(os.path.splitext(filename)[1].lower())
     out: list[str] = []
-    for token, value in lexer.get_tokens(text):
+    for token, value in tokens:
         # JSX text such as "See https://x.io" lexes as a comment from "//".
         is_url = token in Comment.Single and out and out[-1].endswith(":")
         out.append("\n" * value.count("\n") if token in Comment and not is_url else value)
     return "".join(out)
 
 
+def _strip_comments(text: str, filename: str) -> str:
+    """``text`` without its comments, keeping every line break."""
+    return _without_comments(_tokens(text, filename))
+
+
+def _token_specs(tokens: list[tuple[_TokenType, str]]) -> tuple[str, ...] | None:
+    """Import specifiers: whole quoted strings in import position only.
+
+    ``import '<s>'`` and ``import|export <clause> from '<s>'`` at a statement
+    start, ``import('<s>')`` and ``require('<s>')``. A ``from`` or ``import``
+    inside a string, template or JSX text is not one. None when the lexer lost
+    track of the strings, so the caller falls back to ``_SPEC_RE``.
+    """
+    values: list[str] = []
+    quoted: list[bool] = []
+    starts_line: list[bool] = []
+    line_break = True
+    backticks = 0
+    for token, value in tokens:
+        if token in Comment or not value.strip():
+            line_break = line_break or "\n" in value
+            continue
+        is_quoted = token in String.Single or token in String.Double
+        if is_quoted and _RAW_LINE_BREAK.search(value):
+            return None
+        if token in String.Backtick:
+            if value == "`":
+                backticks += 1
+            elif _SWALLOWED_IMPORT.search(value):
+                return None
+        values.append(value)
+        quoted.append(is_quoted and len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0])
+        starts_line.append(line_break)
+        line_break = False
+    if backticks % 2:  # a template literal left open to the end of the file
+        return None
+
+    def statement_start(index: int) -> bool:
+        return starts_line[index] or values[index - 1] in (";", "}")
+
+    specs: list[str] = []
+    for i in range(1, len(values)):
+        value = values[i]
+        if not quoted[i] or len(value) < 3:
+            continue
+        if i + 1 < len(values) and values[i + 1].startswith("+"):
+            continue  # the prefix of a path built at runtime
+        before = values[i - 1]
+        if before == "import":
+            found = statement_start(i - 1)
+        elif before == "(":
+            found = i >= 2 and values[i - 2] in ("import", "require")
+        elif before == "from":
+            j = i - 2
+            while j >= 0 and values[j] not in ("import", "export") and (
+                    values[j] in _CLAUSE_PUNCTUATION or quoted[j] or _IDENTIFIER.match(values[j])):
+                j -= 1
+            found = j >= 0 and values[j] in ("import", "export") and statement_start(j)
+        else:
+            found = False
+        if found:
+            specs.append(value[1:-1])
+    return tuple(specs)
+
+
+class _LexedSource(NamedTuple):
+    code: str  # the source without its comments
+    specs: tuple[str, ...]  # its import specifiers, as written
+
+
 @lru_cache(maxsize=512)
-def _stripped_file(path: str, mtime_ns: int, size: int) -> str:
-    return _strip_comments(_read(path), os.path.basename(path))
+def _lexed_file(path: str, mtime_ns: int, size: int) -> _LexedSource:
+    tokens = _tokens(_read(path), os.path.basename(path))
+    code = _without_comments(tokens)
+    specs = _token_specs(tokens)
+    if specs is None:
+        specs = tuple(match.group(2) for match in _SPEC_RE.finditer(code))
+    return _LexedSource(code, specs)
+
+
+def _lexed_source(path: str) -> _LexedSource:
+    """A source file lexed once per file version."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return _LexedSource("", ())
+    return _lexed_file(path, stat.st_mtime_ns, stat.st_size)
 
 
 def _stripped_source(path: str) -> str:
     """A source file without its comments, lexed once per file version."""
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return ""
-    return _stripped_file(path, stat.st_mtime_ns, stat.st_size)
+    return _lexed_source(path).code
+
+
+def import_specifiers(path: str) -> tuple[str, ...]:
+    """The import specifiers a JS/TS source file makes, read from code tokens."""
+    return _lexed_source(path).specs
 
 
 def _walk(root: str):
@@ -163,13 +271,8 @@ def _resolves(base_dir: str, spec: str) -> bool:
         for ext in _RESOLVE_EXT[1:]:
             if os.path.isfile(os.path.join(target, "index" + ext)):
                 return True
-    # A ".js" specifier that a TS project writes for a ".ts" source.
     stem, ext = os.path.splitext(target)
-    if ext in (".js", ".jsx"):
-        for alt in (".ts", ".tsx"):
-            if os.path.isfile(stem + alt):
-                return True
-    return False
+    return any(os.path.isfile(stem + alt) for alt in _TS_SOURCE_FOR.get(ext, ()))
 
 
 def _has_path_aliases(project_dir: str) -> bool:
@@ -193,10 +296,17 @@ def _registers_vite_react_plugin(config: str) -> bool:
     Declaring ``@vitejs/plugin-react`` in package.json, or naming it in a
     comment, leaves Vite on esbuild's classic transform.
     """
-    for binding in re.findall(
-            r"""import\s+(\w+)\s+from\s+['"](?:@vitejs/plugin-react(?:-swc)?|@preact/preset-vite)['"]""",
-            config):
-        if re.search(rf"\bplugins\s*:\s*\[[^\]]*\b{binding}\s*\(", config):
+    # Imported here so the module stays runnable as a stdlib-only script.
+    from besser.spec_driven_agent.validation.frontend_source import match_bracket
+
+    bindings = re.findall(
+        r"""import\s+(\w+)\s+from\s+['"](?:@vitejs/plugin-react(?:-swc)?|@preact/preset-vite)['"]""",
+        config)
+    for match in re.finditer(r"\bplugins\s*:\s*\[", config):
+        # Bracket-balanced: an earlier plugin's options may hold a "]".
+        end = match_bracket(config, match.end() - 1)
+        plugins = config[match.end():end]  # end None: the rest of the file
+        if any(re.search(rf"\b{binding}\s*\(", plugins) for binding in bindings):
             return True
     return False
 
@@ -283,13 +393,15 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 if not name.endswith(_SOURCE_EXT) or name.endswith(".d.ts"):
                     continue
                 path = os.path.join(folder, name)
-                source = _stripped_source(path)
+                source, specs = _lexed_source(path)
                 rel_file = os.path.relpath(path, project_dir).replace("\\", "/")
 
-                for _, spec in _SPEC_RE.findall(source):
+                for written in specs:
+                    # Vite drops a query suffix (?react, ?raw, ?url, ...) before resolving.
+                    spec = written.split("?", 1)[0]
                     if spec.startswith("."):
                         if not _resolves(folder, spec):
-                            missing_paths.append((rel_file, spec))
+                            missing_paths.append((rel_file, written))
                     elif spec.startswith("/") or spec.startswith("~") or spec.startswith("#"):
                         continue  # root/alias-relative: a bundler decides
                     else:
@@ -315,15 +427,20 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 f"frontend dependency: {prefix}{rel_file} imports the package '{package}', "
                 f"which is not declared in {prefix}package.json. Nothing installs it, so "
                 f"the import fails at load. Add it to dependencies or stop importing it.")
-        for rel_file in sorted(set(jsx_without_react)):
+        if jsx_without_react:
+            # One finding per project: the cause is the project's config.
+            shown = sorted(set(jsx_without_react))
+            listed = ", ".join(prefix + rel for rel in shown[:_JSX_FILES_LISTED])
+            if len(shown) > _JSX_FILES_LISTED:
+                listed += f" and {len(shown) - _JSX_FILES_LISTED} more"
             issues.append(
-                f"frontend contract: {prefix}{rel_file} contains JSX but does not import "
+                f"frontend contract: {listed} contain JSX but do not import "
                 f"React, and this project configures no automatic JSX runtime (react() is not "
                 f"registered in vite.config's plugins: [...] - declaring @vitejs/plugin-react "
                 f"or mentioning it in a comment does not enable it - and no \"jsx\": "
                 f"\"react-jsx\"). The classic transform emits React.createElement and every "
                 f"page dies with 'React is not defined'. Import the plugin and add react() "
-                f"to plugins, or add 'import React from \"react\"' to the file.")
+                f"to plugins, or add 'import React from \"react\"' to each file.")
 
     return issues
 

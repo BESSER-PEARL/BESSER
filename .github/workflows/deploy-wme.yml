@@ -14,130 +14,127 @@ on:
           - frontend
           - agent_simulator
 
+permissions:
+  contents: read
+
+# Every deploy moves the same :latest tags and restarts the same host: one at a time.
+concurrency:
+  group: deploy-wme
+  cancel-in-progress: false
+
 env:
+  REGISTRY_HOST: artefacts.list.lu
   REGISTRY: artefacts.list.lu/besser/web_modeling_editor
-  SSH_TARGET: ec2-user@ec2-16-16-223-38.eu-north-1.compute.amazonaws.com
+  SSH_USER: ec2-user
+  SSH_HOST: ec2-16-16-223-38.eu-north-1.compute.amazonaws.com
   EDITOR_URL: https://editor.besser-pearl.org
+  TARGET: ${{ inputs.target }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Pushing images to artefacts.list.lu from GitHub-hosted runners takes ~20+ min (run 43038262597 was cancelled at 20 min).
+    timeout-minutes: 60
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
-      - name: Record the commit being deployed
-        id: src
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup SSH key
+      # Later steps reach the host as `ssh wme`.
+      - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ec2-16-16-223-38.eu-north-1.compute.amazonaws.com >> ~/.ssh/known_hosts 2>/dev/null
+          cat >> ~/.ssh/config <<EOF
+          Host wme
+            HostName $SSH_HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+          EOF
 
       - name: Resolve the services to deploy
-        id: svc
         run: |
-          SERVICES=""
-          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "backend" ]]; then
-            # The spec-driven worker is built from the same commit, so it is
-            # recreated with the backend; otherwise it keeps the previous code.
-            SERVICES="$SERVICES besser-wme-backend besser-wme-smartgen"
-          fi
-          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "frontend" ]]; then
-            SERVICES="$SERVICES besser-wme-frontend"
-          fi
-          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "agent_simulator" ]]; then
-            SERVICES="$SERVICES besser-wme-agent-simulator"
-          fi
-          echo "list=$SERVICES" >> "$GITHUB_OUTPUT"
+          # The spec-driven worker is built from the same commit, so it is
+          # recreated with the backend; otherwise it keeps the previous code.
+          BACKEND="besser-wme-backend besser-wme-smartgen"
+          case "$TARGET" in
+            all)             SERVICES="$BACKEND besser-wme-frontend besser-wme-agent-simulator" ;;
+            backend)         SERVICES="$BACKEND" ;;
+            frontend)        SERVICES="besser-wme-frontend" ;;
+            agent_simulator) SERVICES="besser-wme-agent-simulator" ;;
+            *) echo "::error::Unknown target '$TARGET'"; exit 1 ;;
+          esac
+          echo "SERVICES=$SERVICES" >> "$GITHUB_ENV"
 
-      # Before anything is built or pushed: a service missing from the host's
-      # compose file would fail `docker compose pull` halfway through, and a
-      # worker still on the backend image would lose its toolchains and
-      # bubblewrap without any error. Stop here instead, with nothing changed.
       - name: Check the host compose file defines the services
+        run: .github/scripts/check_host_compose.sh
+
+      # Watchtower deploys whatever reaches :latest, so this runs before any push.
+      - name: Check the frontend build settings
+        if: inputs.target == 'all' || inputs.target == 'frontend'
+        env:
+          POSTHOG_KEY: ${{ vars.FRONTEND_POSTHOG_KEY }}
         run: |
-          SSH="ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.SSH_TARGET }}"
-          RUNBOOK="docs/source/spec_driven_agent/production_deployment.rst"
-          if ! DEFINED=$($SSH "docker compose config --services"); then
-            echo "::error::Could not read the host's compose file (docker compose config failed). Nothing was built, pushed or restarted."
+          if [[ -z "$POSTHOG_KEY" ]]; then
+            echo "::error::Set the repository variable FRONTEND_POSTHOG_KEY. Nothing was built, pushed or restarted."
             exit 1
           fi
-          MISSING=""
-          for S in ${{ steps.svc.outputs.list }}; do
-            grep -qx "$S" <<< "$DEFINED" || MISSING="$MISSING $S"
-          done
-          if [[ -n "$MISSING" ]]; then
-            echo "::error::The host's compose file does not define:$MISSING. Add them first (besser-wme-smartgen: copy it from docker-compose.prod.yml, see $RUNBOOK). Nothing was built, pushed or restarted."
-            exit 1
-          fi
-          if [[ " ${{ steps.svc.outputs.list }} " == *" besser-wme-smartgen "* ]]; then
-            WANT="${{ env.REGISTRY }}/smartgen_worker:latest"
-            IMAGE=$($SSH "docker compose config --images besser-wme-smartgen") \
-              || IMAGE="unknown (docker compose config --images failed)"
-            if [[ "$IMAGE" != "$WANT" ]]; then
-              echo "::error::besser-wme-smartgen uses '$IMAGE' on the host, not '$WANT'. The backend image no longer carries the worker's toolchains or bubblewrap; point the service at $WANT (see $RUNBOOK). Nothing was built, pushed or restarted."
-              exit 1
-            fi
-          fi
-          echo "The host defines:${{ steps.svc.outputs.list }}"
 
       - name: Login to Docker registry
-        run: echo "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" | docker login artefacts.list.lu -u "${{ secrets.DOCKER_REGISTRY_USERNAME }}" --password-stdin
+        env:
+          REGISTRY_USERNAME: ${{ secrets.DOCKER_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+        run: echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u "$REGISTRY_USERNAME" --password-stdin
 
-      # ── Backend and the besser-wme-smartgen worker ──────────
+      # Images are pushed as an OCI index and checked against the registry by
+      # .github/scripts/publish_image.sh; a plain `docker push` never moved
+      # :latest on artefacts.list.lu (run 43050874178).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
       # Two targets of one Dockerfile: the worker adds the toolchains and
       # bubblewrap to the backend's dependency layers.
-      - name: Build backend and worker images
+      - name: Build and push backend and worker images
         if: inputs.target == 'all' || inputs.target == 'backend'
         run: |
-          docker build --target backend --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
-            -t ${{ env.REGISTRY }}/backend:latest -f Dockerfile .
-          docker build --target smartgen-worker --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
-            -t ${{ env.REGISTRY }}/smartgen_worker:latest -f Dockerfile .
+          .github/scripts/publish_image.sh "$REGISTRY/backend:latest" \
+            --target backend --build-arg GIT_SHA="$GITHUB_SHA" -f Dockerfile .
+          .github/scripts/publish_image.sh "$REGISTRY/smartgen_worker:latest" \
+            --target smartgen-worker --build-arg GIT_SHA="$GITHUB_SHA" -f Dockerfile .
 
-      - name: Push backend and worker images
-        if: inputs.target == 'all' || inputs.target == 'backend'
-        run: |
-          docker push ${{ env.REGISTRY }}/backend:latest
-          docker push ${{ env.REGISTRY }}/smartgen_worker:latest
-
-      # ── Frontend ─────────────────────────────────────────────
-      - name: Build frontend image
+      # The URLs and the PostHog key are baked into the bundle at build time;
+      # the Dockerfile defaults point the assistant at ws://localhost:8765.
+      - name: Build and push frontend image
         if: inputs.target == 'all' || inputs.target == 'frontend'
+        env:
+          POSTHOG_KEY: ${{ vars.FRONTEND_POSTHOG_KEY }}
         run: |
-          docker build -t ${{ env.REGISTRY }}/frontend:latest \
+          .github/scripts/publish_image.sh "$REGISTRY/frontend:latest" \
+            --build-arg DEPLOYMENT_URL="$EDITOR_URL" \
+            --build-arg BACKEND_URL="$EDITOR_URL/besser_api" \
+            --build-arg UML_BOT_WS_URL=wss://editor.besser-pearl.org/agent \
+            --build-arg POSTHOG_HOST=https://eu.i.posthog.com \
+            --build-arg POSTHOG_KEY="$POSTHOG_KEY" \
             -f besser/utilities/web_modeling_editor/frontend/Dockerfile \
             besser/utilities/web_modeling_editor/frontend/
 
-      - name: Push frontend image
-        if: inputs.target == 'all' || inputs.target == 'frontend'
-        run: docker push ${{ env.REGISTRY }}/frontend:latest
-
-      # ── Agent simulator ──────────────────────────────────────
       # Built from the repository root so it ships this checkout's `besser`.
-      - name: Build agent simulator image
+      - name: Build and push agent simulator image
         if: inputs.target == 'all' || inputs.target == 'agent_simulator'
         run: |
-          docker build -t ${{ env.REGISTRY }}/agent_simulator:latest \
+          .github/scripts/publish_image.sh "$REGISTRY/agent_simulator:latest" \
             -f besser/utilities/web_modeling_editor/agent_simulator/Dockerfile .
 
-      - name: Push agent simulator image
-        if: inputs.target == 'all' || inputs.target == 'agent_simulator'
-        run: docker push ${{ env.REGISTRY }}/agent_simulator:latest
-
-      # ── Deploy to EC2 ───────────────────────────────────────
       - name: Deploy on EC2
         run: |
-          SERVICES="${{ steps.svc.outputs.list }}"
-
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.SSH_TARGET }} << EOF
+          # $SERVICES expands here, on the runner.
+          # shellcheck disable=SC2087
+          ssh wme << EOF
             set -e
             echo "Pulling latest images..."
             docker compose pull $SERVICES
@@ -154,16 +151,14 @@ jobs:
       - name: Verify the running containers are the code just built
         if: inputs.target == 'all' || inputs.target == 'backend'
         run: |
-          EXPECTED="${{ steps.src.outputs.sha }}"
           FAILED=0
           # By service, not container name: docker-compose.prod.yml pins no
           # container_name for the backend.
           for C in besser-wme-backend besser-wme-smartgen; do
-            RUNNING=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-              ${{ env.SSH_TARGET }} \
-              "docker compose exec -T $C printenv BESSER_BUILD_SHA 2>/dev/null || echo missing")
-            echo "$C: running=$RUNNING expected=$EXPECTED"
-            if [[ "$RUNNING" != "$EXPECTED" ]]; then
+            # shellcheck disable=SC2029  # $C expands here, on the runner
+            RUNNING=$(ssh wme "docker compose exec -T $C printenv BESSER_BUILD_SHA 2>/dev/null || echo missing")
+            echo "$C: running=$RUNNING expected=$GITHUB_SHA"
+            if [[ "$RUNNING" != "$GITHUB_SHA" ]]; then
               echo "::error::$C is running '$RUNNING', not the commit just built (stale image?)."
               FAILED=1
             fi
@@ -173,7 +168,7 @@ jobs:
       - name: Health check
         run: |
           for i in $(seq 1 12); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${{ env.EDITOR_URL }}/besser_api/" || true)
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$EDITOR_URL/besser_api/" || true)
             [[ "$CODE" == "200" ]] && echo "API healthy" && exit 0
             echo "attempt $i: $CODE"; sleep 5
           done

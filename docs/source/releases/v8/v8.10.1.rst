@@ -1,0 +1,43 @@
+Version 8.10.1
+==============
+
+Patch release: **push a run's generated code to GitHub when it finishes,
+switch autosave on from the GitHub menu, offer to generate the code again in
+the agentic interface, and stop reporting the Spec-Driven Agent's own failed
+test workflows as your rules**. No API or metamodel change. Deploy the
+modeling agent v8.1.4 alongside.
+
+Highlights
+----------
+
+* **Push generated code to GitHub.** A project linked to a GitHub repository
+  has a new setting, next to *Autosave to GitHub* in the project settings and
+  the GitHub menu: when a Spec-Driven Agent run of the open project finishes
+  with its whole output, its code is pushed to the linked repository and
+  branch, so the result is kept after its download expires. The push is the
+  run card's own *Push to GitHub*: merged with newer commits, and on a conflict
+  left on its own branch. It is off by default and kept in this browser, skips
+  a run that was stopped or cut short, and needs a GitHub session in the tab
+  (`WME #293 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/293>`_).
+* **Autosave from the GitHub menu.** *Autosave to GitHub* can be switched on
+  and off from the GitHub menu of a linked project, not only from the project
+  settings (`WME #291 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/291>`_).
+* **Generate the code, first, in the agentic interface.** The assistant's
+  widget and drawer now tell the modeling agent which of them sent a message.
+  After a complete class diagram, the drawer (the agentic interface) offers
+  *Generate the code* first again; the small widget keeps its modeling
+  follow-ups (`WME #292 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/292>`_,
+  `modeling-agent #79 <https://github.com/BESSER-PEARL/modeling-agent/pull/79>`_).
+* **Agent-written test workflows are no longer reported as your rules.** A
+  workflow the Spec-Driven Agent writes to test its own code (``test_api``)
+  that fails is listed under *Could not verify* as a failed agent test, not as
+  "rules you asked for are not enforced". The agent can retire a workflow it
+  replaced (``test_api`` ``action='retire'``, with a reason); a retired
+  workflow no longer blocks the run and is listed as retired.
+
+Deploy alongside
+----------------
+
+The modeling agent v8.1.4 reads which surface sent a message. Deploy the
+editor before or together with it: an older editor sends ``"workspace"`` from
+the widget too.

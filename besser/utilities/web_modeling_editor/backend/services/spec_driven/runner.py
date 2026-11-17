@@ -313,9 +313,12 @@ _SKIPPED_CHECK_RE = re.compile(
 # prefixes (ruff, frontend/data contract, create contract) describe code that
 # was built and is defective, which is a different question.
 _UNENFORCED_PREFIXES = ("action contract:", "model contract:")
-# The ``why`` of a requirement the check could not confirm, and of a workflow that failed.
+# The ``why`` of a requirement the check could not confirm, and of a workflow that failed. A workflow
+# is a test the agent wrote for its own code, not a rule the user stated: when it fails, the test or the
+# app may be wrong, so it is a result to look at, not a rule shipped unenforced.
 _UNCONFIRMED = "the check could not confirm it in the delivered code"
-_WORKFLOW_FAILED = "it ran against the app and failed"
+_WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it is not a rule from your "
+                    "request, and the test or the app may be wrong")
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 _UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
@@ -612,9 +615,15 @@ def build_verification_report(recipe: dict) -> VerificationReport:
                 how=f"{len(requests)} request(s) run against the app: {ran}",
             ))
         elif status == "failed":
-            unenforced.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
+            not_verified.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
         else:
             not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
+    # Workflows the agent retired as replaced by another: not run at the end, so not evidence either way.
+    for retired in recipe.get("api_scenarios_retired") or []:
+        if isinstance(retired, dict):
+            ident = str(retired.get("scenario_id") or "")
+            not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
+                                      why=f"the agent retired it: {retired.get('reason') or 'no reason given'}"))
 
     # 3b. A run that judged its requirements but never ran the app has no
     #     runtime evidence at all. Silence here reads as "it works".

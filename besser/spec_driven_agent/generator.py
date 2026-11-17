@@ -227,7 +227,12 @@ class LLMGenerator(GeneratorInterface):
             print(response)  # "Fixed: added auth.py with JWT logic"
 
         Returns:
-            The LLM's explanation of what it did or what you should do.
+            The LLM's explanation of what it did or what you should do, or
+            "Fix cycle stopped: <reason>" when the cost cap, the runtime cap,
+            cancellation or a failed call ended the cycle first.
+
+        Raises:
+            InvalidApiKeyError: the provider rejected the API key.
         """
         if not hasattr(self, '_orchestrator') or self._orchestrator is None:
             raise RuntimeError("Call generate() first before fix_error()")

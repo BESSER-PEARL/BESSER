@@ -52,7 +52,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
         ("Build a NEXTJS application with TypeScript", "nextjs"),
         ("next js with tailwind", "nextjs"),
         ("Build a Rust web server using Axum", "rust"),
-        ("Standard cargo layout please", "rust"),
+        ("Standard Cargo.toml layout please", "rust"),
         ("rocket + serde", "rust"),
         ("Use actix for the API", "rust"),
         ("Build a Kotlin Spring Boot REST API", "kotlin_spring"),
@@ -68,6 +68,8 @@ from besser.spec_driven_agent.planning.stack_metadata import (
         ("Build a Go web service with Gin", None),
         ("Ruby on Rails 7 hotel booking", None),
         ("Express + TypeScript API", None),
+        # Bare "cargo" is usually the domain ("a cargo tracking company").
+        ("Standard cargo layout please", None),
         # Edge cases
         ("", None),
         ("   ", None),

@@ -128,8 +128,12 @@ ROWS = [
      lambda s: s.llm_default_max_turns),
     ("llm_watchdog_grace_seconds", "BESSER_LLM_WATCHDOG_GRACE_SECONDS", 120,
      lambda: _env_int("BESSER_LLM_WATCHDOG_GRACE_SECONDS", 120), lambda s: s.llm_watchdog_grace_seconds),
-    ("llm_download_ttl_seconds", "BESSER_LLM_DOWNLOAD_TTL_SECONDS", 1800,
-     lambda: _env_int("BESSER_LLM_DOWNLOAD_TTL_SECONDS", 1800), lambda s: s.llm_download_ttl_seconds),
+    ("llm_download_ttl_seconds", "BESSER_LLM_DOWNLOAD_TTL_SECONDS", 10800,
+     lambda: _env_int("BESSER_LLM_DOWNLOAD_TTL_SECONDS", 10800), lambda s: s.llm_download_ttl_seconds),
+    ("llm_archive_ttl_seconds", "BESSER_LLM_ARCHIVE_TTL_SECONDS", 86400,
+     lambda: min(max(_env_int("BESSER_LLM_ARCHIVE_TTL_SECONDS", 86400), _env_int("BESSER_LLM_DOWNLOAD_TTL_SECONDS", 10800)),
+                 86400),
+     lambda s: s.llm_archive_ttl_seconds),
     ("llm_cost_emitter_interval_seconds", "BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS", 2.0,
      lambda: _env_float("BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS", 2.0),
      lambda s: s.llm_cost_emitter_interval_seconds),
@@ -319,6 +323,20 @@ def test_defaults_are_clamped_to_the_hard_caps_as_before(clean_env, default, cap
     for field, _, _, old, _ in ROWS:
         if field.startswith("llm_default_max_"):
             assert getattr(settings, field) == old()
+
+
+def test_a_download_is_kept_no_longer_than_the_temp_cleanup_allows(clean_env):
+    """The hourly cleanup deletes run folders after a day; the config must not promise longer."""
+    from besser.utilities.web_modeling_editor.backend.services.cleanup import TEMP_DIR_MAX_AGE_HOURS
+
+    clean_env.setenv("BESSER_LLM_ARCHIVE_TTL_SECONDS", str(7 * 86400))
+    assert BackendSettings().llm_archive_ttl_seconds == TEMP_DIR_MAX_AGE_HOURS * 3600
+
+
+def test_a_download_outlives_its_workspace(clean_env):
+    clean_env.setenv("BESSER_LLM_DOWNLOAD_TTL_SECONDS", "7200")
+    clean_env.setenv("BESSER_LLM_ARCHIVE_TTL_SECONDS", "600")
+    assert BackendSettings().llm_archive_ttl_seconds == 7200
 
 
 def test_a_malformed_value_never_stops_the_backend(clean_env):

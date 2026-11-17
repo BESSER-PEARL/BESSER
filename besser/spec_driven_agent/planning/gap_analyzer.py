@@ -47,8 +47,8 @@ from typing import Any, Callable
 
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
-from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
-from besser.llm import extract_json
+from besser.spec_driven_agent.planning.target import Target
+from besser.llm import clean_json_response, extract_json, parse_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +88,9 @@ _SUBMIT_TASKS_TOOL = {
                             "enum": list(_TASK_KINDS),
                             "description": (
                                 "change: work on top of the scaffold. removes_scaffold: "
-                                "deletes or replaces generated code wholesale (the "
-                                "frontend, the backend, the scaffold). switches_framework: "
+                                "deletes or replaces generated code wholesale, never "
+                                "adding or wiring new work, even a new frontend. "
+                                "switches_framework: "
                                 "moves the app to another framework than the scaffold's."
                             ),
                         },
@@ -120,7 +121,9 @@ def analyze_gaps_via_llm(
     modify_mode: bool = False,
     workspace_files: list[str] | None = None,
     action_endpoints: list[ActionEndpoint] | None = None,
-    target_description: str = "",
+    target: Target | None = None,
+    assistant_notes: str = "",
+    can_call: Callable[[], bool] | None = None,
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
@@ -154,8 +157,12 @@ def analyze_gaps_via_llm(
         action_endpoints: Source-derived operation routes and their handler
             locations. Presence in the domain model is not an implementation;
             this inventory identifies the actual executable extension points.
-        target_description: What the run builds when it is not a web app
-            (``planning/target.py``), named in the from-scratch task.
+        target: What the run builds (``planning/target.py``): named to the
+            planner, and, when it is not a web app, in the from-scratch task.
+        assistant_notes: The modeling agent's notes that came with the request:
+            shown apart from it, as context and never as the user's words.
+        can_call: The run's stop and spend gate, asked before every paid
+            planner call; ``None`` sends them all.
 
     Returns:
         ``None`` on failure, ``[]`` when no work is needed, otherwise
@@ -190,9 +197,9 @@ def analyze_gaps_via_llm(
                 "write). Every entity, attribute, type, and relationship in "
                 "your code must match the model."
             ]
-        elif target_description:
+        elif target is not None and not target.is_web_app and target.description:
             fallback = [
-                f"No BESSER generator was used. Build the {target_description} "
+                f"No BESSER generator was used. Build the {target.description} "
                 "from scratch, in the stack the user asked for, using the domain "
                 "model as your specification. "
                 "Every entity, attribute, type, and relationship in your code "
@@ -226,9 +233,11 @@ def analyze_gaps_via_llm(
         action_inventory=(format_action_inventory(action_endpoints)
                           if action_endpoints is not None
                           else "Action handlers were not inventoried; inspect their implementations."),
+        target_line=_target_line(target),
+        assistant_notes=assistant_notes,
     )
 
-    tasks = _call_planner(llm_client, user_prompt)
+    tasks = _call_planner(llm_client, user_prompt, can_call)
     if tasks is None:
         return None
     cleaned = _dedupe(_drop_scaffold_conflicts(tasks))[:_MAX_TASKS]
@@ -244,7 +253,9 @@ def analyze_gaps_via_llm(
     # (worse) judge "nothing to do" — this must survive even an empty list,
     # since [] can short-circuit Phase 2 entirely (see the module docstring).
     cleaned = _dedupe(_note_derived_enum_initial_state(domain_model, instructions) + cleaned)
-    cleaned = _dedupe(_note_rejected_constraints(domain_model, cleaned) + cleaned)
+    # A rejected OCL constraint is not added here: the orchestrator seeds one
+    # recovery item per rejected constraint (_deterministic_gap_tasks), the one
+    # the requirements judge can close. A second copy here was a duplicate.
     if tasks and not cleaned:
         # Only the planner may say "the scaffold covers it": a list the
         # sanitizers emptied means no usable checklist, not "skip Phase 2".
@@ -330,13 +341,15 @@ def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) ->
     every action endpoint returning 501. Annotate explicit action references
     without discarding requirements or guessing that an ORM method is
     connected. Harness-owned action tasks enforce omissions independently of
-    this hint.
+    this hint. A task that only mentions the action (a Cancel button) is
+    annotated too, since it needs the route; ``merge_action_tasks`` folds a
+    task into the handler's own item only when it names the handler.
     """
     noted = []
     for task in tasks:
         matches = [item for item in endpoints if re.search(
             rf"\b{_class_name_pattern(item.action)}\b", task, re.IGNORECASE,
-        )]
+        ) or re.search(rf"\b{re.escape(item.function)}\b", task)]
         if matches:
             locations = "; ".join(
                 f"{item.http_method} {item.route} is served by {item.path} "
@@ -409,9 +422,16 @@ def _drop_scaffold_conflicts(tasks: list) -> list[str]:
 
 # An add/create/define verb within three tokens of "enum": proposes the
 # enumeration itself, as opposed to using one ("add a cancel endpoint that
-# moves BookingCommercialStatus ...").
+# moves BookingCommercialStatus ..."). A UI or API word next to "enum" makes
+# the enumeration a means, not the object ("add a status enum dropdown",
+# "create a filter by enum value"), so the task is real work.
+_ENUM_USE_WORDS = (
+    r"(?:drop-?downs?|selects?|selectors?|pickers?|filters?|fields?|values?|columns?|badges?|chips?|"
+    r"inputs?|options?|radios?|labels?|params?|parameters?|query|forms?|endpoints?)\b"
+)
 _ADD_ENUM_RE = re.compile(
-    r"\b(?:add|create|introduce|define|declare)\b(?:\s+\S+){0,3}?\s+enum",
+    rf"\b(?:add|create|introduce|define|declare)\b(?:\s+(?!{_ENUM_USE_WORDS})\S+){{0,3}}?"
+    rf"\s+enum\w*\b(?!\s+{_ENUM_USE_WORDS})",
     re.IGNORECASE,
 )
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -467,10 +487,18 @@ _QUOTED_IDENT_RE = re.compile(r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]")
 # 'awaiting payment' to 'confirmed' when the bill is settled" names an
 # existing attribute, but the transition LOGIC the model does not encode is
 # the real ask. This downgrades a drop to an annotation so the requirement
-# itself is never lost.
+# itself is never lost. A rule on the attribute (unique, a check, an index,
+# reject ...) is the same: the declaration is present, the rule is not. The
+# rule words are prefixes ("valid" covers "validate"); they follow
+# requirements_ledger._CONSTRAINT_WORDS, which this module cannot import (that
+# module imports this one).
 _ATTR_BEHAVIOR_RE = re.compile(
     r"\b(?:derive[ds]?\s+from|computed?\s+from|transition\w*|based\s+on|"
-    r"calculat\w+|whenever|logic)\b",
+    r"calculat\w+|whenever|logic)\b"
+    r"|\b(?:unique|constrain|check|index|valid|enforc|reject|refus|must|cannot|can\s+not|"
+    r"may\s+not|never|at\s+least|at\s+most|no\s+more\s+than|exceed|only\s+(?:if|when|after)|"
+    r"format|match|overlap|before|after|greater|less|between|positive|non-negative|"
+    r"minimum|maximum|default|search|filter|sort)",
     re.IGNORECASE,
 )
 _TYPE_SYNONYMS = {"boolean": "bool", "string": "str", "text": "str", "integer": "int"}
@@ -516,55 +544,6 @@ def _mentions_rejected_constraint(task: str, rejected_names: set) -> bool:
     return any(re.search(rf"\b{re.escape(n)}\b", task, re.IGNORECASE) for n in rejected_names)
 
 
-# A model can reject many constraints; the checklist is a scarce resource.
-_MAX_REJECTED_CONSTRAINT_TASKS = 6
-
-
-def _note_rejected_constraints(domain_model, tasks: list) -> list[str]:
-    """Harness-owned tasks for OCL invariants the converter threw away.
-
-    The generator leaves a TODO where it could not enforce a constraint
-    (``pydantic_classes/ocl_utils.py``), which makes the omission visible but
-    does not make it anyone's job; if the planner does not raise it, the rule
-    ships as a comment. Rejected invariants are exactly the rules the
-    deterministic path cannot express, so the agent implements them.
-
-    Only constraints no existing task already names are added, since the
-    planner's own phrasing carries the spec's wording and already gets
-    placement advice. The rejection reason rides along: it usually says
-    which property name did not resolve, and that is the model-vs-spec
-    delta the agent needs in order to write the check against the ends the
-    model actually declares rather than the ones the OCL text assumed.
-    """
-    issues = getattr(domain_model, "conversion_issues", None) or []
-    added: list[str] = []
-    for issue in issues:
-        if not isinstance(issue, dict) or is_dropped_by_model_change(issue):
-            continue  # the user's model change removed what it uses
-        name = issue.get("name")
-        expression = issue.get("expression") or issue.get("original_text") or ""
-        if not name or not expression:
-            continue
-        if any(_mentions_rejected_constraint(t, {str(name)}) for t in tasks):
-            continue
-        context = issue.get("context") or ""
-        reason = (issue.get("reason") or "").removeprefix("Warning: ")
-        reason = reason.replace(f" in '{expression}'", "", 1).strip()
-        where = f"that create or update {context}" if context else "for this operation"
-        added.append(
-            f"Enforce the '{name}' rule, which the model records but no generated code "
-            f"checks: {expression}. The OCL converter rejected it"
-            + (f" ({reason})" if reason else "")
-            + f", so pydantic_classes.py carries only a TODO for it. Implement the check "
-            f"in the router handlers {where}, after loading the related rows via the "
-            f"database session, and write it against the relationship names the model "
-            f"actually declares - the ones in the OCL text above may not exist."
-        )
-        if len(added) >= _MAX_REJECTED_CONSTRAINT_TASKS:
-            break
-    return added
-
-
 def _mentioned_classes(sentence: str, classes: list) -> list:
     """Model classes named in ``sentence``, tolerating a Create, Update,
     Read or Response schema suffix (``BookingCreate`` still names
@@ -591,7 +570,7 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
     (float/int/bool/...) that contradicts the model's actual type blocks the
     match entirely - that names a real gap, not a duplicate. Only a task
     that is PURELY a declaration is dropped; one that also asks for derived
-    behaviour (see ``_ATTR_BEHAVIOR_RE``) is annotated instead, so the
+    behaviour or a rule (see ``_ATTR_BEHAVIOR_RE``) is annotated instead, so the
     requirement is never silently lost.
     """
     if domain_model is None:
@@ -626,7 +605,8 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
                     type_name = getattr(getattr(attr_by_lower[quoted[0].lower()], "type", None), "name", None)
                     if type_name and word != str(type_name).lower():
                         continue  # names a type the model disagrees with - a real gap
-                decision = "annotate" if _ATTR_BEHAVIOR_RE.search(sentence) else "drop"
+                # The whole task: the rule may sit in another sentence.
+                decision = "annotate" if _ATTR_BEHAVIOR_RE.search(task) else "drop"
                 break
             if decision:
                 break
@@ -885,6 +865,33 @@ def _note_derived_enum_initial_state(domain_model, instructions: str) -> list[st
     return tasks
 
 
+def derived_attribute_tasks(domain_model) -> list[str]:
+    """The one task that names every derived attribute the scaffold does not compute.
+
+    The generators keep a derived attribute at its default (a column with a
+    constant default, sql_alchemy/templates/helpers.py.j2, or a field of an
+    in-memory record); computing it is left to the agent. A derived enumeration
+    is a state the app moves, not a value to compute:
+    ``_note_derived_enum_initial_state`` covers it.
+    """
+    if domain_model is None:
+        return []
+    enums = {enum.name for enum in domain_model.get_enumerations()}
+    derived = [f"{cls.name}.{attr.name}"
+               for cls in sorted(domain_model.get_classes(), key=lambda c: c.name)
+               for attr in sorted(cls.attributes, key=lambda a: a.name)
+               if attr.is_derived and not attr.is_id and attr.type.name not in enums]
+    if not derived:
+        return []
+    many = len(derived) > 1
+    return [
+        f"Compute the model's derived attribute{'s' if many else ''} {', '.join(derived)}: nothing in "
+        f"the scaffold computes {'them, so each' if many else 'it, so it'} keeps its default value. "
+        f"Derive {'each' if many else 'it'} from the data it depends on whenever its record is read, or "
+        "update it in every write that changes that data, and never accept it from the client."
+    ]
+
+
 # File paths named inside a task: a dotted basename, optionally preceded
 # by directory segments. Restricted to extensions the generators actually
 # emit so prose like ``domain_model.get_classes`` or a bare ``Booking.`` is
@@ -930,6 +937,11 @@ def _nearest_existing(path: str, workspace_files: list[str]) -> list[str]:
     return [real for _, real in scored[:_MAX_NEAREST]]
 
 
+def _normalize_task_path(path: str) -> str:
+    """``/``-separated, without a leading ``./`` (a dot-directory keeps its dot)."""
+    return re.sub(r"^(?:\./)+", "", path.replace("\\", "/"))
+
+
 def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     """Repair the file paths a task list names, against the real tree.
 
@@ -951,7 +963,7 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     if not workspace_files:
         return tasks
 
-    real = {f.replace("\\", "/").lstrip("./") for f in workspace_files}
+    real = {_normalize_task_path(f) for f in workspace_files}
     by_suffix: dict[str, set] = {}
     for full in real:
         parts = full.split("/")
@@ -963,13 +975,15 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
         text = task
         missing: list[str] = []
         for token in dict.fromkeys(_TASK_PATH_RE.findall(task)):
-            norm = token.replace("\\", "/").lstrip("./")
+            norm = _normalize_task_path(token)
             if norm in real:
                 continue
             matches = by_suffix.get(norm, set())
             if len(matches) == 1:
                 target = next(iter(matches))
-                text = text.replace(token, target)
+                # Whole tokens only: a plain replace would also rewrite the
+                # tail of a right path that ends in this token.
+                text = re.sub(rf"(?<![\w/\\.]){re.escape(token)}(?![\w/\\])", lambda _: target, text)
                 logger.info(
                     "Gap sanitizer repaired task path %r -> %r", token, target
                 )
@@ -1100,7 +1114,9 @@ def _relationship_names_by_class(domain_model) -> dict:
             bucket = names.setdefault(cls_name, set())
             if getattr(other, "name", None):
                 bucket.add(other.name.lower())
-            if getattr(assoc, "name", None):
+            # An association named after this class is not told apart from the
+            # class itself in a sentence; the other class still reaches it by that name.
+            if getattr(assoc, "name", None) and assoc.name.lower() != cls_name.lower():
                 bucket.add(assoc.name.lower())
     return names
 
@@ -1151,7 +1167,7 @@ def _note_present_relationships(tasks: list, domain_model) -> list:
                     continue
                 low = sentence.lower()
                 match = next(
-                    (rel for rel in idents if re.search(rf"\b{re.escape(rel)}\b", low)), None,
+                    (rel for rel in sorted(idents) if re.search(rf"\b{re.escape(rel)}\b", low)), None,
                 )
                 if match:
                     hit = (cls.name, match)
@@ -1176,12 +1192,19 @@ def _note_present_relationships(tasks: list, domain_model) -> list:
     return noted
 
 
-def _call_planner(llm_client, user_prompt: str) -> list | None:
+def _call_planner(llm_client, user_prompt: str,
+                  can_call: Callable[[], bool] | None = None) -> list | None:
     """Run the planning call: cheap model first, primary on error, one
     repair retry on an unparseable reply. Returns the raw task list or
-    ``None`` on failure."""
+    ``None`` on failure, or once ``can_call`` refuses a call."""
     structured = _chat_supports_kwargs(llm_client, "force_tool", "model_override")
     planning_model = getattr(llm_client, "planning_model", None) if structured else None
+
+    def _refused(call: str) -> bool:
+        if can_call is None or can_call():
+            return False
+        logger.warning("Gap analyzer: %s not sent (stopped or budget exhausted); no checklist", call)
+        return True
 
     def _chat(prompt: str, model_override: str | None):
         messages = [{"role": "user", "content": prompt}]
@@ -1196,6 +1219,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
         return llm_client.chat(system=_SYSTEM_PROMPT, messages=messages, tools=[])
 
     response = None
+    if _refused("the planning call"):
+        return None
     try:
         response = _chat(user_prompt, planning_model)
     except Exception:
@@ -1206,6 +1231,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
                 "Gap analyzer: planning model %r failed; retrying on primary",
                 planning_model,
             )
+            if _refused("the primary fallback"):
+                return None
             try:
                 response = _chat(user_prompt, None)
             except Exception:
@@ -1226,6 +1253,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
         'array of {"task": ..., "kind": ...} objects (or call the submit_tasks '
         "tool). No prose, no markdown."
     )
+    if _refused("the repair retry"):
+        return None
     try:
         response = _chat(repair_prompt, planning_model)
         tasks = _extract_tasks(response)
@@ -1234,12 +1263,18 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
         tasks = None
     if tasks is not None:
         return tasks
+    if not structured:
+        # The repair retry already was a plain call; a third would be identical.
+        logger.warning("Gap analyzer unparseable after repair retry; no checklist")
+        return None
 
     # Final fallback, NO tools: some OpenAI-compatible gateways (ollama
     # for certain models, e.g. devstral) reject a FORCED tool_choice with
     # an error even though ordinary tool calling works, which would drop
     # the checklist (and with it the end_turn gate). A plain call asking for
     # a bare JSON array sidesteps the gateway quirk entirely.
+    if _refused("the plain fallback"):
+        return None
     try:
         response = llm_client.chat(
             system=_SYSTEM_PROMPT,
@@ -1407,18 +1442,39 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _target_line(target: Target | None) -> str:
+    """What the user wants built, for the planner; empty when the target is unknown."""
+    if target is None or not target.description:
+        return ""
+    if target.is_web_app:
+        # The harness seeds that item itself (orchestrator._deterministic_gap_tasks).
+        return (f"WHAT THE USER WANTS BUILT: {target.description} (a web app used through screens). "
+                "If the inventory has no frontend, the coding agent already has a task to build it with "
+                "a screen per entity: add UI tasks only for what the request names beyond that.\n\n")
+    ui = "used through screens" if target.has_user_interface else "no user interface"
+    return f"WHAT THE USER WANTS BUILT: {target.description} ({ui}).\n\n"
+
+
 def _build_user_prompt(
     instructions: str,
     generator_used: str,
     model_json: str,
     inventory: str,
     action_inventory: str = "",
+    target_line: str = "",
+    assistant_notes: str = "",
 ) -> str:
     # Only derived inventories are clipped; user requirements must not disappear.
     inventory_clipped = _clip(inventory, _MAX_INVENTORY_CHARS, "inventory")
     actions_clipped = _clip(action_inventory, _MAX_ACTION_INVENTORY_CHARS, "action inventory")
+    # Not the user's words: a feature named only here is no task (r9/r11/r12-p61 got auth tasks from them).
+    notes = (f"ASSISTANT'S NOTES (context for how to build what the request names; NOT the user's words "
+             f"and never a source of tasks the request does not name):\n{assistant_notes}\n\n"
+             if assistant_notes else "")
     return (
         f"USER REQUEST:\n{instructions}\n\n"
+        f"{notes}"
+        f"{target_line}"
         f"DETERMINISTIC GENERATOR THAT RAN: {generator_used}\n\n"
         f"DOMAIN MODEL (JSON):\n{model_json}\n\n"
         f"FILE INVENTORY (paths + sizes):\n{inventory_clipped}\n\n"
@@ -1470,6 +1526,22 @@ def _clip(text: str, limit: int, label: str) -> str:
     return f"{head}\n…[{label} truncated at {limit} chars]"
 
 
+def _planner_conversion_issue(issue: Any) -> Any:
+    """A rejected-constraint diagnostic without the copies of its own expression.
+
+    The converter sets ``original_text`` to the expression it parsed and quotes
+    that expression again inside ``reason``; the planner needs it once.
+    """
+    if not isinstance(issue, dict) or not issue.get("expression"):
+        return issue
+    expression = issue["expression"]
+    compact = {key: value for key, value in issue.items()
+               if not (key == "original_text" and value == expression)}
+    if isinstance(compact.get("reason"), str):
+        compact["reason"] = compact["reason"].replace(f" in '{expression}'", "", 1)
+    return compact
+
+
 def _safe_serialize_model(domain_model) -> str:
     """Best-effort JSON dump of the domain model.
 
@@ -1493,13 +1565,16 @@ def _safe_serialize_model(domain_model) -> str:
         fallback = {}
         issues = getattr(domain_model, "conversion_issues", None)
         if issues:
-            fallback["conversion_issues"] = issues
+            fallback["conversion_issues"] = [_planner_conversion_issue(i) for i in issues]
         try:
             names = [c.name for c in domain_model.get_classes()]
             fallback["classes"] = [{"name": n} for n in names]
         except Exception:
             pass
         return json.dumps(fallback, default=str)
+
+    if data.get("conversion_issues"):
+        data = {**data, "conversion_issues": [_planner_conversion_issue(i) for i in data["conversion_issues"]]}
 
     def _dump(payload: Any) -> str:
         return json.dumps(payload, default=str, separators=(",", ":"))
@@ -1580,5 +1655,18 @@ def _extract_text(response: dict[str, Any]) -> str:
 
 
 def _parse_task_array(text: str) -> list | None:
-    """The first JSON array in a model response (fenced, bare or in prose)."""
-    return extract_json(text, list)
+    """The task list in a model response (fenced, bare or in prose): a JSON
+    array, or the ``submit_tasks`` schema's own ``{"tasks": [...]}``, which a
+    gateway that ignores tool_choice may send as text."""
+    tasks = extract_json(text, list)
+    if tasks is not None:
+        return tasks
+    wrapped = extract_json(text, dict)
+    tasks = wrapped.get("tasks") if wrapped else None
+    if not isinstance(tasks, list):
+        return None
+    # Like a bare [], an empty list means "scaffold sufficient" only when it
+    # is the whole reply, never an example quoted in prose.
+    if not tasks and parse_json_safely(clean_json_response(text)) != wrapped:
+        return None
+    return tasks

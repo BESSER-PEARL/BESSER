@@ -395,3 +395,60 @@ def read_clerk(clerk_id, database):
     db_clerk = database.query(Clerk).filter(Clerk.id == clerk_id).first()
     {body}
 ''') == []
+
+
+MIXIN_MODELS = '''\
+from sqlalchemy import Column, DateTime, func
+from sqlalchemy.orm import DeclarativeBase
+
+class AppBase(DeclarativeBase):
+    def to_dict(self):
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+
+class TimestampMixin:
+    created_at = Column(DateTime, server_default=func.now())
+
+class Order(AppBase, TimestampMixin):
+    __tablename__ = "order"
+'''
+
+
+def test_silent_on_members_a_mixin_or_the_declarative_base_declares(tmp_path):
+    """``to_dict`` comes from the app's declarative base and ``created_at``
+    from a mixin; neither base is a model class, and both members exist."""
+    assert _issues(tmp_path, mixins=MIXIN_MODELS, order='''\
+from mixins import Order
+
+def read_order(order_id, database):
+    db_order = database.query(Order).filter(Order.id == order_id).first()
+    payload = db_order.to_dict()
+    payload["age"] = db_order.created_at
+    return payload
+''') == []
+
+
+def test_a_mixin_resolved_in_the_app_still_misses_an_undeclared_read(tmp_path):
+    issues = _issues(tmp_path, mixins=MIXIN_MODELS, order='''\
+from mixins import Order
+
+def read_order(order_id, database):
+    db_order = database.query(Order).filter(Order.id == order_id).first()
+    return db_order.updated_at
+''')
+    assert len(issues) == 1 and "Order.updated_at" in issues[0], issues
+
+
+def test_silent_when_a_base_is_defined_outside_the_app(tmp_path):
+    """A base imported from a library may declare anything."""
+    assert _issues(tmp_path, mixins='''\
+from sqlalchemy_utils import Timestamp
+
+class Order(Base, Timestamp):
+    __tablename__ = "order"
+''', order='''\
+from mixins import Order
+
+def read_order(order_id, database):
+    db_order = database.query(Order).filter(Order.id == order_id).first()
+    return db_order.updated
+''') == []

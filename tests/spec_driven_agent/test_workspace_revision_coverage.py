@@ -168,3 +168,45 @@ def test_excluded_dirs_stay_excluded(orch):
     _write(orch, "node_modules/left-pad/index.js", "module.exports = 1\n")
     _write(orch, "__pycache__/main.cpython-311.pyc", "bytes\n")
     assert orch._workspace_revision() == before
+
+
+# ------------------------- output-dir names that are also ordinary folder names
+
+
+@pytest.mark.parametrize("rel", [
+    "frontend/src/features/coverage/CoverageForm.jsx",  # an insurance app's feature folder
+    "backend/coverage/router.py",
+    "backend/obj/models.py",                            # a domain package named obj
+    "frontend/src/htmlcov/View.tsx",
+])
+def test_source_under_an_output_dir_name_is_still_tracked(orch, rel):
+    """``coverage`` / ``obj`` / ``htmlcov`` matched at any depth, so an edit
+    here kept the revision, and every revision-keyed cache (``_validate_app``,
+    the runtime probe, the Phase 3 unchanged-state guard) served a stale result."""
+    _write(orch, "frontend/package.json", "{}\n")
+    _write(orch, "backend/requirements.txt", "fastapi\n")
+    _write(orch, rel, "first version\n")
+    before = orch._workspace_revision()
+    _write(orch, rel, "second version\n")
+    assert orch._workspace_revision() != before, f"editing {rel} registered no progress"
+
+
+@pytest.mark.parametrize("rel", [
+    "frontend/coverage/lcov-report/index.html",  # jest/vitest, next to package.json
+    "coverage/lcov.info",                        # a test run from the workspace root
+    "htmlcov/index.html",
+    "backend/htmlcov/index.html",                # coverage.py, next to requirements.txt
+    "src/Api/obj/project.assets.json",           # MSBuild, next to Api.csproj
+    "backend/.pytest_cache/v/cache/nodeids",     # dot-named caches, at any depth
+    "frontend/.dart_tool/package_config.json",
+])
+def test_tool_output_dirs_are_still_not_progress(orch, rel):
+    """The other direction: a test, lint or build run's own report is no edit."""
+    _write(orch, "frontend/package.json", "{}\n")
+    _write(orch, "backend/requirements.txt", "fastapi\n")
+    _write(orch, "src/Api/Api.csproj", "<Project/>\n")
+    before = orch._workspace_revision()
+    _write(orch, rel, "generated v1")
+    assert orch._workspace_revision() == before
+    _write(orch, rel, "generated v2, quite different")
+    assert orch._workspace_revision() == before

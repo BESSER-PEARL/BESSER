@@ -15,6 +15,8 @@ from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -83,6 +85,7 @@ from besser.utilities.web_modeling_editor.backend.services.validators.alloy.sema
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     SpecDrivenRuntime,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_record import enable_run_log
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -211,6 +214,7 @@ def _validate_env_vars() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _validate_env_vars()
+    enable_run_log()
     # A broken BESSER_MODEL_CATALOG stops startup here rather than silently
     # dropping a provider from the key dialog.
     load_model_catalog()
@@ -314,6 +318,20 @@ app.include_router(agent_simulator_router.router)
 
 
 # Exception handlers
+# Pydantic's ``input`` (the whole body when a model validator fails, API keys
+# included) and ``ctx`` are dropped from a 422; ``type`` / ``loc`` / ``msg`` stay.
+_REDACTED_VALIDATION_ERROR_KEYS = frozenset({"input", "ctx"})
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request, exc):
+    errors = [
+        {key: value for key, value in error.items() if key not in _REDACTED_VALIDATION_ERROR_KEYS}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 @app.exception_handler(ConversionError)
 async def conversion_error_handler(request, exc):
     return JSONResponse(status_code=400, content={"detail": str(exc)})

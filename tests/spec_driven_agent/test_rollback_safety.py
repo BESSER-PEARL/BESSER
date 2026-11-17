@@ -20,7 +20,7 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import (
-    LLMOrchestrator, _ROLLBACK_DISCARD_DIR, _SNAPSHOT_DIR,
+    LLMOrchestrator, TOOL_INPUTS_FILENAME, _ROLLBACK_DISCARD_DIR, _SNAPSHOT_DIR,
 )
 
 
@@ -83,6 +83,22 @@ def test_rollback_preserves_the_trace_and_checkpoint(orch, tmp_path):
     # ...and neither was copied into the snapshot in the first place.
     assert not (tmp_path / _SNAPSHOT_DIR / ".besser_trace.jsonl").exists()
     assert not (tmp_path / _SNAPSHOT_DIR / ".besser_checkpoint.json").exists()
+
+
+def test_rollback_keeps_the_discarded_attempts_tool_inputs(orch, tmp_path):
+    """The trace and the recipe's tool_calls still list the discarded repair's
+    writes, so the sidecar holding their untruncated inputs must keep them."""
+    root = str(tmp_path)
+    _write(root, TOOL_INPUTS_FILENAME, '{"turn": 1}\n')
+    _write(root, "app.py", "phase1")
+    orch._create_snapshot()
+    _write(root, TOOL_INPUTS_FILENAME, '{"turn": 1}\n{"turn": 9}\n')
+    _write(root, "app.py", "phase3-broken")
+
+    assert orch._restore_snapshot() is True
+    assert (tmp_path / "app.py").read_text() == "phase1"
+    assert (tmp_path / TOOL_INPUTS_FILENAME).read_text() == '{"turn": 1}\n{"turn": 9}\n'
+    assert not (tmp_path / _SNAPSHOT_DIR / TOOL_INPUTS_FILENAME).exists()
 
 
 def test_a_failing_restore_does_not_destroy_the_workspace(orch, tmp_path, monkeypatch):

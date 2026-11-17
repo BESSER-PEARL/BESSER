@@ -349,7 +349,8 @@ def test_explicit_blocked_reason_survives_listing_and_resume(executor, tmp_path)
     restored.restore_tasks(executor.task_snapshot())
     listing = restored._task_list({"action": "list"})["tasks"][0]
     assert listing["status"] == "blocked"
-    assert listing["verification"] == "unverified"
+    assert "verification" not in listing  # implied by status
+    assert restored.task_snapshot()[0]["verification"] == "unverified"
     assert listing["reason"] == "Payment adapter is unavailable"
     # An explicit block also closes only on fresh implementation evidence.
     repaired = _done(restored, id=1, evidence=_record_changes(restored, [1]))

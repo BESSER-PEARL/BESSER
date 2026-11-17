@@ -5,8 +5,8 @@ executes generated application code, just like the constructibility probe, in
 the run sandbox with no network; it is not proof of complete specification
 coverage.
 No commands, external URLs or Python expressions are accepted. Request headers
-are limited to an allow-list, and the values of sensitive ones never appear in
-the report.
+are limited to an allow-list, and the values of sensitive ones, credential
+response fields and JWT-shaped strings never appear in the report.
 The child imports no BESSER package and runs this same file as a script, so it
 masks the scenario's own secrets with ``_scrub`` rather than
 ``besser.utilities.secret_redaction``.
@@ -29,10 +29,12 @@ from urllib.parse import quote, unquote, urlsplit
 _MARKER = "BESSER_API_SCENARIO_REPORT:"
 _PROBE_TIMEOUT_SECONDS = 60
 _MAX_REQUESTS = 20
+_REQUEST_KEYS = frozenset({"method", "path", "json", "headers", "expected_status", "expected_fields"})
 _MAX_INPUT_BYTES = 64_000
 _BODY_CHARS = 2000
 _MAX_REPORTED_FAILURES = 5
 _NO_JSON = object()
+_MISSING = object()
 _REFERENCE = re.compile(r"\{\{(\d+)(?:\.([^{}]+))?\}\}")
 _MAX_HEADERS = 10
 _HEADER_VALUE_CHARS = 4096
@@ -47,7 +49,29 @@ _DENIED_X_HEADERS = frozenset({"x-real-ip", "x-http-method-override", "x-method-
                                "x-original-url", "x-rewrite-url", "x-original-method"})
 _SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "password", "credential")
 _REDACTED = "[REDACTED]"
+# A response field holding a credential, judged on its snake/kebab/camel words: any secret
+# word (``passwordNew``, ``password_reset_code``), ``token`` that is not a page cursor
+# (``next_page_token``), or api/access/private/secret key, auth/reset code or session id, unless
+# the next word only describes or identifies it (``password_changed_at``, ``token_count``, ``api_key_name``).
+# A run of non-ASCII letters is a word of its own, so no letter is dropped and the ASCII
+# camelCase words around it stay apart (``überAdmin``: ü, ber, admin).
+_KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+|[^\W\d_A-Za-z]+")
+_SECRET_WORDS = frozenset({"password", "passwd", "passphrase", "secret", "jwt", "apikey", "credential",
+                           "credentials", "otp"})
+_DESCRIBING_WORDS = frozenset({"changed", "updated", "created", "at", "hint", "expires", "expiry", "expiration",
+                               "length", "policy", "required", "strength", "count", "type", "santa",
+                               "question", "sent", "id", "name", "prefix", "suffix", "last", "label",
+                               "attempts", "min", "max"})
+_CURSOR_WORDS = frozenset({"page", "next", "prev", "previous", "continuation", "cursor", "sync"})
+_SECRET_PAIRS = {"key": frozenset({"api", "access", "private", "secret"}),
+                 "code": frozenset({"auth", "authorization", "reset", "verification"}),
+                 "id": frozenset({"session"})}
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}")
 _SCOPE = "Only the submitted scenario was checked; this is not complete specification verification."
+# ``boot`` values meaning the scenario never ran: the sandbox was unavailable,
+# the worker timed out, or the harness lacks a dependency (httpx). Unknowns,
+# not application failures - see ``runtime_check_unverified``.
+DID_NOT_RUN_BOOTS = frozenset({"probe_error", "timeout", "missing_dependency"})
 
 
 def _error(message, boot="not_started", **extra):
@@ -114,27 +138,107 @@ def redact_scenario_headers(requests):
             for request in requests]
 
 
-def _scrub(value, secrets):
+def name_words(name: str) -> list[str]:
+    """The lowercase words of a snake_case, camelCase or kebab-case name."""
+    return [word.lower() for word in _KEY_WORDS.findall(name)]
+
+
+def _credential_key(key):
+    words = name_words(key) if isinstance(key, str) else []
+    for index, word in enumerate(words):
+        secret = (word in _SECRET_WORDS
+                  or (word == "token" and not _CURSOR_WORDS.intersection(words[:index]))
+                  or (index > 0 and words[index - 1] in _SECRET_PAIRS.get(word, ())))
+        if secret and (index + 1 == len(words) or words[index + 1] not in _DESCRIBING_WORDS):
+            return True
+    return False
+
+
+def _credential_field(key, value):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)) or value == "":
+        return False
+    if not isinstance(value, str) and isinstance(key, str) and name_words(key)[-1:] == ["id"]:
+        return False  # a numeric id references a record (a conference Session), it is no minted secret
+    return _credential_key(key)
+
+
+def _singular(name: str) -> str:
+    return name[:-1] if name.endswith("s") and not name.endswith("ss") else name
+
+
+def _child_names(parent, key) -> list:
+    """The names a value at ``parent.key`` goes by: ``key`` and, unless ``key`` repeats
+    the parent's last word, the parent's word before it (``tokens.access`` is ``token_access``)."""
+    if not isinstance(parent, str) or not isinstance(key, str):
+        return [key]
+    head = _singular(parent)
+    last = name_words(head)[-1:]
+    return [key] if not last or last[0] in name_words(key) else [key, f"{head}_{key}"]
+
+
+def _path_names(path: str) -> list:
+    """The names of the value at a dotted JSON path; a list item goes by its list's name."""
+    names: list = []
+    for part in path.split(".") if path else []:
+        names = [_singular(name) for name in names] if part.isdecimal() else _child_names(
+            names[0] if names else None, part)
+    return names
+
+
+def _credential_reference(match):
+    return any(_credential_key(name) for name in _path_names(match.group(2) or ""))
+
+
+def _sent_credentials(request, previous):
+    """Credential-named response values ``request`` names by reference, e.g. /reset/{{1.reset_token}}."""
+    sent = set()
+    for match in _REFERENCE.finditer(json.dumps(
+            [request.get(key) for key in ("path", "headers", "json", "expected_fields")])):
+        if _credential_reference(match) and int(match.group(1)) < len(previous):
+            body = previous[int(match.group(1))]
+            value = _walk(body, _reference_path(body, match.group(2) or ""))
+            if isinstance(value, str) and len(value) >= 8:
+                sent.add(value)
+    return sent
+
+
+def _scrub(value, secrets, names=()):
+    """``value`` with credentials hidden; ``names`` are what it is called (see ``_child_names``)."""
+    if any(_credential_field(name, value) for name in names):
+        return _REDACTED
     if isinstance(value, str):
         for secret in secrets:
             value = value.replace(secret, _REDACTED)
-        return value
+        return _JWT.sub(_REDACTED, value)
     if isinstance(value, list):
-        return [_scrub(item, secrets) for item in value]
+        return [_scrub(item, secrets, [_singular(name) for name in names if isinstance(name, str)]) for item in value]
     if isinstance(value, dict):
-        return {key: _scrub(item, secrets) for key, item in value.items()}
+        # A validation error echoes the submitted value: {"loc": [..., "password"], "input": ...}.
+        loc = value.get("loc")
+        field = next((part for part in reversed(loc) if isinstance(part, str)), None) if isinstance(loc, list) else None
+        echoed = {"input", "ctx"} if _credential_key(field) else set()
+        parent = names[0] if names else None
+        return {key: _REDACTED if key in echoed else _scrub(item, secrets, _child_names(parent, key))
+                for key, item in value.items()}
     return value
 
 
 def _validate_requests(requests):
-    if not isinstance(requests, list) or not 1 <= len(requests) <= _MAX_REQUESTS:
-        raise ValueError(f"requests must contain 1 to {_MAX_REQUESTS} request objects")
+    if not isinstance(requests, list):
+        raise ValueError("requests must be a list of request objects")
+    if not 1 <= len(requests) <= _MAX_REQUESTS:
+        raise ValueError(f"requests must contain 1 to {_MAX_REQUESTS} request objects, got {len(requests)}; "
+                         "split a longer workflow into scenarios with their own scenario_id")
     serialized = json.dumps(requests, allow_nan=False)
     if len(serialized.encode("utf-8")) > _MAX_INPUT_BYTES:
         raise ValueError(f"scenario exceeds {_MAX_INPUT_BYTES} bytes")
     for index, request in enumerate(requests):
-        if not isinstance(request, dict) or set(request) - {"method", "path", "json", "headers", "expected_status", "expected_fields"}:
-            raise ValueError(f"request {index} has an invalid shape or unsupported keys")
+        if not isinstance(request, dict):
+            raise ValueError(f"request {index} must be an object")
+        unsupported = sorted(set(request) - _REQUEST_KEYS, key=str)
+        if unsupported:
+            raise ValueError(f"request {index}: unsupported key(s) {', '.join(map(repr, unsupported))}; "
+                             f"a request takes {', '.join(sorted(_REQUEST_KEYS))}")
         if request.get("method") not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise ValueError(f"request {index}: method must be GET, POST, PUT, PATCH or DELETE")
         _local_path(request.get("path"))
@@ -154,7 +258,7 @@ def _validate_requests(requests):
     return requests
 
 
-def _json_path(body, path):
+def _walk(body, path):
     current = body
     for part in path.split(".") if path else []:
         if isinstance(current, dict) and part in current:
@@ -162,15 +266,66 @@ def _json_path(body, path):
         elif isinstance(current, list) and part.isdecimal() and int(part) < len(current):
             current = current[int(part)]
         else:
-            raise ValueError(f"JSON path {path!r} was not present")
+            return _MISSING
     return current
 
 
-def _resolve_references(value, previous, *, in_path=False, in_header=False):
-    if isinstance(value, dict):
-        return {key: _resolve_references(item, previous) for key, item in value.items()}
+def _holds(value, path):
     if isinstance(value, list):
-        return [_resolve_references(item, previous) for item in value]
+        return any(isinstance(item, dict) and _walk(item, path) is not _MISSING for item in value)
+    return _walk(value, path) is not _MISSING
+
+
+def _sole_wrapper(body, path):
+    """The one dict key holding ``path``, as in {"dataset": {"id": 1}}, or None.
+
+    With {"meta": {"id": ...}, "data": [...]} a guess could name the wrong id.
+    """
+    if not isinstance(body, dict):
+        return None
+    holders = [key for key, child in body.items()
+               if isinstance(child, (dict, list)) and _holds(child, path)]
+    if len(holders) == 1 and isinstance(body[holders[0]], dict) and "." not in holders[0]:
+        return holders[0]
+    return None
+
+
+def _reference_path(body, path):
+    """The path a ``{{N.path}}`` reference reads: ``path``, or it under the one wrapper holding it."""
+    wrapper = _sole_wrapper(body, path) if _walk(body, path) is _MISSING else None
+    return path if wrapper is None else f"{wrapper}.{path}"
+
+
+def _json_path(body, path):
+    current = _walk(body, path)
+    if current is _MISSING:
+        hint = ""
+        if isinstance(body, dict) and body:
+            wrapper = _sole_wrapper(body, path)
+            if wrapper is not None:
+                hint = f"; did you mean {wrapper + '.' + path!r}?"
+            else:
+                keys = ", ".join(map(repr, list(body)[:10])) + (", ..." if len(body) > 10 else "")
+                hint = f"; the top-level keys are {keys}"
+        elif isinstance(body, list):
+            hint = f"; the body is a list of {len(body)} item(s)"
+            if body and not path.split(".")[0].isdecimal():
+                hint += f", so index one, e.g. {'0.' + path!r}"
+        raise ValueError(f"JSON path {path!r} was not present{hint}")
+    return current
+
+
+def _resolve_references(value, previous, *, in_path=False, in_header=False, redact=False, notes=None):
+    """Substitute ``{{N.path}}`` references from earlier responses.
+
+    A path missing from a response that wraps the record under one key
+    (``{"todolist": {"id": 1}}``) resolves through that key, and ``notes``,
+    when given, records the path actually read.
+    """
+    if isinstance(value, dict):
+        return {key: _resolve_references(item, previous, notes=notes) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve_references(item, previous, notes=notes) for item in value]
     if not isinstance(value, str):
         return value
 
@@ -178,13 +333,19 @@ def _resolve_references(value, previous, *, in_path=False, in_header=False):
         index = int(match.group(1))
         if index >= len(previous) or previous[index] is _NO_JSON:
             raise ValueError(f"response {index} has no preceding JSON value to reference")
-        return _json_path(previous[index], match.group(2) or "")
+        body, path = previous[index], match.group(2) or ""
+        read = _reference_path(body, path)
+        if read != path and notes is not None:
+            notes.append(f"`{{{{{index}.{path}}}}}` resolved as `{{{{{index}.{read}}}}}`")
+        return _json_path(body, read)
 
     match = _REFERENCE.fullmatch(value)
     if match and not (in_path or in_header):
         return copy.deepcopy(resolve(match))
 
     def substitute(match):
+        if redact and _credential_reference(match):
+            return _REDACTED
         replacement = resolve(match)
         if isinstance(replacement, (dict, list)):
             raise ValueError("embedded references must resolve to scalar values")
@@ -192,6 +353,21 @@ def _resolve_references(value, previous, *, in_path=False, in_header=False):
         return quote(text, safe="") if in_path else text
 
     return _REFERENCE.sub(substitute, value)
+
+
+def _expected_shown(value, previous):
+    """An expected value that resolved, as a failure message may quote it: each
+    referenced value has its credentials hidden under the names the reference gives it."""
+    if isinstance(value, dict):
+        return {key: _expected_shown(item, previous) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expected_shown(item, previous) for item in value]
+    match = _REFERENCE.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        return _resolve_references(value, previous, redact=True)
+    body = previous[int(match.group(1))]
+    read = _reference_path(body, match.group(2) or "")
+    return _scrub(copy.deepcopy(_walk(body, read)), (), _path_names(read))
 
 
 def _same_literal(actual, expected):
@@ -226,15 +402,6 @@ def confirmed_create_paths(report: dict) -> set[str]:
     if report.get("boot") != "ok":
         return set()
 
-    def records(value):
-        if isinstance(value, dict):
-            if type(value.get("id")) in (int, str):
-                return [value]
-            return [record for child in value.values() for record in records(child)]
-        if isinstance(value, list):
-            return [record for child in value for record in records(child)]
-        return []
-
     responses = report.get("responses", [])
     confirmed = set()
     for index, created in enumerate(responses):
@@ -248,14 +415,61 @@ def confirmed_create_paths(report: dict) -> set[str]:
                     or not 200 <= read["status"] < 300 or read.get("truncated") or read.get("failures")
                     or not (read_path == path or read_path.startswith(path + "/"))):
                 continue
-            for inserted in records(created.get("json")):
-                for observed in records(read.get("json")):
-                    common = set(inserted) & set(observed) - {"id"}
-                    if (_same_literal(inserted["id"], observed["id"])
-                            and any(isinstance(inserted[key], (str, int, float, bool))
-                                    and _same_literal(inserted[key], observed[key]) for key in common)):
-                        confirmed.add(path)
+            # The worker compared the unredacted bodies; a report without that comparison
+            # (an older saved one) is judged on its redacted copies.
+            reads_back = read.get("reads_back")
+            if (created.get("index") in reads_back if isinstance(reads_back, list)
+                    else _reads_back(created.get("json"), read.get("json"))):
+                confirmed.add(path)
     return confirmed
+
+
+# Keys that make a body a record: whatever else it holds (a status, an error field) is its data.
+_RECORD_KEYS = ("id", "pk", "uuid", "_id")
+_FAILURE_FLAGS = ("success", "ok", "succeeded")
+_FAILURE_KEYS = ("error", "errors", "detail")
+_FAILURE_STATUSES = frozenset({"error", "failed", "failure"})
+
+
+def declares_failure(body) -> bool:
+    """Whether a response body is a failure envelope: no record, and an explicit flag that
+    the call did not act (``success``/``ok``/``result`` false, an ``error`` or ``detail``,
+    ``status: "error"``), at the top or in a wrapper. A list fails when all its items do."""
+    if isinstance(body, list):
+        return bool(body) and all(declares_failure(item) for item in body)
+    if not isinstance(body, dict) or any(body.get(key) not in (None, "") for key in _RECORD_KEYS):
+        return False
+    # ``result: false`` is the scaffold's "declined to act"; a result of 0 is a value.
+    if any(body.get(key, True) == 0 or str(body.get(key)).strip().lower() == "false" for key in _FAILURE_FLAGS)             or str(body.get("result")).strip().lower() == "false":
+        return True
+    status = body.get("status")
+    if any(body.get(key) for key in _FAILURE_KEYS) or (
+            isinstance(status, str) and status.strip().lower() in _FAILURE_STATUSES):
+        return True
+    return any(declares_failure(value) for value in body.values() if isinstance(value, (dict, list)))
+
+
+def _records(value):
+    if isinstance(value, dict):
+        if type(value.get("id")) in (int, str):
+            return [value]
+        return [record for child in value.values() for record in _records(child)]
+    if isinstance(value, list):
+        return [record for child in value for record in _records(child)]
+    return []
+
+
+def _reads_back(created, observed) -> bool:
+    """Whether ``observed`` holds a record of ``created``: the same id and one equal plain field."""
+    for inserted in _records(created):
+        for record in _records(observed):
+            common = set(inserted) & set(record) - {"id"}
+            # Two redacted values are equal whatever they hid, so they prove nothing.
+            if (_same_literal(inserted["id"], record["id"])
+                    and any(isinstance(inserted[key], (str, int, float, bool)) and inserted[key] != _REDACTED
+                            and _same_literal(inserted[key], record[key]) for key in common)):
+                return True
+    return False
 
 
 def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | None = None) -> dict:
@@ -377,14 +591,17 @@ async def _run_requests(app, requests):
             for index, request in enumerate(requests):
                 item = {"index": index, "method": request["method"], "path": request["path"], "failures": []}
                 body = _NO_JSON
+                notes: list[str] = []
                 try:
-                    path = _local_path(_resolve_references(request["path"], previous, in_path=True))
-                    item["path"] = path
-                    kwargs = {"json": _resolve_references(request["json"], previous)} if "json" in request else {}
+                    path = _local_path(_resolve_references(request["path"], previous, in_path=True, notes=notes))
+                    item["path"] = _resolve_references(request["path"], previous, in_path=True, redact=True)
+                    kwargs = ({"json": _resolve_references(request["json"], previous, notes=notes)}
+                              if "json" in request else {})
                     if request.get("headers"):
                         headers = {}
                         for name, raw in request["headers"].items():
-                            value = _header_value(_resolve_references(raw, previous, in_header=True), index, name)
+                            value = _header_value(
+                                _resolve_references(raw, previous, in_header=True, notes=notes), index, name)
                             headers[name] = value
                             if _sensitive_header(name):
                                 # The whole value and its credential part, e.g.
@@ -410,8 +627,10 @@ async def _run_requests(app, requests):
                     item["status"] = response.status_code
                     try:
                         body = response.json()
-                        item["json"] = _bounded(body)
-                        item["truncated"] = len(json.dumps(body, ensure_ascii=True)) > _BODY_CHARS
+                        # References read the raw ``body``; the report keeps a redacted copy, cut after redaction.
+                        shown = _scrub(body, ())
+                        item["json"] = _bounded(shown)
+                        item["truncated"] = len(json.dumps(shown, ensure_ascii=True)) > _BODY_CHARS
                     except ValueError:
                         item["text"] = response.text[:_BODY_CHARS]
                         item["truncated"] = len(response.text) > _BODY_CHARS
@@ -419,15 +638,47 @@ async def _run_requests(app, requests):
                     expected = expected if isinstance(expected, list) else [expected]
                     if response.status_code not in expected:
                         item["failures"].append(f"expected HTTP {request.get('expected_status', '2xx')}, got {response.status_code}")
-                    for path, expected_value in request.get("expected_fields", {}).items():
+                    for path, written in request.get("expected_fields", {}).items():
                         try:
                             actual = _json_path(body, path)
-                            if not _same_literal(actual, expected_value):
+                            # Braces that name no earlier value are part of the text: the
+                            # value as written is accepted too.
+                            if _same_literal(actual, written):
+                                continue
+                            resolved_notes: list[str] = []
+                            try:
+                                resolved = _resolve_references(written, previous, notes=resolved_notes)
+                                unresolved = False
+                            except ValueError:
+                                # Braces that resolve to nothing: the expectation is the text as written.
+                                resolved, unresolved = written, True
+                            notes.extend(resolved_notes)
+                            if not _same_literal(actual, resolved):
+                                # A message is a string: redact the response values before quoting
+                                # them. An expected value written out in full is the test's own text.
+                                names = _path_names(path)
+                                expected_value = written if unresolved else _expected_shown(written, previous)
+                                if expected_value != written:
+                                    expected_value = _scrub(expected_value, (), names)
+                                actual = _scrub(actual, (), names)
                                 item["failures"].append(f"{path}: expected {_bounded(expected_value)!r}, got {_bounded(actual)!r}")
                         except ValueError as exc:
                             item["failures"].append(str(exc))
                 except Exception as exc:
                     item["failures"].append(f"{type(exc).__name__}: {exc}"[:1000])
+                if notes:
+                    item["notes"] = list(dict.fromkeys(notes))
+                # An error or failure of this request may quote a credential it sent back.
+                sent = sorted(_sent_credentials(request, previous), key=len, reverse=True)
+                item["failures"] = _scrub(item["failures"], sent)
+                secrets.update(sent)  # a later body may echo it back; scrubbed with the headers' below
+                if "error" in item:
+                    item["error"]["message"] = _scrub(item["error"]["message"], sent)
+                if request["method"] == "GET" and body is not _NO_JSON:
+                    # Compared here, before redaction: a record whose only field is a secret is read back too.
+                    item["reads_back"] = [earlier for earlier, raw in enumerate(previous)
+                                          if requests[earlier]["method"] == "POST" and raw is not _NO_JSON
+                                          and _reads_back(raw, body)]
                 previous.append(body)
                 count = len(item["failures"])
                 item["failure_count"] = count

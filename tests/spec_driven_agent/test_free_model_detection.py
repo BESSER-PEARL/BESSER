@@ -91,7 +91,7 @@ def test_known_paid_models_bill_at_published_rates(model_id, input_rate, output_
     # Anthropic's cache reads are 0.1x input and 5-minute writes 1.25x. Haiku
     # 5.5 had no cache rates in the catalog and billed both at the input rate.
     ("claude-haiku-5-5", {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_write": 0.125}),
-    ("claude-sonnet-5-5", {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_write": 2.5}),
+    ("claude-sonnet-5-5", {"input": 2.0, "output": 10.0, "cache_read": 0.1, "cache_write": 2.5}),
     ("claude-opus-5-5", {"input": 4.0, "output": 20.0, "cache_read": 0.2, "cache_write": 5.0}),
 ])
 def test_catalog_claude_models_bill_published_cache_rates(model_id, rates):

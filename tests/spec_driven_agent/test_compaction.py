@@ -199,6 +199,27 @@ class TestCompaction:
         assert "write_file" in summary
         assert "modify_file" in summary
 
+    def test_summary_lists_the_project_not_its_installed_dependencies(self, simple_model, tmp_path):
+        """After ``npm install`` an unpruned walk is all node_modules: the 25
+        paths the summary shows were every one a dependency file, so a model
+        that had just lost its context was told nothing about its own source.
+        """
+        for index in range(40):
+            dependency = tmp_path / "frontend" / "node_modules" / f"pkg{index:02d}"
+            dependency.mkdir(parents=True)
+            (dependency / "index.js").write_text("x", encoding="utf-8")
+        for rel in ("backend/main_api.py", "frontend/src/App.tsx",
+                    "backend/__pycache__/main_api.cpython-312.pyc"):
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+
+        summary = self._make_orchestrator(simple_model, tmp_path)._summarize_messages(
+            [{"role": "user", "content": "test"}])
+
+        assert "backend/main_api.py" in summary and "frontend/src/App.tsx" in summary
+        assert "node_modules" not in summary and "__pycache__" not in summary
+
 
 # ======================================================================
 # Standalone module tests
@@ -573,6 +594,31 @@ class TestTokenBudgetTail:
             preserve_tokens=12_000,
         )
         assert standalone_estimate_tokens(tight) < standalone_estimate_tokens(roomy)
+
+    def test_a_compaction_that_frees_nothing_is_not_applied(self, tmp_path, caplog):
+        """The newest turn alone is over the budget, so everything in front of
+        it is one short request. Summarising that request makes the history
+        LARGER and still over the threshold, yet it rewrote message 0 (a full
+        prompt-cache miss), dropped every thinking block, and fired again on
+        the next turn. Nothing to gain: the history is sent as it is."""
+        messages = [
+            {"role": "user", "content": "build the app"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "write_file",
+                                               "input": {"path": "app.py",
+                                                         "content": _bulk(STANDALONE_THRESHOLD)}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]},
+            {"role": "user", "content": "<system-reminder>verify it</system-reminder>"},
+        ]
+        log = [{"tool": "write_file", "input": {"path": "app.py"}}]
+
+        with caplog.at_level("WARNING"):
+            result, did_compact = standalone_maybe_compact(
+                messages=messages, tool_calls_log=log, output_dir=str(tmp_path),
+            )
+
+        assert did_compact is False
+        assert result is messages
+        assert "frees nothing" in caplog.text
 
     def test_tail_cut_index_never_returns_an_empty_tail(self):
         messages = [{"role": "user", "content": "a" * 4_000}]

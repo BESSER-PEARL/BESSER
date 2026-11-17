@@ -9,6 +9,7 @@ placeholders only, not behavioral correctness (which still needs runtime tests).
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from besser.spec_driven_agent.parsed_source import parse_source
@@ -236,12 +237,37 @@ def _endpoint_key(endpoint: ActionEndpoint) -> tuple[str, str, str, str]:
     return endpoint.path, endpoint.function, endpoint.http_method, endpoint.route
 
 
+# "the cancel endpoint", "the approve action": the task is about the handler.
+_HANDLER_NOUNS = r"(?:method|action|endpoint|handler|route|operation|logic|behaviou?r)s?"
+# "Implement approve in sql_alchemy.py" or "implement cancel.", not "implement a cancel button".
+_AFTER_IMPLEMENTED_ACTION = r"(?=\s*(?:[.,;:]|$)|\s+(?:in|for|on|of|so|to|via|with|using|by|when|from)\b)"
+
+
+def _names_handler(task: str, endpoint: ActionEndpoint) -> bool:
+    """Whether ``task`` is the handler's own work rather than merely naming its action.
+
+    "Add a Cancel button", a 'cancelled' badge or "an email after check-out"
+    are separate work; folded into the handler task they would close with it
+    once the 501 stub is gone, with nothing checking them.
+    """
+    action = rf"['\"`]?{re.escape(endpoint.action)}['\"`]?"
+    return (
+        endpoint.route in task
+        or re.search(rf"\b{re.escape(endpoint.function)}\b", task) is not None
+        or re.search(rf"\b{action}\s+{_HANDLER_NOUNS}\b", task, re.IGNORECASE) is not None
+        or re.search(rf"\bimplement(?:s|ing)?\s+(?:the\s+)?{action}{_AFTER_IMPLEMENTED_ACTION}",
+                     task, re.IGNORECASE) is not None
+    )
+
+
 def merge_action_tasks(tasks: list, endpoints: list[ActionEndpoint]) -> list:
     """Fold exact single-action planner duplicates into stable harness tasks.
 
-    Only our explicit source-derived ACTION HANDOFF mapping qualifies, not a
-    fuzzy action-name match. Keep all planner detail as ``planning_notes``;
-    leave multi-action tasks and unrelated deterministic checks untouched.
+    Only our explicit source-derived ACTION HANDOFF mapping qualifies, and only
+    when the planner's own text names the handler itself (``_names_handler``):
+    a task that merely uses the action's name stays its own checklist item.
+    Keep all planner detail as ``planning_notes``; leave multi-action tasks
+    and unrelated deterministic checks untouched.
     The canonical task text stays stable for checkpoint verifier reattachment.
     """
     known = {_endpoint_key(item): item for item in endpoints}
@@ -260,7 +286,7 @@ def merge_action_tasks(tasks: list, endpoints: list[ActionEndpoint]) -> list:
             continue
         # Match the full emitted mapping. In particular Order.cancel and
         # Invoice.cancel are separate operations despite the shared name.
-        handoff = item.split("ACTION HANDOFF: ", 1)[1]
+        planned, handoff = item.split("ACTION HANDOFF: ", 1)
         matches = []
         for key, endpoint in known.items():
             marker = (
@@ -269,7 +295,7 @@ def merge_action_tasks(tasks: list, endpoints: list[ActionEndpoint]) -> list:
             )
             if marker + ";" in handoff or marker + "." in handoff:
                 matches.append(key)
-        if len(matches) != 1 or matches[0] not in anchors:
+        if len(matches) != 1 or matches[0] not in anchors or not _names_handler(planned, known[matches[0]]):
             merged.append(item)
             continue
         notes = anchors[matches[0]]["planning_notes"]

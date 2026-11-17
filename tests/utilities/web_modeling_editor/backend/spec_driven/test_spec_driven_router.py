@@ -4,6 +4,8 @@ import asyncio
 import io
 import json
 import os
+import pathlib
+import time
 import zipfile
 from typing import Iterable
 
@@ -13,6 +15,7 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
@@ -253,6 +256,60 @@ class TestDownloadEndpoint:
         assert r2.status_code == 200
         assert r2.content == r1.content
 
+    def test_download_never_serves_a_file_the_run_can_redirect(self, tmp_path, monkeypatch):
+        """The run's shell writes an artifact and a manifest naming it, the user
+        downloads once, then the shell replaces the artifact with a link to a
+        worker file: no response may carry that file."""
+        from besser.utilities.web_modeling_editor.backend.settings import get_settings
+
+        monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
+        secret = tmp_path / "environ"
+        secret.write_text("BESSER_FREE_LLM_TOKEN=server-paid-token\n", encoding="utf-8")
+        run_id = "ab" * 16
+        workspace = tmp_path / f"besser_llm_{run_id}_pg2wfopn"
+        workspace.mkdir()
+        (workspace / "out.bin").write_text("hi\n", encoding="utf-8")
+        (workspace / ".besser_download.json").write_text(json.dumps({
+            "version": 1, "runId": run_id, "relativePath": "out.bin", "fileName": "out.bin",
+            "isZip": False, "createdAt": time.time()}), encoding="utf-8")
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(f"/besser_api/spec-driven/download/{run_id}")
+
+        first = asyncio.run(_get())
+        (workspace / "out.bin").unlink()
+        (workspace / "out.bin").symlink_to(secret)
+        second = asyncio.run(_get())
+
+        for response in (first, second):
+            assert b"server-paid-token" not in response.content
+        assert second.status_code == 404
+
+    def test_download_refuses_a_link_at_the_registered_file(self, tmp_path):
+        """Defence in depth: even a registered path is opened without following a link."""
+        secret = tmp_path / "environ"
+        secret.write_text("BESSER_FREE_LLM_TOKEN=server-paid-token\n", encoding="utf-8")
+        run_id = "cd" * 16
+        workspace = tmp_path / f"besser_llm_{run_id}_x"
+        workspace.mkdir()
+        download_dir = pathlib.Path(f"{workspace}.download")
+        download_dir.mkdir()
+        (download_dir / "artifact").symlink_to(secret)
+        current_runtime().registry._entries[run_id] = runner_module.SmartRunEntry(
+            file_path=str(download_dir / "artifact"), file_name="out.bin", is_zip=False,
+            temp_dir=str(workspace), created_at=time.time())
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(f"/besser_api/spec-driven/download/{run_id}")
+
+        response = asyncio.run(_get())
+        assert response.status_code == 404
+        assert b"server-paid-token" not in response.content
+
     def test_unknown_run_id_returns_404(self, stub_backend):
         transport = ASGITransport(app=app)
 
@@ -290,3 +347,56 @@ class TestApiInfo:
         endpoints = r.json()["endpoints"]
         assert "smart_generate" in endpoints
         assert "download_smart" in endpoints
+
+
+def test_a_run_frees_its_slot_before_it_frees_its_disk():
+    """Removing a run's installed dependencies takes seconds; the slot must not wait for it."""
+    from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import _stream_with_slot_release
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import SpecDrivenRuntime
+
+    async def frames():
+        yield b"event: done\ndata: {}\n\n"
+
+    async def exercise():
+        runtime = SpecDrivenRuntime.create()
+        assert runtime.slots.try_acquire()
+        held_at_release: list[int] = []
+
+        async def release_disk():
+            held_at_release.append(runtime.slots._held)
+
+        async for _ in _stream_with_slot_release(frames(), runtime, after_release=release_disk):
+            pass
+        await asyncio.gather(*runtime.background)
+        runtime.close()
+        return held_at_release
+
+    assert asyncio.run(exercise()) == [0]
+
+
+class _StoppedOrchestrator(_FakeOrchestrator):
+    """Honours a cancel request after writing files: the run ends with output."""
+
+    def run(self, instructions: str) -> str:
+        out = super().run(instructions)
+        self._phase2_exited_cleanly, self._phase2_stop_reason = False, "cancelled"
+        return out
+
+
+@pytest.mark.parametrize("orchestrator, cancelled", [(_FakeOrchestrator, False), (_StoppedOrchestrator, True)])
+def test_done_says_whether_a_cancel_ended_the_run_also_on_replay(monkeypatch, orchestrator, cancelled):
+    """A stopped run with output ends in ``done``; the client cannot tell it from another early end."""
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", orchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    status, events = asyncio.run(_post_sse(_build_project_body()))
+    assert status == 200 and events[-1]["event"] == "done"
+    assert events[-1]["cancelled"] is cancelled
+
+    run_id, cursor = events[0]["runId"], events[0]["sequence"]
+
+    async def replay():
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            response = await client.get(f"/besser_api/spec-driven/runs/{run_id}/events", params={"after": cursor})
+            return _parse_sse_stream(response.content)
+
+    assert asyncio.run(replay())[-1]["cancelled"] is cancelled

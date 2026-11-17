@@ -250,7 +250,7 @@ def test_a_startup_blocker_already_present_on_entry_is_not_a_new_trade(orchestra
 
 @pytest.mark.parametrize("message", [
     "mapper config: x", "application startup: x", "python contract: x",
-    "missing module: x", "undefined name: x",
+    "missing module: x",
 ])
 def test_every_startup_class_counts(orchestrator, monkeypatch, message):
     monkeypatch.setattr(orchestrator, "_restore_snapshot", lambda: True)

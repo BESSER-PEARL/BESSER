@@ -52,3 +52,9 @@ def test_source_files_are_not_over_excluded():
         dirs=[],
     )
     assert kept == ["database.py", "models.py", "seed_data.py"]
+
+
+def test_the_recipe_manifest_and_the_download_share_one_exclusion_list():
+    from besser.spec_driven_agent.pipeline.constants import EXCLUDED_OUTPUT_NAMES
+
+    assert _EXCLUDED_OUTPUT_DIRS is EXCLUDED_OUTPUT_NAMES

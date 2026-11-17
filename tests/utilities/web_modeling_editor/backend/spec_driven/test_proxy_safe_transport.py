@@ -192,3 +192,54 @@ class TestIdempotentStart:
 
         (_, id_a), (_, id_b) = asyncio.run(scenario())
         assert id_a != id_b, "unkeyed requests must not be deduplicated"
+
+
+class TestPollingKeepsTheRunAlive:
+    """Polling is presence: behind a proxy that tears the POST stream down,
+    the client follows the run through ``events.json`` and must not have it
+    cancelled as abandoned while it keeps polling."""
+
+    def test_polled_run_is_not_abandoned_until_polling_stops(self):
+        from types import SimpleNamespace
+
+        from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
+        from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+            DurableRunManager,
+            ErrorEvent,
+            SqliteRunEventStore,
+            format_sse,
+        )
+
+        grace = 0.3
+
+        async def scenario():
+            store = SqliteRunEventStore(":memory:")
+            manager = DurableRunManager(store)
+            runtime = SimpleNamespace(durable_runs=manager)
+            run_id = "c" * 32
+            cancel = asyncio.Event()
+
+            async def source():
+                await cancel.wait()
+                yield format_sse(ErrorEvent(code="CANCELLED", message="cancelled"))
+
+            await manager.start(
+                run_id, source(), on_abandoned=cancel.set, disconnect_grace_seconds=grace,
+            )
+            loop = asyncio.get_running_loop()
+            polling_until = loop.time() + 3 * grace
+            while loop.time() < polling_until:
+                await spec_driven_router.poll_smart_run_events(runtime, run_id, after=0, limit=250)
+                await asyncio.sleep(grace / 5)
+            polled_status = manager.get_run(run_id)
+
+            # Polling stopped: the grace period now runs out and the run stops.
+            await asyncio.wait_for(manager.wait(run_id), 10 * grace)
+            final = manager.get_run(run_id)
+            store.close()
+            return polled_status, final
+
+        polled_status, final = asyncio.run(scenario())
+        assert polled_status.abandonment_requested_at is None, "a polled run was abandoned"
+        assert polled_status.status == "running"
+        assert final.status == "abandoned"

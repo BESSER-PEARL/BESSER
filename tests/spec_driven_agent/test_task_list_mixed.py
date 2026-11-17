@@ -222,7 +222,7 @@ def test_single_action_shapes_are_unaffected_by_the_refactor(executor):
     executor.set_tasks(["one", "two", "three"])
 
     listing = executor._task_list({"action": "list"})
-    assert listing["tasks"][0] == {"id": 1, "text": "one", "status": "open", "verification": "unverified"}
+    assert listing["tasks"][0] == {"id": 1, "text": "one", "status": "open"}
 
     evidence1 = _write_evidence(executor, 1)
     done_single = executor._task_list({"action": "done", "id": 1, "evidence": evidence1})

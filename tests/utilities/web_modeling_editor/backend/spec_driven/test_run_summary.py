@@ -78,3 +78,32 @@ def test_without_the_run_key_list_a_prefixless_key_would_leak():
     report = _report()
     report.notVerified[0].why = f"refused with key {KEY}"
     assert KEY in "\n".join(run_summary_markdown({"generator_used": None}, report, secrets=()))
+
+
+def test_a_packaged_backend_says_where_its_run_instructions_are(tmp_path):
+    """A backend on its own gets a README, and the run summary points to it."""
+    import zipfile
+
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import SmartGenerationRunner
+    from tests.spec_driven_agent.test_frontend_scaffold_repair import _MAIN_API_PY
+    from tests.utilities.web_modeling_editor.backend._runtime import make_runtime
+    from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _build_request
+
+    result = tmp_path / "besser_llm_example" / "result"
+    (result / "backend").mkdir(parents=True)
+    (result / "backend" / "main_api.py").write_text(_MAIN_API_PY, encoding="utf-8")
+    (result / "backend" / "requirements.txt").write_text("fastapi\nuvicorn\n", encoding="utf-8")
+    runner = SmartGenerationRunner(_build_request(), runtime=make_runtime())
+    runner.temp_dir = str(result.parent)
+
+    _done, entry = runner._package_result(str(result))
+
+    with zipfile.ZipFile(entry.file_path) as archive:
+        readme = archive.read("README.md").decode("utf-8")
+        summary = archive.read("BESSER_GENERATION.md").decode("utf-8")
+    assert "cd backend" in readme and "python main_api.py" in readme
+    assert "- How to run it: see `README.md`" in summary
+
+
+def test_the_summary_points_to_no_readme_that_is_not_there():
+    assert not [line for line in run_summary_markdown({}, VerificationReport()) if "README" in line]

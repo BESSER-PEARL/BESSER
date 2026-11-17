@@ -140,3 +140,26 @@ def test_phase2_loop_silent_when_model_stable(tmp_path, monkeypatch):
     orch._run_phase2("build a library api", extra_issues=[])
 
     assert not any(a[1] == "__model_switch__" for a in progress)
+
+
+# ----------------------------------------------------------------------
+# Phase-3 fix loop integration
+# ----------------------------------------------------------------------
+
+
+def test_phase3_fix_loop_reports_switch_after_llm_call(tmp_path):
+    """An outage fallback during a repair was never surfaced: Phase 3 did
+    not call ``_notify_model_switch``, so the run card kept naming a model
+    that no longer served the run."""
+    from besser.spec_driven_agent.validation.issues import ValidationIssue
+
+    client = _FallbackSwitchingClient()
+    orch = _make_orchestrator(tmp_path, client)
+    progress: list[tuple] = []
+    orch.on_progress = lambda *a: progress.append(a)
+    blocker = ValidationIssue("blocker", "requirement unverified: R1 - verification is required")
+
+    orch._invoke_phase3_fix_loop([blocker], is_first_attempt=True)
+
+    switches = [a for a in progress if a[1] == "__model_switch__"]
+    assert switches == [(0, "__model_switch__", "fallback-model")]

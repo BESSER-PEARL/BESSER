@@ -19,7 +19,10 @@ Highlights
   when it found nothing, and the object diagram gains *Semantic generation*,
   which fills it with objects that satisfy the model. The backend streams both
   as Server-Sent Events from ``POST /besser_api/semantic-consistency-check`` and
-  ``POST /besser_api/generate-object-diagram``; at most
+  ``POST /besser_api/generate-object-diagram``. Objects of a class named like
+  a B-UML metaclass (``Class``, the editor's default name, or ``Property``,
+  ``Method``, ``Constraint``...) were dropped when an object diagram was read
+  from B-UML code; they are kept now, so generation and import show them. At most
   ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks run at once (others get 503),
   each with a heap of ``BESSER_ALLOY_MAX_HEAP_MB``. The Docker images now carry
   a Java runtime and the Alloy 6.2 jar, verified by checksum. See

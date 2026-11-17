@@ -112,8 +112,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     CostEvent,
     DoneEvent,
     ErrorEvent,
-    ModelUpdateEvent,
     FindingsEvent,
+    ModelUpdateEvent,
     PhaseEvent,
     PhaseUpdateEvent,
     StartEvent,
@@ -1205,7 +1205,7 @@ class SmartGenerationRunner:
                 generator=getattr(self.request, "target_generator_override", None)))
         elif isinstance(event, PhaseEvent):
             self._facts.saw_phase(event.phase)
-            if event.elapsedSeconds is None:
+            if event.elapsedSeconds is None:  # yielded directly, not through the worker queue
                 event = event.model_copy(update=self._run_totals())
         elif isinstance(event, ErrorEvent):
             if event.code in _WARNING_CODES:
@@ -1543,6 +1543,9 @@ class SmartGenerationRunner:
         model_state: dict[str, str] = {"current": llm_model}
 
         def _put(event: BaseSseEvent) -> None:
+            if isinstance(event, PhaseEvent):
+                # Stamped as the phase starts, not when the consumer gets to it.
+                event = event.model_copy(update=self._run_totals())
             try:
                 loop.call_soon_threadsafe(_put_in_loop, event)
             except RuntimeError:

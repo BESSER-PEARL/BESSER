@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
@@ -45,6 +46,10 @@ class _RepairingOrchestrator(_StubOrchestrator):
         self.client.usage.estimated_cost = 0.25
         self.total_turns = 0
         progress(0, "__validating__", "")
+        # Spend that lands after Phase 3 started; the pause lets the consumer
+        # serialize the validate event first, so a late stamp would pick it up.
+        self.client.usage.estimated_cost = 0.9
+        time.sleep(0.2)
         progress(0, "validation", "2 blockers / 3 total")
         findings(0, [
             ValidationIssue("blocker", "import [backend/main.py]: " + "x" * 600),
@@ -140,6 +145,7 @@ def test_phase_events_carry_the_run_totals_at_their_start(monkeypatch):
         assert isinstance(phase["usd"], (int, float))
     select, validate = phases[0], phases[-1]
     assert select["phase"] == "select" and select["usd"] == 0 and select["turns"] == 0
+    # The totals when the phase started, not when the frame was sent (run on Linux CI: 0.01).
     assert validate["phase"] == "validate" and validate["usd"] == 0.25
     elapsed = [p["elapsedSeconds"] for p in phases]
     assert elapsed == sorted(elapsed)

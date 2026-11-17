@@ -64,8 +64,8 @@ Traceability
 
 The *Traceability* page (in the project section of the sidebar, next to *Settings*)
 records and shows what happened to the project's models and the code generated from
-them, for every diagram type. Recording is on for a new project; *Record traces for this
-project* on that page turns it off or on.
+them, for every diagram type. Recording is opt-in: it is off for a new project, and
+*Record traces for this project* on that page turns it on or off.
 
 * **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
   class, attribute, method, enumeration, association, generalization or OCL

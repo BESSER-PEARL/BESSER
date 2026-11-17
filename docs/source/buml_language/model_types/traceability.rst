@@ -209,7 +209,7 @@ In the web editor
 -----------------
 
 The editor records traces per project while *Record traces for this project* is
-on, on the project's *Traceability* page (on for a new project). Edits of every
+on, on the project's *Traceability* page (opt-in: off for a new project). Edits of every
 diagram type are recorded as modeling sessions (each with one call to the editor),
 under the B-UML metaclasses of the elements; every generation, with any generator,
 as a generation run (one call to the generator), its links reaching the generated

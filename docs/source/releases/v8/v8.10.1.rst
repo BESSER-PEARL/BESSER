@@ -5,7 +5,7 @@ Patch release: **push a run's generated code to GitHub when it finishes,
 switch autosave on from the GitHub menu, offer to generate the code again in
 the agentic interface, and stop reporting the Spec-Driven Agent's own failed
 test workflows as your rules**. No API or metamodel change. Deploy the
-modeling agent v8.1.4 alongside.
+modeling agent v8.1.5 alongside.
 
 Highlights
 ----------
@@ -33,11 +33,17 @@ Highlights
   that fails is listed under *Could not verify* as a failed agent test, not as
   "rules you asked for are not enforced". The agent can retire a workflow it
   replaced (``test_api`` ``action='retire'``, with a reason); a retired
-  workflow no longer blocks the run and is listed as retired.
+  workflow no longer blocks the run and is listed as retired
+  (`#800 <https://github.com/BESSER-PEARL/BESSER/pull/800>`_).
+* **A mistyped answer no longer becomes the app's description.** The assistant
+  remembers a request as the application's description only when its model is
+  built, so an answer such as a mistyped reply to the replace-or-keep question
+  is no longer sent as the whole request of the next Spec-Driven Agent run
+  (`modeling-agent #82 <https://github.com/BESSER-PEARL/modeling-agent/pull/82>`_).
 
 Deploy alongside
 ----------------
 
-The modeling agent v8.1.4 reads which surface sent a message. Deploy the
+The modeling agent v8.1.5 reads which surface sent a message. Deploy the
 editor before or together with it: an older editor sends ``"workspace"`` from
 the widget too.

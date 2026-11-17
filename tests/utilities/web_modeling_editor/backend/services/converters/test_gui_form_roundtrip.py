@@ -91,3 +91,30 @@ def test_an_editor_input_that_draws_its_own_label_gets_no_second_one():
     # The export keeps the wrapper's data-gui-component, not its editor type.
     assert [c.get("tagName") for c in children] == ["div", "button"]
     assert children[0]["attributes"]["data-gui-component"] == "gui-input-text"
+
+
+def test_the_submit_button_keeps_its_classes():
+    styled = {**SIGNUP, "components": [
+        *SIGNUP["components"][:-1],
+        {"tagName": "button", "attributes": {"type": "submit", "class": "btn btn-primary"},
+         "components": [{"type": "textnode", "content": "Sign up"}]},
+    ]}
+
+    first = _roundtrip(_page(styled))
+    assert _form(first)["components"][-1]["attributes"]["class"] == "btn btn-primary"
+
+    second = _roundtrip(first)
+    assert _form(second)["components"][-1]["attributes"] == {"type": "submit", "class": "btn btn-primary"}
+
+
+def test_a_class_given_to_the_submit_button_after_an_export_wins():
+    styled = {**SIGNUP, "components": [
+        *SIGNUP["components"][:-1],
+        {"tagName": "button", "attributes": {"type": "submit", "class": "btn btn-primary"},
+         "components": [{"type": "textnode", "content": "Sign up"}]},
+    ]}
+    exported = _roundtrip(_page(styled))
+    # The user restyles the button in the editor.
+    _form(exported)["components"][-1]["attributes"]["class"] = "btn btn-danger"
+
+    assert _parsed_form(exported).custom_attributes["data-submit-class"] == "btn btn-danger"

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from besser.BUML.metamodel.structural import Class, DomainModel, Property
+from besser.BUML.metamodel.structural import AssociationClass, Class, DomainModel, Property
+from besser.utilities import sort_by_timestamp
 
 # Last word of an attribute name that marks a stored secret, and the words before a last
 # "token" that make it one (an invitation or device token is data a client reads back).
@@ -101,6 +102,62 @@ def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],
     if end.multiplicity.max > 1:
         return True
     return fkeys.get(association.name, [""])[0] == near.type.name
+
+
+def display_attribute(attributes: List[Property]) -> Optional[Property]:
+    """The attribute that labels a record among others of its class (a lookup's
+    options, a lookup column), or ``None`` when there are no attributes.
+
+    The label has to let someone tell two records apart, so an attribute the
+    model marks as a business identifier wins, and an ``email`` outranks a
+    ``name``: two people called Jane are indistinguishable in a dropdown, two
+    email addresses are not.
+
+    Preference order: an attribute marked ``is_external_id`` (not the key the
+    server generates), then one named ``email``, then one named ``name``, then
+    the first string attribute that is not the id, then the first non-id
+    attribute, then the first attribute.
+    """
+    if not attributes:
+        return None
+
+    def is_key(attr: Property) -> bool:
+        return attr.is_id or attr.name == "id"
+
+    external_id = next(
+        (attr for attr in attributes
+         if attr.is_external_id and not attr.is_id and not is_server_owned_attribute(attr)),
+        None,
+    )
+    if external_id is not None:
+        return external_id
+    for preferred in ("email", "name"):
+        named = next((attr for attr in attributes if attr.name == preferred), None)
+        if named is not None:
+            return named
+    return (
+        next((attr for attr in attributes if not is_key(attr) and attr.type.name == "str"), None)
+        or next((attr for attr in attributes if not is_key(attr)), None)
+        or attributes[0]
+    )
+
+
+def form_parent_ends(domain_class: Class, model: DomainModel) -> List[Property]:
+    """The ends through which a new record of ``domain_class`` references exactly
+    one record (an order line's order), oldest first: both ends of the
+    association an association class materializes, else each navigable to-one
+    end the ``<Class>Create`` schema has a field for."""
+    if isinstance(domain_class, AssociationClass):
+        return sort_by_timestamp(set(domain_class.association.ends))
+    fkeys = get_foreign_keys(model)
+    link_associations = frozenset(
+        type_.association.name for type_ in model.types if isinstance(type_, AssociationClass)
+    )
+    return [
+        end for end in sort_by_timestamp(domain_class.all_association_ends())
+        if end.is_navigable and end.multiplicity.max == 1
+        and create_schema_accepts_end(end, fkeys, link_associations)
+    ]
 
 
 def _sorted_association_ends(association) -> list:

@@ -19,6 +19,8 @@ from besser.BUML.metamodel.gui.dashboard import (
 )
 from besser.BUML.metamodel.gui.dashboard import Series
 from besser.BUML.metamodel.gui.binding import DataAggregation, is_valid_endpoint
+from besser.generators.structural_utils import display_attribute
+from besser.utilities import sort_by_timestamp
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, css_class_names, get_element_by_id, html_attributes, parse_bool, sanitize_name
 
@@ -585,10 +587,23 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                     # name in 'field'; lookupEntity (the target class id) picks the end.
                     entity = col_data.get('lookupEntity')
                     target = get_element_by_id(class_model, entity)
-                    target_name = target.get('name') if target else entity
-                    matches = [end for end in ends if getattr(end.type, 'name', None) == target_name]
-                    if len(matches) == 1:
+                    target_name = target.get('name') if target else (entity or lookup_path)
+                    matches = sorted(
+                        (end for end in ends if getattr(end.type, 'name', None) == target_name),
+                        key=lambda end: end.name,
+                    )
+                    # Of several, the end the column's label names ("Origin", "Destination airport")
+                    named = [end for end in matches if _names_end(label, end.name)]
+                    if len(named) == 1:
+                        matches = named
+                    if matches:
                         path_end = matches[0]
+                    if len(matches) > 1:
+                        logger.warning(
+                            "Lookup column %r names the class %s, which %s reaches through %d associations: "
+                            "using %r. Name the association end in the column's label or 'path' to choose another.",
+                            label or lookup_path, target_name, domain_class.name, len(matches), path_end.name,
+                        )
 
                 if path_end and path_end.type:
                     target_class = path_end.type
@@ -600,9 +615,9 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                                 lookup_field_attr = attr
                                 break
 
-                    # If no lookup field specified, use first attribute
-                    if not lookup_field_attr and target_class.all_attributes():
-                        lookup_field_attr = list(target_class.all_attributes())[0]
+                    # If no lookup field specified, the attribute that labels a record
+                    if not lookup_field_attr:
+                        lookup_field_attr = display_attribute(sort_by_timestamp(target_class.all_attributes()))
 
                     if lookup_field_attr:
                         column = LookupColumn(
@@ -620,6 +635,14 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                 columns_list.append(column)
 
     return columns_list
+
+
+def _names_end(label: str, end_name: str) -> bool:
+    """Whether a column label names an association end: the end's name is the
+    label or one of its words, case and separators aside."""
+    words = re.findall(r"[a-z0-9]+", (label or "").lower())
+    end_key = re.sub(r"[^a-z0-9]", "", end_name.lower())
+    return bool(end_key) and (end_key == "".join(words) or end_key in words)
 
 
 def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:

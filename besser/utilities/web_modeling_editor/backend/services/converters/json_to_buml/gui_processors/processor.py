@@ -67,12 +67,25 @@ from .utils import (
 )
 from besser.generators.react.routes import page_route
 
-# An href that cannot name a page of the app: a URL with a scheme
-# (https:, mailto:), a protocol-relative URL, or a fragment of the current page.
-_NOT_A_PAGE_HREF = re.compile(r"\s*(?:[a-z][a-z0-9+.-]*:|//|#)", re.IGNORECASE)
+def _is_not_a_page_href(href: str) -> bool:
+    """Whether an href cannot name a page of the app: a URL with a scheme
+    (``https:``, ``mailto:``), a protocol-relative URL, or a fragment of the
+    current page. Plain string checks: the href comes from the user's design."""
+    target = href.lstrip()
+    if target.startswith(("//", "#")):
+        return True
+    scheme, colon, _rest = target.partition(":")
+    return bool(colon) and scheme[:1].isalpha() and scheme.isascii() and all(
+        char.isalnum() or char in "+.-" for char in scheme)
 
 
-_TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
+def _has_template_placeholder(text: str) -> bool:
+    """Whether a line of ``text`` holds a ``{{ name }}`` placeholder."""
+    for line in text.splitlines():
+        start = line.find("{{")
+        if start != -1 and line.find("}}", start + 2) != -1:
+            return True
+    return False
 
 
 def _page_key(reference: Any) -> str:
@@ -81,9 +94,13 @@ def _page_key(reference: Any) -> str:
     return re.sub(r"[\W_]+", "-", str(reference or "").lower()).strip("-")
 
 
-# A route stored on a page that the app can use as is: the characters of a
-# derived route (letters of any script, digits, ``_``, ``-``), one or more per segment.
-_STORED_ROUTE = re.compile(r"(?:/[\w-]+)+")
+def _is_stored_route(route: str) -> bool:
+    """Whether a route stored on a page can be used as is: ``/`` then one or more
+    segments of the characters of a derived route (letters of any script,
+    digits, ``_``, ``-``)."""
+    return route.startswith("/") and all(
+        segment and all(char.isalnum() or char in "_-" for char in segment)
+        for segment in route[1:].split("/"))
 
 
 def _screen_fallback(page: Dict[str, Any], page_index: int, frame_index: int) -> str:
@@ -108,7 +125,7 @@ def _page_routes(pages: List[Dict[str, Any]]) -> Dict[tuple, str]:
         page = pages[page_index]
         stored = str(page.get("route_path") or "")
         for frame_index, _frame in enumerate(page.get("frames", [])):
-            route = stored if _STORED_ROUTE.fullmatch(stored) else ""
+            route = stored if _is_stored_route(stored) else ""
             if route in used:
                 route = ""
             if stored and not route:
@@ -133,7 +150,7 @@ def _holds_only_text(component: Dict[str, Any]) -> bool:
     if any(not isinstance(child, dict) or child.get("type") != "textnode" for child in children):
         return False
     text = html.unescape(extract_text_content(component)).strip()
-    return bool(text) and not _TEMPLATE_PLACEHOLDER.search(text)
+    return bool(text) and not _has_template_placeholder(text)
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -776,7 +793,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         """The page a link opens: the one ``data-navigate-to`` names, else the
         one a site-relative ``href`` names by route, name or id."""
         key = _page_key(navigate_to)
-        if not key and href and not _NOT_A_PAGE_HREF.match(str(href)):
+        if not key and href and not _is_not_a_page_href(str(href)):
             key = _page_key(href)
         return screens_by_key.get(key) if key else None
 

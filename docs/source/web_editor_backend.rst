@@ -1073,8 +1073,10 @@ read once at startup):
 - ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` (``1``) -- Checks running at once, each in
   its own Alloy Analyzer JVM; more are answered with 503. A client that disconnects
   stops its JVM and frees its slot.
-- ``BESSER_ALLOY_MAX_HEAP_MB`` (``1024``) -- Maximum heap of each JVM (``-Xmx``), so
-  that a large search cannot exhaust the host's memory.
+- ``BESSER_ALLOY_MAX_HEAP_MB`` (``1024``) -- Maximum heap of each JVM (``-Xmx``). It
+  bounds the heap only: the SAT solver's own memory comes on top. A 9-class model
+  searched up to the largest scope used about 500 MB per check with a heap of 1024 or
+  384 MB alike, so plan that much free memory per concurrent check.
 
 
 Generator Configuration

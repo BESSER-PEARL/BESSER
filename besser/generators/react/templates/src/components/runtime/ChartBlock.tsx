@@ -14,6 +14,7 @@ import {
   isNestedField,
   parseFilterExpression,
 } from "./bindingData";
+import { useDataVersion } from "./dataVersion";
 
 export interface ChartSeries {
   name?: string;
@@ -76,6 +77,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
   const [seriesData, setSeriesData] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dataVersion = useDataVersion();
 
   const normalizedSeries = useMemo(() => {
     const parsed = parseSeries(series);
@@ -137,7 +139,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         setSeriesData(dataMap);
       })
       .finally(() => setLoading(false));
-  }, [chartType, normalizedSeries]);
+  }, [chartType, normalizedSeries, dataVersion]);
 
   useEffect(() => {
     const endpoint = dataBinding?.endpoint;
@@ -177,6 +179,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
     dataBinding?.filter_expression,
     dataBinding?.label_field,
     dataBinding?.data_field,
+    dataVersion,
   ]);
 
   const prepareChartDataFromSeries = (seriesConfig: ChartSeries[], seriesDataMap: Record<string, any[]>) => {
@@ -222,7 +225,8 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
     : defaultDataField;
   const finalChartData = hasSeries ? (seriesChartData.length > 0 ? seriesChartData : chartData) : chartData;
 
-  if (loading) return <div id={id} className={className}>Loading data...</div>;
+  // A reload keeps the chart on screen until the new rows arrive.
+  if (loading && finalChartData.length === 0) return <div id={id} className={className}>Loading data...</div>;
   if (error) return <div id={id} className={className}>{error}</div>;
 
   if (chartType === "bar-chart") {

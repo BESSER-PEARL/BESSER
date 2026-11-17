@@ -46,7 +46,7 @@ from .component_helpers import (
     extract_menu_items,
     extract_parameters_from_attributes,
 )
-from besser.generators.structural_utils import is_server_owned_attribute
+from besser.generators.structural_utils import form_parent_ends, is_server_owned_attribute
 
 from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
 from .utils import css_class_names, extract_text_content, html_attributes, clean_attribute_name, get_element_by_id
@@ -416,8 +416,10 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
         )
         if req_raw:
             required = str(req_raw).lower() in ("true", "1", "yes")
-        elif attributes.get("required"):
-            required = True
+        elif "required" in attributes:
+            # HTML boolean attribute: present (saved as "" or true) or set to "required"
+            value = attributes["required"]
+            required = value is True or (isinstance(value, str) and value.lower() in ("", "true", "required"))
 
         # Default value (Toggle's "Default On" / "default-checked")
         default_raw = (
@@ -626,7 +628,8 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
     submit button's text the form's ``submit_label``. A form bound to a class
     - by its ``data-source`` (class id or name), else by input names that are
     all attributes of exactly one class - gets a ``data_binding`` on that
-    class, and each input a binding to the attribute it edits.
+    class, and each input a binding to the attribute it edits or, when it is
+    named after a to-one association end, to the related record it selects.
 
     Args:
         component: GrapesJS component dict
@@ -657,6 +660,8 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
         buttons[0] if buttons else None,
     )
     submit_label = attributes.get("data-submit-label") or (submit.label if submit else None) or "Submit"
+    # The button's own classes, else those kept on the form when it was exported
+    submit_classes = " ".join((submit.css_classes if submit else None) or []) or attributes.get("data-submit-class")
 
     form = Form(
         name=name,
@@ -692,6 +697,8 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
                 ))
 
     _attach_component_metadata(form, component, meta)
+    if submit_classes:
+        form.custom_attributes["data-submit-class"] = submit_classes
     return form
 
 
@@ -749,6 +756,16 @@ def _attribute_for(input_field, domain_class):
     return next((by_name[key] for key in _input_keys(input_field) if key in by_name), None)
 
 
+def _parent_end_keys(domain_class, domain_model) -> Dict[str, Any]:
+    """The records a new record of the class references (see ``form_parent_ends``),
+    by the names an input selecting one may carry: ``order``, ``order_id``, ``orderId``."""
+    keys: Dict[str, Any] = {}
+    for end in form_parent_ends(domain_class, domain_model):
+        keys.setdefault(_normalized(end.name), end)
+        keys.setdefault(_normalized(end.name) + "id", end)
+    return keys
+
+
 def _covers_required(domain_class, inputs) -> bool:
     """Whether the inputs supply every attribute a new record needs (a lookup
     form - booking id + email - names attributes but creates nothing)."""
@@ -760,22 +777,39 @@ def _covers_required(domain_class, inputs) -> bool:
     )
 
 
-def _infer_form_class(inputs, domain_model):
+def _infer_form_class(inputs, domain_model, form_name: str):
     """The one class whose attributes name every input (own attributes first,
-    so a ``name``/``email`` form binds to Person, not to each subclass) and
-    that the inputs can create a record of."""
+    so a ``name``/``email`` form binds to Person, not to each subclass; only
+    when no class matches that way, inputs may also name to-one association
+    ends, as long as one names an attribute) and that the inputs can create a
+    record of."""
     if not inputs or domain_model is None:
         return None
     classes = sorted(domain_model.get_classes(), key=lambda c: c.name)
-    for attributes_of in (lambda c: c.attributes, lambda c: c.all_attributes()):
-        matches = []
-        for domain_class in classes:
-            names = {_normalized(attr.name) for attr in attributes_of(domain_class)}
-            if all(any(key in names for key in _input_keys(i)) for i in inputs):
-                matches.append(domain_class)
+    keys = [_input_keys(input_field) for input_field in inputs]
+
+    def names_every_input(names) -> bool:
+        return all(any(key in names for key in input_keys) for input_keys in keys)
+
+    def attribute_names(attributes):
+        return {_normalized(attr.name) for attr in attributes}
+
+    def through_parents(domain_class) -> bool:
+        names = attribute_names(domain_class.all_attributes())
+        return names_every_input(names | set(_parent_end_keys(domain_class, domain_model))) and any(key in names for k in keys for key in k)
+
+    for matches_inputs in (lambda c: names_every_input(attribute_names(c.attributes)),
+                           lambda c: names_every_input(attribute_names(c.all_attributes())),
+                           through_parents):
+        matches = [domain_class for domain_class in classes if matches_inputs(domain_class)]
         if len(matches) == 1:
             return matches[0] if _covers_required(matches[0], inputs) else None
         if matches:
+            logger.warning(
+                "The inputs of form %r match the classes %s: it is not bound to any. "
+                "Set the form's data source to choose one.",
+                form_name, ", ".join(c.name for c in matches),
+            )
             return None
     return None
 
@@ -788,12 +822,16 @@ def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain
         class_el = get_element_by_id(class_model, class_ref)
         domain_class = domain_model.get_class_by_name(class_el.get("name") if class_el else class_ref)
     else:
-        domain_class = _infer_form_class(inputs, domain_model)
+        domain_class = _infer_form_class(inputs, domain_model, form.name)
     if domain_class is None:
         return
     form.data_binding = DataBinding(domain_concept=domain_class, name=f"{form.name}_binding")
+    parent_ends = _parent_end_keys(domain_class, domain_model)
     for input_field in inputs:
-        attribute = _attribute_for(input_field, domain_class)
+        # An input edits the attribute it names, else selects the related record it names
+        attribute = _attribute_for(input_field, domain_class) or next(
+            (parent_ends[key] for key in _input_keys(input_field) if key in parent_ends), None
+        )
         if attribute is not None:
             input_field.data_binding = DataBinding(
                 domain_concept=domain_class, data_field=attribute, name=f"{input_field.name}_binding"

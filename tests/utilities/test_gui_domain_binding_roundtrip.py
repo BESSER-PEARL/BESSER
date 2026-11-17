@@ -255,3 +255,61 @@ def test_the_emitted_file_still_runs_as_plain_python(tmp_path):
     assert components["pages_chart"].data_binding.domain_concept.name == "Book"
     source = next(iter(components["book_list"].list_sources))
     assert {field.name for field in source.fields} == {"title", "pages"}
+
+
+def _form_with_a_parent_input():
+    """An order line form whose ``order`` input selects the line's order (an association end)."""
+    from besser.BUML.metamodel.gui import Form, GUIModel, InputField, InputFieldType, Module, Screen
+    from besser.BUML.metamodel.gui.binding import DataBinding
+    from besser.BUML.metamodel.structural import (
+        BinaryAssociation, Class, DomainModel, IntegerType, Multiplicity, Property, StringType,
+    )
+
+    order = Class(name="Order", attributes={Property(name="reference", type=StringType)})
+    quantity = Property(name="quantity", type=IntegerType)
+    line = Class(name="OrderLine", attributes={quantity})
+    order_end = Property(name="order", type=order, multiplicity=Multiplicity(1, 1))
+    lines = BinaryAssociation(name="lines", ends={
+        order_end, Property(name="lines", type=line, multiplicity=Multiplicity(0, "*")),
+    })
+    domain_model = DomainModel(name="shop", types={order, line}, associations={lines})
+
+    inputs = set()
+    for name, field in (("quantity", quantity), ("order", order_end)):
+        input_field = InputField(name=name, description="", field_type=InputFieldType.Text)
+        input_field.data_binding = DataBinding(domain_concept=line, data_field=field, name=f"{name}_binding")
+        inputs.add(input_field)
+    form = Form(name="line_form", description="", inputFields=inputs)
+    form.data_binding = DataBinding(domain_concept=line, name="line_form_binding")
+    screen = Screen(name="line_entry", description="", view_elements={form}, is_main_page=True,
+                    route_path="/", screen_size="Medium")
+    gui_model = GUIModel(name="ui", package="p", versionCode="1", versionName="1", description="",
+                         modules={Module(name="Main", screens={screen})})
+    return gui_model, domain_model
+
+
+def _input_bindings(gui_model):
+    form = _components(gui_model)["line_form"]
+    return {i.name: i.data_binding.data_field for i in form.inputFields}
+
+
+def test_an_input_bound_to_an_association_end_reimports_bound(tmp_path):
+    from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.gui_diagram_converter import (
+        _parse_gui_model,
+    )
+
+    gui_model, domain_model = _form_with_a_parent_input()
+    domain_path = tmp_path / "domain.py"
+    domain_model_to_code(domain_model, str(domain_path))
+    loaded = _parse_gui_model(
+        _gui_code(tmp_path, gui_model), context_code=domain_path.read_text(encoding="utf-8"),
+    )
+    executed = {}
+    exec(_gui_code(tmp_path, gui_model, domain_model=domain_model), executed)  # noqa: S102
+
+    for reimported in (loaded, executed["gui_model"]):
+        fields = _input_bindings(reimported)
+        assert fields["quantity"].name == "quantity"
+        assert fields["order"] is not None and fields["order"].name == "order"
+        assert fields["order"].type.name == "Order"

@@ -222,6 +222,9 @@ class DoneEvent(BaseSseEvent):
     # may be incomplete rather than report an unqualified success.
     incomplete: bool = False
     incompleteReason: Optional[str] = None
+    # True when the run ended because a cancel request was honoured after it
+    # had written files: the output is what it had made by then.
+    cancelled: bool = False
     # Number of unresolved blocker-severity validation issues left by a run
     # whose customization loop COMPLETED. Lets the client distinguish
     # "finished, but with issues that may stop the app from running" from a
@@ -281,7 +284,8 @@ class ErrorEvent(BaseSseEvent):
 
     ``INTERNAL`` errors are always sent with the literal string
     ``"Internal server error"``; tracebacks go to ``logger.exception``
-    only, never to the client.
+    only, never to the client. The one other ``INTERNAL`` message is the fixed
+    one a server restart adds to a run it interrupted, with ``resumeAvailable``.
     """
 
     event: Literal["error"] = "error"

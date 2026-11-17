@@ -1,0 +1,86 @@
+import pytest
+from tests.generators.alloy.BUML_genealogy_model import genealogy_model  # noqa: F401
+from tests.generators.alloy.utils_alloy_translation import translate
+
+
+@pytest.fixture
+def spec(genealogy_model):  # noqa: F811
+    return translate(genealogy_model, scope=5)
+
+
+def test_library_modules(spec):
+    # No Int, String, Date or Boolean types: no library module is opened
+    assert len(spec.opens) == 0
+
+
+def test_signatures(spec):
+    assert "abstract sig Person" in spec.sigs
+    assert "sig Man extends Person" in spec.sigs
+    assert "sig Woman extends Person" in spec.sigs
+    assert "sig Adam extends Man" in spec.sigs
+    assert "sig Eve extends Woman" in spec.sigs
+
+
+def test_signature_fields(spec):
+    # Both associations are reflexive over Person: only the navigable ends
+    # (parents, spouse) become fields, each declared exactly once
+    assert len(spec.fields["Person"]) == 2
+    assert "Person_parents: set Person" in spec.fields["Person"]
+    assert "Person_spouse: lone Person" in spec.fields["Person"]
+
+    # Subclasses inherit the relations without redeclaring them
+    assert len(spec.fields["Man"]) == 0
+    assert len(spec.fields["Woman"]) == 0
+    assert len(spec.fields["Adam"]) == 0
+    assert len(spec.fields["Eve"]) == 0
+
+
+def test_facts(spec):
+    assert len(spec.facts) == 16
+
+    # spouse_of (0..1) is not navigable, so there is no `lone` field enforcing it: its bound is
+    # checked navigating the opposite field backwards
+    assert "all a: Person | #(Person_spouse.a) <= 1" in spec.facts
+    # Person -> Person, spouse (0..1)
+    assert "all a: Person | #(a.Person_spouse) <= 1" in spec.facts
+
+    # OCL: Adam::allInstances()->size() = 1
+    assert "all self:this/Adam|(#(Adam) = 1)" in spec.facts
+    # OCL: Eve::allInstances()->size() = 1
+    assert "all self:this/Eve|(#(Eve) = 1)" in spec.facts
+    # OCL: Adam has no parents (self.parents->isEmpty())
+    assert "all self:this/Adam|(no self.Person_parents)" in spec.facts
+    # OCL: Eve has no parents (self.parents->isEmpty())
+    assert "all self:this/Eve|(no self.Person_parents)" in spec.facts
+    # OCL: Adam's spouse is Eve (self.spouse.oclIsTypeOf(Eve) and self.spouse->size()=1)
+    assert "all self:this/Adam|((self.Person_spouse in Eve) and (#(self.Person_spouse) = 1))" in spec.facts
+    # OCL: Eve's spouse is Adam (self.spouse.oclIsTypeOf(Adam) and self.spouse->size()=1)
+    assert "all self:this/Eve|((self.Person_spouse in Adam) and (#(self.Person_spouse) = 1))" in spec.facts
+    # OCL: a man's spouse is a woman (self.spouse.oclIsKindOf(Woman))
+    assert "all self:this/Man|(self.Person_spouse in Woman)" in spec.facts
+    # OCL: a woman's spouse is a man (self.spouse.oclIsKindOf(Man))
+    assert "all self:this/Woman|(self.Person_spouse in Man)" in spec.facts
+    # OCL: two parents are a woman and a man (exists with two iterator variables)
+    assert "all self:this/Person|((#(self.Person_parents) = 2) => " \
+        "(some p, q : self.Person_parents | ((p in Woman) and (q in Man))))" in spec.facts
+    # OCL: nobody is married to a parent (self.parents->intersection(self.spouse)->isEmpty())
+    assert "all self:this/Person|(no (self.Person_parents & self.Person_spouse))" in spec.facts
+    # OCL: spouses share no parent (self.spouse.parents->intersection(self.parents)->isEmpty())
+    assert "all self:this/Person|(no (self.Person_spouse.Person_parents & self.Person_parents))" in spec.facts
+    # OCL: marriage is symmetric ((self.spouse<>null) implies (self = self.spouse.spouse))
+    assert "all self:this/Person|((some self.Person_spouse) => " \
+        "(self = self.Person_spouse.Person_spouse))" in spec.facts
+    # OCL: everyone except Adam and Eve has two parents
+    assert "all self:this/Person|((not ((self in Adam) or (self in Eve))) => " \
+        "(#(self.Person_parents) = 2))" in spec.facts
+    # OCL: nobody is their own ancestor (self.parents->closure(parents)->excludes(self))
+    assert "all self:this/Person|(self not in ((self.Person_parents).*(Person_parents)))" in spec.facts
+
+
+def test_run_command(spec):
+    assert spec.run_pred == "instance_model"
+    assert "5 Person" in spec.run_scopes
+    assert "5 Man" in spec.run_scopes
+    assert "5 Woman" in spec.run_scopes
+    assert "5 Adam" in spec.run_scopes
+    assert "5 Eve" in spec.run_scopes

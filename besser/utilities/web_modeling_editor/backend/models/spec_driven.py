@@ -687,7 +687,11 @@ class SpecDrivenConfigResponse(ResponseModel):
     """Response of ``GET /besser_api/spec-driven/config``: public caps and feature flags."""
 
     caps: SpecDrivenCapsResponse
-    download_ttl_seconds: int
+    download_ttl_seconds: int = Field(
+        description="How long a finished run can be modified, pushed or resumed (its workspace).")
+    archive_ttl_seconds: int = Field(
+        description="How long a finished run's download stays available: at least download_ttl_seconds, "
+                    "at most 24 hours.")
     cost_emitter_interval_seconds: float
     concurrency: SpecDrivenConcurrencyResponse
     features: SpecDrivenFeaturesResponse

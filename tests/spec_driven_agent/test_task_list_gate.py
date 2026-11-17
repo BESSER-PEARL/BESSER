@@ -89,13 +89,13 @@ def test_task_list_tool_crud(tmp_path):
 
     listing = json.loads(executor.execute("task_list", {"action": "list"}))
     assert listing["open"] == 2
-    assert listing["tasks"][0] == {"id": 1, "text": "Add auth", "status": "open", "verification": "unverified"}
+    assert listing["tasks"][0] == {"id": 1, "text": "Add auth", "status": "open"}
 
     executor._write_file({"path": "auth.py", "content": "enabled = True\n"})
     done = json.loads(executor.execute("task_list", {"action": "done", "id": 1,
         "evidence": [{"id": 1, "path": "auth.py", "quote": "enabled = True"}]}))
     assert done["open_remaining"] == 1
-    assert done["open_items"] == [{"id": 2, "text": "Style the pages"}]
+    assert done["open_items"] == [{"id": 2, "label": "Style the pages"}]
 
     added = json.loads(executor.execute("task_list", {"action": "add", "text": "Wire delete"}))
     assert added == {"status": "added", "id": 3, "open": 2}

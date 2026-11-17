@@ -20,7 +20,7 @@ import fnmatch
 import json
 import logging
 import os
-from typing import Iterable, NamedTuple, Optional
+from typing import Iterable, Mapping, NamedTuple, Optional
 
 import httpx
 
@@ -90,15 +90,29 @@ PULL_REQUEST_FILE_LIMIT = 30
 VERSION_NOT_COMPARED = "class diagram not compared: one version could not be read"
 
 
-def with_origin(message: str, origin: str) -> str:
-    """``message`` with the ``BESSER-Origin`` trailer that marks a BESSER commit."""
-    return f"{message.rstrip()}\n\n{ORIGIN_TRAILER}: {origin}"
+_TRAILER_VALUE_LIMIT = 100
+
+
+def _trailer_value(value: object) -> str:
+    """One line: control characters (line breaks included) become spaces, length is capped."""
+    return "".join(" " if ord(c) < 32 or ord(c) == 127 else c for c in str(value)).strip()[:_TRAILER_VALUE_LIMIT]
+
+
+def with_origin(message: str, origin: str, ai_headers: Optional[Mapping[str, str]] = None) -> str:
+    """``message`` with its trailers: the ``ai_headers`` (``AI-Model`` etc.), then ``BESSER-Origin`` last,
+    which marks a BESSER commit."""
+    trailers = [f"{name}: {_trailer_value(value)}" for name, value in (ai_headers or {}).items() if value]
+    trailers.append(f"{ORIGIN_TRAILER}: {_trailer_value(origin)}")
+    return f"{message.rstrip()}\n\n" + "\n".join(trailers)
 
 
 def commit_origin(message: str) -> Optional[str]:
-    """The ``BESSER-Origin`` of a commit message, or None for a person's commit."""
+    """The ``BESSER-Origin`` of a commit message's trailer block (its last paragraph), or None for a person's commit."""
+    paragraphs = message.replace("\r\n", "\n").rstrip().split("\n\n")
+    if len(paragraphs) < 2:
+        return None
     prefix = f"{ORIGIN_TRAILER}:"
-    for line in reversed(message.splitlines()):
+    for line in reversed(paragraphs[-1].splitlines()):
         if line.startswith(prefix):
             return line[len(prefix):].strip() or None
     return None

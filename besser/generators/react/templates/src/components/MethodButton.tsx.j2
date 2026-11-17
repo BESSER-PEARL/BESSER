@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useTableContext } from "../contexts/TableContext";
+import { notifyDataChanged } from "./runtime/dataVersion";
 
 export interface MethodParameter {
   name: string;
@@ -292,11 +293,8 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
         setShowResultModal(true);
       }
       
-      // Refresh the source table if this is an instance method
-      if (isInstanceMethod && instanceSourceTableId) {
-        console.log(`[MethodButton] Refreshing table: ${instanceSourceTableId}`);
-        tableContext.refreshTable(instanceSourceTableId);
-      }
+      // The method may have changed records: reload what the page shows
+      notifyDataChanged();
       
       if (onSuccess) {
         onSuccess(response.data);
@@ -318,8 +316,12 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       // Handle different error response formats
       let errorMessage = "Error executing method";
       const statusCode = err.response?.status;
+      // 501: the method is modeled without an implementation; the backend's detail addresses developers
+      const notImplemented = statusCode === 501;
       
-      if (err.response?.data) {
+      if (notImplemented) {
+        errorMessage = "This action is not available yet.";
+      } else if (err.response?.data) {
         const data = err.response.data;
         
         // Try to extract error message from various formats
@@ -361,7 +363,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       }
       
       // Add status code prefix for server errors if not already included
-      if (statusCode && statusCode >= 500 && !errorMessage.includes(String(statusCode))) {
+      if (!notImplemented && statusCode && statusCode >= 500 && !errorMessage.includes(String(statusCode))) {
         errorMessage = `Server Error (${statusCode}): ${errorMessage}`;
       }
       
@@ -686,7 +688,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
 
       {/* Result popup */}
       {showResultModal && (
-        <div style={{
+        <div className="bsr-runtime" style={{
           position: "fixed",
           top: 0,
           left: 0,
@@ -766,7 +768,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
 
       {/* Parameter input modal */}
       {showModal && (
-        <div style={{
+        <div className="bsr-runtime" style={{
           position: "fixed",
           top: 0,
           left: 0,

@@ -125,6 +125,43 @@ def test_home_route_via_navigate_redirect_is_ok(tmp_path):
     assert _run(tmp_path, files) == []
 
 
+_ROUTES_HEAD = 'import { Routes, Route } from "react-router-dom";\nfunction App(){ return (<Routes>\n'
+
+
+@pytest.mark.parametrize("routes", [
+    # The path is a constant: it may well be "/" (ROUTES.HOME = '/').
+    '  <Route path={ROUTES.HOME} element={<Home />} />\n  <Route path={ROUTES.BOOKS} element={<B/>} />\n',
+    '  <Route path={`${base}/`} element={<Home />} />\n',
+    # An index route whose `index` is not the first attribute.
+    '  <Route element={<Layout />}>\n    <Route element={<Home />} index />\n'
+    '    <Route path="books" element={<B/>} />\n  </Route>\n',
+    '  <Route path={"/"} element={<Home />} />\n',
+])
+def test_home_route_written_without_a_leading_literal_path_is_ok(tmp_path, routes):
+    files = {"frontend/src/App.js": _ROUTES_HEAD + routes + "</Routes>);}\n"}
+    assert _run(tmp_path, files) == []
+
+
+def test_data_router_with_a_computed_path_is_ok(tmp_path):
+    files = {"frontend/src/main.js": (
+        'import { createBrowserRouter } from "react-router-dom";\n'
+        "export const router = createBrowserRouter([\n"
+        "  { path: ROUTES.HOME, element: <Home /> },\n"
+        '  { path: "/books", element: <Books /> },\n'
+        "]);\n")}
+    assert _run(tmp_path, files) == []
+
+
+def test_literal_routes_without_home_are_still_flagged_next_to_a_layout_route(tmp_path):
+    files = {"frontend/src/App.js": _ROUTES_HEAD + (
+        '  <Route element={<Layout />}>\n'
+        '    <Route path="/books" element={<B/>} />\n'
+        '    <Route path="/indexes" element={<I/>} />\n'
+        "  </Route>\n</Routes>);}\n")}
+    [issue] = _run(tmp_path, files)
+    assert "blank on first load" in issue
+
+
 def test_dead_form_noop_onsubmit(tmp_path):
     # A sibling issues a real POST, so check 2b (no writes at all) stays silent
     # and we isolate the no-op-handler check 2a.
@@ -152,6 +189,42 @@ def test_dead_form_prevent_default_only(tmp_path):
     }
     issues = _run(tmp_path, files)
     assert any("onSubmit does" in i for i in issues)
+
+
+_BUTTON_FORM = (
+    "export default function BookForm({ onSaved }) {\n"
+    "  const [title, setTitle] = useState('')\n"
+    "  const save = async () => {\n"
+    "    SAVE_BODY\n"
+    "    onSaved()\n"
+    "  }\n"
+    "  return (\n"
+    "    <form onSubmit={(e) => e.preventDefault()}>\n"
+    "      <input value={title} onChange={e => setTitle(e.target.value)} />\n"
+    '      <button type="button" ONCLICK>Save</button>\n'
+    "    </form>)\n"
+    "}\n"
+)
+
+
+@pytest.mark.parametrize("onclick", ["onClick={save}", "onClick={() => save()}"])
+@pytest.mark.parametrize("body", [
+    "await fetch('/book/', { method: 'POST', body: JSON.stringify({ title }) })",
+    "await axios.put(`/book/${id}/`, { title })",
+    "await api.createBook({ title })",
+])
+def test_prevent_default_form_saved_by_a_button_in_it_is_ok(tmp_path, onclick, body):
+    form = _BUTTON_FORM.replace("SAVE_BODY", body).replace("ONCLICK", onclick)
+    api = "export const createBook = (x) => fetch('/book/', {method: 'POST', body: x});\n"
+    assert _run(tmp_path, {"frontend/src/BookForm.jsx": form, "frontend/src/api.js": api}) == []
+
+
+def test_prevent_default_form_whose_button_does_not_save_is_still_flagged(tmp_path):
+    form = _BUTTON_FORM.replace("SAVE_BODY", "setTitle('')").replace("ONCLICK", "onClick={save}")
+    files = {"frontend/src/BookForm.jsx": form,
+             "frontend/src/api.js": "export const create = (x) => fetch('/b', {method: 'POST', body: x});\n"}
+    [issue] = _run(tmp_path, files)
+    assert "onSubmit does" in issue
 
 
 def test_forms_present_but_no_http_write(tmp_path):

@@ -97,6 +97,23 @@ class Checkpoint:
     # A modify run's own state (``ModifyRunMixin._modify_checkpoint_state``);
     # ``None`` for a create run, so a resume knows which kind it continues.
     modify: dict | None = None
+    # Files a generator wrote (``ToolExecutor._generator_files``): the scaffold
+    # guardrail and the recipe's ``source`` tags.
+    generator_files: list[str] = field(default_factory=list)
+    # What the workspace held when the run started (``None``: an older
+    # checkpoint). The run never deletes these as files the app wrote.
+    files_at_start: list[str] | None = None
+    # What ``task_list`` evidence is checked against (``ToolExecutor.evidence_snapshot``).
+    write_evidence: dict = field(default_factory=dict)
+    # The requirements ledger (``None``: not extracted). Phase 2 and Phase 3
+    # hold the run to one list; a resume must not extract a second one.
+    requirements: list[dict] | None = None
+    # The routing answer's ``unsupported_stack`` (``None``: no routing answer);
+    # it picks the prompt's stack idioms.
+    routed_stack: str | None = None
+    # Set once the packaged run's installed and built folders were removed
+    # (``mark_dependencies_removed``): a resume must install them again.
+    dependencies_removed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +142,12 @@ class Checkpoint:
             "locked_generators": self.locked_generators,
             "target": self.target,
             "modify": self.modify,
+            "generator_files": self.generator_files,
+            "files_at_start": self.files_at_start,
+            "write_evidence": self.write_evidence,
+            "requirements": self.requirements,
+            "routed_stack": self.routed_stack,
+            "dependencies_removed": self.dependencies_removed,
         }
 
 
@@ -165,6 +188,15 @@ def api_scenario_snapshot(records, *, include_reports: bool = False) -> list[dic
              "previous_status": str(item.get("previous_status", ""))[:40]}
             for item in history[-10:] if isinstance(item, dict)
         ]
+        submitted = record.get("submitted_requests")
+        if submitted is not None:
+            # The model's own list of a correction the harness added passing checks to: a
+            # convenience, so an invalid one is dropped, never a reason to lose the checkpoint.
+            try:
+                _validate_requests(submitted)
+                saved["submitted_requests"] = copy.deepcopy(submitted)
+            except ValueError as exc:
+                logger.warning("Saved API scenario %r: its submitted_requests are dropped: %s", identifier, exc)
         if include_reports:
             saved["report"] = copy.deepcopy(record.get("report") or {"status": "unverified"})
         output.append(saved)
@@ -359,6 +391,11 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             for item in states
         ):
             raise ValueError("Invalid repair progress states")
+        modify = data.get("modify") if isinstance(data.get("modify"), dict) else None
+        # Older checkpoints kept them in a modify run's state only.
+        generator_files = data.get("generator_files", (modify or {}).get("generator_files"))
+        if not isinstance(generator_files, list):
+            generator_files = []
         return Checkpoint(
             schema_version=data["schema_version"],
             run_id=data.get("run_id", ""),
@@ -384,11 +421,30 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             repair_progress=progress,
             locked_generators=[t for t in data.get("locked_generators") or [] if isinstance(t, str)],
             target=data.get("target"),
-            modify=data.get("modify") if isinstance(data.get("modify"), dict) else None,
+            modify=modify,
+            generator_files=[p for p in generator_files if isinstance(p, str)],
+            files_at_start=(
+                [p for p in data["files_at_start"] if isinstance(p, str)]
+                if isinstance(data.get("files_at_start"), list) else None),
+            write_evidence=data.get("write_evidence") if isinstance(data.get("write_evidence"), dict) else {},
+            requirements=(
+                [r for r in data["requirements"] if isinstance(r, dict)]
+                if isinstance(data.get("requirements"), list) else None),
+            routed_stack=data.get("routed_stack") if isinstance(data.get("routed_stack"), str) else None,
+            dependencies_removed=data.get("dependencies_removed") is True,
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)
         return None
+
+
+def mark_dependencies_removed(output_dir: str) -> bool:
+    """Record in the checkpoint that the run's installed dependencies were removed; False when it has none."""
+    checkpoint = load_checkpoint(output_dir)
+    if checkpoint is None:
+        return False
+    checkpoint.dependencies_removed = True
+    return save_checkpoint(output_dir, checkpoint) is not None
 
 
 def delete_checkpoint(output_dir: str) -> None:

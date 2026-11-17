@@ -1,8 +1,40 @@
 from __future__ import annotations
 
-from typing import Dict, List
+import re
+from typing import Dict, List, Optional
 
-from besser.BUML.metamodel.structural import DomainModel, Property
+from besser.BUML.metamodel.structural import AssociationClass, Class, DomainModel, Property
+from besser.utilities import sort_by_timestamp
+
+# Last word of an attribute name that marks a stored secret, and the words before a last
+# "token" that make it one (an invitation or device token is data a client reads back).
+_SECRET_WORDS = frozenset({"password", "passwd", "pwd", "passphrase", "passcode", "secret", "salt"})
+_SECRET_TOKEN_KINDS = frozenset({"access", "refresh", "auth", "api", "reset", "session"})
+
+
+def is_secret_attribute(attribute: Property) -> bool:
+    """Whether a text attribute's name marks it as a stored secret, such as a password hash.
+
+    The generated search endpoint does not filter by such an attribute: a partial
+    match would let a caller recover the value one character at a time. The name
+    is read as camelCase / snake_case words. Its last word, or the word before a
+    last ``hash``, is ``password``, ``passwd``, ``pwd``, ``passphrase``,
+    ``passcode``, ``secret`` or ``salt`` (``passwordHash``, ``clientSecret``), or
+    ``token`` alone or after ``access``, ``refresh``, ``auth``, ``api``, ``reset``
+    or ``session``. Any other last word (``passwordHint``, ``tokenCount``) and an
+    ``is`` / ``has`` prefix make ordinary data. Only the search filter depends
+    on this: the attribute is stored, validated and returned like any other.
+    """
+    if attribute.type.name not in ("str", "string"):
+        return False
+    words = [word.lower() for word in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", attribute.name)]
+    if words and words[-1] == "hash":
+        words = words[:-1]
+    if not words or words[0] in ("is", "has"):
+        return False
+    if words[-1] == "token":
+        return len(words) == 1 or words[-2] in _SECRET_TOKEN_KINDS
+    return words[-1] in _SECRET_WORDS
 
 
 def is_server_owned_attribute(attribute: Property) -> bool:
@@ -18,6 +50,32 @@ def is_server_owned_attribute(attribute: Property) -> bool:
         or attribute.name.lower().replace("_", "") in {"createdat", "updatedat"}
         or attribute.is_derived
     )
+
+
+def is_shadowed_by_association_end(attribute: Property) -> bool:
+    """Whether an attribute has the name of a navigable association end its class reaches.
+
+    Generated Python gives a class one member per name. The association is the
+    richer fact (the attribute usually repeats it as text), so the SQLAlchemy,
+    Pydantic and backend generators emit the association end and leave the
+    attribute out. An end that is not navigable from the class is not part of
+    its API, so there the attribute stays (see ``end_hidden_by_attribute``).
+    ``DomainModel.validate()`` warns about the clash.
+    """
+    owner = attribute.owner
+    return isinstance(owner, Class) and attribute.name in {
+        end.name for end in owner.all_association_ends() if end.is_navigable}
+
+
+def end_hidden_by_attribute(end: Property, cls: Class) -> bool:
+    """Whether ``cls`` gets no relationship for ``end`` because an attribute keeps the name.
+
+    The counterpart of ``is_shadowed_by_association_end``: ``end`` is an end
+    ``cls`` reaches but cannot navigate, and ``cls`` has an attribute called
+    the same. The foreign key column and the other side of the association are
+    unaffected.
+    """
+    return not end.is_navigable and end.name in {attribute.name for attribute in cls.all_attributes()}
 
 
 def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],
@@ -44,6 +102,62 @@ def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],
     if end.multiplicity.max > 1:
         return True
     return fkeys.get(association.name, [""])[0] == near.type.name
+
+
+def display_attribute(attributes: List[Property]) -> Optional[Property]:
+    """The attribute that labels a record among others of its class (a lookup's
+    options, a lookup column), or ``None`` when there are no attributes.
+
+    The label has to let someone tell two records apart, so an attribute the
+    model marks as a business identifier wins, and an ``email`` outranks a
+    ``name``: two people called Jane are indistinguishable in a dropdown, two
+    email addresses are not.
+
+    Preference order: an attribute marked ``is_external_id`` (not the key the
+    server generates), then one named ``email``, then one named ``name``, then
+    the first string attribute that is not the id, then the first non-id
+    attribute, then the first attribute.
+    """
+    if not attributes:
+        return None
+
+    def is_key(attr: Property) -> bool:
+        return attr.is_id or attr.name == "id"
+
+    external_id = next(
+        (attr for attr in attributes
+         if attr.is_external_id and not attr.is_id and not is_server_owned_attribute(attr)),
+        None,
+    )
+    if external_id is not None:
+        return external_id
+    for preferred in ("email", "name"):
+        named = next((attr for attr in attributes if attr.name == preferred), None)
+        if named is not None:
+            return named
+    return (
+        next((attr for attr in attributes if not is_key(attr) and attr.type.name == "str"), None)
+        or next((attr for attr in attributes if not is_key(attr)), None)
+        or attributes[0]
+    )
+
+
+def form_parent_ends(domain_class: Class, model: DomainModel) -> List[Property]:
+    """The ends through which a new record of ``domain_class`` references exactly
+    one record (an order line's order), oldest first: both ends of the
+    association an association class materializes, else each navigable to-one
+    end the ``<Class>Create`` schema has a field for."""
+    if isinstance(domain_class, AssociationClass):
+        return sort_by_timestamp(set(domain_class.association.ends))
+    fkeys = get_foreign_keys(model)
+    link_associations = frozenset(
+        type_.association.name for type_ in model.types if isinstance(type_, AssociationClass)
+    )
+    return [
+        end for end in sort_by_timestamp(domain_class.all_association_ends())
+        if end.is_navigable and end.multiplicity.max == 1
+        and create_schema_accepts_end(end, fkeys, link_associations)
+    ]
 
 
 def _sorted_association_ends(association) -> list:

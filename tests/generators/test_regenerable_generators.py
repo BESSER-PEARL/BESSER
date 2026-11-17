@@ -21,13 +21,14 @@ from tests.generators.regenerable_builders import BUILDERS
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = Path(__file__).with_name("regenerable_builders.py")
 SEEDS = ("0", "1")
-# Excluded on purpose: output that differs per run, or an LLM step.
+# Excluded on purpose: output that differs per run, an LLM step, or output nobody edits.
 NOT_REGENERABLE = {
     "terraform": "its templates loop over sets of regions, services and deployments",
     "supabase": "a timestamp in the migration's file name",
     "flutter": "sql_helper.dart's order follows the hash seed",
     "agent": "personalization calls an LLM and draws random ids",
     "docker_compose": "personalization calls an LLM and draws random ids",
+    "alloy": "a specification for the Alloy Analyzer, not code a user edits; it has not opted in",
 }
 
 

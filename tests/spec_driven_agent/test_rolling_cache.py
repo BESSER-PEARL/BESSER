@@ -13,6 +13,7 @@ import pytest
 
 from besser.spec_driven_agent.providers import llm_client
 from besser.spec_driven_agent.providers.llm_client import _with_message_cache
+from besser.spec_driven_agent.settings import AgentSettings
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def rolling_off(monkeypatch):
     monkeypatch.setattr(llm_client, "_ROLLING_MESSAGE_CACHE", False)
 
 
-def test_enabled_by_default():
+def test_enabled_by_default(monkeypatch):
     """The paid check this default was waiting on has happened.
 
     claude-sonnet-5 through the PIA gateway, four growing turns, flag off then
@@ -36,11 +37,13 @@ def test_enabled_by_default():
     a 25.2% hit rate, about half its cost.
 
     A saving nobody enables is no saving, so the default is the point.
-    """
-    import importlib
 
-    importlib.reload(llm_client)
-    assert llm_client._ROLLING_MESSAGE_CACHE is True
+    Read from the setting the module reads at import, not by reloading the module:
+    a reload replaces every class in it, and ``issubclass`` checks in later tests that
+    hold the old classes then fail.
+    """
+    monkeypatch.delenv("BESSER_LLM_ROLLING_CACHE", raising=False)
+    assert AgentSettings().llm_rolling_cache is True
 
 
 def test_opting_out_is_a_noop(rolling_off):

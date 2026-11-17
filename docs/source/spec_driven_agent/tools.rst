@@ -20,7 +20,7 @@ would immediately fail.
    * - Validation / bookkeeping
      - ``validate_app``, ``test_api``, ``validate_model``, ``check_syntax``, ``task_list``
    * - Generators
-     - The 20 generator tools listed below.
+     - The 19 generator tools listed below.
    * - Shell
      - ``run_command``, ``install_dependencies``
 
@@ -42,29 +42,64 @@ them for the requested path.
 this run; a rewrite from memory would drop scaffold code. Like the other
 editors, it refuses an edit that would make the ORM or Pydantic module
 (``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
-``NNN| `` line numbering that ``read_file`` displays is stripped from edit
-text, and only when it is uniform; a single copied numbered line is refused
-rather than guessed at. ``list_files`` and ``search_in_files`` skip links that
+``N| `` line numbering that ``read_file`` displays (``7| code``, or the padded
+``   7| code`` of the post-edit echo) is stripped from edit text, and only
+when it is uniform; a single copied numbered line is refused
+rather than guessed at. ``write_file`` strips it only when the content is
+exactly that display of a whole file (every line numbered from 1), so numbered
+data such as a pipe-delimited id column is written as sent; any stripping is
+reported in the result's ``note``. ``list_files`` and ``search_in_files`` skip links that
 resolve outside the workspace, and the harness never reads or writes a
 workspace file through a symbolic link or special file. A call with a missing required argument, or
 arguments that are not valid JSON, returns a tool error naming the problem
-instead of running.
+instead of running. Each argument is also checked against the type its tool's
+schema declares: a null optional argument counts as omitted, ``"12"`` or ``12.0``
+is accepted for an integer, ``"true"``/``"false"`` for a boolean and a single value
+for an array; any other mismatch (a boolean or ``1.5`` for an integer, ``inf``, an
+object for a string, a value outside an ``enum``) is refused with an error naming
+the argument, the expected type and the type received.
 
-After two rejected text edits on a file, the executor provides an explicit
-recovery sequence: ``read_file`` followed by ``replace_file_lines``. This applies
-in customization and validation repair. Repeated quotation failures do not
-permanently freeze the file; an agent that ignores recovery is still bounded by
-the loop and run budgets.
+A refused edit carries one next step (``edit_recovery``), the same in
+customization and validation repair. When a ``modify_file`` miss brackets one
+region, or a range edit's ``read_id`` is stale, the result holds that span as a
+``located_range`` with a fresh ``read_id`` for ``replace_file_lines``. From the
+second refused edit on a file (with no landed edit between), the step is to read
+the whole file and ``write_file`` it back; two targeted edit attempts of either
+kind also unlock ``write_file`` where it is otherwise held back (a large
+generated file, a modify run). The orchestrator's reminders repeat that step.
+Repeated failures do not permanently freeze the file; an agent that ignores
+recovery is still bounded by the loop and run budgets.
 
 ``read_file`` returns a ``read_id`` tied to the resolved path, whole-file content
 hash, and actually displayed lines. ``replace_file_lines`` accepts that ID,
 1-based inclusive ``start_line``/``end_line``, and complete ``new_text``. It does
-not require reproducing the old text. Unread/truncated ranges, stale IDs,
+not require reproducing the old text. A line longer than one read's cap is
+shown clipped and never authorized by a ``read_id``. Unread/truncated ranges, stale IDs,
 no-ops, new elisions, and changes that break previously valid Python syntax are
 refused without writing. After a successful edit, read again before another
 same-file range edit. IDs are session-local and expire on resume. The tool shares
 path containment, per-file locking, diagnostics, and successful-write evidence
 with the other editors. An accepted edit is not proof of business correctness.
+
+A ``read_file`` repeating an earlier call (same path, ``offset`` and
+``limit``) on unchanged content, while that earlier result is still in the
+conversation, returns a short ``unchanged`` stub naming the still-valid
+``read_id`` and line range instead of the text. Repeating the call right after
+a stub returns the text. Compaction, history eviction, a resume and each
+Phase 3 fix round (a fresh conversation) reset this, so the next read is full.
+
+Every tool result reaches the model as JSON with non-ASCII text kept literal
+(``é``, not ``\u00e9``). ``list_files`` returns one ``<path> <size>`` line per
+file, skipping installed dependencies, build output and any directory holding
+a ``pyvenv.cfg`` (a virtualenv, whatever its name; it is named under
+``not_listed``). Past 300 files it lists source files first and ends with a
+``... N more files not listed`` line counting the rest per directory.
+``search_in_files`` returns up to 50 matches; it skips lock files
+(``package-lock.json``, ``yarn.lock``, ``pnpm-lock.yaml``, ``poetry.lock``,
+``Cargo.lock``), minified bundles, source maps and binaries unless
+``file_glob`` names the file exactly, and says so under ``not_searched``.
+``file_glob`` matches file names only; one containing a path separator is
+refused with an error rather than returning no matches.
 
 ``task_list(action='done')`` runs an attached verifier. A verifier exception is a
 failed check, not success. Without a verifier, supply
@@ -81,12 +116,29 @@ Application checks during editing
 ---------------------------------
 
 ``validate_app`` reports source contracts, startup and create-request failures
-after a coherent edit. Validation runs after writes in the same tool batch.
+after a coherent edit. It lists at most 40 findings, most urgent first, and
+counts the rest (``remaining_issue_count``); a finding longer than 1,200
+characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
+Once the app has frontend files, it also reports the static frontend checks
+(contract, import resolution, create forms) and, without a GUI model, the
+acceptance-matrix findings; a warning among them is marked
+``advisory, not a blocker``. When the run has a checklist, a passing result
+also lists its open items (``open_items``: id and a short label, empty when
+none is open), the ids ``task_list`` needs to close them. Ending a turn runs
+the same checks, so the tool's description asks for a call after a code change
+only, not a second one before finishing.
 
 ``test_api`` executes up to 20 declarative requests against a disposable copy of
 one generated FastAPI backend and a fresh SQLite database. Requests share state
 within a scenario; later requests may reference response JSON using
-``{{0.room.id}}``. Assertions specify expected statuses and dotted JSON fields.
+``{{0.room.id}}``. When the path is missing from a response that wraps the record
+under exactly one key (``{"todolist": {"id": 1}, "items_ids": []}``), ``{{0.id}}``
+resolves through that key and the response carries a note such as ``{{0.id}}``
+resolved as ``{{0.todolist.id}}``; ``expected_fields`` paths are matched exactly.
+Assertions specify expected statuses and dotted JSON fields;
+an expected field value accepts the same references, so a check can name an id
+an earlier request returned. Braces that resolve to no earlier value are text,
+compared and reported as written.
 
 A request may carry ``headers``, whose values accept the same references, so a
 scenario can register, log in and send the returned token on later requests:
@@ -98,10 +150,25 @@ method-override headers are refused. Cookies a response sets are kept for the
 rest of the scenario. The values of credential-bearing headers (``Authorization``
 and names containing words such as *key*, *token*, *secret* or *auth*) are
 redacted from the report, from ``action="get"`` and from the trace, as is the
-value wherever the app echoes it.
+value wherever the app echoes it. Response fields named like a credential
+(``access_token``, ``api_key``, ``client_secret``, ``password``,
+``password_hash``, ``passwordNew``, ``secret_answer``, ``reset_token``, a
+non-numeric ``session_id``, ``reset_code``, nested ``tokens.access``; not a
+page cursor such as ``next_page_token`` nor a field whose next word only
+describes or identifies one, such as ``password_changed_at``, ``token_count``,
+``api_key_name`` or ``secret_id``), the input a
+validation error echoes for such a field, and any JWT-shaped string are
+redacted too, even when no later request sends them, including inside
+assertion failure messages and in the path, error and failures of a later
+request that sends such a field back by reference; other fields that happen to
+hold the same value are shown. References such as ``{{1.access_token}}`` still
+receive the real value.
 Named scenarios are retained during the run and replayed after source changes;
 failures block completion. Correcting a mistaken test requires an explicit
-``correction_reason``. Model-authored scenarios are supplemental checks, not an
+``correction_reason``. A correction that removes a request which passed in the
+scenario's last run (same method and route no longer present) is refused: such
+checks stay in the corrected scenario or go under their own ``scenario_id``.
+Model-authored scenarios are supplemental checks, not an
 independent proof of specification coverage.
 
 Use ``test_api(action="list")`` to discover retained workflows and
@@ -196,6 +263,10 @@ difference between a run with them and a run without. They are also arbitrary
 code execution on the host that serves generation, so who is allowed to switch them on is a
 deployment decision, never a per-request one.
 
+A command cannot change the run's own records: ``.besser_checkpoint.json`` and
+``.besser_recipe.json`` are restored after each command if it rewrote, deleted
+or planted them, and the result says so under ``run_records_restored``.
+
 Before it installs, ``install_dependencies`` pins the known-incompatible
 dependency pairs described in :doc:`validation` into the working directory's
 ``requirements.txt`` and lists each change under ``pinned`` in its result.
@@ -283,7 +354,8 @@ What it does:
   credentials are not visible to a command or to a build backend it triggers.
 - **A denylist** for the obvious catastrophes: ``sudo``, ``rm -rf /``,
   curl-pipe-shell, fork bombs, reads of ``~/.ssh`` and ``~/.aws``.
-- **A bounded amount of output** in the model's context, with the full log
+- **A bounded amount of output** in the model's context: 15,000 characters
+  per command, half for each stream, with the full log
   still reachable (below). Each stream is also capped at 8 MB while it is
   captured: past that the command's process tree is killed, and the head and
   tail are kept with a marker for the dropped middle.
@@ -365,7 +437,32 @@ prints only their names. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
 session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
+A command without ``working_dir`` starts where an earlier ``cd`` left the
+shell; when that is not the workspace root, the result's first field,
+``ran_in``, names that directory. A line that joins two commands with ``;`` or
+a new line, exits 0 and reports a failure in stderr gets a ``note`` that
+``exit_code`` is the last command's alone.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
+
+The probe runs the app inside the workspace, so what the app writes on startup
+or while answering a request (its database, a signing key it generates, an
+upload) lands beside the source. The probe records the files that appear under
+the backend during ``up`` and ``req`` in ``.besser_probe.runtime_files.json``,
+and the run deletes them before it writes the recipe, unless a generator or a
+write tool wrote them; the recipe lists them under ``runtime_files_removed``.
+They are therefore in neither the download nor a GitHub push. Only the
+name-based exclusions (databases, logs, caches) apply, and a generated key or
+upload is delivered with the app, when the file is:
+
+- written while the app was started some other way than the probe: ``python
+  main_api.py`` or a test run through ``run_command``, or a script that
+  imports the app's module;
+- written by the running server between two probe calls, for example by a
+  background task or a request sent with ``curl``;
+- written anywhere when the backend is the workspace root: the probe then
+  records nothing and nothing is removed;
+- in a dot-folder or outside the backend folder, an existing file the app
+  rewrote, or a recorded file changed afterwards.
 
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on
@@ -386,7 +483,7 @@ So when either stream is cut, the complete output is written to
 that path for the errors and ``read_file`` the surrounding lines. The directory
 is run-internal: it is excluded from the download archive, from a GitHub push,
 from the scaffold inventory and from the recipe's file manifest. Each spilled
-stream is itself capped at 2 MB — far above anything a build log needs, and
+stream is itself capped at 2,000,000 characters — far above anything a build log needs, and
 only there so a runaway command cannot fill the disk.
 
 .. note::

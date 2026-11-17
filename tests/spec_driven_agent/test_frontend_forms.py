@@ -120,6 +120,34 @@ def test_new_placeholder_compared_explicitly_is_quiet(tmp_path):
         "form create target:")
 
 
+@pytest.mark.parametrize("save", [
+    # 'new' is handled first; the truthiness branch is its else.
+    "if (editingId === 'new') await api.createExpense(form)\n"
+    "    else if (editingId) await api.updateExpense(editingId, form)\n",
+    "if (editingId === 'new') { await api.createExpense(form) }\n"
+    "    else if (editingId) { await api.updateExpense(editingId, form) }\n",
+    "await (editingId === 'new' ? api.createExpense(form) : editingId ? api.updateExpense(editingId, form) : null)\n",
+])
+def test_new_placeholder_handled_before_the_truthiness_branch_is_quiet(tmp_path, save):
+    assert not _findings(tmp_path, {"Expenses.jsx": (
+        "export default function Expenses(){const [editingId,setEditingId]=useState(null)\n"
+        "  const save = async () => {\n    " + save + "    setEditingId(null)\n  }\n"
+        "  return <div><button onClick={() => setEditingId('new')}>Add</button>"
+        "<button onClick={save}>Save</button></div>}\n")}, "form create target:")
+
+
+def test_new_placeholder_reported_once_when_set_and_compared(tmp_path):
+    """``setEditingId('new')`` and ``editingId === 'new'`` name the same
+    variable; they used to give two identical findings."""
+    issues = _findings(tmp_path, {"Expenses.jsx": (
+        "export default function Expenses(){const [editingId,setEditingId]=useState(null)\n"
+        "  const save = async () => { if (editingId) await api.updateExpense(editingId, form);"
+        " else await api.createExpense(form) }\n"
+        "  return <div><button onClick={() => setEditingId('new')}>Add</button>"
+        "<h2>{editingId === 'new' ? 'Add' : 'Edit'}</h2></div>}\n")}, "form create target:")
+    assert len(issues) == 1 and "'editingId'" in issues[0]
+
+
 # ---- T2b: a create link to an undeclared route ---------------------------
 
 _ROUTES = ("<Routes><Route path=\"/\" element={<Home/>}/>"

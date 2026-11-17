@@ -39,6 +39,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import stat
 import threading
 import uuid
@@ -53,6 +54,7 @@ from besser.utilities.workspace_fs import (
     write_atomic_plain,
 )
 from besser.utilities.provenance import ATTRIBUTION_FILENAME, PROVENANCE_FILENAME
+from besser.utilities.secret_redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -127,21 +129,28 @@ def unknown_contributor() -> dict:
     return {"kind": KIND_UNKNOWN}
 
 
-def normalize_model_id(provider: Optional[str], model: Optional[str]) -> Optional[str]:
-    """``provider/model-name`` (the models.dev convention Agent Trace uses).
+# Providers whose model ids are public vendor names. Any other route (free, sponsored,
+# pia, gateway, local) publishes its route name, never its provider-side model id.
+_PUBLIC_MODEL_PROVIDERS = frozenset({"anthropic", "openai", "mistral", "nebius"})
+_SAFE_MODEL_ID = re.compile(r"^[A-Za-z0-9._:/@-]{1,100}$")
 
-    A model id that already names its provider (``openai/gpt-4o``, an
-    OpenRouter-style id) is kept as is.
+
+def normalize_model_id(provider: Optional[str], model: Optional[str]) -> Optional[str]:
+    """The model label a pushed file may carry: ``provider/model-name`` (models.dev
+    convention) for a public provider, else the bare route name.
+
+    The label lands in the user's repo, so a non-public route and a value that is
+    not a plain id (free text could hold a pasted key) never publish the model id.
     """
     model = (model or "").strip()
     if not model:
         return None
-    if "/" in model:
-        return model
     provider = (provider or "").strip().lower()
-    if provider in ("", "free", "sponsored", "pia", "gateway", "local"):
-        return model
-    return f"{provider}/{model}"
+    if provider not in _PUBLIC_MODEL_PROVIDERS:
+        return provider or None
+    if not _SAFE_MODEL_ID.match(model) or redact_text(model)[0] != model:
+        return provider
+    return model if "/" in model else f"{provider}/{model}"
 
 
 def _line_hash(line: str) -> str:

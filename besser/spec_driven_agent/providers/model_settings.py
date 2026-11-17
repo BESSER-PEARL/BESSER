@@ -21,6 +21,7 @@ or a probe recorded in the comment. Sampling defaults we cannot observe are
 left alone rather than guessed at.
 """
 
+import re
 from dataclasses import dataclass, field, replace
 
 from besser.llm.catalog import load_model_catalog
@@ -130,17 +131,18 @@ _CLAUDE_ALWAYS_THINKING = ModelSettings(
     thinking_can_be_disabled=False,
 )
 _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL = ModelSettings(
-    # Fable 5.1, Opus 5.5 and Sonnet 5.5: thinking cannot be disabled, and
-    # tool_choice {"type": "tool"/"any"} is a 400 ("not supported for this
-    # model").
+    # Fable 5.1 / 5.2, Mythos 5.1 / 5.2, Opus 5.5 and Sonnet 5.5: thinking
+    # cannot be disabled, and tool_choice {"type": "tool"/"any"} is a 400
+    # ("not supported for this model").
     thinking_can_be_disabled=False,
     forced_tool_choice=False,
 )
 
 
 # Ordered longest-marker-first at import so a specific id always beats a
-# shorter family prefix. Matched as a lowercased substring, the same way
-# get_pricing and compaction's window tables match.
+# shorter family prefix. Matched as a lowercased substring that must not run
+# on into a digit: "claude-fable-5-2" is a prefix of the dated Fable 5 id
+# "claude-fable-5-20260101", which must keep the "claude-fable-5" row.
 #
 # Markers are chosen not to overlap: "qwen3-30b-a3b-instruct-2507" and
 # "qwen3-coder" cannot both match one id. The Claude markers do overlap
@@ -162,6 +164,12 @@ _REGISTRY: tuple[tuple[str, ModelSettings], ...] = tuple(
             # resolve to the same row.
             ("claude-fable-5", _CLAUDE_ALWAYS_THINKING),
             ("claude-fable-5-1", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            # Without its own row a point release falls back to the shorter
+            # "claude-fable-5" marker, which still forces tool_choice.
+            ("claude-fable-5-2", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            ("claude-mythos-5", _CLAUDE_ALWAYS_THINKING),
+            ("claude-mythos-5-1", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            ("claude-mythos-5-2", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
             ("claude-opus-5-5", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
             ("claude-sonnet-5-5", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
         ),
@@ -182,7 +190,8 @@ def settings_for(model: str | None) -> ModelSettings:
     if not model:
         return _DEFAULTS
     low = model.lower()
-    settings = next((row for marker, row in _REGISTRY if marker in low), _DEFAULTS)
+    settings = next((row for marker, row in _REGISTRY if re.search(re.escape(marker) + r"(?!\d)", low)),
+                    _DEFAULTS)
     override = load_model_catalog().request_override(model)
     return replace(settings, **override) if override else settings
 

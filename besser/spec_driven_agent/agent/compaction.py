@@ -18,6 +18,7 @@ import os
 import urllib.request
 from typing import Any
 from besser.utilities.workspace_fs import walk_plain
+from besser.spec_driven_agent.pipeline.constants import _RECIPE_EXCLUDED_DIRS
 from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -483,6 +484,17 @@ def maybe_compact(
             {"role": "assistant", "content": [{"type": "text", "text": "Continuing."}]}
         )
     compacted.extend(to_preserve)
+    if _estimate_tokens(compacted) >= est_tokens:
+        # Everything in front of the kept tail costs less than its summary
+        # (the newest turn alone fills the budget). Applying it would grow the
+        # history, rewrite message 0 (a full prompt-cache miss), drop every
+        # thinking block, and fire again next turn.
+        logger.warning(
+            "Compaction frees nothing (~%d tokens over a %d threshold, the kept "
+            "tail alone is ~%d): sending the history as it is",
+            est_tokens, threshold, _estimate_tokens(to_preserve),
+        )
+        return messages, False
     return compacted, True
 
 
@@ -549,7 +561,10 @@ def _summarize_messages(
         )
     try:
         files = []
-        for root, _, fnames in walk_plain(output_dir):
+        for root, dirs, fnames in walk_plain(output_dir):
+            # The delivered files only: after an install an unpruned walk is
+            # all node_modules, and the cap below then shows nothing else.
+            dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
             for f in fnames:
                 if not f.startswith(".besser_"):
                     files.append(

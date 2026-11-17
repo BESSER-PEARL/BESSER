@@ -623,10 +623,11 @@ Example (good)
 Review and merging
 ~~~~~~~~~~~~~~~~~~
 
-* All PRs must pass automated checks. The CI workflow runs three jobs — tests
-  on Python 3.11 and 3.12, the Ruff lint above, and a docs build that fails on
-  any Sphinx warning (``python docs/check_docs.py``) — plus CodeQL from the
-  security workflow.
+* All PRs must pass automated checks. The CI workflow runs five jobs — tests
+  on Python 3.11 and 3.12, the Ruff lint above with the import-layer contracts,
+  the editor's OpenAPI schema check, a wheel build and install, and a docs
+  build that fails on any Sphinx warning (``python docs/check_docs.py``) — plus
+  CodeQL from the security workflow.
 * At least one maintainer review is required, per the
   `governance rules <https://github.com/BESSER-PEARL/BESSER/blob/master/GOVERNANCE.md>`_.
 * Maintainers choose the merge strategy (squash, rebase, or merge commit)

@@ -10,6 +10,7 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
+from besser.utilities.buml_code_builder.common import safe_class_name
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
@@ -116,6 +117,8 @@ def object_buml_to_json(
         for elem_id, elem in reference_diagram_json["elements"].items():
             if elem["type"] in ("Class", "AbstractClass"):
                 class_name_to_id[elem["name"]] = elem_id
+                # The code names a class as object_model_to_code does: Class_ for Class
+                class_name_to_id.setdefault(safe_class_name(elem["name"]), elem_id)
                 # Store class attributes for object attribute mapping
                 class_attributes = {}
                 for attr_id in elem.get("attributes", []):

@@ -186,7 +186,7 @@ def test_phase2_prompt_for_a_native_target():
     assert "Do NOT add a web frontend" in prompt
     # No scaffold: nothing to keep, so no "ignore the user's stack".
     assert STACK_LOCK not in prompt
-    assert "The generator handled the base app" not in prompt
+    assert "The generator output above is your starting point" not in prompt
 
 
 def test_phase2_prompt_for_a_web_target_is_unchanged():
@@ -194,7 +194,7 @@ def test_phase2_prompt_for_a_web_target_is_unchanged():
     assert RULE_15_WEB in web
     assert web == _prompt(TODO_APP, target=Target("web_app", "todo web app", True))
     scaffolded = _prompt(TODO_APP, scaffold_snapshot="backend/main_api.py ...")
-    assert STACK_LOCK in scaffolded and "The generator handled the base app" in scaffolded
+    assert STACK_LOCK in scaffolded and "The generator output above is your starting point" in scaffolded
 
 
 def test_a_native_target_keeps_its_ui_requirements_in_scope(tmp_path):

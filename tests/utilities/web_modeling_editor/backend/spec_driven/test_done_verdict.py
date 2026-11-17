@@ -143,7 +143,8 @@ def test_failed_diagram_is_visible_and_bound_missing_inputs_fail_before_client(m
             assert any(event["event"] == "phase_update" and "assembly_issues" in event["details"] for event in events)
             done = next(event for event in events if event["event"] == "done")
             assert done["incomplete"] is True and done["blockerCount"] == 1
-            assert "validation unverified: model assembly" in done["incompleteReason"]
+            assert "First: Not run: model assembly (GUINoCodeDiagram [failed-gui]" in done["incompleteReason"]
+            assert "validation unverified" not in done["incompleteReason"]
     finally:
         _cleanup()
 

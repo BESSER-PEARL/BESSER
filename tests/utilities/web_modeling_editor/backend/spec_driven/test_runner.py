@@ -564,6 +564,33 @@ class TestInstalledDependencies:
         assert not os.path.exists(sandbox_home(runner.temp_dir))
         assert load_checkpoint(runner.temp_dir).dependencies_removed is True
 
+    @pytest.mark.parametrize("resume", [False, True])
+    def test_a_failed_run_kept_for_resume_drops_them_too(self, tmp_path, resume):
+        """A failed run is not in the registry, so release_disk never reaches it: only the
+        24 h temp cleanup would have removed what it installed."""
+        from besser.spec_driven_agent.state.checkpoint import load_checkpoint
+
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+        workspace = tmp_path / "besser_llm_run"
+        for folder in _INSTALLED:
+            (workspace / "out" / os.path.join(*folder)).mkdir(parents=True)
+        (workspace / "out" / "main.py").write_text("print('app')\n", encoding="utf-8")
+        os.makedirs(os.path.join(sandbox_home(str(workspace)), ".npm"))
+        (workspace / CHECKPOINT_FILENAME).write_text(
+            json.dumps({"schema_version": 1, "instructions": "x", "phase": "phase2"}), encoding="utf-8")
+        runner.temp_dir = str(workspace)
+        if resume:
+            runner._resume_run_id = "an-interrupted-run"
+
+        runner._cleanup_temp_dir()
+
+        assert runner.temp_dir == str(workspace)
+        assert (workspace / "out" / "main.py").is_file()
+        for folder in _INSTALLED:
+            assert not (workspace / "out" / os.path.join(*folder)).exists(), folder
+        assert not os.path.exists(sandbox_home(str(workspace)))
+        assert load_checkpoint(str(workspace)).dependencies_removed is True
+
 
 class TestRegistrySweep:
     def test_sweep_expires_entries_older_than_ttl(self):

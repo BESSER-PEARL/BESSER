@@ -2939,6 +2939,7 @@ class SmartGenerationRunner:
             # and download outlive a failed resume, so the user can retry with
             # the right input. The 24 h temp cleanup removes it.
             logger.warning("Run %s: resume failed; keeping its workspace for another resume", self.run_id)
+            self._drop_dependencies_of_kept_workspace()
             return
         from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 
@@ -2946,6 +2947,7 @@ class SmartGenerationRunner:
             # A checkpoint makes the run resumable, and an abandoned run has
             # already told its client so (``resumeAvailable``).
             logger.warning("Run %s failed after a checkpoint; keeping its workspace for resume", self.run_id)
+            self._drop_dependencies_of_kept_workspace()
             return
         if self.temp_dir and os.path.isdir(self.temp_dir):
             try:
@@ -2955,3 +2957,20 @@ class SmartGenerationRunner:
                     "Failed to clean up temp dir for run %s", self.run_id
                 )
         self.temp_dir = None
+
+    def _drop_dependencies_of_kept_workspace(self) -> None:
+        """Keep a failed run's files for a resume, but not what it installed and built.
+
+        Failed runs are not in the registry, so ``release_disk`` never reaches them
+        and the 24 h temp cleanup is all that would remove them; a resume installs
+        the dependencies again (``mark_dependencies_removed``).
+        """
+        from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
+
+        if not (self.temp_dir and os.path.isdir(self.temp_dir)):
+            return
+        try:
+            drop_installed_dependencies(self.temp_dir)
+            mark_dependencies_removed(self.temp_dir)
+        except OSError:
+            logger.warning("Run %s: its installed dependencies could not be removed", self.run_id, exc_info=True)

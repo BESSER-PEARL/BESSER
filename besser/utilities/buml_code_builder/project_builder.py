@@ -265,6 +265,9 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
             # ---------------------------------------------------------- #
             # DOMAIN MODELS (regular, non-user)                          #
             # ---------------------------------------------------------- #
+            # Association variables by association id, for the trace to reference (see structural_variables).
+            association_vars: Dict[str, str] = {}
+            user_association_vars: Dict[str, str] = {}
             for idx, (dm, om) in enumerate(domain_pairs, start=1):
                 var_name = _suffixed_name("domain_model", idx, n_domain)
                 obj_var_name = _suffixed_name("object_model", idx, n_domain)
@@ -286,6 +289,7 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                         metadata_var_name=meta_var_name,
                         emit_ids=emit_ids,
                         object_model_var_name=obj_var_name,
+                        variables=association_vars,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
@@ -297,6 +301,7 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                         model_var_name=var_name,
                         metadata_var_name=meta_var_name,
                         emit_ids=emit_ids,
+                        variables=association_vars,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
@@ -354,6 +359,7 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                     metadata_var_name=meta_var,
                     object_model_var_name=obj_var,
                     emit_ids=emit_ids,
+                    variables=user_association_vars,
                 )
                 _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
@@ -594,6 +600,8 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                 references = structural_variables(
                     [(dm, _suffixed_name("domain_model", idx, n_domain)) for idx, (dm, _) in enumerate(domain_pairs, start=1)],
                     other_models=[udm for udm, _ in user_pairs],
+                    association_variables=association_vars,
+                    other_association_variables=user_association_vars.values(),
                 )
                 tmp_path = os.path.join(temp_dir, "trace_model.py")
                 trace_model_to_code(trace, tmp_path, references=references)

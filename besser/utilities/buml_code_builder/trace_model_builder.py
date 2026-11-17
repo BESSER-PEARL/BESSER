@@ -16,9 +16,10 @@ are free text, and a trace can hold many elements with the same name.
 In a project file the trace follows its models, so a model element it is about is
 referenced, not repeated: ``ModelArtifact(element=Library)``. The variable is the
 one the structural section binds the element to, found with the structural
-builder's own public naming helpers (:func:`structural_variables`). An element
-without such a variable (an association, a literal, a deleted element) stays a
-record with its name, type and id; the importer matches it by name.
+builder's own public naming helpers (:func:`structural_variables`), or, for an
+association, reported by the builder as it writes it. An element without such a
+variable (a literal, a deleted element) stays a record with its name, type and id;
+the importer matches it by name.
 """
 
 import re
@@ -83,7 +84,9 @@ def model_key(name: str) -> str:
 
 
 def structural_variables(domain_models: Sequence[Tuple[DomainModel, str]],
-                         other_models: Iterable[DomainModel] = ()) -> Dict[str, str]:
+                         other_models: Iterable[DomainModel] = (),
+                         association_variables: Optional[Dict[str, str]] = None,
+                         other_association_variables: Iterable[str] = ()) -> Dict[str, str]:
     """The variables a project file binds model elements to, for the trace to reference.
 
     Keyed by element id (classes, enumerations, association classes, their attributes and
@@ -96,6 +99,10 @@ def structural_variables(domain_models: Sequence[Tuple[DomainModel, str]],
         domain_models: Each written domain model with its variable (``domain_model``, ...).
         other_models: Domain models written in the same file whose names can collide
             (the user reference model), not referenced themselves.
+        association_variables: The variable of each association of ``domain_models``, by id, as
+            ``domain_model_to_code`` reported it. Referenced, so two associations of the same name
+            (written ``books`` and ``books_1``) are told apart.
+        other_association_variables: The association variables of ``other_models``, which can collide.
     """
     candidates: List[Tuple[Optional[str], str]] = []  # (key or None when not referenced, variable)
 
@@ -115,6 +122,8 @@ def structural_variables(domain_models: Sequence[Tuple[DomainModel, str]],
         collect(model, key=True)
     for model in other_models:
         collect(model, key=False)
+    candidates.extend((association_variables or {}).items())
+    candidates.extend((None, variable) for variable in other_association_variables)
 
     uses = Counter(variable for _, variable in candidates)
     keys = Counter(key for key, _ in candidates if key)

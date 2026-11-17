@@ -10,7 +10,9 @@ A project's Python export has no element ids in its structural sections, so impo
 gives every class diagram element a new id. The trace refers to the elements as they were, by
 reference (``ModelArtifact(element=Library)``) or by record (name, type and the old id), so each
 of its class diagram artifacts is matched by qualified name: ``Library``, ``Library.name``, an
-association's name, ``Color.RED``. Names are unique inside one diagram, so the match is exact.
+association's name, ``Color.RED``. Names are unique inside one diagram, so the match is exact; an
+association, whose name need not be, is referenced by its variable and so carries the name the
+import gives it (``books_1`` for the second ``books``).
 The other diagram types keep their element ids through the export where the B-UML file carries
 them (a GUI's pages and components, the ``layout`` of BPMN, deployment and component elements, a
 knowledge graph's nodes and edges), so an artifact of one keeps its id when the imported diagram

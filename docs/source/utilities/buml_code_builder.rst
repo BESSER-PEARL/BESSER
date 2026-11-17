@@ -101,6 +101,9 @@ one of them. The section references the structural elements it is about
 (``ModelArtifact(element=Library)``) by the variables the structural sections bind
 them to; ``structural_variables`` computes them with the structural builder's own
 naming helpers (``safe_class_name``, ``attribute_var_name``, ``method_var_name``).
+An association's variable is minted while the model is written (two associations
+named ``books`` become ``books`` and ``books_1``), so ``domain_model_to_code``
+reports it through its ``variables`` argument.
 
 All builder functions accept an optional ``model_var_name`` parameter to customize the variable
 name used in the generated code (defaults vary by builder type, e.g., ``"domain_model"``,

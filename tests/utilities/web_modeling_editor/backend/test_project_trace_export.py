@@ -159,14 +159,45 @@ def test_every_traced_element_is_found_in_the_imported_project(client, project, 
     assert ghost["elementId"] == "gone"  # deleted: nothing to match, the record keeps its id
 
 
+def test_two_associations_of_the_same_name_keep_their_own_trace(client, project, class_diagram):
+    """Live: the Library template's two "books" associations; the import names the second ``books_1``,
+    and its trace followed the first one by name."""
+    model = class_diagram["model"]
+    author = next(e for e in model["elements"].values() if e.get("name") == "Publication")
+    (holds_id,) = [k for k, r in model["relationships"].items() if r.get("name") == "holds"]
+    model["relationships"][holds_id]["name"] = "books"
+    second = copy.deepcopy(model["relationships"][holds_id])
+    second.update(id="writes", source={**second["source"], "element": author["id"]})
+    model["relationships"]["writes"] = second
+    project = {**project, "diagrams": {"ClassDiagram": [class_diagram]}}
+    response = client.post("/besser_api/traceability/generate-output", json={
+        **class_diagram, "generator": "sqlalchemy", "config": {"dbms": "sqlite"}, "actorName": "Ada Lovelace",
+    })
+    trace = _record_editing({**response.json()["trace"], "projectId": "project-1"}, class_diagram)
+    for artifact in trace["artifacts"]:
+        if artifact.get("elementType") == "BinaryAssociation":
+            artifact["name"] = "books"  # the editor's name of both, not the generator's ``books_1``
+
+    body = _import(client, _export(client, {**project, "trace": trace})).json()
+    (diagram,) = body["project"]["diagrams"]["ClassDiagram"]
+    imported = diagram["model"]
+    names = {e["id"]: e.get("name") for e in imported["elements"].values()}
+    ends_of = {rid: {names[r["source"]["element"]], names[r["target"]["element"]]}
+               for rid, r in imported["relationships"].items() if r["type"] != "ClassInheritance"}
+    associations = [a for a in body["trace"]["artifacts"]
+                    if a["type"] == "ModelArtifact" and a["elementType"] == "BinaryAssociation"]
+    # Each artifact found its own association, not both the first one.
+    assert sorted(sorted(ends_of.get(a["elementId"], ())) for a in associations) == [
+        ["Book", "Library"], ["Book", "Publication"]]
+
+
 def test_the_trace_references_the_structural_elements(client, project, trace):
     source = _export(client, {**project, "trace": trace})
     section = source.split("# TRACEABILITY MODEL #")[1]
     for reference in ("element=domain_model,", "element=Library,", "element=Library_name,", "element=Library_m_open,",
-                      "element=Genre,"):
+                      "element=Genre,", "element=holds,"):
         assert reference in section
     assert 'ModelArtifact("Ghost", element_id="gone", element_type="Class"' in section
-    assert 'element_type="BinaryAssociation"' in section  # no public variable: kept as a record
 
     namespace = {}
     exec(compile(source, "library.py", "exec"), namespace)  # noqa: S102 -- our own export, run as a script

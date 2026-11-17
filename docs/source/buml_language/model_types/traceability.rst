@@ -236,8 +236,8 @@ B-UML with its trace has it as a ``TRACEABILITY`` section bound to
 ``trace_model``, after the models it is about. It references their elements
 instead of repeating them -- ``ModelArtifact(element=domain_model)``,
 ``ModelArtifact(element=Library)``, ``ModelArtifact(element=Library_name)`` -- for
-the models, classes, enumerations, attributes and methods, which the structural
-sections bind to variables. The other elements (associations, generalizations,
+the models, classes, enumerations, attributes, methods and associations, which the
+structural sections bind to variables. The other elements (generalizations,
 literals, constraints) and deleted ones stay records. Running the file gives you
 the ``TraceModel``, whose artifacts point at the real B-UML objects::
 

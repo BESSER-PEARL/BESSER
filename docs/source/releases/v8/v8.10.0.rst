@@ -92,3 +92,18 @@ confirmation, never runs a bare "try again" as the whole request of a new
 application, says when the previous result has expired, and applies stricter
 class-model guards. It reads the ``context.generationKey`` and
 ``context.lastGeneration`` fields this editor sends.
+
+Contributors
+------------
+
+Thank you to everyone who made this release:
+
+- `@pponzio <https://github.com/pponzio>`_ and `@marcelouva <https://github.com/marcelouva>`_
+  for the semantic check of class diagrams and OCL constraints with the Alloy
+  Analyzer.
+- `@jcabot <https://github.com/jcabot>`_ for the requests behind autosave to
+  GitHub (`#790 <https://github.com/BESSER-PEARL/BESSER/issues/790>`_) and the
+  plain GitHub import (`#789 <https://github.com/BESSER-PEARL/BESSER/issues/789>`_).
+- `@ArmenSl <https://github.com/ArmenSl>`_ for the web apps from designed
+  screens, the generated backend hardening, the Spec-Driven Agent and assistant
+  fixes, and this release.

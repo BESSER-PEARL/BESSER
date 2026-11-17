@@ -1,4 +1,10 @@
-name: Deploy WME to EC2
+name: Deploy WME
+
+# Builds the editor images and pushes them to :latest. The editor host (the
+# LIST VM rp-besser-wme, behind LIST's reverse proxy) is only reachable over the
+# LIST VPN, so this workflow never logs in to it: watchtower there pulls new
+# :latest images every 30 minutes and recreates the containers. The last step
+# waits until the public URL serves the new build.
 
 on:
   workflow_dispatch:
@@ -10,14 +16,15 @@ on:
         type: choice
         options:
           - all
-          - backend          # backend + worker images; restarts besser-wme-backend and besser-wme-smartgen
+          - backend          # backend + worker images (besser-wme-backend and besser-wme-smartgen)
           - frontend
+          - agent            # modeling agent, from BESSER-PEARL/modeling-agent main
           - agent_simulator
 
 permissions:
   contents: read
 
-# Every deploy moves the same :latest tags and restarts the same host: one at a time.
+# Every deploy moves the same :latest tags: one at a time.
 concurrency:
   group: deploy-wme
   cancel-in-progress: false
@@ -25,54 +32,21 @@ concurrency:
 env:
   REGISTRY_HOST: artefacts.list.lu
   REGISTRY: artefacts.list.lu/besser/web_modeling_editor
-  SSH_USER: ec2-user
-  SSH_HOST: ec2-16-16-223-38.eu-north-1.compute.amazonaws.com
   EDITOR_URL: https://editor.besser-pearl.org
   TARGET: ${{ inputs.target }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Pushing images to artefacts.list.lu from GitHub-hosted runners takes ~20+ min (run 43038262597 was cancelled at 20 min).
-    timeout-minutes: 60
+    # Pushes to artefacts.list.lu from GitHub-hosted runners take ~20+ min
+    # (run 43038262597 was cancelled at 20 min), the agent image is ~4 GB, and
+    # watchtower takes up to 30 min to install what was pushed.
+    timeout-minutes: 150
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-
-      # Later steps reach the host as `ssh wme`.
-      - name: Setup SSH
-        env:
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          cat >> ~/.ssh/config <<EOF
-          Host wme
-            HostName $SSH_HOST
-            User $SSH_USER
-            IdentityFile ~/.ssh/deploy_key
-            StrictHostKeyChecking no
-          EOF
-
-      - name: Resolve the services to deploy
-        run: |
-          # The spec-driven worker is built from the same commit, so it is
-          # recreated with the backend; otherwise it keeps the previous code.
-          BACKEND="besser-wme-backend besser-wme-smartgen"
-          case "$TARGET" in
-            all)             SERVICES="$BACKEND besser-wme-frontend besser-wme-agent-simulator" ;;
-            backend)         SERVICES="$BACKEND" ;;
-            frontend)        SERVICES="besser-wme-frontend" ;;
-            agent_simulator) SERVICES="besser-wme-agent-simulator" ;;
-            *) echo "::error::Unknown target '$TARGET'"; exit 1 ;;
-          esac
-          echo "SERVICES=$SERVICES" >> "$GITHUB_ENV"
-
-      - name: Check the host compose file defines the services
-        run: .github/scripts/check_host_compose.sh
 
       # Watchtower deploys whatever reaches :latest, so this runs before any push.
       - name: Check the frontend build settings
@@ -81,7 +55,7 @@ jobs:
           POSTHOG_KEY: ${{ vars.FRONTEND_POSTHOG_KEY }}
         run: |
           if [[ -z "$POSTHOG_KEY" ]]; then
-            echo "::error::Set the repository variable FRONTEND_POSTHOG_KEY. Nothing was built, pushed or restarted."
+            echo "::error::Set the repository variable FRONTEND_POSTHOG_KEY. Nothing was built or pushed."
             exit 1
           fi
 
@@ -97,15 +71,39 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # Push order matters: the images without a public build stamp (agent,
+      # agent simulator, worker) go before the backend, so a watchtower pass
+      # that installed the new backend also saw them.
+      - name: Checkout modeling agent
+        if: inputs.target == 'all' || inputs.target == 'agent'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: BESSER-PEARL/modeling-agent
+          ref: main
+          path: modeling-agent
+
+      - name: Build and push modeling agent image
+        if: inputs.target == 'all' || inputs.target == 'agent'
+        run: |
+          .github/scripts/publish_image.sh "$REGISTRY/modeling_agent:latest" \
+            -f modeling-agent/Dockerfile modeling-agent
+
+      # Built from the repository root so it ships this checkout's `besser`.
+      - name: Build and push agent simulator image
+        if: inputs.target == 'all' || inputs.target == 'agent_simulator'
+        run: |
+          .github/scripts/publish_image.sh "$REGISTRY/agent_simulator:latest" \
+            -f besser/utilities/web_modeling_editor/agent_simulator/Dockerfile .
+
       # Two targets of one Dockerfile: the worker adds the toolchains and
       # bubblewrap to the backend's dependency layers.
-      - name: Build and push backend and worker images
+      - name: Build and push worker and backend images
         if: inputs.target == 'all' || inputs.target == 'backend'
         run: |
-          .github/scripts/publish_image.sh "$REGISTRY/backend:latest" \
-            --target backend --build-arg GIT_SHA="$GITHUB_SHA" -f Dockerfile .
           .github/scripts/publish_image.sh "$REGISTRY/smartgen_worker:latest" \
             --target smartgen-worker --build-arg GIT_SHA="$GITHUB_SHA" -f Dockerfile .
+          .github/scripts/publish_image.sh "$REGISTRY/backend:latest" \
+            --target backend --build-arg GIT_SHA="$GITHUB_SHA" -f Dockerfile .
 
       # The URLs and the PostHog key are baked into the bundle at build time;
       # the Dockerfile defaults point the assistant at ws://localhost:8765.
@@ -123,58 +121,16 @@ jobs:
             -f besser/utilities/web_modeling_editor/frontend/Dockerfile \
             besser/utilities/web_modeling_editor/frontend/
 
-      # Built from the repository root so it ships this checkout's `besser`.
-      - name: Build and push agent simulator image
-        if: inputs.target == 'all' || inputs.target == 'agent_simulator'
+      # The entry bundle name is a content hash, so it identifies this build.
+      - name: Read the frontend entry bundle
+        if: inputs.target == 'all' || inputs.target == 'frontend'
         run: |
-          .github/scripts/publish_image.sh "$REGISTRY/agent_simulator:latest" \
-            -f besser/utilities/web_modeling_editor/agent_simulator/Dockerfile .
+          IMAGE="$REGISTRY/frontend:latest"
+          docker pull -q "$IMAGE"
+          ENTRY=$(docker run --rm --entrypoint cat "$IMAGE" /opt/besser/build/webapp/index.html \
+            | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -1)
+          [[ -n "$ENTRY" ]] || { echo "::error::No entry bundle in the image's index.html"; exit 1; }
+          echo "FRONTEND_ENTRY=$ENTRY" >> "$GITHUB_ENV"
 
-      - name: Deploy on EC2
-        run: |
-          # $SERVICES expands here, on the runner.
-          # shellcheck disable=SC2087
-          ssh wme << EOF
-            set -e
-            echo "Pulling latest images..."
-            docker compose pull $SERVICES
-            echo "Restarting services..."
-            docker compose up -d $SERVICES
-            echo "Pruning dangling images..."
-            docker image prune -f
-            echo "Running containers:"
-            docker compose ps
-          EOF
-
-      # `docker compose pull` succeeds on a stale tag too, so compare the
-      # commit stamped into the image (BESSER_BUILD_SHA) with the one built.
-      - name: Verify the running containers are the code just built
-        if: inputs.target == 'all' || inputs.target == 'backend'
-        run: |
-          FAILED=0
-          # By service, not container name: docker-compose.prod.yml pins no
-          # container_name for the backend.
-          for C in besser-wme-backend besser-wme-smartgen; do
-            # shellcheck disable=SC2029  # $C expands here, on the runner
-            RUNNING=$(ssh wme "docker compose exec -T $C printenv BESSER_BUILD_SHA 2>/dev/null || echo missing")
-            echo "$C: running=$RUNNING expected=$GITHUB_SHA"
-            if [[ "$RUNNING" != "$GITHUB_SHA" ]]; then
-              echo "::error::$C is running '$RUNNING', not the commit just built (stale image?)."
-              FAILED=1
-            fi
-          done
-          exit $FAILED
-
-      - name: Health check
-        run: |
-          for i in $(seq 1 12); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$EDITOR_URL/besser_api/" || true)
-            [[ "$CODE" == "200" ]] && echo "API healthy" && exit 0
-            echo "attempt $i: $CODE"; sleep 5
-          done
-          echo "::error::API did not return 200 after the deploy"
-          exit 1
-
-      - name: Cleanup SSH key
-        if: always()
-        run: rm -f ~/.ssh/deploy_key
+      - name: Wait until the editor serves this build
+        run: .github/scripts/wait_for_live.sh

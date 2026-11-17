@@ -522,7 +522,9 @@ def _assert_valid(messages: list[dict], where: str) -> None:
 
 def test_no_rewrite_mutates_the_history_it_is_given(tmp_path_factory, fast_tokens, monkeypatch):
     monkeypatch.setattr(llm_client, "_ROLLING_MESSAGE_CACHE", True)
-    output_dir = str(tmp_path_factory.getbasetemp())
+    # A directory of its own: the summary lists the files under it, and the
+    # session's base temp holds every other test's output.
+    output_dir = str(tmp_path_factory.mktemp("compaction"))
     histories = _recorded_histories(tmp_path_factory)
     assert len(histories) > 100
     for history in histories:
@@ -563,7 +565,9 @@ def test_compaction_at_any_budget_stays_valid_and_keeps_its_tail_verbatim(
     """Including a second compaction of an already compacted history, and
     eviction first (the orchestrator's order)."""
     monkeypatch.setattr(llm_client, "_ROLLING_MESSAGE_CACHE", True)
-    output_dir = str(tmp_path_factory.getbasetemp())
+    # A directory of its own: the summary lists the files under it, and the
+    # session's base temp holds every other test's output.
+    output_dir = str(tmp_path_factory.mktemp("compaction"))
     for history in _recorded_histories(tmp_path_factory):
         for start in (history, evict_stale_file_bodies(history, preserve_recent=2)[0]):
             current = start

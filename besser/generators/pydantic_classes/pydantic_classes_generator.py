@@ -12,6 +12,7 @@ from besser.generators.structural_utils import (
     get_deferred_fk_associations,
     get_foreign_keys,
     is_server_owned_attribute,
+    is_shadowed_by_association_end,
 )
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.utilities.utils import sort_by_timestamp
@@ -71,6 +72,7 @@ class PydanticGenerator(GeneratorInterface):
         )
         env.filters["ascii_identifier"] = ascii_identifier
         env.globals["is_server_owned_attribute"] = is_server_owned_attribute
+        env.globals["is_shadowed_by_association_end"] = is_shadowed_by_association_end
         register_default_literals(env)
         template = env.get_template('pydantic_classes_template.py.j2')
 

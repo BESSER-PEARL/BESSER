@@ -309,7 +309,7 @@ def test_api_fk_validation_and_assignment(relationship_model, tmpdir):
     sensor_section = sensor_code[sensor_post_idx:sensor_put_idx]
 
     assert "if sensor_data.dt is not None:" in sensor_section
-    assert "db_dt = database.query(DigitalTwin)" in sensor_section
+    assert "related_dt = database.query(DigitalTwin)" in sensor_section
     assert "DigitalTwin ID is required" in sensor_section
     assert "dt_id=sensor_data.dt" in sensor_section  # Should assign FK field, not object
 
@@ -320,7 +320,7 @@ def test_api_fk_validation_and_assignment(relationship_model, tmpdir):
     digitaltwin_section = digitaltwin_code[digitaltwin_post_idx:digitaltwin_put_idx]
 
     assert "if digitaltwin_data.p_asset is not None:" in digitaltwin_section
-    assert "db_p_asset = database.query(PhysicalAsset)" in digitaltwin_section
+    assert "related_p_asset = database.query(PhysicalAsset)" in digitaltwin_section
     assert "PhysicalAsset ID is required" in digitaltwin_section
     assert "p_asset_id=digitaltwin_data.p_asset" in digitaltwin_section  # Should assign FK field
 

@@ -24,6 +24,9 @@ Use class diagrams for data, GUI diagrams for screens, state machines and
 agent diagrams for behaviour, BPMN for processes, neural-network diagrams
 for training architectures, and knowledge-graph diagrams for ontologies. See :doc:`buml_language` for the model catalogue.
 Available generation actions depend on the selected diagram and deployment.
+The *Quality Check* menu's *Semantic check* searches for an instance of a class
+diagram and its OCL constraints with the Alloy Analyzer, and the object diagram's
+*Semantic generation* fills it with one; see :doc:`examples/semantic_check_example`.
 
 The assistant service creates and edits diagrams. The :doc:`Spec-Driven Agent
 <spec_driven_agent/index>` handles application files. Agent chat simulation

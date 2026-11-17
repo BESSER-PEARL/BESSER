@@ -2,9 +2,10 @@ Version 8.10.1
 ==============
 
 Patch release: **push a run's generated code to GitHub when it finishes,
-switch autosave on from the GitHub menu, and offer to generate the code again
-in the agentic interface**. Editor and modeling agent only; no backend, API or
-metamodel change. Deploy the modeling agent v8.1.4 alongside.
+switch autosave on from the GitHub menu, offer to generate the code again in
+the agentic interface, and stop reporting the Spec-Driven Agent's own failed
+test workflows as your rules**. No API or metamodel change. Deploy the
+modeling agent v8.1.4 alongside.
 
 Highlights
 ----------
@@ -27,6 +28,12 @@ Highlights
   *Generate the code* first again; the small widget keeps its modeling
   follow-ups (`WME #292 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/292>`_,
   `modeling-agent #79 <https://github.com/BESSER-PEARL/modeling-agent/pull/79>`_).
+* **Agent-written test workflows are no longer reported as your rules.** A
+  workflow the Spec-Driven Agent writes to test its own code (``test_api``)
+  that fails is listed under *Could not verify* as a failed agent test, not as
+  "rules you asked for are not enforced". The agent can retire a workflow it
+  replaced (``test_api`` ``action='retire'``, with a reason); a retired
+  workflow no longer blocks the run and is listed as retired.
 
 Deploy alongside
 ----------------

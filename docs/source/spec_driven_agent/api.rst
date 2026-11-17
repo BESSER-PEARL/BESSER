@@ -302,9 +302,23 @@ SSE event types
      - Run accepted; carries ``runId``, provider, model, and caps.
    * - ``phase``
      - Pipeline advanced to a phase: ``select``, ``generate``, ``gap``,
-       ``customize``, ``validate``.
+       ``customize``, ``validate``. Carries the run's ``usd``, ``turns`` and
+       ``elapsedSeconds`` when the phase started, measured like ``cost``: a
+       phase's own figures are the difference to the next phase, or to the
+       final ``cost`` event for the last one. ``validate`` is sent when Phase 3
+       starts, before the first check.
    * - ``phase_update``
-     - Extra detail for the current phase (e.g. the gap task list).
+     - Extra detail for the current phase (e.g. the gap task list); for
+       ``validate``, the first check's result as ``message``
+       (``"2 blockers / 5 total"``).
+   * - ``findings``
+     - One Phase 3 validation round: ``attempt`` (0 for the first check, n for
+       the re-check after fix attempt n), ``blockers`` (at most 20 messages,
+       each clipped to 300 characters), and the true ``blockerCount`` and
+       ``issueCount``. The ``tool_call`` events between two ``findings``
+       events are that fix attempt's repairs. ``restored: true`` marks a last
+       round after the run went back to a better earlier tree; it describes
+       the delivered app.
    * - ``text``
      - A streaming text delta from the LLM.
    * - ``tool_call``

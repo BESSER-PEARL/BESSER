@@ -152,3 +152,32 @@ def test_a_reused_generator_describes_its_last_run_only(tmp_path):
     generator.generate()
     assert set(generator.traced_files) == {"models/shelf.py"}
     assert generator.ai_files == set() and generator.ai_llm is None
+
+
+class _Writes(GeneratorInterface):
+    def __init__(self, model, relative_path, output_dir=None):
+        super().__init__(model, output_dir)
+        self.relative_path = relative_path
+
+    def generate(self):
+        self._write_file(self.relative_path, "content\n")
+
+
+@pytest.mark.parametrize("relative_path", ["../escaped.txt", "sub/../../escaped.txt"])
+def test_a_file_outside_the_output_folder_is_refused(tmp_path, relative_path):
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="outside the output folder"):
+        _Writes(_library(), relative_path, output_dir=str(out)).generate()
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_an_absolute_path_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="outside the output folder"):
+        _Writes(_library(), str(tmp_path / "escaped.txt"), output_dir=str(tmp_path / "out")).generate()
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_a_nested_file_inside_the_output_folder_is_written(tmp_path):
+    generator = _Writes(_library(), "a/b/../c.txt", output_dir=str(tmp_path))
+    generator.generate()
+    assert (tmp_path / "a" / "c.txt").read_text(encoding="utf-8") == "content\n"

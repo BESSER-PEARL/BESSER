@@ -187,8 +187,14 @@ class GeneratorInterface(ABC):
 
     def _record_file(self, relative_path: str, code: str, regions: Sequence[TraceRegion],
                      sources: Sequence[Optional[TraceSource]], output_dir: Optional[str]) -> None:
-        base = output_dir if output_dir is not None else self.build_generation_dir()
-        file_path = os.path.join(base, relative_path)
+        base = os.path.realpath(output_dir if output_dir is not None else self.build_generation_dir())
+        file_path = os.path.realpath(os.path.join(base, relative_path))
+        try:
+            inside = os.path.commonpath([base, file_path]) == base
+        except ValueError:  # on different drives
+            inside = False
+        if not inside:
+            raise ValueError(f"Refusing to write {relative_path!r}: it is outside the output folder.")
         os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
         with open(file_path, mode="w", encoding="utf-8", newline="\n") as f:
             f.write(code)

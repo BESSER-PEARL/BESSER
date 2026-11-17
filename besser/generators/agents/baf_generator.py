@@ -22,7 +22,7 @@ from besser.generators.agents.deployment_components import materialize_deploymen
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
-from besser.utilities.buml_code_builder.common import safe_var_name
+from besser.utilities.buml_code_builder.common import identifier_part, safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 from besser.utilities.generation_trace import trace_source, traced_environment
 from besser.utilities.path_utils import normalize_relative_path
@@ -706,7 +706,7 @@ class BAFGenerator(GeneratorInterface):
                 skills_dir = os.path.join(self.build_generation_dir(), "skills")
                 os.makedirs(skills_dir, exist_ok=True)
                 for skill in skills:
-                    self._write_file(f"skills/{skill.name}.md", skill.content,
+                    self._write_file(f"skills/{identifier_part(skill.name)}.md", skill.content,
                                        trace_source(skill, "skill.md#skill"))
                 logger.info("Skills directory generated at %s", skills_dir)
 

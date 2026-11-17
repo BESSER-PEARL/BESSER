@@ -88,7 +88,9 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             Delegates to is_server_owned_attribute() (structural_utils.py) so
             this can't drift from the shared definition. #}
         {%- set _is_server_owned = backend and is_server_owned_attribute(attribute) %}
-        {%- if attribute.name not in inherited_attr_names and not _is_server_owned %}
+        {#- An attribute named like an association end of the class is left
+            out: the association field below takes the name. #}
+        {%- if attribute.name not in inherited_attr_names and not _is_server_owned and not is_shadowed_by_association_end(attribute) %}
         {%- set is_opt = attribute.is_optional and not attribute.is_id %}
         {%- set attr_type_name = 'Any' if attribute.type.name == 'any' else attribute.type.name %}
         {%- if is_opt and attribute.default_value is not none %}

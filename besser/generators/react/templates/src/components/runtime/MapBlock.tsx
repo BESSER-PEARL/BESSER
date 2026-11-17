@@ -27,6 +27,7 @@ import React, { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import axios from "axios";
+import { useDataVersion } from "./dataVersion";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface DataBindingConfig {
@@ -434,8 +435,9 @@ export function MapBlock({ id, title, mapConfig, layers = [], styles }: MapBlock
     mapRef.current?.setView([lat, lng], zoom);
   }, [lat, lng, zoom]);
 
-  // (Re)build the data layers whenever the layer config changes.
+  // (Re)build the data layers whenever the layer config or the data changes.
   const layersKey = JSON.stringify(layers);
+  const dataVersion = useDataVersion();
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -469,10 +471,10 @@ export function MapBlock({ id, title, mapConfig, layers = [], styles }: MapBlock
       handles.forEach((h) => h.remove());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layersKey]);
+  }, [layersKey, dataVersion]);
 
   return (
-    <div id={id}>
+    <div id={id} className="bsr-runtime">
       {title && (
         <h3 style={{ marginBottom: "8px", fontWeight: 600 }}>{title}</h3>
       )}

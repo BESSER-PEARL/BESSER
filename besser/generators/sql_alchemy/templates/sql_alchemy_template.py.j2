@@ -277,7 +277,8 @@ class {{ asso_class.name }}(Base):
                 {%- set ns.assoc_has_class = true %}
             {%- endif %}
         {%- endfor %}
-        {%- if not ns.assoc_has_class %}
+        {#- An end the class cannot navigate gives way to an attribute of the same name #}
+        {%- if not ns.assoc_has_class and not end_hidden_by_attribute(end, class) %}
             {%- set ns.has_relationships = true %}
             {%- if loop.index == 1 %}
 

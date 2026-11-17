@@ -80,7 +80,9 @@ Instrumenting a generator, step by step
                          output_dir: Optional[str] = None) -> str
 
    It removes the markers, writes the file (UTF-8, ``\n`` line endings, creating folders),
-   records ``traced_files[relative_path]`` and returns the text written. ``output_dir`` defaults to
+   records ``traced_files[relative_path]`` and returns the text written. A path that resolves
+   outside the output folder (``..``, an absolute path) is refused with a ``ValueError``, so a
+   path built from a model name cannot write elsewhere. ``output_dir`` defaults to
    ``build_generation_dir()``; pass it when the generator writes elsewhere (the backend generator's
    own default folder). For a file generated as a whole from one element, pass its source:
    ``self._write_traced(f"routers/{name}.py", rendered, trace_source(cls, "router.py.j2#router"))``.

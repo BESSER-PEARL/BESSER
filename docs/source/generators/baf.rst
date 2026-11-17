@@ -59,7 +59,9 @@ The generated files land in the ``<<current_directory>>/output`` folder:
 - ``config.yaml``: the agent's configuration file.
 - ``readme.txt``: how to run the generated agent.
 - ``tools.py``: the agent's tool function definitions — only when the model declares tools.
-- ``skills/``: one Markdown file per skill — only when the model declares skills.
+- ``skills/``: one Markdown file per skill, named after it — only when the model declares skills.
+  A skill name that is not a valid identifier (``/``, ``..``) has those characters replaced by
+  ``_`` and a short hash appended, so the file stays in ``skills/``.
 - ``personalized_agent_model.py`` / ``personalized_agent_model.json``: the
   personalized agent model, written alongside the others only when a
   personalization config is supplied and the mode is not ``CODE_ONLY``.

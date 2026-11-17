@@ -255,8 +255,9 @@ class DoneEvent(BaseSseEvent):
     # ``trace_buml_to_json``, as the traced generation endpoints return) that the
     # editor merges into the project trace. One CodeGeneration ``spec-driven:<runId>``
     # with the generator and LLM calls, the files they wrote, the requirements and the
-    # judge's requirement -> code links (see ``state/trace_model.py``). ``None`` when it
-    # could not be built; the same JSON ships in the ZIP as ``.besser_trace_model.json``.
+    # judge's requirement -> code links (see ``state/trace_model.py``). ``None`` when the
+    # request did not set ``traceabilityEnabled`` or it could not be built; the same JSON
+    # ships in the ZIP as ``.besser_trace_model.json``.
     trace: Optional[dict[str, Any]] = None
     # What this run changed, for the card's "What changed" summary.
     # ``mode`` is "create" for a new app and "modify" for an update of an

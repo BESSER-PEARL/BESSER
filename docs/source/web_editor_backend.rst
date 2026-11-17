@@ -44,7 +44,7 @@ Additional infrastructure:
 - **``models/responses.py``** -- Standardized Pydantic response models. They derive from ``ResponseModel``, which marks every field the backend sends (defaults included) as required in the OpenAPI schema, and use ``Literal`` types and nested models for fields with a fixed set of values or a fixed shape, so the editor's generated client needs no casts. ``KGIssueResponse`` and ``KGActionResponse`` stay plain ``BaseModel`` classes: they are also part of a request body
 - **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
 - **``models/traceability.py``** -- ``TracedGenerationInput`` (a ``DiagramInput`` plus ``actorName``), ``TracedProjectGenerationInput`` (a ``ProjectInput`` plus ``actorName``) and ``TracedGenerationResponse``
-- **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
+- **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators; ``traceabilityEnabled``, off by default, makes a run record its trace)
 - **``dependencies.py``** -- FastAPI dependencies that hand routes the state built in the lifespan
 
 Runtime State

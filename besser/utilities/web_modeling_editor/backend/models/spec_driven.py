@@ -93,12 +93,17 @@ class SmartGenerateRequest(BaseModel):
         Optional name of the person starting the run (the project owner), the
         Person the run's trace (``done.trace``) records besides the agent.
         Left out, the trace names only the Spec-Driven Agent.
+    traceabilityEnabled
+        Whether the project records traces (opt-in, off by default). Only
+        then does the run build its trace, send it as ``done.trace`` and ship
+        it in the ZIP.
     """
 
     project: ProjectInput
     instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
     requirements: Optional[List[RequirementInput]] = Field(default=None, max_length=MAX_REQUIREMENTS)
     actorName: Optional[str] = Field(default=None, max_length=TRACE_MAX_ACTOR_NAME_LENGTH)
+    traceabilityEnabled: bool = False
     # Optional: the ``"free"`` provider needs no key (the server injects a
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.

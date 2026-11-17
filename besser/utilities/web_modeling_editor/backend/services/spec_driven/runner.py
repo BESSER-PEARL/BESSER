@@ -2490,7 +2490,8 @@ class SmartGenerationRunner:
             # that misses someone's lines. The next run starts as "unknown".
             agent_trace.discard_attribution(result_path)
         try:
-            verification = build_verification_report(recipe, self.run_id)
+            verification = build_verification_report(
+                recipe, self.run_id if self.request.traceabilityEnabled else None)
         except Exception:
             # Never block the download on the report. An empty report would
             # read as "nothing to verify", so say the report itself failed.
@@ -2528,8 +2529,9 @@ class SmartGenerationRunner:
 
         # The run's trace (a fragment of the project trace), from what the run
         # persisted; built after the scrub and the attribution, like the Agent
-        # Trace record. Best-effort: never blocks the download.
-        trace = self._write_trace_model(result_path)
+        # Trace record, and only when the project records traces (opt-in).
+        # Best-effort: never blocks the download.
+        trace = self._write_trace_model(result_path) if self.request.traceabilityEnabled else None
 
         # Collect every user file. Skips internal artefacts
         # (.besser_recipe.json etc.) AND build-output directories —

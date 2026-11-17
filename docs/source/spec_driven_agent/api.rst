@@ -164,6 +164,11 @@ Request body
      - The person starting the run (the project owner), at most 200
        characters. The run's trace (``done.trace``) records them as a
        ``Person`` beside the Spec-Driven Agent; left out, it names only the agent.
+   * - ``traceabilityEnabled``
+     - boolean (optional)
+     - Whether the project records traces (opt-in, default ``false``). Only
+       when true does the run build its trace, send it as ``done.trace`` and
+       ship it in the ZIP (see :ref:`spec-driven-run-trace`).
    * - ``api_key``
      - string (secret)
      - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``
@@ -356,7 +361,8 @@ SSE event types
        differs from the one the base app was built from (modify runs).
        ``trace`` is the run's trace, a trace-file fragment (``projectId``
        null) the editor merges into the project trace (see
-       :ref:`spec-driven-run-trace`); ``null`` when it could not be built.
+       :ref:`spec-driven-run-trace`); ``null`` when the request did not set
+       ``traceabilityEnabled`` or the trace could not be built.
        ``verification`` lists what the run verified, could not verify and
        shipped unenforced; a requirement item's ``id`` is its ``R<n>`` label
        and its ``traceRef`` the id of its ``RequirementArtifact`` in ``trace``.

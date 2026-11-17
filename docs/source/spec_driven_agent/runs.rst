@@ -174,9 +174,12 @@ The run's trace
 ---------------
 
 A run is recorded in the project's trace (:doc:`../buml_language/model_types/traceability`)
-like a traced generation: the ``done`` event carries a trace-file fragment
+like a traced generation when the request sets ``traceabilityEnabled`` (the project
+records traces; opt-in, off by default): the ``done`` event carries a trace-file fragment
 (``trace``, ``projectId`` null, ``schemaVersion`` 6), and the same JSON ships in
-the download ZIP as ``.besser_trace_model.json``. A run keeps three records of
+the download ZIP as ``.besser_trace_model.json``. Otherwise the run builds no trace:
+``trace`` is ``null``, the ZIP has no ``.besser_trace_model.json`` and no requirement
+item has a ``traceRef``. A run keeps three records of
 itself, with three names: the *run log* (``.besser_trace.jsonl``, for debugging,
 see :doc:`how_it_works`), the *Agent Trace record* (who wrote which lines, below)
 and this *run trace*, a ``TraceModel``. The run trace is built at the end of the

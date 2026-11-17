@@ -68,7 +68,7 @@ def _run(monkeypatch, generator="generate_sqlalchemy", **request):
 
 def test_done_carries_the_trace_of_the_run(monkeypatch):
     try:
-        runner, done = _run(monkeypatch, actorName="Ada")
+        runner, done = _run(monkeypatch, actorName="Ada", traceabilityEnabled=True)
         trace = done["trace"]
         assert trace["schemaVersion"] == 6 and trace["projectId"] is None
         model = process_trace(trace)
@@ -97,8 +97,32 @@ def test_done_carries_the_trace_of_the_run(monkeypatch):
 
 def test_a_run_without_actor_is_performed_by_the_agent_alone(monkeypatch):
     try:
-        _, done = _run(monkeypatch)
+        _, done = _run(monkeypatch, traceabilityEnabled=True)
         assert [a["type"] for a in done["trace"]["actors"]] == ["Agent"]
+    finally:
+        _cleanup()
+
+
+def test_a_run_with_traceability_off_records_no_trace(monkeypatch):
+    """Recording is opt-in: by default a run builds no trace, sends none on ``done``, ships none in the ZIP
+    and points no requirement at one."""
+    built, build = [], runner_module.build_run_trace_model
+
+    def recording_build(*args, **kwargs):
+        built.append(args)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(runner_module, "build_run_trace_model", recording_build)
+    try:
+        runner, done = _run(monkeypatch)
+        assert built == []
+        assert done.get("trace") is None
+        items = done["verification"]["verified"] + done["verification"]["notVerified"]
+        assert all(item.get("traceRef") is None for item in items)
+        entry = asyncio.run(current_runtime().registry.get(runner.run_id))
+        assert entry.is_zip
+        with zipfile.ZipFile(entry.file_path) as archive:
+            assert TRACE_MODEL_FILENAME not in archive.namelist()
     finally:
         _cleanup()
 
@@ -162,7 +186,7 @@ def test_the_run_trace_refers_to_the_elements_of_every_diagram_by_their_editor_i
         return ids
 
     try:
-        _, done = _run(monkeypatch, generator="generate_web_app", project=project)
+        _, done = _run(monkeypatch, generator="generate_web_app", project=project, traceabilityEnabled=True)
         trace = done["trace"]
         process_trace(trace).validate()
         artifacts = {a["id"]: a for a in trace["artifacts"]}

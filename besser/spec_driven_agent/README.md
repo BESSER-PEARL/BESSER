@@ -118,8 +118,9 @@ A run records itself three ways; keep the names apart:
   `TraceModel` fragment of the project trace (B-UML traceability metamodel),
   built at packaging from the two above, the recipe and the delivered files, so
   it needs nothing threaded through the orchestrator and survives `resume()`.
-  The web runner serialises it (`trace_buml_to_json`) onto the `done` event
-  (`trace`) and into the ZIP (`.besser_trace_model.json`). Its mapping (one
+  When the request sets `traceabilityEnabled` (recording is opt-in), the web
+  runner builds it and serialises it (`trace_buml_to_json`) onto the `done`
+  event (`trace`) and into the ZIP (`.besser_trace_model.json`). Its mapping (one
   `CodeGeneration` per run, a tool call per generator run and LLM turn,
   revisions for edited generated files, judge verdicts as requirement → code
   links) is in the module docstring and `docs/source/spec_driven_agent/runs.rst`.

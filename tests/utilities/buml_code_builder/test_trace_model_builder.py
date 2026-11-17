@@ -162,3 +162,64 @@ def test_a_long_revision_chain_is_written_and_loaded_back(tmp_path):
         versions.append(CodeArtifact("f.py", "f.py", "a" * 64, revision_of=versions[-1], timestamp=_at(1)))
     loaded = parse_trace_code(_code(TraceModel(artifacts=list(reversed(versions))), tmp_path))
     assert len(loaded.artifacts) == 3001
+
+
+@pytest.mark.parametrize("names", [("Person", "Agent"), ("TraceModel", "TracePerson")])
+def test_classes_named_like_trace_metaclasses_keep_their_trace(tmp_path, names):
+    """A model class named like a traceability metaclass (or like what the trace section imports it as)
+    must not shadow it: the project file loads with its trace and runs as a plain script."""
+    from besser.BUML.metamodel.project import Metadata, Project
+    from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
+    from besser.utilities.buml_code_builder.project_builder import project_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+        project_to_json, project_trace_to_json,
+    )
+
+    classes = []
+    for index, name in enumerate(names, start=1):
+        attribute = Property(name="name", type=StringType)
+        attribute.id = f"attr-{index}"
+        cls = Class(name=name, attributes={attribute})
+        cls.id = f"class-{index}"
+        classes.append(cls)
+    domain = DomainModel(name="Library", types=set(classes))
+    domain.id = "diagram-1"
+    project = Project(name="P", models=[domain], owner="me", metadata=Metadata(description="d"))
+
+    owner = Person("BESSER User", timestamp=_at(0))
+    generator = CodeGenerator("python", timestamp=_at(0))
+    model = ModelArtifact("Library", "diagram-1", "DomainModel", timestamp=_at(0))
+    artifacts = [ModelArtifact(cls.name, cls.id, "Class", parent=model, timestamp=_at(0)) for cls in classes]
+    file = CodeArtifact("classes.py", "classes.py", "a" * 64, timestamp=_at(0))
+    generation = CodeGeneration([owner], started_at=_at(0), tool_calls=[ToolCall(generator, 0, started_at=_at(0))],
+                                reads=[model], writes=[file])
+    links = [TraceLink(a, file, generation, [RuleEvidence("r", timestamp=_at(0))], timestamp=_at(0))
+             for a in artifacts]
+    trace = TraceModel(project_id="p1", actors=[owner], tools=[generator], artifacts=[model, *artifacts, file],
+                       operations=[generation], trace_links=links)
+
+    path = tmp_path / "project.py"
+    project_to_code(project, str(path), emit_ids=True, trace=trace)
+    source = path.read_text(encoding="utf-8")
+
+    namespace = {}
+    exec(compile(source, str(path), "exec"), namespace)  # noqa: S102 -- our own builder output
+    loaded = namespace["trace_model"]
+    assert {a.name: type(a.element).__name__ for a in loaded.artifacts
+            if isinstance(a, ModelArtifact) and a.parent is not None} == dict.fromkeys(names, "Class")
+
+    imported = project_to_json(source)
+    trace_json = project_trace_to_json(source, imported)
+    assert {a["name"] for a in trace_json["artifacts"] if a["type"] == "ModelArtifact"} == {"Library", *names}
+    assert len(trace_json["traceLinks"]) == 2
+
+
+def test_a_trace_written_with_the_metaclass_names_still_loads():
+    """A trace section exported before the metaclasses were imported under aliases calls them by name."""
+    loaded = parse_trace_code(
+        "import datetime\n"
+        "from besser.BUML.metamodel.traceability import (\n    TraceModel, Person,\n)\n"
+        'actor_1 = Person("Ada", id="p1", timestamp=datetime.datetime.fromisoformat("2026-10-29T09:00:00"))\n'
+        "trace_model = TraceModel(project_id=None, actors=[actor_1], tools=[], artifacts=[], operations=[],"
+        " trace_links=[])\n")
+    assert [a.name for a in loaded.actors] == ["Ada"]

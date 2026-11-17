@@ -233,9 +233,13 @@ Python form
 as Python that rebuilds it, ids and timestamps included, but not the contents of
 generated files (their hashes, paths and line ranges are written). A project exported as
 B-UML with its trace has it as a ``TRACEABILITY`` section bound to
-``trace_model``, after the models it is about. It references their elements
-instead of repeating them -- ``ModelArtifact(element=domain_model)``,
-``ModelArtifact(element=Library)``, ``ModelArtifact(element=Library_name)`` -- for
+``trace_model``, after the models it is about. It imports the metaclasses under a
+``Trace`` prefix (``Person as TracePerson``; ``TraceModel`` and ``TraceLink`` keep
+their names), so a class called ``Person`` or ``Agent`` neither hides one nor is
+replaced by one; a class named like one of those imports gets a ``_`` suffix on its
+variable, like a class named ``Class``. It references their elements
+instead of repeating them -- ``TraceModelArtifact(element=domain_model)``,
+``TraceModelArtifact(element=Library)``, ``TraceModelArtifact(element=Library_name)`` -- for
 the models, classes, enumerations, attributes, methods and associations, which the
 structural sections bind to variables. The other elements (generalizations,
 literals, constraints) and deleted ones stay records. Running the file gives you

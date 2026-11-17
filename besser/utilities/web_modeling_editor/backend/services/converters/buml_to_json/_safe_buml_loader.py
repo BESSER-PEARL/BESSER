@@ -23,7 +23,7 @@ import ast
 import datetime as _datetime
 import sys
 import types
-from typing import Any, Dict, Mapping, Set
+from typing import Any, Dict, Mapping, Optional, Set
 
 
 # Stand-in for the ``datetime`` module, for ``allowed_names``. Generated BUML
@@ -503,6 +503,7 @@ def safe_load_buml(
     allowed_names: Mapping[str, Any],
     max_ast_nodes: int = _MAX_AST_NODES,
     max_content_chars: int = _MAX_CONTENT_BYTES,
+    shadowable_names: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Parse ``content`` as Python, validate against the allowlist, and execute
@@ -527,6 +528,11 @@ def safe_load_buml(
     max_content_chars:
         Cap on the source size. A trace section gets the size of a whole
         project file, which it can fill.
+    shadowable_names:
+        Names allowed like ``allowed_names`` unless the content assigns a
+        variable of that name: then the name is the content's variable only.
+        For a file whose models may use them (a class called ``Person`` in a
+        project file with a trace written before its metaclasses got aliases).
 
     Returns
     -------
@@ -615,6 +621,11 @@ def safe_load_buml(
     allowed_names = {**allowed_names, **aliases}
 
     declared_vars = _collect_assigned_names(tree)
+    allowed_names = {
+        **{name: value for name, value in (shadowable_names or {}).items()
+           if name not in declared_vars and not isinstance(value, types.ModuleType)},
+        **allowed_names,
+    }
 
     # Reject any overlap between declared vars and allowed builtins that
     # contain characters forbidden elsewhere (e.g. starting with ``_``).

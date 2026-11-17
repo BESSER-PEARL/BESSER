@@ -5,7 +5,9 @@ Counterpart of ``parse_trace_code`` in
 ``besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json
 .trace_converter``, which loads the code this module writes through
 ``safe_load_buml``. The emitted code therefore sticks to literals and
-constructor calls on the public names of ``besser.BUML.metamodel.traceability``.
+constructor calls on the public names of ``besser.BUML.metamodel.traceability``,
+imported under ``TRACE_IMPORT_NAMES`` (``Person as TracePerson``) so that a model
+class called ``Person`` cannot shadow them.
 
 Every trace element keeps its id and timestamp. A file's content is not written (its hash,
 path and line range are): the code would double the file the trace is about, and a project
@@ -14,7 +16,7 @@ file has to stay under the import cap. The JSON export of a project keeps it. Va
 are free text, and a trace can hold many elements with the same name.
 
 In a project file the trace follows its models, so a model element it is about is
-referenced, not repeated: ``ModelArtifact(element=Library)``. The variable is the
+referenced, not repeated: ``TraceModelArtifact(element=Library)``. The variable is the
 one the structural section binds the element to, found with the structural
 builder's own public naming helpers (:func:`structural_variables`), or, for an
 association, reported by the builder as it writes it. An element without such a
@@ -33,8 +35,8 @@ from besser.BUML.metamodel.traceability import (
 )
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.utilities.buml_code_builder.common import (
-    _comment_safe, _escape_python_string, attribute_var_name, buml_header, method_var_name, safe_class_name,
-    section_banner,
+    TRACE_IMPORT_NAMES, _comment_safe, _escape_python_string, attribute_var_name, buml_header, method_var_name,
+    safe_class_name, section_banner,
 )
 
 __all__ = ["trace_model_to_code", "structural_variables", "TRACE_SECTION_KEYWORD"]
@@ -46,13 +48,11 @@ _TRACE_NAMES = re.compile(r"^((actor|tool|artifact|change|log|call|operation|evi
 #: Section keyword of a trace in a project file; ``project_to_json`` splits on it.
 TRACE_SECTION_KEYWORD = "TRACEABILITY"
 
-_IMPORTED_NAMES = (
-    "TraceModel, Person, Agent, Editor, CodeGenerator, ModelGenerator, LLM, ModelArtifact, CodeArtifact, PromptArtifact,\n"
-    "    RequirementArtifact, RequirementKind,\n"
-    "    ModelingSession, CodeGeneration, RequirementExtraction, Conversation, ExecutionStatus,\n"
-    "    ChangeEvent, ChangeKind, ToolCall, LogRecord, LogType,\n"
-    "    RuleEvidence, AIEvidence, Confidence, TraceLink,"
-)
+#: The metaclasses are imported under ``TRACE_IMPORT_NAMES`` (``Person as TracePerson``), so a
+#: model class called ``Person`` neither hides them nor is replaced by one when the file runs.
+_IMPORTS = "".join(f"    {name if alias == name else f'{name} as {alias}'},\n"
+                   for name, alias in TRACE_IMPORT_NAMES.items())
+_T = TRACE_IMPORT_NAMES
 
 
 def trace_model_to_code(model: TraceModel, file_path: str, model_var_name: str = "trace_model",
@@ -74,7 +74,7 @@ def trace_model_to_code(model: TraceModel, file_path: str, model_var_name: str =
         f.write(buml_header())
         f.write(section_banner(TRACE_SECTION_KEYWORD) + "\n")
         f.write("import datetime\n")
-        f.write(f"from besser.BUML.metamodel.traceability import (\n    {_IMPORTED_NAMES}\n)\n\n")
+        f.write(f"from besser.BUML.metamodel.traceability import (\n{_IMPORTS})\n\n")
         _TraceWriter(f, references or {}).write(model, model_var_name)
 
 
@@ -174,12 +174,12 @@ class _TraceWriter:
         self.out.write("# Actors\n")
         for actor in model.actors:
             version = f", version={_optional(actor.version)}" if isinstance(actor, Agent) else ""
-            self._bind(actor, "actor", f"{type(actor).__name__}({_string(actor.name)}{version}, {_common(actor)})")
+            self._bind(actor, "actor", f"{_T[type(actor).__name__]}({_string(actor.name)}{version}, {_common(actor)})")
 
         self.out.write("\n# Tools\n")
         for tool in model.tools:
             provider = f", provider={_string(tool.provider)}" if isinstance(tool, LLM) else ""
-            self._bind(tool, "tool", f"{type(tool).__name__}({_string(tool.name)}{provider}, "
+            self._bind(tool, "tool", f"{_T[type(tool).__name__]}({_string(tool.name)}{provider}, "
                                      f"version={_optional(tool.version)}, {_common(tool)})")
 
         self.out.write("\n# Artifacts\n")
@@ -193,7 +193,7 @@ class _TraceWriter:
         for link in model.trace_links:
             self._trace_link(link)
 
-        self.out.write(f"\n{model_var_name} = TraceModel(\n")
+        self.out.write(f"\n{model_var_name} = {_T['TraceModel']}(\n")
         self.out.write(f"    project_id={_optional(model.project_id)},\n")
         self.out.write(f"    actors={self._refs(model.actors)},\n")
         self.out.write(f"    tools={self._refs(model.tools)},\n")
@@ -213,24 +213,24 @@ class _TraceWriter:
         if isinstance(artifact, ModelArtifact):
             element = self._reference(artifact)
             if element:
-                return f"ModelArtifact(element={element}{parent}, {_common(artifact)})"
-            return (f"ModelArtifact({_string(artifact.name)}, element_id={_string(artifact.element_id)}, "
+                return f"{_T['ModelArtifact']}(element={element}{parent}, {_common(artifact)})"
+            return (f"{_T['ModelArtifact']}({_string(artifact.name)}, element_id={_string(artifact.element_id)}, "
                     f"element_type={_string(artifact.element_type)}{parent}, {_common(artifact)})")
         if isinstance(artifact, CodeArtifact):
             revision_of = (f", revision_of={self.vars[artifact.revision_of.id]}"
                            if artifact.revision_of is not None else "")
             # No content: the B-UML export keeps a file's hash, path and lines, not the file
             # (the JSON export keeps it), so a project with its trace stays importable.
-            return (f"CodeArtifact({_string(artifact.name)}, path={_string(artifact.path)}, "
+            return (f"{_T['CodeArtifact']}({_string(artifact.name)}, path={_string(artifact.path)}, "
                     f"content_hash={_string(artifact.content_hash)}, "
                     f"start_line={_optional(artifact.start_line)}, end_line={_optional(artifact.end_line)}"
                     f"{parent}{revision_of}, {_common(artifact)})")
         if isinstance(artifact, PromptArtifact):
-            return (f"PromptArtifact({_string(artifact.name)}, content={_string(artifact.content)}, "
+            return (f"{_T['PromptArtifact']}({_string(artifact.name)}, content={_string(artifact.content)}, "
                     f"content_hash={_string(artifact.content_hash)}{parent}, {_common(artifact)})")
         if isinstance(artifact, RequirementArtifact):
-            return (f"RequirementArtifact({_string(artifact.name)}, quote={_string(artifact.quote)}, "
-                    f"kind=RequirementKind.{artifact.kind.name}{parent}, {_common(artifact)})")
+            return (f"{_T['RequirementArtifact']}({_string(artifact.name)}, quote={_string(artifact.quote)}, "
+                    f"kind={_T['RequirementKind']}.{artifact.kind.name}{parent}, {_common(artifact)})")
         raise TypeError(f"Unsupported artifact type {type(artifact).__name__}.")
 
     def _operation(self, index: int, operation: Operation):
@@ -253,8 +253,8 @@ class _TraceWriter:
             self._bind(operation.confidence, "confidence", self._confidence(operation.confidence))
             confidence = self.vars[operation.confidence.id]
         self._bind(operation, "operation", (
-            f"{kind}({self._refs(operation.performed_by)}, {specific}"
-            f"status=ExecutionStatus.{operation.status.name}, "
+            f"{_T[kind]}({self._refs(operation.performed_by)}, {specific}"
+            f"status={_T['ExecutionStatus']}.{operation.status.name}, "
             f"started_at={self._datetime(operation.started_at)}, ended_at={self._datetime(operation.ended_at)}, "
             f"tool_calls={self._refs(operation.tool_calls)}, "
             f"reads={self._refs(operation.reads)}, writes={self._refs(operation.writes)}, "
@@ -266,27 +266,28 @@ class _TraceWriter:
         return "None" if value is None else f"datetime.datetime.fromisoformat({_string(value.isoformat())})"
 
     def _change(self, change: ChangeEvent) -> str:
-        return (f"ChangeEvent(ChangeKind.{change.kind.name}, {self.vars[change.artifact.id]}, "
+        return (f"{_T['ChangeEvent']}({_T['ChangeKind']}.{change.kind.name}, {self.vars[change.artifact.id]}, "
                 f"feature={_optional(change.feature)}, old_value={_optional(change.old_value)}, "
                 f"new_value={_optional(change.new_value)}, {_common(change)})")
 
     def _tool_call(self, call: ToolCall) -> str:
         tokens = "".join(f", {name}={value}" for name, value in
                          (("input_tokens", call.input_tokens), ("output_tokens", call.output_tokens)) if value is not None)
-        return (f"ToolCall({self.vars[call.tool.id]}, {call.sequence_number}, "
-                f"status=ExecutionStatus.{call.status.name}, started_at={self._datetime(call.started_at)}, "
+        return (f"{_T['ToolCall']}({self.vars[call.tool.id]}, {call.sequence_number}, "
+                f"status={_T['ExecutionStatus']}.{call.status.name}, started_at={self._datetime(call.started_at)}, "
                 f"ended_at={self._datetime(call.ended_at)}, logs={self._refs(call.logs)}{tokens}, id={_string(call.id)})")
 
     @staticmethod
     def _log(log: LogRecord) -> str:
-        return f"LogRecord({_string(log.content)}, {log.sequence_number}, LogType.{log.log_type.name}, {_common(log)})"
+        return (f"{_T['LogRecord']}({_string(log.content)}, {log.sequence_number}, "
+                f"{_T['LogType']}.{log.log_type.name}, {_common(log)})")
 
     def _evidence(self, evidence: Evidence) -> str:
         logs = f", logs={self._refs(evidence.logs)}" if evidence.logs else ""
         if isinstance(evidence, RuleEvidence):
-            return f"RuleEvidence({_string(evidence.rule)}{logs}, {_common(evidence)})"
+            return f"{_T['RuleEvidence']}({_string(evidence.rule)}{logs}, {_common(evidence)})"
         if isinstance(evidence, AIEvidence):
-            return f"AIEvidence({_string(evidence.algorithm)}{logs}, {_common(evidence)})"
+            return f"{_T['AIEvidence']}({_string(evidence.algorithm)}{logs}, {_common(evidence)})"
         raise TypeError(f"Unsupported evidence type {type(evidence).__name__}.")
 
     def _trace_link(self, link: TraceLink):
@@ -297,12 +298,12 @@ class _TraceWriter:
             self._bind(link.confidence, "confidence", self._confidence(link.confidence))
             confidence = self.vars[link.confidence.id]
         self._bind(link, "link", (
-            f"TraceLink({self.vars[link.source.id]}, {self.vars[link.target.id]}, {self.vars[link.operation.id]}, "
+            f"{_T['TraceLink']}({self.vars[link.source.id]}, {self.vars[link.target.id]}, {self.vars[link.operation.id]}, "
             f"evidence={self._refs(link.evidence)}, confidence={confidence}, {_common(link)})"
         ))
 
     def _confidence(self, confidence: Confidence) -> str:
-        return (f"Confidence({confidence.value!r}, "
+        return (f"{_T['Confidence']}({confidence.value!r}, "
                 f"explanation={_optional(confidence.explanation)}, {_common(confidence)})")
 
 

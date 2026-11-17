@@ -18,6 +18,7 @@ from besser.BUML.metamodel.traceability import (
     AIEvidence, Artifact, ChangeEvent, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
     ModelingSession, Operation, PromptArtifact, RequirementArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
+from besser.utilities.buml_code_builder.common import TRACE_IMPORT_NAMES
 from besser.utilities.web_modeling_editor.backend.constants.constants import MAX_BUML_SIZE, TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     structural_allowed_names,
@@ -165,11 +166,13 @@ def parse_trace_code(content: str, context_code: Optional[str] = None) -> TraceM
     ``content`` comes from a user upload, so it runs through ``safe_load_buml``:
     only the public names of ``besser.BUML.metamodel.traceability`` and
     ``datetime.datetime`` can be called, plus the structural ones when
-    ``context_code`` is given.
+    ``context_code`` is given. The metaclasses are called by the names the trace
+    builder imports them under (``TracePerson``), which no model variable takes; by
+    their own names (``Person``, as written before) unless a model variable has it.
 
     Args:
         content: The trace code.
-        context_code: The structural code the trace references (``ModelArtifact(element=Library)``),
+        context_code: The structural code the trace references (``TraceModelArtifact(element=Library)``),
             run first; a project file's STRUCTURAL sections.
 
     Raises:
@@ -177,12 +180,12 @@ def parse_trace_code(content: str, context_code: Optional[str] = None) -> TraceM
     """
     allowed_names: Dict[str, Any] = structural_allowed_names() if context_code else {}
     allowed_names["datetime"] = SAFE_DATETIME_MODULE
-    for name in traceability_module.__all__:
-        allowed_names[name] = getattr(traceability_module, name)
+    metaclasses = {name: getattr(traceability_module, name) for name in traceability_module.__all__}
+    allowed_names.update({alias: metaclasses[name] for name, alias in TRACE_IMPORT_NAMES.items()})
     code = f"{context_code}\n{content}" if context_code else content
     try:
         local_vars = safe_load_buml(code, allowed_names, max_ast_nodes=_TRACE_MAX_AST_NODES,
-                                    max_content_chars=_TRACE_MAX_CONTENT_CHARS)
+                                    max_content_chars=_TRACE_MAX_CONTENT_CHARS, shadowable_names=metaclasses)
     except Exception as exc:
         raise ConversionError(f"Failed to load the traceability section: {exc}") from exc
     traces = [value for value in local_vars.values() if isinstance(value, TraceModel)]

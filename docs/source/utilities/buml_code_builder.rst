@@ -97,8 +97,11 @@ Use the specialized helpers in the same way:
 ``TRACEABILITY`` section bound to ``trace_model`` (without the generated files'
 contents: hashes, paths and line ranges only), after the models and outside
 ``Project(models=[...])``, since a trace describes the models rather than being
-one of them. The section references the structural elements it is about
-(``ModelArtifact(element=Library)``) by the variables the structural sections bind
+one of them. It imports the traceability metaclasses as ``TRACE_IMPORT_NAMES``
+(``common.py``) lists them (``Person as TracePerson``), names reserved like the
+structural imports, so no model variable collides with them. The section references
+the structural elements it is about
+(``TraceModelArtifact(element=Library)``) by the variables the structural sections bind
 them to; ``structural_variables`` computes them with the structural builder's own
 naming helpers (``safe_class_name``, ``attribute_var_name``, ``method_var_name``).
 An association's variable is minted while the model is written (two associations

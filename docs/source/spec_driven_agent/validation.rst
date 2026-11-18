@@ -455,7 +455,8 @@ Findings are classified into three severities:
        short (``<Table id=`` for ``<Table id="orders" ... />``), is rejected and the note names
        the line it starts, so the citation-repair round can cite the whole line; one under
        eight characters (``title=``) identifies no code and counts as code that exists
-       nowhere. A quote that starts or ends inside a string or comment
+       nowhere. A line of punctuation alone (``{``, ``/>``) identifies no code and
+       proves nothing. A quote that starts or ends inside a string or comment
        is not code. An explanation after a closed statement or element
        ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
        another file's code leaves the requirement unverified. A Python

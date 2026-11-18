@@ -67,3 +67,12 @@ def test_an_invented_line_start_gets_no_hint(tmp_path):
 def test_the_whole_line_verifies(tmp_path):
     line = '<OrderTable id="orders-table" className="table" title="Open orders" rows={rows} />'
     assert _verify(tmp_path, line)["status"] == "implemented"
+
+
+def test_a_line_of_punctuation_alone_proves_nothing(tmp_path):
+    """``{`` or ``/>`` is a whole line of many files; it identifies no code."""
+    verdict = _verify(tmp_path, "/>", "))}")
+    assert verdict["status"] == "unverified"
+    assert "identifies no code" in verdict["note"]
+    line = '<OrderTable id="orders-table" className="table" title="Open orders" rows={rows} />'
+    assert _verify(tmp_path, "/>", line)["status"] == "implemented"

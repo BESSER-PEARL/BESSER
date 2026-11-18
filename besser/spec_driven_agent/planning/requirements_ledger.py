@@ -1495,6 +1495,8 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     """
     if first_line in source.comments or lineno in source.comments:
         return "the cited line is a comment, not an implementation"
+    if not re.search(r"\w", "".join(source.lines[first_line - 1:lineno])):
+        return "the cited line is punctuation alone (`{`, `/>`); it identifies no code"
     statement = None
     if source.path.endswith(".py"):
         statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), item.get("text", ""))

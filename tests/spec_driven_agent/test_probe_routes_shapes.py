@@ -79,3 +79,29 @@ def test_routes_show_the_body_wrapper_and_the_response_shape(tmp_path):
     # A handler returning its argument says nothing certain about the answer.
     assert 'POST   /task/  <- {"title": string*, "estimate": integer|null, "project": string*}' in lines
     assert any(line.startswith('NOTE: a body shown as {"params": {...}} is sent with that key') for line in lines)
+
+
+def test_an_install_without_python_sources_still_lists_routes(tmp_path, monkeypatch):
+    """A bytecode-only install has no source to embed; importing the runbook must not fail."""
+    from besser.spec_driven_agent.agent import runbook
+
+    def no_source(_module):
+        raise OSError("could not get source code")
+
+    monkeypatch.setattr(runbook.inspect, "getsource", no_source)
+    script = tmp_path / "probe.py"
+    script.write_text(runbook._with_route_returns(runbook._PROBE_TEMPLATE), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("bare_probe", script)
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    namespace: dict = {}
+    exec(compile(ROUTER, "task.py", "exec"), namespace)
+    app = FastAPI()
+    app.include_router(namespace["router"])
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        probe.print_routes(app.openapi(), probe.source_shapes(str(tmp_path)))
+    lines = [line.strip() for line in out.getvalue().splitlines()]
+
+    assert 'POST   /task/{task_id}/methods/close/  <- {"params": {...}}' in lines
+    assert "GET    /task/" in lines

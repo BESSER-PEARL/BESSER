@@ -247,6 +247,7 @@ tracebacks. Run these from the workspace root, exactly as written:
 ```
 python {PROBE_FILENAME} up                       # boot; prints BOOT_OK / BOOT_FAILED
 python {PROBE_FILENAME} routes                   # each path, the body it reads, what it returns
+python {PROBE_FILENAME} routes <entity>          # only the paths containing that word
 python {PROBE_FILENAME} req GET /health
 python {PROBE_FILENAME} req POST /<entity> {{"field": "value"}}
 python {PROBE_FILENAME} req POST /<entity>/<id>/<action> {{}}
@@ -308,7 +309,7 @@ not that you "verified" something.
 # output cannot eat the 15k-char tool-output budget.
 # ----------------------------------------------------------------------
 
-PROBE_SCRIPT = r'''#!/usr/bin/env python3
+_PROBE_TEMPLATE = r'''#!/usr/bin/env python3
 """Drive the generated backend from the shell: boot it, call it, read its log.
 
 Run-internal helper written by the BESSER generator; not part of the app.
@@ -830,5 +831,28 @@ def main(argv):
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
 '''
-# The probe describes a route's response with the same code as the Phase 3 check.
-PROBE_SCRIPT = PROBE_SCRIPT.replace("# <route_returns>\n", inspect.getsource(route_returns), 1)
+# Stands in for route_returns where its source is not installed (bytecode only).
+_NO_ROUTE_RETURNS = """import ast
+
+
+def route_handlers(tree):
+    return ()
+
+
+def response_shape(function, decorator=None):
+    return None
+"""
+
+
+def _with_route_returns(template: str) -> str:
+    """The probe script, describing a route's response with the same code as the
+    Phase 3 check; without that source ``routes`` prints no response it read."""
+    try:
+        source = inspect.getsource(route_returns)
+    except (OSError, TypeError):
+        logger.debug("runbook: route_returns source unavailable", exc_info=True)
+        source = _NO_ROUTE_RETURNS
+    return template.replace("# <route_returns>\n", source, 1)
+
+
+PROBE_SCRIPT = _with_route_returns(_PROBE_TEMPLATE)

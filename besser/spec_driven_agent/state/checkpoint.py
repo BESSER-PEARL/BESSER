@@ -86,7 +86,7 @@ class Checkpoint:
     api_scenarios: list[dict] = field(default_factory=list)
     phase: str = "phase2"
     source_revision: str = ""
-    phase2_stop_reason: str = "max_turns"
+    phase2_stop_reason: str = ""
     phase2_exited_cleanly: bool = False
     # Scheduling/progress only, never cached validation or API success.
     repair_progress: dict = field(default_factory=dict)
@@ -347,6 +347,15 @@ def save_checkpoint(
         return None
 
 
+def _phase2_stop_reason(data: dict, phase: str) -> str:
+    """The saved Phase 2 stop reason. Older runs whose Phase 2 was skipped saved the then-default
+    "max_turns" with a clean exit; that Phase 2 finished."""
+    reason = str(data.get("phase2_stop_reason", ""))
+    if phase == "phase3" and data.get("phase2_exited_cleanly") is True and reason == "max_turns":
+        return "completed"
+    return reason
+
+
 def load_checkpoint(output_dir: str) -> Checkpoint | None:
     """Read and parse a checkpoint file. Returns ``None`` if missing
     or unreadable or from an incompatible schema version.
@@ -416,7 +425,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             api_scenarios=data.get("api_scenarios", []),
             phase=phase,
             source_revision=revision,
-            phase2_stop_reason=str(data.get("phase2_stop_reason", "max_turns")),
+            phase2_stop_reason=_phase2_stop_reason(data, phase),
             phase2_exited_cleanly=data.get("phase2_exited_cleanly") is True,
             repair_progress=progress,
             locked_generators=[t for t in data.get("locked_generators") or [] if isinstance(t, str)],

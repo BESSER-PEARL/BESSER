@@ -130,7 +130,7 @@ Dockerfile baked — the user supplies their own build context.
 Agent image dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Generated Dockerfiles install ``besser-agentic-framework[extras,llms]==4.5.1``
+Generated Dockerfiles install ``besser-agentic-framework[extras,llms]==4.6.1``
 by default (the release the BAF generator's templates target). These groups retain API LLM providers, RAG and the framework's optional
 speech, visualization and database functionality without installing every local
 machine-learning backend. The same selection applies to ordinary and A2A agents.

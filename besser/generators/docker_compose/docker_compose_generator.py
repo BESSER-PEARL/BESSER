@@ -27,14 +27,14 @@ from besser.generators.docker_compose.runtime_config import (
     resolve_runtime_yaml,
 )
 # Tested tally engine; its source is baked into governed agents.
+from besser.generators.agents.baf_version import BAF_VERSION
 from besser.generators.agents import governance_engine as _gov_engine
 from besser.utilities import sort_by_timestamp
 
 logger = logging.getLogger(__name__)
 
-# BESSER Agentic Framework release the BAF generator's templates target (the
-# agent simulator image pins the same version). Baked agent images install it.
-BAF_VERSION = "4.5.1"
+# BESSER Agentic Framework release the BAF generator's templates target (see
+# besser.generators.agents.baf_version). Baked agent images install it.
 
 
 def _safe_service_name(name: str) -> str:

@@ -15,6 +15,7 @@ from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
 from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
+from besser.generators.agents.baf_version import BAF_VERSION
 from besser.generators.agents.deployment_components import materialize_deployment_components
 
 # BESSER utilities
@@ -667,7 +668,7 @@ class BAFGenerator(GeneratorInterface):
             readme_template = env.get_template('readme.txt.j2')
             readme_path = self.build_generation_path(file_name="readme.txt")
             with open(readme_path, mode="w", encoding="utf-8") as f:
-                generated_code = readme_template.render(agent=self.model, classical_ic_fallback=classical_ic_fallback)
+                generated_code = readme_template.render(agent=self.model, classical_ic_fallback=classical_ic_fallback, baf_version=BAF_VERSION)
                 f.write(generated_code)
             logger.info("Agent readme file generated at %s", readme_path)
 

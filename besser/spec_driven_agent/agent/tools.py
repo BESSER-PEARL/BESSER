@@ -313,15 +313,17 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "scenarios; action='get' with scenario_id reads its exact requests, expectations and "
             "last report without executing it. action='run' (default) with just scenario_id replays "
             "the saved definition. Inspect failed tests before changing either code or expectations. "
+            "action='retire' with scenario_id and correction_reason drops a scenario another one replaced; "
+            "it no longer runs and is reported as retired. "
             "No shell or external URLs. "
             "Passing proves only the submitted scenario, not every requirement."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["run", "list", "get"]},
+                "action": {"type": "string", "enum": ["run", "list", "get", "retire"]},
                 "scenario_id": {"type": "string", "description": "Stable workflow name (max 80 characters)"},
-                "correction_reason": {"type": "string", "description": "Required when changing a saved scenario; explain why the previous test was wrong"},
+                "correction_reason": {"type": "string", "description": "Required when changing or retiring a saved scenario; explain why the previous test was wrong or what replaced it"},
                 "backend": {"type": "string", "description": "Optional relative generated backend directory"},
                 "requests": {
                     "type": "array", "minItems": 1, "maxItems": 20,

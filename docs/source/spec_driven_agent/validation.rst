@@ -149,7 +149,8 @@ as ``httpx``) as ``validation unverified: runtime check (<check>) did not run
 (<reason>)``. The auto-fix loop does not spend rounds on them, and the run
 ends *unverified*: neither verified complete nor incomplete. A retained
 workflow that did not run is kept and replayed on the next source revision;
-only a workflow that ran and failed is an ``api scenario:`` blocker. A repair
+only a workflow that ran and failed is an ``api scenario:`` blocker; one the
+agent retired as replaced (``test_api(action="retire")``) is not replayed. A repair
 after which the probe can no longer measure a backend it measured before is
 not accepted as "all blockers fixed": the rollback check ranks that tree
 behind the measured one.

@@ -47,8 +47,8 @@ def test_nothing_the_user_reads_is_written_for_the_agent():
         assert not [fragment for fragment in FORBIDDEN if fragment in text], text
     assert "Creating order (POST /order/) could not be tested automatically" in "\n".join(shown)
     assert "The action close on Task could not be tested automatically" in "\n".join(shown)
-    workflow = next(item for item in report.shippedUnenforced if item.kind == "api_workflow")
-    assert workflow.what == "Test workflow 'order_flow'" and workflow.why == "it ran against the app and failed"
+    workflow = next(item for item in report.notVerified if item.kind == "api_workflow")
+    assert workflow.what == "Test workflow 'order_flow'" and workflow.why.startswith("a test the agent wrote")
 
 
 def test_the_summary_merges_repeated_kinds_and_counts_the_rest():
@@ -60,7 +60,7 @@ def test_the_summary_merges_repeated_kinds_and_counts_the_rest():
                                "an existing record first: order, shelf, loan, member, fee.`") for line in not_checked)
     assert len(not_checked) <= 9
     total = report.counts.notVerified
-    assert total == 9 and not [line for line in not_checked if "more" in line]
+    assert total == 10 and not [line for line in not_checked if "more" in line]
 
 
 def test_the_next_run_reads_the_finding_and_the_user_reads_the_sentence():

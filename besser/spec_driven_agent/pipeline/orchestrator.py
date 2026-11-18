@@ -431,6 +431,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[tuple, dict] | None = None
         self._api_scenarios: dict[str, dict] = {}
+        # Workflows the agent retired as replaced (test_api action='retire'): no longer
+        # replayed, still listed in the recipe and the run report with the reason.
+        self._retired_api_scenarios: list[dict] = []
         # Give the LLM tools scoped to the models it actually has. Tools
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
         # are hidden when there isn't one so the LLM doesn't waste turns
@@ -3177,11 +3180,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _test_api(self, args: dict) -> dict:
         """Run and retain bounded declarative workflow checks, never arbitrary commands."""
         action = args.get("action", "run")
-        if action not in ("run", "list", "get"):
-            return {"error": "action must be run, list, or get"}
+        if action not in ("run", "list", "get", "retire"):
+            return {"error": "action must be run, list, get, or retire"}
         scenario_id = args.get("scenario_id")
         if scenario_id is not None and (not isinstance(scenario_id, str) or not scenario_id.strip() or len(scenario_id) > 80):
             return {"error": "scenario_id must be a nonempty workflow name of at most 80 characters."}
+        if action == "retire":
+            return self._retire_api_scenario(scenario_id, args.get("correction_reason"))
         if action == "list":
             revision = self._workspace_revision()
             return {"scenarios": [{"scenario_id": record.get("scenario_id"),
@@ -3277,6 +3282,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 history.append(report["correction"])
             self._api_scenarios[key] = {"scenario": scenario, "scenario_id": scenario_id, "revision": revision,
                                         "report": report, "correction_history": history[-5:]}
+            # Run again under its id, a retired workflow is a retained one again.
+            self._retired_api_scenarios = [entry for entry in self._retired_api_scenarios
+                                           if entry["scenario_id"] != scenario_id]
             if dropped:
                 self._api_scenarios[key]["submitted_requests"] = submitted
             elif previous is not None and not changed and previous.get("submitted_requests") is not None:
@@ -3289,6 +3297,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                          f"added back at the end and passed: {shown}. Rerun this scenario "
                                          "by scenario_id alone; resending your own list keeps them too.")
         return report
+
+    def _retire_api_scenario(self, scenario_id: str | None, reason: Any) -> dict:
+        """Stop replaying a workflow another one replaced; the report still lists it, with the reason."""
+        record = self._api_scenarios.get("named:" + scenario_id) if scenario_id else None
+        if record is None:
+            return {"error": "Unknown scenario_id; use action=list to find retained workflows."}
+        if not isinstance(reason, str) or not reason.strip():
+            return {"error": "Retiring a workflow requires correction_reason: why it no longer tests the "
+                             "specification, e.g. the scenario that replaced it."}
+        del self._api_scenarios["named:" + scenario_id]
+        self._retired_api_scenarios.append({"scenario_id": scenario_id, "reason": reason.strip()[:1000],
+                                            "last_status": record["report"].get("status")})
+        self._app_validation_cache = None
+        logger.warning("Run %s: test workflow %r retired by the agent (%s)", self.run_id, scenario_id,
+                       reason.strip()[:200])
+        return {"retired": scenario_id,
+                "note": "It no longer runs or blocks completion; the run's report lists it as retired, with this reason."}
 
     def _collect_api_scenario_issues(self) -> list[str]:
         """Replay retained scenarios against changed source so old green results cannot hide regressions."""
@@ -3318,7 +3343,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "Inspect its exact requests and expected values with test_api(action='get', "
                     f"scenario_id={scenario_id!r}). The original specification is authoritative: "
                     "fix the application if its behavior is wrong; if the generated test is wrong, "
-                    "resubmit this scenario with correction_reason grounded in the specification."
+                    "resubmit this scenario with correction_reason grounded in the specification; "
+                    "if another scenario replaced it, retire it with test_api(action='retire', "
+                    f"scenario_id={scenario_id!r}, correction_reason=...)."
                 )
         return issues
 
@@ -5447,6 +5474,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # extracted it, None when no ledger was built.
             "requirements_source": self._requirements_source,
             "api_scenarios": api_scenario_snapshot(self._api_scenarios.values(), include_reports=True),
+            "api_scenarios_retired": list(self._retired_api_scenarios),
             "model_conversion_issues": getattr(self.domain_model, "conversion_issues", []) or [],
             "model_assembly_issues": self._assembly_issues,
             "usage": self.client.usage.summary(),

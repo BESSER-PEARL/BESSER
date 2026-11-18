@@ -102,6 +102,33 @@ def _ids(items) -> list[str]:
     return [item.id for item in items]
 
 
+def test_tests_the_agent_wrote_are_not_reported_as_rules_the_user_asked_for():
+    """A production run built from a request with no business rule ended "Delivered, but 2 rules
+    you asked for are not enforced": both were debug workflows the agent wrote for itself."""
+    def workflow(ident: str, status: str) -> dict:
+        return {"scenario_id": ident, "report": {"status": status, "boot": "ok"},
+                "scenario": {"backend": "backend", "requests": [
+                    {"method": "POST", "path": "/booktergre/"},
+                    {"method": "POST", "path": "/booktergre/1/methods/decrease_stock/"}]}}
+
+    report = build_verification_report({
+        "requirements": [],
+        "business_rules_stated": False,
+        "api_scenarios": [workflow("test_decrease_stock", "failed"),
+                          workflow("test_decrease_stock_simple", "passed")],
+        "api_scenarios_retired": [{"scenario_id": "test_decrease_stock_proper", "last_status": "failed",
+                                   "reason": "Wrong payload; test_decrease_stock_simple replaces it."}],
+    })
+
+    assert report.shippedUnenforced == [] and report.counts.shippedUnenforced == 0
+    failed = next(i for i in report.notVerified if i.id == "test_decrease_stock")
+    assert "a test the agent wrote" in failed.why and "not a rule from your request" in failed.why
+    retired = next(i for i in report.notVerified if i.id == "test_decrease_stock_proper")
+    assert retired.what == "Test workflow 'test_decrease_stock_proper'"
+    assert retired.why == "the agent retired it: Wrong payload; test_decrease_stock_simple replaces it."
+    assert _ids(report.verified) == ["test_decrease_stock_simple"]
+
+
 def test_failed_ocl_conversion_is_reported_as_shipped_unenforced():
     report = build_verification_report(_hotel_recipe())
 

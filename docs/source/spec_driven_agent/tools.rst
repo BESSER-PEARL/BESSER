@@ -174,9 +174,18 @@ independent proof of specification coverage.
 Use ``test_api(action="list")`` to discover retained workflows and
 ``test_api(action="get", scenario_id="...")`` to inspect their exact inputs,
 expectations and last report without executing them. ``action="run"`` with
-only a scenario ID replays its saved definition. The original specification
+only a scenario ID replays its saved definition. ``action="retire"`` with a
+scenario ID and ``correction_reason`` drops a workflow another one replaced: it
+is no longer replayed and no longer blocks the run, and the run report lists it
+under *Could not verify* as retired, with the reason. The original specification
 remains authoritative: a generated assertion can be wrong and must not force
 correct application behavior to regress.
+
+In the run report a failed workflow is listed under *Could not verify*, as a
+test the agent wrote that failed, not under *shipped unenforced*: it is not a
+rule the user stated, and either the test or the app may be wrong. The rules the
+report counts as shipped unenforced are the user's requirements, the model's
+OCL constraints and its modeled operations.
 
 Both runtime probes honor ``enable_import_smoke_check``. The API tool accepts no
 shell commands or external URLs. The generated app runs in the same bubblewrap

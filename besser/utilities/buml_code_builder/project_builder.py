@@ -426,10 +426,10 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
             for idx, qm in enumerate(quantum_models, start=1):
                 var_name = _suffixed_name("quantum_model", idx, n_quantum)
 
-                section = ""
-                if n_quantum > 1:
-                    label = _comment_safe(getattr(qm, "name", "")) or f"Quantum {idx}"
-                    section = f"# QUANTUM MODEL {idx}: \"{label}\" #\n\n"
+                # quantum_model_to_code writes no section header, and the editor's importer finds a
+                # circuit by its header: a lone circuit gets one too.
+                label = _comment_safe(getattr(qm, "name", "")) or f"Quantum {idx}"
+                section = f"# QUANTUM MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"quantum_model_{idx}.py")
                 quantum_model_to_code(
@@ -595,7 +595,9 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
         f.write("from besser.BUML.metamodel.structural.structural import Metadata\n\n")
 
         # Write metadata and project
-        f.write(f'metadata = Metadata(description="{_escape_python_string(project.metadata.description)}")\n')
+        # ``Project(name, models)`` has no metadata, and a Metadata no description, unless given one.
+        description = (project.metadata.description if project.metadata else None) or ""
+        f.write(f'metadata = Metadata(description="{_escape_python_string(description)}")\n')
         f.write("project = Project(\n")
         f.write(f'    name="{_escape_python_string(project.name)}",\n')
         f.write(f'    models=[{", ".join(model_vars)}],\n')

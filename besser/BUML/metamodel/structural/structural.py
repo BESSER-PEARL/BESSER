@@ -633,7 +633,8 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
-        is_optional (bool): Indicates whether the property is optional/nullable (False as default).
+        is_optional (bool): Indicates whether the property is optional/nullable (False as default). A
+            multiplicity whose lower bound is 0 makes the property optional as well, unless it is an identifier.
         default_value (Any): The default value of the property (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the property (None as default).
@@ -649,7 +650,8 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
-        is_optional (bool): Indicates whether the property is optional/nullable (False as default).
+        is_optional (bool): Whether the property is optional/nullable: set with ``is_optional=True``, or by a
+            multiplicity whose lower bound is 0 (not for an identifier).
         default_value (Any): The default value of the property (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the property (None as default).
@@ -751,8 +753,11 @@ class Property(TypedElement):
 
     @property
     def is_optional(self) -> bool:
-        """bool: Get whether the property is optional."""
-        return self.__is_optional
+        """bool: Get whether the property is optional: ``is_optional=True``, or a multiplicity whose lower
+        bound is 0 (#428 added the flag as the simple way to say ``Multiplicity(0, 1)``). An identifier or
+        an external identifier is never optional because of its multiplicity."""
+        return self.__is_optional or (self.__multiplicity.min == 0
+                                      and not self.__is_id and not self.__is_external_id)
 
     @is_optional.setter
     def is_optional(self, is_optional: bool):
@@ -2582,6 +2587,7 @@ class DomainModel(Model):
         self._validate_unique_end_names(errors)
         self._validate_identifier_names(errors)
         self._validate_attribute_types(errors)
+        self._validate_enumeration_defaults(errors)
         self._validate_mandatory_cycles(warnings)
         self._validate_duplicate_associations(warnings)
         self._validate_attribute_end_collisions(warnings)
@@ -2804,12 +2810,18 @@ class DomainModel(Model):
         quotes, ``;`` and newlines, and a name written verbatim into generated
         Python would otherwise become code.
         """
-        return [
+        errors = [
             f"{label} is not a valid identifier: generated code uses the name as written, "
             f"so it will not parse. Use letters, digits and '_' only, not starting with a digit."
             for label, name in self._code_names()
             if not name.isidentifier()
         ]
+        # The model's own name is written inside strings (a database file name, a docstring): it need
+        # not be an identifier, but it must not end the string it is in.
+        if any(character in (self.name or "") for character in ("\"", "'", "\\", "\r", "\n")):
+            errors.append(f"The model's name {self.name!r} holds a quote, a backslash or a line break: generated "
+                          f"code writes it inside strings, which it would end. Remove those characters.")
+        return errors
 
     def _validate_attribute_types(self, errors: list[str]):
         """Report an attribute typed by a class or enumeration that is not in the model.
@@ -2829,6 +2841,26 @@ class DomainModel(Model):
                     f"which is not in the domain model '{self.name}'. Generated code would refer to a type "
                     f"it never defines. Add '{type_name}' to the model or use a primitive type."
                 )
+
+    def _validate_enumeration_defaults(self, errors: list[str]):
+        """Report an attribute typed by an enumeration whose default is not one of its literals.
+
+        The generators refuse such a default (``InvalidDefaultValueError``). The
+        default may be the literal, its name, or its name qualified by the
+        enumeration's (``Status.OPEN``), as the generators accept.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if not isinstance(attr.type, Enumeration) or attr.default_value is None:
+                    continue
+                default = attr.default_value
+                member = str(getattr(default, "name", default)).strip().removeprefix(f"{attr.type.name}.")
+                literals = {literal.name for literal in attr.type.literals}
+                if literals and member not in literals:  # an empty enumeration has its own warning
+                    errors.append(
+                        f"Attribute '{attr.name}' of class '{cls.name}' has the default '{member}', which is not "
+                        f"a literal of its enumeration '{attr.type.name}' ({', '.join(sorted(literals))})."
+                    )
 
     def _validate_attribute_end_collisions(self, warnings: list[str]):
         """Warn about a class reaching an attribute and an association end of the same name.

@@ -49,6 +49,26 @@ BackendGenerator(model, output_dir="library_api").generate()   # FastAPI + SQLAl
 
 That's a working REST API with a database, CRUD endpoints and validation, generated from five lines of model.
 
+**From the command line:** the same install gives you the `besser` command, for a terminal, a CI job or a coding agent ([docs](https://besser.readthedocs.io/en/latest/cli.html)):
+
+    besser new model.py                             # a starter model to edit (--kind: state_machine, gui, bpmn, ...)
+    besser schema domain                            # the B-UML classes and arguments to write it with
+    besser validate model.py --json                 # errors and warnings of a B-UML model
+    besser validate models/ --ocl                   # every editor export in a folder, with OCL constraints
+    besser info model.py                            # its classes and the generators that read it
+    besser model add-attribute Book isbn:str?       # change the model in place: add, rename, remove, ...
+    besser generators                               # every generator and its options
+    besser generate backend model.py -o library_api # run one, print the files it wrote
+    besser regenerate backend model.py -o library_api   # after a model change: keeps your hand edits
+    besser build                                    # every output listed in besser.toml, edits kept
+    besser convert model.py -o model.json           # B-UML <-> editor project
+    besser convert diagram.plantuml -o model.py     # import PlantUML, draw.io, CSV, RDF/OWL, SDMX, Python code
+    eval "$(besser completion bash)"                # tab completion (bash, zsh, fish)
+
+`generate` records what it wrote; `regenerate` (or `generate --keep-edits`) then merges the model's changes into code you have edited and lists the conflicts, and needs `pip install "besser[regen]"`. `--dry-run` on `generate`, `regenerate` and `convert` shows what would change and writes nothing. `besser mcp` serves the same commands to an AI agent as MCP tools (`pip install "besser[mcp]"`).
+
+A `.py` model is Python code and is executed to load it, so only pass files you trust; in a folder, `validate` loads only the `.json` exports unless you add `--exec-py`.
+
 **With your AI coding agent** (Claude Code, Cursor, Copilot, Cline, …): install the [BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) and just ask, e.g. *"model a library with books and authors in BESSER and generate a FastAPI backend"*. The agent builds a correct B-UML model and runs the right generator for you.
 
     npx skills add BESSER-PEARL/besser-skills --all

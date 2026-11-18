@@ -24,14 +24,34 @@ It needs an explicit ``output_dir``, which also holds the record, and the option
 
 ``generate()`` is unchanged, and you never have to use ``regenerate()``.
 
+From a terminal, :ref:`besser regenerate <cli-regenerate>` does the same for a model file:
+
+.. code-block:: console
+
+    besser regenerate java library.py -o app
+
+``regenerate()`` needs pygit2 only when a file you edited also changes in the new output;
+otherwise it writes the new output without it. To generate and start the record without pygit2,
+call ``record_output`` instead of
+``generate()``; ``besser generate`` does this for every generator that supports
+``regenerate()``, so a later ``regenerate()`` merges into the folder without adopting it:
+
+.. code-block:: python
+
+    from besser.generators.regeneration import record_output
+
+    record_output(JavaGenerator(library_model, output_dir="app"))   # needs no pygit2
+
 How it works
 ------------
 
 ``regenerate()`` runs the generator in a scratch folder, then merges three versions of
 each file: what it generated last time, the file as it is now, and the new output.
 What it generated last time is recorded in ``.besser_generated.json`` in the output
-folder, so keep that file with your code. Files the generator does not produce are
-never read or changed.
+folder, so keep that file with your code. The record also names the BESSER version that
+wrote it (``besser_version``): a generator can change between versions, so the ``besser``
+command notes when another version regenerates the folder. Files the generator does not
+produce are never read or changed.
 
 Every edit is kept or flagged, never overwritten:
 
@@ -87,6 +107,8 @@ your edits from then on, so a long list usually means it was the wrong model.
     JavaGenerator(library_model, output_dir="app").regenerate(adopt=True)
 
     JavaGenerator(new_library_model, output_dir="app").regenerate()
+
+On the command line this is ``besser regenerate java library.py -o app --adopt``.
 
 Limits
 ------

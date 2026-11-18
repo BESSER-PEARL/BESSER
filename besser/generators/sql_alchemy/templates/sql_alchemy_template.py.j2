@@ -111,13 +111,16 @@ class {{ class.name }}(
             {{parent.name}}{{ ", " if not loop.last else "):" }}
     {% endfor -%}
     {% else -%}
-    {% if class.name in concrete_parents -%}
+    {% if class.name in concrete_parents and class.specializations() -%}
     AbstractConcreteBase, Base):
     {% else -%}
         Base):
     {% endif -%}
     {% endif -%}
-    {%- if class.name in concrete_parents -%}
+    {%- if class.name in concrete_parents and not class.specializations() -%}
+    # No class specializes it yet: a polymorphic union over no table would fail every mapper.
+    __abstract__ = True
+    {%- elif class.name in concrete_parents -%}
     strict_attrs = True
     {%- else -%}
     __tablename__ = "{{class.name.lower()}}"
@@ -207,7 +210,7 @@ class {{ class.name }}(
     subtract two methods instead of two dates. #}
     {%- set column_names = class.all_attributes() | map(attribute='name') | list
                          + class.association_ends() | map(attribute='name') | list %}
-    {%- for method in class.methods|sort(attribute='name') if method.code and method.name not in column_names %}
+    {%- for method in class.methods|sort(attribute='name') if methods and method.code and method.name not in column_names %}
 
 {{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- endfor %}

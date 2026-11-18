@@ -16,6 +16,7 @@ Generate code
 * :doc:`../generators/full_web_app`: React frontend and FastAPI backend.
 * :doc:`../generators/backend`: REST backend with persistence.
 * :doc:`../generators/django`: Django project and admin interface.
+* :doc:`../cli`: run any generator from the command line, without a script.
 
 Create or import a model
 ------------------------

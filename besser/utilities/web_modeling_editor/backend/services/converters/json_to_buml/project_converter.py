@@ -298,7 +298,8 @@ def json_to_buml_project(project):
             else:
                 class_json = class_diagram_json
 
-            gui_model = process_gui_diagram(gui_json, class_json, gui_domain_model)
+            # The diagram's title names the model, as it does for every other kind.
+            gui_model = process_gui_diagram(gui_json, class_json, gui_domain_model, title=gui_diag.title)
             model_list.append(gui_model)
         else:
             logger.warning(

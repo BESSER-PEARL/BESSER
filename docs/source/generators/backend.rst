@@ -62,6 +62,37 @@ This method will generate a modular project (rather than one large file) so each
 
 Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
 
+Generated API tests
+-------------------
+With ``tests=True`` (``--option tests=true`` on the command line; off by default) the generator also writes
+the tests of the API it generates, regenerated with the model like every other file:
+
+   + ``tests/conftest.py``: a pytest fixture ``client``, a FastAPI ``TestClient`` on ``main_api.app``. It imports
+     ``main_api`` once, with ``DATABASE_URL`` set to a temporary SQLite file (never the application's database),
+     and drops and creates every table before each test, so each test starts from an empty database.
+   + ``tests/test_generated_api.py``: one test per class that creates an object, reads it back, finds it in the
+     list, updates one attribute and deletes it. The payload is derived from the model: a value of each
+     attribute's type (an enumeration by literal name), the association ends the create schema requires
+     (the objects they name are created first, a concrete subclass standing for an abstract class), and values
+     that satisfy the OCL constraints the API enforces (comparisons, ``matches``, expressions over several
+     attributes). When a related object needs at least one object of the class, the test expects the API to
+     refuse the delete (409). Responses are read in both shapes, the object or ``{"<class>": object, ...}``.
+
+A class no valid payload can be derived for gets a skipped test whose reason says why, never a failing one:
+an abstract class (its subclasses' tests create it), an association class, a cycle of required association
+ends (``Node -> Node`` when every node needs a parent), a constraint no generated value satisfies. A valid
+model whose generated app does not run is skipped too, the reason naming the generator's limitation: a
+many-to-many self association, a to-one association between a class and its parent or child, or a class with two
+parent tables or two abstract bases (no mapper can be configured, so every test), and a one-to-one self
+association (creating that class or a subclass). The
+tests need ``pytest``, ``fastapi`` and ``httpx``; run them with ``python -m pytest`` from the backend folder or
+any folder above it. ``web_app`` takes the same option for the backend it writes in ``backend/``.
+
+.. code-block:: python
+
+    BackendGenerator(model=library_model, output_dir="backend", tests=True).generate()
+    # then: cd backend && python -m pytest -q
+
 
 .. image:: ../img/backend_generator_schema.png
   :width: 1000
@@ -77,17 +108,22 @@ This example showcases the usage of the Backend Generator with our :doc:`../exam
 
 Extending the Generated Backend
 -------------------------------
-Regenerating the backend overwrites the generated files, so keep your own code in separate files and
-plug it into the generated ``app`` with the standard FastAPI mechanisms. For example, a ``my_extensions.py``
-next to the generated code can add endpoints, middleware or authentication:
+Every generated file starts with a line that says so, and regenerating rewrites it. Hand-written code goes
+in ``extensions.py`` beside ``main_api.py`` (or in a module of that name anywhere on ``PYTHONPATH``). No
+generation writes that file, ``besser build`` and ``besser regenerate`` leave it alone, and ``main_api.py``
+loads it when it is there and calls two optional functions:
+
+- ``before_routers(app)``, before the generated routers are added: a route added here wins over a generated
+  route with the same method and path, so it can replace one.
+- ``setup(app)``, after the generated routes: new routers, middleware, authentication, startup hooks.
 
 .. code-block:: python
 
+    # extensions.py
     from fastapi import APIRouter, Depends
     from sqlalchemy.orm import Session
 
     from database import get_db
-    from main_api import app
     from sql_alchemy import Library
 
     router = APIRouter(prefix="/custom", tags=["Custom"])
@@ -98,26 +134,26 @@ next to the generated code can add endpoints, middleware or authentication:
         return [library.name for library in database.query(Library).all()]
 
 
-    @app.middleware("http")
-    async def add_custom_header(request, call_next):
-        response = await call_next(request)
-        response.headers["X-Custom"] = "yes"
-        return response
+    def setup(app):
+        app.include_router(router)
 
+        @app.middleware("http")
+        async def add_custom_header(request, call_next):
+            response = await call_next(request)
+            response.headers["X-Custom"] = "yes"
+            return response
 
-    app.include_router(router)
+Start the application as before (``python main_api.py``, which reads ``PORT``, or ``uvicorn main_api:app``);
+the generated ``Dockerfile`` copies ``extensions.py`` into the image when it exists.
 
-Start the application from your file, so that your additions are loaded with the generated routes:
-``uvicorn my_extensions:app`` instead of ``python main_api.py``. If you use the generated ``Dockerfile``,
-copy your file into the image and change its start command the same way.
-
-- **Endpoints**: put them in your own ``APIRouter`` and add it with ``app.include_router()``. Use ``get_db``
-  from ``database.py`` for a database session and the models from ``sql_alchemy.py`` to query it.
-- **Middleware and authentication**: register them on ``app`` (``app.middleware()``, ``app.add_middleware()``),
-  or protect your own routes with FastAPI dependencies.
+- **Endpoints**: put them in your own ``APIRouter``, added in ``setup`` (or in ``before_routers`` to replace a
+  generated route). Use ``get_db`` from ``database.py`` for a database session and the models from
+  ``sql_alchemy.py`` to query it.
+- **Middleware and authentication**: register them on ``app`` in ``setup`` (``app.middleware()``,
+  ``app.add_middleware()``), or protect your own routes with FastAPI dependencies.
 - **Configuration and secrets**: read them from environment variables (``os.environ``) instead of writing them
-  into code. The generated code already reads ``DATABASE_URL`` this way. With Docker, pass them at run time,
-  for example ``docker run --env-file .env ...``.
+  into code. The generated code already reads ``DATABASE_URL`` and ``PORT`` this way. With Docker, pass them at
+  run time, for example ``docker run --env-file .env ...``.
 
 Docker Image Generation
 -----------------------
@@ -266,6 +302,63 @@ Known limits:
    A ``default_value`` must be expressible as a literal of the attribute's
    type; otherwise generation raises ``InvalidDefaultValueError``. See the
    :doc:`release notes </releases/v8/v8.0.0>`.
+
+.. _backend-response-shapes:
+
+Response Shapes
+^^^^^^^^^^^^^^^
+
+For a class ``X`` (``x``: its name in lower case), an *object* is
+``{attributes, "id", "<end>_id" per to-one end}``. ``GET /x/`` answers a list of
+objects, and ``GET /x/{x_id}/`` answers the object with the ids of each to-many end
+beside it:
+
+.. code-block:: json
+
+   {"x": {"id": 1, "name": "...", "owner_id": 4}, "pets_ids": [2, 3], "course_ids": [5]}
+
+The key of a one-to-many end is ``"<end>_ids"``, that of a many-to-many end
+``"<other class>_ids"`` (the other class's name in lower case), and that of an end
+materialized by an association class ``"<end>_ids"``. A class without a to-many end
+answers ``{"x": object}``.
+
+What ``POST /x/`` and ``PUT /x/{x_id}/`` answer depends on the ``uniform_responses``
+option:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - Route
+     - ``uniform_responses=False`` (default)
+     - ``uniform_responses=True``
+   * - ``POST /x/``, ``PUT /x/{x_id}/``
+     - what ``GET /x/{x_id}/`` answers if ``X`` has a to-many end, else the bare object
+     - what ``GET /x/{x_id}/`` answers
+   * - each item of ``GET /x/paginated/?detailed=true``
+     - the same split
+     - what ``GET /x/{x_id}/`` answers
+
+.. code-block:: python
+
+    backend = BackendGenerator(model=library_model, uniform_responses=True)
+
+Without the option, adding a to-many end to a class moves the object its ``POST``
+and ``PUT`` answer from the top level to ``"x"``, so a client of the API breaks on
+an unrelated model edit; with it, the object is always at ``"x"`` and a new end only
+adds a key. The default is off because deployed apps and their clients read the
+historical shapes; ``besser init`` turns it on for a new project
+(``options = { uniform_responses = true }`` in its ``besser.toml``), and the
+:doc:`full_web_app` (``web_app``) takes the same option and passes it to the backend it
+writes (its React frontend reads only the status of a create or update, then the list).
+
+The option changes nothing else: an association class is addressed by the ids of
+its two ends and answers the bare link on ``GET``, ``POST`` and ``PUT`` alike;
+``GET /x/`` and ``GET /x/paginated/`` without ``detailed`` answer bare objects;
+``POST /x/bulk/`` answers ``{"created_count", "created_ids", "message"}``; a method
+route answers ``{"method", "status", "result", "output"}`` with the class name or the
+instance id; the relationship routes under ``/x/{x_id}/<end>/`` answer a message or the
+related objects.
 
 Relationship Management (N:M)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

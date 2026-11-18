@@ -92,17 +92,27 @@ class WebAppGenerator(GeneratorInterface):
         app_name (str, optional): The application's name as its users see it: the
             browser tab title and the README headings. Without it the README is
             titled after the domain model and the browser tab reads ``BESSER App``.
+        uniform_responses (bool, optional): Passed to the :class:`BackendGenerator` of
+            ``backend/``: its ``POST`` and ``PUT`` answer what ``GET /x/{x_id}/`` answers
+            for every class. Defaults to False. The React app does not read those answers.
+        tests (bool, optional): Also write the backend's API tests in ``backend/tests/`` (see the
+            ``tests`` option of :class:`BackendGenerator`). Defaults to False.
     """
 
     regenerable = True
+    # The backend it writes in backend/ loads hand-written code from this file (see BackendGenerator).
+    extension_file = "backend/extensions.py"
 
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,
-                 agent_config_yamls=None, link_agent_database: bool = True, app_name: str = None):
+                 agent_config_yamls=None, link_agent_database: bool = True, app_name: str = None,
+                 uniform_responses: bool = False, tests: bool = False):
         super().__init__(model, output_dir)
+        self.tests = tests
         self.gui_model = gui_model
         self.app_name = app_name
+        self.uniform_responses = uniform_responses
         self.link_agent_database = link_agent_database
         if agent_model is not None and not agent_models:
             agent_models = [agent_model]
@@ -162,7 +172,8 @@ class WebAppGenerator(GeneratorInterface):
     def _generate_backend(self, env):
         # Generate backend code in 'backend' subfolder
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
-        backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
+        backend_gen = BackendGenerator(self.model, output_dir=backend_dir,
+                                       uniform_responses=self.uniform_responses, tests=self.tests)
         backend_gen.generate()
 
     def _generate_agent(self, env):

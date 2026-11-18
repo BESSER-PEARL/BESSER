@@ -75,6 +75,7 @@ Next steps
 ----------
 
 * :doc:`../guides/choose-generator` to produce a database schema or backend.
+* :doc:`../cli` to validate the model and run a generator with the ``besser`` command.
 * :doc:`../examples/library_example` to add authors and relationships.
 * :doc:`../buml_language/model_types/structural` for model properties and rules.
 * :doc:`../troubleshooting` if installation or imports fail.

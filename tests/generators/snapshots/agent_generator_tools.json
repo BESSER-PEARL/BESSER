@@ -59,13 +59,7 @@
                 "DELETE"
               ]
             },
-            "description": "HTTP methods to generate endpoints for",
-            "default": [
-              "GET",
-              "POST",
-              "PUT",
-              "DELETE"
-            ]
+            "description": "HTTP methods to generate endpoints for"
           }
         }
       }
@@ -145,13 +139,7 @@
                 "PATCH",
                 "DELETE"
               ]
-            },
-            "default": [
-              "GET",
-              "POST",
-              "PUT",
-              "DELETE"
-            ]
+            }
           }
         }
       }

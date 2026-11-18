@@ -7,7 +7,7 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
-from besser.utilities.utils import sort_by_timestamp
+from besser.utilities.utils import display_order_key, sort_by_timestamp
 from besser.utilities.buml_code_builder.common import (
     _comment_safe, _escape_python_string, attribute_var_name, buml_header, identifier_part, method_var_name,
     safe_class_name, safe_var_name,
@@ -290,7 +290,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
                 element_vars = []
                 if hasattr(screen, 'view_elements') and screen.view_elements:
                     # Sort by display_order first (JSON order), then by name
-                    sorted_elements = sorted(screen.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
+                    sorted_elements = sorted(screen.view_elements, key=lambda e: (*display_order_key(e), e.name))
                     for elem in sorted_elements:
                         elem_var = _write_component(f, elem, created_vars, screen_var, pending_button_events)
                         if elem_var:
@@ -447,7 +447,7 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
             # It's a container but not typed as ViewContainer
             child_vars = []
             # Sort by display_order first (JSON order), then by name
-            sorted_children = sorted(component.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
+            sorted_children = sorted(component.view_elements, key=lambda e: (*display_order_key(e), e.name))
             for child in sorted_children:
                 child_var = _write_component(f, child, created_vars, comp_var, pending_button_events)
                 if child_var:
@@ -1048,7 +1048,7 @@ def _write_container(f, var_name, container, created_vars, pending_button_events
     child_vars = []
     if hasattr(container, 'view_elements') and container.view_elements:
         # Sort by display_order first (JSON order), then by name
-        sorted_children = sorted(container.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
+        sorted_children = sorted(container.view_elements, key=lambda e: (*display_order_key(e), e.name))
         for child in sorted_children:
             child_var = _write_component(f, child, created_vars, var_name, pending_button_events)
             if child_var:

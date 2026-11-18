@@ -24,8 +24,8 @@ Design points (mirror of the processor):
 """
 
 import logging
-import uuid
 
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 from besser.BUML.metamodel.bpmn import (
     AgentRole,
     GatewayRole,
@@ -191,7 +191,7 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
     def id_for(obj) -> str:
         if obj not in id_map:
             stashed = (obj.layout or {}).get("id") if hasattr(obj, "layout") else None
-            id_map[obj] = stashed or str(uuid.uuid4())
+            id_map[obj] = stashed or new_id()
         return id_map[obj]
 
     # --- 1. Pools (and their lanes) ----------------------------------------

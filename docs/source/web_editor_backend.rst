@@ -34,7 +34,7 @@ Additional infrastructure:
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError``, ``ConfigurationError`` and ``UpstreamError`` (an external service such as GitHub refused or failed; carries the HTTP status).
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
 - **Request validation (422)** -- ``backend.py`` replaces FastAPI's handler: each ``detail`` entry keeps ``type``, ``loc`` and ``msg`` but drops pydantic's ``input`` and ``ctx``, since a failing model validator puts the whole request body there, API keys included.
-- **``services/generation/``** -- Generator dispatch behind ``/generate-output`` and ``/generate-output-from-project``: ``dispatch.py`` picks the path from the generator's registry entry (``category``, ``required_diagram_type``, ``output_type``; ``needs_beyond_one_diagram`` refuses a generator one diagram cannot feed; generators with request options have a builder in ``_CLASS_DIAGRAM_BUILDERS``) and runs it, ``agents.py`` generates agents (BAF), ``downloads.py`` packs the output as a ``GeneratedOutput`` (a ZIP with its provenance file, or one file with its version comment), which the router sends as the download
+- **``services/generation/``** -- Generator dispatch behind ``/generate-output`` and ``/generate-output-from-project``: ``dispatch.py`` picks the path from the generator's registry entry (``category``, ``required_diagram_type``, ``output_type``; ``needs_beyond_one_diagram`` refuses a generator one diagram cannot feed; generators with request options have a builder in ``_CLASS_DIAGRAM_BUILDERS``, which maps the request config to the generator's options) and runs it through ``besser.generators.runner.run_generator``, the calling contract shared with the :doc:`besser command <cli>`, ``agents.py`` generates agents (BAF), ``downloads.py`` packs the output as a ``GeneratedOutput`` (a ZIP with its provenance file, or one file with its version comment), which the router sends as the download
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``github_sync.py`` (a run pushed to GitHub, a GitHub repo imported as a run), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
@@ -117,6 +117,14 @@ Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 ``QuantumCircuitDiagram``, ``UserDiagram``, ``NNDiagram``, ``BPMN``,
 ``ComponentDiagram``, ``DeploymentDiagram``, and ``KnowledgeGraphDiagram``. A
 single BPMN diagram payload has type ``BPMNDiagram``.
+
+A diagram's ``title`` names its model: ``json_to_buml_project`` names each
+model after it (GUI models included), and ``project_to_json`` titles each
+imported diagram after the model its section builds (``DomainModel(name="Library")``
+is the class diagram ``Library``), so a name survives B-UML -> JSON -> B-UML.
+A section header's title comes first; a model named as the default title
+(``Class_Diagram``), or one whose name the section does not spell out, gets the
+default title (``Class Diagram``).
 
 
 Class Diagrams: Element Timestamps

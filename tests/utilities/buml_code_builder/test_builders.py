@@ -778,6 +778,17 @@ class TestQuantumModelBuilder:
         assert "control_qubits" in code
         assert "ControlState.CONTROL" in code
 
+    def test_the_same_circuit_gives_the_same_code(self, tmp_path):
+        """Gate variables are numbered in order, not named after the gate object's id()."""
+        first, second = self._build_simple_circuit(), self._build_simple_circuit()
+        quantum_model_to_code(first, str(tmp_path / "first.py"))
+        quantum_model_to_code(second, str(tmp_path / "second.py"))
+
+        code = (tmp_path / "first.py").read_text(encoding="utf-8")
+        assert code == (tmp_path / "second.py").read_text(encoding="utf-8")
+        assert "gate_HadamardGate_1 = HadamardGate(target_qubit=0)" in code
+        assert "gate_Measurement_3 = Measurement(" in code
+
 
 # ---------------------------------------------------------------------------
 # agent_model_builder.py
@@ -1322,6 +1333,16 @@ class TestProjectBuilder:
             code = f.read()
 
         assert "TestProject" in code
+
+    def test_project_without_metadata_is_written(self, tmp_path):
+        """``Project(name, models)`` leaves metadata unset; the code gets an empty description."""
+        project = self._build_simple_project()
+        project.metadata = None
+        file_path = str(tmp_path / "project.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert 'metadata = Metadata(description="")' in f.read()
 
     def test_domain_model_included(self, tmp_path):
         """Domain model content is embedded in the project code."""

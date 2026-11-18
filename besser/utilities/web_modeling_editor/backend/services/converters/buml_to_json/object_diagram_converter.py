@@ -5,12 +5,12 @@ Handles object diagram processing and attribute mapping.
 
 import ast
 import logging
-import uuid
 from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
 from besser.utilities.buml_code_builder.common import safe_class_name
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
@@ -288,7 +288,7 @@ def object_buml_to_json(
         object_var_to_id = {}  # object variable name -> element ID
         for obj_name, obj_info in objects_by_name.items():
             x, y = get_position()
-            object_id = str(uuid.uuid4())
+            object_id = new_id()
             object_var_to_id[obj_name] = object_id
 
             # Create object attribute elements
@@ -298,7 +298,7 @@ def object_buml_to_json(
 
             attr_y_offset = 30
             for attr_name, attr_value in obj_info["attributes"].items():
-                attr_id = str(uuid.uuid4())
+                attr_id = new_id()
                 object_attribute_ids.append(attr_id)
 
                 # Format the value appropriately
@@ -408,7 +408,7 @@ def object_buml_to_json(
                     target_id = object_var_to_id.get(target_obj)
                     if not target_id:
                         continue
-                    rel_id = str(uuid.uuid4())
+                    rel_id = new_id()
                     relationships[rel_id] = {
                         "id": rel_id,
                         "name": f"{relationship_name}",
@@ -446,7 +446,7 @@ def object_buml_to_json(
         # Create comment elements from metadata
         # 1. ObjectModel comment (unlinked)
         if om_comment:
-            comment_id = str(uuid.uuid4())
+            comment_id = new_id()
             elements[comment_id] = {
                 "id": comment_id,
                 "name": om_comment,
@@ -464,7 +464,7 @@ def object_buml_to_json(
         # 2. Object comments (linked to objects)
         for obj_var, comment_text in object_comments.items():
             if obj_var in object_var_to_id:
-                comment_id = str(uuid.uuid4())
+                comment_id = new_id()
                 object_id = object_var_to_id[obj_var]
 
                 elements[comment_id] = {
@@ -481,7 +481,7 @@ def object_buml_to_json(
                 }
 
                 # Create Link relationship
-                link_id = str(uuid.uuid4())
+                link_id = new_id()
                 source_element = elements[comment_id]
                 target_element = elements[object_id]
 

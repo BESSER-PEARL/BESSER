@@ -340,21 +340,63 @@ last run has expired, the editor imports the branch head before the run
 - the next run's inventory gets the earlier requests, where the last run ended
   (repairs rolled back, requirements missing from the code or not checked, tasks
   left out), the commits made since, and the repository's ``AGENTS.md``;
-- every push of a run with a recipe keeps a section in ``AGENTS.md``, for people
-  and for other coding tools. It sits between ``<!-- besser:begin -->`` and ``<!-- besser:end -->``,
-  and anything outside those markers stays as it is, also when the run never held
-  the file. A seeded run works without the section, and the push renders it again.
-  An ``AGENTS.md`` that is a link or not text, or that was added on GitHub after
-  the run started, is left alone, with a warning;
+- every push of a run with a recipe keeps BESSER's records in ``.besser/``, for
+  people and for other coding tools, and one fixed line in ``AGENTS.md`` that
+  points to them (see below);
 - the import and the push return it as ``recap``. The chat shows it when a
   repository opens or a run continues from one, and the editor sends it to the
   modeling agent with each message (``context.githubRepo``).
 
 A recipe and an ``AGENTS.md`` can be written by anyone with push access, and a
 public repository's by a stranger. So a recap value is one line, capped, free of
-credentials and unable to close the ``AGENTS.md`` section; the agent receives
+credentials and unable to write a block marker; the agent receives
 all of it labelled as a record and not as instructions, and ``AGENTS.md``
-quoted line by line and capped at 4,000 characters; the chat escapes it.
+(without BESSER's block) quoted line by line and capped at 4,000 characters; the
+chat escapes it.
+
+**The records in .besser/.** A push of a run with a recipe writes:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Path
+     - What
+   * - ``.besser/README.md``
+     - The index: what the folder holds, where the model is, the recent runs
+       (newest first) and what the last run left open. Rewritten on every push.
+   * - ``.besser/runs/<YYYYMMDDTHHMMSSZ>.md``
+     - One file per run, named by its time (UTC): the request, in the user's
+       words, and the files the run changed. Written from the recipe's history;
+       the newest 50 are kept, and a push that holds older ones deletes them.
+   * - ``.besser/previous-recap.md``
+     - Only in a repository pushed before the records moved here: the section
+       earlier versions kept in ``AGENTS.md``, moved once.
+   * - ``.besser/project.json``
+     - Which BESSER project the repository belongs to (written by every save).
+
+``AGENTS.md`` gets one line between ``<!-- besser:begin -->`` and
+``<!-- besser:end -->``, the same on every push, so the file never grows::
+
+   Project history, run recaps and the requests made to BESSER's agent: see `.besser/` (start with [`.besser/README.md`](.besser/README.md)).
+
+Anything outside the markers stays as it is, also when the run never held the
+file. A seeded run works without the line, and the push writes it again. An
+``AGENTS.md`` that is a link or not text, or that was added on GitHub after the
+run started, is left alone, with a warning. The ``besser`` command's guide block
+(``<!-- besser-guide:begin -->``, written by ``besser new`` and ``besser init``)
+has its own markers, so both can sit in one ``AGENTS.md``.
+
+Every value in the records goes through the recap's one-line filter, which
+redacts credentials, and the moved section is redacted too. The next run reads
+earlier runs from the recipe, and from ``.besser/README.md`` when the repository
+has no recipe; it never reads BESSER's block of ``AGENTS.md``.
+
+**Moving an older recap.** Repositories pushed by BESSER 8.9 hold a recap
+section between the same markers in ``AGENTS.md``. The next run seeded from such
+a repository, or failing that the next push, moves the section's text to
+``.besser/previous-recap.md`` and puts the pointer in its place; the rest of
+``AGENTS.md`` is left untouched.
 
 The commits since the last run are the ones after the last commit that changed
 the recipe. The import notes them on the imported recipe

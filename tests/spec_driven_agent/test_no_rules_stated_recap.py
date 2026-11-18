@@ -13,7 +13,7 @@ import os
 from besser.BUML.metamodel.structural import Class, Constraint, DomainModel
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
-from besser.spec_driven_agent.run_recap import NO_RULES_STATED, agents_block, build_recap, next_run_notes
+from besser.spec_driven_agent.run_recap import NO_RULES_STATED, build_recap, next_run_notes, records_index
 
 HOTEL = "I want to create an application to manage a hotel. To manage bookings."
 
@@ -47,7 +47,7 @@ def test_an_empty_ledger_tells_the_user_no_rules_were_checked(tmp_path):
     recap = build_recap(recipe)
     assert {"kind": "not_checked", "text": NO_RULES_STATED} in recap["open_items"]
     assert recap["open_item_count"] == 1
-    assert NO_RULES_STATED in agents_block(recap)
+    assert NO_RULES_STATED in records_index(recap)
     # The next run's prompt does not get it: it must not read as work to do.
     assert NO_RULES_STATED not in next_run_notes(recipe)
 
@@ -71,16 +71,16 @@ def test_a_ledger_that_did_not_run_claims_nothing(tmp_path):
     assert NO_RULES_STATED not in json.dumps(build_recap(recipe))
 
 
-def test_the_agents_md_note_stays_out_of_the_next_runs_prompt(tmp_path):
-    """Review: the line sat under "Still open" in AGENTS.md, and a modify run quotes that
-    file to the model through repo_notes. It is a plain note there, and not quoted."""
-    from besser.spec_driven_agent.run_recap import repo_notes
+def test_the_records_note_stays_out_of_the_next_runs_prompt(tmp_path):
+    """Review: the line sat under "Still open" in BESSER's records, and a modify run quotes
+    them to the model through records_notes. It is a plain note there, and not quoted."""
+    from besser.spec_driven_agent.run_recap import RECORDS_INDEX, records_notes
 
     recipe = _recipe(tmp_path / "app", [])
-    block = agents_block(build_recap(recipe))
-    assert f"Note: {NO_RULES_STATED}." in block
-    assert "Still open" not in block  # it was the only open item
-    (tmp_path / "repo").mkdir()
-    (tmp_path / "repo" / "AGENTS.md").write_text(block, encoding="utf-8")
-    notes = repo_notes(str(tmp_path / "repo"))
+    index = records_index(build_recap(recipe))
+    assert f"Note: {NO_RULES_STATED}." in index
+    assert "Still open" not in index  # it was the only open item
+    (tmp_path / "repo" / ".besser").mkdir(parents=True)
+    (tmp_path / "repo" / RECORDS_INDEX).write_text(index, encoding="utf-8")
+    notes = records_notes(str(tmp_path / "repo"))
     assert notes and "business rules" not in notes

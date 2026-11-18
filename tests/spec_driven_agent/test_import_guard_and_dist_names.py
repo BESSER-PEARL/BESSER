@@ -109,3 +109,19 @@ def test_an_unguarded_import_inside_a_function_is_still_reported(tmp_path):
     _write(tmp_path, "backend/extract.py", "def read(raw):\n    import vendor_parser\n    return vendor_parser.parse(raw)\n")
     problems = _unresolvable_local_imports(str(tmp_path))
     assert len(problems) == 1 and problems[0].startswith("missing module:"), problems
+
+
+@pytest.mark.parametrize("handler", [
+    "except Exception as exc:\n        return JSONResponse({'detail': str(exc)}, status_code=500)\n",
+    "except Exception:\n        logger.exception('export failed')\n        raise\n",
+])
+def test_a_handler_that_returns_or_raises_does_not_excuse_a_forgotten_module(tmp_path, handler):
+    """Review of d5b411a20: an endpoint that answers 500 from its catch-all has no fallback,
+    so a module that was never written fails every call and must still be reported."""
+    _write(tmp_path, "backend/requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+    _write(tmp_path, "backend/routers/reports.py",
+           "def export_report(report_id: int):\n    try:\n        from report_builder import build_pdf\n"
+           "        return build_pdf(report_id)\n    " + handler)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and "report_builder" in problems[0], problems

@@ -260,6 +260,14 @@ def _handler_kind(handler: _ast.ExceptHandler) -> str | None:
     return _failure_kind(_exception_names(types))
 
 
+def _falls_back(node: _ast.Try | _ast.TryStar) -> bool:
+    """Whether the catch-all handlers go on to the code after the ``try``: one
+    that returns or raises (an endpoint answering 500) has no fallback."""
+    return not any(isinstance(n, (_ast.Return, _ast.Raise))
+                   for handler in node.handlers if _handler_kind(handler) == _BROAD
+                   for n in _ast.walk(handler))
+
+
 def _is_type_checking(test: _ast.expr) -> bool:
     return ((isinstance(test, _ast.Name) and test.id == "TYPE_CHECKING")
             or (isinstance(test, _ast.Attribute) and test.attr == "TYPE_CHECKING"))
@@ -288,8 +296,8 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
     that handles the import failure (and the fallback in its handler) or a
     ``with suppress(ImportError)``, ``if TYPE_CHECKING:`` imports, which never
     run, both branches of a ``sys.version_info`` check (a backport), and an
-    import inside a function under a catch-all handler (an optional fast path
-    the function falls back from).
+    import inside a function under a catch-all handler that neither returns nor
+    raises (an optional fast path the function falls back from).
     ``broad`` marks an import under a handler that catches every exception.
     """
     if isinstance(node, _ast.ImportFrom):
@@ -301,7 +309,7 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
         kinds = {_handler_kind(h) for h in node.handlers}
         if _OPTIONAL in kinds or _BROAD in kinds:
             children = [*node.orelse, *node.finalbody]
-            guarded = [] if _OPTIONAL in kinds or in_function else node.body
+            guarded = [] if _OPTIONAL in kinds or (in_function and _falls_back(node)) else node.body
         else:
             children = list(_ast.iter_child_nodes(node))
     elif isinstance(node, _ast.If) and _is_type_checking(node.test):

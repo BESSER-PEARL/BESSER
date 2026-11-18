@@ -62,6 +62,8 @@ EVENT_ROLLBACK = "rollback"
 EVENT_REGENERATION = "regeneration"
 EVENT_TARGET = "target"
 EVENT_VALIDATION_ISSUE = "validation_issue"
+# The fix agent's verified citation of a requirement (validate_app citations).
+EVENT_REQUIREMENT_CITED = "requirement_cited"
 EVENT_CHECKPOINT = "checkpoint"
 EVENT_ERROR = "error"
 EVENT_RUN_END = "run_end"

@@ -1,11 +1,15 @@
-"""A citation that is only the start of a source line names the line it starts.
+"""A citation that is only a fragment of real code proves nothing, but is not invented.
 
 A judge sometimes quotes a line only up to its first double quote
-(``<OrderTable id=`` for ``<OrderTable id="orders-table" ... />``). The verifier
-rightly rejects such a quote, but it said "no source line matches the part" and
-labelled the cited code absent, so the citation-repair round got no hint to cite
-the whole line. The cut quote is now named as the start of the line(s) it starts.
-A fragment too short to identify code (``title=``) is not taken for misquoted code.
+(``<OrderTable id=`` for ``<OrderTable id="orders-table" ... />``, ``title=`` for
+``title="Edit"``). Such a fragment was counted as code that exists nowhere, so one
+cut citation sank a verdict whose other citations were whole, verified lines, and
+the requirement was reported unverified although its code works.
+
+A fragment that is code of the cited file is now located like the part of an
+abridged quote: it proves no role (a whole line must), and it does not fail the
+verdict. When it is in exactly one line, the verdict records that line, the only
+line the fix agent may cite in its place (``CITED_FRAGMENT_LINES``).
 """
 
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
@@ -27,52 +31,60 @@ export default function Orders({ rows, onEdit, onDelete }) {
             title="Remove"
             onClick={() => onDelete(row.id)}
           />
+          ); // the row actions
         </span>
       ))}
     </div>
   );
 }
 """
+TABLE_LINE = '<OrderTable id="orders-table" className="table" title="Open orders" rows={rows} />'
 
 
-def _verify(tmp_path, *lines):
+def _verify(tmp_path, *lines, text="The orders screen shows a table of open orders", kind="ui"):
     path = tmp_path / PAGE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(SOURCE, encoding="utf-8")
-    verdict = {"id": 1, "text": "The orders screen shows a table of open orders", "kind": "ui",
+    verdict = {"id": 1, "text": text, "kind": kind,
                "status": "implemented", "evidence": [{"path": PAGE, "line": line} for line in lines], "note": ""}
     return ledger.verify_evidence([verdict], str(tmp_path))[0]
 
 
-def test_a_quote_cut_at_the_lines_first_string_is_named_as_that_lines_start(tmp_path):
+def test_a_cut_fragment_beside_a_whole_verified_line_does_not_sink_the_verdict(tmp_path):
+    verdict = _verify(tmp_path, "title=", "onClick={() => onEdit(row)}",
+                      text="Each row has an Edit button", kind="action")
+    assert verdict["status"] == "implemented"
+
+
+def test_a_fragment_alone_proves_nothing_and_points_at_its_only_line(tmp_path):
     verdict = _verify(tmp_path, "<OrderTable id=")
     assert verdict["status"] == "unverified"
-    assert f"the part is only the start of {PAGE} line 6; cite the whole line" in verdict["note"]
-    assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_MALFORMED
+    assert "no cited part is a whole source line" in verdict["note"]
+    assert ledger.EVIDENCE_UNLOCATED not in verdict
+    assert verdict[ledger.CITED_FRAGMENT_LINES] == [f"{PAGE}:6"]
 
 
-def test_a_fragment_too_short_to_identify_code_names_its_lines_but_proves_no_code_exists(tmp_path):
+def test_a_fragment_in_several_lines_points_at_none(tmp_path):
     verdict = _verify(tmp_path, "title=")
     assert verdict["status"] == "unverified"
-    assert f"too short to identify a line (it starts {PAGE} lines 10, 14); cite the whole line" in verdict["note"]
-    assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_ABSENT
+    assert ledger.CITED_FRAGMENT_LINES not in verdict and ledger.EVIDENCE_UNLOCATED not in verdict
 
 
-def test_an_invented_line_start_gets_no_hint(tmp_path):
+def test_an_invented_line_start_is_still_absent(tmp_path):
     verdict = _verify(tmp_path, "<CustomerTable id=")
     assert "no source line matches the part" in verdict["note"]
     assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_ABSENT
 
 
 def test_the_whole_line_verifies(tmp_path):
-    line = '<OrderTable id="orders-table" className="table" title="Open orders" rows={rows} />'
-    assert _verify(tmp_path, line)["status"] == "implemented"
+    assert _verify(tmp_path, TABLE_LINE)["status"] == "implemented"
 
 
 def test_a_line_of_punctuation_alone_proves_nothing(tmp_path):
-    """``{`` or ``/>`` is a whole line of many files; it identifies no code."""
-    verdict = _verify(tmp_path, "/>", "))}")
-    assert verdict["status"] == "unverified"
-    assert "identifies no code" in verdict["note"]
-    line = '<OrderTable id="orders-table" className="table" title="Open orders" rows={rows} />'
-    assert _verify(tmp_path, "/>", line)["status"] == "implemented"
+    """``{`` or ``/>`` is a whole line of many files; it identifies no code, nor does
+    punctuation followed by a comment."""
+    for lines in (("/>", "))}"), ("); // the row actions",)):
+        verdict = _verify(tmp_path, *lines)
+        assert verdict["status"] == "unverified", lines
+        assert "identifies no code" in verdict["note"], lines
+    assert _verify(tmp_path, "/>", TABLE_LINE)["status"] == "implemented"

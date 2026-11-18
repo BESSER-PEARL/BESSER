@@ -353,7 +353,7 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "code change, not again without one: ending your turn runs it too. Fix the "
             "returned blockers, then rerun. "
             "A passing result covers these checks only, not all business requirements. "
-            "citations: whole source lines of a 'requirement unverified' blocker's present code."
+            "citations: the whole line a 'requirement unverified' blocker asks you to cite."
         ),
         "input_schema": {"type": "object", "properties": {"citations": {"type": "array", "items": {
             "type": "object", "required": ["requirement", "path", "line"],

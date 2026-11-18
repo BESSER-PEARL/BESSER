@@ -68,7 +68,8 @@ The table is the button's ``instance_source`` or, failing that, the table
 bound to the button's ``entity_class`` on the same screen. A create button
 with no such table on its screen navigates to the first screen that has one
 and opens its dialog there. Update and delete report "Select a row in the
-table first" when nothing is selected. A CRUD button with no bound table is
+table first" when nothing is selected; the confirmation prompt comes only once
+the action can run. A CRUD button with no bound table is
 rendered as a plain button.
 
 FormBlock

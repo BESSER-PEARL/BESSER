@@ -39,15 +39,17 @@ export const CrudButton: React.FC<CrudButtonProps> = ({
 
   const handleClick = () => {
     setMessage(null);
-    if (confirmMessage && !window.confirm(confirmMessage)) {
-      return;
-    }
+    const confirmed = () => !confirmMessage || window.confirm(confirmMessage);
     if (targetPath) {
+      if (!confirmed()) {
+        return;
+      }
       runTableAction(tableId, action, true);
       navigate(targetPath);
       return;
     }
-    const problem = runTableAction(tableId, action);
+    // Asked only once the action can run: no prompt before "Select a row".
+    const problem = runTableAction(tableId, action, false, confirmed);
     if (problem) {
       setMessage(entity && action !== "create" ? problem.replace("a row", `a ${entity}`) : problem);
     }

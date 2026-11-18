@@ -100,8 +100,31 @@ def test_the_runtime_wires_the_button_to_the_table_dialog_and_row(build_app):
     assert "await axios.delete(fullUrl);" in table
 
     button = app.file("components", "runtime", "CrudButton.tsx")
-    assert "runTableAction(tableId, action)" in button
+    assert "runTableAction(tableId, action, false, confirmed)" in button
     assert "window.confirm(confirmMessage)" in button
+
+
+def test_delete_asks_for_confirmation_only_once_a_row_is_selected(build_app):
+    """The prompt came first, so a user confirmed a delete and only then read
+    "Select a row in the table first"."""
+    app = build_app(CLASSES, {"Books": [_table(), _crud_button("delete", "Remove", table="table-books", confirm=True)]})
+
+    context = app.file("contexts", "TableContext.tsx")
+    run = context[context.index("const runTableAction = ("):]
+    run = run[:run.index("\n  };\n")]
+    not_on_page = run.index('return "The table for this action is not on this page.";')
+    no_row = run.index('return "Select a row in the table first.";')
+    confirm = run.index("if (confirm && !confirm()) {\n      return null;\n    }")
+    remove = run.index("actions.remove(row);")
+    assert not_on_page < no_row < confirm < remove
+    assert run.index("actions.create();") > confirm
+
+    button = app.file("components", "runtime", "CrudButton.tsx")
+    handler = button[button.index("const handleClick = () => {"):button.index("return (\n    <>")]
+    # The only prompt is the callback the table context calls after its checks.
+    assert handler.count("window.confirm(") == 1
+    assert "const confirmed = () => !confirmMessage || window.confirm(confirmMessage);" in handler
+    assert "runTableAction(tableId, action, false, confirmed)" in handler
 
 
 def test_a_create_button_without_a_table_on_its_page_opens_the_table_page(build_app, jsx):

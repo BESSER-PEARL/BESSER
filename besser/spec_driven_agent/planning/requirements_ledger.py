@@ -1495,6 +1495,8 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     """
     if first_line in source.comments or lineno in source.comments:
         return "the cited line is a comment, not an implementation"
+    if not re.search(r"\w", "".join(source.bare[first_line - 1:lineno])):
+        return "the cited line is punctuation alone (`{`, `/>`); it identifies no code"
     statement = None
     if source.path.endswith(".py"):
         statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), item.get("text", ""))
@@ -1983,7 +1985,10 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
     if not spans:
         located = []
         literals: list[str] = []
-        for part_path, part, cut in _citation_parts(raw_quote, path, files):
+        parts = _citation_parts(raw_quote, path, files)
+        if not parts and any(_in_code(quoted, source, i) for i in range(len(source.lines))):
+            located = [(source, quoted, [])]  # too short to split, but code of the file
+        for part_path, part, cut in parts:
             homes = _resolve_cited_path(part_path, part, files, quote_cache)
             part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
             spans = list(_quote_spans(part, part_source, cut)) if part_source else []
@@ -2008,6 +2013,9 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
         # The role check reads the matched source without comments, never the quote:
         # a comment the judge wrote into it is not code.
         return [(source, "".join(source.bare[first - 1:last]), [(first, last)]) for first, last in syntax], "", False
+    if located:
+        # Code of the file but no whole line (a quote cut short): it proves no role, and is not invented.
+        return located, "", False
     return _not_found(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote,
                       files, parsed, quote_cache, sqlite)
 
@@ -2038,7 +2046,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
-        for key in (*VERDICT_FINGERPRINT_KEYS, EVIDENCE_UNLOCATED):
+        for key in (*VERDICT_FINGERPRINT_KEYS, EVIDENCE_UNLOCATED, CITED_FRAGMENT_LINES):
             item.pop(key, None)
         if item.get("kind") == "verification":
             item.update(status="unverified", evidence="",
@@ -2083,8 +2091,18 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                 if structured and spans:
                     reason = f"citation {index} ({path.strip()}): {reason}"
         if reason:
+            homes = _fragment_homes([(source, part) for _, _, source, part, spans in located if not spans], rel_of)
+            for rel, lines in homes:
+                reason += (f"; a cited part is part of {rel} line{'s' if len(lines) > 1 else ''} "
+                           + ", ".join(map(str, lines[:3])) + (", ..." if len(lines) > 3 else "") + "; cite that whole line")
+            if homes and not item.get(EVIDENCE_UNLOCATED) and not any(spans for *_, spans in located):
+                # Only fragments of real code: the judge misquoted lines that exist.
+                item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
+            pointed = sorted(f"{rel}:{lines[0]}" for rel, lines in homes if len(lines) == 1)
+            if pointed:
+                item[CITED_FRAGMENT_LINES] = pointed
         else:
             cited = {rel_of[part_source.path] for _, _, part_source, _, _ in located}
             if imports is None:
@@ -2099,11 +2117,47 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
 VERDICT_FINGERPRINT_KEYS = ("cited_file_hashes", "dependency_file_hashes")
 # Set on a verdict with a citation not found in the file it names. CITATION_MALFORMED:
 # every such citation's code exists (a near match in the file, or the line verbatim in
-# one other file), so only the judge can correct it. CITATION_ABSENT: some cited code
-# exists nowhere, so implementing it may be the fix.
+# one other file), so its citation-repair round can correct it. CITATION_ABSENT: some
+# cited code exists nowhere, so implementing it may be the fix.
 EVIDENCE_UNLOCATED = "evidence_unlocated"
 CITATION_MALFORMED = "near_match"
 CITATION_ABSENT = "absent"
+# Set on an unverified verdict that cites a fragment of code (``_fragment_homes``) found in exactly one line:
+# ["path:line", ...], the lines the fix agent may cite whole in its place.
+CITED_FRAGMENT_LINES = "fragment_lines"
+
+
+def _fragment_homes(fragments: list[tuple[_Source, str]], rel_of: dict[str, str]) -> list[tuple[str, list[int]]]:
+    """(path, lines) of each fragment that identifies code (``_MIN_PART_QUOTE`` characters,
+    a word among them) and the 1-based lines it is code of; ``({`` or ``id=`` identifies none."""
+    homes = {}
+    for source, part in fragments:
+        if len(part) >= _MIN_PART_QUOTE and re.search(r"\w", part):
+            lines = [i + 1 for i in range(len(source.lines)) if _in_code(part, source, i)]
+            if lines:
+                homes.setdefault((rel_of[source.path], tuple(lines)), None)
+    return [(rel, list(lines)) for rel, lines in homes]
+
+
+def cites_fragment_lines(verdict: dict, evidence: list[dict], output_dir: str) -> str:
+    """"" when each ``{path, line}`` of ``evidence`` is located on a line of the verdict's
+    :data:`CITED_FRAGMENT_LINES`: the judge's own citation, completed. Otherwise why not."""
+    pointed = set(verdict.get(CITED_FRAGMENT_LINES) or ())
+    if not pointed:
+        return ("the judge's citation points at no single source line; implement the behaviour "
+                "only if it is really absent")
+    files = _source_files(output_dir)
+    rel_of = {full: rel for rel, full in files.items()}
+    parsed: dict[str, _Source] = {}
+    cache: dict = {}
+    sqlite = workspace_uses_sqlite(output_dir)
+    for citation in evidence:
+        found, failure, _ = _locate_citation(citation["path"], citation["line"], files, parsed, cache, sqlite)
+        if failure or not found or not all(
+                any(f"{rel_of[source.path]}:{n}" in pointed for first, last in spans for n in range(first, last + 1))
+                for source, _, spans in found):
+            return "cite only the whole line(s) the judge's citation quoted part of: " + ", ".join(sorted(pointed))
+    return ""
 
 _JS_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"})
 # ``from './x'``, ``import './x'``, ``import('./x')``, ``require('./x')``: relative specifiers only.
@@ -2403,9 +2457,12 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         elif status == "partial":
             issues.append(f"requirement partial: {label}{note}; inspect and complete the missing behaviour")
         elif status == "unverified":
+            pointed = ", ".join(v.get(CITED_FRAGMENT_LINES) or ())
             issues.append(
                 f"requirement unverified: {label} — the cited evidence "
-                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; implement the behaviour only if it is really absent: "
-                "the citation is re-judged automatically"
+                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; implement the behaviour only if it is "
+                + (f"really absent; if it is present, cite the whole line the judge quoted part of ({pointed}): "
+                   f"validate_app citations=[{{requirement: {v['id']}, path, line}}]" if pointed else
+                   "really absent: the citation is re-judged automatically")
             )
     return issues

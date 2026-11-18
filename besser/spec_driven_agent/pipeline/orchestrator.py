@@ -207,6 +207,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_LLM_CALL,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
+    EVENT_REQUIREMENT_CITED,
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
@@ -426,6 +427,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             allow_shell=allow_shell_tools,
         )
         self.executor.app_validator = self._validate_app
+        self.executor.requirement_citer = self._cite_requirements
         self.executor.time_left = self._time_left
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[tuple, dict] | None = None
@@ -4217,6 +4219,49 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts_key = cache_key
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
+    def _cite_requirements(self, citations) -> list[dict]:
+        """``validate_app`` citations: the agent's ``{requirement, path, line}`` source lines for a
+        requirement the judge found implemented whose citation quoted only part of one line
+        (``CITED_FRAGMENT_LINES``). Each must be that whole line, and is checked like the
+        judge's; verified, they replace its citation in the current judgment."""
+        key = self._requirement_verdicts_key
+        judged = self._requirement_judgments.get(key) or []
+        stale = judged and self._requirement_cache_key(self._requirements_to_judge()) != key
+        cited: dict = {}
+        results = []
+        for index, citation in enumerate(citations[:20] if isinstance(citations, list) else [citations]):
+            rid = _requirements_ledger._verdict_id(citation.get("requirement")) if isinstance(citation, dict) else None
+            if rid is None or not all(isinstance(citation.get(k), str) and citation[k].strip() for k in ("path", "line")):
+                results.append({"citation": index, "accepted": False,
+                                "reason": "a citation is {requirement: <id>, path: <file>, line: <whole source line>}"})
+                continue
+            cited.setdefault(rid, []).append({"path": citation["path"].strip(), "line": citation["line"]})
+        for rid, evidence in cited.items():
+            raw = next((item for item in judged if item["id"] == rid), None)
+            current = next((item for item in self._requirement_verdicts if item["id"] == rid), None)
+            if not judged:
+                reason = "the requirements have not been judged yet; there is no citation to replace"
+            elif stale:
+                reason = "the source changed since the last judgment; it is judged again when this attempt ends"
+            elif not (raw and current and raw.get("status") == "implemented" and current.get("status") == "unverified"):
+                reason = "only a requirement the judge found implemented, whose citation was rejected, can be cited"
+            else:
+                reason = _requirements_ledger.cites_fragment_lines(current, evidence, self.output_dir)
+            if not reason:
+                [checked] = _requirements_ledger.verify_evidence(
+                    [{**raw, "evidence": evidence, "note": ""}], self.output_dir, self._import_index(key))
+                reason = checked["note"] if checked["status"] != "implemented" else ""
+            results.append({"requirement": rid, "accepted": not reason, **({"reason": reason} if reason else {})})
+            if reason:
+                continue
+            self._trace.write(EVENT_REQUIREMENT_CITED, requirement=rid, evidence=evidence)
+            note = " ".join(f"{raw.get('note') or ''} The fix agent supplied the citation.".split())
+            judged = [{**raw, "evidence": evidence, "note": note} if item["id"] == rid else item for item in judged]
+            self._requirement_judgments[key] = judged
+            self._requirement_verdicts = [{**checked, "note": note} if item["id"] == rid else item
+                                          for item in self._requirement_verdicts]
+        return results
+
     def _rejudge_unknown(self, requirements: list[dict], unknown_ids: set[int], unseen: dict[int, list[str]],
                          imports: _requirements_ledger.ImportIndex) -> dict[int, dict]:
         """The focused re-judge of the unknown verdicts: their files shown, each requirement's
@@ -4259,7 +4304,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     replacements[rid] = item
                     continue
                 base = {key: value for key, value in first[rid].items()
-                        if key not in (*_requirements_ledger.VERDICT_FINGERPRINT_KEYS, _requirements_ledger.EVIDENCE_UNLOCATED)}
+                        if key not in (*_requirements_ledger.VERDICT_FINGERPRINT_KEYS, _requirements_ledger.EVIDENCE_UNLOCATED,
+                                       _requirements_ledger.CITED_FRAGMENT_LINES)}
                 cited = bool(_requirements_ledger.render_evidence(item.get("evidence")).strip(": "))
                 # Its own "implemented" is kept and re-checked, so the reason is about its citation.
                 status = "implemented" if item.get("status") == "implemented" and cited else base["status"]

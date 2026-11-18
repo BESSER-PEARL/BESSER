@@ -451,7 +451,17 @@ Findings are classified into three severities:
        code; quoted alone it proves nothing, and the note names the line it is in
        when it is a message (it holds a space) or at least 20 characters long; a
        short one-word literal (``"ok"``, ``"admin"``) is found in almost any file and
-       counts as code that exists nowhere. A quote that starts or ends inside a string or comment
+       counts as code that exists nowhere. A citation that is only a fragment of the cited
+       file's code, too short for a line of its own (``<Table id=`` for
+       ``<Table id="orders" ... />``, ``title=``), is found but proves nothing, like a part
+       of an abridged quote: another cited line must prove the requirement, and the
+       fragment does not count as code that exists nowhere. A fragment of at least eight
+       characters with a word in it has its line(s) named in the note ("a cited part is part
+       of ``x.tsx`` line 6; cite that whole line"), and a verdict whose citations are only
+       such fragments counts as misquoted code; a shorter one (``title=``, ``({``) names no
+       line. A line of punctuation alone
+       (``{``, ``/>``, even followed by a comment) identifies no code and proves nothing.
+       A quote that starts or ends inside a string or comment
        is not code. An explanation after a closed statement or element
        ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
        another file's code leaves the requirement unverified. A Python
@@ -630,8 +640,9 @@ message over 1,200 characters with a marker, and names a requirement already in
 the ledger by its id. Validation still records and reports every blocker.
 A fix attempt is skipped when every remaining blocker is a requirement whose
 cited code exists but whose citation is malformed and already had its
-citation-repair round: no edit can change it. A citation of code that exists
-nowhere keeps its attempt. The loop also ends when the last attempt faced the same
+citation-repair round, and that has no fragment the fix agent may complete (below):
+no edit can change it. A citation of code that exists nowhere keeps its attempt. The
+loop also ends when the last attempt faced the same
 blockers (requirements compared by id, status and citation label, since a re-judge
 rewords its note; other blockers by message), its edits were not all rejected,
 and each remaining blocker is a ``requirement unverified`` verdict the
@@ -642,7 +653,17 @@ HTTP 501 scaffold, a no-op), keeps its attempts. The blockers keep their severit
 and are reported. ``validate_app`` lists the requirement blockers of the last
 judgment too (no new judge call), so the fix agent is never told the app is
 verified while the run holds one; their message tells it to implement behaviour
-only if it is really absent, since citations are re-judged automatically. A
+only if it is really absent, since citations are re-judged automatically. When the
+judge found the requirement implemented and one of its citations is a fragment found
+in exactly one line, the message names that line instead and tells the agent to cite
+it: ``validate_app`` takes ``citations=[{requirement, path, line}]``, and accepts only
+that whole line (the judge's own citation, completed, never a line the agent picks),
+checked exactly like the judge's citations against the source of the current
+judgment. A verified one replaces the judge's citation in that judgment, its note
+says the fix agent supplied it, and the trace records a ``requirement_cited`` event;
+it holds until the cited files change. Any other citation, a requirement the judge
+left unverified, partial or missing, source edited since the judgment, or a
+malformed item is refused, one reason per citation. A
 judgment of other source than the judge would read now (an edit to a judged file)
 is listed as advisory, "judged before your latest edits; it is re-judged when you
 finish", and does not count as a blocker there; an edit to a file the judge does

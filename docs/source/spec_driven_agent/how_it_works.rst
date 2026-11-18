@@ -328,7 +328,7 @@ reading a trace and wondering why a run did what it did.
        ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
        ``tool_call``, ``cost_update``, ``llm_call``, ``checkpoint``, ``error``,
        ``target``, ``snapshot``, ``rollback``, ``regeneration``,
-       ``validation_issue``, ``run_end``). ``run_start`` holds the start of
+       ``validation_issue``, ``requirement_cited``, ``run_end``). ``run_start`` holds the start of
        the user's own request, not the modeling agent's notes. Every Phase 2
        turn, the closing reply included, and every Phase 3 fix turn
        (``phase: "phase3_fix"``) writes a ``turn_start`` and a ``cost_update``

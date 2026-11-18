@@ -703,13 +703,15 @@ class Phase3RepairMixin:
         verifier could not locate (malformed), and the judge already had its
         citation-repair round on this source.
 
-        A fix attempt cannot clear such a blocker: the fix agent has no tool to change a
-        citation, and on unchanged source the next validation re-verifies the same cached
-        verdict (run r9-p81 spent 3 turns that way). A citation of code that exists
-        nowhere keeps its attempt: implementing the behaviour may be the fix.
+        A fix attempt cannot clear such a blocker: on unchanged source the next validation
+        re-verifies the same cached verdict (run r9-p81 spent 3 turns that way), and the fix
+        agent may cite a line only in place of a fragment that names one
+        (``CITED_FRAGMENT_LINES``). A citation of code that exists nowhere keeps its
+        attempt: implementing the behaviour may be the fix.
         """
         unlocated = {issue for verdict in self._requirement_verdicts
                      if verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED) == _requirements_ledger.CITATION_MALFORMED
+                     and not verdict.get(_requirements_ledger.CITED_FRAGMENT_LINES)
                      for issue in _requirements_ledger.ledger_issues([verdict])}
         if not blockers or any(issue.message not in unlocated for issue in blockers):
             return False

@@ -89,3 +89,13 @@ def test_tracing_does_not_change_the_generated_sql(tmp_path):
         assert [re.sub(rb"\s+", b" ", s) for s in sorted(traced.split(b"\n\n"))] == \
                [re.sub(rb"\s+", b" ", s) for s in sorted(untraced.split(b"\n\n"))]
         assert untraced_generator.traced_files[name].regions == ()
+
+
+def test_a_non_ascii_name_is_written_as_utf8_and_traced(tmp_path):
+    # The DDL script wrote in the platform encoding, so on Windows "Bücher" came out as cp1252 and reading the
+    # file back to trace it raised UnicodeDecodeError.
+    books = Class("Bücher", {Property("titel", StringType)}, id="class-buecher")
+    generator, name, content = _generate(DomainModel("Bibliothek", types={books}), tmp_path, "utf8", "sqlite")
+    assert 'CREATE TABLE "bücher"' in content.decode("utf-8") and b"\r\n" not in content
+    (region,) = generator.traced_files[name].regions
+    assert region.element_id == "class-buecher"

@@ -204,7 +204,7 @@ for table in Base.metadata.sorted_tables:
 
 # CreateTable pads a statement with blank lines and leaves a space after each comma.
 tidy_statements = ["\\n".join(line.rstrip() for line in stmt.strip().splitlines()) + ";" for stmt in ddl_statements]
-with open(sql_file_path, "w") as f:
+with open(sql_file_path, "w", encoding="utf-8", newline="\\n") as f:
     f.write("\\n\\n".join(tidy_statements) + "\\n")
 '''
             content += ddl_dump_code.replace(

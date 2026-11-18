@@ -57,6 +57,9 @@ _ROLLBACK_PRESERVED = {
     _ROLLBACK_DISCARD_DIR,
 }
 
+# A run's temporary workspace folder starts with this; it is removed after the run.
+RUN_DIR_PREFIX = "besser_llm_"
+
 # Dependency, build and run-internal directories that are not part of the app.
 _RECIPE_EXCLUDED_DIRS = {
     "target", "node_modules", "__pycache__", ".git", "dist", "build",

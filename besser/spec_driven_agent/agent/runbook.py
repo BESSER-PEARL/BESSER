@@ -32,12 +32,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import stat
 from dataclasses import dataclass
 from typing import Iterable
 
 from besser.spec_driven_agent.pipeline.constants import (
     _RECIPE_EXCLUDED_DIRS,
+    RUN_DIR_PREFIX,
     WORKSPACE_SKIP_DIRS,
     is_excluded_output_file,
 )
@@ -53,10 +55,11 @@ RUNTIME_FILES_FILENAME = ".besser_probe.runtime_files.json"
 # (about 300 KB); a larger record is not the probe's and is not parsed.
 _MAX_RUNTIME_RECORD_BYTES = 1_000_000
 _MAX_RUNTIME_RECORD_ENTRIES = 2000
-# A run's temporary workspace (removed after the run) starts with this; a
-# folder the caller chose does not, and a path to it stays valid.
-_RUN_DIR_PREFIX = "besser_llm_"
 _MAX_SCRATCH_SCAN_BYTES = 1_000_000
+# Helper scripts by name; a .py qualifies only at the root of a workspace that is not the app.
+_HELPER_SCRIPT_SUFFIXES = (".sh", ".ps1", ".bat", ".cmd")
+# A workspace root holding one of these is the app itself, so its .py files are app code.
+_APP_ROOT_MARKERS = ("__init__.py", "manage.py", "setup.py", "pyproject.toml")
 
 # Environment kill switch (BESSER_LLM_SHELL_RUNBOOK). Default on whenever
 # shell tools are enabled; ``0`` gives the shell without the procedure (an
@@ -217,19 +220,65 @@ def remove_app_runtime_files(output_dir: str, keep: Iterable[str]) -> RuntimeFil
     return RuntimeFileRemoval(tuple(removed), tuple(not_removed), note)
 
 
-def remove_run_folder_bound_files(output_dir: str, written: Iterable[str]) -> tuple[str, ...]:
-    """Delete the files in ``written`` that name the run's temporary workspace path.
+def _read_small_text(root: str, rel: str) -> str | None:
+    """A regular workspace file's text, or None when it is missing, special or too large."""
+    path = os.path.join(root, *rel.split("/"))
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SCRATCH_SCAN_BYTES:
+            return None
+        with open_plain(path, "r", root=root, encoding="utf-8", errors="ignore") as handle:
+            return handle.read()
+    except OSError:
+        return None
 
-    Such a file (a check script that ``cd``s into the run folder) works only
-    in this run's sandbox and would expose the server's layout. ``written``
-    is the workspace-relative paths the agent wrote this run. Never raises.
+
+def _is_helper_script(root: str, rel: str) -> bool:
+    """A shell script, or a non-test ``.py`` at a workspace root that is not itself the app."""
+    name = rel.rsplit("/", 1)[-1].lower()
+    if name.endswith(_HELPER_SCRIPT_SUFFIXES):
+        return True
+    if not name.endswith(".py") or "/" in rel or name.startswith("test_") or name.endswith("_test.py"):
+        return False
+    return _find_backend(root) != "." and not any(
+        os.path.exists(os.path.join(root, marker)) for marker in _APP_ROOT_MARKERS)
+
+
+def _is_referenced(root: str, rel: str) -> bool:
+    """Whether another workspace file names ``rel`` (or imports it, for a ``.py``)."""
+    name = rel.rsplit("/", 1)[-1]
+    stem = name[:-3] if name.endswith(".py") else None
+    imports = re.compile(r"\b(?:import|from)\s+%s\b" % re.escape(stem)) if stem else None
+    for folder, dirs, files in walk_plain(root):
+        dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS and not d.startswith(".")]
+        for other in files:
+            other_rel = os.path.relpath(os.path.join(folder, other), root).replace("\\", "/")
+            if other.startswith(".besser_") or other_rel == rel:
+                continue
+            text = _read_small_text(root, other_rel)
+            if text and (name in text or (imports and imports.search(text))):
+                return True
+    return False
+
+
+def remove_run_folder_bound_files(output_dir: str, written: Iterable[str],
+                                  removable: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Sort the files in ``written`` that name the run's temporary workspace path.
+
+    The folder is removed after the run, so such a file works only in this
+    run's sandbox. One of ``removable`` (the agent's own writes) that is a
+    standalone helper script no other file names is deleted. Every other such
+    file is part of the app or used by it, and is kept. Returns ``(removed,
+    kept)``. Never raises.
     """
     root = os.path.realpath(output_dir)
-    if not os.path.basename(root).startswith(_RUN_DIR_PREFIX):
-        return ()
+    if not os.path.basename(root).startswith(RUN_DIR_PREFIX):
+        return (), ()
     needles = {root, os.path.abspath(output_dir)}
     needles |= {needle.replace("\\", "/") for needle in needles}
+    removable = set(removable)
     removed: list[str] = []
+    kept: list[str] = []
     for rel in sorted(set(written)):
         if not is_plain_relpath(rel):
             continue
@@ -237,19 +286,18 @@ def remove_run_folder_bound_files(output_dir: str, written: Iterable[str]) -> tu
         if (name.startswith(".besser_") or is_excluded_output_file(name)
                 or _RECIPE_EXCLUDED_DIRS.intersection(folders)):
             continue
-        path = os.path.join(root, *folders, name)
-        try:
-            info = os.lstat(path)
-            if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SCRATCH_SCAN_BYTES:
-                continue
-            with open_plain(path, "r", root=root, encoding="utf-8", errors="ignore") as handle:
-                text = handle.read()
-            if any(needle in text for needle in needles):
-                remove_plain(path, root=root)
+        text = _read_small_text(root, rel)
+        if not text or not any(needle in text for needle in needles):
+            continue
+        if rel in removable and _is_helper_script(root, rel) and not _is_referenced(root, rel):
+            try:
+                remove_plain(os.path.join(root, *folders, name), root=root)
                 removed.append(rel)
-        except OSError as exc:
-            logger.warning("runbook: could not check or remove %s: %s", rel, exc.strerror or type(exc).__name__)
-    return tuple(removed)
+                continue
+            except OSError as exc:
+                logger.warning("runbook: could not remove %s: %s", rel, exc.strerror or type(exc).__name__)
+        kept.append(rel)
+    return tuple(removed), tuple(kept)
 
 
 def runbook_section(output_dir: str) -> str:

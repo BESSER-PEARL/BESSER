@@ -460,8 +460,12 @@ def run_summary_markdown(
             + (f" ({one_line(note)})" if note else ""))
     scratch = recipe.get("scratch_files_removed")
     if isinstance(scratch, list) and scratch:
-        lines.append("- Left out: file(s) the agent wrote that named the run's temporary folder: "
+        lines.append("- Left out: helper script(s) the agent wrote that named the run's temporary folder: "
                      + ", ".join(one_line(path) for path in scratch[:10]))
+    bound = recipe.get("temporary_path_files")
+    if isinstance(bound, list) and bound:
+        lines.append("- Names a temporary path: the run's folder, which does not exist after the run; "
+                     "replace it with a relative path: " + ", ".join(one_line(path) for path in bound[:10]))
     findings = {finding.sentence: finding for finding in map(user_finding, _issue_messages(recipe))}
     for title, items, total in (("Missing in the code", verification.shippedUnenforced, counts.shippedUnenforced),
                                 ("Not checked", verification.notVerified, counts.notVerified)):

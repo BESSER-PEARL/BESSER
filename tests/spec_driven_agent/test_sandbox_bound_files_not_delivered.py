@@ -75,3 +75,72 @@ def test_only_files_this_run_wrote_are_considered(simple_library_book_model, tmp
 
     assert _recipe(orchestrator, workspace)["scratch_files_removed"] == []
     assert (workspace / "seeded.sh").exists() and (workspace / "generated.cfg").exists()
+
+
+def _run_folder_with(model, tmp_path, files, generated=()):
+    workspace = tmp_path / "besser_llm_0123abcd_x3"
+    (workspace / "backend").mkdir(parents=True)
+    (workspace / "backend" / "main_api.py").write_text("app = None\n", encoding="utf-8")
+    (workspace / "backend" / "sql_alchemy.py").write_text("Base = None\n", encoding="utf-8")
+    orchestrator = _orchestrator(model, workspace)
+    for rel, text in files.items():
+        (workspace / rel).parent.mkdir(parents=True, exist_ok=True)
+        (workspace / rel).write_text(text.format(root=workspace), encoding="utf-8")
+    orchestrator.executor._generator_files.update(generated)
+    _written(orchestrator, *files)
+    return workspace, _recipe(orchestrator, workspace)
+
+
+def test_app_files_naming_the_run_folder_are_kept_and_listed(simple_library_book_model, tmp_path):
+    files = {
+        "backend/settings.py": 'UPLOAD_DIR = r"{root}/backend/uploads"\n',
+        "backend/storage.py": "from settings import UPLOAD_DIR\n",
+        "README.md": "# Orders\n\nRun locally:\n\n    cd {root}/backend && uvicorn main_api:app\n",
+        "backend/tests/test_orders.py": 'import sys\nsys.path.insert(0, r"{root}/backend")\n',
+        "check_orders.sh": "#!/bin/sh\ncd {root}\ncurl -s http://localhost:41234/order/\n",
+    }
+    workspace, recipe = _run_folder_with(simple_library_book_model, tmp_path, files)
+
+    assert recipe["scratch_files_removed"] == ["check_orders.sh"]
+    kept = ["README.md", "backend/settings.py", "backend/tests/test_orders.py"]
+    assert all((workspace / rel).exists() for rel in kept)
+    assert recipe["temporary_path_files"] == kept
+
+
+def test_a_helper_script_another_file_refers_to_is_kept(simple_library_book_model, tmp_path):
+    files = {
+        "seed.sh": "#!/bin/sh\ncd {root}/backend && python seed.py\n",
+        "README.md": "Load sample data with ./seed.sh\n",
+        "check.py": "import os\nos.chdir(r'{root}')\n",
+        "run_checks.py": "import check\n",
+    }
+    workspace, recipe = _run_folder_with(simple_library_book_model, tmp_path, files)
+
+    assert recipe["scratch_files_removed"] == []
+    assert (workspace / "seed.sh").exists() and (workspace / "check.py").exists()
+    assert recipe["temporary_path_files"] == ["check.py", "seed.sh"]
+
+
+def test_a_standalone_python_check_outside_the_app_is_removed(simple_library_book_model, tmp_path):
+    files = {"verify_orders.py": "import os\nos.chdir(r'{root}')\nprint('ok')\n"}
+    workspace, recipe = _run_folder_with(simple_library_book_model, tmp_path, files)
+
+    assert recipe["scratch_files_removed"] == ["verify_orders.py"]
+    assert not (workspace / "verify_orders.py").exists()
+
+
+def test_python_files_in_folders_are_kept_even_without_a_detected_backend(simple_library_book_model, tmp_path):
+    workspace = tmp_path / "besser_llm_0123abcd_x4"
+    workspace.mkdir()
+    orchestrator = _orchestrator(simple_library_book_model, workspace)
+    files = {"server/tests/test_orders.py": f"import sys\nsys.path.insert(0, r'{workspace}/server')\n",
+             "scripts/check.py": f"import os\nos.chdir(r'{workspace}')\n"}
+    for rel, text in files.items():
+        (workspace / rel).parent.mkdir(parents=True, exist_ok=True)
+        (workspace / rel).write_text(text, encoding="utf-8")
+    _written(orchestrator, *files)
+
+    recipe = _recipe(orchestrator, workspace)
+
+    assert recipe["scratch_files_removed"] == []
+    assert recipe["temporary_path_files"] == ["scripts/check.py", "server/tests/test_orders.py"]

@@ -904,12 +904,17 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
+        # Imported here: the generator is registered in this backend's generator config.
+        from besser.generators.agents.baf_generator import GenerationMode
+
         generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
         generator_instance = generator_class(
             agent_model,
             config=config,
             openai_api_key=extract_openai_api_key(config),
             output_dir=generation_output_dir,
+            # Only the personalized model is returned: skip rendering the agent code.
+            generation_mode=GenerationMode.PERSONALIZED_ONLY,
         )
         await asyncio.to_thread(generator_instance.generate)
 

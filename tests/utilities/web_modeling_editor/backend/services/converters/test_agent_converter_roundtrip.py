@@ -576,6 +576,45 @@ def test_gui_reply_without_agent_gui_is_rejected():
         process_agent_diagram(diagram)
 
 
+def test_intent_matched_transition_without_intent_is_rejected():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    with pytest.raises(ValueError, match="names no intent"):
+        process_agent_diagram(diagram)
+
+
+def test_state_with_two_auto_transitions_is_rejected():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-auto2"] = _transition(
+        "r-auto2", "s-think", "s-ask", transitionType="predefined", predefined={"predefinedType": "auto"})
+    diagram["model"]["relationships"]["r-auto3"] = _transition(
+        "r-auto3", "s-think", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    with pytest.raises(ValueError, match="has 2 'auto' transitions"):
+        process_agent_diagram(diagram)
+
+
+def test_custom_condition_code_is_wired_under_its_generated_name(tmp_path):
+    """Two custom conditions with the same authored function name must not collide, and the
+    transition must reference a function that exists."""
+    import re
+
+    from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
+
+    diagram = _live_testing_diagram()
+    for rel_id, dest, value in (("r-c1", "s-think", 1), ("r-c2", "s-ask", 2)):
+        diagram["model"]["relationships"][rel_id] = _transition(
+            rel_id, "s-files", dest, transitionType="custom",
+            custom={"event": "None", "condition": [f"def condition(session):\n    return session.get('q') == {value}"]})
+    agent = process_agent_diagram(diagram)
+    BAFGenerator(agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    code = (tmp_path / f"{agent.name}.py").read_text(encoding="utf-8")
+
+    used = re.findall(r"\.when_condition\((\w+)\)", code)
+    assert len(used) == 2 and len(set(used)) == 2
+    for name in used:
+        assert re.search(rf"^def {name}\(", code, re.M), f"{name} is used but never defined"
+
+
 def test_undesigned_agent_gui_becomes_empty_gui_model():
     diagram = _live_testing_diagram()
     diagram["model"]["components"]["gui-1"]["guiModel"] = None

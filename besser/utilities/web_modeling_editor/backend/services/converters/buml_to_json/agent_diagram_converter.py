@@ -396,6 +396,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
                     "actionType": "WebSocketReplyOptionsAction", "replyType": "ws_options",
                     "ws_options": opts,
+                    "ws_options_label": action.get("ws_options_label") or "",
                 }
                 elements[state_id][state_key].append(body_id)
             elif action_type == "ws_location":
@@ -1039,6 +1040,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             val = kw.value.value
                             if kw.arg == 'message' and isinstance(val, str):
                                 ws_action["ws_message"] = val
+                            elif kw.arg == 'label' and isinstance(val, str):
+                                ws_action["ws_options_label"] = val
                             elif kw.arg == 'audio_speed' and isinstance(val, (int, float)) and not isinstance(val, bool):
                                 ws_action["ws_audio_speed"] = float(val)
                             elif kw.arg == 'latitude' and isinstance(val, (int, float)) and not isinstance(val, bool):

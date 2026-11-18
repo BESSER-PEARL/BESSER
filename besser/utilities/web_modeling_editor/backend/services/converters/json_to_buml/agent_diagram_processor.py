@@ -2,6 +2,7 @@
 Agent diagram processing for converting JSON to BUML format.
 """
 
+import re
 import logging
 import operator
 
@@ -284,7 +285,8 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
         elif action_type == "WebSocketReplyOptionsAction":
             opts_raw = element.get("ws_options", "")
             options = [o.strip() for o in opts_raw.split('\n') if o.strip()]
-            body.add_action(WebSocketReplyOptions(options=options))
+            options_label = (element.get("ws_options_label") or "").strip() or None
+            body.add_action(WebSocketReplyOptions(options=options, label=options_label))
             action_added = True
 
         elif action_type == "WebSocketReplyLocationAction":
@@ -858,6 +860,13 @@ def process_agent_diagram(json_data):
                             conditions=[IntentMatcher(unresolved_intent)],
                         ).go_to(target_state)
                         transition_count += 1
+                    else:
+                        raise ValueError(
+                            f"Transition from '{source_state.name}' to '{target_state.name}' is "
+                            "'when_intent_matched' but names no intent. Select the intent that "
+                            "triggers it, or use 'auto' to continue without waiting, or "
+                            "'when_no_intent_matched' for a fallback transition."
+                        )
 
                 elif condition_name == "when_no_intent_matched":
                     source_state.when_no_intent_matched().go_to(target_state)
@@ -995,7 +1004,13 @@ def process_agent_diagram(json_data):
                     for condition_index, custom_condition_code in enumerate(custom_conditions, start=1):
                         generated_name = f"condition_{transition_count + 1}_{condition_index}"
                         custom_condition = Condition(name=generated_name, callable=None)
-                        custom_condition.code = custom_condition_code
+                        # The generated agent wires the transition to ``generated_name``, so the
+                        # function must carry that name whatever the author called it (the
+                        # editor's template is ``def condition(...)``): two transitions would
+                        # otherwise collide, or reference a function that does not exist.
+                        custom_condition.code = re.sub(
+                            r"(?m)^(\s*)def\s+\w+\s*\(", rf"\1def {generated_name}(", custom_condition_code, count=1
+                        )
                         condition_objects.append(custom_condition)
 
                     transition_builder = None

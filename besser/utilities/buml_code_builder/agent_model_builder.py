@@ -181,7 +181,8 @@ def _action_expr(action: Action) -> Optional[str]:
     if isinstance(action, (WebSocketReplyMarkdown, WebSocketReplyHTML, WebSocketReplySpeech)):
         return _ws_text_reply_expr(action)
     if isinstance(action, WebSocketReplyOptions):
-        return f"WebSocketReplyOptions(options={action.options!r})"
+        label = f", label={action.label!r}" if action.label else ""
+        return f"WebSocketReplyOptions(options={action.options!r}{label})"
     if isinstance(action, WebSocketReplyLocation):
         return f"WebSocketReplyLocation(latitude={action.latitude!r}, longitude={action.longitude!r})"
     if isinstance(action, _PARAMETERLESS_WS_REPLIES):

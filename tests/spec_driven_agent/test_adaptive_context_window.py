@@ -256,6 +256,29 @@ class TestCatalogLayer:
         assert c._fetch_catalog() == {"m": 256_000}
 
 
+    def test_fetch_names_besser_as_its_user_agent(self, monkeypatch):
+        """A CDN in front of a gateway refuses Python's default urllib agent with a 403."""
+        monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://gateway.example/v1")
+        seen: dict = {}
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"data": []}'
+
+        def fake_urlopen(request, timeout=None):
+            seen["agent"] = request.get_header("User-agent")
+            return _Response()
+
+        monkeypatch.setattr(c.urllib.request, "urlopen", fake_urlopen)
+        c._fetch_catalog()
+        assert seen["agent"] and seen["agent"].startswith("BESSER")
+
 class TestKnownWindows:
     """Hosted models whose catalogs do not expose context_length (OpenAI,
     Anthropic, Mistral) resolve through the family table."""

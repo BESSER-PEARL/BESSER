@@ -10,6 +10,8 @@ import {
 
 interface SeriesConfig {
   name: string;
+  // Shown in the legend and tooltip; `name` is the data key
+  label?: string;
   color?: string;
 }
 
@@ -119,7 +121,7 @@ export const RadialBarChartComponent: React.FC<Props> = ({
               key={s.name || index}
               background
               dataKey={s.name || actualDataField}
-              name={s.name || actualDataField}
+              name={s.label || s.name || actualDataField}
               fill={
                 s.color ||
                 resolveFill(color, options, styles) ||

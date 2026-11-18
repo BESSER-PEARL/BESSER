@@ -30,3 +30,14 @@ def test_an_empty_optional_value_is_sent_as_null(build_app):
     # Before the coercions that turned it into "" (text, dates) or 0 (numbers).
     assert sends_null < submit.index("processedValues[col.field] = isNaN(intValue) ? 0 : intValue;")
     assert sends_null < submit.index("processedValues[col.field] = value;")
+
+
+def test_dialog_labels_do_not_show_type_names(build_app):
+    """A field was labelled "Quantity (int)" or "Shipped on (date)"; the input
+    already says what it takes."""
+    table = build_app(CLASSES, PAGES).file("components", "table", "TableComponent.tsx")
+    label = table[table.rindex("<label htmlFor={`modal-input-${col.field}`}"):]
+    label = label[:label.index("</label>")]
+
+    assert "col.type)" not in label and ": col.type" not in label
+    assert "{col.type === 'list' && (" in label and "(comma-separated)" in label

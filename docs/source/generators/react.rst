@@ -142,6 +142,8 @@ Visualization components including:
 - Bar charts
 - Pie charts
 - Data binding to backend entities
+- A series appears in the legend and tooltip under its ``label``; its ``name``
+  is the key of its values in the chart data
 - Aggregation: a series with an ``aggregation`` groups the records by its
   label field and shows one value per group (``count``, ``sum``, ``avg``,
   ``min``, ``max``, ``median``, ``first``, ``last``); a bound series without a

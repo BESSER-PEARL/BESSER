@@ -1512,8 +1512,8 @@ export const TableComponent: React.FC<Props> = ({
                       <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                         {col.label}
                         {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
-                        {col.type && col.type !== 'string' && (
-                          <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
+                        {col.type === 'list' && (
+                          <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>(comma-separated)</span>
                         )}
                       </label>
                       <input

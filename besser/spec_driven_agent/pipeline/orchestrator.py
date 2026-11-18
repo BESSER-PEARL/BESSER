@@ -171,6 +171,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
+from besser.utilities.provenance import get_besser_version
 from besser.utilities.secret_redaction import redact_trace_text
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
@@ -197,6 +198,7 @@ from besser.spec_driven_agent.validation.python_source import (
     _CREATE_FIELD_RE as _CREATE_FIELD_RE,
     _ROUTER_READ_RE as _ROUTER_READ_RE,
 )
+from besser.spec_driven_agent.state.agent_trace import harness_writes, record_generated_files
 from besser.spec_driven_agent.state.recipe_size import bounded_recipe
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
@@ -221,6 +223,7 @@ logger = logging.getLogger(__name__)
 
 
 from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
+    EXCLUDED_OUTPUT_NAMES,
     WORKSPACE_SKIP_DIRS,
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
@@ -1869,6 +1872,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if not os.path.exists(path):
                 with open_plain_write(path, "w", root=self.output_dir, encoding="utf-8") as fh:
                     fh.write(self._GITIGNORE)
+                record_generated_files(self.output_dir, [".gitignore"], "gitignore", get_besser_version())
         except OSError:
             logger.debug("could not write .gitignore", exc_info=True)
 
@@ -3324,6 +3328,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 )
         return issues
 
+    def _repair_build_configuration(self) -> None:
+        """Write the frontend build configuration and run instructions; their lines are the harness's."""
+        project_name = (self._source_project_export or {}).get("name") or ""
+        with harness_writes(self.output_dir, "frontend_scaffold_repair", EXCLUDED_OUTPUT_NAMES):
+            repairs = ensure_frontend_scaffold(self.output_dir, app_name=project_name)
+        for repair in repairs:
+            logger.info("Auto-fixed: %s", repair)
+
     def _collect_validation_issues(self) -> list[ValidationIssue]:
         """Collect all validation issues from the output directory.
 
@@ -3343,9 +3355,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # nor pays to repair a defect we can settle for free - and, unlike
         # the packaging-time hook, it puts back a config a Phase 3 edit
         # deleted. Idempotent; it never overwrites what a project already has.
-        project_name = (self._source_project_export or {}).get("name") or ""
-        for repair in ensure_frontend_scaffold(self.output_dir, app_name=project_name):
-            logger.info("Auto-fixed: %s", repair)
+        self._repair_build_configuration()
         build_contexts = compose_build_contexts(self.output_dir)
         self._restore_scaffold_requirements(build_contexts)
         raw_issues: list[str] = [

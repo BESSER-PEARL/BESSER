@@ -192,9 +192,13 @@ lists each text file of the delivered tree with line ranges and who wrote them:
    * - ``unknown`` (generator)
      - Unchanged from a deterministic BESSER generator's output. ``related``
        names the generator and BESSER version
-       (``urn:besser:generator:django@<version>``). Deterministic packaging
-       fixes (the frontend build configuration, secret redaction) are
-       attributed the same way.
+       (``urn:besser:generator:django@<version>``). Files and lines the
+       harness writes itself (the ``.gitignore``, the frontend build
+       configuration, Dockerfiles, ``.dockerignore`` files and README of the
+       scaffold repair, secret redaction) are attributed the same way, under
+       the name of the step that wrote them, and so is a package manager's lock
+       file (``package-lock.json``, ``yarn.lock``, ``poetry.lock``, ...)
+       whoever ran the install (``package_manager``).
    * - ``human``
      - On a run that continues from a previous run or a GitHub import: lines a
        person changed in between.
@@ -210,7 +214,8 @@ and for this run, and per file.
 Attribution compares files, it does not replay edits: whenever a generator
 writes a file, its lines are recorded (as short hashes) in
 ``.besser_attribution.json``; at packaging time every line that differs from
-that record goes to the LLM. A line keeps its contributor however often the
+that record goes to the LLM, except the lines a harness step or a package
+manager wrote. A line keeps its contributor however often the
 file was edited, as long as the line itself is unchanged. The record holds
 hashes only, never content, and goes into the GitHub push and the download ZIP
 beside the recipe, so a continue-from-GitHub run can tell a person's edits from

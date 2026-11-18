@@ -2349,6 +2349,10 @@ class SmartGenerationRunner:
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
                 blocker_count=len(_unfixed_blockers) if exited_cleanly else 0, cost=final_cost,
             )
+            # A cancel can land after Phase 2 ended cleanly: the run is still cut short.
+            cancelled = self._facts.stopped_by == run_record.CANCELLED
+            if cancelled and not incomplete:
+                incomplete, incomplete_reason_msg = True, self._facts.stop_message
 
             # ---- 10. Package the result and emit `done` ---------------
             try:
@@ -2357,14 +2361,14 @@ class SmartGenerationRunner:
                 )
                 done_event.incomplete = incomplete
                 done_event.incompleteReason = incomplete_reason_msg
-                done_event.cancelled = self._facts.stopped_by == run_record.CANCELLED
+                done_event.cancelled = cancelled
                 # Completed-with-blockers vs cut-short need different
                 # client framing: a run whose loop finished but left
                 # completion-blocking issues did NOT "stop early". Only set
                 # when the loop exited cleanly — a genuinely cut-short
                 # run keeps 0 so clients use their cut-short copy.
                 done_event.blockerCount = (
-                    len(_unfixed_blockers) if exited_cleanly else 0
+                    len(_unfixed_blockers) if exited_cleanly and not cancelled else 0
                 )
                 # Best-effort authorship split (generator vs. LLM) over the
                 # final tree — the headline telemetry metric. Never blocks the

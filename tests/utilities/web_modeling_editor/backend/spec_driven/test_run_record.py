@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from besser.spec_driven_agent.validation.issues import ValidationIssue
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
@@ -158,6 +159,41 @@ def test_a_cancelled_run_that_left_output_records_the_cancel(orchestrator):
 
     assert run["stopped_by"] == "cancelled" and run["outcome"] == "cancelled"
     assert run["stop_message"] == "The run was cancelled before it finished."
+
+
+class _BlockedOrchestrator(_Orchestrator):
+    """Leaves two unresolved findings behind."""
+
+    cancel = None
+    severity, prefix = "blocker", "runtime: route"
+
+    def _finish(self, method):
+        out = super()._finish(method)
+        cls = type(self)
+        self._validation_issues = [ValidationIssue(cls.severity, f"{cls.prefix} {n} fails") for n in (1, 2)]
+        if type(self).cancel is not None:
+            type(self).cancel.set()  # the cancel arrives after Phase 2 ended cleanly
+        return out
+
+
+def test_a_cancel_after_a_clean_phase_2_is_reported_as_cancelled_not_finished(monkeypatch):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
+    _BlockedOrchestrator.stop_reason, _BlockedOrchestrator.cancel = "completed", asyncio.Event()
+    # Checks that could not run: alone they leave a finished run complete.
+    monkeypatch.setattr(_BlockedOrchestrator, "severity", "warning")
+    monkeypatch.setattr(_BlockedOrchestrator, "prefix", "validation unverified: the boot check")
+    try:
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime(),
+                                       reserved_cancel_event=_BlockedOrchestrator.cancel)
+        done = _parse(asyncio.run(seed._collect_frames(runner))[-1])
+    finally:
+        _BlockedOrchestrator.cancel = None
+
+    assert done["cancelled"] is True and done["recipe"]["run"]["outcome"] == "cancelled"
+    # Cut short, not "finished with N unresolved issues".
+    assert (done["incomplete"], done["blockerCount"]) == (True, 0)
+    assert done["incompleteReason"] == "The run was cancelled before it finished."
 
 
 def test_the_section_is_small_and_holds_no_key_path_or_request(orchestrator):

@@ -2347,7 +2347,7 @@ class SmartGenerationRunner:
             self._facts.stop(
                 stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
-                blocker_count=len(_unfixed_blockers) if exited_cleanly else 0, cost=final_cost,
+                blocker_count=len(_unfixed_blockers), cost=final_cost,
             )
             # A cancel can land after Phase 2 ended cleanly: the run is still cut short.
             cancelled = self._facts.stopped_by == run_record.CANCELLED

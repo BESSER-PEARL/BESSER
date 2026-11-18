@@ -301,7 +301,8 @@ keys, always in this order:
   ``customise``, ``validate``; ``validate`` starts with Phase 3 and includes its
   fix loop) and ``estimated_cost_usd``.
 - ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
-  ``blockers``.
+  ``blockers`` (the unresolved findings the run left, also when a limit or a
+  cancel cut it short; the end log line carries the same count).
 - ``lines``: the lines of the delivered files by author, as in the run's Agent
   Trace record: ``total``, ``generator``, ``ai``, ``human``, ``unknown``, and
   ``ai_this_run`` (the part of ``ai`` this run wrote). ``null`` when the run has

@@ -176,6 +176,19 @@ class _BlockedOrchestrator(_Orchestrator):
         return out
 
 
+def test_a_run_cut_short_logs_and_records_its_real_blocker_count(monkeypatch, caplog):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
+    _BlockedOrchestrator.stop_reason, _BlockedOrchestrator.cancel = "max_turns", None
+    caplog.set_level(logging.INFO, logger=run_record.run_log.name)
+
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    assert (run["outcome"], run["counts"]["blockers"]) == ("budget_stop", 2)
+    end = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("spec-driven run end"))
+    assert " blockers=2 " in end
+
+
 def test_a_cancel_after_a_clean_phase_2_is_reported_as_cancelled_not_finished(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())

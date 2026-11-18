@@ -749,8 +749,51 @@ verdict only when it is a verified "implemented"; otherwise a missing or partial
 from it proves no absence, so the checked verdict keeps its status, and it takes
 the focused judge's citation (when it gave one), note and inspection paths, which
 name the files that judge saw. An answer naming a file that round left out gets
-one more round with that file shown. An empty citation fails as "no source line is
-cited", never as a citation of code that exists nowhere.
+one more round with that file shown, together with every other file the answer
+names (its citations, inspection paths and the files its note names), including
+those the round showed for another requirement. An inspection path may be a glob
+(``src/**/*.css``); the files globs match fill only the slots the named files leave.
+An empty citation fails as "no source line is cited", never as a citation of code
+that exists nowhere.
+
+Stylesheets (``.css``, ``.scss``, ``.sass``, ``.less``) are judged source: a
+stylesheet rule is a citation like any other line, and a rule inside a comment is
+not. The whole-app digest shows them, last, only when a requirement is about
+appearance (its text names a colour, font, hover, cursor, border, shadow, accent,
+spacing, layout, styling and the like); otherwise they are listed as omitted, so a
+verdict naming one is judged once more with it shown. In a stylesheet a line
+starting with ``#`` is an id selector and is kept. A stylesheet a cited page imports
+is not among the files the verdict rests on, so a style edit does not re-judge it.
+
+Two kinds of requirement cannot be shown by citing a line of code, and the
+extraction labels them: ``absence``, something the app must not have at all ("no
+sign-in", never a refusal the app enforces), and ``preservation``, existing
+behaviour a change must keep working as it is. When the judge leaves one
+unverified, it is settled without a citation, never as met, and an unverified
+absence is not sent to the focused round:
+
+- An absence that names sign-in or agents is checked in the app's files: a sign-in
+  library declared in a ``requirements*.txt`` or ``package.json`` dependency
+  (``passlib``, ``python-jose``, ``bcrypt``, ``next-auth``, ``jsonwebtoken``,
+  ``passport-*``, ``@clerk/*`` ...), a Python route with a ``login``, ``sign-in``,
+  ``sign-up`` or ``auth`` segment, an ``agents/<name>/`` folder at the top of the
+  app or of one of its folders (where the generator puts agents), Python code
+  importing the BESSER Agentic Framework, or the framework as a dependency. The
+  requirement is ``not_provable`` either way, and its note names what was found or
+  what was checked. A find is never a blocker: it cannot tell the excluded feature
+  from a requested one ("No sign-in for visitors" beside an admin login), and the
+  repair loop must not remove a feature the request asked for. Nothing found is no
+  proof (a hand-written login page is not seen). Only the judge's own missing or
+  partial verdict blocks an absence.
+- A preservation is ``not_provable``. Its note names the files the judge named for
+  it (inspection paths and citations), and the files they import or are mounted by,
+  that changed since the previous version (in a modify run the files as the run found
+  them, before its model sync and regeneration; otherwise the stored generator
+  output), or says that none did, which does not show the behaviour still works.
+
+A ``not_provable`` requirement is a warning, ``requirement not provable:``, never a
+blocker; the report lists it as not verified, with its note. A judge verdict of
+missing or partial for either kind stays a blocker.
 
 The recipe records, for each implemented requirement, ``verification`` and a
 ``verification_note`` giving its API half and its screens half apart. The API half

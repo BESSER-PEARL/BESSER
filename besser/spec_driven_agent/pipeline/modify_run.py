@@ -31,7 +31,7 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
-from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message, original_request
+from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message, original_request, source_hashes
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
@@ -103,6 +103,8 @@ class ModifyRunMixin:
         self._instructions = instructions
 
         self._start_time = time.monotonic()
+        # The previous version, before this run's model sync and regeneration change it.
+        self._seed_source_hashes = source_hashes(self.output_dir)
         # Before the model-sync below adds classes: a resume re-checks it
         # against the model in the request.
         self._project_fingerprint = self._compute_project_fingerprint(instructions)
@@ -589,6 +591,7 @@ class ModifyRunMixin:
             "model_sync_classes": self._model_sync_classes,
             "updated_project_export": self._updated_project_export,
             "model_sync_error": self._model_sync_error,
+            "seed_source_hashes": self._seed_source_hashes,
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -620,6 +623,8 @@ class ModifyRunMixin:
         export = state.get("updated_project_export")
         self._updated_project_export = export if isinstance(export, dict) else None
         self._model_sync_error = state.get("model_sync_error")
+        hashes = state.get("seed_source_hashes")
+        self._seed_source_hashes = hashes if isinstance(hashes, dict) else None
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""

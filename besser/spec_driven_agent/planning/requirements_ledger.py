@@ -15,6 +15,7 @@ verdict lands in the recipe so the reviewer sees what was NOT built.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import hashlib
 import json
 import keyword
@@ -65,6 +66,12 @@ _EXTRACTION_INCOMPLETE = (
     "verification obligation, not an application feature."
 )
 _STATUSES = ("implemented", "partial", "missing", "unverified")
+# Requirements no cited line can show: something the app must not have, and existing
+# behaviour a change must keep. Left unverified by the judge, ``settle_uncitable`` decides them.
+ABSENCE_KIND = "absence"
+PRESERVATION_KIND = "preservation"
+# The status it gives besides "missing": reported, never a blocker.
+NOT_PROVABLE = "not_provable"
 
 # What the judge reads: the schemas and the ORM first (validators, unique
 # columns), then the backend code the model wrote or changed (where rules are
@@ -386,13 +393,36 @@ _SOURCE_SUFFIXES = frozenset({
     # native UI markup that holds a desktop app's controls: WPF/WinUI, Avalonia, Qt
     ".xaml", ".axaml", ".qml",
 })
+# Judged and citable, but in the whole-app digest only for an appearance requirement
+# (``shows_stylesheets``); otherwise listed as omitted, so a verdict naming one gets them shown.
+_STYLESHEET_SUFFIXES = frozenset({".css", ".scss", ".sass", ".less"})
+
+
+def _is_stylesheet(rel: str) -> bool:
+    return Path(rel).suffix.lower() in _STYLESHEET_SUFFIXES
 
 
 def _is_judged_source(path: Path) -> bool:
-    """Application source, plus Android's screens (``res/layout*/*.xml``); other
-    XML (``pom.xml``, the manifest) carries no behaviour."""
+    """Application source and stylesheets, plus Android's screens (``res/layout*/*.xml``);
+    other XML (``pom.xml``, the manifest) carries no behaviour."""
     suffix = path.suffix.lower()
-    return suffix in _SOURCE_SUFFIXES or (suffix == ".xml" and path.parent.name.startswith("layout"))
+    return (suffix in _SOURCE_SUFFIXES or suffix in _STYLESHEET_SUFFIXES
+            or (suffix == ".xml" and path.parent.name.startswith("layout")))
+
+
+# A requirement about how the app looks, whose evidence may be a stylesheet rule.
+_APPEARANCE_RE = re.compile(
+    r"\b(?:colou?rs?|colou?red|styled|styling|stylesheets?|css|fonts?|hover|cursor|dark\s+mode|borders?"
+    r"|shadows?|accent|spacing|margins?|padding|animat\w*|layout|appearance|visual(?:ly)?)\b",
+    re.IGNORECASE,
+)
+
+
+def shows_stylesheets(requirements: list[dict]) -> bool:
+    """Whether the whole-app digest should show the stylesheets: a requirement is about appearance."""
+    return any(_APPEARANCE_RE.search(str(item.get("text") or "")) for item in requirements)
+
+
 _BEHAVIOURAL_KINDS = frozenset({"computed", "transition", "action"})
 _TEST_SOURCE_NAME = re.compile(r"(?:\.(?:test|spec)\.[^.]+$|^test_.+\.py$|_test\.py$)", re.I)
 
@@ -419,7 +449,10 @@ _EXTRACT_SYSTEM_PROMPT = (
     "for the shape a value must have; 'rule' for limits and cross-entity "
     "rules; 'computed' for values worked out rather than typed in; "
     "'transition' for state changes and when they are refused; 'action' for "
-    "named operations; 'ui' for screens and interactions.\n"
+    "named operations; 'ui' for screens and interactions; 'absence' for "
+    "something the app must not have at all (no sign-in, no admin area), never "
+    "a refusal or limit the app enforces (that is a 'rule'); 'preservation' "
+    "for existing behaviour a change must keep working as it is.\n"
     "- Skip the technology stack and instructions to the assistant.\n"
     "- Broad goals such as 'functional for any user' or 'no errors' do not add "
     "unstated authentication, authorization, user roles, integrations, or exhaustive "
@@ -445,7 +478,8 @@ _SUBMIT_REQUIREMENTS_TOOL = {
                         "kind": {
                             "type": "string",
                             "enum": ["validation", "uniqueness", "rule",
-                                     "computed", "transition", "action", "ui"],
+                                     "computed", "transition", "action", "ui",
+                                     ABSENCE_KIND, PRESERVATION_KIND],
                         },
                     },
                     "required": ["text"],
@@ -728,10 +762,12 @@ def render_requirements(requirements: list[dict] | None) -> str:
 
 def _digest_priority(rel: str, shares: dict[str, float | None] | None = None) -> tuple[int, float, str]:
     """Digest order: schemas, backend code by the share of it the agent wrote, untouched
-    generator output, pages and components, the rest. With no stored generator output
+    generator output, pages and components, the rest, stylesheets. With no stored generator output
     (``shares`` empty) routers come before the other Python modules."""
     if rel.endswith(("pydantic_classes.py", "sql_alchemy.py")):
         return (0, 0.0, rel)
+    if _is_stylesheet(rel):
+        return (6, 0.0, rel)
     router = "/routers/" in rel or rel.startswith("routers/")
     if router or rel.endswith(".py"):
         if not shares:
@@ -800,7 +836,7 @@ _REGION_VIEW_MAX_SHARE = 0.5
 _REGION_CONTEXT_LINES = 3
 
 
-def _changed_regions(compacted: str, generated: str) -> str:
+def _changed_regions(compacted: str, generated: str, rel: str = "") -> str:
     """``compacted`` (a :func:`_compact` file) without its runs of lines unchanged from
     ``generated`` beyond ``_REGION_CONTEXT_LINES`` of a change; each run left out is
     marked, and so is each place where generator lines were removed."""
@@ -808,7 +844,7 @@ def _changed_regions(compacted: str, generated: str) -> str:
     changed = [True] * len(lines)
     removed: dict[int, int] = {}  # index in ``lines`` -> generator lines removed just before it
     old_end = 0
-    for old_start, start, size in matching_lines(_compact(generated).splitlines(), lines):
+    for old_start, start, size in matching_lines(_compact(generated, rel).splitlines(), lines):
         if old_start > old_end:
             removed[start] = removed.get(start, 0) + old_start - old_end
         changed[start:start + size] = [False] * size
@@ -902,12 +938,14 @@ def _class_homes(files: dict[str, str], cache: dict) -> dict[str, set[str]]:
     return cache["classes"]
 
 
-def _compact(content: str) -> str:
-    """Drop blank and comment-only lines; the judge reads code, not prose."""
+def _compact(content: str, rel: str = "") -> str:
+    """Drop blank and comment-only lines; the judge reads code, not prose. In a
+    stylesheet a line starting with ``#`` is an id selector."""
+    comments = ("//",) if _is_stylesheet(rel) else ("#", "//")
     kept = []
     for line in content.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "//")):
+        if not stripped or stripped.startswith(comments):
             continue
         kept.append(line.rstrip())
     return "\n".join(kept)
@@ -939,37 +977,48 @@ def focus_paths_in_turn(path_lists: list[list[str]]) -> list[str]:
     return ordered
 
 
+def _glob_matches(pattern: str, rel: str) -> bool:
+    """``rel`` matches a judge's glob (``src/**/*.css``), from the root or as a suffix;
+    ``**/`` may stand for no folder."""
+    return any(fnmatch.fnmatchcase(rel, form) or fnmatch.fnmatchcase(rel, "*/" + form)
+               for form in {pattern, pattern.replace("**/", "")})
+
+
 def resolved_focus_paths(files: dict[str, str], focus_paths: list | None) -> list[str]:
     """The first ten distinct judged files the focus paths name, each unambiguously (a path
-    or a suffix). Capped after resolving: ten copies of one path left the rest out (r13-p81)."""
-    resolved: list[str] = []
+    or a suffix), then the files globs match in the slots left: a broad glob must not crowd
+    out a named file. Capped after resolving: ten copies of one path left the rest out (r13-p81)."""
+    named: list[str] = []
+    globbed: list[str] = []
     for path in focus_paths or []:
-        if len(resolved) >= _MAX_FOCUS_FILES:
-            break
         if not isinstance(path, str):
             continue
         path = path.strip().replace("\\", "/")
         while path.startswith("./"):
             path = path[2:]
+        if "*" in path:
+            globbed += sorted(rel for rel in files if _glob_matches(path, rel))
+            continue
         candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
-        if path and len(candidates) == 1 and candidates[0] not in resolved:
-            resolved.append(candidates[0])
-    return resolved
+        if path and len(candidates) == 1:
+            named.append(candidates[0])
+    return list(dict.fromkeys(named + globbed))[:_MAX_FOCUS_FILES]
 
 
-def build_app_digest_and_gaps(output_dir: str, *,
-                              focus_paths: list[str] | None = None) -> tuple[str, frozenset[str]]:
+def build_app_digest_and_gaps(output_dir: str, *, focus_paths: list[str] | None = None,
+                              stylesheets: bool = False) -> tuple[str, frozenset[str]]:
     """:func:`build_app_digest`, and the source files it left out or cut for the budget.
 
     The gaps are what the judge could not read in full: a verdict about them is
     not a fair one. Files never shown (``_DIGEST_SKIP_NAMES``) and the files a
-    focused digest leaves out on purpose are not gaps.
+    focused digest leaves out on purpose are not gaps; stylesheets a whole-app digest
+    leaves out (``stylesheets`` off) are.
     """
-    digest, gaps, _shown = build_app_digest_details(output_dir, focus_paths=focus_paths)
+    digest, gaps, _shown = build_app_digest_details(output_dir, focus_paths=focus_paths, stylesheets=stylesheets)
     return digest, gaps
 
 
-def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None = None
+def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None = None, stylesheets: bool = False
                              ) -> tuple[str, frozenset[str], frozenset[str]]:
     """:func:`build_app_digest_and_gaps`, and the files the digest shows (a focused one
     always shows the schema files too)."""
@@ -987,16 +1036,20 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     contents: list[tuple[str, str]] = []
     unreadable = []
     omitted_by_focus: list[str] = []
+    styles_left_out: list[str] = []
     for rel, full in files.items():
         if focused and rel not in focused and _digest_priority(rel)[0] != 0:
             omitted_by_focus.append(rel)
+            continue
+        if not focused and not stylesheets and _is_stylesheet(rel):
+            styles_left_out.append(rel)
             continue
         if Path(full).name in _DIGEST_SKIP_NAMES:
             unreadable.append(rel)
             continue
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as fh:
-                content = _compact(fh.read())
+                content = _compact(fh.read(), rel)
         except OSError:
             unreadable.append(rel)
             continue
@@ -1010,7 +1063,7 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
         if (whole > source_budget and rel not in focused and rel in baselines
                 and _digest_priority(rel)[0] != 0 and shares[rel] is not None
                 and 0 < shares[rel] < _REGION_VIEW_MAX_SHARE):
-            content = _changed_regions(content, baselines[rel])
+            content = _changed_regions(content, baselines[rel], rel)
             regions.add(rel)
         header = f"### {rel}\n"
         # The cited files share the budget: one large file must not crowd out the next.
@@ -1028,11 +1081,11 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     if not focused:  # pages and components first, then the rest of the non-Python source
         ui_budget = int(source_budget * _DIGEST_UI_SHARE)
         for key, rel, chunk, _ in entries:
-            if key[1] >= 4 and total + len(chunk) + 2 <= ui_budget:
+            if 4 <= key[1] <= 5 and total + len(chunk) + 2 <= ui_budget:
                 reserved.add(rel)
                 total += len(chunk) + 2
     parts: list[str] = []
-    omitted = unreadable + omitted_by_focus
+    omitted = unreadable + omitted_by_focus + styles_left_out
     truncated_paths = []
     over_budget = []
     shown: list[str] = []
@@ -1062,14 +1115,15 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     )
     if len(footer) > footer_budget:
         footer = footer[:max(0, footer_budget - 42)] + "\n[Coverage path listing also truncated.]\n"
-    return "\n\n".join(parts) + footer[:footer_budget], frozenset(over_budget + truncated_paths), frozenset(shown)
+    return "\n\n".join(parts) + footer[:footer_budget], frozenset(
+        over_budget + truncated_paths + styles_left_out), frozenset(shown)
 
 
 def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
     """The digest gaps a verdict's inspection paths, citations or note name.
 
-    A gap counts when its path appears in the note, when a named path is it or a
-    suffix of it (``risk_service.py`` for ``backend/risk_service.py``), or when its
+    A gap counts when its path appears in the note, when a named path is it, a suffix
+    of it (``risk_service.py`` for ``backend/risk_service.py``) or a glob matching it, or when its
     file name appears in the note and no other gap has that name.
     """
     named = [path.strip().replace("\\", "/").removeprefix("./")
@@ -1078,7 +1132,8 @@ def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
     note = str(verdict.get("note") or "")
     names = [Path(rel).name for rel in gaps]
     return [rel for rel in sorted(gaps)
-            if rel in note or any(rel == path or rel.endswith("/" + path) for path in named)
+            if rel in note or any(rel == path or rel.endswith("/" + path)
+                                  or ("*" in path and _glob_matches(path, rel)) for path in named)
             or (names.count(Path(rel).name) == 1
                 and re.search(r"(?<![\w.-])" + re.escape(Path(rel).name) + r"(?![\w-])", note))]
 
@@ -2265,8 +2320,9 @@ class ImportIndex:
     def dependencies(self, cited: set[str]) -> set[str]:
         """What a cited file's behaviour rests on beyond its own bytes: its direct
         local imports, and the entry files mounting it (a file importing a cited
-        file that no judged file imports). One level only."""
-        imported = set().union(*(self.imports(rel) for rel in cited))
+        file that no judged file imports). One level only. A stylesheet a page imports is
+        not one: a style edit does not change what the page does."""
+        imported = {rel for rel in set().union(*(self.imports(rel) for rel in cited)) if not _is_stylesheet(rel)}
         entries = {other for rel in cited for other in self.importers(rel) if not self.importers(other)}
         return (imported | entries) - cited
 
@@ -2280,7 +2336,7 @@ def _ancestors(folder: str) -> list[str]:
 
 
 # Cited code no harness check runs (no screen is rendered); any other cited file is backend code.
-_FRONTEND_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", ".css")
+_FRONTEND_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", *sorted(_STYLESHEET_SUFFIXES))
 
 
 def _path_segments(path: str) -> tuple[str, ...]:
@@ -2433,6 +2489,142 @@ def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
             for v in verdicts]
 
 
+# What an absence requirement may name, the words that name it, what was checked when nothing
+# is found, and the packages that bring it (fullmatch on the lower-case name, ``-`` for ``_``).
+# A find is named, never a blocker: it cannot tell the excluded feature from a requested one
+# ("no sign-in for visitors" beside an admin login).
+_ABSENCE_TOPICS = (
+    # "auth" and its derivations, never "author".
+    ("authentication", re.compile(r"\b(?:auth|authenticat\w*|authori[sz]\w*|log(?:ging)?[\s-]?ins?"
+                                  r"|sign(?:ing)?[\s-]?(?:in|up)s?|passwords?)\b", re.I),
+     "no authentication library or sign-in route found (requirements*.txt and package.json dependencies, "
+     "Python routes)",
+     re.compile(r"python-jose|jose|passlib|pyjwt|bcrypt|bcryptjs|argon2(?:-cffi)?|fastapi-users|fastapi-login"
+                r"|fastapi-jwt-auth|authlib|flask-login|flask-httpauth|flask-jwt-extended|django-allauth"
+                r"|djangorestframework-simplejwt|python-keycloak|next-auth|better-auth|lucia|jsonwebtoken"
+                r"|passport(?:-.+)?|keycloak-js|oidc-client-ts|react-oidc-context|@auth/.+|@auth0/.+|@clerk/.+"
+                r"|@azure/msal-.+|@supabase/auth.*")),
+    ("agents", re.compile(r"\b(?:agents?|chat\s?bots?)\b", re.I),
+     "no agent code or agent library found (an agents/<name>/ folder at the top of the app, Python code "
+     "importing the agent framework, requirements*.txt and package.json dependencies)",
+     re.compile(r"besser-agentic-framework")),
+)
+_AUTH_ROUTE_SEGMENTS = frozenset({"login", "logout", "signin", "signup", "auth", "oauth"})
+_AGENT_FRAMEWORK_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+baf\b", re.M)
+_REQUIREMENTS_FILE_RE = re.compile(r"requirements[\w.-]*\.txt")
+
+
+def _declared_packages(output_dir: str) -> dict[str, str]:
+    """Runtime packages the app declares (``requirements*.txt``, ``package.json``
+    dependencies), lower-case with ``-`` for ``_``: name -> the manifest declaring it."""
+    base = Path(output_dir)
+    found: dict[str, str] = {}
+    for root, dirs, names in walk_plain(base):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _DIGEST_SKIP_DIRS]
+        for name in names:
+            if name != "package.json" and not _REQUIREMENTS_FILE_RE.fullmatch(name):
+                continue
+            path = Path(root, name)
+            try:
+                text = path.read_text(encoding="utf-8-sig", errors="ignore")
+                data = json.loads(text) if name == "package.json" else None
+            except (OSError, ValueError):
+                continue
+            if name == "package.json":
+                deps = list((data.get("dependencies") or {}) if isinstance(data, dict) else ())
+            else:
+                deps = [re.split(r"[\s\[<>=!~;@]", line.strip(), maxsplit=1)[0] for line in text.splitlines()
+                        if line.strip() and not line.strip().startswith(("#", "-"))]
+            for dep in deps:
+                found.setdefault(str(dep).lower().replace("_", "-"), path.relative_to(base).as_posix())
+    return found
+
+
+def _topic_found(topic: str, packages: re.Pattern, files: dict[str, str], declared: dict[str, str]) -> list[str]:
+    """Where the app has what an absence requirement may exclude: a package of the topic, an
+    authentication route, or agents as the generator lays them out (``agents/<name>/`` at the
+    top of the app or of one of its folders) and Python code importing the agent framework,
+    never the screens or routes of a domain class called Agent."""
+    found = [f"{name} in {declared[name]}" for name in sorted(declared) if packages.fullmatch(name)]
+    if topic == "authentication":
+        for rel, full in sorted(files.items()):
+            if rel.endswith(".py"):
+                found += sorted(f"route /{'/'.join(segments)} in {rel}" for _, segments, *_ in _declared_routes(full)
+                                if _AUTH_ROUTE_SEGMENTS & {s.lower().replace("-", "").replace("_", "") for s in segments})
+    else:
+        folders = {"/".join(parts[:parts.index("agents") + 1]) for parts in (rel.split("/") for rel in files)
+                   if "agents" in parts[:2] and len(parts) >= parts.index("agents") + 3}
+        found += [f"agents folder {folder}" for folder in sorted(folders)]
+        for rel, full in sorted(files.items()):
+            if rel.endswith(".py") and not any(rel.startswith(folder + "/") for folder in folders):
+                try:
+                    text = Path(full).read_text(encoding="utf-8-sig", errors="ignore")
+                except OSError:
+                    continue
+                if _AGENT_FRAMEWORK_IMPORT_RE.search(text):
+                    found.append(f"agent code {rel}")
+    return found
+
+
+def source_hashes(output_dir: str) -> dict[str, str]:
+    """sha256 of every judged file, by its path."""
+    return {rel: cited_file_hash(full) for rel, full in _source_files(output_dir).items()}
+
+
+def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex | None,
+                     baseline: dict[str, str] | None) -> list[dict]:
+    """The unverified absence and preservation verdicts, settled without a citation: never met.
+
+    Absence is ``NOT_PROVABLE``, naming what of its topics (``_ABSENCE_TOPICS``) was found in
+    the tree, or what was checked. Preservation is ``NOT_PROVABLE``, naming the files the judge named for
+    it, and the files they rest on, that changed since ``baseline`` (:func:`source_hashes` of the
+    previous version; the stored generator output when None), or that none did.
+    """
+    if not any(v.get("status") == "unverified" and v.get("kind") in (ABSENCE_KIND, PRESERVATION_KIND)
+               for v in verdicts):
+        return verdicts
+    files = _source_files(output_dir)
+    declared: dict[str, str] | None = None
+    settled = []
+    for verdict in verdicts:
+        kind = verdict.get("kind")
+        if verdict.get("status") != "unverified" or kind not in (ABSENCE_KIND, PRESERVATION_KIND):
+            settled.append(verdict)
+            continue
+        text = str(verdict.get("text") or "")
+        if kind == ABSENCE_KIND:
+            topics = [topic for topic in _ABSENCE_TOPICS if topic[1].search(text)]
+            declared = _declared_packages(output_dir) if topics and declared is None else declared
+            found = {name: _topic_found(name, packages, files, declared) for name, _, _, packages in topics}
+            seen = [where for wheres in found.values() for where in wheres]
+            checked = [absent for name, _, absent, _ in topics if not found[name]]
+            status, note = NOT_PROVABLE, "; ".join(
+                ["Something the app must not have cannot be shown by citing code"]
+                + ([f"found in the app, which this requirement may exclude: {', '.join(seen[:5])}"] if seen else [])
+                + [f"checked: {absent}" for absent in checked]) + ". Not counted as a blocker."
+        else:
+            named = resolved_focus_paths(files, [*verdict.get("inspection_paths", []),
+                                                 *cited_paths(verdict.get("evidence"))])
+            if baseline is None:
+                baseline = {rel: hashlib.sha256(generated.encode("utf-8")).hexdigest()
+                            for rel, generated in _generator_baselines(output_dir, files).items()}
+            resting = sorted((imports or ImportIndex(output_dir, files)).dependencies(set(named))) if named else []
+            changed = [rel for rel in [*named, *resting] if baseline.get(rel) != cited_file_hash(files[rel])]
+            if changed:
+                state = f"changed since the previous version: {', '.join(changed[:5])}"
+            elif named:
+                # Unchanged files do not show it still works: a caller, a route or the schema may have changed.
+                state = (f"unchanged since the previous version: {', '.join(named)}"
+                         + (f" and the {len(resting)} file(s) they import or are mounted by" if resting else "")
+                         + "; that does not show it still works")
+            else:
+                state = "no file implementing it was named"
+            status, note = NOT_PROVABLE, f"Behaviour kept as before cannot be shown by citing code; {state}. " \
+                                         "Not counted as a blocker."
+        settled.append({**verdict, "status": status, "evidence": "", "note": note})
+    return settled
+
+
 def ledger_issues(verdicts: list[dict]) -> list[str]:
     """Unresolved requirements block completion without claiming they are absent."""
     issues: list[str] = []
@@ -2443,6 +2635,10 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         if status == "out_of_scope":
             # Unclassified prefix: a warning, never a blocker.
             issues.append(f"requirement out of scope: {label}{note}")
+            continue
+        if status == NOT_PROVABLE:
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement not provable: {label}{note}")
             continue
         if v.get("kind") == "verification":
             issues.append(f"requirement unverified: {label}{note}")

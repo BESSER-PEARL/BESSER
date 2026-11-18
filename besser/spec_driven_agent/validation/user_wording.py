@@ -101,6 +101,8 @@ _SIMPLE = (
     ("runtime gate:", "The app could not be shown to start and save a record."),
     ("entity coverage:", "Not every class can be created, viewed, edited and deleted in the app."),
     ("requirement out of scope:", "A requirement was judged to be outside what this app covers."),
+    ("requirement not provable:", "A requirement cannot be shown by reading the code (something the app must not "
+                                  "have, or behaviour kept as before), so it is not counted as a blocker."),
     ("reported-failure:", "The failure you reported could not be confirmed as fixed."),
     ("tsc [", "The user interface does not compile."),
     ("frontend build [", "The user interface does not build."),

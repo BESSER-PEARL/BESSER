@@ -327,6 +327,12 @@ _WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it i
 # Verification levels (``requirements_ledger.with_verification_levels``) at which a call to the
 # running app exercised the requirement; ``unverified`` means only its source citation was checked.
 _RAN_LEVELS = ("verified", "api_verified")
+
+
+def _ran(verdict: dict) -> bool:
+    """Whether a call to the running app exercised an implemented verdict. Recipes written before
+    levels existed have none, and keep their old place among the verified."""
+    return verdict.get("verification", "verified") in _RAN_LEVELS
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 _UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
@@ -543,7 +549,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             f"{issue.get('expression') or issue.get('original_text') or ''}"
         )
         if verdict is not None and verdict.get("status") == "implemented":
-            (found_in_code if verdict.get("verification") == "unverified" else verified).append(_item(
+            (verified if _ran(verdict) else found_in_code).append(_item(
                 "ocl_constraint", label, what,
                 how="rejected by the OCL converter, then recovered in code: "
                     + (render_evidence(verdict.get("evidence")) or "no citation"),
@@ -589,9 +595,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             if level:
                 # Clip the citation, not the note: a bare "implemented" would read as checked.
                 how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
-            # Recipes written before levels existed have none, and keep their old place.
-            ran = verdict.get("verification", "verified") in _RAN_LEVELS
-            (verified if ran else found_in_code).append(_item("requirement", ident, what, how=how))
+            (verified if _ran(verdict) else found_in_code).append(_item("requirement", ident, what, how=how))
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
                       else "the delivered code implements it only partly")

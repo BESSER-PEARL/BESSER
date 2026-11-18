@@ -262,6 +262,10 @@ keys, always in this order:
   fix loop) and ``estimated_cost_usd``.
 - ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
   ``blockers``.
+- ``lines``: the lines of the delivered files by author, as in the run's Agent
+  Trace record: ``total``, ``generator``, ``ai``, ``human``, ``unknown``, and
+  ``ai_this_run`` (the part of ``ai`` this run wrote). ``null`` when the run has
+  no Agent Trace record.
 - ``besser_version``, ``besser_build`` and ``request_chars`` (the request itself
   is ``instructions``).
 
@@ -276,7 +280,12 @@ The worker logs one line when a run starts and one when it ends, with the same
 names: ``spec-driven run start run_id=... mode=... base_run_id=... key_tier=...
 model=... generator=...`` (``generator=auto`` unless the request bound one; the
 target is decided later) and ``spec-driven run end run_id=... outcome=...
-duration_seconds=... blockers=... estimated_cost_usd=... archive_written=...``.
+duration_seconds=... blockers=... estimated_cost_usd=... input_tokens=...
+output_tokens=... cache_creation_tokens=... cache_read_tokens=... lines_total=...
+lines_generator=... lines_ai=... lines_human=... lines_unknown=...
+lines_ai_this_run=... archive_written=...``: the token counts under the recipe's
+``usage`` names, the line counts as in ``lines``, and ``-`` for a value the run
+does not have.
 ``outcome`` is ``completed``, ``completed_with_blockers``, ``cancelled``,
 ``budget_stop`` or ``failed``. Neither line carries the request or the key.
 They are written by the ``besser.spec_driven.runs`` logger, which the backend

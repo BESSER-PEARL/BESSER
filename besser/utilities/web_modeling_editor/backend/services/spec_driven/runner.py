@@ -1122,7 +1122,8 @@ class SmartGenerationRunner:
                     async for frame in frames:
                         yield frame
             finally:
-                run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
+                run_record.run_log.info(run_record.end_line(
+                    self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
             return
         try:
             async with inner as frames:
@@ -1138,7 +1139,8 @@ class SmartGenerationRunner:
             self._t_stream_aborted = "STREAM_CRASH"
             raise
         finally:
-            run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
+            run_record.run_log.info(run_record.end_line(
+                self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
             self._record_run_summary()
 
     async def release_disk(self) -> None:
@@ -2625,6 +2627,8 @@ class SmartGenerationRunner:
             )
             path = agent_trace.write_trace_record(result_path, record, self.run_id)
             share = agent_trace.ai_share(state, self.run_id)
+            by_kind = record["metadata"][agent_trace.METADATA_KEY]["lines"]
+            self._facts.lines = {"total": sum(by_kind.values()), **by_kind, "ai_this_run": share["aiLinesThisRun"]}
             share["tracePath"] = os.path.relpath(path, result_path).replace(os.sep, "/")
             return share
         except Exception:

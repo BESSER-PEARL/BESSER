@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from types import SimpleNamespace
 
@@ -62,6 +63,8 @@ class _Orchestrator(seed._StubOrchestrator):
 
 
 class _Usage(seed._FakeUsage):
+    input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens = 1200, 340, 5000, 42000
+
     def summary(self):
         return {"estimated_cost_usd": round(self.estimated_cost, 4), "model": "claude-sonnet-4-5"}
 
@@ -106,6 +109,16 @@ def test_a_generate_run_records_a_fresh_project(orchestrator):
     assert run["counts"] == {"turns": 4, "tool_calls": 3, "files_written": 1, "files_edited": 1, "blockers": 0}
     assert run["limits"]["time_seconds"] == 60 and run["request_chars"] == len(REQUEST)
     assert run["estimated_cost_usd"] == 0.01 and run["besser_version"]
+
+
+def test_the_section_counts_the_delivered_lines_by_author(orchestrator):
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    lines = run["lines"]
+    assert list(lines) == ["total", "generator", "ai", "human", "unknown", "ai_this_run"]
+    assert lines["total"] > 0
+    assert lines["total"] == lines["generator"] + lines["ai"] + lines["human"] + lines["unknown"]
+    assert 0 < lines["ai_this_run"] <= lines["ai"]
 
 
 def test_a_modify_run_records_the_edited_base(tmp_path, orchestrator):
@@ -176,6 +189,9 @@ def test_the_log_says_when_a_run_starts_and_ends_without_its_request(orchestrato
     assert "model=anthropic/claude-sonnet-4-5" in start
     assert f"run_id={runner.run_id}" in end and "outcome=completed" in end and "archive_written=true" in end
     assert "estimated_cost_usd=0.0100" in end and "blockers=0" in end
+    assert "input_tokens=1200 output_tokens=340 cache_creation_tokens=5000 cache_read_tokens=42000" in end
+    assert re.search(r"lines_total=[1-9]\d* lines_generator=\d+ lines_ai=[1-9]\d* lines_human=0 lines_unknown=\d+ "
+                     r"lines_ai_this_run=[1-9]\d* ", end), end
     for line in (start, end):
         assert REQUEST not in line and KEY not in line
 

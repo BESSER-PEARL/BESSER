@@ -65,6 +65,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% set ns.id_found = false -%}
     {% set ns.has_field = false %}
     {%- set inherited_attr_names = [] -%}
+    {%- set required_text = [] -%}
     {%- if class.parents() -%}
         {%- for attr in class.inherited_attributes() -%}
             {%- do inherited_attr_names.append(attr.name) -%}
@@ -102,6 +103,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         {%- else %}
     {{ attribute.name }}: {{ attr_type_name }}
         {%- endif %}{% if attribute.is_id %}  # the id{% endif %}
+        {%- if backend and not is_opt and attribute.type.name == 'str' %}{% do required_text.append(attribute.name) %}{% endif %}
     {% set ns.has_field = true %}
 
         {% endif %}
@@ -345,6 +347,16 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {%- endfor %}
     {%- if not ns.has_field %}
     pass
+    {% endif %}
+    {%- if required_text %}
+
+    @field_validator({% for name in required_text %}'{{ name }}'{{ ", " if not loop.last else "" }}{% endfor %})
+    @classmethod
+    def validate_{{ class.name }}_text_not_blank(cls, v):
+        """A required text attribute must not be empty or only whitespace."""
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v
     {% endif %}
     {# OCL Constraint Validators #}
     {%- if constraints_map and class.name in constraints_map %}

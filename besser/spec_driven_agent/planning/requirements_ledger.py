@@ -2416,7 +2416,8 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         elif status == "unverified":
             issues.append(
                 f"requirement unverified: {label} — the cited evidence "
-                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; implement the behaviour only if it is really absent: "
-                "the citation is re-judged automatically"
+                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; implement the behaviour only if it is "
+                f"really absent; if it is present, cite its whole lines: validate_app citations=[{{requirement: {v['id']}, "
+                "path, line}]"
             )
     return issues

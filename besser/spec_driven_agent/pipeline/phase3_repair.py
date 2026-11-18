@@ -435,11 +435,6 @@ class Phase3RepairMixin:
                 logger.warning("Phase 3: %s; preserving unresolved findings", stop_reason)
                 exit_reason = stop_reason
                 break
-            if self._only_unlocated_citations_remain(current_blockers):
-                logger.warning("Phase 3: every blocker is a requirement citation the judge could not "
-                               "locate after its citation-repair round; no fix attempt can change it")
-                exit_reason = "only unlocated requirement citations remain"
-                break
             # The last attempt faced these very blockers, so it had this request. Not after
             # an attempt whose edits were all rejected: the rejections reach the next prompt.
             if (faced_last == self._blocker_identity(current_blockers) and not last_edits_rejected
@@ -697,23 +692,6 @@ class Phase3RepairMixin:
             )
             for issue in last_issues:
                 logger.warning("  [%s] %s", issue.severity, issue.message)
-
-    def _only_unlocated_citations_remain(self, blockers: list[ValidationIssue]) -> bool:
-        """Every blocker is a requirement whose cited code exists but whose citation the
-        verifier could not locate (malformed), and the judge already had its
-        citation-repair round on this source.
-
-        A fix attempt cannot clear such a blocker: the fix agent has no tool to change a
-        citation, and on unchanged source the next validation re-verifies the same cached
-        verdict (run r9-p81 spent 3 turns that way). A citation of code that exists
-        nowhere keeps its attempt: implementing the behaviour may be the fix.
-        """
-        unlocated = {issue for verdict in self._requirement_verdicts
-                     if verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED) == _requirements_ledger.CITATION_MALFORMED
-                     for issue in _requirements_ledger.ledger_issues([verdict])}
-        if not blockers or any(issue.message not in unlocated for issue in blockers):
-            return False
-        return self._requirement_cache_key(self._requirements_to_judge()) in self._requirement_evidence_retries
 
     def _blocker_identity(self, blockers: list[ValidationIssue]) -> frozenset:
         """What blocks, as the stop compares rounds: a requirement by id, status and unlocated

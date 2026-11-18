@@ -633,10 +633,7 @@ whose blockers are all syntax, import, lint, compiler or dependency errors. The
 prompt lists at most 30 blockers in repair order, counts the rest by kind, cuts a
 message over 1,200 characters with a marker, and names a requirement already in
 the ledger by its id. Validation still records and reports every blocker.
-A fix attempt is skipped when every remaining blocker is a requirement whose
-cited code exists but whose citation is malformed and already had its
-citation-repair round: no edit can change it. A citation of code that exists
-nowhere keeps its attempt. The loop also ends when the last attempt faced the same
+The loop ends when the last attempt faced the same
 blockers (requirements compared by id, status and citation label, since a re-judge
 rewords its note; other blockers by message), its edits were not all rejected,
 and each remaining blocker is a ``requirement unverified`` verdict the
@@ -647,7 +644,14 @@ HTTP 501 scaffold, a no-op), keeps its attempts. The blockers keep their severit
 and are reported. ``validate_app`` lists the requirement blockers of the last
 judgment too (no new judge call), so the fix agent is never told the app is
 verified while the run holds one; their message tells it to implement behaviour
-only if it is really absent, since citations are re-judged automatically. A
+only if it is really absent, and otherwise to cite it: ``validate_app`` takes
+``citations=[{requirement, path, line}]``, whole source lines for a requirement the
+judge found implemented but whose own citation was rejected. They are checked
+exactly like the judge's citations, against the source of the current judgment; a
+verified one replaces the rejected citation in that judgment (its note says the fix
+agent supplied it), so it holds until the cited files change. A requirement the
+judge left unverified, partial or missing cannot be cited this way, and the result
+says why each citation was refused. A
 judgment of other source than the judge would read now (an edit to a judged file)
 is listed as advisory, "judged before your latest edits; it is re-judged when you
 finish", and does not count as a blocker there; an edit to a file the judge does

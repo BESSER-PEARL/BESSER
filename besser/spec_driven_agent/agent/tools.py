@@ -352,9 +352,13 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "No arbitrary shell commands or package installation. Call after a coherent "
             "code change, not again without one: ending your turn runs it too. Fix the "
             "returned blockers, then rerun. "
-            "A passing result covers these checks only, not all business requirements."
+            "A passing result covers these checks only, not all business requirements. "
+            "citations: whole source lines of a 'requirement unverified' blocker's present code."
         ),
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {"type": "object", "properties": {"citations": {"type": "array", "items": {
+            "type": "object", "required": ["requirement", "path", "line"],
+            "properties": {"requirement": {"type": "integer"}, "path": {"type": "string"},
+                           "line": {"type": "string"}}}}}},
     },
     {
         "name": "validate_model",

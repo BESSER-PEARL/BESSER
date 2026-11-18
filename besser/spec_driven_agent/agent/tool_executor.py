@@ -834,6 +834,7 @@ class ToolExecutor:
         # Consecutive refused edits per path: the edit-recovery ladder's rung.
         self._edit_recovery: dict[str, int] = {}
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
+        self.requirement_citer = None  # validate_app citations; supplied by the orchestrator
         self.api_tester = None
         # When True (weak / free-tier models only), the deterministic Phase-1
         # scaffold is IMMUTABLE to delete_file: the model may edit those files
@@ -3859,7 +3860,12 @@ class ToolExecutor:
     def _validate_app(self, args: dict) -> dict:
         if self.app_validator is None:
             return {"error": "Application verification is unavailable in this executor; do not claim the app was verified."}
+        citations = args.get("citations")
+        # Cited first, so the result's requirement blockers reflect the accepted citations.
+        cited = self.requirement_citer(citations) if citations and self.requirement_citer else None
         result = self.app_validator()
+        if cited is not None and isinstance(result, dict):
+            result = {**result, "citations": cited}
         if isinstance(result, dict) and result.get("verified") is True and self._tasks:
             # The ids task_list(done) needs: without them the next turn was a task_list 'list' alone.
             # A copy: the orchestrator caches and re-serves its result.

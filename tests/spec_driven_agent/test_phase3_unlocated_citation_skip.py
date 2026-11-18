@@ -1,16 +1,12 @@
-"""No fix attempt when the only blockers are citations the judge could not locate.
+"""Citations the judge could not locate: how the verifier marks them, and the fix attempt.
 
-Live evidence (2026-11-14, claude-sonnet-5-5, run r9-p81): Phase 3 entered
-with two blockers, both ``requirement unverified`` because a citation was not
-found in its file, and the judge's citation-repair round had already run. The
-fix agent has no tool that changes a citation, and on unchanged source the
-next validation re-verifies the same cached verdict, so the attempt spent 3
-turns and could not move either blocker. The verifier now marks such a
-verdict, and Phase 3 ends with the blockers reported as they are.
-
-Only when the cited code demonstrably EXISTS: a near match in the cited file,
-or the line verbatim in another file. A citation of code that exists nowhere
-keeps its fix attempt; the blocker says to implement behaviour that is absent.
+The verifier marks a verdict whose cited code demonstrably EXISTS (a near match in
+the cited file, or the line verbatim in another file) apart from one citing code that
+exists nowhere. Phase 3 used to skip the fix attempt when only the first kind
+remained, because the fix agent had no tool to change a citation. It now has one
+(``validate_app`` citations), so such blockers get one attempt, in which the agent
+can cite the code; the stop after an attempt that faced the same blockers still
+applies (test_phase3_rejudged_requirement_stop.py).
 """
 
 from __future__ import annotations
@@ -110,10 +106,9 @@ def test_one_absent_citation_makes_the_verdict_absent(orch):
     assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_ABSENT
 
 
-def test_only_malformed_citations_after_their_repair_round_get_no_fix_attempt(orch):
+def test_only_malformed_citations_after_their_repair_round_get_one_attempt_to_cite_them(orch):
     calls, blockers = _run(orch, [NEAR_MATCH, MISFILED, VERIFIED])
-    assert calls == 0
-    assert orch._phase3_exit_reason == "only unlocated requirement citations remain"
+    assert calls == 1
     reported = {issue.message for issue in orch._validation_issues}
     assert {issue.message for issue in blockers} <= reported
 

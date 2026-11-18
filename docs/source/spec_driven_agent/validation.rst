@@ -706,15 +706,15 @@ absence is not sent to the focused round:
   library declared in a ``requirements*.txt`` or ``package.json`` dependency
   (``passlib``, ``python-jose``, ``bcrypt``, ``next-auth``, ``jsonwebtoken``,
   ``passport-*``, ``@clerk/*`` ...), a Python route with a ``login``, ``sign-in``,
-  ``sign-up`` or ``auth`` segment, code under an ``agents`` folder, or the BESSER
-  Agentic Framework as a dependency. A find makes it ``missing``, a blocker naming
-  what was found ("the delivered app has what it excludes"), only when every part of
-  its text excludes the topic outright ("The app has no sign-in and no agents"). For
-  a scoped one ("No login required to browse products", "The chatbot must not give
-  medical advice") the find is named in a ``not_provable`` warning, so the repair
-  loop never removes a feature the request asked for. Nothing found is no proof
-  (a hand-written login page is not seen): the requirement is ``not_provable``, and
-  its note says what was checked.
+  ``sign-up`` or ``auth`` segment, an ``agents/<name>/`` folder at the top of the
+  app or of one of its folders (where the generator puts agents), Python code
+  importing the BESSER Agentic Framework, or the framework as a dependency. The
+  requirement is ``not_provable`` either way, and its note names what was found or
+  what was checked. A find is never a blocker: it cannot tell the excluded feature
+  from a requested one ("No sign-in for visitors" beside an admin login), and the
+  repair loop must not remove a feature the request asked for. Nothing found is no
+  proof (a hand-written login page is not seen). Only the judge's own missing or
+  partial verdict blocks an absence.
 - A preservation is ``not_provable``. Its note names the files the judge named for
   it (inspection paths and citations), and the files they import or are mounted by,
   that changed since the previous version (in a modify run the files as the run found

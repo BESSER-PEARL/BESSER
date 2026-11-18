@@ -2437,6 +2437,8 @@ def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
 
 # What an absence requirement may name, the words that name it, what was checked when nothing
 # is found, and the packages that bring it (fullmatch on the lower-case name, ``-`` for ``_``).
+# A find is named, never a blocker: it cannot tell the excluded feature from a requested one
+# ("no sign-in for visitors" beside an admin login).
 _ABSENCE_TOPICS = (
     # "auth" and its derivations, never "author".
     ("authentication", re.compile(r"\b(?:auth|authenticat\w*|authori[sz]\w*|log(?:ging)?[\s-]?ins?"
@@ -2449,14 +2451,12 @@ _ABSENCE_TOPICS = (
                 r"|passport(?:-.+)?|keycloak-js|oidc-client-ts|react-oidc-context|@auth/.+|@auth0/.+|@clerk/.+"
                 r"|@azure/msal-.+|@supabase/auth.*")),
     ("agents", re.compile(r"\b(?:agents?|chat\s?bots?)\b", re.I),
-     "no agent code or agent library found (agents folders, requirements*.txt and package.json dependencies)",
+     "no agent code or agent library found (an agents/<name>/ folder at the top of the app, Python code "
+     "importing the agent framework, requirements*.txt and package.json dependencies)",
      re.compile(r"besser-agentic-framework")),
 )
 _AUTH_ROUTE_SEGMENTS = frozenset({"login", "logout", "signin", "signup", "auth", "oauth"})
-_CLAUSE_RE = re.compile(r",|;|\b(?:and|or|nor)\b", re.I)
-# "The app has no ...", "There is no ...", "No ...": a clause excluding a topic outright.
-_BARE_ABSENCE_RE = re.compile(r"(?:(?:the\s+)?(?:app|application|system|site|website)\s+(?:has|have|uses|needs|offers)\s+"
-                              r"|there\s+(?:is|are)\s+)?(?:no|without)\s+", re.I)
+_AGENT_FRAMEWORK_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+baf\b", re.M)
 _REQUIREMENTS_FILE_RE = re.compile(r"requirements[\w.-]*\.txt")
 
 
@@ -2487,8 +2487,10 @@ def _declared_packages(output_dir: str) -> dict[str, str]:
 
 
 def _topic_found(topic: str, packages: re.Pattern, files: dict[str, str], declared: dict[str, str]) -> list[str]:
-    """Where the app has what an absence requirement excludes: a package of the topic, an
-    authentication route, or code under an ``agents`` folder."""
+    """Where the app has what an absence requirement may exclude: a package of the topic, an
+    authentication route, or agents as the generator lays them out (``agents/<name>/`` at the
+    top of the app or of one of its folders) and Python code importing the agent framework,
+    never the screens or routes of a domain class called Agent."""
     found = [f"{name} in {declared[name]}" for name in sorted(declared) if packages.fullmatch(name)]
     if topic == "authentication":
         for rel, full in sorted(files.items()):
@@ -2497,23 +2499,17 @@ def _topic_found(topic: str, packages: re.Pattern, files: dict[str, str], declar
                                 if _AUTH_ROUTE_SEGMENTS & {s.lower().replace("-", "").replace("_", "") for s in segments})
     else:
         folders = {"/".join(parts[:parts.index("agents") + 1]) for parts in (rel.split("/") for rel in files)
-                   if "agents" in parts[:-1]}
+                   if "agents" in parts[:2] and len(parts) >= parts.index("agents") + 3}
         found += [f"agents folder {folder}" for folder in sorted(folders)]
+        for rel, full in sorted(files.items()):
+            if rel.endswith(".py") and not any(rel.startswith(folder + "/") for folder in folders):
+                try:
+                    text = Path(full).read_text(encoding="utf-8-sig", errors="ignore")
+                except OSError:
+                    continue
+                if _AGENT_FRAMEWORK_IMPORT_RE.search(text):
+                    found.append(f"agent code {rel}")
     return found
-
-
-def _bare_topics(text: str) -> set[str]:
-    """The topics a requirement excludes outright: every clause is "no <topic>" ("The app has
-    no sign-in and no agents"), never a scoped one ("No login required to browse")."""
-    clauses = [clause.strip(" .!") for clause in _CLAUSE_RE.split(text) if re.search(r"\w", clause)]
-    if not clauses or not _BARE_ABSENCE_RE.match(clauses[0]):
-        return set()
-    bare = set()
-    for clause in clauses:
-        prefix = _BARE_ABSENCE_RE.match(clause)
-        rest = clause[prefix.end():] if prefix else clause
-        bare |= {name for name, words, _, _ in _ABSENCE_TOPICS if words.fullmatch(rest)}
-    return bare
 
 
 def source_hashes(output_dir: str) -> dict[str, str]:
@@ -2525,9 +2521,8 @@ def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex
                      baseline: dict[str, str] | None) -> list[dict]:
     """The unverified absence and preservation verdicts, settled without a citation: never met.
 
-    Absence: what a bare "no <topic>" excludes (``_ABSENCE_TOPICS``) found in the tree is
-    ``missing``, with what was found; anything else is ``NOT_PROVABLE``, naming what was found
-    or what was checked. Preservation is ``NOT_PROVABLE``, naming the files the judge named for
+    Absence is ``NOT_PROVABLE``, naming what of its topics (``_ABSENCE_TOPICS``) was found in
+    the tree, or what was checked. Preservation is ``NOT_PROVABLE``, naming the files the judge named for
     it, and the files they rest on, that changed since ``baseline`` (:func:`source_hashes` of the
     previous version; the stored generator output when None), or that none did.
     """
@@ -2547,16 +2542,12 @@ def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex
             topics = [topic for topic in _ABSENCE_TOPICS if topic[1].search(text)]
             declared = _declared_packages(output_dir) if topics and declared is None else declared
             found = {name: _topic_found(name, packages, files, declared) for name, _, _, packages in topics}
-            excluded = [where for name in _bare_topics(text) for where in found.get(name, [])]
-            if excluded:
-                status, note = "missing", "The app has what this requirement excludes: " + "; ".join(excluded[:5]) + "."
-            else:
-                seen = [where for wheres in found.values() for where in wheres]
-                checked = [absent for name, _, absent, _ in topics if not found[name]]
-                status, note = NOT_PROVABLE, "; ".join(
-                    ["Something the app must not have cannot be shown by citing code"]
-                    + ([f"found in the app, which this requirement may exclude: {', '.join(seen[:5])}"] if seen else [])
-                    + [f"checked: {absent}" for absent in checked]) + ". Not counted as a blocker."
+            seen = [where for wheres in found.values() for where in wheres]
+            checked = [absent for name, _, absent, _ in topics if not found[name]]
+            status, note = NOT_PROVABLE, "; ".join(
+                ["Something the app must not have cannot be shown by citing code"]
+                + ([f"found in the app, which this requirement may exclude: {', '.join(seen[:5])}"] if seen else [])
+                + [f"checked: {absent}" for absent in checked]) + ". Not counted as a blocker."
         else:
             named = resolved_focus_paths(files, [*verdict.get("inspection_paths", []),
                                                  *cited_paths(verdict.get("evidence"))])

@@ -6,9 +6,10 @@ excerpts do not establish absence"). They were blockers on every pass, so a work
 app was reported as incomplete. Now an unverified one is a warning that says what was
 checked, never a "met":
 
-- an absence of sign-in or of agents is checked in the app's files. A find is a
-  blocker only for a bare "no <topic>"; for a scoped one ("no login required to
-  browse") it is named in the warning. Nothing found is no proof of absence;
+- an absence of sign-in or of agents is checked in the app's files and the warning
+  names what was found or what was checked. A find is never a blocker: it cannot
+  tell the excluded feature from a requested one ("no sign-in for visitors" beside
+  an admin login). Nothing found is no proof of absence;
 - a preservation names the files the judge named for it that are unchanged, or those
   that changed, since the previous version. Unchanged files do not show the
   behaviour still works.
@@ -125,16 +126,16 @@ def test_an_absence_found_absent_is_a_warning_saying_what_was_checked(app, monke
     assert "no agent code or agent library found" in verdict["note"]
 
 
-def test_agent_code_in_an_agents_folder_is_a_blocker(app, monkeypatch):
-    _write(app, "backend/agents/helpdesk/helpdesk.py", "agent = None\n")
-    _judge(monkeypatch, NO_SIGN_IN, UNVERIFIED)
-    issues = _orchestrator(app, NO_SIGN_IN)._collect_requirement_issues()
-    (issue,) = _requirement_issues(issues)
-    assert issue.startswith("requirement: R1") and "agents folder backend/agents" in issue
-    assert _classify_issue(issue).severity == "blocker"
+def _settled_absence(app, monkeypatch, text):
+    requirement = {"id": 1, "text": text, "kind": "absence"}
+    _judge(monkeypatch, requirement, UNVERIFIED)
+    (issue,) = _requirement_issues(_orchestrator(app, requirement)._collect_requirement_issues())
+    return issue
 
 
 @pytest.mark.parametrize("path,text,found", [
+    ("backend/agents/helpdesk/helpdesk.py", "agent = None\n", "agents folder backend/agents"),
+    ("backend/support.py", "from baf.core.agent import Agent\n", "agent code backend/support.py"),
     ("backend/requirements.txt", "fastapi==0.115.0\npasslib[bcrypt]==1.7.4\n", "passlib in backend/requirements.txt"),
     ("frontend/package.json", '{"dependencies": {"react": "18.3.1", "next-auth": "4.24.0"}}',
      "next-auth in frontend/package.json"),
@@ -149,31 +150,59 @@ def test_agent_code_in_an_agents_folder_is_a_blocker(app, monkeypatch):
                                    "@router.post('/api/v1/sign-in')\ndef enter():\n    return {}\n",
      "route /api/v1/sign-in in backend/routers/account.py"),
 ])
-def test_an_authentication_library_or_route_is_a_blocker(app, monkeypatch, path, text, found):
+def test_a_find_is_a_warning_naming_it_never_a_blocker(app, monkeypatch, path, text, found):
+    """A find cannot tell the excluded feature from a requested one ("No sign-in for visitors"
+    beside an admin login); as a blocker it would send the repair loop to delete it."""
     _write(app, path, text)
-    _judge(monkeypatch, NO_SIGN_IN, UNVERIFIED)
-    (issue,) = _requirement_issues(_orchestrator(app, NO_SIGN_IN)._collect_requirement_issues())
-    assert issue.startswith("requirement: R1") and found in issue
-
-
-@pytest.mark.parametrize("text,path,content,found", [
-    # The request asks for an admin login; browsing without one is all it excludes.
-    ("No login required to browse products", "backend/routers/admin.py",
-     "from fastapi import APIRouter\nrouter = APIRouter()\n\n\n@router.post('/admin/login')\ndef login():\n"
-     "    return {}\n", "route /admin/login"),
-    ("The app must not store passwords in plain text", "backend/requirements.txt", "fastapi\npasslib[bcrypt]\n",
-     "passlib"),
-    ("No travel agents can edit bookings", "backend/agents/routes.py", "x = 1\n", "agents folder backend/agents"),
-    ("The chatbot must not give medical advice", "agents/helper/helper.py", "x = 1\n", "agents folder agents"),
-])
-def test_a_find_for_a_scoped_absence_is_a_warning_naming_it(app, monkeypatch, text, path, content, found):
-    """Only a bare "no <topic>" excludes the topic outright; a blocker here would send the
-    repair loop to delete a feature the request asked for."""
-    requirement = {"id": 1, "text": text, "kind": "absence"}
-    _write(app, path, content)
-    _judge(monkeypatch, requirement, UNVERIFIED)
-    (issue,) = _requirement_issues(_orchestrator(app, requirement)._collect_requirement_issues())
+    issue = _settled_absence(app, monkeypatch, NO_SIGN_IN["text"])
     assert issue.startswith("requirement not provable: R1") and found in issue
+    assert _classify_issue(issue).severity == "warning"
+
+
+# Requests that exclude sign-in or agents only in part, beside a requested admin login.
+ADMIN_LOGIN = {
+    "backend/requirements.txt": "fastapi==0.115.0\npasslib[bcrypt]==1.7.4\n",
+    "backend/routers/admin.py": "from fastapi import APIRouter\nrouter = APIRouter()\n\n\n"
+                                "@router.post('/admin/login')\ndef login():\n    return {}\n",
+}
+
+
+@pytest.mark.parametrize("text", [
+    "No sign-in for visitors", "No sign-in for visitors, admins log in",
+    "Without signing in, visitors browse the catalogue", "No sign-in or sign-up for customers",
+    "No sign-in, but admins log in with a password", "The app has no sign-up", "There is no sign-up",
+    "No passwords", "The app has no authorization", "No authorisation, every user can do everything", "No login",
+    "The app has no login and no agents", "No login, no agents.", "Without login", "No auth needed",
+    "There are no logins for guests", "No sign-up; accounts are created by an admin",
+    "The site has no sign up and no chatbot", "No sign-in. Admins use the admin login page",
+    "No sign in for shoppers", "no login",
+    "No login required to browse products", "The app must not store passwords in plain text",
+])
+def test_an_absence_beside_a_requested_login_is_a_warning(app, monkeypatch, text):
+    for path, content in ADMIN_LOGIN.items():
+        _write(app, path, content)
+    issue = _settled_absence(app, monkeypatch, text)
+    assert issue.startswith("requirement not provable: R1")
+    assert "route /admin/login" in issue or "passlib" in issue or "agent" in text.lower() or "chatbot" in text
+
+
+@pytest.mark.parametrize("path", [
+    "frontend/src/components/agents/AgentCard.tsx", "backend/routers/agents/crud.py", "backend/agents/routes.py",
+])
+def test_an_agent_entitys_own_code_is_not_named_as_an_agent(app, monkeypatch, path):
+    """Agents are the generator's ``agents/<name>/`` folder, the agent framework or code using it,
+    not the screens and routes of a domain class called Agent."""
+    _write(app, path, "x = 1\n")
+    issue = _settled_absence(app, monkeypatch, "The app has no chatbot")
+    assert issue.startswith("requirement not provable: R1")
+    assert "found in the app" not in issue
+    assert "no agent code or agent library found" in issue
+
+
+def test_the_chatbot_folder_of_a_requested_chatbot_is_named_not_blocked(app, monkeypatch):
+    _write(app, "agents/helper/helper.py", "x = 1\n")
+    issue = _settled_absence(app, monkeypatch, "The chatbot must not give medical advice")
+    assert issue.startswith("requirement not provable: R1") and "agents folder agents" in issue
 
 
 def test_an_absence_naming_anything_else_is_a_warning(app, monkeypatch):
@@ -263,10 +292,10 @@ def test_without_a_previous_version_the_generated_files_are_the_baseline(app, mo
 def test_the_report_explains_a_warning_and_a_found_absence():
     report = build_verification_report({"requirements": [
         dict(KEEP_EDITING, status=ledger.NOT_PROVABLE, note="Changed since the previous version: x.tsx."),
-        dict(NO_SIGN_IN, id=2, status="missing", note="The app has what this requirement excludes: agents folder a."),
+        dict(NO_SIGN_IN, id=2, status="missing", note="a support chatbot answers on every page"),
     ]})
     assert not report.verified
     assert [item.why for item in report.notVerified if item.kind == "requirement"] == [
         "Changed since the previous version: x.tsx."]
     (found,) = report.shippedUnenforced
-    assert "does not implement" not in found.why and "agents folder a" in found.why
+    assert found.why == "the delivered app has what it excludes; a support chatbot answers on every page"

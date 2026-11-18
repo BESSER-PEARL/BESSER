@@ -1309,8 +1309,9 @@ class ToolExecutor:
         ids, bad = self._requested_task_ids(args)
         if not ids:
             return {"error": (
-                "action='done' requires `id` (an integer) or `ids` "
-                "(a list of integers). Use action='list' to see ids."
+                "action='done' requires `id` (an integer) or `ids` (a list of integers; "
+                "`done_ids` works too), or evidence entries carrying their item's id. "
+                "Use action='list' to see ids."
                 + (f" Not integers: {bad}." if bad else "")
             )}
 

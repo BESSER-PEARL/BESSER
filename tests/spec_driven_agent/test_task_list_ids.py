@@ -79,3 +79,8 @@ def test_done_without_ids_closes_the_items_its_evidence_names(executor):
     assert "error" not in result, result
     assert result["done_ids"] == [1]
     assert [t["id"] for t in executor.open_tasks()] == [2]
+
+
+def test_the_missing_ids_error_names_every_key_done_accepts(executor):
+    error = executor._task_list({"action": "done"})["error"]
+    assert "`ids`" in error and "`done_ids`" in error and "evidence" in error

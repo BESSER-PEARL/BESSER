@@ -2047,6 +2047,12 @@ def set_attribute(editor: ModelEditor, path: str, spec: str) -> Edited:
         _set_field(editor, attribute, "type", type_code, "")
     if optional != old_optional:
         _set_field(editor, attribute, "is_optional", "True" if optional else None, "False")
+        if not optional and attribute.multiplicity.min == 0:  # a lower bound of 0 makes it optional too
+            high = attribute.multiplicity.max
+            high_code = '"*"' if high >= UNLIMITED_MAX_MULTIPLICITY else str(high)
+            multiplicity = editor._structural("Multiplicity")
+            _set_field(editor, attribute, "multiplicity", None if high == 1 else f"{multiplicity}(1, {high_code})",
+                       f"{multiplicity}(1, 1)")
     if default_given is not None or (retyped and default is not None):
         _set_field(editor, attribute, "default_value", default_code, "None")
     wanted_default = None if default is None else (

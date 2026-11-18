@@ -633,7 +633,8 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
-        is_optional (bool): Indicates whether the property is optional/nullable (False as default).
+        is_optional (bool): Indicates whether the property is optional/nullable (False as default). A
+            multiplicity whose lower bound is 0 makes the property optional as well, unless it is an identifier.
         default_value (Any): The default value of the property (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the property (None as default).
@@ -649,7 +650,8 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
-        is_optional (bool): Indicates whether the property is optional/nullable (False as default).
+        is_optional (bool): Whether the property is optional/nullable: set with ``is_optional=True``, or by a
+            multiplicity whose lower bound is 0 (not for an identifier).
         default_value (Any): The default value of the property (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the property (None as default).
@@ -751,8 +753,11 @@ class Property(TypedElement):
 
     @property
     def is_optional(self) -> bool:
-        """bool: Get whether the property is optional."""
-        return self.__is_optional
+        """bool: Get whether the property is optional: ``is_optional=True``, or a multiplicity whose lower
+        bound is 0 (#428 added the flag as the simple way to say ``Multiplicity(0, 1)``). An identifier or
+        an external identifier is never optional because of its multiplicity."""
+        return self.__is_optional or (self.__multiplicity.min == 0
+                                      and not self.__is_id and not self.__is_external_id)
 
     @is_optional.setter
     def is_optional(self, is_optional: bool):

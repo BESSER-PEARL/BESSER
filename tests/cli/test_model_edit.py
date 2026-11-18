@@ -634,3 +634,17 @@ def test_a_method_written_on_one_line_is_stored_on_two(besser, model, tmp_path):
     assert refused.returncode == 2 and "--code is not Python" in refused.stderr
     refused = besser("model", "-f", model, "add-method", "Book", "loose()", "--code", "x = 1")
     assert refused.returncode == 2 and "--code must be one function: 'def loose(self, ...): ...'" in refused.stderr
+
+
+def test_an_attribute_optional_by_its_multiplicity_can_be_made_required(edit):
+    """A lower bound of 0 makes an attribute optional. Before: set-attribute wrote no is_optional, the
+    attribute stayed optional, and the command refused with 'the change did not land as expected'."""
+    text = INLINE.replace('Property(name="pages", type=IntegerType)',
+                          'Property(name="pages", type=IntegerType, multiplicity=Multiplicity(0, 1))')
+    run, after = edit(text, "set-attribute", "Book.pages", ":int", output=None)
+
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "model.py: changed Book.pages from int? to int\n"
+    removed, added = _changed_lines(text, after)
+    assert removed == ['    Property(name="pages", type=IntegerType, multiplicity=Multiplicity(0, 1)),']
+    assert added == ['    Property(name="pages", type=IntegerType),']

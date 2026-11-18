@@ -53,6 +53,7 @@ export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChan
   // Parse current filter value (format: "operator:value")
   const parseFilterValue = (val: string): { operator: FilterOperator; value: string } => {
     if (!val) return { operator: defaultOperator, value: "" };
+    if (val === "empty" || val === "not_empty") return { operator: val, value: "" };
     const parts = val.split(":");
     if (parts.length === 1) return { operator: "contains", value: parts[0] };
     return { operator: parts[0] as FilterOperator, value: parts.slice(1).join(":") };

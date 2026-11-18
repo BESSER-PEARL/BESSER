@@ -4,6 +4,12 @@ The filter treated an enumeration column as free text: the user had to type a
 literal exactly, under a "(string)" label, although the column carries its
 literals as ``options``.
 """
+import json
+import shutil
+import subprocess
+
+import pytest
+
 from besser.BUML.metamodel.gui import DataBinding, GUIModel, Module, Screen
 from besser.BUML.metamodel.gui.dashboard import FieldColumn, Table
 from besser.BUML.metamodel.structural import (
@@ -53,3 +59,39 @@ def test_an_enumeration_column_is_filtered_by_choosing_a_literal(tmp_path):
     value_select = column_filter.split(') : dataType === "enum" ? (')[1].split(") : (")[0]
     assert "<select" in value_select and "{column.options!.map((option) => (" in value_select
     assert '{dataType !== "enum" && (' in column_filter
+
+
+def _node_strips_types():
+    node = shutil.which("node")
+    if not node:
+        return None
+    version = subprocess.run([node, "--version"], capture_output=True, text=True).stdout.strip().lstrip("v")
+    major, minor = (int(part) for part in version.split(".")[:2])
+    return node if (major, minor) >= (22, 6) else None
+
+
+NODE = _node_strips_types()
+
+
+@pytest.mark.skipif(NODE is None, reason="needs Node.js 22.6+ to run TypeScript")
+def test_reopening_an_empty_check_shows_that_check(tmp_path):
+    """An "is empty" filter, reopened, showed "equals" with no value, and Apply
+    then sent ``contains:empty``, which matched no row."""
+    source = (_generate(tmp_path) / "src/components/table/ColumnFilter.tsx").read_text(encoding="utf-8")
+    start = source.index("  const parseFilterValue = ")
+    parse = source[start:source.index("\n  };\n", start) + 5]
+    script = tmp_path / "parse.ts"
+    script.write_text(
+        'type FilterOperator = string;\nconst defaultOperator: FilterOperator = "equals";\n' + parse
+        + '\nconsole.log(JSON.stringify(["", "empty", "not_empty", "equals:OPEN", "legacy"].map(parseFilterValue)));\n',
+        encoding="utf-8")
+    result = subprocess.run([NODE, "--experimental-strip-types", "--no-warnings", str(script)],
+                            capture_output=True, text=True, check=True)
+
+    assert json.loads(result.stdout) == [
+        {"operator": "equals", "value": ""},
+        {"operator": "empty", "value": ""},
+        {"operator": "not_empty", "value": ""},
+        {"operator": "equals", "value": "OPEN"},
+        {"operator": "contains", "value": "legacy"},
+    ]

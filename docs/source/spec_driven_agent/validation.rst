@@ -84,7 +84,9 @@ that was already broken is never refused, so it can be repaired.
   imported by name. A wrapper is followed only when it calls
   ``fetch(BASE + path, ...)`` once, passes the caller's options on without a
   method or body of its own, and returns the parsed JSON; an instance or base
-  whose URL adds a path (``${API}/v2``) is not followed.
+  whose URL adds a path (``${API}/v2``, or a constant declared with one) is not
+  followed, nor an instance with its own ``transformRequest`` or
+  ``transformResponse``.
 
   * the JSON body: an object literal, written in place or in a variable
     declared with it and otherwise only read, none of whose keys the route
@@ -92,7 +94,9 @@ that was already broken is never refused, so it can be repaired.
     model parameter reads the model's fields; otherwise the body has one
     top-level key per body parameter, so a ``/methods/<name>/`` route with
     ``params: dict = Body(embed=True)`` reads ``{"params": {...}}``, never the
-    values flat, and a key sent beside ``params`` is lost too.
+    values flat. A key sent beside ``params`` is reported only when the
+    handler reads it from inside ``params`` (``params.get('<key>')``); one it
+    takes elsewhere, such as an id from the path, is harmless.
   * the response: when every ``return`` of the handler sends a dict literal
     that is not handed to another function, the object's top-level keys. Code
     that uses that object's data only as an array (``Array.isArray``,
@@ -105,10 +109,15 @@ that was already broken is never refused, so it can be repaired.
   Generated routes declare ``response_model=None``, so the app's OpenAPI has
   no response schema to compare with; the handler's ``return`` statements are
   what it sends. Only certain cases are reported. Left alone: a body with a
-  spread or a computed key; a model with a validator that runs before field
-  validation, which can fill a missing field; a handler that takes the
-  ``Request`` and can read the raw body itself; data passed on or read by one
-  of its real keys; an Axios response interceptor; and, for ``fetch`` and its
+  spread or a computed key, or one held in a variable that is changed
+  (``delete body.x`` included); a model with a model-level validator that runs
+  before field validation (``root_validator(pre=True)``, ``model_validator``
+  in before or wrap mode), which can fill a missing field (a field validator
+  cannot); a handler that takes the ``Request`` and can read the raw body
+  itself; data passed on or read by one of its real keys; Axios bodies when a
+  request interceptor or ``defaults.transformRequest`` is set, and Axios
+  responses when a response interceptor or ``defaults.transformResponse`` is;
+  and, for ``fetch`` and its
   wrappers, a read of a key the success body lacks (the parsed body is the
   error body too). A ``fetch`` method is the options object's own top-level
   ``method``, wherever it is written. The same finding is attached to the

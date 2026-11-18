@@ -88,6 +88,7 @@ class _Body:
     keys: frozenset
     required: frozenset
     schema: str  # the model's name, or "" for one key per body parameter
+    inner: frozenset = frozenset()  # keys the handler reads from inside its Body() parameters
 
 
 @dataclass(frozen=True)
@@ -138,19 +139,28 @@ def _body(function, path: str, imports: dict, resolve) -> _Body | None:
             required = not ({"default", "default_factory"} & keywords.keys()) and (
                 not marker.args or (isinstance(marker.args[0], ast.Constant) and marker.args[0].value is Ellipsis))
             name = alias.value if isinstance(alias, ast.Constant) and isinstance(alias.value, str) else arg.arg
-            params.append((name, isinstance(embed, ast.Constant) and embed.value is True, required, model, type_name))
+            params.append((name, isinstance(embed, ast.Constant) and embed.value is True, required, model, type_name,
+                           arg.arg))
         elif model is not None:
-            params.append((arg.arg, False, default is None, model, type_name))
+            params.append((arg.arg, False, default is None, model, type_name, arg.arg))
         elif not _is_scalar(annotation):
             return None
     if not params:
         return None
     if len(params) == 1 and not params[0][1]:
-        _, _, _, model, type_name = params[0]
+        _, _, _, model, type_name, _ = params[0]
         if model is None or model.allows_extra:
             return None
         return _Body(model.fields, model.required, type_name)
-    return _Body(frozenset(p[0] for p in params), frozenset(p[0] for p in params if p[2]), "")
+    # The keys the handler reads from inside them (``params.get('carrier')``).
+    names = {p[5] for p in params}
+    inner = frozenset(
+        key.value for node in ast.walk(function)
+        for key in ([node.args[0]] if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in {"get", "pop"} and _name(node.func.value) in names and node.args
+                    else [node.slice] if isinstance(node, ast.Subscript) and _name(node.value) in names else [])
+        if isinstance(key, ast.Constant) and isinstance(key.value, str))
+    return _Body(frozenset(p[0] for p in params), frozenset(p[0] for p in params if p[2]), "", inner)
 
 
 def _routes(sources: list) -> dict:
@@ -285,7 +295,7 @@ def _declared_object(blanked: str, name: str, used_at: int) -> tuple[int, int] |
     for use in re.finditer(rf"(?<![\w$.]){re.escape(name)}(?![\w$])", blanked):
         if use.start() == used_at or declaration.start() <= use.start() < end:
             continue
-        if not read.match(blanked, use.end()):
+        if not read.match(blanked, use.end()) or re.search(r"\bdelete\s+$", blanked[max(0, use.start() - 12):use.start()]):
             return None
     return start, end
 
@@ -325,8 +335,10 @@ def _body_message(call, route_path: str, route: _Route, sent: list) -> str | Non
     body = route.body
     unknown = [key for key in sent if key not in body.keys]
     missing = sorted(body.required - set(sent))
-    # A model ignores an extra field, often harmlessly; beside Body() keys it is always a lost value.
-    lost = unknown if not body.schema or len(unknown) == len(sent) else []
+    # An extra key is ignored, often harmlessly (an id the path already carries). It is a
+    # lost value when nothing sent is read, or when the handler reads it from inside a
+    # Body() parameter instead.
+    lost = unknown if len(unknown) == len(sent) else [key for key in unknown if key in body.inner]
     if not lost and not missing:
         return None
     accepted = ", ".join(sorted(body.keys))
@@ -493,6 +505,19 @@ def _adds_path(text: str, blanked: str, index: int) -> bool:
     return bool(re.search(r"/\s*[\w-]", value))
 
 
+def _name_adds_path(text: str, blanked: str, name: str) -> bool:
+    """``_adds_path`` for the one declaration of ``name`` in the file; a name declared
+    elsewhere (or twice) may add a path, so it counts as adding one."""
+    declared = list(re.finditer(rf"(?<![\w$.])(?:const|let|var)\s+{re.escape(name)}\s*(?::[^=;]*)?=", blanked))
+    return len(declared) != 1 or _adds_path(text, blanked, declared[0].end())
+
+
+def _base_adds_path(text: str, blanked: str, index: int) -> bool:
+    """``_adds_path`` for a base URL value, following a bare name to its declaration."""
+    name = re.compile(r"\s*([A-Za-z_$][\w$]*)\s*(?=[,;}\n]|$)").match(text, index)
+    return _name_adds_path(text, blanked, name.group(1)) if name else _adds_path(text, blanked, index)
+
+
 def _fetch_helper(text: str, blanked: str, head) -> bool:
     """Whether the function ``head`` starts is ``fetch(BASE + path, options)`` for its
     caller: one fetch, the caller's options passed on with no method or body of its own,
@@ -509,8 +534,7 @@ def _fetch_helper(text: str, blanked: str, head) -> bool:
     if url is None:
         return False
     base = url.group("plus") or url.group("template")
-    declared = list(re.finditer(rf"(?<![\w$.])(?:const|let|var)\s+{re.escape(base)}\s*(?::[^=;]*)?=", blanked))
-    if "." not in base and (len(declared) != 1 or _adds_path(text, blanked, declared[0].end())):
+    if "." not in base and _name_adds_path(text, blanked, base):
         return False
     argument = _skip_space(blanked, url.end())
     if blanked.startswith("{", argument):
@@ -563,8 +587,10 @@ def _instances(frontend: dict) -> dict:
             config = _skip_space(blanked, match.end())
             if blanked.startswith("{", config):
                 value = _top_level_value(blanked, config, "baseURL")
-                if value is not None and _adds_path(text, blanked, value):
-                    continue
+                if (value is not None and _base_adds_path(text, blanked, value)) or any(
+                        _top_level_value(blanked, config, key) is not None
+                        for key in ("transformRequest", "transformResponse")):
+                    continue  # its calls go elsewhere, or their data is reshaped
             elif not blanked.startswith(")", config):
                 continue  # options held in a variable
             if match.group("name"):
@@ -605,8 +631,12 @@ def collect_api_call_diagnostics(workspace, changed_path=None, content=None) -> 
     routes = _routes(sources) if manifest else {}
     if not routes:
         return []
-    # An interceptor can hand the code ``response.data`` as the response itself.
-    axios_reads = not any("interceptors.response.use" in text for _, text in frontend)
+    # A response interceptor or default transform can hand the code ``response.data`` as
+    # the response itself; a request one can rewrite every body axios sends.
+    axios_reads = not any(re.search(r"interceptors\s*\.\s*response\s*\.\s*use|defaults\s*\.\s*transformResponse",
+                                    text) for _, text in frontend)
+    axios_bodies = not any(re.search(r"interceptors\s*\.\s*request\s*\.\s*use|defaults\s*\.\s*transformRequest",
+                                     text) for _, text in frontend)
     instances, helpers = _instances(dict(frontend)), _helpers(dict(frontend))
     findings, seen = [], set()
     for path, text in frontend:
@@ -628,7 +658,7 @@ def collect_api_call_diagnostics(workspace, changed_path=None, content=None) -> 
             fetch_like = call.client in {"fetch", "fetch-helper"}
             axios_like = not fetch_like and (imports_axios or not text.startswith("axios", call.start))
             messages = []
-            if route.body is not None and call.method in {"POST", "PUT", "PATCH"}:
+            if route.body is not None and call.method in {"POST", "PUT", "PATCH"} and (fetch_like or axios_bodies):
                 literal = _sent_object(blanked, call)
                 sent = _object_keys(text, blanked, *literal) if literal else None
                 if sent is not None:

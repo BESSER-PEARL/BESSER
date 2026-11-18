@@ -81,21 +81,36 @@ def test_annotated_field_alias_and_default_are_read(tmp_path):
 @pytest.mark.parametrize("validator", [
     "@root_validator(pre=True)\n    def fill(cls, values):",
     "@model_validator(mode=\"before\")\n    @classmethod\n    def fill(cls, values):",
-    "@validator(\"customer\", pre=True, always=True)\n    def fill(cls, value):",
-    "@field_validator(\"customer\", mode=\"before\")\n    @classmethod\n    def fill(cls, value):",
+    "@model_validator(mode=\"wrap\")\n    @classmethod\n    def fill(cls, values, handler):",
 ])
-def test_a_before_validator_can_fill_a_required_field(tmp_path, validator):
+def test_a_model_validator_before_validation_can_fill_a_required_field(tmp_path, validator):
     schemas = SCHEMAS + f"\n    {validator}\n        return values\n"
     page = _fn("await axios.post(`${API}/order/`, { reference: 'r', total: 1 });")
     assert collect_api_call_issues(_workspace(tmp_path, page, schemas=schemas)) == []
+
+
+@pytest.mark.parametrize("validator", [
+    "@validator(\"customer\", pre=True)\n    def fill(cls, value):",
+    "@field_validator(\"customer\", mode=\"before\")\n    @classmethod\n    def fill(cls, value):",
+])
+def test_a_field_validator_does_not_fill_a_missing_field(tmp_path, validator):
+    from besser.spec_driven_agent.validation.frontend_schema import _model_resolver
+
+    schemas = SCHEMAS + f"\n    {validator}\n        return value\n"
+    page = _fn("await axios.post(`${API}/order/`, { reference: 'r', total: 1 });")
+    [issue] = collect_api_call_issues(_workspace(tmp_path, page, schemas=schemas))
+    assert "leaves out the required customer" in issue
+    # The model stays known to the form checks as well.
+    _, resolve = _model_resolver([("pydantic_classes.py", schemas)])
+    assert resolve("OrderCreate").required == {"reference", "total", "customer"}
 
 
 def test_a_handler_reading_the_raw_request_has_no_fixed_body(tmp_path):
     router = ROUTER.replace(
         "    order_id: str,\n    params: dict = Body(default=None, embed=True),",
         "    order_id: str,\n    request: Request,\n    params: dict = Body(default=None, embed=True),")
-    router = router.replace('return {"order": order_id, "result": None}',
-                            'return {"order": order_id, "result": params or await request.json()}')
+    router = router.replace('return {"order": order_id, "result": carrier}',
+                            'return {"order": order_id, "result": carrier or await request.json()}')
     assert "request: Request" in router and "await request.json()" in router
     page = _fn("await axios.post(`${API}/order/${o}/methods/ship/`, { carrier: 'x' });")
     assert collect_api_call_issues(_workspace(tmp_path, page, router=router)) == []
@@ -129,3 +144,47 @@ def test_a_method_named_inside_the_body_is_not_the_request_method(tmp_path):
     assert call.method == "POST"
     [call] = _calls_in_file("a.ts", "fetch('/order/', { body: JSON.stringify({ method: 'DELETE' }) })")
     assert call.method == "GET"
+
+
+def test_a_key_beside_params_that_the_handler_takes_elsewhere_is_not_reported(tmp_path):
+    page = _fn("await axios.post(`${API}/order/${o}/methods/ship/`, { params: { carrier: 'x' }, order_id: o });")
+    assert collect_api_call_issues(_workspace(tmp_path, page)) == []
+
+
+def test_a_key_the_handler_reads_from_params_sent_beside_it_is_reported(tmp_path):
+    page = _fn("await axios.post(`${API}/order/${o}/methods/ship/`, { params: {}, carrier: 'x' });")
+    [issue] = collect_api_call_issues(_workspace(tmp_path, page))
+    assert "the keys it sends beside them (carrier) never reach the handler" in issue
+
+
+def test_a_deleted_key_makes_a_body_variable_unknown(tmp_path):
+    page = _fn("const body = { params: { carrier: 'x' }, carrier: 'x' }; delete body.carrier; "
+               "await axios.post(`${API}/order/${o}/methods/ship/`, body);")
+    assert collect_api_call_issues(_workspace(tmp_path, page)) == []
+
+
+INSTANCE_PAGE = ('import api from "../client";\n'
+                 + _fn("const x = await api.get(`/customer/${c}/orders/`); "
+                       "await api.post(`/order/${o}/methods/ship/`, { carrier: 'x' }); return x.data.map(i => i);"))
+
+
+@pytest.mark.parametrize("create", [
+    "{ baseURL: import.meta.env.VITE_API_URL, transformRequest: [(d) => JSON.stringify({ params: d })] }",
+    "{ baseURL: import.meta.env.VITE_API_URL, transformResponse: [(d) => JSON.parse(d).orders] }",
+    "{ baseURL: BASE }",
+], ids=["transform_request", "transform_response", "base_constant_with_a_path"])
+def test_an_instance_that_reshapes_or_moves_its_calls_is_not_followed(tmp_path, create):
+    client = ("import axios from 'axios';\nconst BASE = 'http://localhost:8000/v2';\n"
+              f"const api = axios.create({create});\nexport default api;\n")
+    assert collect_api_call_issues(_workspace(tmp_path, INSTANCE_PAGE, extra={"frontend/src/client.js": client})) == []
+
+
+@pytest.mark.parametrize("setup", [
+    "api.interceptors.request.use((cfg) => { cfg.data = { params: cfg.data }; return cfg; });\n",
+    "axios.defaults.transformRequest = [(d) => JSON.stringify({ params: d })];\n",
+], ids=["request_interceptor", "default_transform_request"])
+def test_a_global_request_rewrite_leaves_bodies_alone(tmp_path, setup):
+    client = ("import axios from 'axios';\nconst api = axios.create({ baseURL: import.meta.env.VITE_API_URL });\n"
+              + setup + "export default api;\n")
+    [issue] = collect_api_call_issues(_workspace(tmp_path, INSTANCE_PAGE, extra={"frontend/src/client.js": client}))
+    assert "returns an object" in issue  # the response is still read as sent

@@ -113,10 +113,11 @@ def _model_resolver(sources):
             return None
         for stmt in cls.body:
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # A validator that runs before field validation can accept arbitrary
-                # legacy names and fill a missing required field (v1 ``pre=True`` too).
+                # A model validator that runs before field validation can accept arbitrary
+                # legacy names and fill a missing required field (v1 ``pre=True`` too). A
+                # field validator cannot: a missing field fails before it runs.
                 if any(isinstance(d, ast.Call)
-                       and _name(d.func) in {"model_validator", "root_validator", "validator", "field_validator"}
+                       and _name(d.func) in {"model_validator", "root_validator"}
                        and any(isinstance(k.value, ast.Constant)
                                and ((k.arg == "mode" and k.value.value in {"before", "wrap"})
                                     or (k.arg == "pre" and k.value.value is True)) for k in d.keywords)

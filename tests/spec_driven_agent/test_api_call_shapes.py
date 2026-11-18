@@ -72,7 +72,9 @@ async def execute_order_ship(
     params: dict = Body(default=None, embed=True),
     database: Session = Depends(get_db)
 ):
-    return {"order": order_id, "result": None}
+    params = params or {}
+    carrier = params.get('carrier')
+    return {"order": order_id, "result": carrier}
 '''
 
 HEADER = 'import axios from "axios";\nconst API = import.meta.env.VITE_API_URL;\n'

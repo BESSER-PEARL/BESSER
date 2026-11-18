@@ -512,9 +512,9 @@ Findings are classified into three severities:
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
        now), ``form field type:``, the model-derived acceptance matrix (with
-       a GUI model, a class no screen offers to create, through a table with
-       action buttons, a form or a create button, is not asked for a create
-       path), ``entity coverage:`` (for an ``other`` target used through screens, the
+       a GUI model whose screens bind at least one class, a class no screen
+       offers to create, through a table with action buttons, a form or a
+       create button, is not asked for a create path), ``entity coverage:`` (for an ``other`` target used through screens, the
        judge also checks that every entity can be created, viewed, edited and
        deleted, since the acceptance matrix only reads web routes and pages;
        like the matrix it is reported, never a blocker. Abstract classes are

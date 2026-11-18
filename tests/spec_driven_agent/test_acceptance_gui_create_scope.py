@@ -83,3 +83,32 @@ def test_without_a_gui_model_every_class_is_still_checked(tmp_path):
     _workspace(tmp_path)
     matrix = build_acceptance_matrix(str(tmp_path), _model())
     assert matrix["OrderLine"]["create"] is False
+
+
+# Review of d5b411a20: a class-only project carries the editor's default GUI
+# diagram, which converts to a GUI model with screens but no bound class. It
+# scoped every class out of the create check.
+
+def _unbound_gui(modules) -> GUIModel:
+    return GUIModel(name="Default", package="app", versionCode="1", versionName="1.0",
+                    modules=modules, description="")
+
+
+def test_a_gui_model_that_binds_no_class_keeps_the_model_wide_check(tmp_path):
+    from besser.BUML.metamodel.gui import Text
+
+    _workspace(tmp_path)
+    screen = Screen(name="Home", description="", view_elements={Text(name="hello", content="Hi", description="")})
+    matrix = build_acceptance_matrix(str(tmp_path), _model(),
+                                     gui_model=_unbound_gui({Module(name="Main", screens={screen})}))
+    assert matrix["Order"]["create"] is False
+    assert matrix["OrderLine"]["create"] is False
+
+
+def test_a_gui_model_without_modules_keeps_the_model_wide_check(tmp_path):
+    _workspace(tmp_path)
+    gui = _unbound_gui(set())
+    gui.modules = None
+    matrix = build_acceptance_matrix(str(tmp_path), _model(), gui_model=gui)
+    assert matrix["OrderLine"]["create"] is False
+

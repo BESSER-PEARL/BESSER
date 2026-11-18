@@ -1645,6 +1645,15 @@ def _where_the_quote_leaves(part: str, source: _Source, path: str, raw: str, cac
         or (len(part) >= _MIN_CUT_QUOTE and _in_code(part, source, i)))), None)
     if inside is not None:
         return f"the part is inside {path} line {inside + 1}; cite that whole line", True
+    # The start of a line, cut short (a quote can stop at the line's first string).
+    starts = [i + 1 for i, line in enumerate(lines)
+              if len(line) > len(part) and line.startswith(part) and _in_code(part, source, i)]
+    if starts:
+        where = f"{path} line{'s' if len(starts) > 1 else ''} " + ", ".join(map(str, starts[:3])) + (
+            ", ..." if len(starts) > 3 else "")
+        if len(part) < _MIN_PART_QUOTE:
+            return f"the part is too short to identify a line (it starts {where}); cite the whole line", False
+        return f"the part is only the start of {where}; cite the whole line", True
     best = (0, 0, 0, 0)  # characters followed, first line, line where it leaves, whole-line characters
     for start, first in enumerate(lines):
         if not first or not part.startswith(first[:_MIN_CUT_QUOTE]):

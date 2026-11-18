@@ -347,3 +347,41 @@ class TestAssembleModels:
         # QuantumCircuit. Both are safe for the downstream serializer.
         if result.quantum_circuit is not None:
             assert getattr(result.quantum_circuit, "num_qubits", 0) == 0
+
+
+class TestAgentNextToAGui:
+    """An AgentDiagram joins a GUI project only when a screen uses an agent, as on /generate-output."""
+
+    @staticmethod
+    def _project(monkeypatch, gui_uses_agent: bool):
+        agent = object()
+        monkeypatch.setattr(model_assembly_module, "process_gui_diagram", lambda *args: object())
+        monkeypatch.setattr(model_assembly_module, "has_agent_components", lambda gui: gui_uses_agent)
+        monkeypatch.setattr(model_assembly_module, "process_agent_diagram", lambda payload: agent)
+        project = _project_with({
+            "ClassDiagram": [{"id": "cd1", "title": "Library", "model": CLASS_DIAGRAM_MODEL}],
+            "GUINoCodeDiagram": [{"id": "gui1", "title": "Screens",
+                                  "model": {"type": "GUINoCodeDiagram", "pages": []}}],
+            "AgentDiagram": [{"id": "ad1", "title": "Helper",
+                              "model": {"type": "AgentDiagram", "elements": {}, "relationships": {}}}],
+        })
+        return assemble_models_from_project(project), agent
+
+    def test_an_agent_no_screen_uses_is_left_out(self, monkeypatch):
+        result, _ = self._project(monkeypatch, gui_uses_agent=False)
+        assert result.gui_model is not None
+        assert result.agent_model is None
+
+    def test_an_agent_a_screen_uses_is_kept(self, monkeypatch):
+        result, agent = self._project(monkeypatch, gui_uses_agent=True)
+        assert result.agent_model is agent
+
+    def test_an_agent_next_to_a_class_diagram_without_a_gui_is_kept(self, monkeypatch):
+        agent = object()
+        monkeypatch.setattr(model_assembly_module, "process_agent_diagram", lambda payload: agent)
+        project = _project_with({
+            "ClassDiagram": [{"id": "cd1", "title": "Library", "model": CLASS_DIAGRAM_MODEL}],
+            "AgentDiagram": [{"id": "ad1", "title": "Helper",
+                              "model": {"type": "AgentDiagram", "elements": {}, "relationships": {}}}],
+        })
+        assert assemble_models_from_project(project).agent_model is agent

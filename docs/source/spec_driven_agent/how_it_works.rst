@@ -130,7 +130,9 @@ The three phases
    frontend files. With no GUI model, the item names the classes that have
    backend routes, says that a narrower UI scope in the request wins, and
    closes only once a routed app with at least one entity screen exists. A new project with both a class model and an agent model
-   gets a checklist item to connect them: the agent's intents about the
+   gets a checklist item to connect them (with a GUI model, the project's
+   agent diagram is part of the run only when a screen uses an agent, as in
+   the editor's own web app generation): the agent's intents about the
    model's records must read and write them, not answer with canned text.
    The item also keeps Phase 2 from being skipped, and the agent may drop it
    with a reason when it has nothing to do with the data. Phase 3 checks the

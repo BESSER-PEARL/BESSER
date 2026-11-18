@@ -236,7 +236,8 @@ def assemble_models_from_project(
     gui_model, agent_model, agent_config = _assemble_gui_and_agent(
         project, class_diagram, domain_model, assembly_issues
     )
-    if agent_model is None:
+    # A GUI that uses no agent leaves the project's AgentDiagram out, as on /generate-output.
+    if agent_model is None and (gui_model is None or has_agent_components(gui_model)):
         agent_model, agent_config = _assemble_standalone_agent(
             project, agent_config, assembly_issues
         )
@@ -331,11 +332,11 @@ def _assemble_standalone_agent(
     agent_config: Optional[dict],
     issues: Optional[list[dict[str, str]]] = None,
 ) -> tuple[Optional[Any], Optional[dict]]:
-    """Process an AgentDiagram even when no GUI is present.
+    """Process an AgentDiagram when no GUI is present, or when the GUI's own agent did not convert.
 
     The GUI-and-agent path above only wires agents when the GUI
-    contains AgentComponents. For projects that are agent-only (no
-    ClassDiagram, no GUI), we still want the agent model available.
+    contains AgentComponents. For projects without a GUI, we still
+    want the agent model available.
     """
     agent_diagram = project.get_active_diagram("AgentDiagram")
     if agent_diagram is None or not getattr(agent_diagram, "model", None):

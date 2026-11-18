@@ -2349,10 +2349,12 @@ class SmartGenerationRunner:
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
                 blocker_count=len(_unfixed_blockers), cost=final_cost,
             )
-            # A cancel can land after Phase 2 ended cleanly: the run is still cut short.
+            # A cancel can land after Phase 2 ended cleanly: the run is still cut short,
+            # and its reason says so before anything Phase 3 left.
             cancelled = self._facts.stopped_by == run_record.CANCELLED
-            if cancelled and not incomplete:
-                incomplete, incomplete_reason_msg = True, self._facts.stop_message
+            if cancelled and exited_cleanly:
+                incomplete = True
+                incomplete_reason_msg = " ".join(filter(None, (self._facts.stop_message, incomplete_reason_msg)))
 
             # ---- 10. Package the result and emit `done` ---------------
             try:

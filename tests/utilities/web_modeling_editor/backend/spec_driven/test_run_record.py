@@ -209,6 +209,23 @@ def test_a_cancel_after_a_clean_phase_2_is_reported_as_cancelled_not_finished(mo
     assert done["incompleteReason"] == "The run was cancelled before it finished."
 
 
+def test_a_cancel_after_a_clean_phase_2_with_defects_says_it_was_cancelled(monkeypatch):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
+    _BlockedOrchestrator.stop_reason, _BlockedOrchestrator.cancel = "completed", asyncio.Event()
+    try:
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime(),
+                                       reserved_cancel_event=_BlockedOrchestrator.cancel)
+        done = _parse(asyncio.run(seed._collect_frames(runner))[-1])
+    finally:
+        _BlockedOrchestrator.cancel = None
+
+    assert (done["cancelled"], done["incomplete"], done["blockerCount"]) == (True, True, 0)
+    reason = done["incompleteReason"]
+    assert reason.startswith("The run was cancelled before it finished. ")
+    assert "2 unresolved" in reason
+
+
 def test_the_section_is_small_and_holds_no_key_path_or_request(orchestrator):
     runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     run = _run(runner)

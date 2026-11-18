@@ -31,7 +31,8 @@ stamped with the commit they were built from (``BESSER_BUILD_SHA``).
      - ``artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest``
        (``smartgen-worker``)
      - Everything in the backend image, plus Node.js 22 with ``tsc``, JDK 21,
-       Rust (``cargo``), ``kotlinc``, ``build-essential``, bubblewrap and passt.
+       Rust (``cargo``), ``kotlinc``, ``build-essential``, bubblewrap, passt and
+       procps (``ps``); no ``git``.
 
 The ``Dockerfile`` requires BuildKit (the default builder in current Docker
 releases; set ``DOCKER_BUILDKIT=1`` on older ones): the proxy certificates are

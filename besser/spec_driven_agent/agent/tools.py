@@ -227,7 +227,8 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
             "whose runtime is not installed returns success=false, missing_command=true: "
-            "treat its check as failed, not as passing. Several run_command calls in one turn run "
+            "treat its check as failed, not as passing. git is not installed and the workspace is "
+            "not a git repository. Several run_command calls in one turn run "
             "one after another in the order given."
         ),
         "input_schema": {

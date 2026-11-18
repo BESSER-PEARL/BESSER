@@ -679,8 +679,19 @@ verdict only when it is a verified "implemented"; otherwise a missing or partial
 from it proves no absence, so the checked verdict keeps its status, and it takes
 the focused judge's citation (when it gave one), note and inspection paths, which
 name the files that judge saw. An answer naming a file that round left out gets
-one more round with that file shown. An empty citation fails as "no source line is
-cited", never as a citation of code that exists nowhere.
+one more round with that file shown, together with every other file the answer
+names (its citations, inspection paths and the files its note names), including
+those the round showed for another requirement. An inspection path may be a glob
+(``src/**/*.css``); it names every judged file it matches. An empty citation fails
+as "no source line is cited", never as a citation of code that exists nowhere.
+
+Stylesheets (``.css``, ``.scss``, ``.sass``, ``.less``) are judged source: a
+stylesheet rule is a citation like any other line, and a rule inside a comment is
+not. The whole-app digest shows them, last, only when a requirement is about
+appearance (its text names a colour, style, font, hover, cursor, theme, border,
+spacing, layout and the like); otherwise they are listed as omitted, so a verdict
+naming one is judged once more with it shown. In a stylesheet a line starting with
+``#`` is an id selector and is kept.
 
 The recipe records, for each implemented requirement, ``verification`` and a
 ``verification_note`` giving its API half and its screens half apart. The API half

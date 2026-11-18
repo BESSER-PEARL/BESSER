@@ -4122,7 +4122,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         requirements = self._requirements_to_judge()
         if not requirements:
             return []
-        digest, digest_gaps = _requirements_ledger.build_app_digest_and_gaps(self.output_dir)
+        digest, digest_gaps = _requirements_ledger.build_app_digest_and_gaps(
+            self.output_dir, stylesheets=_requirements_ledger.shows_stylesheets(requirements))
         cache_key = self._requirement_cache_key(requirements)
         imports = self._import_index(cache_key)
         scope = json.dumps([requirements, self._instructions], sort_keys=True)
@@ -4258,12 +4259,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # A file this round did not show whole (left out or cut), named by an answer that is
             # not a verified implemented. The schema files a focused digest shows are not.
             left_out = (frozenset(files) - shown) | gaps
-            named = {item["id"]: _requirements_ledger.named_digest_gaps(item, left_out)
-                     for item in repaired if item["id"] not in valid_ids}
+            answers = {item["id"]: item for item in repaired if item["id"] not in valid_ids}
+            named = {rid: _requirements_ledger.named_digest_gaps(item, left_out) for rid, item in answers.items()}
             named = {rid: paths for rid, paths in named.items() if paths}
             if not named or not self._verification_call_allowed():
                 break
-            focus = {rid: [*paths, *focus[rid]] for rid, paths in named.items()}
+            # The files the answer relied on stay shown, also those this round showed for another requirement.
+            focus = {rid: [*paths, *_requirements_ledger.named_digest_gaps(answers[rid], frozenset(files)), *focus[rid]]
+                     for rid, paths in named.items()}
         return replacements
 
     def _requirements_still_verified(self, scope: str,

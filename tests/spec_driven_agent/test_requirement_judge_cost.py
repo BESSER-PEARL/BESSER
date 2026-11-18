@@ -405,7 +405,7 @@ def test_the_citation_repair_reads_every_file_a_structured_citation_names(orch, 
     # The focused round also needs its gaps (a file it left out gets one more round).
     digest = ledger.build_app_digest_details
     monkeypatch.setattr(ledger, "build_app_digest_details",
-                        lambda out, focus_paths=None: focused.append(focus_paths) or digest(out, focus_paths=focus_paths))
+                        lambda out, focus_paths=None, **kw: focused.append(focus_paths) or digest(out, focus_paths=focus_paths, **kw))
     orch._collect_requirement_issues()
 
     assert focused[-1] == ["routers/room.py", "routers/guest.py"]

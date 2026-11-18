@@ -15,6 +15,7 @@ verdict lands in the recipe so the reviewer sees what was NOT built.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import hashlib
 import json
 import keyword
@@ -386,13 +387,37 @@ _SOURCE_SUFFIXES = frozenset({
     # native UI markup that holds a desktop app's controls: WPF/WinUI, Avalonia, Qt
     ".xaml", ".axaml", ".qml",
 })
+# Judged and citable, but in the whole-app digest only for an appearance requirement
+# (``shows_stylesheets``); otherwise listed as omitted, so a verdict naming one gets them shown.
+_STYLESHEET_SUFFIXES = frozenset({".css", ".scss", ".sass", ".less"})
+
+
+def _is_stylesheet(rel: str) -> bool:
+    return Path(rel).suffix.lower() in _STYLESHEET_SUFFIXES
 
 
 def _is_judged_source(path: Path) -> bool:
-    """Application source, plus Android's screens (``res/layout*/*.xml``); other
-    XML (``pom.xml``, the manifest) carries no behaviour."""
+    """Application source and stylesheets, plus Android's screens (``res/layout*/*.xml``);
+    other XML (``pom.xml``, the manifest) carries no behaviour."""
     suffix = path.suffix.lower()
-    return suffix in _SOURCE_SUFFIXES or (suffix == ".xml" and path.parent.name.startswith("layout"))
+    return (suffix in _SOURCE_SUFFIXES or suffix in _STYLESHEET_SUFFIXES
+            or (suffix == ".xml" and path.parent.name.startswith("layout")))
+
+
+# A requirement about how the app looks, whose evidence may be a stylesheet rule.
+_APPEARANCE_RE = re.compile(
+    r"\b(?:colou?rs?|colou?red|styl(?:e|es|ed|ing)|css|fonts?|hover|cursor|themes?|dark\s+mode|background"
+    r"|borders?|shadows?|accent|align(?:ed|ment)?|spacing|margins?|padding|animat\w*|responsive|layout"
+    r"|appearance|visual(?:ly)?)\b",
+    re.IGNORECASE,
+)
+
+
+def shows_stylesheets(requirements: list[dict]) -> bool:
+    """Whether the whole-app digest should show the stylesheets: a requirement is about appearance."""
+    return any(_APPEARANCE_RE.search(str(item.get("text") or "")) for item in requirements)
+
+
 _BEHAVIOURAL_KINDS = frozenset({"computed", "transition", "action"})
 _TEST_SOURCE_NAME = re.compile(r"(?:\.(?:test|spec)\.[^.]+$|^test_.+\.py$|_test\.py$)", re.I)
 
@@ -728,10 +753,12 @@ def render_requirements(requirements: list[dict] | None) -> str:
 
 def _digest_priority(rel: str, shares: dict[str, float | None] | None = None) -> tuple[int, float, str]:
     """Digest order: schemas, backend code by the share of it the agent wrote, untouched
-    generator output, pages and components, the rest. With no stored generator output
+    generator output, pages and components, the rest, stylesheets. With no stored generator output
     (``shares`` empty) routers come before the other Python modules."""
     if rel.endswith(("pydantic_classes.py", "sql_alchemy.py")):
         return (0, 0.0, rel)
+    if _is_stylesheet(rel):
+        return (6, 0.0, rel)
     router = "/routers/" in rel or rel.startswith("routers/")
     if router or rel.endswith(".py"):
         if not shares:
@@ -800,7 +827,7 @@ _REGION_VIEW_MAX_SHARE = 0.5
 _REGION_CONTEXT_LINES = 3
 
 
-def _changed_regions(compacted: str, generated: str) -> str:
+def _changed_regions(compacted: str, generated: str, rel: str = "") -> str:
     """``compacted`` (a :func:`_compact` file) without its runs of lines unchanged from
     ``generated`` beyond ``_REGION_CONTEXT_LINES`` of a change; each run left out is
     marked, and so is each place where generator lines were removed."""
@@ -808,7 +835,7 @@ def _changed_regions(compacted: str, generated: str) -> str:
     changed = [True] * len(lines)
     removed: dict[int, int] = {}  # index in ``lines`` -> generator lines removed just before it
     old_end = 0
-    for old_start, start, size in matching_lines(_compact(generated).splitlines(), lines):
+    for old_start, start, size in matching_lines(_compact(generated, rel).splitlines(), lines):
         if old_start > old_end:
             removed[start] = removed.get(start, 0) + old_start - old_end
         changed[start:start + size] = [False] * size
@@ -902,12 +929,14 @@ def _class_homes(files: dict[str, str], cache: dict) -> dict[str, set[str]]:
     return cache["classes"]
 
 
-def _compact(content: str) -> str:
-    """Drop blank and comment-only lines; the judge reads code, not prose."""
+def _compact(content: str, rel: str = "") -> str:
+    """Drop blank and comment-only lines; the judge reads code, not prose. In a
+    stylesheet a line starting with ``#`` is an id selector."""
+    comments = ("//",) if _is_stylesheet(rel) else ("#", "//")
     kept = []
     for line in content.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "//")):
+        if not stripped or stripped.startswith(comments):
             continue
         kept.append(line.rstrip())
     return "\n".join(kept)
@@ -939,37 +968,47 @@ def focus_paths_in_turn(path_lists: list[list[str]]) -> list[str]:
     return ordered
 
 
+def _glob_matches(pattern: str, rel: str) -> bool:
+    """``rel`` matches a judge's glob (``src/**/*.css``), from the root or as a suffix;
+    ``**/`` may stand for no folder."""
+    return any(fnmatch.fnmatchcase(rel, form) or fnmatch.fnmatchcase(rel, "*/" + form)
+               for form in {pattern, pattern.replace("**/", "")})
+
+
 def resolved_focus_paths(files: dict[str, str], focus_paths: list | None) -> list[str]:
     """The first ten distinct judged files the focus paths name, each unambiguously (a path
-    or a suffix). Capped after resolving: ten copies of one path left the rest out (r13-p81)."""
+    or a suffix), or every file a glob matches. Capped after resolving: ten copies of one
+    path left the rest out (r13-p81)."""
     resolved: list[str] = []
     for path in focus_paths or []:
-        if len(resolved) >= _MAX_FOCUS_FILES:
-            break
         if not isinstance(path, str):
             continue
         path = path.strip().replace("\\", "/")
         while path.startswith("./"):
             path = path[2:]
-        candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
-        if path and len(candidates) == 1 and candidates[0] not in resolved:
-            resolved.append(candidates[0])
-    return resolved
+        if "*" in path:
+            candidates = sorted(rel for rel in files if _glob_matches(path, rel))
+        else:
+            candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
+            candidates = candidates if path and len(candidates) == 1 else []
+        resolved += [rel for rel in dict.fromkeys(candidates) if rel not in resolved]
+    return resolved[:_MAX_FOCUS_FILES]
 
 
-def build_app_digest_and_gaps(output_dir: str, *,
-                              focus_paths: list[str] | None = None) -> tuple[str, frozenset[str]]:
+def build_app_digest_and_gaps(output_dir: str, *, focus_paths: list[str] | None = None,
+                              stylesheets: bool = False) -> tuple[str, frozenset[str]]:
     """:func:`build_app_digest`, and the source files it left out or cut for the budget.
 
     The gaps are what the judge could not read in full: a verdict about them is
     not a fair one. Files never shown (``_DIGEST_SKIP_NAMES``) and the files a
-    focused digest leaves out on purpose are not gaps.
+    focused digest leaves out on purpose are not gaps; stylesheets a whole-app digest
+    leaves out (``stylesheets`` off) are.
     """
-    digest, gaps, _shown = build_app_digest_details(output_dir, focus_paths=focus_paths)
+    digest, gaps, _shown = build_app_digest_details(output_dir, focus_paths=focus_paths, stylesheets=stylesheets)
     return digest, gaps
 
 
-def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None = None
+def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None = None, stylesheets: bool = False
                              ) -> tuple[str, frozenset[str], frozenset[str]]:
     """:func:`build_app_digest_and_gaps`, and the files the digest shows (a focused one
     always shows the schema files too)."""
@@ -987,16 +1026,20 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     contents: list[tuple[str, str]] = []
     unreadable = []
     omitted_by_focus: list[str] = []
+    styles_left_out: list[str] = []
     for rel, full in files.items():
         if focused and rel not in focused and _digest_priority(rel)[0] != 0:
             omitted_by_focus.append(rel)
+            continue
+        if not focused and not stylesheets and _is_stylesheet(rel):
+            styles_left_out.append(rel)
             continue
         if Path(full).name in _DIGEST_SKIP_NAMES:
             unreadable.append(rel)
             continue
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as fh:
-                content = _compact(fh.read())
+                content = _compact(fh.read(), rel)
         except OSError:
             unreadable.append(rel)
             continue
@@ -1010,7 +1053,7 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
         if (whole > source_budget and rel not in focused and rel in baselines
                 and _digest_priority(rel)[0] != 0 and shares[rel] is not None
                 and 0 < shares[rel] < _REGION_VIEW_MAX_SHARE):
-            content = _changed_regions(content, baselines[rel])
+            content = _changed_regions(content, baselines[rel], rel)
             regions.add(rel)
         header = f"### {rel}\n"
         # The cited files share the budget: one large file must not crowd out the next.
@@ -1028,11 +1071,11 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     if not focused:  # pages and components first, then the rest of the non-Python source
         ui_budget = int(source_budget * _DIGEST_UI_SHARE)
         for key, rel, chunk, _ in entries:
-            if key[1] >= 4 and total + len(chunk) + 2 <= ui_budget:
+            if 4 <= key[1] <= 5 and total + len(chunk) + 2 <= ui_budget:
                 reserved.add(rel)
                 total += len(chunk) + 2
     parts: list[str] = []
-    omitted = unreadable + omitted_by_focus
+    omitted = unreadable + omitted_by_focus + styles_left_out
     truncated_paths = []
     over_budget = []
     shown: list[str] = []
@@ -1062,14 +1105,15 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     )
     if len(footer) > footer_budget:
         footer = footer[:max(0, footer_budget - 42)] + "\n[Coverage path listing also truncated.]\n"
-    return "\n\n".join(parts) + footer[:footer_budget], frozenset(over_budget + truncated_paths), frozenset(shown)
+    return "\n\n".join(parts) + footer[:footer_budget], frozenset(
+        over_budget + truncated_paths + styles_left_out), frozenset(shown)
 
 
 def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
     """The digest gaps a verdict's inspection paths, citations or note name.
 
-    A gap counts when its path appears in the note, when a named path is it or a
-    suffix of it (``risk_service.py`` for ``backend/risk_service.py``), or when its
+    A gap counts when its path appears in the note, when a named path is it, a suffix
+    of it (``risk_service.py`` for ``backend/risk_service.py``) or a glob matching it, or when its
     file name appears in the note and no other gap has that name.
     """
     named = [path.strip().replace("\\", "/").removeprefix("./")
@@ -1078,7 +1122,8 @@ def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
     note = str(verdict.get("note") or "")
     names = [Path(rel).name for rel in gaps]
     return [rel for rel in sorted(gaps)
-            if rel in note or any(rel == path or rel.endswith("/" + path) for path in named)
+            if rel in note or any(rel == path or rel.endswith("/" + path)
+                                  or ("*" in path and _glob_matches(path, rel)) for path in named)
             or (names.count(Path(rel).name) == 1
                 and re.search(r"(?<![\w.-])" + re.escape(Path(rel).name) + r"(?![\w-])", note))]
 
@@ -2226,7 +2271,7 @@ def _ancestors(folder: str) -> list[str]:
 
 
 # Cited code no harness check runs (no screen is rendered); any other cited file is backend code.
-_FRONTEND_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", ".css")
+_FRONTEND_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", *sorted(_STYLESHEET_SUFFIXES))
 
 
 def _path_segments(path: str) -> tuple[str, ...]:
@@ -2377,6 +2422,7 @@ def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
                  note="UI requirement; this output has no frontend")
             if v.get("kind") == "ui" and v.get("status") != "implemented" else v
             for v in verdicts]
+
 
 
 def ledger_issues(verdicts: list[dict]) -> list[str]:

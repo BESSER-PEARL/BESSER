@@ -74,28 +74,45 @@ that was already broken is never refused, so it can be repaired.
   Absence of a known stub is structural evidence, not proof of business behavior.
 - Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
   match no generated backend route.
-- API call shapes (``api call:``, blocker) — a literal ``fetch`` or Axios call
-  whose URL resolves to exactly one route, checked against that route's
-  handler, which is read without importing the app:
+- API call shapes (``api call:``, blocker) — a frontend call with a literal or
+  template URL that resolves to exactly one route, checked against that
+  route's handler, which is read without importing the app. The calls read are
+  ``fetch``, ``axios.<method>`` (with or without a TypeScript type argument),
+  the ``axios({method, url, data})`` config form, an ``axios.create()``
+  instance defined in the file or imported from the file that defines it, and
+  a ``fetch`` wrapper function such as ``api(path, options)``, defined or
+  imported by name. A wrapper is followed only when it calls
+  ``fetch(BASE + path, ...)`` once, passes the caller's options on without a
+  method or body of its own, and returns the parsed JSON; an instance or base
+  whose URL adds a path (``${API}/v2``) is not followed.
 
-  * the JSON body: an object literal none of whose keys the route reads, or one
-    that leaves out a required field. A route with one Pydantic model parameter
-    reads the model's fields; otherwise the body has one top-level key per body
-    parameter, so a ``/methods/<name>/`` route with ``params: dict =
-    Body(embed=True)`` reads ``{"params": {...}}``, never the values flat.
-  * the response: when every ``return`` of the handler sends a dict literal,
-    the object's top-level keys. Code that uses that object's data only as an
-    array (``Array.isArray``, ``.length``, ``.map()``, ``.filter()``, ...) or
-    reads only keys it does not have is reported, with the keys it has. The
-    generated relation routes answer ``{<parent>_id, <end>_count, <end>: [...]}``.
+  * the JSON body: an object literal, written in place or in a variable
+    declared with it and otherwise only read, none of whose keys the route
+    reads, or one that leaves out a required field. A route with one Pydantic
+    model parameter reads the model's fields; otherwise the body has one
+    top-level key per body parameter, so a ``/methods/<name>/`` route with
+    ``params: dict = Body(embed=True)`` reads ``{"params": {...}}``, never the
+    values flat, and a key sent beside ``params`` is lost too.
+  * the response: when every ``return`` of the handler sends a dict literal
+    that is not handed to another function, the object's top-level keys. Code
+    that uses that object's data only as an array (``Array.isArray``,
+    ``.length``, ``.map()``, ``.filter()``, ``Array.isArray(x) ? x : []``, or
+    handing it to the setter of a ``useState([])`` whose state is used only as
+    an array) or reads only keys it does not have is reported, with the keys
+    it has. The generated relation routes answer
+    ``{<parent>_id, <end>_count, <end>: [...]}``.
 
   Generated routes declare ``response_model=None``, so the app's OpenAPI has
   no response schema to compare with; the handler's ``return`` statements are
-  what it sends. Only certain cases are reported: a body with a spread or a
-  computed key, data passed on or read by one of its real keys, an Axios
-  response interceptor, and, for ``fetch``, a read of a key the success body
-  lacks (``await response.json()`` is the error body too) are left alone. The
-  same finding is attached to the write that introduces it.
+  what it sends. Only certain cases are reported. Left alone: a body with a
+  spread or a computed key; a model with a validator that runs before field
+  validation, which can fill a missing field; a handler that takes the
+  ``Request`` and can read the raw body itself; data passed on or read by one
+  of its real keys; an Axios response interceptor; and, for ``fetch`` and its
+  wrappers, a read of a key the success body lacks (the parsed body is the
+  error body too). A ``fetch`` method is the options object's own top-level
+  ``method``, wherever it is written. The same finding is attached to the
+  write that introduces it.
 - ``ruff`` lint, limited to defects that break at runtime (syntax errors, undefined
   names, redefinitions, repeated dict keys, invalid format strings and comparisons,
   ``raise NotImplemented``, a value returned from ``__init__``, a non-string in

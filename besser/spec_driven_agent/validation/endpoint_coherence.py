@@ -44,11 +44,21 @@ _NONCODE_RE = re.compile(
     r'''"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`|//[^\r\n]*|/\*[\s\S]*?\*/''')
 _METHOD_KEY_RE = re.compile(r"(?<![\w$.])method(?![\w$])")
 _METHOD_VALUE_RE = re.compile(r"method\s*:\s*([\"'])([A-Za-z]+)\1")
-_AXIOS_METHOD_RE = re.compile(
-    r"\baxios\s*\.\s*(?P<method>get|post|put|patch|delete|head|options)"
-    r"\s*\(\s*(?P<quote>[`\"'])(?P<url>.*?)(?P=quote)",
-    re.IGNORECASE | re.DOTALL,
-)
+# A TypeScript type argument (``axios.get<Order[]>(``), nested one level at most.
+_TYPE_ARGUMENT = r"(?:\s*<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>)?"
+
+
+def _axios_method_re(clients) -> re.Pattern:
+    """``<client>.<method>(<literal url>`` for ``axios`` or the given axios instances."""
+    return re.compile(
+        r"(?<![\w$])(?:" + "|".join(map(re.escape, clients)) + r")\s*\.\s*"
+        r"(?P<method>(?i:get|post|put|patch|delete|head|options))" + _TYPE_ARGUMENT
+        + r"\s*\(\s*(?P<quote>[`\"'])(?P<url>.*?)(?P=quote)",
+        re.DOTALL,
+    )
+
+
+_AXIOS_METHOD_RE = _axios_method_re(("axios",))
 _AXIOS_CONFIG_RE = re.compile(r"\baxios\s*\(\s*\{(?P<body>.*?)\}\s*\)", re.DOTALL)
 _METHOD_FIELD_RE = re.compile(r"\bmethod\s*:\s*[\"']([A-Za-z]+)[\"']", re.IGNORECASE)
 _URL_FIELD_RE = re.compile(r"\burl\s*:\s*(?P<quote>[`\"'])(?P<url>.*?)(?P=quote)", re.DOTALL)
@@ -63,7 +73,7 @@ class FrontendCall:
     file: str
     line: int
     # Where the call starts and its URL literal ends, and "fetch" / "axios"
-    # ("" for the axios config form), for checks that read its arguments.
+    # ("axios-config" for the axios config form), for checks that read its arguments.
     start: int = 0
     url_end: int = 0
     client: str = ""
@@ -146,9 +156,22 @@ def _fetch_method(content: str, blanked: str, index: int) -> str | None:
     return None
 
 
-def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
+def _calls_in_file(rel_path: str, content: str, clients=("axios",), helpers=()) -> list[FrontendCall]:
+    """Literal-URL calls; ``clients`` names the axios instances besides ``axios``, and
+    ``helpers`` the functions that call ``fetch(BASE + path, options)`` for their caller."""
     calls: list[FrontendCall] = []
     blanked = None
+    if helpers:
+        blanked = _NONCODE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), content)
+        helper_calls = re.compile(
+            r"(?<![\w$.])(?:" + "|".join(map(re.escape, helpers)) + r")" + _TYPE_ARGUMENT
+            + r"\s*\(\s*(?P<quote>[`\"'])(?P<url>(?:(?!(?P=quote))[^\n])*)(?P=quote)")
+        for match in helper_calls.finditer(content):
+            path = _normalize_frontend_url(match.group("url"))
+            method = _fetch_method(content, blanked, match.end()) if path is not None else None
+            if method is not None:
+                calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start()),
+                                          match.start(), match.end("url") + 1, "fetch-helper"))
     for match in _FETCH_RE.finditer(content):
         path = _normalize_frontend_url(match.group("url"))
         if path is None:
@@ -161,7 +184,8 @@ def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
         calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start()),
                                   match.start(), match.end("url") + 1, "fetch"))
 
-    for match in _AXIOS_METHOD_RE.finditer(content):
+    axios_calls = _AXIOS_METHOD_RE if tuple(clients) == ("axios",) else _axios_method_re(clients)
+    for match in axios_calls.finditer(content):
         path = _normalize_frontend_url(match.group("url"))
         if path is not None:
             calls.append(FrontendCall(
@@ -184,7 +208,8 @@ def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
             continue
         method_match = _METHOD_FIELD_RE.search(body)
         method = method_match.group(1).upper() if method_match else "GET"
-        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start())))
+        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start()),
+                                  match.start(), 0, "axios-config"))
     return calls
 
 

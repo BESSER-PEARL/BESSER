@@ -24,6 +24,12 @@ from pathlib import Path
 import re
 
 from besser.spec_driven_agent.agent.prompt_builder import build_endpoint_manifest
+from besser.spec_driven_agent.validation.acceptance import (
+    _IMPORT_RE,
+    _LEADING_NAME_RE,
+    _NAMED_IMPORT_RE,
+    _resolve_import,
+)
 from besser.spec_driven_agent.validation.endpoint_coherence import (
     _ROUTE_VALUE_RE,
     _calls_in_file,
@@ -64,7 +70,16 @@ _STRING_MEMBER = re.compile(r"\s*(?:\?\.)?\[\s*(['\"])([\w$]+)\1\s*\]")
 _IS_ARRAY = re.compile(r"Array\s*\.\s*isArray\s*\(\s*$")
 _CLOSE = re.compile(r"\s*\)")
 _KEY = re.compile(r"\s*(?:([A-Za-z_$][\w$]*)|(['\"])([^'\"\n]*)\2)\s*(?::|$)")
-_STRINGIFY = re.compile(r"\bbody\s*:\s*JSON\s*\.\s*stringify\s*\(\s*\{")
+_STRINGIFY = re.compile(r"JSON\s*\.\s*stringify\s*\(")
+_CREATE = re.compile(r"(?:(?<![\w$.])(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*(?::[^=;]*)?=\s*"
+                     r"|\bexport\s+default\s+)axios\s*\.\s*create\s*\(")
+_HELPER_HEAD = re.compile(
+    r"(?:\bfunction\s+(?P<function>[A-Za-z_$][\w$]*)|(?<![\w$.])(?:const|let|var)\s+(?P<arrow>[A-Za-z_$][\w$]*)"
+    r"\s*=\s*(?:async\s+)?)\s*(?:<[^<>()]*>)?\s*\(\s*(?P<path>[A-Za-z_$][\w$]*)\s*\??\s*(?::\s*[\w$.]+\s*)?,"
+    r"\s*(?P<options>[A-Za-z_$][\w$]*)\s*\??\s*(?::\s*[\w$.]+\s*)?(?:=\s*\{\s*\}\s*)?\)\s*(?::[^{=;]*)?(?:=>\s*)?\{")
+_ARRAY_STATE = re.compile(r"(?<![\w$.])(?:const|let)\s*\[\s*(?P<state>[A-Za-z_$][\w$]*)\s*,\s*"
+                          r"(?P<setter>[A-Za-z_$][\w$]*)\s*\]\s*=\s*(?:React\s*\.\s*)?useState\s*(?:<[^>]*>)?"
+                          r"\s*\(\s*\[\s*\]\s*\)")
 _AXIOS_IMPORT = re.compile(r"""\bimport\s+axios\b[^;\n]*\bfrom\s*['"]axios['"]|\brequire\s*\(\s*['"]axios['"]\s*\)""")
 
 
@@ -235,33 +250,84 @@ def _object_keys(text: str, blanked: str, start: int, end: int) -> list | None:
     return keys
 
 
+def _top_level_value(blanked: str, opening: int, key: str) -> int | None:
+    """The index just past the colon of ``key`` in the object literal opening at
+    ``opening``, counting only the object's own keys, not those of a value nested in it."""
+    end = _group_end(blanked, opening)
+    pattern = re.compile(rf"(?<![\w$.]){re.escape(key)}\s*:")
+    depth = 0
+    for index in range(opening, end or 0):
+        char = blanked[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif depth == 1 and (match := pattern.match(blanked, index)):
+            return match.end()
+    return None
+
+
+def _declared_object(blanked: str, name: str, used_at: int) -> tuple[int, int] | None:
+    """The object literal a variable is declared with, when it is the file's only
+    declaration of that name, encloses the use, and the variable is otherwise only
+    read by member (never assigned, handed to a function or called)."""
+    declarations = list(re.finditer(rf"(?<![\w$.])(?:const|let|var)\s+{re.escape(name)}\s*(?::[^=;]*)?=\s*",
+                                    blanked))
+    if len(declarations) != 1 or declarations[0].end() >= used_at:
+        return None
+    declaration = declarations[0]
+    start = declaration.end()
+    end = _group_end(blanked, start) if blanked.startswith("{", start) else None
+    block = _enclosing_block(blanked, declaration.start())
+    if end is None or (block is not None and used_at >= (_group_end(blanked, block) or 0)):
+        return None
+    read = re.compile(r"\s*(?:\?\.|\.)\s*[\w$]+(?![\w$])(?!\s*(?:\(|=(?!=)|\+\+|--|[-+*/]=))")
+    for use in re.finditer(rf"(?<![\w$.]){re.escape(name)}(?![\w$])", blanked):
+        if use.start() == used_at or declaration.start() <= use.start() < end:
+            continue
+        if not read.match(blanked, use.end()):
+            return None
+    return start, end
+
+
+def _object_at(blanked: str, index: int) -> tuple[int, int] | None:
+    """The object literal at ``index``, or the one the variable named there is declared with."""
+    index = _skip_space(blanked, index)
+    if blanked.startswith("{", index):
+        end = _group_end(blanked, index)
+        return (index, end) if end else None
+    name = re.compile(r"[A-Za-z_$][\w$]*(?=\s*[,)}])").match(blanked, index)
+    return _declared_object(blanked, name.group(), index) if name else None
+
+
 def _sent_object(blanked: str, call) -> tuple[int, int] | None:
-    """Where the JSON body object literal of a call is: ``axios.post(url, {...})``
-    or ``fetch(url, {..., body: JSON.stringify({...})})``."""
+    """Where the JSON body object literal of a call is: ``axios.post(url, {...})``,
+    ``fetch(url, {..., body: JSON.stringify({...})})`` or ``axios({..., data: {...}})``,
+    the literal written in place or in a variable declared with it."""
+    if call.client == "axios-config":
+        config = _skip_space(blanked, blanked.find("(", call.start) + 1)
+        value = _top_level_value(blanked, config, "data") if blanked.startswith("{", config) else None
+        return _object_at(blanked, value) if value is not None else None
     index = _skip_space(blanked, call.url_end)
     if not blanked.startswith(",", index):
         return None
     index = _skip_space(blanked, index + 1)
+    if call.client == "axios":
+        return _object_at(blanked, index)
     if not blanked.startswith("{", index):
         return None
-    end = _group_end(blanked, index)
-    if end is None:
-        return None
-    if call.client == "axios":
-        return index, end
-    for match in _STRINGIFY.finditer(blanked, index, end):
-        inner = blanked[index + 1:match.start()]
-        if sum(inner.count(c) for c in "([{") == sum(inner.count(c) for c in ")]}"):
-            literal_end = _group_end(blanked, match.end() - 1)
-            return (match.end() - 1, literal_end) if literal_end else None
-    return None
+    value = _top_level_value(blanked, index, "body")
+    stringify = _STRINGIFY.match(blanked, _skip_space(blanked, value)) if value is not None else None
+    return _object_at(blanked, stringify.end()) if stringify else None
 
 
 def _body_message(call, route_path: str, route: _Route, sent: list) -> str | None:
     body = route.body
     unknown = [key for key in sent if key not in body.keys]
     missing = sorted(body.required - set(sent))
-    if not (sent and len(unknown) == len(sent)) and not missing:
+    # A model ignores an extra field, often harmlessly; beside Body() keys it is always a lost value.
+    lost = unknown if not body.schema or len(unknown) == len(sent) else []
+    if not lost and not missing:
         return None
     accepted = ", ".join(sorted(body.keys))
     if body.schema:
@@ -270,9 +336,11 @@ def _body_message(call, route_path: str, route: _Route, sent: list) -> str | Non
         shape = (f"one top-level key per Body() parameter, {{{accepted}}} "
                  f"(handler: {route.file} line {route.line})")
     problems = []
-    if sent and len(unknown) == len(sent):
+    if lost and len(lost) == len(sent):
         problems.append(f"none of the keys it sends ({', '.join(sent)}) is one of them, so they never reach "
                         "the handler")
+    elif lost:
+        problems.append(f"the keys it sends beside them ({', '.join(lost)}) never reach the handler")
     if missing:
         problems.append(f"it leaves out the required {', '.join(missing)}, so every call is refused with 422")
     wrapper = next(iter(body.keys)) if not body.schema and len(body.keys) == 1 else None
@@ -306,11 +374,26 @@ def _response_data(blanked: str, call):
             return None
         start, end = then.end(), (_group_end(blanked, blanked.index("(", then.start())) or len(blanked)) - 1
         response, data = then.group("p1") or then.group("p2"), "data" if then.group("data") else None
-    if call.client == "axios":
+    if call.client in {"axios", "axios-config"}:
         if response is not None:
             return (rf"(?<![\w$.]){re.escape(response)}\s*(?:\?\.|\.)\s*data(?![\w$])",
                     f"{response}.data", response, start, end)
         return rf"(?<![\w$.]){re.escape(data)}(?![\w$])", data, None, start, end
+    if call.client == "fetch-helper":
+        # The wrapper already returns the parsed body.
+        if response is None:
+            return None
+        return rf"(?<![\w$.]){re.escape(response)}(?![\w$])", response, None, start, end
+    if call.client == "fetch" and not head and response is not None:
+        # ``.then(r => r.json()).then(items => ...)``: the next callback gets the body.
+        if not re.fullmatch(rf"\s*{re.escape(response)}\s*\.\s*json\s*\(\s*\)\s*", blanked[start:end]):
+            return None
+        chained = _THEN.match(blanked, end + 1)
+        name = chained and (chained.group("p1") or chained.group("p2"))
+        if not name:
+            return None
+        scope_end = (_group_end(blanked, blanked.index("(", chained.start())) or len(blanked)) - 1
+        return rf"(?<![\w$.]){re.escape(name)}(?![\w$])", name, None, chained.end(), scope_end
     if call.client != "fetch" or response is None or not head:
         return None
     declared = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]*)?=\s*await\s+"
@@ -321,21 +404,46 @@ def _response_data(blanked: str, call):
     return rf"(?<![\w$.]){re.escape(name)}(?![\w$])", name, None, declared.end(), end
 
 
-def _data_uses(text: str, blanked: str, pattern: str, guarded: str | None, start: int, end: int) -> list | None:
+def _array_states(text: str, blanked: str) -> dict:
+    """``setter -> (state, uses of the state)`` for each ``useState([])`` of the file whose
+    setter name is declared once."""
+    states: dict = {}
+    for match in _ARRAY_STATE.finditer(blanked):
+        setter = match.group("setter")
+        states[setter] = None if setter in states else (match.group("state"), _data_uses(
+            text, blanked, rf"(?<![\w$.]){re.escape(match.group('state'))}(?![\w$])", None,
+            match.end(), len(blanked)))
+    return {setter: value for setter, value in states.items() if value and value[1]}
+
+
+def _data_uses(text: str, blanked: str, pattern: str, guarded: str | None, start: int, end: int,
+               expression: str = "", states: dict | None = None) -> list | None:
     """Each use of the data in ``start:end``: ``("array", how)``, ``("key", name)`` or
-    ``("other", "")``; None when the response variable is bound again or used whole."""
+    ``("other", "")``; None when the response variable is bound again or used whole.
+    Data handed whole to the setter of an array state (``states``) is used as that state is."""
     if guarded and re.search(rf"(?<![\w$.]){re.escape(guarded)}(?![\w$])(?!\s*(?:\?\.|\.))",
                              blanked[start:end]):
         return None
+    # ``Array.isArray(x) ? x : []`` is ``[]`` for an object: the x it returns is an array use too.
+    empty_otherwise = {match.start("then") for match in re.compile(
+        r"Array\s*\.\s*isArray\s*\(\s*(?:" + pattern + r")\s*\)\s*\?\s*(?P<then>" + pattern + r")\s*:\s*\[\s*\]"
+    ).finditer(blanked, start, end)}
     uses = []
     for match in re.compile(pattern).finditer(blanked, start, end):
         after = match.end()
         array = _ARRAY_USE.match(blanked, after)
+        setter = re.search(r"([A-Za-z_$][\w$]*)\s*\(\s*$", blanked[max(0, match.start() - 80):match.start()])
         if array:
             uses.append(("array", "." + array.group("prop") if array.group("prop")
                          else f".{array.group('method')}()" if array.group("method") else "[index]"))
+        elif match.start() in empty_otherwise:
+            uses.append(("array", "Array.isArray(...) ? ... : []"))
         elif _IS_ARRAY.search(blanked, max(0, match.start() - 40), match.start()) and _CLOSE.match(blanked, after):
             uses.append(("array", "Array.isArray"))
+        elif setter and states and setter.group(1) in states and _CLOSE.match(blanked, after):
+            state, state_uses = states[setter.group(1)]
+            uses.extend((kind, f"{setter.group(1)}({expression}), then {state}{how}" if kind == "array" else how)
+                        for kind, how in state_uses)
         elif member := (_MEMBER.match(blanked, after) or _STRING_MEMBER.match(text, after)):
             uses.append(("key", member.group(member.lastindex)))
         else:
@@ -345,7 +453,7 @@ def _data_uses(text: str, blanked: str, pattern: str, guarded: str | None, start
 
 def _response_message(call, route_path: str, route: _Route, expression: str, uses: list) -> str | None:
     keys = route.returns
-    if call.client == "fetch":
+    if call.client in {"fetch", "fetch-helper"}:
         # ``await response.json()`` is the error body too when the status is not 2xx.
         uses = [(kind, value) for kind, value in uses if kind != "key" or value in keys]
     if not uses or any(kind == "other" or (kind == "key" and value in keys) for kind, value in uses):
@@ -364,6 +472,126 @@ def _response_message(call, route_path: str, route: _Route, expression: str, use
             f"Read the value you need from its key, e.g. {expression}.<key>.")
 
 
+def _config_method(text: str, blanked: str, call) -> str | None:
+    """The literal top-level ``method`` of ``axios({...})`` (GET when absent), else None."""
+    config = _skip_space(blanked, blanked.find("(", call.start) + 1)
+    value = _top_level_value(blanked, config, "method") if blanked.startswith("{", config) else None
+    if value is None:
+        return "GET" if blanked.startswith("{", config) else None
+    literal = re.compile(r"\s*(['\"])([A-Za-z]+)\1").match(text, value)
+    return literal.group(2).upper() if literal else None
+
+
+def _adds_path(text: str, blanked: str, index: int) -> bool:
+    """Whether the value starting at ``index`` (a ``baseURL``, a base constant) adds a path
+    to the host (``${API}/v2``)."""
+    depth, stop = 0, _skip_space(blanked, index)
+    while stop < len(blanked) and not (depth == 0 and blanked[stop] in ",;}\n"):
+        depth += {"(": 1, "[": 1, "{": 1, ")": -1, "]": -1, "}": -1}.get(blanked[stop], 0)
+        stop += 1
+    value = re.sub(r"\$\{[^}]*\}|https?://[^/'\"`\s]*", "", text[index:stop])
+    return bool(re.search(r"/\s*[\w-]", value))
+
+
+def _fetch_helper(text: str, blanked: str, head) -> bool:
+    """Whether the function ``head`` starts is ``fetch(BASE + path, options)`` for its
+    caller: one fetch, the caller's options passed on with no method or body of its own,
+    a base that adds no path, and every ``return`` the parsed JSON (or nothing)."""
+    path, options = head.group("path"), head.group("options")
+    end = _group_end(blanked, head.end() - 1)
+    body = blanked[head.end():end] if end else ""
+    fetches = list(re.finditer(r"(?<![\w$.])fetch\s*\(", body))
+    if len(fetches) != 1:
+        return False
+    at = head.end() + fetches[0].end()
+    url = re.compile(rf"\s*(?:(?P<plus>[A-Za-z_$][\w$.]*)\s*\+\s*{path}|`\$\{{\s*(?P<template>[A-Za-z_$][\w$.]*)\s*\}}"
+                     rf"\$\{{\s*{path}\s*\}}`)\s*,\s*").match(text, at)
+    if url is None:
+        return False
+    base = url.group("plus") or url.group("template")
+    declared = list(re.finditer(rf"(?<![\w$.])(?:const|let|var)\s+{re.escape(base)}\s*(?::[^=;]*)?=", blanked))
+    if "." not in base and (len(declared) != 1 or _adds_path(text, blanked, declared[0].end())):
+        return False
+    argument = _skip_space(blanked, url.end())
+    if blanked.startswith("{", argument):
+        if (not re.search(rf"\.\.\.\s*{options}(?![\w$])", blanked[argument:_group_end(blanked, argument) or 0])
+                or _top_level_value(blanked, argument, "method") is not None
+                or _top_level_value(blanked, argument, "body") is not None):
+            return False
+    elif not re.compile(rf"{options}\s*\)").match(blanked, argument):
+        return False
+    response = re.search(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]*)?=\s*await\s+$",
+                         blanked[max(head.end(), at - 120):at - len(fetches[0].group())])
+    if response is None:
+        return False
+    parsed = re.escape(response.group(1)) + r"\s*\.\s*json\s*\(\s*\)"
+    data = re.search(rf"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]*)?=\s*await\s+{parsed}", body)
+    value = rf"(?:{parsed}|{re.escape(data.group(1))})" if data else parsed
+    allowed = re.compile(rf"return\s*(?:(?:[^;\n?]*\?\s*null\s*:\s*)?{value}|null|undefined)?\s*")
+    return all(allowed.fullmatch(statement.group()) for statement in re.finditer(r"\breturn\b[^;\n}]*", body))
+
+
+def _helpers(frontend: dict) -> dict:
+    """Per file, the ``fetch`` wrapper functions its calls go through (see ``_fetch_helper``),
+    defined there or imported by name from the file that defines them."""
+    defined: dict = {}
+    for path, text in frontend.items():
+        blanked = _blank(text)
+        for head in _HELPER_HEAD.finditer(blanked):
+            if _fetch_helper(text, blanked, head):
+                defined.setdefault(path, set()).add(head.group("function") or head.group("arrow"))
+    helpers = {path: set(names) for path, names in defined.items()}
+    for path, text in frontend.items():
+        for match in _IMPORT_RE.finditer(text):
+            target = next((c for c in _resolve_import(path, match.group("spec")) if c in frontend), None)
+            named = _NAMED_IMPORT_RE.search(match.group("clause"))
+            for item in named.group(1).split(",") if target in defined and named else ():
+                original, _, local = item.strip().partition(" as ")
+                if original.strip() in defined[target]:
+                    helpers.setdefault(path, set()).add((local or original).strip())
+    return helpers
+
+
+def _instances(frontend: dict) -> dict:
+    """Per file, the ``axios.create()`` instances its calls go through, defined there or
+    imported from the file that defines them; one whose ``baseURL`` adds a path is left out."""
+    defined: dict = {}
+    default: dict = {}
+    for path, text in frontend.items():
+        blanked = _blank(text)
+        for match in _CREATE.finditer(blanked):
+            config = _skip_space(blanked, match.end())
+            if blanked.startswith("{", config):
+                value = _top_level_value(blanked, config, "baseURL")
+                if value is not None and _adds_path(text, blanked, value):
+                    continue
+            elif not blanked.startswith(")", config):
+                continue  # options held in a variable
+            if match.group("name"):
+                defined.setdefault(path, set()).add(match.group("name"))
+            else:
+                default[path] = True
+        for name in defined.get(path, ()):
+            if re.search(rf"\bexport\s+default\s+{re.escape(name)}\b", blanked):
+                default[path] = True
+    clients = {path: set(names) for path, names in defined.items()}
+    for path, text in frontend.items():
+        for match in _IMPORT_RE.finditer(text):
+            target = next((c for c in _resolve_import(path, match.group("spec")) if c in frontend), None)
+            if target is None:
+                continue
+            clause = match.group("clause")
+            named = _NAMED_IMPORT_RE.search(clause)
+            for item in named.group(1).split(",") if named else ():
+                original, _, local = item.strip().partition(" as ")
+                if original.strip() in defined.get(target, ()):
+                    clients.setdefault(path, set()).add((local or original).strip())
+            name = clause.split("{")[0].split("*")[0].strip().rstrip(",").strip()
+            if name and target in default and _LEADING_NAME_RE.fullmatch(name):
+                clients.setdefault(path, set()).add(name)
+    return clients
+
+
 def collect_api_call_diagnostics(workspace, changed_path=None, content=None) -> list[dict]:
     """Frontend calls whose body or response use contradicts the route, for tool feedback.
 
@@ -379,29 +607,39 @@ def collect_api_call_diagnostics(workspace, changed_path=None, content=None) -> 
         return []
     # An interceptor can hand the code ``response.data`` as the response itself.
     axios_reads = not any("interceptors.response.use" in text for _, text in frontend)
+    instances, helpers = _instances(dict(frontend)), _helpers(dict(frontend))
     findings, seen = [], set()
     for path, text in frontend:
-        calls = _calls_in_file(path, text)
+        calls = _calls_in_file(path, text, ("axios", *sorted(instances.get(path, ()))),
+                               tuple(sorted(helpers.get(path, ()))))
         if not calls:
             continue
         blanked = _blank(text)
         imports_axios = bool(_AXIOS_IMPORT.search(text))
+        states = None
         for call in calls:
             route_path = _resolve(call.path, call.method, manifest)
             route = routes.get((call.method, route_path)) if route_path else None
             if route is None or not call.client:
                 continue
+            if call.client == "axios-config" and _config_method(text, blanked, call) != call.method:
+                continue  # the method was read from a value nested in the config
+            # ``axios`` itself only when the file imports the library; an instance is one by construction.
+            fetch_like = call.client in {"fetch", "fetch-helper"}
+            axios_like = not fetch_like and (imports_axios or not text.startswith("axios", call.start))
             messages = []
             if route.body is not None and call.method in {"POST", "PUT", "PATCH"}:
                 literal = _sent_object(blanked, call)
                 sent = _object_keys(text, blanked, *literal) if literal else None
                 if sent is not None:
                     messages.append(_body_message(call, route_path, route, sent))
-            if route.returns is not None and (call.client == "fetch" or (axios_reads and imports_axios)):
+            if route.returns is not None and (fetch_like or (axios_reads and axios_like)):
                 data = _response_data(blanked, call)
                 if data is not None:
                     pattern, expression, guarded, start, end = data
-                    uses = _data_uses(text, blanked, pattern, guarded, start, end)
+                    if states is None:
+                        states = _array_states(text, blanked)
+                    uses = _data_uses(text, blanked, pattern, guarded, start, end, expression, states)
                     if uses is not None:
                         messages.append(_response_message(call, route_path, route, expression, uses))
             for message in filter(None, messages):

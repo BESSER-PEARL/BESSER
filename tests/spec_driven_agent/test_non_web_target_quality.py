@@ -316,6 +316,16 @@ def test_a_run_that_targets_the_agent_gets_the_task_next_to_any_gui(tmp_path):
     assert _agent_requirement(orch)
 
 
+@pytest.mark.parametrize("field", ["_generator_used", "target_generator"])
+def test_a_baf_run_next_to_a_gui_gets_the_task(tmp_path, field):
+    # A class-primary project asking for "the chatbot": keyword routing picks
+    # generate_baf, so the agent is the app even though no screen uses it.
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=False)
+    setattr(orch, field, "generate_baf")
+    assert _agent_task(orch)
+    assert _agent_requirement(orch)
+
+
 def test_an_agent_that_never_uses_the_data_is_a_blocker():
     from besser.spec_driven_agent.validation.issues import _classify_issue
     verdict = {"id": 4, "text": "The TaskAssistant agent handles ...", "kind": AGENT_DATA_KIND,

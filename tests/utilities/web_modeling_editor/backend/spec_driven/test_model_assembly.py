@@ -384,3 +384,40 @@ class TestAgentNextToAGui:
         assert result.agent_model is agent
         assert "generate_baf" in get_available_generator_names(
             has_domain_model=True, has_gui_model=True, has_agent_model=True)
+
+
+def _gui_with(*elements):
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen
+
+    screen = Screen(name="S", description="", view_elements=set(elements))
+    return GUIModel(name="G", package="p", versionCode="1", versionName="1",
+                    modules={Module(name="M", screens={screen})}, description="")
+
+
+def _agent_gui_cases():
+    from besser.BUML.metamodel.gui import GUIModel, Text, ViewContainer
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+
+    chat = AgentComponent(name="chat", description="")
+    nested = ViewContainer(name="outer", description="", view_elements={
+        ViewContainer(name="inner", description="", view_elements={chat})})
+    return {
+        "plain": _gui_with(Text(name="t", content="hi", description="")),
+        "top-level": _gui_with(AgentComponent(name="chat", description="")),
+        "nested twice": _gui_with(nested),
+        "no modules": GUIModel(name="G", package="p", versionCode="1", versionName="1",
+                               modules=set(), description=""),
+        "modules None": GUIModel(name="G", package="p", versionCode="1", versionName="1",
+                                 modules=None, description=""),
+    }
+
+
+@pytest.mark.parametrize("case", ["plain", "top-level", "nested twice", "no modules", "modules None"])
+def test_the_spec_driven_agent_rule_matches_generate_output(case):
+    """gui_uses_agent (spec-driven layer, which may not import the backend) must agree with
+    has_agent_components, which decides on /generate-output whether a web app ships an agent."""
+    from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
+    from besser.utilities.web_modeling_editor.backend.services.generation.agents import has_agent_components
+
+    gui = _agent_gui_cases()[case]
+    assert gui_uses_agent(gui) == has_agent_components(gui)

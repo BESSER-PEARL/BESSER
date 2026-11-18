@@ -3841,8 +3841,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _app_agent(self):
         """The agent model when it is part of the app: without a GUI, when a screen
-        uses it, or when the run targets the agent; else None."""
-        if self.agent_model is None or self.gui_model is None or self.primary_kind == "agent":
+        uses it, or when the run targets the agent (as its primary kind or through
+        the BAF generator); else None."""
+        targets_agent = (self.primary_kind == "agent"
+                         or "generate_baf" in (self._generator_used, self.target_generator))
+        if self.agent_model is None or self.gui_model is None or targets_agent:
             return self.agent_model
         return self.agent_model if gui_uses_agent(self.gui_model) else None
 

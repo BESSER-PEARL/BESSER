@@ -178,7 +178,7 @@ def test_checked_and_missing_is_separated_from_could_not_check():
     assert len({i.id for i in identified}) == len(identified), \
         "an identified item may appear in exactly one list"
     assert report.counts.model_dump() == {
-        "verified": 2, "notVerified": 2, "shippedUnenforced": 3,
+        "verified": 2, "foundInCode": 0, "notVerified": 2, "shippedUnenforced": 3,
     }
 
 

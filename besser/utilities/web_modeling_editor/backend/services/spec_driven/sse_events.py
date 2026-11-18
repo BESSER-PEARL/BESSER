@@ -174,8 +174,9 @@ VerificationKind = Literal["requirement", "ocl_constraint", "api_workflow", "che
 class VerificationItem(BaseModel):
     """One thing the run checked, could not check, or found missing.
 
-    ``how`` is set on a verified item (what was actually run); ``why`` on the
-    other two (why nothing reached it, or what the delivered code is missing).
+    ``how`` is set on a verified item (what was actually run) and on a
+    found-in-code item (the cited source); ``why`` on the other two (why
+    nothing reached it, or what the delivered code is missing).
     Rendered in full by the client, so a value cut server-side ends in a
     visible truncation mark rather than mid-word.
     """
@@ -195,22 +196,26 @@ class VerificationCounts(BaseModel):
     """
 
     verified: int = 0
+    foundInCode: int = 0
     notVerified: int = 0
     shippedUnenforced: int = 0
 
 
 class VerificationReport(BaseModel):
-    """The three states a blocker count collapses into one number.
+    """The four states a blocker count collapses into one number.
 
     An app scored 11/11 with a passing booking workflow still double-sold
     rooms: two OCL constraints failed conversion and never reached the code.
     The run knew — it listed both and reported 21 blockers — but the number
-    hid which. ``verified`` is "we checked and it works", ``notVerified`` is
-    "we could not check", ``shippedUnenforced`` is "we checked and it is
-    missing". ``counts`` holds the true totals; the lists are capped.
+    hid which. ``verified`` is "we ran it against the app and it works",
+    ``foundInCode`` is "its source is cited, but nothing ran it",
+    ``notVerified`` is "we could not check", ``shippedUnenforced`` is "we
+    checked and it is missing". ``counts`` holds the true totals; the lists
+    are capped.
     """
 
     verified: list[VerificationItem] = Field(default_factory=list)
+    foundInCode: list[VerificationItem] = Field(default_factory=list)
     notVerified: list[VerificationItem] = Field(default_factory=list)
     shippedUnenforced: list[VerificationItem] = Field(default_factory=list)
     counts: VerificationCounts = Field(default_factory=VerificationCounts)

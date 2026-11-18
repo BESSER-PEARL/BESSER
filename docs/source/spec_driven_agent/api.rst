@@ -343,8 +343,10 @@ SSE event types
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
        count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
        blocker-severity findings plus required checks that could not run,
-       ``validation unverified:``), ``verification`` (what the run verified,
-       could not verify, and shipped unenforced, with true totals in
+       ``validation unverified:``), ``verification`` (what the run confirmed
+       by running the app (``verified``), found cited in the code without
+       running it (``foundInCode``), could not verify (``notVerified``) and
+       shipped unenforced (``shippedUnenforced``), with true totals in
        ``counts``), ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
        when a cancel request was honoured after the run had written files, so
        the output is what it had made by then; a run the server stopped because

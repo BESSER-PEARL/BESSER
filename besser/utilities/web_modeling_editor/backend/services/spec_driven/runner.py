@@ -324,6 +324,9 @@ _UNENFORCED_PREFIXES = ("action contract:", "model contract:")
 _UNCONFIRMED = "the check could not confirm it in the delivered code"
 _WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it is not a rule from your "
                     "request, and the test or the app may be wrong")
+# Verification levels (``requirements_ledger.with_verification_levels``) at which a call to the
+# running app exercised the requirement; ``unverified`` means only its source citation was checked.
+_RAN_LEVELS = ("verified", "api_verified")
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 _UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
@@ -448,7 +451,8 @@ def run_summary_markdown(
     if readme:
         lines.append("- How to run it: see `README.md`")
     lines.append(
-        f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
+        f"- Verification: {counts.verified} confirmed by running the app's API, "
+        f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not checked, "
         f"{counts.shippedUnenforced} checked and missing in the code")
     removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
                      for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
@@ -489,15 +493,16 @@ def _summary_finding(item: VerificationItem, findings: dict) -> Finding:
 
 
 def build_verification_report(recipe: dict) -> VerificationReport:
-    """Split the recipe's own evidence into the three states a count hides.
+    """Split the recipe's own evidence into the four states a count hides.
 
-    "we checked and it works", "we could not check" and "we checked and it is
-    missing" are different results. A run that scored 11/11 and passed its
+    "we ran it and it works", "we found it in the code but did not run it",
+    "we could not check" and "we checked and it is missing" are different results. A run that scored 11/11 and passed its
     booking workflow still double-sold rooms because two OCL constraints
     failed conversion; the evidence was in the recipe, flattened into
     "21 blockers".
     """
     verified: list[VerificationItem] = []
+    found_in_code: list[VerificationItem] = []
     not_verified: list[VerificationItem] = []
     unenforced: list[VerificationItem] = []
 
@@ -538,7 +543,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             f"{issue.get('expression') or issue.get('original_text') or ''}"
         )
         if verdict is not None and verdict.get("status") == "implemented":
-            verified.append(_item(
+            (found_in_code if verdict.get("verification") == "unverified" else verified).append(_item(
                 "ocl_constraint", label, what,
                 how="rejected by the OCL converter, then recovered in code: "
                     + (render_evidence(verdict.get("evidence")) or "no citation"),
@@ -584,7 +589,9 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             if level:
                 # Clip the citation, not the note: a bare "implemented" would read as checked.
                 how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
-            verified.append(_item("requirement", ident, what, how=how))
+            # Recipes written before levels existed have none, and keep their old place.
+            ran = verdict.get("verification", "verified") in _RAN_LEVELS
+            (verified if ran else found_in_code).append(_item("requirement", ident, what, how=how))
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
                       else "the delivered code implements it only partly")
@@ -617,7 +624,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         if status == "passed":
             verified.append(_item(
                 "api_workflow", ident, what,
-                how=f"{len(requests)} request(s) run against the app: {ran}",
+                how=f"a test the agent wrote passed: {len(requests)} request(s) run against the app: {ran}",
             ))
         elif status == "failed":
             not_verified.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
@@ -674,10 +681,12 @@ def build_verification_report(recipe: dict) -> VerificationReport:
 
     return VerificationReport(
         verified=_capped(verified),
+        foundInCode=_capped(found_in_code),
         notVerified=_capped(not_verified),
         shippedUnenforced=_capped(unenforced),
         counts=VerificationCounts(
             verified=len(verified),
+            foundInCode=len(found_in_code),
             notVerified=len(not_verified),
             shippedUnenforced=len(unenforced),
         ),

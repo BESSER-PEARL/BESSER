@@ -693,7 +693,9 @@ screen, so a cited frontend file is never exercised, and the note says why: "scr
 not run (the frontend builds)", "(the frontend build failed)", "(the frontend build
 check did not run)" or "(no frontend)". ``verified`` means every cited half was
 exercised, ``api_verified`` that the API half was and screens are cited,
-``unverified`` anything else. It is reported, never a blocker. The recipe also records
+``unverified`` anything else. It is reported, never a blocker: the verification
+report counts a ``verified`` or ``api_verified`` requirement as confirmed and an
+``unverified`` one as found in the code but not run. The recipe also records
 ``business_rules_stated``: ``false`` only when the ledger ran and extracted no
 requirement at all and the model has no rule, ``null`` when the ledger did not
 run. When it is ``false``, the repository recap and the end-of-run report say

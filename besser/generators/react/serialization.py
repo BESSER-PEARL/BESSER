@@ -685,7 +685,6 @@ class GuiSerializationMixin:
                     "positiveColor": element.positive_color,
                     "negativeColor": element.negative_color,
                     "value": 0,  # Default placeholder - will be populated from API
-                    "trend": 12,  # Default placeholder trend percentage
                 }
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"

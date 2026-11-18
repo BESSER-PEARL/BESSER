@@ -5,12 +5,8 @@ interface Props {
   "metric-title"?: string;
   "value-color"?: string;
   "value-size"?: number;
-  "show-trend"?: boolean;
-  "positive-color"?: string;
-  "negative-color"?: string;
   format?: "number" | "currency" | "percentage" | "time";
   value?: number;
-  trend?: number;
   data_binding?: {
     entity?: string;
     endpoint?: string;
@@ -50,12 +46,8 @@ export const MetricCardComponent: React.FC<Props> = ({
   "metric-title": metricTitle = "Metric Title",
   "value-color": valueColor = "#2c3e50",
   "value-size": valueSize = 32,
-  "show-trend": showTrend = true,
-  "positive-color": positiveColor = "#27ae60",
-  "negative-color": negativeColor = "#e74c3c",
   format = "number",
   value = 0,
-  trend = 0,
   data_binding,
   styles,
   className,
@@ -109,8 +101,6 @@ export const MetricCardComponent: React.FC<Props> = ({
       >
         {displayValue}
       </div>
-
-      {/* No trend is computed (no earlier value to compare with), so showTrend draws nothing. */}
 
       {/* TODO: Uncomment when backend aggregation is ready */}
       {/* Data Binding Info (only in development) */}

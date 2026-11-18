@@ -25,7 +25,10 @@ TableComponent
 
 Dynamic data tables with:
 
-- Sorting and filtering
+- Sorting and filtering; an enumeration column is filtered by choosing one of
+  its literals
+- Enumeration literals offered in the model's order (columns, Add/Edit dialog,
+  association class fields, method parameters)
 - Pagination
 - Add/Edit modals with form validation; an empty field of an ``is_optional``
   attribute (``"nullable": true`` in ``formColumns``) is saved as ``null``, not
@@ -163,8 +166,9 @@ Visualization components including:
 
 Metric cards (``MetricCardBlock``) show their binding's ``aggregation`` over all
 records; without one, the sum of the bound field, or the number of records when
-no field is bound. No trend is computed, so ``show_trend`` adds nothing under
-the figure. A card whose binding has an ``endpoint`` fetches it instead
+no field is bound. No trend is computed: ``show_trend``, ``positive_color`` and
+``negative_color`` are carried in the page's metric data but draw nothing, and
+``MetricCardComponent`` takes no trend properties. A card whose binding has an ``endpoint`` fetches it instead
 of the CRUD list, and applies the binding's filter to the rows it returns. The response contract (an array of rows, or an object holding
 one under ``data``, ``results``, ``items``, ``records`` or ``list``) is described
 with ``DataBinding`` in :doc:`../buml_language/model_types/gui`. Tables, maps and

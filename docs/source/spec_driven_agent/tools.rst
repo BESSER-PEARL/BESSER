@@ -473,7 +473,10 @@ session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
 A command without ``working_dir`` starts where an earlier ``cd`` left the
 shell; when that is not the workspace root, the result's first field,
-``ran_in``, names that directory. A line that joins two commands with ``;`` or
+``ran_in``, names that directory. When the line's first ``cd``, relative,
+fails there and the path exists from the workspace root (inside it), a
+``cd_hint`` names the shell's directory
+and the path to use from it (or as ``working_dir``). A line that joins two commands with ``;`` or
 a new line, exits 0 and reports a failure in stderr gets a ``note`` that
 ``exit_code`` is the last command's alone.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.

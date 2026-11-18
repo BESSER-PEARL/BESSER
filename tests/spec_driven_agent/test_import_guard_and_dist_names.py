@@ -90,3 +90,38 @@ def test_a_distribution_named_exactly_after_a_shipped_module_still_excuses_it(tm
     _write(tmp_path, "worker/auth.py", "x = 1\n")
     _write(tmp_path, "backend/main.py", "from auth import x\n")
     assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+@pytest.mark.parametrize("handler", ["except Exception:\n        text = None\n", "except:\n        pass\n"])
+def test_a_broad_handler_around_an_import_inside_a_function_is_an_optional_import(tmp_path, handler):
+    """A deferred import under a catch-all is the app's optional fast path with a fallback after it:
+    it never runs at startup and the handler is the designed failure."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py",
+           "def read(raw):\n    text = None\n    try:\n        import vendor_parser\n"
+           "        text = vendor_parser.parse(raw)\n    " + handler
+           + "    return text or raw.decode()\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_an_unguarded_import_inside_a_function_is_still_reported(tmp_path):
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py", "def read(raw):\n    import vendor_parser\n    return vendor_parser.parse(raw)\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and problems[0].startswith("missing module:"), problems
+
+
+@pytest.mark.parametrize("handler", [
+    "except Exception as exc:\n        return JSONResponse({'detail': str(exc)}, status_code=500)\n",
+    "except Exception:\n        logger.exception('export failed')\n        raise\n",
+])
+def test_a_handler_that_returns_or_raises_does_not_excuse_a_forgotten_module(tmp_path, handler):
+    """Review of d5b411a20: an endpoint that answers 500 from its catch-all has no fallback,
+    so a module that was never written fails every call and must still be reported."""
+    _write(tmp_path, "backend/requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+    _write(tmp_path, "backend/routers/reports.py",
+           "def export_report(report_id: int):\n    try:\n        from report_builder import build_pdf\n"
+           "        return build_pdf(report_id)\n    " + handler)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and "report_builder" in problems[0], problems

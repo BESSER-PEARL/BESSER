@@ -111,7 +111,9 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     ROUTER_TEMPLATE_GENERATORS,
     _FRONTEND_ASK_RE,
 )
-from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
+from besser.spec_driven_agent.planning.agent_wiring import (
+    AGENT_DOMAIN_TASK, agent_data_requirement, gui_uses_agent,
+)
 from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
 from besser.spec_driven_agent.planning.generator_keywords import (
     default_generator,
@@ -3125,7 +3127,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         try:
             from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
-            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model,
+                                                              gui_model=self.gui_model)
             return matrix_issues(self._acceptance_matrix)
         except Exception as exc:
             logger.warning("Acceptance matrix computation failed", exc_info=True)
@@ -3836,6 +3839,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     continue
         return bool(_route_may_serve_home(_CodeFiles(files)))
 
+    def _app_agent(self):
+        """The agent model when it is part of the app: without a GUI, when a screen
+        uses it, or when the run targets the agent; else None."""
+        if self.agent_model is None or self.gui_model is None or self.primary_kind == "agent":
+            return self.agent_model
+        return self.agent_model if gui_uses_agent(self.gui_model) else None
+
     def _deterministic_gap_tasks(self) -> list[str]:
         """Checklist items the harness ADDS regardless of the planner.
 
@@ -3849,7 +3859,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._asks_for_frontend() and not self._has_frontend_files():
             # Cheat-proof: done is refused until the frontend exists.
             tasks.append(self._frontend_checklist_task())
-        if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
+        if not self._modify_mode and agent_data_requirement(self._app_agent(), self.domain_model):
             # The requirements judge checks it in Phase 3 (agent_data); a modify
             # run's app already has an agent, so only the judge applies there.
             tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
@@ -4145,7 +4155,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         model's data, and the per-entity checks of a non-web app (reported,
         never planned as obligations)."""
         requirements = self._requirements_for_validation()
-        derived = [item for item in [agent_data_requirement(self.agent_model, self.domain_model)] if item]
+        derived = [item for item in [agent_data_requirement(self._app_agent(), self.domain_model)] if item]
         if not self._generator_used:
             # A BESSER generator built the base (a BAF chatbot, Python classes):
             # per-entity screens are not what it delivers.

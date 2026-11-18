@@ -221,12 +221,14 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "say the session was restarted or the command ran in a one-off sandbox, earlier "
             "background processes are gone. A result's cwd field is the shell's directory "
             "when it is not the workspace root; ran_in, the result's first field, names it when an "
-            "earlier cd left the shell there. A result's note says when exit_code is only that of the "
+            "earlier cd left the shell there, and cd_hint gives the path from there when a cd failed "
+            "on a path that exists from the root. A result's note says when exit_code is only that of the "
             "last of several commands joined with ';' and an earlier one failed. Destructive or exfiltrating commands "
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
             "whose runtime is not installed returns success=false, missing_command=true: "
-            "treat its check as failed, not as passing. Several run_command calls in one turn run "
+            "treat its check as failed, not as passing. git is not installed and the workspace is "
+            "not a git repository. Several run_command calls in one turn run "
             "one after another in the order given."
         ),
         "input_schema": {

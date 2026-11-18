@@ -74,6 +74,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     stray_gutter_line,
     strip_read_display,
 )
+from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
@@ -464,6 +465,27 @@ def _joins_commands_unconditionally(command: str) -> bool:
     except ValueError:
         return False  # unbalanced quotes: the shell reports that itself
     return commands + bool(words) >= 2
+
+
+_CD_FAILED_RE = re.compile(r"\bcd: (.+?): No such file or directory")
+# The line's first cd: a later one runs wherever the earlier ones left the shell.
+_FIRST_CD_RE = re.compile(r"(?:^|[;&|(\n])\s*cd\s+(['\"]?)([^\s;&|)'\"]+)\1")
+
+
+def _cd_hint(stderr: str, command: str, workspace: str, started_in: str | None) -> str | None:
+    """One line for the line's first ``cd P``, relative, that failed off the workspace
+    root while ``P`` exists from the root, inside the workspace."""
+    first_cd = _FIRST_CD_RE.search(command)
+    if started_in in (None, ".") or first_cd is None:
+        return None
+    target = first_cd.group(2)
+    from_root = _normalize_path_for_comparison(os.path.realpath(os.path.join(workspace, target)))
+    if (target not in _CD_FAILED_RE.findall(stderr) or os.path.isabs(target) or target.startswith("~")
+            or os.path.commonpath([from_root, workspace]) != workspace or not os.path.isdir(from_root)):
+        return None
+    from_here = os.path.relpath(from_root, os.path.join(workspace, started_in)).replace(os.sep, "/")
+    return (f"The shell was in {started_in}, not the workspace root, and {target} is a path from the root: "
+            f"use cd {from_here} from here, or working_dir='{target}'.")
 
 
 def ends_shell_session(method):
@@ -2391,9 +2413,13 @@ class ToolExecutor:
             return {"error": "No GUI model available. The WebApp generator requires a GUI model."}
         from besser.generators.web_app import WebAppGenerator
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
+        # An agent no screen uses stays out of the web app, as on /generate-output.
+        ships_agent = gui_uses_agent(self.gui_model)
         WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
-            agent_model=self.agent_model, agent_config=self.agent_config, app_name=self.app_name,
+            agent_model=self.agent_model if ships_agent else None,
+            agent_config=self.agent_config if ships_agent else None,
+            app_name=self.app_name,
         ).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
@@ -3715,6 +3741,7 @@ class ToolExecutor:
         logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
         # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
         carried_over = None if working_dir else self._shell.relative_cwd()
+        started_in = carried_over or os.path.relpath(start_dir, self.workspace).replace(os.sep, "/")
         located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
                    if carried_over not in (None, ".") else {})
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
@@ -3792,6 +3819,9 @@ class ToolExecutor:
                 "new line and stderr reports a failure, so an earlier command did not do its job: "
                 "read stderr, and join commands with && to stop at the first failure."
             )
+        cd_hint = _cd_hint(raw_stderr, command, self.workspace, started_in)
+        if cd_hint:
+            payload["cd_hint"] = cd_hint
         # A missing binary is a failure like any other: the model must not
         # read a check whose tool is absent as a passed one.
         if result.returncode != 0 and _looks_like_command_not_found(stderr):

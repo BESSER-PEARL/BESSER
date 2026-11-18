@@ -633,7 +633,8 @@ class ModifyRunMixin:
                 build_acceptance_matrix,
                 matrix_issues,
             )
-            matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            matrix = build_acceptance_matrix(self.output_dir, self.domain_model,
+                                             gui_model=self.gui_model)
             return matrix_issues(matrix)
         except Exception:
             logger.debug("Seed acceptance computation failed", exc_info=True)

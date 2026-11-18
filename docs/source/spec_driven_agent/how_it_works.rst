@@ -420,7 +420,8 @@ next, so it stays in the agent's prompt, the trace and the recipe's
 ``validation_issues``. A finding with no sentence of its own reads as a generic
 one, never as the agent's text. A request that states no business rule adds a *Not
 checked* line saying so, and an implemented requirement that was only found in
-the source is counted as found in the code, never as confirmed. No check opens
+the source is counted as found in the code, never as confirmed; a confirmed one
+names the call that exercised it. No check opens
 the screens, so only a call to the running app's API confirms anything. It leaves out the request itself, because the file
 also goes into GitHub pushes, and shows model-written values as code, never as
 links or markup.

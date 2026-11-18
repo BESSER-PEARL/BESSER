@@ -71,9 +71,18 @@ def test_note_survives_a_long_citation():
     assert build_verification_report({"requirements": [verdict]}).foundInCode[0].how.endswith(_NOTE)
 
 
-def test_verified_or_old_verdicts_render_as_before():
-    old = build_verification_report({"requirements": [_IMPLEMENTED]}).verified[0].how
-    verified = {**_IMPLEMENTED, "verification": "verified", "verification_note": "Cited in the source; ..."}
+def test_a_verified_requirement_names_the_call_that_exercised_it():
+    note = "Cited in the source; API: a passing workflow called POST /order/, the cited route"
+    verified = {**_IMPLEMENTED, "verification": "verified", "verification_note": note}
 
-    assert build_verification_report({"requirements": [verified]}).verified[0].how == old
-    assert "Found in the source only" not in old
+    how = build_verification_report({"requirements": [verified]}).verified[0].how
+
+    assert how.startswith("implementation cited and re-checked against the delivered source: ")
+    assert how.endswith(note)
+
+
+def test_old_verdicts_render_as_before():
+    old = build_verification_report({"requirements": [_IMPLEMENTED]}).verified[0].how
+
+    assert old.startswith("implementation cited and re-checked against the delivered source: ")
+    assert "Cited in the source" not in old and "Found in the source" not in old

@@ -309,6 +309,48 @@ def test_phase2_skipped_when_gap_tasks_empty_and_generator_ran(tmp_path, monkeyp
     assert any(a[1] == "__customize_skipped__" for a in progress)
 
 
+def test_skipped_phase2_is_reported_as_finished_not_as_a_turn_limit(tmp_path, monkeypatch):
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
+
+    orch = _make_orchestrator(tmp_path, _ExplodingClient())
+    orch._generator_used = "generate_fastapi_backend"
+    monkeypatch.setattr(
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
+        lambda **kwargs: [],
+    )
+
+    orch._run_phase2("build a library api", extra_issues=[])
+
+    assert orch._phase2_stop_reason == "completed"
+    facts = run_record.RunFacts()
+    facts.stop(stop_reason=orch._phase2_stop_reason, cancelled=False, cap_breach=False, timed_out=False,
+               incomplete=False, blocker_count=0, cost=0.0)
+    assert (facts.stopped_by, facts.stop_message, facts.outcome) == (run_record.FINISHED, None, "completed")
+    assert " outcome=completed " in run_record.end_line("r1", facts)
+
+
+class _ToolUseClient(_MockClient):
+    """Asks for a tool every turn and never ends its turn."""
+
+    def chat(self, system, messages, tools):
+        self.chat_calls += 1
+        return {"stop_reason": "tool_use", "content": [_MockBlock("text", text="Working")]}
+
+
+def test_phase2_that_uses_every_turn_reports_the_turn_limit(tmp_path, monkeypatch):
+    orch = _make_orchestrator(tmp_path, _ToolUseClient())
+    orch.max_turns = 1
+    monkeypatch.setattr(
+        "besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm",
+        lambda **kwargs: None,
+    )
+
+    orch._run_phase2("build a library api", extra_issues=[])
+
+    assert orch.total_turns == 1
+    assert (orch._phase2_stop_reason, orch._phase2_exited_cleanly) == ("max_turns", False)
+
+
 def test_phase2_not_skipped_when_analysis_failed(tmp_path, monkeypatch):
     """None (failure) must keep today's behavior: loop without checklist."""
     client = _MockClient()

@@ -855,11 +855,15 @@ class DurableRunManager:
                     incomplete = payload.get("incomplete")
                     if incomplete is None:
                         incomplete = int(payload.get("blockerCount") or 0) > 0
-                    terminal_status = (
-                        "abandoned"
-                        if abandoned and incomplete
-                        else "partial" if incomplete else "succeeded"
-                    )
+                    # A run cancelled after it wrote files ends in ``done``, flagged ``cancelled``.
+                    if payload.get("cancelled"):
+                        terminal_status = "abandoned" if abandoned else "cancelled"
+                    else:
+                        terminal_status = (
+                            "abandoned"
+                            if abandoned and incomplete
+                            else "partial" if incomplete else "succeeded"
+                        )
                     terminal_event = "done"
                     if abandoned:
                         policy = self._abandonment_policies.get(run_id)

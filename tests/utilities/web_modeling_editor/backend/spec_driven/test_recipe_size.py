@@ -122,7 +122,8 @@ def test_a_busy_run_keeps_its_record_and_reports_what_its_checks_found(tmp_path)
     assert not any("could not be read" in (item.why or "") for item in verification.notVerified)
     assert verification.counts.notVerified == 3
     assert recipe["verification"] == verification.model_dump(mode="json")
-    assert "3 checked and working, 3 not checked, 0 checked and missing in the code" in _summary(entry)
+    assert ("3 confirmed by running the app's API, 0 found in the code but not run, 3 not checked, "
+            "0 checked and missing in the code") in _summary(entry)
 
 
 def test_a_record_too_large_for_the_writer_budget_alone_still_stays_under_the_reader_limit(tmp_path):

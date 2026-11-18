@@ -171,6 +171,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
+from besser.utilities.provenance import get_besser_version
 from besser.utilities.secret_redaction import redact_trace_text
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
@@ -197,6 +198,7 @@ from besser.spec_driven_agent.validation.python_source import (
     _CREATE_FIELD_RE as _CREATE_FIELD_RE,
     _ROUTER_READ_RE as _ROUTER_READ_RE,
 )
+from besser.spec_driven_agent.state.agent_trace import harness_writes, record_generated_files
 from besser.spec_driven_agent.state.recipe_size import bounded_recipe
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
@@ -221,6 +223,7 @@ logger = logging.getLogger(__name__)
 
 
 from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
+    EXCLUDED_OUTPUT_NAMES,
     WORKSPACE_SKIP_DIRS,
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
@@ -641,11 +644,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # possible resume. Kept separate from ``self._validation_issues``
         # because those are about Phase 3 quality, not run completion.
         self._phase2_exited_cleanly: bool = False
-        # Why Phase 2 stopped. "completed" only when the LLM signalled
-        # end_turn; otherwise one of: "api_error", "cost_cap", "timeout",
-        # "cancelled", "max_turns". The runner reads this to decide whether
-        # to warn the user that the downloaded output may be incomplete.
-        self._phase2_stop_reason: str = "max_turns"
+        # Why Phase 2 stopped: "completed" when the LLM signalled end_turn or
+        # the scaffold already covered the request; otherwise one of
+        # "api_error", "cost_cap", "timeout", "cancelled", "max_turns" (set
+        # only when the loop used every turn). Empty until Phase 2 ends. The
+        # runner reads this to decide whether to warn the user that the
+        # downloaded output may be incomplete.
+        self._phase2_stop_reason: str = ""
         # Which branch produced that reason, when the reason alone is
         # ambiguous. "validation_required" is set both by the end_turn blocker
         # gate and by the bounded-inspection handoff, two exits of very
@@ -1867,6 +1872,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if not os.path.exists(path):
                 with open_plain_write(path, "w", root=self.output_dir, encoding="utf-8") as fh:
                     fh.write(self._GITIGNORE)
+                record_generated_files(self.output_dir, [".gitignore"], "gitignore", get_besser_version())
         except OSError:
             logger.debug("could not write .gitignore", exc_info=True)
 
@@ -1977,6 +1983,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         self._generator_used,
                     )
                     self._phase2_exited_cleanly = True
+                    self._phase2_stop_reason = "completed"
+                    self._phase2_stop_detail = "scaffold already covers the request"
                     if self.on_progress:
                         self.on_progress(
                             1, "__customize_skipped__",
@@ -2320,6 +2328,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
+        else:
+            self._phase2_stop_reason = "max_turns"
 
     # Above this the request is not repeated as the first user message. The
     # system prompt already carries it whole ("## User request"), and a second
@@ -3318,6 +3328,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 )
         return issues
 
+    def _repair_build_configuration(self) -> None:
+        """Write the frontend build configuration and run instructions; their lines are the harness's."""
+        project_name = (self._source_project_export or {}).get("name") or ""
+        with harness_writes(self.output_dir, "frontend_scaffold_repair", EXCLUDED_OUTPUT_NAMES):
+            repairs = ensure_frontend_scaffold(self.output_dir, app_name=project_name)
+        for repair in repairs:
+            logger.info("Auto-fixed: %s", repair)
+
     def _collect_validation_issues(self) -> list[ValidationIssue]:
         """Collect all validation issues from the output directory.
 
@@ -3337,9 +3355,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # nor pays to repair a defect we can settle for free - and, unlike
         # the packaging-time hook, it puts back a config a Phase 3 edit
         # deleted. Idempotent; it never overwrites what a project already has.
-        project_name = (self._source_project_export or {}).get("name") or ""
-        for repair in ensure_frontend_scaffold(self.output_dir, app_name=project_name):
-            logger.info("Auto-fixed: %s", repair)
+        self._repair_build_configuration()
         build_contexts = compose_build_contexts(self.output_dir)
         self._restore_scaffold_requirements(build_contexts)
         raw_issues: list[str] = [

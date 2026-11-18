@@ -192,9 +192,13 @@ lists each text file of the delivered tree with line ranges and who wrote them:
    * - ``unknown`` (generator)
      - Unchanged from a deterministic BESSER generator's output. ``related``
        names the generator and BESSER version
-       (``urn:besser:generator:django@<version>``). Deterministic packaging
-       fixes (the frontend build configuration, secret redaction) are
-       attributed the same way.
+       (``urn:besser:generator:django@<version>``). Files and lines the
+       harness writes itself (the ``.gitignore``, the frontend build
+       configuration, Dockerfiles, ``.dockerignore`` files and README of the
+       scaffold repair, secret redaction) are attributed the same way, under
+       the name of the step that wrote them, and so is a package manager's lock
+       file (``package-lock.json``, ``yarn.lock``, ``poetry.lock``, ...)
+       whoever ran the install (``package_manager``).
    * - ``human``
      - On a run that continues from a previous run or a GitHub import: lines a
        person changed in between.
@@ -210,7 +214,8 @@ and for this run, and per file.
 Attribution compares files, it does not replay edits: whenever a generator
 writes a file, its lines are recorded (as short hashes) in
 ``.besser_attribution.json``; at packaging time every line that differs from
-that record goes to the LLM. A line keeps its contributor however often the
+that record goes to the LLM, except the lines a harness step or a package
+manager wrote. A line keeps its contributor however often the
 file was edited, as long as the line itself is unchanged. The record holds
 hashes only, never content, and goes into the GitHub push and the download ZIP
 beside the recipe, so a continue-from-GitHub run can tell a person's edits from
@@ -287,14 +292,17 @@ keys, always in this order:
   (``finished``, ``time limit``, ``cost limit``, ``turn limit``, ``provider
   error``, ``internal error``, ``cancelled``, ``repeated edits did not land`` or
   ``handed off to validation``), ``stop_message`` (the run card's sentence for
-  that ending, without its variable parts) and ``outcome``.
+  that ending, without its variable parts) and ``outcome``. ``turn limit`` means
+  the customization loop used every turn; a run whose customization was skipped
+  because the scaffold already covered the request ended ``finished``.
 - ``warnings``: the warnings shown to the user during the run (at most eight),
   each as a fixed sentence. A warning whose text can quote an error is left out.
 - ``duration_seconds``, ``phase_seconds`` (``select``, ``generate``, ``plan``,
   ``customise``, ``validate``; ``validate`` starts with Phase 3 and includes its
   fix loop) and ``estimated_cost_usd``.
 - ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
-  ``blockers``.
+  ``blockers`` (the unresolved findings the run left, also when a limit or a
+  cancel cut it short; the end log line carries the same count).
 - ``lines``: the lines of the delivered files by author, as in the run's Agent
   Trace record: ``total``, ``generator``, ``ai``, ``human``, ``unknown``, and
   ``ai_this_run`` (the part of ``ai`` this run wrote). ``null`` when the run has

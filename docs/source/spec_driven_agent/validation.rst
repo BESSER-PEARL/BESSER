@@ -455,7 +455,11 @@ Findings are classified into three severities:
        file's code, too short for a line of its own (``<Table id=`` for
        ``<Table id="orders" ... />``, ``title=``), is found but proves nothing, like a part
        of an abridged quote: another cited line must prove the requirement, and the
-       fragment does not count as code that exists nowhere. A line of punctuation alone
+       fragment does not count as code that exists nowhere. A fragment of at least eight
+       characters with a word in it has its line(s) named in the note ("a cited part is part
+       of ``x.tsx`` line 6; cite that whole line"), and a verdict whose citations are only
+       such fragments counts as misquoted code; a shorter one (``title=``, ``({``) names no
+       line. A line of punctuation alone
        (``{``, ``/>``, even followed by a comment) identifies no code and proves nothing.
        A quote that starts or ends inside a string or comment
        is not code. An explanation after a closed statement or element

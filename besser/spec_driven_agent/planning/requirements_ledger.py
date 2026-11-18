@@ -2091,9 +2091,16 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                 if structured and spans:
                     reason = f"citation {index} ({path.strip()}): {reason}"
         if reason:
+            homes = _fragment_homes([(source, part) for _, _, source, part, spans in located if not spans], rel_of)
+            for rel, lines in homes:
+                reason += (f"; a cited part is part of {rel} line{'s' if len(lines) > 1 else ''} "
+                           + ", ".join(map(str, lines[:3])) + (", ..." if len(lines) > 3 else "") + "; cite that whole line")
+            if homes and not item.get(EVIDENCE_UNLOCATED) and not any(spans for *_, spans in located):
+                # Only fragments of real code: the judge misquoted lines that exist.
+                item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
-            pointed = _fragment_lines([(source, part) for _, _, source, part, spans in located if not spans], rel_of)
+            pointed = sorted(f"{rel}:{lines[0]}" for rel, lines in homes if len(lines) == 1)
             if pointed:
                 item[CITED_FRAGMENT_LINES] = pointed
         else:
@@ -2115,19 +2122,21 @@ VERDICT_FINGERPRINT_KEYS = ("cited_file_hashes", "dependency_file_hashes")
 EVIDENCE_UNLOCATED = "evidence_unlocated"
 CITATION_MALFORMED = "near_match"
 CITATION_ABSENT = "absent"
-# Set on an unverified verdict that cites a fragment of code found in exactly one line:
+# Set on an unverified verdict that cites a fragment of code (``_fragment_homes``) found in exactly one line:
 # ["path:line", ...], the lines the fix agent may cite whole in its place.
 CITED_FRAGMENT_LINES = "fragment_lines"
 
 
-def _fragment_lines(fragments: list[tuple[_Source, str]], rel_of: dict[str, str]) -> list[str]:
-    """``path:line`` of each fragment that is code of exactly one line of its file."""
-    pointed = set()
+def _fragment_homes(fragments: list[tuple[_Source, str]], rel_of: dict[str, str]) -> list[tuple[str, list[int]]]:
+    """(path, lines) of each fragment that identifies code (``_MIN_PART_QUOTE`` characters,
+    a word among them) and the 1-based lines it is code of; ``({`` or ``id=`` identifies none."""
+    homes = {}
     for source, part in fragments:
-        lines = [i + 1 for i in range(len(source.lines)) if _in_code(part, source, i)]
-        if len(lines) == 1:
-            pointed.add(f"{rel_of[source.path]}:{lines[0]}")
-    return sorted(pointed)
+        if len(part) >= _MIN_PART_QUOTE and re.search(r"\w", part):
+            lines = [i + 1 for i in range(len(source.lines)) if _in_code(part, source, i)]
+            if lines:
+                homes.setdefault((rel_of[source.path], tuple(lines)), None)
+    return [(rel, list(lines)) for rel, lines in homes]
 
 
 def cites_fragment_lines(verdict: dict, evidence: list[dict], output_dir: str) -> str:

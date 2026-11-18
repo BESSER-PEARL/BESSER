@@ -60,7 +60,7 @@ def test_a_fragment_alone_proves_nothing_and_points_at_its_only_line(tmp_path):
     verdict = _verify(tmp_path, "<OrderTable id=")
     assert verdict["status"] == "unverified"
     assert "no cited part is a whole source line" in verdict["note"]
-    assert ledger.EVIDENCE_UNLOCATED not in verdict
+    assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_MALFORMED  # real code, misquoted
     assert verdict[ledger.CITED_FRAGMENT_LINES] == [f"{PAGE}:6"]
 
 
@@ -88,3 +88,25 @@ def test_a_line_of_punctuation_alone_proves_nothing(tmp_path):
         assert verdict["status"] == "unverified", lines
         assert "identifies no code" in verdict["note"], lines
     assert _verify(tmp_path, "/>", TABLE_LINE)["status"] == "implemented"
+
+
+def test_a_fragment_too_short_to_identify_code_records_no_line(tmp_path):
+    """``({`` or ``id=`` is in one line of a small file by chance; it points at nothing."""
+    for fragment in ("({", "id=", "=>"):
+        verdict = _verify(tmp_path, fragment)
+        assert ledger.CITED_FRAGMENT_LINES not in verdict, fragment
+        assert "cite that whole line" not in verdict["note"], fragment
+
+
+def test_the_note_names_the_line_a_fragment_is_part_of(tmp_path):
+    """The re-judge reads the note: it must say which whole line to cite."""
+    verdict = _verify(tmp_path, "<OrderTable id=")
+    assert f"part of {PAGE} line 6; cite that whole line" in verdict["note"]
+
+
+def test_a_fragment_in_several_lines_is_misquoted_code_and_names_them(tmp_path):
+    verdict = _verify(tmp_path, "onClick={() =>", text="Each row has an Edit button", kind="action")
+    assert verdict["status"] == "unverified"
+    assert f"part of {PAGE} lines 11, 15; cite that whole line" in verdict["note"]
+    assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_MALFORMED
+    assert ledger.CITED_FRAGMENT_LINES not in verdict

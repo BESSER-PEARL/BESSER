@@ -8,6 +8,9 @@ reaches the data (models, an API, a helper module).
 """
 from __future__ import annotations
 
+from besser.BUML.metamodel.gui import ViewContainer
+from besser.BUML.metamodel.gui.dashboard import AgentComponent
+
 AGENT_DATA_KIND = "agent_data"
 
 AGENT_DOMAIN_TASK = (
@@ -23,6 +26,20 @@ AGENT_DOMAIN_TASK = (
 _MAX_INTENTS = 12
 _EXAMPLES_PER_INTENT = 2
 _MAX_EXAMPLE_CHARS = 60
+
+
+def gui_uses_agent(gui_model) -> bool:
+    """Whether a screen holds an agent component: the editor's rule for shipping a
+    project's agent with its web app (has_agent_components on /generate-output)."""
+    pending = [element for module in gui_model.modules or () for screen in module.screens or ()
+               for element in screen.view_elements or ()]
+    while pending:
+        element = pending.pop()
+        if isinstance(element, AgentComponent):
+            return True
+        if isinstance(element, ViewContainer):
+            pending.extend(element.view_elements or ())
+    return False
 
 
 def agent_data_requirement(agent_model, domain_model) -> dict | None:

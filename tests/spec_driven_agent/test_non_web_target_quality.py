@@ -257,6 +257,65 @@ def test_no_agent_task_or_requirement_without_an_agent_model(tmp_path):
     assert not [r for r in orch._requirements_to_judge() if r["kind"] == AGENT_DATA_KIND]
 
 
+# Live (quiz app, 2026-11-18): a class + GUI project also held an agent diagram
+# that no screen used. The web app shipped it under web_app/agents/ and the
+# checklist asked to connect it to the data. The editor's own web app generation
+# includes an agent only when a screen uses it. The agent stays in the run, so a
+# request that targets it (a chatbot, generate_baf) still has it.
+
+def _gui(with_agent: bool):
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+
+    elements = {Text(name="intro", content="Quiz", description="")}
+    if with_agent:
+        elements.add(AgentComponent(name="chat", agent_name="TaskAssistant"))
+    screen = Screen(name="Home", description="", view_elements=elements, is_main_page=True)
+    return GUIModel(name="Quiz", package="quiz", versionCode="1", versionName="1",
+                    modules={Module(name="Main", screens={screen})}, description="")
+
+
+def _web_model():
+    # _model() has a class named Base, which the SQLAlchemy generator refuses.
+    task = Class(name="Task")
+    task.attributes = {Property(name="id", type=PrimitiveDataType("int"), is_id=True),
+                       Property(name="title", type=PrimitiveDataType("str"))}
+    return DomainModel(name="Quiz", types={task})
+
+
+@pytest.mark.parametrize("screen_uses_agent", [False, True])
+def test_the_web_app_ships_the_agent_only_when_a_screen_uses_it(tmp_path, screen_uses_agent):
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+
+    executor = ToolExecutor(workspace=str(tmp_path), domain_model=_web_model(),
+                            gui_model=_gui(screen_uses_agent), agent_model=_agent())
+    assert executor._gen_web_app({})["status"] == "ok"
+    assert (tmp_path / "web_app" / "agents").is_dir() is screen_uses_agent
+
+
+def _gui_agent_orch(tmp_path, screen_uses_agent, **kwargs):
+    return LLMOrchestrator(llm_client=_OfflineClient(), domain_model=_model(), agent_model=_agent(),
+                           gui_model=_gui(screen_uses_agent), output_dir=str(tmp_path), **kwargs)
+
+
+def test_an_agent_no_screen_uses_gets_no_task_and_no_judge_check(tmp_path):
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=False)
+    assert not _agent_task(orch)
+    assert not _agent_requirement(orch)
+
+
+def test_an_agent_a_screen_uses_gets_the_task(tmp_path):
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=True)
+    assert _agent_task(orch)
+    assert _agent_requirement(orch)
+
+
+def test_a_run_that_targets_the_agent_gets_the_task_next_to_any_gui(tmp_path):
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=False, primary_kind="agent")
+    assert _agent_task(orch)
+    assert _agent_requirement(orch)
+
+
 def test_an_agent_that_never_uses_the_data_is_a_blocker():
     from besser.spec_driven_agent.validation.issues import _classify_issue
     verdict = {"id": 4, "text": "The TaskAssistant agent handles ...", "kind": AGENT_DATA_KIND,

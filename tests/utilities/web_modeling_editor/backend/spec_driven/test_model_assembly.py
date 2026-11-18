@@ -349,14 +349,16 @@ class TestAssembleModels:
             assert getattr(result.quantum_circuit, "num_qubits", 0) == 0
 
 
+
 class TestAgentNextToAGui:
-    """An AgentDiagram joins a GUI project only when a screen uses an agent, as on /generate-output."""
+    """Assembly keeps an AgentDiagram next to a GUI that uses no agent: a run that targets the
+    agent (a chatbot / BAF request) needs it. The web app leaves such an agent out instead."""
 
     @staticmethod
-    def _project(monkeypatch, gui_uses_agent: bool):
-        agent = object()
+    def _assemble(monkeypatch, **kwargs):
+        agent = type("Agent", (), {"name": "Helper"})()
         monkeypatch.setattr(model_assembly_module, "process_gui_diagram", lambda *args: object())
-        monkeypatch.setattr(model_assembly_module, "has_agent_components", lambda gui: gui_uses_agent)
+        monkeypatch.setattr(model_assembly_module, "has_agent_components", lambda gui: False)
         monkeypatch.setattr(model_assembly_module, "process_agent_diagram", lambda payload: agent)
         project = _project_with({
             "ClassDiagram": [{"id": "cd1", "title": "Library", "model": CLASS_DIAGRAM_MODEL}],
@@ -365,23 +367,20 @@ class TestAgentNextToAGui:
             "AgentDiagram": [{"id": "ad1", "title": "Helper",
                               "model": {"type": "AgentDiagram", "elements": {}, "relationships": {}}}],
         })
-        return assemble_models_from_project(project), agent
+        return assemble_models_from_project(project, **kwargs), agent
 
-    def test_an_agent_no_screen_uses_is_left_out(self, monkeypatch):
-        result, _ = self._project(monkeypatch, gui_uses_agent=False)
+    def test_an_agent_no_screen_uses_is_still_assembled(self, monkeypatch):
+        result, agent = self._assemble(monkeypatch)
         assert result.gui_model is not None
-        assert result.agent_model is None
-
-    def test_an_agent_a_screen_uses_is_kept(self, monkeypatch):
-        result, agent = self._project(monkeypatch, gui_uses_agent=True)
         assert result.agent_model is agent
 
-    def test_an_agent_next_to_a_class_diagram_without_a_gui_is_kept(self, monkeypatch):
-        agent = object()
-        monkeypatch.setattr(model_assembly_module, "process_agent_diagram", lambda payload: agent)
-        project = _project_with({
-            "ClassDiagram": [{"id": "cd1", "title": "Library", "model": CLASS_DIAGRAM_MODEL}],
-            "AgentDiagram": [{"id": "ad1", "title": "Helper",
-                              "model": {"type": "AgentDiagram", "elements": {}, "relationships": {}}}],
-        })
-        assert assemble_models_from_project(project).agent_model is agent
+    def test_a_run_that_targets_the_agent_keeps_the_agent_and_the_baf_generator(self, monkeypatch):
+        # Review of 140218981: dropping the agent here turned this run into a class run
+        # and took generate_baf off the tool list.
+        from besser.spec_driven_agent.agent.tools import get_available_generator_names
+
+        result, agent = self._assemble(monkeypatch, primary_kind_override="agent")
+        assert result.primary_kind == "agent"
+        assert result.agent_model is agent
+        assert "generate_baf" in get_available_generator_names(
+            has_domain_model=True, has_gui_model=True, has_agent_model=True)

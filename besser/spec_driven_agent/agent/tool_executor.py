@@ -73,6 +73,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     stray_gutter_line,
     strip_read_display,
 )
+from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
@@ -2328,9 +2329,12 @@ class ToolExecutor:
             return {"error": "No GUI model available. The WebApp generator requires a GUI model."}
         from besser.generators.web_app import WebAppGenerator
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
+        # An agent no screen uses stays out of the web app, as on /generate-output.
+        ships_agent = gui_uses_agent(self.gui_model)
         WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
-            agent_model=self.agent_model, agent_config=self.agent_config,
+            agent_model=self.agent_model if ships_agent else None,
+            agent_config=self.agent_config if ships_agent else None,
         ).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 

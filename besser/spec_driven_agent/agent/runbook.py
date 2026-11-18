@@ -53,6 +53,10 @@ RUNTIME_FILES_FILENAME = ".besser_probe.runtime_files.json"
 # (about 300 KB); a larger record is not the probe's and is not parsed.
 _MAX_RUNTIME_RECORD_BYTES = 1_000_000
 _MAX_RUNTIME_RECORD_ENTRIES = 2000
+# A run's temporary workspace (removed after the run) starts with this; a
+# folder the caller chose does not, and a path to it stays valid.
+_RUN_DIR_PREFIX = "besser_llm_"
+_MAX_SCRATCH_SCAN_BYTES = 1_000_000
 
 # Environment kill switch (BESSER_LLM_SHELL_RUNBOOK). Default on whenever
 # shell tools are enabled; ``0`` gives the shell without the procedure (an
@@ -211,6 +215,41 @@ def remove_app_runtime_files(output_dir: str, keep: Iterable[str]) -> RuntimeFil
     except OSError:
         logger.debug("runbook: could not remove the runtime-file record", exc_info=True)
     return RuntimeFileRemoval(tuple(removed), tuple(not_removed), note)
+
+
+def remove_run_folder_bound_files(output_dir: str, written: Iterable[str]) -> tuple[str, ...]:
+    """Delete the files in ``written`` that name the run's temporary workspace path.
+
+    Such a file (a check script that ``cd``s into the run folder) works only
+    in this run's sandbox and would expose the server's layout. ``written``
+    is the workspace-relative paths the agent wrote this run. Never raises.
+    """
+    root = os.path.realpath(output_dir)
+    if not os.path.basename(root).startswith(_RUN_DIR_PREFIX):
+        return ()
+    needles = {root, os.path.abspath(output_dir)}
+    needles |= {needle.replace("\\", "/") for needle in needles}
+    removed: list[str] = []
+    for rel in sorted(set(written)):
+        if not is_plain_relpath(rel):
+            continue
+        *folders, name = rel.split("/")
+        if (name.startswith(".besser_") or is_excluded_output_file(name)
+                or _RECIPE_EXCLUDED_DIRS.intersection(folders)):
+            continue
+        path = os.path.join(root, *folders, name)
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SCRATCH_SCAN_BYTES:
+                continue
+            with open_plain(path, "r", root=root, encoding="utf-8", errors="ignore") as handle:
+                text = handle.read()
+            if any(needle in text for needle in needles):
+                remove_plain(path, root=root)
+                removed.append(rel)
+        except OSError as exc:
+            logger.warning("runbook: could not check or remove %s: %s", rel, exc.strerror or type(exc).__name__)
+    return tuple(removed)
 
 
 def runbook_section(output_dir: str) -> str:

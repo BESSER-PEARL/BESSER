@@ -77,3 +77,9 @@ def test_the_run_summary_says_what_could_not_be_removed():
 def test_the_run_summary_is_silent_when_the_app_wrote_nothing():
     lines = run_summary_markdown({"runtime_files_removed_count": 0, "runtime_files_note": ""}, VerificationReport())
     assert not [line for line in lines if "Left out" in line]
+
+
+def test_the_run_summary_names_files_left_out_for_naming_the_run_folder():
+    lines = run_summary_markdown({"scratch_files_removed": ["check_orders.sh"]}, VerificationReport())
+    assert ("- Left out: file(s) the agent wrote that named the run's temporary folder: "
+            "`check_orders.sh`") in lines

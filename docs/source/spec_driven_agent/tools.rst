@@ -484,6 +484,15 @@ upload is delivered with the app, when the file is:
 - in a dot-folder or outside the backend folder, an existing file the app
   rewrote, or a recorded file changed afterwards.
 
+The run also deletes, at the same point, every file a write tool of this run
+wrote (not a generator's, nor one there when the run started) whose content
+names the run's temporary workspace folder (``besser_llm_...``), such as a
+check script that ``cd``s into it: that folder is removed after the run, so the
+file works nowhere else. The recipe lists them under ``scratch_files_removed``
+and ``BESSER_GENERATION.md`` names them. A workspace folder the caller chose (a
+:doc:`Python library run <usage>` with its own ``output_dir``) is left alone,
+since a path to it stays valid.
+
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on
 a developer laptop or a single-tenant on-prem box, and not on a shared one.

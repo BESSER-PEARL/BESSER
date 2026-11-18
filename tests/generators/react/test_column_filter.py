@@ -5,10 +5,7 @@ literal exactly, under a "(string)" label, although the column carries its
 literals as ``options``.
 """
 import json
-import shutil
-import subprocess
-
-import pytest
+import re
 
 from besser.BUML.metamodel.gui import DataBinding, GUIModel, Module, Screen
 from besser.BUML.metamodel.gui.dashboard import FieldColumn, Table
@@ -30,68 +27,70 @@ def _generate(tmp_path):
     screen = Screen(name="Orders", description="Orders", view_elements={table}, is_main_page=True)
     gui_model = GUIModel(name="OrdersApp", package="", versionCode="1", versionName="1.0",
                          modules={Module(name="M", screens={screen})}, description="Orders")
-    ReactGenerator(model=DomainModel(name="Orders", types={order, status}), gui_model=gui_model,
-                   output_dir=str(tmp_path)).generate()
-    return tmp_path
+    generator = ReactGenerator(model=DomainModel(name="Orders", types={order, status}), gui_model=gui_model,
+                               output_dir=str(tmp_path / "app"))
+    generator.generate()
+    return generator, tmp_path / "app"
 
 
-def test_an_enumeration_column_is_filtered_by_choosing_a_literal(tmp_path):
-    out = _generate(tmp_path)
-    page = (out / "src/pages/Orders.tsx").read_text(encoding="utf-8")
-    table = (out / "src/components/table/TableComponent.tsx").read_text(encoding="utf-8")
+def _filter_state(run_ts, column_filter, cases):
+    """The filter's data type, default operator, operators and parsed value for
+    each (column, current filter value)."""
+    begin = column_filter.index("  // Determine column data type")
+    block = column_filter[begin:column_filter.index("  const operators = getOperators();", begin)]
+    return run_ts(
+        "type FilterOperator = string;\n"
+        "const useState = <T>(value: T): [T, (next: T) => void] => [value, () => {}];\n"
+        "const useEffect = (..._args: unknown[]) => {};\n"
+        "function state(column: any, currentValue: string) {\n" + block
+        + "  return { dataType, defaultOperator, operators: getOperators().map((o) => o.value),"
+        " parsed: parseFilterValue(currentValue) };\n}\n"
+        f"const cases = {json.dumps(cases)};\n"
+        "console.log(JSON.stringify(cases.map(([column, value]: [any, string]) => state(column, value))));\n")
+
+
+def test_the_table_column_carries_the_literals(tmp_path):
+    generator, _ = _generate(tmp_path)
+    payload = json.loads(generator._build_generation_context()["components_json"])
+    table = next(node for page in payload["pages"] for node in page["components"] if node.get("chart"))
+
+    status = next(column for column in table["chart"]["columns"] if column["field"] == "status")
+    assert (status["type"], status["options"]) == ("enum", ["OPEN", "SHIPPED", "DELIVERED"])
+
+
+def test_an_enumeration_column_is_filtered_by_choosing_a_literal(tmp_path, run_ts):
+    _, out = _generate(tmp_path)
     column_filter = (out / "src/components/table/ColumnFilter.tsx").read_text(encoding="utf-8")
+    enum = {"field": "status", "label": "Status", "type": "enum", "options": ["OPEN", "SHIPPED"]}
+    number = {"field": "total", "label": "Total", "type": "float"}
 
-    # The column reaches the filter with its literals.
-    assert '"type": "enum"' in page and '"OPEN",' in page
-    assert "options: col.options," in table
-    assert "<ColumnFilter\n                          column={column}" in table
-    assert "options?: string[];" in column_filter.split("onFilterChange")[0]
-
-    # An enumeration with literals is its own data type, filtered by exact match.
-    assert 'if (type === "enum" && column.options && column.options.length > 0) {\n      return "enum";' \
-        in column_filter
-    enum_operators = column_filter.split('if (dataType === "enum") {\n      return [')[1].split("];")[0]
-    assert '{ value: "equals", label: "equals" }' in enum_operators
-    assert "contains" not in enum_operators
-    assert 'dataType === "enum" ? "equals"' in column_filter
+    opened_empty, reopened, as_number = _filter_state(run_ts, column_filter, [[enum, ""], [enum, "equals:OPEN"],
+                                                                              [number, ""]])
+    assert opened_empty["dataType"] == "enum"
+    assert opened_empty["operators"] == ["equals", "empty", "not_empty"]
+    assert opened_empty["parsed"] == {"operator": "equals", "value": ""}
+    assert reopened["parsed"] == {"operator": "equals", "value": "OPEN"}
+    # A filter opened without a value starts on the operator its select shows.
+    assert as_number["parsed"]["operator"] == as_number["operators"][0] == "eq"
 
     # Its value is chosen from a select of the literals, without a type label.
-    value_select = column_filter.split(') : dataType === "enum" ? (')[1].split(") : (")[0]
-    assert "<select" in value_select and "{column.options!.map((option) => (" in value_select
-    assert '{dataType !== "enum" && (' in column_filter
+    flat = re.sub(r"\s+", " ", column_filter)
+    value_select = flat.split(') : dataType === "enum" ? (')[1].split(") : (")[0]
+    assert "<select" in value_select and "column.options!.map((option) =>" in value_select
+    assert '{dataType !== "enum" && (' in flat
 
 
-def _node_strips_types():
-    node = shutil.which("node")
-    if not node:
-        return None
-    version = subprocess.run([node, "--version"], capture_output=True, text=True).stdout.strip().lstrip("v")
-    major, minor = (int(part) for part in version.split(".")[:2])
-    return node if (major, minor) >= (22, 6) else None
-
-
-NODE = _node_strips_types()
-
-
-@pytest.mark.skipif(NODE is None, reason="needs Node.js 22.6+ to run TypeScript")
-def test_reopening_an_empty_check_shows_that_check(tmp_path):
+def test_reopening_an_empty_check_shows_that_check(tmp_path, run_ts):
     """An "is empty" filter, reopened, showed "equals" with no value, and Apply
     then sent ``contains:empty``, which matched no row."""
-    source = (_generate(tmp_path) / "src/components/table/ColumnFilter.tsx").read_text(encoding="utf-8")
-    start = source.index("  const parseFilterValue = ")
-    parse = source[start:source.index("\n  };\n", start) + 5]
-    script = tmp_path / "parse.ts"
-    script.write_text(
-        'type FilterOperator = string;\nconst defaultOperator: FilterOperator = "equals";\n' + parse
-        + '\nconsole.log(JSON.stringify(["", "empty", "not_empty", "equals:OPEN", "legacy"].map(parseFilterValue)));\n',
-        encoding="utf-8")
-    result = subprocess.run([NODE, "--experimental-strip-types", "--no-warnings", str(script)],
-                            capture_output=True, text=True, check=True)
+    _, out = _generate(tmp_path)
+    column_filter = (out / "src/components/table/ColumnFilter.tsx").read_text(encoding="utf-8")
+    enum = {"field": "status", "label": "Status", "type": "enum", "options": ["OPEN"]}
 
-    assert json.loads(result.stdout) == [
-        {"operator": "equals", "value": ""},
+    parsed = [state["parsed"] for state in _filter_state(
+        run_ts, column_filter, [[enum, "empty"], [enum, "not_empty"], [enum, "legacy"]])]
+    assert parsed == [
         {"operator": "empty", "value": ""},
         {"operator": "not_empty", "value": ""},
-        {"operator": "equals", "value": "OPEN"},
         {"operator": "contains", "value": "legacy"},
     ]

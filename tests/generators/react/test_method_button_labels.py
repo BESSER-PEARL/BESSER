@@ -26,3 +26,12 @@ def test_parameters_are_shown_by_a_readable_label_without_their_type(build_app):
     assert 'import { humanize } from "./runtime/humanize";' in button
     assert 'import { humanize } from "../runtime/humanize";' in table
     assert "const humanize = (" not in table
+
+
+def test_the_label_rule_reads_like_a_person_wrote_it(build_app, run_ts):
+    app = build_app(CLASSES, {"Orders": [
+        {"type": "table", "attributes": {"id": "orders", "data-source": "cls-Order"}}]})
+    humanize = app.file("components", "runtime", "humanize.ts")
+
+    labels = run_ts(humanize + '\nconsole.log(JSON.stringify(["min_pages", "orderDate", "due-at", ""].map(humanize)));\n')
+    assert labels == ["Min pages", "Order Date", "Due at", ""]

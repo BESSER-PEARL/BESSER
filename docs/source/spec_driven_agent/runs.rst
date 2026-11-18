@@ -228,6 +228,39 @@ else's lines to the AI; the next run on that code then starts from
 it is part of the commit it would have to name. Older traces in the repository
 are kept, and their ranges refer to the revision they were written for.
 
+.. _spec-driven-trace-view:
+
+The run's trace in the editor
+-----------------------------
+
+The editor's run card shows what a run did, from data the run already records,
+both while it runs and afterwards (see :doc:`../web_editor`):
+
+- **Steps.** Each phase row lists its tool calls (files read, written, edited,
+  commands run) and how long the phase took, how many LLM turns it used and,
+  once the run has ended, its estimated cost. The figures come from the run
+  totals each ``phase`` event carries at its start (see :doc:`api`).
+  ``validate`` starts with Phase 3, so a long first check (``npm``, ``tsc``)
+  counts as validation, not as customization.
+- **Findings and repairs.** The ``validate`` row reads as check, fix attempt,
+  re-check: the blockers each check found (from the ``findings`` events),
+  the tool calls of the fix attempt that followed, and on each re-check which
+  blockers were fixed, which still fail and which are new. When a run goes
+  back to a better earlier tree, the last round says so and lists what the
+  delivered app still has.
+- **Who wrote which lines.** *View files* reads the run's Agent Trace record
+  (see :ref:`spec-driven-agent-trace`) from the ZIP and marks each line as
+  written by the AI, from a BESSER generator, edited by a person between runs,
+  or unattributed, with per-file counts and the AI share of all lines. Each
+  range's ``content_hash`` is checked: a file that no longer matches its record
+  shows no attribution rather than a wrong one. The record is written when the
+  run is packaged, so this view exists once the run has finished.
+
+Everything except the files comes from the run's events, which are stored as
+they are sent (see :ref:`spec-driven-durable-runs`): a page reloaded during a
+run replays them and shows the same timeline. The files come from the download,
+so *View files* works while the server keeps it.
+
 .. _spec-driven-run-record:
 
 The run record

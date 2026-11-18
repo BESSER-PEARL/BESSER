@@ -324,6 +324,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         on_progress: Callable[..., None] | None = None,
         on_text: Callable[[str], None] | None = None,
         on_phase_details: Callable[[str, str], None] | None = None,
+        on_findings: Callable[..., None] | None = None,
         use_streaming: bool = True,
         object_model=None,
         state_machines=None,
@@ -396,6 +397,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.on_progress = on_progress
         self.on_text = on_text
         self.on_phase_details = on_phase_details
+        # Phase 3 reports each validation round: (attempt, issues, restored=False).
+        self.on_findings = on_findings
         self.use_streaming = use_streaming
         # Weak / free-tier open models (e.g. qwen3-coder) ignore "don't switch
         # frameworks" and delete the whole deterministic scaffold to rebuild it.

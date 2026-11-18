@@ -249,10 +249,26 @@ class Phase3RepairMixin:
         """
         if self.phase3_started_at is None:
             self.phase3_started_at = time.monotonic()
+        # Announced before the first check, which can take minutes (npm, tsc), so
+        # that time is counted as validation, not as the phase before it.
+        if self.on_progress:
+            self.on_progress(self.total_turns, "__validating__", "")
         try:
             self._run_phase3_repair_cycle()
         finally:
             self._apply_runtime_gate()
+
+    def _report_findings(self, attempt: int, issues: list[ValidationIssue], restored: bool = False) -> None:
+        """Hand one validation round to ``on_findings`` (the run card's findings-and-repairs view).
+
+        Best-effort: a failing listener never stops the repair loop.
+        """
+        if not self.on_findings:
+            return
+        try:
+            self.on_findings(attempt, list(issues), restored=restored)
+        except Exception:
+            logger.warning("Phase 3: reporting findings of attempt %d failed", attempt, exc_info=True)
 
     def _run_phase3_repair_cycle(self) -> None:
         """
@@ -326,6 +342,7 @@ class Phase3RepairMixin:
                 "validation",
                 f"{len(blockers_before)} blockers / {len(issues)} total",
             )
+        self._report_findings(0, issues)
 
         # Auto-fix is opt-in (default off). Industry pattern: report by
         # default, fix on request. Avoid the LLM running ``npm install`` —
@@ -501,6 +518,7 @@ class Phase3RepairMixin:
                 blockers_after = [i for i in issues_after if i.severity == "blocker"]
             last_issues = issues_after
             self._validation_issues = self._with_model_contract(issues_after)
+            self._report_findings(attempts_run, issues_after)
             last_validated_revision = self._workspace_revision()
             last_obligations_revision = self._repair_obligations_revision()
             self._trace.write(
@@ -660,9 +678,11 @@ class Phase3RepairMixin:
         self._phase3_exit_reason = exit_reason
         if discarded_unverified:
             last_issues = list(self._validation_issues)
+            self._report_findings(attempts_run, last_issues, restored=True)
         elif self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed,
                                             entry_score=best_score):
             last_issues = list(self._validation_issues)
+            self._report_findings(attempts_run, last_issues, restored=True)
         else:
             self._validation_issues = self._with_model_contract(last_issues)
         checkpoint_progress()

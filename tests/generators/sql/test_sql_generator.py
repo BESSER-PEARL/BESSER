@@ -100,16 +100,16 @@ def test_columns_exist(domain_model, tmpdir):
 
     # Verify columns in the library table
     assert "id SERIAL NOT NULL" in generated_code
-    assert "name VARCHAR(100) NOT NULL" in generated_code
-    assert "address VARCHAR(100) NOT NULL" in generated_code
+    assert "name TEXT NOT NULL" in generated_code
+    assert "address TEXT NOT NULL" in generated_code
 
     # Verify columns in the book table
-    assert "title VARCHAR(100) NOT NULL" in generated_code
+    assert "title TEXT NOT NULL" in generated_code
     assert "pages INTEGER NOT NULL" in generated_code
     assert "release DATE NOT NULL" in generated_code
 
     # Verify columns in the author table
-    assert "email VARCHAR(100) NOT NULL" in generated_code
+    assert "email TEXT NOT NULL" in generated_code
 
 def test_primary_keys(domain_model, tmpdir):
     output_dir = tmpdir.mkdir("output")

@@ -797,6 +797,7 @@ class ToolExecutor:
         gui_model: Optional GUI model.
         agent_model: Optional agent model.
         agent_config: Optional agent config dict.
+        app_name: The project's name, given to the generators that show one (web app, React).
     """
 
     def __init__(
@@ -813,8 +814,10 @@ class ToolExecutor:
         protect_scaffold: bool = False,
         per_write_diagnostics: bool = True,
         allow_shell: bool = False,
+        app_name: str | None = None,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
+        self.app_name = app_name
         self.allow_shell = allow_shell
         # The run's one shell: cwd, exported env and background processes
         # carry over between run_command calls. No process until first use.
@@ -2090,6 +2093,8 @@ class ToolExecutor:
         "generate_sqlalchemy": (
             "To change the database: modify the create_engine() call. "
             "To add indexes: find the Column definition and add index=True. "
+            "A str column is Text, which MySQL, SQL Server and Oracle cannot index: change it to "
+            "String_(255) before adding index=True or unique=True to it. "
             "To add constraints: add __table_args__ to the class."
         ),
         "generate_fastapi_backend": (
@@ -2105,6 +2110,8 @@ class ToolExecutor:
             "endpoints in routers/<Class>.py. "
             "To add a new endpoint: add it to the appropriate routers/<Class>.py (use @router), "
             "or create a new router file and register it with include_router() in main_api.py. "
+            "A str column is Text, which MySQL, SQL Server and Oracle cannot index: change it to "
+            "String_(255) before adding index=True or unique=True to it. "
             "NEVER rewrite these files — use modify_file for surgical edits."
         ),
         "generate_django": (
@@ -2372,7 +2379,8 @@ class ToolExecutor:
             return {"error": "No GUI model available. The React generator requires a GUI model."}
         from besser.generators.react import ReactGenerator
         out = self._gen_dir("react")
-        ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
+        ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out,
+                       app_name=self.app_name).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_web_app(self, args: dict) -> dict:
@@ -2385,7 +2393,7 @@ class ToolExecutor:
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
         WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
-            agent_model=self.agent_model, agent_config=self.agent_config,
+            agent_model=self.agent_model, agent_config=self.agent_config, app_name=self.app_name,
         ).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 

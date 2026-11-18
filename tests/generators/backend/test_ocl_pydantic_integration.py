@@ -422,7 +422,7 @@ class TestNoConstraints:
             PlayerCreate = classes['PlayerCreate']
             
             # Any values should be valid
-            player = PlayerCreate(age=-100, name="", salary=-1.0, jerseyNumber=0, team=1)
+            player = PlayerCreate(age=-100, name="Test", salary=-1.0, jerseyNumber=0, team=1)
             assert player.age == -100
 
 

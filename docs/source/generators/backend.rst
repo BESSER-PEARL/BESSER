@@ -236,6 +236,11 @@ How the model shapes these endpoints:
 * When an attribute and an **association end share a name**, the association
   end is generated and the attribute is left out (model validation warns about
   the clash).
+* A required **text attribute** (a ``str`` that is not optional) refuses an
+  empty or whitespace-only value with ``422``; the value is stored as sent.
+  An optional one accepts any value. A ``str`` attribute is stored as
+  long text: unbounded on PostgreSQL and SQLite, up to 64 KB on MySQL, 4000
+  characters on Oracle (see :doc:`alchemy`).
 * A ``DELETE`` that would leave another record without a link it requires is
   refused with ``409`` and a message naming that record, including when the
   record is required by a part that would be deleted with its whole.

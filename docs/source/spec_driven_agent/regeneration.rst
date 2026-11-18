@@ -234,25 +234,25 @@ changes touch different lines, so both are kept.
    class Book(Base):
        __tablename__ = "book"
        id: Mapped_[int] = mapped_column(primary_key=True)
-       title: Mapped_[str] = mapped_column(String_(100))
+       title: Mapped_[str] = mapped_column(Text_().with_variant(String_(4000), "oracle"))
        pages: Mapped_[int] = mapped_column(Integer_)
        library_id: Mapped_[int] = mapped_column(ForeignKey_("library.id"), nullable=True)
 
-   # ours: the agent made the title indexed
-       title: Mapped_[str] = mapped_column(String_(100), index=True)
+   # ours: the agent made the title indexed (an indexed str column needs a bounded type)
+       title: Mapped_[str] = mapped_column(String_(255), index=True)
 
    # theirs: the generator for the new model adds a line after pages
        pages: Mapped_[int] = mapped_column(Integer_)
-       isbn: Mapped_[str] = mapped_column(String_(100))
+       isbn: Mapped_[str] = mapped_column(Text_().with_variant(String_(4000), "oracle"))
        library_id: Mapped_[int] = mapped_column(ForeignKey_("library.id"), nullable=True)
 
    # merged: both
    class Book(Base):
        __tablename__ = "book"
        id: Mapped_[int] = mapped_column(primary_key=True)
-       title: Mapped_[str] = mapped_column(String_(100), index=True)
+       title: Mapped_[str] = mapped_column(String_(255), index=True)
        pages: Mapped_[int] = mapped_column(Integer_)
-       isbn: Mapped_[str] = mapped_column(String_(100))
+       isbn: Mapped_[str] = mapped_column(Text_().with_variant(String_(4000), "oracle"))
        library_id: Mapped_[int] = mapped_column(ForeignKey_("library.id"), nullable=True)
 
 Example: an edit where the change lands

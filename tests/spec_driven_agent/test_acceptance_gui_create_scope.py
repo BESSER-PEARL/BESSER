@@ -112,3 +112,26 @@ def test_a_gui_model_without_modules_keeps_the_model_wide_check(tmp_path):
     matrix = build_acceptance_matrix(str(tmp_path), _model(), gui_model=gui)
     assert matrix["OrderLine"]["create"] is False
 
+
+def test_a_form_and_a_create_button_in_a_nested_container_offer_creation():
+    from besser.BUML.metamodel.gui import Button, ButtonActionType, ButtonType, Form, ViewContainer
+    from besser.spec_driven_agent.validation.acceptance import _gui_creatable_classes
+
+    form_class, add_class, create_class, other = (Class(name=n) for n in ("Survey", "Answer", "Note", "Log"))
+    form = Form(name="surveyForm", description="", inputFields=set())
+    form.data_binding = DataBinding(domain_concept=form_class)
+
+    def button(name, action, entity):
+        return Button(name=name, description="", label=name, buttonType=ButtonType.CustomizableButton,
+                      actionType=action, entity_class=entity)
+
+    inner = ViewContainer(name="inner", description="", view_elements={
+        button("add", ButtonActionType.Add, add_class),
+        button("open", ButtonActionType.Navigate, other),
+    })
+    outer = ViewContainer(name="outer", description="", view_elements={
+        inner, button("create", ButtonActionType.Create, create_class)})
+    screen = Screen(name="Home", description="", view_elements={form, outer})
+    gui = GUIModel(name="G", package="g", versionCode="1", versionName="1.0",
+                   modules={Module(name="Main", screens={screen})}, description="")
+    assert _gui_creatable_classes(gui) == {"Survey", "Answer", "Note"}

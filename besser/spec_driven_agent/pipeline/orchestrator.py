@@ -4182,9 +4182,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # A partial/missing/unverified verdict about a file the digest left out or cut
         # was not judged on the code; it joins the focused round with that file shown
         # (the judge is told to answer unverified for code it was not shown).
-        # An absence is settled below, never by showing more code.
+        # An unverified absence is settled below, never by showing more code.
         rejudgeable = [item for item in self._requirement_verdicts
-                       if item.get("kind") != _requirements_ledger.ABSENCE_KIND]
+                       if not (item.get("kind") == _requirements_ledger.ABSENCE_KIND and item["status"] == "unverified")]
         unseen = {item["id"]: _requirements_ledger.named_digest_gaps(item, digest_gaps)
                   for item in rejudgeable if item["status"] in ("partial", "missing", "unverified")}
         unseen = {rid: paths for rid, paths in unseen.items() if paths}

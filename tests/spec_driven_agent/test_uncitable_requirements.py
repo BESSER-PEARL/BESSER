@@ -1,15 +1,17 @@
-"""Requirements no cited line can show are settled without one, or reported as warnings.
+"""Requirements no cited line can show are reported as warnings, not blockers.
 
 "The app has no sign-in" and "keep the existing editing working as before" cannot be
 proved by quoting a line of code, and the judge answers both "unverified" ("the
 excerpts do not establish absence"). They were blockers on every pass, so a working
-app was reported as incomplete. Now:
+app was reported as incomplete. Now an unverified one is a warning that says what was
+checked, never a "met":
 
-- an absence of sign-in or of agents is checked in the app's files: found, it is a
-  blocker naming what was found; absent, the requirement is met; any other absence is
-  a warning;
-- a preservation is met when the files the judge named for it, and the files they rest
-  on, are unchanged since the previous version; otherwise it is a warning.
+- an absence of sign-in or of agents is checked in the app's files. A find is a
+  blocker only for a bare "no <topic>"; for a scoped one ("no login required to
+  browse") it is named in the warning. Nothing found is no proof of absence;
+- a preservation names the files the judge named for it that are unchanged, or those
+  that changed, since the previous version. Unchanged files do not show the
+  behaviour still works.
 """
 import hashlib
 
@@ -109,16 +111,18 @@ def test_extraction_keeps_the_absence_and_preservation_kinds(kind):
 # --------------------------------------------------------------------- absence
 
 
-def test_an_absence_found_absent_is_met_without_another_judge_call(app, monkeypatch):
+def test_an_absence_found_absent_is_a_warning_saying_what_was_checked(app, monkeypatch):
     digests = _judge(monkeypatch, NO_SIGN_IN, UNVERIFIED)
     orch = _orchestrator(app, NO_SIGN_IN)
-    issues = orch._collect_requirement_issues()
-    assert len(digests) == 1
-    assert not _requirement_issues(issues), issues
+    (issue,) = _requirement_issues(orch._collect_requirement_issues())
+    assert len(digests) == 1  # no focused re-judge for an unverified absence
+    # Nothing found is not proof: no check sees every way an app can sign users in.
+    assert issue.startswith("requirement not provable: R1")
+    assert _classify_issue(issue).severity == "warning"
     (verdict,) = orch._requirement_verdicts
-    assert verdict["status"] == ledger.CHECKED
-    assert "no authentication library or sign-in route" in verdict["note"]
-    assert "no agents folder or agent library" in verdict["note"]
+    assert verdict["status"] == ledger.NOT_PROVABLE
+    assert "no authentication library or sign-in route found" in verdict["note"]
+    assert "no agent code or agent library found" in verdict["note"]
 
 
 def test_agent_code_in_an_agents_folder_is_a_blocker(app, monkeypatch):
@@ -134,9 +138,16 @@ def test_agent_code_in_an_agents_folder_is_a_blocker(app, monkeypatch):
     ("backend/requirements.txt", "fastapi==0.115.0\npasslib[bcrypt]==1.7.4\n", "passlib in backend/requirements.txt"),
     ("frontend/package.json", '{"dependencies": {"react": "18.3.1", "next-auth": "4.24.0"}}',
      "next-auth in frontend/package.json"),
+    ("frontend/package.json", '{"dependencies": {"react": "18.3.1", "@clerk/nextjs": "5.0.0"}}',
+     "@clerk/nextjs in frontend/package.json"),
+    ("frontend/package.json", '{"dependencies": {"react": "18.3.1", "passport-local": "1.0.0"}}',
+     "passport-local in frontend/package.json"),
     ("backend/routers/session.py", "from fastapi import APIRouter\nrouter = APIRouter(prefix='/auth')\n\n\n"
                                    "@router.post('/login')\ndef login():\n    return {}\n",
      "route /auth/login in backend/routers/session.py"),
+    ("backend/routers/account.py", "from fastapi import APIRouter\nrouter = APIRouter()\n\n\n"
+                                   "@router.post('/api/v1/sign-in')\ndef enter():\n    return {}\n",
+     "route /api/v1/sign-in in backend/routers/account.py"),
 ])
 def test_an_authentication_library_or_route_is_a_blocker(app, monkeypatch, path, text, found):
     _write(app, path, text)
@@ -145,12 +156,32 @@ def test_an_authentication_library_or_route_is_a_blocker(app, monkeypatch, path,
     assert issue.startswith("requirement: R1") and found in issue
 
 
+@pytest.mark.parametrize("text,path,content,found", [
+    # The request asks for an admin login; browsing without one is all it excludes.
+    ("No login required to browse products", "backend/routers/admin.py",
+     "from fastapi import APIRouter\nrouter = APIRouter()\n\n\n@router.post('/admin/login')\ndef login():\n"
+     "    return {}\n", "route /admin/login"),
+    ("The app must not store passwords in plain text", "backend/requirements.txt", "fastapi\npasslib[bcrypt]\n",
+     "passlib"),
+    ("No travel agents can edit bookings", "backend/agents/routes.py", "x = 1\n", "agents folder backend/agents"),
+    ("The chatbot must not give medical advice", "agents/helper/helper.py", "x = 1\n", "agents folder agents"),
+])
+def test_a_find_for_a_scoped_absence_is_a_warning_naming_it(app, monkeypatch, text, path, content, found):
+    """Only a bare "no <topic>" excludes the topic outright; a blocker here would send the
+    repair loop to delete a feature the request asked for."""
+    requirement = {"id": 1, "text": text, "kind": "absence"}
+    _write(app, path, content)
+    _judge(monkeypatch, requirement, UNVERIFIED)
+    (issue,) = _requirement_issues(_orchestrator(app, requirement)._collect_requirement_issues())
+    assert issue.startswith("requirement not provable: R1") and found in issue
+
+
 def test_an_absence_naming_anything_else_is_a_warning(app, monkeypatch):
     _judge(monkeypatch, NO_PAYMENTS, UNVERIFIED)
     orch = _orchestrator(app, NO_PAYMENTS)
     (issue,) = _requirement_issues(orch._collect_requirement_issues())
     assert issue.startswith("requirement not provable: R1")
-    assert "no authentication library or sign-in route" in issue
+    assert "no authentication library or sign-in route found" in issue
     assert _classify_issue(issue).severity == "warning"
     assert "not counted as a blocker" in user_sentence(issue)
 
@@ -168,6 +199,15 @@ def test_an_absence_the_judge_found_missing_stays_a_blocker(app, monkeypatch):
     assert issue.startswith("requirement: R1") and "checkout page" in issue
 
 
+def test_a_missing_absence_naming_an_omitted_file_is_judged_again(app, monkeypatch):
+    _write(app, "frontend/src/checkout.css", ".pay { color: green; }\n")
+    digests = _judge(monkeypatch, NO_PAYMENTS,
+                     {"status": "missing", "evidence": "", "note": "frontend/src/checkout.css styles a payment form"},
+                     {"status": "missing", "evidence": "", "note": "the payment form is styled"})
+    _orchestrator(app, NO_PAYMENTS)._collect_requirement_issues()
+    assert len(digests) == 2 and "### frontend/src/checkout.css" in digests[1]
+
+
 # ---------------------------------------------------------------- preservation
 
 
@@ -177,14 +217,16 @@ def _seeded(app, requirement):
     return orch
 
 
-def test_a_preservation_whose_files_are_unchanged_is_met(app, monkeypatch):
+def test_a_preservation_whose_files_are_unchanged_is_a_warning_not_met(app, monkeypatch):
+    """Unchanged files do not show the behaviour still works: here the page no longer mounts the table."""
     orch = _seeded(app, KEEP_EDITING)
     _write(app, HOME, "export default function Home() {\n  return <h1>Tasks</h1>;\n}\n")  # this run's edit
     _judge(monkeypatch, KEEP_EDITING, UNVERIFIED, UNVERIFIED)
-    issues = orch._collect_requirement_issues()
-    assert not _requirement_issues(issues), issues
+    (issue,) = _requirement_issues(orch._collect_requirement_issues())
+    assert issue.startswith("requirement not provable: R1")
     (verdict,) = orch._requirement_verdicts
-    assert verdict["status"] == ledger.CHECKED and TABLE in verdict["note"]
+    assert verdict["status"] == ledger.NOT_PROVABLE
+    assert f"unchanged since the previous version: {TABLE}" in verdict["note"]
 
 
 def test_a_preservation_whose_dependency_changed_is_a_warning(app, monkeypatch):
@@ -210,18 +252,21 @@ def test_without_a_previous_version_the_generated_files_are_the_baseline(app, mo
     monkeypatch.setattr(ledger, "_generator_baselines", lambda output_dir, files: dict(stored))
     _judge(monkeypatch, KEEP_EDITING, UNVERIFIED, UNVERIFIED)
     orch = _orchestrator(app, KEEP_EDITING)
-    assert not _requirement_issues(orch._collect_requirement_issues())
+    (issue,) = _requirement_issues(orch._collect_requirement_issues())
+    assert issue.startswith("requirement not provable: R1") and "unchanged since the previous version" in issue
     assert hashlib.sha256(stored[TABLE].encode()).hexdigest() == ledger.source_hashes(str(app))[TABLE]
 
 
 # ---------------------------------------------------------------------- report
 
 
-def test_the_report_lists_a_checked_requirement_as_verified_and_explains_a_warning():
+def test_the_report_explains_a_warning_and_a_found_absence():
     report = build_verification_report({"requirements": [
-        dict(NO_SIGN_IN, status=ledger.CHECKED, note="Checked in the app's files: no agents folder."),
-        dict(KEEP_EDITING, id=2, status=ledger.NOT_PROVABLE, note="Changed since the previous version: x.tsx."),
+        dict(KEEP_EDITING, status=ledger.NOT_PROVABLE, note="Changed since the previous version: x.tsx."),
+        dict(NO_SIGN_IN, id=2, status="missing", note="The app has what this requirement excludes: agents folder a."),
     ]})
-    assert [item.how for item in report.verified] == ["Checked in the app's files: no agents folder."]
+    assert not report.verified
     assert [item.why for item in report.notVerified if item.kind == "requirement"] == [
         "Changed since the previous version: x.tsx."]
+    (found,) = report.shippedUnenforced
+    assert "does not implement" not in found.why and "agents folder a" in found.why

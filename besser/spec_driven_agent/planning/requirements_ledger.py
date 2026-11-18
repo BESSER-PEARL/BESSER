@@ -70,9 +70,7 @@ _STATUSES = ("implemented", "partial", "missing", "unverified")
 # behaviour a change must keep. Left unverified by the judge, ``settle_uncitable`` decides them.
 ABSENCE_KIND = "absence"
 PRESERVATION_KIND = "preservation"
-# Statuses it gives besides "missing": CHECKED, met as a check other than a citation shows
-# (its note says which); NOT_PROVABLE, reported and never a blocker.
-CHECKED = "checked"
+# The status it gives besides "missing": reported, never a blocker.
 NOT_PROVABLE = "not_provable"
 
 # What the judge reads: the schemas and the ORM first (validators, unique
@@ -2437,24 +2435,28 @@ def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
             for v in verdicts]
 
 
-# What an absence requirement may name, the words that name it, how it reads when absent,
-# and the packages that bring it.
+# What an absence requirement may name, the words that name it, what was checked when nothing
+# is found, and the packages that bring it (fullmatch on the lower-case name, ``-`` for ``_``).
 _ABSENCE_TOPICS = (
     # "auth" and its derivations, never "author".
     ("authentication", re.compile(r"\b(?:auth|authenticat\w*|authori[sz]\w*|log(?:ging)?[\s-]?ins?"
                                   r"|sign(?:ing)?[\s-]?(?:in|up)s?|passwords?)\b", re.I),
-     "no authentication library or sign-in route",
-     frozenset({"python-jose", "passlib", "pyjwt", "fastapi-users", "fastapi-login", "authlib", "flask-login",
-                "flask-jwt-extended", "djangorestframework-simplejwt", "django-allauth", "python-keycloak",
-                "next-auth", "@auth/core", "@auth0/auth0-react", "@auth0/auth0-spa-js", "@auth0/nextjs-auth0",
-                "jsonwebtoken", "passport", "keycloak-js", "oidc-client-ts", "react-oidc-context",
-                "@azure/msal-browser", "@azure/msal-react", "@clerk/clerk-react"})),
+     "no authentication library or sign-in route found (requirements*.txt and package.json dependencies, "
+     "Python routes)",
+     re.compile(r"python-jose|jose|passlib|pyjwt|bcrypt|bcryptjs|argon2(?:-cffi)?|fastapi-users|fastapi-login"
+                r"|fastapi-jwt-auth|authlib|flask-login|flask-httpauth|flask-jwt-extended|django-allauth"
+                r"|djangorestframework-simplejwt|python-keycloak|next-auth|better-auth|lucia|jsonwebtoken"
+                r"|passport(?:-.+)?|keycloak-js|oidc-client-ts|react-oidc-context|@auth/.+|@auth0/.+|@clerk/.+"
+                r"|@azure/msal-.+|@supabase/auth.*")),
     ("agents", re.compile(r"\b(?:agents?|chat\s?bots?)\b", re.I),
-     "no agents folder or agent library",
-     frozenset({"besser-agentic-framework"})),
+     "no agent code or agent library found (agents folders, requirements*.txt and package.json dependencies)",
+     re.compile(r"besser-agentic-framework")),
 )
 _AUTH_ROUTE_SEGMENTS = frozenset({"login", "logout", "signin", "signup", "auth", "oauth"})
 _CLAUSE_RE = re.compile(r",|;|\b(?:and|or|nor)\b", re.I)
+# "The app has no ...", "There is no ...", "No ...": a clause excluding a topic outright.
+_BARE_ABSENCE_RE = re.compile(r"(?:(?:the\s+)?(?:app|application|system|site|website)\s+(?:has|have|uses|needs|offers)\s+"
+                              r"|there\s+(?:is|are)\s+)?(?:no|without)\s+", re.I)
 _REQUIREMENTS_FILE_RE = re.compile(r"requirements[\w.-]*\.txt")
 
 
@@ -2484,20 +2486,34 @@ def _declared_packages(output_dir: str) -> dict[str, str]:
     return found
 
 
-def _topic_found(topic: str, packages: frozenset[str], files: dict[str, str], declared: dict[str, str]) -> list[str]:
+def _topic_found(topic: str, packages: re.Pattern, files: dict[str, str], declared: dict[str, str]) -> list[str]:
     """Where the app has what an absence requirement excludes: a package of the topic, an
-    authentication route, or Python agent code under an ``agents`` folder."""
-    found = [f"{name} in {declared[name]}" for name in sorted(packages & set(declared))]
+    authentication route, or code under an ``agents`` folder."""
+    found = [f"{name} in {declared[name]}" for name in sorted(declared) if packages.fullmatch(name)]
     if topic == "authentication":
         for rel, full in sorted(files.items()):
             if rel.endswith(".py"):
                 found += sorted(f"route /{'/'.join(segments)} in {rel}" for _, segments, *_ in _declared_routes(full)
-                                if _AUTH_ROUTE_SEGMENTS & set(segments))
+                                if _AUTH_ROUTE_SEGMENTS & {s.lower().replace("-", "").replace("_", "") for s in segments})
     else:
         folders = {"/".join(parts[:parts.index("agents") + 1]) for parts in (rel.split("/") for rel in files)
-                   if parts[-1].endswith(".py") and "agents" in parts[:-1]}
+                   if "agents" in parts[:-1]}
         found += [f"agents folder {folder}" for folder in sorted(folders)]
     return found
+
+
+def _bare_topics(text: str) -> set[str]:
+    """The topics a requirement excludes outright: every clause is "no <topic>" ("The app has
+    no sign-in and no agents"), never a scoped one ("No login required to browse")."""
+    clauses = [clause.strip(" .!") for clause in _CLAUSE_RE.split(text) if re.search(r"\w", clause)]
+    if not clauses or not _BARE_ABSENCE_RE.match(clauses[0]):
+        return set()
+    bare = set()
+    for clause in clauses:
+        prefix = _BARE_ABSENCE_RE.match(clause)
+        rest = clause[prefix.end():] if prefix else clause
+        bare |= {name for name, words, _, _ in _ABSENCE_TOPICS if words.fullmatch(rest)}
+    return bare
 
 
 def source_hashes(output_dir: str) -> dict[str, str]:
@@ -2507,13 +2523,13 @@ def source_hashes(output_dir: str) -> dict[str, str]:
 
 def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex | None,
                      baseline: dict[str, str] | None) -> list[dict]:
-    """The unverified absence and preservation verdicts, decided without a citation.
+    """The unverified absence and preservation verdicts, settled without a citation: never met.
 
-    Absence: an excluded topic the tree has (``_ABSENCE_TOPICS``) is ``missing``, with
-    what was found; all of the text's topics absent is ``CHECKED``; anything else is
-    ``NOT_PROVABLE``. Preservation: ``CHECKED`` when the files the judge named for it, and
-    the files they rest on, are byte-identical to ``baseline`` (:func:`source_hashes` of the
-    previous version; the stored generator output when None), else ``NOT_PROVABLE``.
+    Absence: what a bare "no <topic>" excludes (``_ABSENCE_TOPICS``) found in the tree is
+    ``missing``, with what was found; anything else is ``NOT_PROVABLE``, naming what was found
+    or what was checked. Preservation is ``NOT_PROVABLE``, naming the files the judge named for
+    it, and the files they rest on, that changed since ``baseline`` (:func:`source_hashes` of the
+    previous version; the stored generator output when None), or that none did.
     """
     if not any(v.get("status") == "unverified" and v.get("kind") in (ABSENCE_KIND, PRESERVATION_KIND)
                for v in verdicts):
@@ -2530,17 +2546,17 @@ def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex
         if kind == ABSENCE_KIND:
             topics = [topic for topic in _ABSENCE_TOPICS if topic[1].search(text)]
             declared = _declared_packages(output_dir) if topics and declared is None else declared
-            found = [where for name, _, _, packages in topics for where in _topic_found(name, packages, files, declared)]
-            checked = "; ".join(absent for _, _, absent, _ in topics)
-            if found:
-                status, note = "missing", "Found in the app: " + "; ".join(found[:5]) + "."
-            elif topics and all(any(words.search(clause) for _, words, _, _ in topics)
-                                for clause in _CLAUSE_RE.split(text) if re.search(r"\w", clause)):
-                status, note = CHECKED, f"Checked in the app's files: {checked}."
+            found = {name: _topic_found(name, packages, files, declared) for name, _, _, packages in topics}
+            excluded = [where for name in _bare_topics(text) for where in found.get(name, [])]
+            if excluded:
+                status, note = "missing", "The app has what this requirement excludes: " + "; ".join(excluded[:5]) + "."
             else:
-                status, note = NOT_PROVABLE, ("Something the app must not have cannot be shown by citing code"
-                                              + (f"; checked in the app's files: {checked}" if topics else "")
-                                              + ". Not counted as a blocker.")
+                seen = [where for wheres in found.values() for where in wheres]
+                checked = [absent for name, _, absent, _ in topics if not found[name]]
+                status, note = NOT_PROVABLE, "; ".join(
+                    ["Something the app must not have cannot be shown by citing code"]
+                    + ([f"found in the app, which this requirement may exclude: {', '.join(seen[:5])}"] if seen else [])
+                    + [f"checked: {absent}" for absent in checked]) + ". Not counted as a blocker."
         else:
             named = resolved_focus_paths(files, [*verdict.get("inspection_paths", []),
                                                  *cited_paths(verdict.get("evidence"))])
@@ -2549,15 +2565,17 @@ def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex
                             for rel, generated in _generator_baselines(output_dir, files).items()}
             resting = sorted((imports or ImportIndex(output_dir, files)).dependencies(set(named))) if named else []
             changed = [rel for rel in [*named, *resting] if baseline.get(rel) != cited_file_hash(files[rel])]
-            if named and not changed:
-                status, note = CHECKED, ("Unchanged since the previous version: " + ", ".join(named)
-                                         + (f", and the {len(resting)} file(s) they import or are mounted by"
-                                            if resting else "") + ".")
+            if changed:
+                state = f"changed since the previous version: {', '.join(changed[:5])}"
+            elif named:
+                # Unchanged files do not show it still works: a caller, a route or the schema may have changed.
+                state = (f"unchanged since the previous version: {', '.join(named)}"
+                         + (f" and the {len(resting)} file(s) they import or are mounted by" if resting else "")
+                         + "; that does not show it still works")
             else:
-                status, note = NOT_PROVABLE, (
-                    "Behaviour kept as before is shown by its files being unchanged, not by citing code; "
-                    + (f"changed since the previous version: {', '.join(changed[:5])}" if changed
-                       else "no file implementing it was named") + ". Not counted as a blocker.")
+                state = "no file implementing it was named"
+            status, note = NOT_PROVABLE, f"Behaviour kept as before cannot be shown by citing code; {state}. " \
+                                         "Not counted as a blocker."
         settled.append({**verdict, "status": status, "evidence": "", "note": note})
     return settled
 

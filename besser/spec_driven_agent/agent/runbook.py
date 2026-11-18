@@ -32,7 +32,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import stat
 from dataclasses import dataclass
 from typing import Iterable
@@ -56,10 +55,8 @@ RUNTIME_FILES_FILENAME = ".besser_probe.runtime_files.json"
 _MAX_RUNTIME_RECORD_BYTES = 1_000_000
 _MAX_RUNTIME_RECORD_ENTRIES = 2000
 _MAX_SCRATCH_SCAN_BYTES = 1_000_000
-# Helper scripts by name; a .py qualifies only at the root of a workspace that is not the app.
+# Shell scripts at the workspace root are the only files the run-folder cleanup may delete.
 _HELPER_SCRIPT_SUFFIXES = (".sh", ".ps1", ".bat", ".cmd")
-# A workspace root holding one of these is the app itself, so its .py files are app code.
-_APP_ROOT_MARKERS = ("__init__.py", "manage.py", "setup.py", "pyproject.toml")
 
 # Environment kill switch (BESSER_LLM_SHELL_RUNBOOK). Default on whenever
 # shell tools are enabled; ``0`` gives the shell without the procedure (an
@@ -233,22 +230,14 @@ def _read_small_text(root: str, rel: str) -> str | None:
         return None
 
 
-def _is_helper_script(root: str, rel: str) -> bool:
-    """A shell script, or a non-test ``.py`` at a workspace root that is not itself the app."""
-    name = rel.rsplit("/", 1)[-1].lower()
-    if name.endswith(_HELPER_SCRIPT_SUFFIXES):
-        return True
-    if not name.endswith(".py") or "/" in rel or name.startswith("test_") or name.endswith("_test.py"):
-        return False
-    return _find_backend(root) != "." and not any(
-        os.path.exists(os.path.join(root, marker)) for marker in _APP_ROOT_MARKERS)
+def _is_helper_script(rel: str) -> bool:
+    """A shell script at the workspace root; any Python file may be the app's."""
+    return "/" not in rel and rel.lower().endswith(_HELPER_SCRIPT_SUFFIXES)
 
 
 def _is_referenced(root: str, rel: str) -> bool:
-    """Whether another workspace file names ``rel`` (or imports it, for a ``.py``)."""
+    """Whether another workspace file names the file ``rel``."""
     name = rel.rsplit("/", 1)[-1]
-    stem = name[:-3] if name.endswith(".py") else None
-    imports = re.compile(r"\b(?:import|from)\s+%s\b" % re.escape(stem)) if stem else None
     for folder, dirs, files in walk_plain(root):
         dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS and not d.startswith(".")]
         for other in files:
@@ -256,7 +245,7 @@ def _is_referenced(root: str, rel: str) -> bool:
             if other.startswith(".besser_") or other_rel == rel:
                 continue
             text = _read_small_text(root, other_rel)
-            if text and (name in text or (imports and imports.search(text))):
+            if text and name in text:
                 return True
     return False
 
@@ -267,7 +256,7 @@ def remove_run_folder_bound_files(output_dir: str, written: Iterable[str],
 
     The folder is removed after the run, so such a file works only in this
     run's sandbox. One of ``removable`` (the agent's own writes) that is a
-    standalone helper script no other file names is deleted. Every other such
+    shell script at the workspace root no other file names is deleted. Every other such
     file is part of the app or used by it, and is kept. Returns ``(removed,
     kept)``. Never raises.
     """
@@ -289,7 +278,7 @@ def remove_run_folder_bound_files(output_dir: str, written: Iterable[str],
         text = _read_small_text(root, rel)
         if not text or not any(needle in text for needle in needles):
             continue
-        if rel in removable and _is_helper_script(root, rel) and not _is_referenced(root, rel):
+        if rel in removable and _is_helper_script(rel) and not _is_referenced(root, rel):
             try:
                 remove_plain(os.path.join(root, *folders, name), root=root)
                 removed.append(rel)

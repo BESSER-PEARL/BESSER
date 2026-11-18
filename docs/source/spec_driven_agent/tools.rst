@@ -494,12 +494,11 @@ upload is delivered with the app, when the file is:
 
 At the same point the run looks for files written this run whose content names
 the run's temporary workspace folder (``besser_llm_...``), which is removed
-after the run. A standalone helper script a write tool of this run wrote, such
-as a check script that ``cd``s into that folder, is deleted: a ``.sh``,
-``.ps1``, ``.bat`` or ``.cmd`` file, or a ``.py`` other than a test at the
-root of a workspace that is not itself the app, that no other file names or
-imports. The recipe lists those under ``scratch_files_removed``. Every other
-such file (app code, a README, a test) is kept and listed under
+after the run. Only a shell script (``.sh``, ``.ps1``, ``.bat`` or ``.cmd``)
+at the workspace root that a write tool of this run wrote and no other file
+names, such as a check script that ``cd``s into that folder, is deleted; the
+recipe lists those under ``scratch_files_removed``. Every other such file (any
+Python file, a script in a folder, a README, a test) is kept and listed under
 ``temporary_path_files``. ``BESSER_GENERATION.md`` names both. A workspace
 folder the caller chose (a :doc:`Python library run <usage>` with its own
 ``output_dir``) is left alone, since a path to it stays valid.

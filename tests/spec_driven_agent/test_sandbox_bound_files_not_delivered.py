@@ -8,6 +8,8 @@ layout. A script that is meant to ship refers to its own location instead.
 """
 import json
 
+import pytest
+
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
@@ -121,12 +123,29 @@ def test_a_helper_script_another_file_refers_to_is_kept(simple_library_book_mode
     assert recipe["temporary_path_files"] == ["check.py", "seed.sh"]
 
 
-def test_a_standalone_python_check_outside_the_app_is_removed(simple_library_book_model, tmp_path):
-    files = {"verify_orders.py": "import os\nos.chdir(r'{root}')\nprint('ok')\n"}
+@pytest.mark.parametrize("rel,text", [
+    pytest.param("app.py", 'from flask import Flask\napp = Flask(__name__)\nDB = "sqlite:///{root}/data.db"\n',
+                 id="root-entry-point-of-another-stack"),
+    pytest.param("export_orders.py", 'import sqlite3\ncon = sqlite3.connect(r"{root}/backend/app.db")\n',
+                 id="root-tool-the-user-asked-for"),
+    pytest.param("conftest.py", 'import sys\nsys.path.insert(0, r"{root}/backend")\n', id="root-conftest"),
+    pytest.param("scripts/start.sh", "#!/bin/sh\ncd {root}/backend && uvicorn main_api:app\n",
+                 id="shell-script-in-a-folder"),
+])
+def test_python_files_and_scripts_in_folders_are_never_deleted(simple_library_book_model, tmp_path, rel, text):
+    workspace, recipe = _run_folder_with(simple_library_book_model, tmp_path, {rel: text})
+
+    assert recipe["scratch_files_removed"] == []
+    assert (workspace / rel).exists()
+    assert recipe["temporary_path_files"] == [rel]
+
+
+def test_an_unreferenced_root_check_script_is_removed(simple_library_book_model, tmp_path):
+    files = {"verify_workflow.sh": "#!/bin/sh\ncd {root}\ncurl -s http://localhost:41234/\n"}
     workspace, recipe = _run_folder_with(simple_library_book_model, tmp_path, files)
 
-    assert recipe["scratch_files_removed"] == ["verify_orders.py"]
-    assert not (workspace / "verify_orders.py").exists()
+    assert recipe["scratch_files_removed"] == ["verify_workflow.sh"]
+    assert not (workspace / "verify_workflow.sh").exists()
 
 
 def test_python_files_in_folders_are_kept_even_without_a_detected_backend(simple_library_book_model, tmp_path):

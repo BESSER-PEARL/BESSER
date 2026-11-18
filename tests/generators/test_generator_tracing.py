@@ -48,7 +48,7 @@ class _Uninstrumented(GeneratorInterface):
         super().__init__(model, output_dir)
 
     def generate(self):
-        with open(self.build_generation_path("readme.txt"), "w", encoding="utf-8") as f:
+        with open(self.build_generation_path("readme.txt"), "w", encoding="utf-8", newline="\n") as f:
             f.write("hello\n")
 
 

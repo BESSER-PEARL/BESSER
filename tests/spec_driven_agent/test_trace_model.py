@@ -456,7 +456,9 @@ def test_the_trace_of_an_orchestrated_run(tmp_path):
     book = next(a for a in trace.artifacts if isinstance(a, ModelArtifact) and a.element_id == "class-book")
     assert any(link.source is book and link.target.parent is generated for link in trace.trace_links)
     notes = _file(trace, "notes.py")
-    assert notes.content == "NOTES = 1\n"
+    # The trace holds the file as written: write_file uses text mode, so Windows has CRLF.
+    assert notes.content == (tmp_path / "notes.py").read_bytes().decode("utf-8")
+    assert notes.content.splitlines() == ["NOTES = 1"]
     assert any(isinstance(link.evidence[0], AIEvidence) and link.target.parent is notes for link in trace.trace_links)
     _round_trip(trace)
 

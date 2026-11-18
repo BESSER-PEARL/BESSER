@@ -217,8 +217,8 @@ def test_a_parsed_constraint_is_recorded_as_a_constraint():
 
 def test_collect_generated_files_reads_text_files_and_leaves_binary_ones_out(tmp_path):
     (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "b.py").write_text("b\n", encoding="utf-8")
-    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+    (tmp_path / "pkg" / "b.py").write_bytes(b"b\n")
+    (tmp_path / "a.txt").write_bytes(b"a\n")
     (tmp_path / "weights.bin").write_bytes(b"\xff\xfe\x00")
     traced = {"pkg/b.py": FileTrace((TraceRegion("c1", "Class", "B", "t#class", 1, 1),))}
     files = collect_generated_files(str(tmp_path), traced)

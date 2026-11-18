@@ -1,6 +1,8 @@
 """TimeSeriesForecasterGenerator records which lines of the forecaster module come from which layer, though
 its own tidy-up removes duplicated imports and blank lines after the render."""
 
+import os
+
 from besser.generators.nn.forecaster import ForecastConfig, TimeSeriesForecasterGenerator
 from tests.forecaster_networks import HORIZON, WINDOW, gru, mlp
 
@@ -17,7 +19,7 @@ def _identify(model):
 def _generate(model, out):
     generator = TimeSeriesForecasterGenerator(model, config=CONFIG, output_dir=str(out))
     path = generator.generate()
-    return generator, path.rsplit("/", 1)[-1], open(path, encoding="utf-8").read()
+    return generator, os.path.basename(path), open(path, encoding="utf-8").read()
 
 
 def _lines(code, region):

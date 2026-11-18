@@ -16,9 +16,9 @@ never shows up only there.
 
 ``json_container_faults`` parses the ``attr={{...}}`` containers that are
 written as strict JSON - the generated table config, where such breaks
-typically land. A container using JS object syntax (bare identifier keys,
-shorthand properties) never was JSON and is skipped; a trailing comma is legal
-TS and is not a defect.
+typically land. A container holding anything but JSON tokens (identifier keys
+or values, template literals, operators, comments) is JavaScript, not JSON, and
+is skipped; a trailing comma is legal TS and is not a defect.
 
 Calibrated to zero findings on thousands of generated and real-world files
 that esbuild parses, and a finding on every known broken one. Both callers
@@ -116,9 +116,12 @@ def structure_error(source: str) -> tuple[str, int] | None:
 
 
 _ATTRIBUTE_OBJECT = re.compile(r"(\w+)=\{\{")
-_IDENTIFIER_KEY = re.compile(r"(?:^|[\{\[,])\s*[A-Za-z_$][\w$]*\s*:")
 _QUOTED_FIRST_KEY = re.compile(r"^\{\s*(?:\"|\})")
 _TRAILING_COMMA = re.compile(r",(\s*[\]\}])")
+# Whitespace, punctuation, a string with JSON escapes, a JSON number or literal.
+_JSON_TOKEN = re.compile(
+    r'\s+|[{}\[\]:,]|"(?:[^"\\\n]|\\["\\/bfnrtu])*"'
+    r"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w$.])|(?:true|false|null)(?![\w$])")
 
 
 def json_container_faults(source: str) -> list[tuple[int, str, str]]:
@@ -132,7 +135,7 @@ def json_container_faults(source: str) -> list[tuple[int, str, str]]:
         inner = source[opened + 1:closed].strip()
         if not (inner.startswith("{") and inner.endswith("}")):
             continue
-        if not _QUOTED_FIRST_KEY.match(inner) or _IDENTIFIER_KEY.search(_blank_quoted(inner)):
+        if not _QUOTED_FIRST_KEY.match(inner) or not _written_as_json(inner):
             continue
         relaxed = inner
         while True:
@@ -141,10 +144,43 @@ def json_container_faults(source: str) -> list[tuple[int, str, str]]:
                 break
             relaxed = shortened
         try:
-            json.loads(relaxed)
+            json.loads(relaxed, strict=False)
         except ValueError as exc:
             faults.append((source.count("\n", 0, match.start()) + 1, match.group(1), str(exc)[:90]))
     return faults
+
+
+def _written_as_json(inner: str) -> bool:
+    """``inner`` holds only JSON tokens, so a JSON parse failure is a JS one too.
+
+    Any other token is a JavaScript value this check cannot judge. JS also reads
+    some JSON-token runs that JSON rejects: ``[1][0]``, ``1 -2``, a numeric or
+    computed key and an array hole.
+    """
+    stack: list[str] = []
+    previous = ""
+    index = 0
+    while index < len(inner):
+        match = _JSON_TOKEN.match(inner, index)
+        if match is None:
+            # A string left open on its line is broken JS too; else a JS-only escape.
+            return inner[index] == '"' and _string_end(inner, index, '"') is None
+        token, index = match.group(), match.end()
+        if token.isspace():
+            continue
+        if previous not in ("", "{", "[", ":", ",") and token[0] in "[-":
+            return False  # ``[1][0]``, ``1 -2``
+        key_position = stack[-1:] == ["{"] and previous in ("{", ",")
+        if key_position and (token == "[" or token[0] in "-0123456789"):
+            return False  # computed or numeric key
+        if stack[-1:] == ["["] and token == "," and previous in ("[", ","):
+            return False  # array hole
+        if token in ("{", "["):
+            stack.append(token)
+        elif token in ("}", "]") and stack:
+            stack.pop()
+        previous = token
+    return True
 
 
 def new_syntax_error(before: str, after: str) -> tuple[str, int] | None:
@@ -357,27 +393,3 @@ def match_bracket(source: str, index: int) -> int | None:
                 return index
         index += 1
     return None
-
-
-def _blank_quoted(text: str) -> str:
-    """``text`` with the contents of every quoted run replaced by spaces."""
-    out: list[str] = []
-    index, size = 0, len(text)
-    while index < size:
-        char = text[index]
-        if char in "'\"":
-            stop = _string_end(text, index, char)
-            if stop is not None:
-                out.append(" " * (stop - index))
-                index = stop
-                continue
-        if char == "`":
-            stop, _, error = _template_end(text, index)
-            if error:
-                stop = size
-            out.append(" " * (stop - index))
-            index = stop
-            continue
-        out.append(char)
-        index += 1
-    return "".join(out)

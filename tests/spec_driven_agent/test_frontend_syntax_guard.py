@@ -201,6 +201,55 @@ def test_valid_frontend_source_is_not_flagged(source):
     assert frontend_source.json_container_faults(source) == []
 
 
+# Quoted-key containers holding JavaScript values: valid TSX that is not JSON.
+@pytest.mark.parametrize("source", [
+    'const A = () => <div style={{"width": `${ratio * 100}%`, "height": "8px"}} />;\n',
+    'const A = () => <div style={{"color": accent, "padding": 4}} />;\n',
+    'const A = () => <div style={{"width": ratio * 100 + "%"}} />;\n',
+    'const A = () => <div style={{"display": open ? "block" : "none"}} />;\n',
+    'const A = () => <div style={{"margin": 0, ...extra}} />;\n',
+    'const A = () => <div style={{"width": Math.min(total, 10) + "px"}} />;\n',
+    'const A = () => <div style={{"margin": 0, // spacing\n  "padding": 4}} />;\n',
+    "const A = () => <div style={{\"margin\": '0 auto'}} />;\n",
+    'const A = () => <div style={{"opacity": .5, "zIndex": 0x10}} />;\n',
+    'const A = () => <T options={{"size": [10, 20][1]}} />;\n',
+    'const A = () => <T options={{"offset": 10 -2}} />;\n',
+    'const A = () => <T options={{"a": 1, 2: "two"}} />;\n',
+    'const A = () => <T options={{"a": 1, ["b"]: 2}} />;\n',
+    'const A = () => <T options={{"cells": [1, , 3]}} />;\n',
+    'const A = () => <T options={{"label": "a\tb"}} />;\n',
+], ids=["template", "identifier", "arithmetic", "ternary", "spread", "call", "comment",
+        "single-quote", "js-number", "member", "subtraction", "numeric-key", "computed-key",
+        "array-hole", "tab-in-string"])
+def test_javascript_values_in_a_quoted_key_container_are_not_flagged(source):
+    assert frontend_source.structure_error(source) is None
+    assert frontend_source.json_container_faults(source) == []
+
+
+@pytest.mark.parametrize("source", [
+    'const A = () => <T options={{"columns": [{"a": 1} {"b": 2}]}} />;\n',
+    'const A = () => <T options={{"a": 1 "b": 2}} />;\n',
+    'const A = () => <T options={{"a": "x,\n  "b": 2}} />;\n',
+    'const A = () => <T options={{"a": 1,, "b": 2}} />;\n',
+], ids=["missing-comma-objects", "missing-comma-pairs", "unterminated-string", "double-comma"])
+def test_broken_json_container_is_still_flagged(source):
+    assert frontend_source.json_container_faults(source)
+
+
+def test_an_edit_adding_a_template_literal_style_applies(executor):
+    """A quoted-key style object with a template-literal value is valid TSX."""
+    tools, path = executor
+    result = call(
+        tools, "modify_file", path="Booking.tsx",
+        old_text='    <div id="page">\n',
+        new_text='    <div id="page">\n'
+                 '      <div style={{"width": `${done * 100}%`, "height": "8px"}} />\n',
+    )
+    assert result.get("rejection_kind") is None, result
+    with open(path, encoding="utf-8") as handle:
+        assert '`${done * 100}%`' in handle.read()
+
+
 def test_diagnostics_name_the_damage_in_a_file_that_arrived_broken():
     findings = diagnose_written_content("src/pages/Booking.tsx", PAGE.replace('            {\n              "label": "Bill",', '            {\n             {\n              "label": "Bill",'))
     assert findings and findings[0]["source"] == "frontend-source"

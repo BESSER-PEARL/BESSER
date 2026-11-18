@@ -53,8 +53,11 @@ def supports(rel_path: str) -> bool:
     return os.path.splitext(rel_path.lower())[1] in SUPPORTED_EXTENSIONS
 
 
-def structure_error(source: str) -> tuple[str, int] | None:
-    """``(message, line)`` for the first outright delimiter fault, else ``None``."""
+def structure_error(source: str, comments: list[tuple[int, int]] | None = None) -> tuple[str, int] | None:
+    """``(message, line)`` for the first outright delimiter fault, else ``None``.
+
+    ``comments``, when given, receives the ``(start, stop)`` of every comment scanned.
+    """
     stack: list[tuple[str, int]] = []
     index, size, line = 0, len(source), 1
     last = -1  # index of the last code character, comments and whitespace skipped
@@ -70,12 +73,17 @@ def structure_error(source: str) -> tuple[str, int] | None:
         if char == "/" and index + 1 < size:
             if source[index + 1] == "/":
                 stop = source.find("\n", index)
-                index = size if stop < 0 else stop
+                stop = size if stop < 0 else stop
+                if comments is not None:
+                    comments.append((index, stop))
+                index = stop
                 continue
             if source[index + 1] == "*":
                 stop = source.find("*/", index + 2)
                 if stop < 0:
                     return ("unterminated block comment", line)
+                if comments is not None:
+                    comments.append((index, stop + 2))
                 line += source.count("\n", index, stop)
                 index = stop + 2
                 continue
@@ -128,7 +136,11 @@ _JSON_TOKEN = re.compile(
 def json_container_faults(source: str) -> list[tuple[int, str, str]]:
     """``(line, attribute, reason)`` for JSON-written ``attr={{...}}`` that no longer parses."""
     faults: list[tuple[int, str, str]] = []
+    comments: list[tuple[int, int]] = []
+    structure_error(source, comments)
     for match in _ATTRIBUTE_OBJECT.finditer(source):
+        if any(start <= match.start() < stop for start, stop in comments):
+            continue
         opened = match.end() - 2
         closed = match_bracket(source, opened)
         if closed is None:
@@ -138,8 +150,6 @@ def json_container_faults(source: str) -> list[tuple[int, str, str]]:
             continue
         if not _QUOTED_FIRST_KEY.match(inner) or match_bracket(inner, 0) != len(inner) - 1:
             continue  # not JSON-written, or a comma expression ``{...}, {...}``
-        if _in_comment(source, match.start()):
-            continue
         fault = _json_fault(inner)
         if fault:
             message, pos = fault
@@ -186,15 +196,16 @@ def _nested_spans(literal: str) -> list[tuple[int, int, bool]]:
     """``(start, stop, nested)`` of the comments and nested literals directly in ``literal``.
 
     A nested object or array literal counts only as a value - after ``:`` in
-    an object, after ``[`` or ``,`` in an array (or a ``{`` after a closer
-    there), outside parentheses. The scan stops at ``<`` or a ``/`` that is not
-    a comment, which may open JSX or a regex.
+    an object (not a ``):`` return type), after ``[`` or ``,`` in an array (or
+    a ``{`` after a closer there), outside parentheses. A regex literal is
+    skipped; the scan stops at a ``<`` that may open JSX.
     """
     found: list[tuple[int, int, bool]] = []
-    parent = previous = literal[0]
-    depth, index, size = 0, 1, len(literal) - 1
+    parent = previous = before = literal[0]
+    depth, index, size, last = 0, 1, len(literal) - 1, 0
     while index < size:
         char = literal[index]
+        stop = index
         if char in " \t\r\n":
             index += 1
             continue
@@ -206,39 +217,34 @@ def _nested_spans(literal: str) -> list[tuple[int, int, bool]]:
             found.append((index, stop - 1 if closer == "\n" else stop + 1, False))
             index = stop + len(closer)
             continue
-        if char in "</":
-            break
-        if char in "'\"`":
-            if char == "`":
-                stop, _, error = _template_end(literal, index)
-            else:
-                stop, error = _string_end(literal, index, char), None
-            if stop is None or error:
+        if char in "</" and _regex_may_follow(literal, last):
+            stop = _regex_end(literal, index) if char == "/" else None
+            if stop is None:
                 break
-            index, previous = stop, char
-            continue
-        if char in "{[":
+            stop -= 1
+        elif char in "'\"`":
+            if char == "`":
+                end, _, error = _template_end(literal, index)
+            else:
+                end, error = _string_end(literal, index, char), None
+            if end is None or error:
+                break
+            stop = end - 1
+        elif char in "{[":
             stop = match_bracket(literal, index)
             if stop is None:
                 break
             # In an array a ``{`` after a closer is a value too: no JS reads ``} {``.
             in_array = previous in "[," or (char == "{" and previous in "}]")
-            if depth == 0 and (previous == ":" if parent == "{" else in_array):
+            in_object = previous == ":" and before != ")"
+            if depth == 0 and (in_object if parent == "{" else in_array):
                 found.append((index, stop, True))
-            index, previous = stop + 1, literal[stop]
-            continue
-        if char == "(":
+        elif char == "(":
             depth += 1
         elif char == ")":
             depth -= 1
-        index, previous = index + 1, char
+        before, previous, last, index = previous, literal[stop], stop, stop + 1
     return found
-
-
-def _in_comment(source: str, index: int) -> bool:
-    """``index`` may sit in a comment: a ``//`` before it on its line, or an open ``/*``."""
-    line_start = source.rfind("\n", 0, index) + 1
-    return "//" in source[line_start:index] or source.rfind("/*", 0, index) > source.rfind("*/", 0, index)
 
 
 def _written_as_json(inner: str) -> bool:

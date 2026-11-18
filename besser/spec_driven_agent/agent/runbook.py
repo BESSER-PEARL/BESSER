@@ -312,6 +312,7 @@ Run-internal helper written by the BESSER generator; not part of the app.
     python .besser_probe.py routes
     python .besser_probe.py req POST /book {"title": "x"}
     python .besser_probe.py req GET /book -H "Authorization: Bearer <token>"
+    python .besser_probe.py req POST /book/upload -F "file=@cover.png" -F "title=x"
     python .besser_probe.py log 60
     python .besser_probe.py down
 
@@ -438,12 +439,15 @@ def recording(action):
                 json.dump({"files": kept, "overflow": len(noted) - len(kept)}, handle)
 
 
-def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None):
+def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None, form=None):
+    """``form``, when given, is an encoded multipart body and its Content-Type."""
     url = "http://127.0.0.1:%d%s" % (port, path if path.startswith("/") else "/" + path)
     data = None
     headers = {"Accept": "application/json"}
     headers.update(extra_headers or {})
-    if body is not None:
+    if form is not None:
+        data, headers["Content-Type"] = form
+    elif body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
@@ -460,7 +464,7 @@ def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None):
             if location.startswith("http"):
                 location = "/" + location.split("/", 3)[-1] if location.count("/") > 2 else "/"
             follow = "GET" if exc.code == 303 else method
-            return request(follow, location, body, port, timeout, _hops + 1, extra_headers)
+            return request(follow, location, body, port, timeout, _hops + 1, extra_headers, form)
         return exc.code, exc.read().decode("utf-8", "replace")
     except Exception as exc:                    # connection refused, reset, timeout
         return 0, "%s: %s" % (type(exc).__name__, exc)
@@ -693,14 +697,59 @@ def split_headers(argv):
     return rest, headers
 
 
+def split_form(argv):
+    """Remove curl-style ``-F name=value`` / ``-F name=@path`` pairs from argv."""
+    rest, fields = [], []
+    items = iter(argv)
+    for item in items:
+        if item in ("-F", "--form"):
+            raw = next(items, "")
+        elif item.startswith("--form="):
+            raw = item[len("--form="):]
+        else:
+            rest.append(item)
+            continue
+        name, sep, value = raw.strip().strip("'\"").partition("=")
+        if not sep or not name:
+            raise ValueError("a form field must look like name=value or name=@path")
+        fields.append((name, value))
+    return rest, fields
+
+
+def encode_form(fields):
+    """A multipart/form-data body and its Content-Type; ``@path[;type=mime]`` sends a file."""
+    import mimetypes
+    import uuid
+    boundary = uuid.uuid4().hex
+    parts = []
+    for name, value in fields:
+        head = 'Content-Disposition: form-data; name="%s"' % name
+        if value.startswith("@"):
+            path, _, kind = value[1:].partition(";type=")
+            with open(path, "rb") as handle:
+                data = handle.read()
+            kind = kind or mimetypes.guess_type(path)[0] or "application/octet-stream"
+            head += '; filename="%s"\r\nContent-Type: %s' % (os.path.basename(path), kind)
+        else:
+            data = value.encode("utf-8")
+        parts.append(b"--%s\r\n%s\r\n\r\n%s\r\n" % (boundary.encode(), head.encode("utf-8"), data))
+    return b"".join(parts) + b"--%s--\r\n" % boundary.encode(), "multipart/form-data; boundary=" + boundary
+
+
 def cmd_req(argv):
     try:
         argv, headers = split_headers(argv)
     except ValueError as exc:
         print('BAD_HEADER %s\nNEXT: pass it as -H "Authorization: Bearer <token>".' % exc)
         return 2
+    try:
+        argv, fields = split_form(argv)
+        form = encode_form(fields) if fields else None
+    except (ValueError, OSError) as exc:
+        print('BAD_FORM %s\nNEXT: pass a field as -F "name=value" and a file as -F "file=@path".' % exc)
+        return 2
     if len(argv) < 2:
-        print("USAGE: req <METHOD> <PATH> [JSON] [-H 'Name: value']")
+        print("USAGE: req <METHOD> <PATH> [JSON | -F name=value -F file=@path] [-H 'Name: value']")
         return 2
     method, path = argv[0], argv[1]
     raw = " ".join(argv[2:]).strip()
@@ -710,6 +759,9 @@ def cmd_req(argv):
     while len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
         raw = raw[1:-1].strip()
     body = None
+    if raw and form is not None:
+        print("BAD_FORM a request carries a JSON body or -F fields, not both.")
+        return 2
     if raw:
         try:
             body = json.loads(raw)
@@ -717,12 +769,12 @@ def cmd_req(argv):
             print("BAD_JSON %s\nNEXT: pass the body as one JSON object, e.g. "
                   '{"title": "x"}. Quote it for your shell.' % exc)
             return 2
-    elif method.upper() in ("POST", "PUT", "PATCH"):
+    elif method.upper() in ("POST", "PUT", "PATCH") and form is None:
         body = {}                       # the literal {} a generated button sends
     port = ensure_up()
     if not port:
         return 1
-    status, text = recording(lambda: request(method, path, body, port, extra_headers=headers))
+    status, text = recording(lambda: request(method, path, body, port, extra_headers=headers, form=form))
     # Header names only: a value can be a credential.
     sent = ("  (headers: %s)" % ", ".join(sorted(headers))) if headers else ""
     print("%s %s %s%s" % (status or "CONNECTION_FAILED", method.upper(), path, sent))

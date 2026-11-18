@@ -446,7 +446,10 @@ keeps records either way. A new server takes the port of the previous one
 again while nothing else holds it, so a command or script written with that
 port keeps working after a restart. ``req`` sends
 extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
-prints only their names. ``down`` stops a process only when its command line
+prints only their names. It sends form fields and files as
+``multipart/form-data`` with curl's syntax, ``-F "name=value"`` and
+``-F "file=@path"`` (``;type=<mime>`` sets a file's type), for an upload
+endpoint. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
 session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.

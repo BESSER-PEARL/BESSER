@@ -82,3 +82,64 @@ def test_a_port_someone_else_now_holds_is_not_taken_again(tmp_path):
         fresh = unused_port()
         fake_boot(ns, new_port=fresh)
         assert ns["boot"](quiet=True) == (0, fresh)
+
+
+def capture_server():
+    """A local server that records one POST and answers 200."""
+    import http.server
+    import threading
+
+    seen = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen["type"] = self.headers["Content-Type"]
+            seen["body"] = self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def form_parts(content_type, body):
+    from email.parser import BytesParser
+    from email.policy import HTTP
+    message = BytesParser(policy=HTTP).parsebytes(b"Content-Type: " + content_type.encode() + b"\r\n\r\n" + body)
+    return {part.get_param("name", header="content-disposition"): part for part in message.iter_parts()}
+
+
+def test_req_sends_files_and_fields_as_multipart_form_data(tmp_path):
+    workspace(tmp_path)
+    (tmp_path / "orders.csv").write_bytes(b"id,total\n1,9.5\n")
+    ns = load_probe(tmp_path)
+    server, seen = capture_server()
+    try:
+        ns.update(ensure_up=lambda: server.server_address[1])
+        code = ns["cmd_req"](["POST", "/order/import", "-F", "file=@%s;type=text/csv" % (tmp_path / "orders.csv"),
+                              "-F", "'note=first batch'"])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert code == 0
+    assert seen["type"].startswith("multipart/form-data; boundary=")
+    parts = form_parts(seen["type"], seen["body"])
+    assert parts["file"].get_filename() == "orders.csv"
+    assert parts["file"].get_content_type() == "text/csv"
+    assert parts["file"].get_payload(decode=True) == b"id,total\n1,9.5\n"
+    assert parts["note"].get_payload(decode=True) == b"first batch"
+
+
+def test_req_names_a_file_it_cannot_read(tmp_path, capsys):
+    workspace(tmp_path)
+    ns = load_probe(tmp_path)
+    ns.update(ensure_up=lambda: 1 / 0)
+    assert ns["cmd_req"](["POST", "/order/import", "-F", "file=@missing.pdf"]) == 2
+    assert "BAD_FORM" in capsys.readouterr().out

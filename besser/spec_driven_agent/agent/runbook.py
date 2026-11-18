@@ -29,6 +29,7 @@ traceback.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -42,6 +43,7 @@ from besser.spec_driven_agent.pipeline.constants import (
     is_excluded_output_file,
 )
 from besser.spec_driven_agent.settings import AgentSettings
+from besser.spec_driven_agent.validation import route_returns
 from besser.utilities.workspace_fs import is_plain_relpath, open_plain, open_plain_write, remove_plain, walk_plain
 
 logger = logging.getLogger(__name__)
@@ -244,7 +246,7 @@ tracebacks. Run these from the workspace root, exactly as written:
 
 ```
 python {PROBE_FILENAME} up                       # boot; prints BOOT_OK / BOOT_FAILED
-python {PROBE_FILENAME} routes                   # the paths and schemas the app REALLY has
+python {PROBE_FILENAME} routes                   # each path, the body it reads, what it returns
 python {PROBE_FILENAME} req GET /health
 python {PROBE_FILENAME} req POST /<entity> {{"field": "value"}}
 python {PROBE_FILENAME} req POST /<entity>/<id>/<action> {{}}
@@ -270,6 +272,9 @@ create whatever it needs at startup.
    call `install_dependencies` for that directory, then `up` again.
 2. `routes`. Use the paths and field names it prints for every request below.
    Do not use the paths you remember writing - `routes` is the live truth.
+   A frontend caller you write sends the body exactly as `<-` shows it (a
+   `{{"params": {{...}}}}` body keeps that wrapper) and reads `-> object {{...}}`
+   by those keys: only `-> list` is an array.
 3. `req GET /health`. Not 200 → step 1's log tail names the cause.
 4. **Create one of every entity**, parents before children, reusing the `id`
    each create returns. A **500** is your bug: the log tail printed under the
@@ -605,6 +610,9 @@ def ensure_up():
     return port if code == 0 else None
 
 
+# <route_returns>
+
+
 def cmd_routes(argv):
     port = ensure_up()
     if not port:
@@ -613,31 +621,46 @@ def cmd_routes(argv):
     if status != 200:
         print("OPENAPI_FAILED %s\n%s" % (status, body[:400]))
         return 1
-    spec = json.loads(body)
-    wanted = argv[0].lower() if argv else None
-    print("PATHS (method path <- required create fields)")
+    print_routes(json.loads(body), source_shapes(find_backend()), argv[0].lower() if argv else None)
+    print("NEXT: create one of every entity with `req POST <path> {...}`, "
+          "parents first, reusing each returned id.")
+    return 0
+
+
+def print_routes(spec, returns, wanted=None):
+    print("PATHS (method path  <- the JSON body it reads, * = required  -> what a 2xx answer is)")
+    wrapped = False
     for path, operations in sorted(spec.get("paths", {}).items()):
         if wanted and wanted not in path.lower():
             continue
         for method, operation in sorted(operations.items()):
             if method.upper() not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
                 continue
-            fields = _body_fields(operation, spec)
-            print("  %-6s %s%s" % (method.upper(), path, ("  <- " + fields) if fields else ""))
-    print("NEXT: create one of every entity with `req POST <path> {...}`, "
-          "parents first, reusing each returned id.")
-    return 0
+            fields, embedded = _body_fields(operation, spec)
+            wrapped = wrapped or embedded
+            answer = _answer(operation, spec, returns.get((method.upper(), path)))
+            print("  %-6s %s%s%s" % (method.upper(), path, ("  <- " + fields) if fields else "",
+                                     ("  -> " + answer) if answer else ""))
+    if wrapped:
+        print('NOTE: a body shown as {"params": {...}} is sent with that key around the values, '
+              'e.g. {"params": {"field": "value"}}; the values alone never reach the handler.')
+
+
+def _schema(schema, spec):
+    if "$ref" in schema:
+        return spec.get("components", {}).get("schemas", {}).get(schema["$ref"].rsplit("/", 1)[-1], {})
+    return schema
 
 
 def _body_fields(operation, spec):
-    """The request body's own field names and types, resolved one $ref deep."""
+    """The request body as its top-level keys and types, resolved one $ref deep, and
+    whether it is FastAPI's wrapper of Body(embed=True) parameters."""
     try:
         schema = (operation["requestBody"]["content"]["application/json"]["schema"])
     except (KeyError, TypeError):
-        return ""
-    if "$ref" in schema:
-        name = schema["$ref"].rsplit("/", 1)[-1]
-        schema = spec.get("components", {}).get("schemas", {}).get(name, {})
+        return "", False
+    embedded = schema.get("$ref", "").rsplit("/", 1)[-1].startswith("Body_")
+    schema = _schema(schema, spec)
     properties = schema.get("properties") or {}
     required = set(schema.get("required") or [])
     parts = []
@@ -645,8 +668,46 @@ def _body_fields(operation, spec):
         kind = definition.get("type") or definition.get("format") or "?"
         if "anyOf" in definition:
             kind = "|".join(sorted({o.get("type", "?") for o in definition["anyOf"]}))
-        parts.append("%s:%s%s" % (name, kind, "*" if name in required else ""))
-    return ", ".join(parts[:14]) + (", ..." if len(parts) > 14 else "")
+        kind = {"object": "{...}", "array": "[...]"}.get(kind, kind)
+        parts.append('"%s": %s%s' % (name, kind, "*" if name in required else ""))
+    if not parts:
+        return "", False
+    return "{" + ", ".join(parts[:14]) + (", ..." if len(parts) > 14 else "") + "}", embedded
+
+
+def _answer(operation, spec, shape):
+    """What a 2xx answer is: the declared response schema, else what the handler returns."""
+    for status, response in sorted((operation.get("responses") or {}).items()):
+        if status.startswith("2"):
+            schema = _schema(((response.get("content") or {}).get("application/json") or {}).get("schema") or {},
+                             spec)
+            if schema.get("type") == "array":
+                return "list"
+            if schema.get("properties"):
+                return "object {%s}" % ", ".join(schema["properties"])
+            break
+    if not shape:
+        return ""
+    return "list" if shape[0] == "list" else "object {%s}" % ", ".join(sorted(shape[1]))
+
+
+def source_shapes(backend):
+    """(METHOD, path) -> what each route handler under ``backend`` returns, read from
+    its source; None for a route two handlers declare."""
+    shapes = {}
+    for root, dirs, files in os.walk(backend) if backend else ():
+        dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".")]
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            try:
+                with open(os.path.join(root, name), encoding="utf-8-sig") as handle:
+                    tree = ast.parse(handle.read())
+            except (OSError, SyntaxError, ValueError):
+                continue
+            for method, path, function, decorator in route_handlers(tree):
+                shapes[(method, path)] = None if (method, path) in shapes else response_shape(function, decorator)
+    return shapes
 
 
 def split_headers(argv):
@@ -769,3 +830,5 @@ def main(argv):
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
 '''
+# The probe describes a route's response with the same code as the Phase 3 check.
+PROBE_SCRIPT = PROBE_SCRIPT.replace("# <route_returns>\n", inspect.getsource(route_returns), 1)

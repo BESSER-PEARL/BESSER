@@ -33,5 +33,7 @@ def test_the_label_rule_reads_like_a_person_wrote_it(build_app, run_ts):
         {"type": "table", "attributes": {"id": "orders", "data-source": "cls-Order"}}]})
     humanize = app.file("components", "runtime", "humanize.ts")
 
-    labels = run_ts(humanize + '\nconsole.log(JSON.stringify(["min_pages", "orderDate", "due-at", ""].map(humanize)));\n')
-    assert labels == ["Min pages", "Order Date", "Due at", ""]
+    names = ["min_pages", "orderDate", "due-at", "customerID", "Shipping Address", ""]
+    labels = run_ts(humanize + f"\nconsole.log(JSON.stringify({names!r}.map(humanize)));\n")
+    # Snake and camel case read alike; an acronym and a label written with spaces are kept.
+    assert labels == ["Min pages", "Order date", "Due at", "Customer ID", "Shipping Address", ""]

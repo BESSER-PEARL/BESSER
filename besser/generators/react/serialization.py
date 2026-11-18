@@ -643,6 +643,8 @@ class GuiSerializationMixin:
                         column_dict["type"] = field_type.name
 
                     is_optional = getattr(attr, "is_optional", False)
+                    # The backend schema accepts null exactly for these (as Optional[...])
+                    column_dict["nullable"] = bool(is_optional) and not getattr(attr, "is_id", False)
                     if not is_optional:
                         multiplicity = getattr(attr, "multiplicity", None)
                         if multiplicity and getattr(multiplicity, "min", 0) > 0:

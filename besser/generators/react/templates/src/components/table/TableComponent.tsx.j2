@@ -41,6 +41,8 @@ interface TableColumn {
   defaultValue?: any;
   // Shown in the create/edit form but never edited or sent (e.g. a server-computed total)
   readOnly?: boolean;
+  // The backend accepts null for it (an optional attribute)
+  nullable?: boolean;
 }
 
 interface TableOptions {
@@ -236,6 +238,7 @@ export const TableComponent: React.FC<Props> = ({
           relationshipKey: relationshipKey,
           associationClass: col.column_type === "lookup" ? associationClass : undefined,
           readOnly: Boolean((col as any).readOnly ?? (col as any).read_only),
+          nullable: Boolean((col as any).nullable),
         };
       });
   };
@@ -1040,7 +1043,7 @@ export const TableComponent: React.FC<Props> = ({
                         // attribute's default (or reports it missing) instead of rejecting ""
                         return;
                       }
-                      if (!col.required && col.type !== 'list' && col.type !== 'bool' && col.type !== 'boolean'
+                      if (col.nullable && col.type !== 'list' && col.type !== 'bool' && col.type !== 'boolean'
                           && (value === undefined || value === null || value === '')) {
                         // An optional field left empty has no value: null, not "" or 0
                         processedValues[col.field] = null;

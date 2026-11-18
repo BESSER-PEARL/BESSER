@@ -442,7 +442,9 @@ detached, list its routes and send requests, so the agent can run the app
 rather than only read it. The server ``up`` starts keeps running in the run's
 shell session, so ``routes`` and ``req`` reach that same server; when the
 session was restarted in between, they start their own, and the SQLite file
-keeps records either way. ``req`` sends
+keeps records either way. A new server takes the port of the previous one
+again while nothing else holds it, so a command or script written with that
+port keeps working after a restart. ``req`` sends
 extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
 prints only their names. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous

@@ -358,6 +358,22 @@ def free_port():
         return sock.getsockname()[1]
 
 
+def reusable_port(port):
+    """``port`` when nothing holds it, else None."""
+    import socket
+    if type(port) is not int or not 0 < port < 65536:
+        return None
+    with socket.socket() as sock:
+        if os.name != "nt":
+            # As uvicorn binds: the stopped server's TIME_WAIT does not block it.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return None
+    return port
+
+
 def read_state():
     try:
         with open(STATE, encoding="utf-8") as handle:
@@ -508,8 +524,11 @@ def cmd_down(quiet=False):
         pass                            # already gone, e.g. with its sandbox
     except Exception as exc:
         print("STOP_FAILED %s: %s" % (type(exc).__name__, exc))
+    # Only the port stays: the next boot takes it again while it is free, so a
+    # URL written with it keeps working across restarts.
     try:
-        os.remove(STATE)
+        with open(STATE, "w", encoding="utf-8") as fh:
+            json.dump({"port": state.get("port")}, fh)
     except OSError:
         pass
     if not quiet:
@@ -532,7 +551,7 @@ def boot(quiet=False):
         print("NO_BACKEND: no directory holds both main_api.py and sql_alchemy.py.")
         return 2, None
     cmd_down(quiet=True)
-    port = free_port()
+    port = reusable_port(read_state().get("port")) or free_port()
     serve = (
         "# %s port=%d\n"
         "import os,sys,threading,time\n"

@@ -155,7 +155,8 @@ Visualization components including:
 
 Metric cards (``MetricCardBlock``) show their binding's ``aggregation`` over all
 records; without one, the sum of the bound field, or the number of records when
-no field is bound. A card whose binding has an ``endpoint`` fetches it instead
+no field is bound. No trend is computed, so ``show_trend`` adds nothing under
+the figure. A card whose binding has an ``endpoint`` fetches it instead
 of the CRUD list, and applies the binding's filter to the rows it returns. The response contract (an array of rows, or an object holding
 one under ``data``, ``results``, ``items``, ``records`` or ``list``) is described
 with ``DataBinding`` in :doc:`../buml_language/model_types/gui`. Tables, maps and

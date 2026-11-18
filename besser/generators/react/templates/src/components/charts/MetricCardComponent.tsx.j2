@@ -70,8 +70,6 @@ export const MetricCardComponent: React.FC<Props> = ({
   // For now, just show formatted placeholder value
   const displayValue = formatValue(value, format);
 
-  const trendColor = trend >= 0 ? positiveColor : negativeColor;
-
   const containerStyle: CSSProperties = {
     background: "white",
     padding: "25px",
@@ -112,24 +110,7 @@ export const MetricCardComponent: React.FC<Props> = ({
         {displayValue}
       </div>
 
-      {/* Trend Indicator (optional) */}
-      {showTrend && (
-        <div
-          style={{
-            color: trendColor,
-            fontSize: "12px",
-            marginTop: "8px",
-            fontWeight: "500",
-          }}
-        >
-          {/* TODO: Uncomment when backend aggregation is ready */}
-          {/* {hasDataBinding
-            ? "📊 Data bound to " + (data_binding.entity || "entity")
-            : formatTrend(trend)} */}
-          {/* {formatTrend(trend)} */}
-          Latest value
-        </div>
-      )}
+      {/* No trend is computed (no earlier value to compare with), so showTrend draws nothing. */}
 
       {/* TODO: Uncomment when backend aggregation is ready */}
       {/* Data Binding Info (only in development) */}

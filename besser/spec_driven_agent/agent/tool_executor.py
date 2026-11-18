@@ -60,6 +60,7 @@ from besser.utilities.workspace_fs import (
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
+    _OMISSION_PHRASES,
     _strip_line_numbers,
     describe_escape_mismatch,
     elided_lines,
@@ -550,8 +551,16 @@ _TOP_LEVEL_DECL_RE = re.compile(
 )
 _EXPORT_DEFAULT_RE = re.compile(r"^export\s+default\b", re.MULTILINE)
 _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
-# A rewrite of a large file shorter than this share of its lines has left code out.
+# A rewrite of a large file shorter than this share of its non-blank lines has left code out.
 _MIN_REWRITE_SHARE = 0.6
+# A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
+_COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
+
+
+def _placeholder_comments(source: str) -> set[str]:
+    """Comment-only lines that stand in for omitted code ("remaining rows unchanged")."""
+    return {line.strip() for line in source.splitlines()
+            if _COMMENT_ONLY_LINE_RE.match(line) and any(p in line.lower() for p in _OMISSION_PHRASES)}
 
 
 def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None:
@@ -566,9 +575,10 @@ def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None
     old_names = set(_TOP_LEVEL_DECL_RE.findall(old_code))
     if not old_names:
         return None
-    old_lines, new_lines = before.count("\n") + 1, after.count("\n") + 1
+    old_lines, new_lines = (sum(1 for line in text.splitlines() if line.strip()) for text in (before, after))
     if new_lines < _MIN_REWRITE_SHARE * old_lines:
-        return f"this rewrite has {new_lines} lines, under {_MIN_REWRITE_SHARE:.0%} of the file's {old_lines}"
+        return (f"this rewrite has {new_lines} non-blank lines, under {_MIN_REWRITE_SHARE:.0%} "
+                f"of the file's {old_lines}")
     dropped = sorted(old_names - set(_TOP_LEVEL_DECL_RE.findall(new_code)))
     if dropped:
         shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
@@ -581,6 +591,9 @@ def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None
     elision = find_elision(after)
     if elision and elision[1].strip() not in elided_lines(before):
         return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
+    placeholders = sorted(_placeholder_comments(after) - _placeholder_comments(before))
+    if placeholders:
+        return f"this rewrite replaces code with a placeholder comment ({placeholders[0][:80]})"
     return ""
 
 

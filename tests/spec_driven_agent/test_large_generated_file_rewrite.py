@@ -74,10 +74,15 @@ ELIDED_PAGE = PAGE.replace(ROWS, "      {/* ... existing rows unchanged ... */}\
 NO_DEFAULT = PAGE.replace("\nexport default OrderList;\n", "\nexport { OrderList };\n")
 IN_COMMENT = PAGE.replace("const OrderList: React.FC", "/*\nconst OrderList = old\n*/\nconst Other: React.FC").replace(
     "export default OrderList;", "export default Other;")
+PADDED_STUB = 'import React from "react";\n\nconst OrderList: React.FC = () => null;\n' + "\n" * 240 + \
+    "export default OrderList;\n"
+PLACEHOLDER = PAGE.replace("".join(ROW_LINES[150:]), "      {/* remaining rows unchanged */}\n")
 
 
 @pytest.mark.parametrize("rel,before,after", [
     pytest.param(PAGE_PATH, PAGE, PAGE.replace(ROWS, "".join(ROW_LINES[:70])), id="shrinks-below-60-percent"),
+    pytest.param(PAGE_PATH, PAGE, PADDED_STUB, id="gutted-and-padded-with-blank-lines"),
+    pytest.param(PAGE_PATH, PAGE, PLACEHOLDER, id="comment-placeholder-without-dots"),
     pytest.param(PAGE_PATH, PAGE, ELIDED_PAGE, id="jsx-elided-to-a-comment"),
     pytest.param(PAGE_PATH, PAGE, NO_DEFAULT, id="export-default-dropped"),
     pytest.param(PAGE_PATH, PAGE, IN_COMMENT, id="name-kept-only-in-a-comment"),

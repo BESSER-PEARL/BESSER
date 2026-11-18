@@ -69,9 +69,10 @@ kind also unlock ``write_file`` where it is otherwise held back (a large
 generated file, a modify run). The orchestrator's reminders repeat that step.
 A generated frontend page or component (``.tsx``, ``.jsx``, ``.ts`` or ``.js``
 under a ``frontend`` folder) over 200 lines needs no such attempts when the
-rewrite keeps its code: at least 60% of its lines, every column-0 declaration
-outside comments, its ``export default``, every ``<Route>`` element, and no new
-elision such as ``{/* ... unchanged ... */}``. A rewrite that misses one is
+rewrite keeps its code: at least 60% of its non-blank lines, every column-0
+declaration outside comments, its ``export default``, every ``<Route>``
+element, and no new elision or placeholder comment such as
+``{/* ... unchanged ... */}`` or ``{/* remaining fields unchanged */}``. A rewrite that misses one is
 refused saying which. Backend and other files, and frontend files with no
 declarations to compare, keep the two-attempt rule.
 Repeated failures do not permanently freeze the file; an agent that ignores

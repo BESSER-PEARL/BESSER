@@ -16,3 +16,14 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* On a phone a navigation bar wraps its links onto more lines instead of
+   running off the side. !important: designs lay out their bars inline. */
+@media (max-width: 640px) {
+  nav, nav * {
+    flex-wrap: wrap !important;
+  }
+  nav {
+    height: auto !important;
+  }
+}

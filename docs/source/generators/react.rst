@@ -104,6 +104,10 @@ link with ``target="_blank"``, stays a plain anchor. When the GUI comes from the
 web editor, a link names its page by a ``data-navigate-to`` attribute or by a
 site-relative ``href`` matching the page's route, name or id.
 
+On a screen 640 px wide or narrower, a ``<nav>`` bar and the flex rows inside it
+wrap onto more lines and the bar grows to fit them (``src/index.css``), whatever
+height and layout the design gives it, so its links stay on the screen.
+
 A page's route is the route set on the page in the web editor when it is URL-safe
 (letters of any script, digits, ``_``, ``-`` and ``/``). Otherwise it is ``/`` and the page name
 in lower case, with every run of characters other than letters (of any script),

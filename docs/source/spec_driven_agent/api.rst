@@ -315,7 +315,8 @@ SSE event types
      - One Phase 3 validation round: ``attempt`` (0 for the first check, n for
        the re-check after fix attempt n), ``blockers`` (at most 20 messages,
        each clipped to 300 characters), and the true ``blockerCount`` and
-       ``issueCount``. The ``tool_call`` events between two ``findings``
+       ``issueCount``. Blockers are counted as in ``done``, so the last round
+       matches the run's count. The ``tool_call`` events between two ``findings``
        events are that fix attempt's repairs. ``restored: true`` marks a last
        round after the run went back to a better earlier tree; it describes
        the delivered app.
@@ -341,7 +342,8 @@ SSE event types
    * - ``done``
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
        count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
-       blocker-severity findings), ``verification`` (what the run verified,
+       blocker-severity findings plus required checks that could not run,
+       ``validation unverified:``), ``verification`` (what the run verified,
        could not verify, and shipped unenforced, with true totals in
        ``counts``), ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
        when a cancel request was honoured after the run had written files, so

@@ -115,6 +115,31 @@ def test_findings_list_is_capped_but_counts_are_true(monkeypatch):
     assert len(event["blockers"]) == runner_module._MAX_FINDINGS_LISTED
 
 
+def test_findings_count_blockers_as_the_done_event_does(monkeypatch):
+    # Live run f84c0f93 (2026-11-18): the last round said 4 blockers, the done event 5; the fifth was
+    # "validation unverified: frontend build ... did not run", which also counts towards completion.
+    unverified = "validation unverified: frontend build [frontend] did not run completely"
+
+    class _Unverified(_StubOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._on_findings = kwargs["on_findings"]
+
+        def run(self, instructions: str) -> str:
+            self._on_findings(0, [ValidationIssue("blocker", "import [backend/main.py]: boom"),
+                                  ValidationIssue("warning", unverified),
+                                  ValidationIssue("warning", "ruff: unused import")])
+            return self._finish("run")
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _Unverified)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+    events = [_parse(frame) for frame in asyncio.run(_collect_frames(runner))]
+    [event] = [e for e in events if e.get("event") == "findings"]
+    assert event["blockerCount"] == 2 and event["issueCount"] == 3
+    assert unverified in event["blockers"]
+
+
 def test_repairs_stay_under_the_validate_row(monkeypatch):
     events = _events(monkeypatch)
     phases = [e["phase"] for e in events if e.get("event") == "phase"]

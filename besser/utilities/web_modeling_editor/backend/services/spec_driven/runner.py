@@ -1608,7 +1608,8 @@ class SmartGenerationRunner:
 
         def on_findings(attempt: int, issues: list, restored: bool = False) -> None:
             """One Phase 3 validation round, for the run card's findings and repairs."""
-            blockers = [i.message for i in issues if i.severity == "blocker"]
+            # The done event's definition, so the last round and the run's blocker count agree.
+            blockers = [i.message for i in issues if is_completion_issue(i)]
             _put(FindingsEvent(
                 attempt=attempt,
                 blockers=[_clip(m, _MAX_FINDING_CHARS) for m in blockers[:_MAX_FINDINGS_LISTED]],

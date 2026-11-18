@@ -740,7 +740,7 @@ class ToolExecutor:
         gui_model: Optional GUI model.
         agent_model: Optional agent model.
         agent_config: Optional agent config dict.
-        app_name: The project's name, given to the generators that show one (web app).
+        app_name: The project's name, given to the generators that show one (web app, React).
     """
 
     def __init__(
@@ -2303,7 +2303,8 @@ class ToolExecutor:
             return {"error": "No GUI model available. The React generator requires a GUI model."}
         from besser.generators.react import ReactGenerator
         out = self._gen_dir("react")
-        ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
+        ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out,
+                       app_name=self.app_name).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_web_app(self, args: dict) -> dict:

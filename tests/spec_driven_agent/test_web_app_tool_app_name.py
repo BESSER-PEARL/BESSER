@@ -38,6 +38,15 @@ def test_the_web_app_tool_names_the_app_after_the_project(tmp_path):
     assert "<title>Book Shelf</title>" in _read(out, "frontend", "index.html")
 
 
+def test_the_react_tool_names_the_app_after_the_project(tmp_path):
+    domain, gui = _models()
+    executor = ToolExecutor(workspace=str(tmp_path), domain_model=domain, gui_model=gui, app_name="Book_Shelf")
+
+    assert executor._gen_react({}).get("status") == "ok"
+
+    assert "<title>Book Shelf</title>" in _read(str(tmp_path), "react", "index.html")
+
+
 def test_the_run_hands_the_project_name_to_the_tools(tmp_path):
     domain, gui = _models()
     client = SimpleNamespace(model="test-model", planning_model=None, max_tokens=4096)

@@ -16,9 +16,10 @@ never shows up only there.
 
 ``json_container_faults`` parses the ``attr={{...}}`` containers that are
 written as strict JSON - the generated table config, where such breaks
-typically land. A container holding anything but JSON tokens (identifier keys
-or values, template literals, operators, comments) is JavaScript, not JSON, and
-is skipped; a trailing comma is legal TS and is not a defect.
+typically land. Parts holding anything but JSON tokens (identifier keys or
+values, template literals, operators, comments) are JavaScript, not JSON, and
+are not judged; the object and array literals nested in them still are. A
+trailing comma is legal TS and is not a defect.
 
 Calibrated to zero findings on thousands of generated and real-world files
 that esbuild parses, and a finding on every known broken one. Both callers
@@ -120,7 +121,7 @@ _QUOTED_FIRST_KEY = re.compile(r"^\{\s*(?:\"|\})")
 _TRAILING_COMMA = re.compile(r",(\s*[\]\}])")
 # Whitespace, punctuation, a string with JSON escapes, a JSON number or literal.
 _JSON_TOKEN = re.compile(
-    r'\s+|[{}\[\]:,]|"(?:[^"\\\n]|\\["\\/bfnrtu])*"'
+    r'[ \t\r\n]+|[{}\[\]:,]|"(?:[^"\\\n]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"'
     r"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w$.])|(?:true|false|null)(?![\w$])")
 
 
@@ -135,27 +136,119 @@ def json_container_faults(source: str) -> list[tuple[int, str, str]]:
         inner = source[opened + 1:closed].strip()
         if not (inner.startswith("{") and inner.endswith("}")):
             continue
-        if not _QUOTED_FIRST_KEY.match(inner) or not _written_as_json(inner):
+        if not _QUOTED_FIRST_KEY.match(inner) or match_bracket(inner, 0) != len(inner) - 1:
+            continue  # not JSON-written, or a comma expression ``{...}, {...}``
+        if _in_comment(source, match.start()):
             continue
-        relaxed = inner
-        while True:
-            shortened = _TRAILING_COMMA.sub(r"\1", relaxed)
-            if shortened == relaxed:
-                break
-            relaxed = shortened
-        try:
-            json.loads(relaxed, strict=False)
-        except ValueError as exc:
-            faults.append((source.count("\n", 0, match.start()) + 1, match.group(1), str(exc)[:90]))
+        fault = _json_fault(inner)
+        if fault:
+            message, pos = fault
+            line = inner.count("\n", 0, pos) + 1
+            column = pos - inner.rfind("\n", 0, pos)
+            reason = f"{message}: line {line} column {column} (char {pos})"[:90]
+            faults.append((source.count("\n", 0, match.start()) + 1, match.group(1), reason))
     return faults
+
+
+def _json_fault(literal: str) -> tuple[str, int] | None:
+    """``(message, offset)`` where the JSON-written parts of an object or array literal fail.
+
+    A literal that also holds JavaScript is judged with each nested literal
+    standing in as one value, once the nested literals themselves are judged,
+    and its comments as whitespace.
+    """
+    reduced = literal
+    if not _written_as_json(literal):
+        for start, stop, nested in _nested_spans(literal):
+            if nested:
+                fault = _json_fault(literal[start:stop + 1])
+                if fault:
+                    return fault[0], start + fault[1]
+            # Same length and line breaks, so the reason's position still holds.
+            blank = re.sub(r"[^\n]", " ", literal[start + 1:stop + 1])
+            reduced = reduced[:start] + ("0" if nested else " ") + blank + reduced[stop + 1:]
+        if not _written_as_json(reduced):
+            return None
+    relaxed = reduced
+    while True:
+        shortened = _TRAILING_COMMA.sub(r"\1", relaxed)
+        if shortened == relaxed:
+            break
+        relaxed = shortened
+    try:
+        json.loads(relaxed, strict=False)
+    except json.JSONDecodeError as exc:
+        return exc.msg, exc.pos
+    return None
+
+
+def _nested_spans(literal: str) -> list[tuple[int, int, bool]]:
+    """``(start, stop, nested)`` of the comments and nested literals directly in ``literal``.
+
+    A nested object or array literal counts only as a value - after ``:`` in
+    an object, after ``[`` or ``,`` in an array (or a ``{`` after a closer
+    there), outside parentheses. The scan stops at ``<`` or a ``/`` that is not
+    a comment, which may open JSX or a regex.
+    """
+    found: list[tuple[int, int, bool]] = []
+    parent = previous = literal[0]
+    depth, index, size = 0, 1, len(literal) - 1
+    while index < size:
+        char = literal[index]
+        if char in " \t\r\n":
+            index += 1
+            continue
+        if char == "/" and literal[index + 1] in "/*":
+            closer = "\n" if literal[index + 1] == "/" else "*/"
+            stop = literal.find(closer, index + 2)
+            if stop < 0:
+                break
+            found.append((index, stop - 1 if closer == "\n" else stop + 1, False))
+            index = stop + len(closer)
+            continue
+        if char in "</":
+            break
+        if char in "'\"`":
+            if char == "`":
+                stop, _, error = _template_end(literal, index)
+            else:
+                stop, error = _string_end(literal, index, char), None
+            if stop is None or error:
+                break
+            index, previous = stop, char
+            continue
+        if char in "{[":
+            stop = match_bracket(literal, index)
+            if stop is None:
+                break
+            # In an array a ``{`` after a closer is a value too: no JS reads ``} {``.
+            in_array = previous in "[," or (char == "{" and previous in "}]")
+            if depth == 0 and (previous == ":" if parent == "{" else in_array):
+                found.append((index, stop, True))
+            index, previous = stop + 1, literal[stop]
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        index, previous = index + 1, char
+    return found
+
+
+def _in_comment(source: str, index: int) -> bool:
+    """``index`` may sit in a comment: a ``//`` before it on its line, or an open ``/*``."""
+    line_start = source.rfind("\n", 0, index) + 1
+    return "//" in source[line_start:index] or source.rfind("/*", 0, index) > source.rfind("*/", 0, index)
 
 
 def _written_as_json(inner: str) -> bool:
     """``inner`` holds only JSON tokens, so a JSON parse failure is a JS one too.
 
     Any other token is a JavaScript value this check cannot judge. JS also reads
-    some JSON-token runs that JSON rejects: ``[1][0]``, ``1 -2``, a numeric or
-    computed key and an array hole.
+    some JSON-token runs that JSON rejects: ``[1][0]``, ``1 -2``, a numeric,
+    computed or ``true``/``false``/``null`` key and an array hole. So a dropped
+    comma that JS reads as indexing or subtraction (``[[1] [2]]``, ``[10 -2]``)
+    is valid and passes.
     """
     stack: list[str] = []
     previous = ""
@@ -171,8 +264,8 @@ def _written_as_json(inner: str) -> bool:
         if previous not in ("", "{", "[", ":", ",") and token[0] in "[-":
             return False  # ``[1][0]``, ``1 -2``
         key_position = stack[-1:] == ["{"] and previous in ("{", ",")
-        if key_position and (token == "[" or token[0] in "-0123456789"):
-            return False  # computed or numeric key
+        if key_position and (token == "[" or token[0] in "-0123456789tfn"):
+            return False  # computed, numeric or keyword key
         if stack[-1:] == ["["] and token == "," and previous in ("[", ","):
             return False  # array hole
         if token in ("{", "["):

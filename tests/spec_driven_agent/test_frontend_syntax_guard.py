@@ -218,9 +218,17 @@ def test_valid_frontend_source_is_not_flagged(source):
     'const A = () => <T options={{"a": 1, ["b"]: 2}} />;\n',
     'const A = () => <T options={{"cells": [1, , 3]}} />;\n',
     'const A = () => <T options={{"label": "a\tb"}} />;\n',
+    'const A = () => <T options={{"label": "x", true: "Yes", false: "No"}} />;\n',
+    'const A = () => <T labels={{"none": "-", null: "n/a"}} />;\n',
+    'const A = () => <T options={{"icon": "\\u{1F600}"}} />;\n',
+    'const A = () => <T options={{"a": 1}} />;\n',
+    'const A = () => <T options={{"a": 1}, {"b": 2}} />;\n',
+    'const A = () => <div>{/* e.g. options={{"a": 1 "b": 2}} */}</div>;\n',
+    '// set style={{"note": "don\'t, w: 1}} on the row\nconst A = 1;\n',
 ], ids=["template", "identifier", "arithmetic", "ternary", "spread", "call", "comment",
         "single-quote", "js-number", "member", "subtraction", "numeric-key", "computed-key",
-        "array-hole", "tab-in-string"])
+        "array-hole", "tab-in-string", "boolean-keys", "null-key", "code-point-escape",
+        "non-breaking-space", "comma-expression", "in-block-comment", "in-line-comment"])
 def test_javascript_values_in_a_quoted_key_container_are_not_flagged(source):
     assert frontend_source.structure_error(source) is None
     assert frontend_source.json_container_faults(source) == []
@@ -234,6 +242,36 @@ def test_javascript_values_in_a_quoted_key_container_are_not_flagged(source):
 ], ids=["missing-comma-objects", "missing-comma-pairs", "unterminated-string", "double-comma"])
 def test_broken_json_container_is_still_flagged(source):
     assert frontend_source.json_container_faults(source)
+
+
+MISSING_COMMA = PAGE.replace('              "type": "int"\n            },\n',
+                             '              "type": "int"\n            }\n')
+
+
+@pytest.mark.parametrize("old, new", [
+    ('"rowsPerPage": 5,', '"rowsPerPage": pageSize,'),
+    ('"label": "Id"', '"label": `Id ${n}`'),
+    ('"showHeader": true,', '"showHeader": true, // header row'),
+    ('"type": "str"', "\"type\": 'str'"),
+    ('"rowsPerPage": 5', '"rowsPerPage": .5'),
+    ('"showHeader": true,', '"showHeader": true,\n          "onRowClick": (row) => open(row),'),
+    ('"rowsPerPage": 5', '"rowsPerPage": [5, 10][0]'),
+    ('"type": "int"\n            }\n', '"type": "int"\n            } // first column\n'),
+], ids=["identifier", "template", "comment", "single-quote", "js-number", "arrow", "member",
+        "comment-at-the-gap"])
+def test_a_dropped_comma_next_to_a_new_javascript_value_is_refused(old, new):
+    """The JSON-only parts of a container that also holds JS are still judged."""
+    after = MISSING_COMMA.replace(old, new, 1)
+    assert after != MISSING_COMMA
+    broke = frontend_source.new_syntax_error(PAGE, after)
+    assert broke and "no longer parses" in broke[0], broke
+
+
+def test_a_dropped_comma_beside_javascript_at_the_same_level_is_not_judged():
+    """Not covered: telling the two apart there needs a JavaScript parser."""
+    after = MISSING_COMMA.replace('"rowsPerPage": 5,\n          "columns": [',
+                                  '"rowsPerPage": 5,\n          "columns": [extra,')
+    assert frontend_source.new_syntax_error(PAGE, after) is None
 
 
 def test_an_edit_adding_a_template_literal_style_applies(executor):

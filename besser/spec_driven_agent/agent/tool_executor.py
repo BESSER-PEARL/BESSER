@@ -740,6 +740,7 @@ class ToolExecutor:
         gui_model: Optional GUI model.
         agent_model: Optional agent model.
         agent_config: Optional agent config dict.
+        app_name: The project's name, given to the generators that show one (web app).
     """
 
     def __init__(
@@ -756,8 +757,10 @@ class ToolExecutor:
         protect_scaffold: bool = False,
         per_write_diagnostics: bool = True,
         allow_shell: bool = False,
+        app_name: str | None = None,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
+        self.app_name = app_name
         self.allow_shell = allow_shell
         # The run's one shell: cwd, exported env and background processes
         # carry over between run_command calls. No process until first use.
@@ -2313,7 +2316,7 @@ class ToolExecutor:
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
         WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
-            agent_model=self.agent_model, agent_config=self.agent_config,
+            agent_model=self.agent_model, agent_config=self.agent_config, app_name=self.app_name,
         ).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 

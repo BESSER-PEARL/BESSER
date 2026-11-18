@@ -90,8 +90,9 @@ class WebAppGenerator(GeneratorInterface):
             Pass ``False`` when the services do not share a volume (e.g. separate
             hosting services); the agent config then keeps its placeholders.
         app_name (str, optional): The application's name as its users see it: the
-            browser tab title and the README headings. Without it the README is
-            titled after the domain model and the browser tab reads ``BESSER App``.
+            browser tab title, the README headings and the API title. Without it the
+            README is titled after the domain model, the API is ``<model name> API``
+            and the browser tab reads ``BESSER App``.
     """
 
     regenerable = True
@@ -162,8 +163,14 @@ class WebAppGenerator(GeneratorInterface):
     def _generate_backend(self, env):
         # Generate backend code in 'backend' subfolder
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
-        backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
+        # Without an app name the backend keeps its default title, "<model name> API".
+        api_title = f"{self._title()} API" if self.app_name else None
+        backend_gen = BackendGenerator(self.model, output_dir=backend_dir, api_title=api_title)
         backend_gen.generate()
+
+    def _title(self) -> str:
+        """The application's name as its users read it."""
+        return (self.app_name or self.model.name).replace("_", " ")
 
     def _generate_agent(self, env):
         """Generate agent code for every configured agent model.
@@ -210,7 +217,7 @@ class WebAppGenerator(GeneratorInterface):
         readme_path = os.path.join(self.output_dir, "README.md")
         with open(readme_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(env.get_template("README.md.j2").render(
-                title=(self.app_name or self.model.name).replace("_", " "),
+                title=self._title(),
                 agent_models=self.agent_models,
             ))
 

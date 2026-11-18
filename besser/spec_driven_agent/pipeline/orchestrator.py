@@ -421,6 +421,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # advertised list is not a gate: the model can name a tool it was
             # never offered, and a dispatch table alone would run it anyway.
             allow_shell=allow_shell_tools,
+            # The class diagram's title names the model; the project names the app.
+            app_name=(source_project_export or {}).get("name") or None,
         )
         self.executor.app_validator = self._validate_app
         self.executor.time_left = self._time_left

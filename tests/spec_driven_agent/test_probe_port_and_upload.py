@@ -199,3 +199,28 @@ def test_the_runbook_quotes_every_json_body_it_shows(tmp_path):
     section = runbook_section(str(workspace(tmp_path)))
     bodies = re.findall(r"req \w+ \S+ (\S*\{\S*)", section)
     assert bodies and all(body.startswith("'") or body == "{}" for body in bodies), bodies
+
+
+def test_req_with_an_empty_stdin_is_refused_not_sent_as_an_empty_object(tmp_path, monkeypatch, capsys):
+    code, body = _sent_body(tmp_path, ["POST", "/book", "-"], monkeypatch, stdin="")
+    assert (code, body) == (2, None)
+    assert "BAD_BODY" in capsys.readouterr().out
+
+
+def test_form_values_keep_their_own_quotes_and_options(tmp_path):
+    workspace(tmp_path)
+    (tmp_path / "cover.bin").write_bytes(b"\x00\x01")
+    ns = load_probe(tmp_path)
+    rest, fields = ns["split_form"](["-F", "'title=\"x\"'", "-F", 'note=say "hi"',
+                                     "-F", "file=@%s;type=image/png;filename=front.png" % (tmp_path / "cover.bin")])
+    assert rest == []
+    assert fields[:2] == [("title", '"x"'), ("note", 'say "hi"')]
+
+    body, content_type = ns["encode_form"](fields + [('we"ird', "v")])
+    parts = form_parts(content_type, body)
+    assert parts["title"].get_payload(decode=True) == b'"x"'
+    assert parts["note"].get_payload(decode=True) == b'say "hi"'
+    assert parts["file"].get_filename() == "front.png"
+    assert parts["file"].get_content_type() == "image/png"
+    assert parts["file"].get_payload(decode=True) == b"\x00\x01"
+    assert b'name="we%22ird"' in body

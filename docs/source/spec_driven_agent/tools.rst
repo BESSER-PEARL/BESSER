@@ -454,13 +454,14 @@ again while nothing else holds it, so a command or script written with that
 port keeps working after a restart. ``req`` takes a JSON body as one argument
 in single quotes (unquoted, the shell strips its double quotes), from a file
 as ``@body.json``, or from standard input as ``-``, for instance a quoted
-here-document; a body whose quotes the shell removed, or an option ``req``
-does not have, is refused with a message saying which. ``req`` sends
+here-document; a body whose quotes the shell removed, an empty file or empty
+standard input, or an option ``req`` does not have, is refused with a message
+saying which. ``req`` sends
 extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
 prints only their names. It sends form fields and files as
 ``multipart/form-data`` with curl's syntax, ``-F "name=value"`` and
-``-F "file=@path"`` (``;type=<mime>`` sets a file's type), for an upload
-endpoint. ``down`` stops a process only when its command line
+``-F "file=@path"`` (``;type=<mime>`` and ``;filename=<name>`` set a file's
+type and name), for an upload endpoint; a field value keeps its own quotes. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
 session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.

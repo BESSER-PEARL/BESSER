@@ -798,7 +798,10 @@ def split_form(argv):
         else:
             rest.append(item)
             continue
-        name, sep, value = raw.strip().strip("'\"").partition("=")
+        raw = raw.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+            raw = raw[1:-1]             # cmd.exe passes the quotes bash would have removed
+        name, sep, value = raw.partition("=")
         if not sep or not name:
             raise ValueError("a form field must look like name=value or name=@path")
         fields.append((name, value))
@@ -806,19 +809,28 @@ def split_form(argv):
 
 
 def encode_form(fields):
-    """A multipart/form-data body and its Content-Type; ``@path[;type=mime]`` sends a file."""
+    """A multipart/form-data body and its Content-Type.
+
+    ``@path[;type=mime][;filename=name]`` sends a file, as curl's ``-F`` does.
+    """
     import mimetypes
     import uuid
+
+    def quoted(text):
+        return text.replace('"', "%22").replace("\r", "").replace("\n", "")
+
     boundary = uuid.uuid4().hex
     parts = []
     for name, value in fields:
-        head = 'Content-Disposition: form-data; name="%s"' % name
+        head = 'Content-Disposition: form-data; name="%s"' % quoted(name)
         if value.startswith("@"):
-            path, _, kind = value[1:].partition(";type=")
+            path, *options = value[1:].split(";")
+            option = dict(item.partition("=")[::2] for item in options)
             with open(path, "rb") as handle:
                 data = handle.read()
-            kind = kind or mimetypes.guess_type(path)[0] or "application/octet-stream"
-            head += '; filename="%s"\r\nContent-Type: %s' % (os.path.basename(path), kind)
+            kind = option.get("type") or mimetypes.guess_type(path)[0] or "application/octet-stream"
+            filename = option.get("filename") or os.path.basename(path)
+            head += '; filename="%s"\r\nContent-Type: %s' % (quoted(filename), quoted(kind))
         else:
             data = value.encode("utf-8")
         parts.append(b"--%s\r\n%s\r\n\r\n%s\r\n" % (boundary.encode(), head.encode("utf-8"), data))
@@ -857,13 +869,21 @@ def cmd_req(argv):
         print("BAD_FORM a request carries a JSON body or -F fields, not both.")
         return 2
     if raw == "-":
-        raw = sys.stdin.read().strip()
+        raw = (sys.stdin.read() if sys.stdin else "").strip()
+        if not raw:
+            print("BAD_BODY nothing arrived on stdin.\nNEXT: send the JSON with a here-document: "
+                  "req POST /x - <<'EOF' ... EOF, or pass @body.json.")
+            return 2
     elif raw.startswith("@"):
+        source = raw[1:]
         try:
-            with open(raw[1:], encoding="utf-8") as handle:
+            with open(source, encoding="utf-8") as handle:
                 raw = handle.read().strip()
         except OSError as exc:
             print("BAD_BODY %s\nNEXT: name a JSON file that exists, e.g. @body.json." % exc)
+            return 2
+        if not raw:
+            print("BAD_BODY %s is empty.\nNEXT: write the JSON body into it first." % source)
             return 2
     if raw:
         try:

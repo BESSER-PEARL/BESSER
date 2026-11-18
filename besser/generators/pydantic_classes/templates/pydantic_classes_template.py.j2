@@ -42,6 +42,17 @@ class {{ enum.name }}(Enum):
 
 {% endfor -%}
 
+{#- Rejects an empty or whitespace-only value for the required str fields `names`. #}
+{% macro not_blank_validator(owner, names) %}
+
+    @field_validator({% for name in names %}'{{ name }}'{{ ", " if not loop.last else "" }}{% endfor %})
+    @classmethod
+    def validate_{{ owner }}_text_not_blank(cls, v):
+        """A required text attribute must not be empty or only whitespace."""
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v
+{%- endmacro %}
 {% if backend and assoc_link_meta %}
 ############################################
 # Association-class link payloads
@@ -54,6 +65,10 @@ class {{ link.link_class }}(BaseModel):
 {% set link_attr_type = 'Any' if attr.type_name == 'any' else attr.type_name %}
     {{ attr.name }}: {{ ('Optional[' ~ link_attr_type ~ '] = None') if attr.optional else link_attr_type }}
 {% endfor %}
+{% set link_text = link.attributes | rejectattr('optional') | selectattr('type_name', 'equalto', 'str') | map(attribute='name') | list %}
+{% if link_text %}
+{{ not_blank_validator(link.link_class, link_text) }}
+{% endif %}
 
 {% endfor %}
 {% endif %}
@@ -349,14 +364,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     pass
     {% endif %}
     {%- if required_text %}
-
-    @field_validator({% for name in required_text %}'{{ name }}'{{ ", " if not loop.last else "" }}{% endfor %})
-    @classmethod
-    def validate_{{ class.name }}_text_not_blank(cls, v):
-        """A required text attribute must not be empty or only whitespace."""
-        if not v.strip():
-            raise ValueError("must not be empty")
-        return v
+{{ not_blank_validator(class.name, required_text) }}
     {% endif %}
     {# OCL Constraint Validators #}
     {%- if constraints_map and class.name in constraints_map %}

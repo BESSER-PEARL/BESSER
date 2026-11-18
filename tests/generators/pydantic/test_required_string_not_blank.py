@@ -12,7 +12,8 @@ import pytest
 from pydantic import ValidationError
 
 from besser.BUML.metamodel.structural import (
-    Class, DomainModel, Generalization, IntegerType, Property, StringType,
+    AssociationClass, BinaryAssociation, Class, DomainModel, Generalization, IntegerType,
+    Multiplicity, Property, StringType,
 )
 from besser.generators.pydantic_classes import PydanticGenerator
 
@@ -32,9 +33,23 @@ def _catalog_model() -> DomainModel:
     )
 
 
-def _import_generated(tmpdir, module_name: str):
+def _rental_model() -> DomainModel:
+    customer = Class(name="Customer", attributes={Property(name="name", type=StringType)})
+    tool = Class(name="Tool", attributes={Property(name="label", type=StringType)})
+    rents = BinaryAssociation(name="Rents", ends={
+        Property(name="renters", type=customer, multiplicity=Multiplicity(0, "*")),
+        Property(name="rented", type=tool, multiplicity=Multiplicity(0, "*")),
+    })
+    rental = AssociationClass(name="Rental", association=rents, attributes={
+        Property(name="purpose", type=StringType),
+        Property(name="memo", type=StringType, is_optional=True),
+    })
+    return DomainModel(name="Rentals", types={customer, tool, rental}, associations={rents})
+
+
+def _import_generated(tmpdir, module_name: str, model=None):
     output_dir = tmpdir.mkdir(module_name)
-    PydanticGenerator(model=_catalog_model(), output_dir=str(output_dir), backend=True).generate()
+    PydanticGenerator(model=model or _catalog_model(), output_dir=str(output_dir), backend=True).generate()
     spec = importlib.util.spec_from_file_location(module_name, os.path.join(str(output_dir), "pydantic_classes.py"))
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -67,3 +82,13 @@ def test_subclass_checks_its_own_and_inherited_required_strings(tmpdir):
     with pytest.raises(ValidationError, match="name"):
         module.ProductCreate(name=" ", quantity=1, sku="L-1")
     assert module.ProductCreate(name="Lamp", quantity=1, sku="L-1").sku == "L-1"
+
+
+def test_association_class_link_payload_rejects_blank_required_string(tmpdir):
+    """A link created from an end (``rented: [{target, purpose}]``) is validated like the record itself."""
+    module = _import_generated(tmpdir, "blank_link_module", _rental_model())
+    for blank in ("", "  "):
+        with pytest.raises(ValidationError, match="purpose"):
+            module.RentalLinkCreate(target=1, purpose=blank)
+    link = module.RentalLinkCreate(target=1, purpose="repair", memo="")
+    assert (link.purpose, link.memo) == ("repair", "")

@@ -234,6 +234,8 @@ class PageBuilderMixin:
             selector_style_map=selector_style_map,
             has_children=bool(children),
         )
+        if comp_type == "menu" or (node.get("tag") or "").lower() == "nav":
+            style = self._nav_style(style)
 
         indent_str = " " * indent
         # Continuation lines of a multi-line prop align under this component.
@@ -1158,6 +1160,18 @@ class PageBuilderMixin:
     # ------------------------------------------------------------------ #
     # Style helpers for page rendering
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _nav_style(style: Dict[str, Any]) -> Dict[str, Any]:
+        """A navigation bar's fixed height becomes its minimum height, so the bar
+        grows when its items wrap on a narrow screen (``src/index.css``) instead
+        of spilling over the page."""
+        height = str(style.get("height", "")).strip()
+        if not height or height == "auto" or "minHeight" in style:
+            return style
+        style = {key: value for key, value in style.items() if key != "height"}
+        style["minHeight"] = height
+        return style
+
     def _compute_style(
         self,
         component_id: str,

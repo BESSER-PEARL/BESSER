@@ -280,13 +280,16 @@ def _suppress_kind(node: _ast.With) -> str | None:
     return _OPTIONAL if _OPTIONAL in kinds else _BROAD if _BROAD in kinds else None
 
 
-def _required_import_roots(node: _ast.AST, broad: bool = False) -> list[tuple[str, bool]]:
+def _required_import_roots(node: _ast.AST, broad: bool = False,
+                           in_function: bool = False) -> list[tuple[str, bool]]:
     """``(root, broad)`` for the absolute imports the app needs in order to start.
 
     Skipped, because the app starts without them: imports inside a ``try``
     that handles the import failure (and the fallback in its handler) or a
     ``with suppress(ImportError)``, ``if TYPE_CHECKING:`` imports, which never
-    run, and both branches of a ``sys.version_info`` check (a backport).
+    run, both branches of a ``sys.version_info`` check (a backport), and an
+    import inside a function under a catch-all handler (an optional fast path
+    the function falls back from).
     ``broad`` marks an import under a handler that catches every exception.
     """
     if isinstance(node, _ast.ImportFrom):
@@ -298,7 +301,7 @@ def _required_import_roots(node: _ast.AST, broad: bool = False) -> list[tuple[st
         kinds = {_handler_kind(h) for h in node.handlers}
         if _OPTIONAL in kinds or _BROAD in kinds:
             children = [*node.orelse, *node.finalbody]
-            guarded = [] if _OPTIONAL in kinds else node.body
+            guarded = [] if _OPTIONAL in kinds or in_function else node.body
         else:
             children = list(_ast.iter_child_nodes(node))
     elif isinstance(node, _ast.If) and _is_type_checking(node.test):
@@ -306,11 +309,12 @@ def _required_import_roots(node: _ast.AST, broad: bool = False) -> list[tuple[st
     elif isinstance(node, _ast.If) and _is_version_check(node.test):
         children = []
     elif isinstance(node, _ast.With) and (kind := _suppress_kind(node)):
-        children, guarded = [], [] if kind == _OPTIONAL else node.body
+        children, guarded = [], [] if kind == _OPTIONAL or in_function else node.body
     else:
         children = list(_ast.iter_child_nodes(node))
-    return ([root for child in children for root in _required_import_roots(child, broad)]
-            + [root for child in guarded for root in _required_import_roots(child, True)])
+    in_function = in_function or isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+    return ([root for child in children for root in _required_import_roots(child, broad, in_function)]
+            + [root for child in guarded for root in _required_import_roots(child, True, in_function)])
 
 
 def _unresolvable_local_imports(output_dir: str) -> list[str]:

@@ -50,7 +50,9 @@ that was already broken is never refused, so it can be repaired.
   excuses every name), and it is fatal at startup. Imports the app starts
   without are not checked: inside a ``try`` that handles ``ImportError``, and
   under ``if TYPE_CHECKING:``. Under a catch-all handler (``except Exception``)
-  an unresolved import is a warning, ``possibly missing module:``. A package
+  an unresolved import is a warning, ``possibly missing module:``, unless it
+  is inside a function, where it is an optional fast path the function falls
+  back from. A package
   declared in the app's manifest satisfies its import name, matched
   case-insensitively and, for names that differ (``python-socketio`` /
   ``socketio``), by name prefix, unless the app ships a module of that name.
@@ -508,8 +510,10 @@ Findings are classified into three severities:
        cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, the model-derived acceptance matrix,
-       ``entity coverage:`` (for an ``other`` target used through screens, the
+       now), ``form field type:``, the model-derived acceptance matrix (with
+       a GUI model, a class no screen offers to create, through a table with
+       action buttons, a form or a create button, is not asked for a create
+       path), ``entity coverage:`` (for an ``other`` target used through screens, the
        judge also checks that every entity can be created, viewed, edited and
        deleted, since the acceptance matrix only reads web routes and pages;
        like the matrix it is reported, never a blocker. Abstract classes are

@@ -16,7 +16,8 @@ indicate whether the entity appears in the app (not executed acceptance):
   generated create path issues its POST from a shared runtime component
   (``TableComponent``), never a literal call in the page file itself, so
   the binding — not the call site — is the signal. An abstract class is
-  created through its subclasses, so its cell is ``None`` (not expected).
+  created through its subclasses, so its cell is ``None`` (not expected);
+  so is the cell of a class a GUI model's screens offer no way to create.
 
 Most generated React frontends put every request behind one api module
 (``api.create('carpark', payload)`` → ``fetch(url, {method:'POST'})``),
@@ -38,6 +39,7 @@ import bisect
 import functools
 import os
 import re
+from besser.BUML.metamodel.gui import Button, ButtonActionType, Form
 from besser.spec_driven_agent.validation.constructibility import abstract_entities
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.utilities.workspace_fs import walk_plain
@@ -874,16 +876,38 @@ def _creates(args: list[str] | None, forms: list[str]) -> bool:
     return args is None or _mentions(re.sub(r"[-_\s]", "", " ".join(args)), forms)
 
 
+def _gui_creatable_classes(gui_model) -> set[str]:
+    """Classes a GUI model offers to create: a table with action buttons, a form
+    or a create button bound to them."""
+    creatable: set[str] = set()
+    pending = [element for module in gui_model.modules for screen in module.screens
+               for element in (getattr(screen, "view_elements", None) or ())]
+    while pending:
+        element = pending.pop()
+        pending.extend(getattr(element, "view_elements", None) or ())
+        binding = getattr(element, "data_binding", None)
+        bound = getattr(binding, "domain_concept", None)
+        if bound is not None and (getattr(element, "action_buttons", False) or isinstance(element, Form)):
+            creatable.add(bound.name)
+        entity = getattr(element, "entity_class", None)
+        if (isinstance(element, Button) and entity is not None
+                and element.actionType in (ButtonActionType.Create, ButtonActionType.Add)):
+            creatable.add(entity.name)
+    return creatable
+
+
 def build_acceptance_matrix(
     output_dir: str,
     domain_model,
     endpoint_manifest: str = "",
     snapshot_dir: str = ".besser_snapshot",
+    gui_model=None,
 ) -> dict[str, dict[str, bool | None]] | None:
     """Compute {class name: {route, page, create}} for the workspace.
 
     A ``None`` cell is not a finding: the signal was not measured (``route`` on
-    an unparsed stack) or does not apply (``create`` of an abstract class).
+    an unparsed stack) or does not apply (``create`` of an abstract class, or,
+    with a ``gui_model``, of a class its screens offer no way to create).
 
     ``endpoint_manifest`` is the statically parsed route listing (from
     ``prompt_builder.build_endpoint_manifest``); pass it in when the
@@ -900,6 +924,7 @@ def build_acceptance_matrix(
     if not classes:
         return None
     abstract = set(abstract_entities(domain_model))
+    not_created = set(classes) - _gui_creatable_classes(gui_model) if gui_model is not None else set()
 
     if not endpoint_manifest:
         try:
@@ -1044,8 +1069,10 @@ def build_acceptance_matrix(
                     or _table_block_create_wired(content, cls)):
                 create = True
                 break
-        # An abstract class is created through its subclasses: no create form is expected.
-        matrix[cls] = {"route": route, "page": page, "create": None if cls in abstract else create}
+        # An abstract class is created through its subclasses, and the GUI model
+        # scopes which classes the screens create: no create form is expected.
+        matrix[cls] = {"route": route, "page": page,
+                       "create": None if cls in abstract or cls in not_created else create}
     return matrix
 
 

@@ -3072,7 +3072,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         try:
             from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
-            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model,
+                                                              gui_model=self.gui_model)
             return matrix_issues(self._acceptance_matrix)
         except Exception as exc:
             logger.warning("Acceptance matrix computation failed", exc_info=True)

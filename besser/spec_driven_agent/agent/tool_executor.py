@@ -60,6 +60,7 @@ from besser.utilities.workspace_fs import (
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
+    _OMISSION_PHRASES,
     _strip_line_numbers,
     describe_escape_mismatch,
     elided_lines,
@@ -83,6 +84,7 @@ from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_gen
 from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.spec_driven_agent.state.generator_output import store_written_files
 from besser.spec_driven_agent.validation import frontend_source
+from besser.spec_driven_agent.validation.frontend_resolution import _strip_comments
 
 logger = logging.getLogger(__name__)
 
@@ -538,6 +540,61 @@ def _anchored_occurrences(content: str, old_text: str) -> list[int]:
             out.append(pos)
         pos = content.find(old_text, pos + max(1, len(old_text)))
     return out
+
+
+# A column-0 TS/JS declaration and its name (none for `export default class extends X`).
+_TOP_LEVEL_DECL_RE = re.compile(
+    r"^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?"
+    r"(?:function\*?|class|(?:const\s+)?enum|const|let|var|interface|type)\s+"
+    r"(?!(?:extends|implements)\b)([A-Za-z_$][\w$]*)",
+    re.MULTILINE,
+)
+_EXPORT_DEFAULT_RE = re.compile(r"^export\s+default\b", re.MULTILINE)
+_ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
+# A rewrite of a large file shorter than this share of its non-blank lines has left code out.
+_MIN_REWRITE_SHARE = 0.6
+# A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
+_COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
+
+
+def _placeholder_comments(source: str) -> set[str]:
+    """Comment-only lines that stand in for omitted code ("remaining rows unchanged")."""
+    return {line.strip() for line in source.splitlines()
+            if _COMMENT_ONLY_LINE_RE.match(line) and any(p in line.lower() for p in _OMISSION_PHRASES)}
+
+
+def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None:
+    """Why a whole rewrite of a large generated frontend file may lose code.
+
+    ``""`` when it keeps the file's code; ``None`` when the file is not frontend
+    source with listable declarations, which keeps the two-attempt rule.
+    """
+    if not frontend_source.supports(rel_path) or "frontend" not in rel_path.split("/")[:-1]:
+        return None
+    old_code, new_code = _strip_comments(before, rel_path), _strip_comments(after, rel_path)
+    old_names = set(_TOP_LEVEL_DECL_RE.findall(old_code))
+    if not old_names:
+        return None
+    old_lines, new_lines = (sum(1 for line in text.splitlines() if line.strip()) for text in (before, after))
+    if new_lines < _MIN_REWRITE_SHARE * old_lines:
+        return (f"this rewrite has {new_lines} non-blank lines, under {_MIN_REWRITE_SHARE:.0%} "
+                f"of the file's {old_lines}")
+    dropped = sorted(old_names - set(_TOP_LEVEL_DECL_RE.findall(new_code)))
+    if dropped:
+        shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
+        return f"this rewrite drops {len(dropped)} of its declarations: {shown}"
+    if _EXPORT_DEFAULT_RE.search(old_code) and not _EXPORT_DEFAULT_RE.search(new_code):
+        return "this rewrite drops its `export default`"
+    old_routes, new_routes = (len(_ROUTE_ELEMENT_RE.findall(code)) for code in (old_code, new_code))
+    if new_routes < old_routes:
+        return f"this rewrite has {new_routes} <Route> elements where the file has {old_routes}"
+    elision = find_elision(after)
+    if elision and elision[1].strip() not in elided_lines(before):
+        return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
+    placeholders = sorted(_placeholder_comments(after) - _placeholder_comments(before))
+    if placeholders:
+        return f"this rewrite replaces code with a placeholder comment ({placeholders[0][:80]})"
+    return ""
 
 
 def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int] | None:
@@ -1257,11 +1314,18 @@ class ToolExecutor:
 
     def _do_done(self, args: dict) -> dict:
         """action='done' — also the `done_ids`+`evidence` verb inside a mixed call."""
+        if args.get("ids") is None and args.get("id") is None:
+            # The reply names closed items `done_ids`, and evidence names its item.
+            fallback = args.get("done_ids")
+            if fallback is None and isinstance(args.get("evidence"), list):
+                fallback = [e.get("id") for e in args["evidence"] if isinstance(e, dict) and "id" in e] or None
+            args = {**args, "ids": fallback}
         ids, bad = self._requested_task_ids(args)
         if not ids:
             return {"error": (
-                "action='done' requires `id` (an integer) or `ids` "
-                "(a list of integers). Use action='list' to see ids."
+                "action='done' requires `id` (an integer) or `ids` (a list of integers; "
+                "`done_ids` works too), or evidence entries carrying their item's id. "
+                "Use action='list' to see ids."
                 + (f" Not integers: {bad}." if bad else "")
             )}
 
@@ -2859,21 +2923,33 @@ class ToolExecutor:
         # Size rule: a whole-file rewrite is cheapest and
         # safest on a SMALL file (<=200 lines), which the model can reproduce
         # faithfully after one read; it is a large file that risks dropping
-        # code. So small generated files unlock write_file immediately and
-        # large ones keep the targeted-edit requirement until two modify_file
-        # attempts have been made.
+        # code. So small generated files unlock write_file immediately; a
+        # large one after two modify_file attempts, or at once for a frontend
+        # rewrite that keeps the file's code (_frontend_rewrite_loss).
         if rel_path in self._generator_files and os.path.isfile(path):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
-                existing_lines = f.read().count("\n") + 1
+                existing = f.read()
+            existing_lines = existing.count("\n") + 1
             if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-                return {
-                    "error": (
-                        f"'{rel_path}' was created by a BESSER generator and is large "
-                        f"({existing_lines} lines) - too large to reproduce faithfully "
-                        "from one read. Use modify_file for targeted edits. write_file "
-                        "unlocks for this file after two modify_file attempts."
-                    ),
-                }
+                loss = _frontend_rewrite_loss(rel_path, existing, args["content"])
+                if loss is None:
+                    return {
+                        "error": (
+                            f"'{rel_path}' was created by a BESSER generator and is large "
+                            f"({existing_lines} lines) - too large to reproduce faithfully "
+                            "from one read. Use modify_file for targeted edits. write_file "
+                            "unlocks for this file after two modify_file attempts."
+                        ),
+                    }
+                if loss:
+                    return {
+                        "error": (
+                            f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines) "
+                            f"and {loss}. Rewrite it in full keeping that code, or use modify_file "
+                            "for targeted edits. write_file also unlocks for this file after two "
+                            "modify_file attempts."
+                        ),
+                    }
             # Rewrite allowed (large file, or repeated modifies already tried) — log it
             logger.info(
                 "Allowing rewrite of generated file: %s (%d lines, %d prior targeted edits)",

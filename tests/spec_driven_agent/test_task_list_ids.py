@@ -63,3 +63,24 @@ def test_an_overflowing_id_is_a_clean_error(executor):
 def test_blocked_takes_the_same_ids(executor):
     assert executor._task_list({"action": "blocked", "id": "2", "reason": "no spec"})["blocked_ids"] == [2]
     assert "error" in executor._task_list({"action": "blocked", "id": True, "reason": "no spec"})
+
+
+def test_done_accepts_the_done_ids_key_its_own_reply_uses(executor):
+    """Every done reply lists ``done_ids``; a model that sends that key back meant those ids."""
+    result = executor._task_list({"action": "done", "done_ids": [1],
+                                  "evidence": [{"id": 1, "path": "app.py", "quote": "def health():"}]})
+    assert "error" not in result, result
+    assert result["done_ids"] == [1]
+
+
+def test_done_without_ids_closes_the_items_its_evidence_names(executor):
+    result = executor._task_list({"action": "done",
+                                  "evidence": [{"id": 1, "path": "app.py", "quote": "def health():"}]})
+    assert "error" not in result, result
+    assert result["done_ids"] == [1]
+    assert [t["id"] for t in executor.open_tasks()] == [2]
+
+
+def test_the_missing_ids_error_names_every_key_done_accepts(executor):
+    error = executor._task_list({"action": "done"})["error"]
+    assert "`ids`" in error and "`done_ids`" in error and "evidence" in error

@@ -67,6 +67,14 @@ second refused edit on a file (with no landed edit between), the step is to read
 the whole file and ``write_file`` it back; two targeted edit attempts of either
 kind also unlock ``write_file`` where it is otherwise held back (a large
 generated file, a modify run). The orchestrator's reminders repeat that step.
+A generated frontend page or component (``.tsx``, ``.jsx``, ``.ts`` or ``.js``
+under a ``frontend`` folder) over 200 lines needs no such attempts when the
+rewrite keeps its code: at least 60% of its non-blank lines, every column-0
+declaration outside comments, its ``export default``, every ``<Route>``
+element, and no new elision or placeholder comment such as
+``{/* ... unchanged ... */}`` or ``{/* remaining fields unchanged */}``. A rewrite that misses one is
+refused saying which. Backend and other files, and frontend files with no
+declarations to compare, keep the two-attempt rule.
 Repeated failures do not permanently freeze the file; an agent that ignores
 recovery is still bounded by the loop and run budgets.
 
@@ -105,6 +113,8 @@ refused with an error rather than returning no matches.
 failed check, not success. Without a verifier, supply
 ``evidence=[{"id": N, "path": "...", "quote": "..."}]`` from a successful current
 write; this records implementation, with acceptance still unverified.
+The ids may also come as ``done_ids``, the key the reply lists them under;
+with no ids at all, ``done`` closes the items its evidence names.
 Already-correct scaffold code can instead use ``existing=true`` after reading
 the file and citing executable evidence. This records an existing implementation,
 not a fabricated write or a passing business test.
@@ -440,9 +450,19 @@ detached, list its routes and send requests, so the agent can run the app
 rather than only read it. The server ``up`` starts keeps running in the run's
 shell session, so ``routes`` and ``req`` reach that same server; when the
 session was restarted in between, they start their own, and the SQLite file
-keeps records either way. ``req`` sends
+keeps records either way. A new server takes the port of the previous one
+again while nothing else holds it, so a command or script written with that
+port keeps working after a restart. ``req`` takes a JSON body as one argument
+in single quotes (unquoted, the shell strips its double quotes), from a file
+as ``@body.json``, or from standard input as ``-``, for instance a quoted
+here-document; a body whose quotes the shell removed, an empty file or empty
+standard input, or an option ``req`` does not have, is refused with a message
+saying which. ``req`` sends
 extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
-prints only their names. ``down`` stops a process only when its command line
+prints only their names. It sends form fields and files as
+``multipart/form-data`` with curl's syntax, ``-F "name=value"`` and
+``-F "file=@path"`` (``;type=<mime>`` and ``;filename=<name>`` set a file's
+type and name), for an upload endpoint; a field value keeps its own quotes. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
 session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
@@ -472,6 +492,17 @@ upload is delivered with the app, when the file is:
   records nothing and nothing is removed;
 - in a dot-folder or outside the backend folder, an existing file the app
   rewrote, or a recorded file changed afterwards.
+
+At the same point the run looks for files written this run whose content names
+the run's temporary workspace folder (``besser_llm_...``), which is removed
+after the run. Only a shell script (``.sh``, ``.ps1``, ``.bat`` or ``.cmd``)
+at the workspace root that a write tool of this run wrote and no other file
+names, such as a check script that ``cd``s into that folder, is deleted; the
+recipe lists those under ``scratch_files_removed``. Every other such file (any
+Python file, a script in a folder, a README, a test) is kept and listed under
+``temporary_path_files``. ``BESSER_GENERATION.md`` names both. A workspace
+folder the caller chose (a :doc:`Python library run <usage>` with its own
+``output_dir``) is left alone, since a path to it stays valid.
 
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on

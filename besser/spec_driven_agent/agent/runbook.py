@@ -38,6 +38,7 @@ from typing import Iterable
 
 from besser.spec_driven_agent.pipeline.constants import (
     _RECIPE_EXCLUDED_DIRS,
+    RUN_DIR_PREFIX,
     WORKSPACE_SKIP_DIRS,
     is_excluded_output_file,
 )
@@ -53,6 +54,9 @@ RUNTIME_FILES_FILENAME = ".besser_probe.runtime_files.json"
 # (about 300 KB); a larger record is not the probe's and is not parsed.
 _MAX_RUNTIME_RECORD_BYTES = 1_000_000
 _MAX_RUNTIME_RECORD_ENTRIES = 2000
+_MAX_SCRATCH_SCAN_BYTES = 1_000_000
+# Shell scripts at the workspace root are the only files the run-folder cleanup may delete.
+_HELPER_SCRIPT_SUFFIXES = (".sh", ".ps1", ".bat", ".cmd")
 
 # Environment kill switch (BESSER_LLM_SHELL_RUNBOOK). Default on whenever
 # shell tools are enabled; ``0`` gives the shell without the procedure (an
@@ -213,6 +217,78 @@ def remove_app_runtime_files(output_dir: str, keep: Iterable[str]) -> RuntimeFil
     return RuntimeFileRemoval(tuple(removed), tuple(not_removed), note)
 
 
+def _read_small_text(root: str, rel: str) -> str | None:
+    """A regular workspace file's text, or None when it is missing, special or too large."""
+    path = os.path.join(root, *rel.split("/"))
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SCRATCH_SCAN_BYTES:
+            return None
+        with open_plain(path, "r", root=root, encoding="utf-8", errors="ignore") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _is_helper_script(rel: str) -> bool:
+    """A shell script at the workspace root; any Python file may be the app's."""
+    return "/" not in rel and rel.lower().endswith(_HELPER_SCRIPT_SUFFIXES)
+
+
+def _is_referenced(root: str, rel: str) -> bool:
+    """Whether another workspace file names the file ``rel``."""
+    name = rel.rsplit("/", 1)[-1]
+    for folder, dirs, files in walk_plain(root):
+        dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS and not d.startswith(".")]
+        for other in files:
+            other_rel = os.path.relpath(os.path.join(folder, other), root).replace("\\", "/")
+            if other.startswith(".besser_") or other_rel == rel:
+                continue
+            text = _read_small_text(root, other_rel)
+            if text and name in text:
+                return True
+    return False
+
+
+def remove_run_folder_bound_files(output_dir: str, written: Iterable[str],
+                                  removable: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Sort the files in ``written`` that name the run's temporary workspace path.
+
+    The folder is removed after the run, so such a file works only in this
+    run's sandbox. One of ``removable`` (the agent's own writes) that is a
+    shell script at the workspace root no other file names is deleted. Every other such
+    file is part of the app or used by it, and is kept. Returns ``(removed,
+    kept)``. Never raises.
+    """
+    root = os.path.realpath(output_dir)
+    if not os.path.basename(root).startswith(RUN_DIR_PREFIX):
+        return (), ()
+    needles = {root, os.path.abspath(output_dir)}
+    needles |= {needle.replace("\\", "/") for needle in needles}
+    removable = set(removable)
+    removed: list[str] = []
+    kept: list[str] = []
+    for rel in sorted(set(written)):
+        if not is_plain_relpath(rel):
+            continue
+        *folders, name = rel.split("/")
+        if (name.startswith(".besser_") or is_excluded_output_file(name)
+                or _RECIPE_EXCLUDED_DIRS.intersection(folders)):
+            continue
+        text = _read_small_text(root, rel)
+        if not text or not any(needle in text for needle in needles):
+            continue
+        if rel in removable and _is_helper_script(rel) and not _is_referenced(root, rel):
+            try:
+                remove_plain(os.path.join(root, *folders, name), root=root)
+                removed.append(rel)
+                continue
+            except OSError as exc:
+                logger.warning("runbook: could not remove %s: %s", rel, exc.strerror or type(exc).__name__)
+        kept.append(rel)
+    return tuple(removed), tuple(kept)
+
+
 def runbook_section(output_dir: str) -> str:
     """The runbook block for the system prompt, or "" when it does not apply.
 
@@ -246,7 +322,9 @@ tracebacks. Run these from the workspace root, exactly as written:
 python {PROBE_FILENAME} up                       # boot; prints BOOT_OK / BOOT_FAILED
 python {PROBE_FILENAME} routes                   # the paths and schemas the app REALLY has
 python {PROBE_FILENAME} req GET /health
-python {PROBE_FILENAME} req POST /<entity> {{"field": "value"}}
+python {PROBE_FILENAME} req POST /<entity> '{{"field": "value"}}'   # JSON body in single quotes
+python {PROBE_FILENAME} req POST /<entity> @body.json            # body from a file; - reads stdin
+python {PROBE_FILENAME} req POST /<entity>/upload -F "file=@sample.pdf"   # multipart upload
 python {PROBE_FILENAME} req POST /<entity>/<id>/<action> {{}}
 python {PROBE_FILENAME} req GET /<entity> -H "Authorization: Bearer <token>"
 python {PROBE_FILENAME} log 60                   # last 60 lines of the server log
@@ -310,8 +388,9 @@ Run-internal helper written by the BESSER generator; not part of the app.
 
     python .besser_probe.py up
     python .besser_probe.py routes
-    python .besser_probe.py req POST /book {"title": "x"}
+    python .besser_probe.py req POST /book '{"title": "x"}'
     python .besser_probe.py req GET /book -H "Authorization: Bearer <token>"
+    python .besser_probe.py req POST /book/upload -F "file=@cover.png" -F "title=x"
     python .besser_probe.py log 60
     python .besser_probe.py down
 
@@ -356,6 +435,22 @@ def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def reusable_port(port):
+    """``port`` when nothing holds it, else None."""
+    import socket
+    if type(port) is not int or not 0 < port < 65536:
+        return None
+    with socket.socket() as sock:
+        if os.name != "nt":
+            # As uvicorn binds: the stopped server's TIME_WAIT does not block it.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return None
+    return port
 
 
 def read_state():
@@ -422,12 +517,15 @@ def recording(action):
                 json.dump({"files": kept, "overflow": len(noted) - len(kept)}, handle)
 
 
-def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None):
+def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None, form=None):
+    """``form``, when given, is an encoded multipart body and its Content-Type."""
     url = "http://127.0.0.1:%d%s" % (port, path if path.startswith("/") else "/" + path)
     data = None
     headers = {"Accept": "application/json"}
     headers.update(extra_headers or {})
-    if body is not None:
+    if form is not None:
+        data, headers["Content-Type"] = form
+    elif body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
@@ -444,7 +542,7 @@ def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None):
             if location.startswith("http"):
                 location = "/" + location.split("/", 3)[-1] if location.count("/") > 2 else "/"
             follow = "GET" if exc.code == 303 else method
-            return request(follow, location, body, port, timeout, _hops + 1, extra_headers)
+            return request(follow, location, body, port, timeout, _hops + 1, extra_headers, form)
         return exc.code, exc.read().decode("utf-8", "replace")
     except Exception as exc:                    # connection refused, reset, timeout
         return 0, "%s: %s" % (type(exc).__name__, exc)
@@ -508,8 +606,11 @@ def cmd_down(quiet=False):
         pass                            # already gone, e.g. with its sandbox
     except Exception as exc:
         print("STOP_FAILED %s: %s" % (type(exc).__name__, exc))
+    # Only the port stays: the next boot takes it again while it is free, so a
+    # URL written with it keeps working across restarts.
     try:
-        os.remove(STATE)
+        with open(STATE, "w", encoding="utf-8") as fh:
+            json.dump({"port": state.get("port")}, fh)
     except OSError:
         pass
     if not quiet:
@@ -532,7 +633,7 @@ def boot(quiet=False):
         print("NO_BACKEND: no directory holds both main_api.py and sql_alchemy.py.")
         return 2, None
     cmd_down(quiet=True)
-    port = free_port()
+    port = reusable_port(read_state().get("port")) or free_port()
     serve = (
         "# %s port=%d\n"
         "import os,sys,threading,time\n"
@@ -674,16 +775,78 @@ def split_headers(argv):
     return rest, headers
 
 
+def split_form(argv):
+    """Remove curl-style ``-F name=value`` / ``-F name=@path`` pairs from argv."""
+    rest, fields = [], []
+    items = iter(argv)
+    for item in items:
+        if item in ("-F", "--form"):
+            raw = next(items, "")
+        elif item.startswith("--form="):
+            raw = item[len("--form="):]
+        else:
+            rest.append(item)
+            continue
+        raw = raw.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+            raw = raw[1:-1]             # cmd.exe passes the quotes bash would have removed
+        name, sep, value = raw.partition("=")
+        if not sep or not name:
+            raise ValueError("a form field must look like name=value or name=@path")
+        fields.append((name, value))
+    return rest, fields
+
+
+def encode_form(fields):
+    """A multipart/form-data body and its Content-Type.
+
+    ``@path[;type=mime][;filename=name]`` sends a file, as curl's ``-F`` does.
+    """
+    import mimetypes
+    import uuid
+
+    def quoted(text):
+        return text.replace('"', "%22").replace("\r", "").replace("\n", "")
+
+    boundary = uuid.uuid4().hex
+    parts = []
+    for name, value in fields:
+        head = 'Content-Disposition: form-data; name="%s"' % quoted(name)
+        if value.startswith("@"):
+            path, *options = value[1:].split(";")
+            option = dict(item.partition("=")[::2] for item in options)
+            with open(path, "rb") as handle:
+                data = handle.read()
+            kind = option.get("type") or mimetypes.guess_type(path)[0] or "application/octet-stream"
+            filename = option.get("filename") or os.path.basename(path)
+            head += '; filename="%s"\r\nContent-Type: %s' % (quoted(filename), quoted(kind))
+        else:
+            data = value.encode("utf-8")
+        parts.append(b"--%s\r\n%s\r\n\r\n%s\r\n" % (boundary.encode(), head.encode("utf-8"), data))
+    return b"".join(parts) + b"--%s--\r\n" % boundary.encode(), "multipart/form-data; boundary=" + boundary
+
+
 def cmd_req(argv):
     try:
         argv, headers = split_headers(argv)
     except ValueError as exc:
         print('BAD_HEADER %s\nNEXT: pass it as -H "Authorization: Bearer <token>".' % exc)
         return 2
+    try:
+        argv, fields = split_form(argv)
+        form = encode_form(fields) if fields else None
+    except (ValueError, OSError) as exc:
+        print('BAD_FORM %s\nNEXT: pass a field as -F "name=value" and a file as -F "file=@path".' % exc)
+        return 2
     if len(argv) < 2:
-        print("USAGE: req <METHOD> <PATH> [JSON] [-H 'Name: value']")
+        print("USAGE: req <METHOD> <PATH> ['JSON' | @file.json | - | -F name=value -F file=@path] [-H 'Name: value']")
         return 2
     method, path = argv[0], argv[1]
+    unknown = [arg for arg in argv[2:] if arg.startswith("--")]
+    if unknown:
+        print("UNKNOWN_OPTION %s\nNEXT: req takes METHOD PATH, then one JSON body (or -F "
+              "fields) and -H headers; read the status it prints yourself." % " ".join(unknown))
+        return 2
     raw = " ".join(argv[2:]).strip()
     # A quote style that one shell strips and the other passes through must not
     # decide whether a request happens: cmd.exe keeps the single quotes bash
@@ -691,19 +854,44 @@ def cmd_req(argv):
     while len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
         raw = raw[1:-1].strip()
     body = None
+    if raw and form is not None:
+        print("BAD_FORM a request carries a JSON body or -F fields, not both.")
+        return 2
+    if raw == "-":
+        raw = (sys.stdin.read() if sys.stdin else "").strip()
+        if not raw:
+            print("BAD_BODY nothing arrived on stdin.\nNEXT: send the JSON with a here-document: "
+                  "req POST /x - <<'EOF' ... EOF, or pass @body.json.")
+            return 2
+    elif raw.startswith("@"):
+        source = raw[1:]
+        try:
+            with open(source, encoding="utf-8") as handle:
+                raw = handle.read().strip()
+        except OSError as exc:
+            print("BAD_BODY %s\nNEXT: name a JSON file that exists, e.g. @body.json." % exc)
+            return 2
+        if not raw:
+            print("BAD_BODY %s is empty.\nNEXT: write the JSON body into it first." % source)
+            return 2
     if raw:
         try:
             body = json.loads(raw)
         except ValueError as exc:
-            print("BAD_JSON %s\nNEXT: pass the body as one JSON object, e.g. "
-                  '{"title": "x"}. Quote it for your shell.' % exc)
+            if raw[:1] in "{[" and '"' not in raw:
+                advice = "your shell removed the double quotes. Wrap the body in single quotes"
+            else:
+                advice = "pass the body as one JSON value in single quotes"
+            print("BAD_JSON %s\nNEXT: %s: '{\"title\": \"x\"}'. For a body with a single quote "
+                  "in it, pass - and send the JSON on stdin (a <<'EOF' here-document), "
+                  "or @file.json." % (exc, advice))
             return 2
-    elif method.upper() in ("POST", "PUT", "PATCH"):
+    elif method.upper() in ("POST", "PUT", "PATCH") and form is None:
         body = {}                       # the literal {} a generated button sends
     port = ensure_up()
     if not port:
         return 1
-    status, text = recording(lambda: request(method, path, body, port, extra_headers=headers))
+    status, text = recording(lambda: request(method, path, body, port, extra_headers=headers, form=form))
     # Header names only: a value can be a credential.
     sent = ("  (headers: %s)" % ", ".join(sorted(headers))) if headers else ""
     print("%s %s %s%s" % (status or "CONNECTION_FAILED", method.upper(), path, sent))

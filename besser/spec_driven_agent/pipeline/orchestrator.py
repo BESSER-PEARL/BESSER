@@ -136,7 +136,11 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     pre_generate_metadata,
     stack_label,
 )
-from besser.spec_driven_agent.agent.runbook import RuntimeFileRemoval, remove_app_runtime_files
+from besser.spec_driven_agent.agent.runbook import (
+    RuntimeFileRemoval,
+    remove_app_runtime_files,
+    remove_run_folder_bound_files,
+)
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
@@ -263,6 +267,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _TOOL_DETAIL_MAX_CHARS,
     _runtime_verdict,
     _tool_call_detail,
+    RUN_DIR_PREFIX,
     _tool_use_blocks,
     is_excluded_output_file,
 )
@@ -394,7 +399,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "agent, state_machine, object, BPMN, neural network, or quantum)"
             )
         # Absolute: checks pin their cwd to it, which resolves a relative path twice.
-        self.output_dir = os.path.abspath(output_dir or tempfile.mkdtemp(prefix="besser_llm_"))
+        self.output_dir = os.path.abspath(output_dir or tempfile.mkdtemp(prefix=RUN_DIR_PREFIX))
         self.max_turns = max_turns or self.MAX_TURNS
         self.max_cost_usd = max_cost_usd
         self.max_runtime_seconds = max_runtime_seconds
@@ -721,6 +726,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._files_at_start: frozenset[str] = frozenset(self._workspace_file_list())
         # Files the app wrote in its test runs that this run deleted from the output.
         self._runtime_files = RuntimeFileRemoval()
+        # Files the agent wrote that name the run folder's path; deleted from the output.
+        self._scratch_files_removed: tuple[str, ...] = ()
         # The recipe this run wrote, as written; None until _save_recipe ran.
         self.saved_recipe: dict | None = None
 
@@ -5332,6 +5339,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             tuple(dict.fromkeys(earlier.not_removed + result.not_removed)),
             result.note or earlier.note)
         outcome = self._runtime_files
+        written = self._written_paths() - self._files_at_start
+        scratch, bound = remove_run_folder_bound_files(
+            self.output_dir, written, written - self.executor._generator_files)
+        if scratch:
+            logger.warning("Removed %d helper script(s) the agent wrote that name the run folder's path; "
+                           "they work only inside this run: %s", len(scratch), ", ".join(scratch[:20]))
+        self._scratch_files_removed += scratch
+        temporary_paths = bound[:self._MAX_RECIPE_RUNTIME_FILES]
         return {
             # Written by the app while the agent test-ran it, and deleted: not output.
             "runtime_files_removed": list(outcome.removed[:self._MAX_RECIPE_RUNTIME_FILES]),
@@ -5340,6 +5355,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "runtime_files_not_removed": list(outcome.not_removed[:self._MAX_RECIPE_RUNTIME_FILES]),
             "runtime_files_not_removed_count": len(outcome.not_removed),
             "runtime_files_note": outcome.note,
+            # Written by the agent with the run folder's own path in it: works only in this run.
+            "scratch_files_removed": list(self._scratch_files_removed[:self._MAX_RECIPE_RUNTIME_FILES]),
+            "scratch_files_removed_count": len(self._scratch_files_removed),
+            # Kept: part of the app or used by it, but they name that temporary folder.
+            "temporary_path_files": list(temporary_paths),
+            "temporary_path_files_count": len(bound),
         }
 
     def _save_recipe(self, instructions: str, elapsed: float) -> None:

@@ -57,8 +57,33 @@ def test_a_stylesheet_rule_is_a_citation(app):
 
 
 def test_a_commented_out_rule_is_not_a_citation(app):
-    checked = _verify(app, ".book-card--old { cursor: wait; }")
-    assert checked["status"] == "unverified"
+    checked = _verify(app, "/* .book-card--old { cursor: wait; } */")
+    assert checked["status"] == "unverified" and "comment" in checked["note"]
+
+
+@pytest.mark.parametrize("text", [
+    "Background jobs send the invoices nightly", "A beer has a style",
+    "A quiz has a theme", "The API is responsive", "Payments are aligned with invoices",
+])
+def test_a_requirement_that_only_shares_a_word_with_styling_does_not_add_the_stylesheets(text):
+    assert not ledger.shows_stylesheets([{"text": text}])
+
+
+@pytest.mark.parametrize("text", [
+    "Each card has its own accent colour", "Buttons show a pointer cursor on hover",
+    "Titles use a larger font", "The table rows are styled in zebra stripes", "Cards have a drop shadow",
+])
+def test_a_styling_requirement_adds_the_stylesheets(text):
+    assert ledger.shows_stylesheets([{"text": text}])
+
+
+def test_a_glob_does_not_crowd_out_an_exact_path(app):
+    for index in range(12):
+        _write(app, f"frontend/src/pages/Page{index:02}.tsx", "export default () => null;\n")
+    files = ledger._source_files(str(app))
+    focus = ledger.focus_paths_in_turn([["frontend/src/**/*.tsx"], ["backend/pydantic_classes.py"]])
+    resolved = ledger.resolved_focus_paths(files, focus)
+    assert "backend/pydantic_classes.py" in resolved and len(resolved) == 10
 
 
 def test_an_appearance_requirement_digest_shows_the_stylesheets(app):
@@ -136,3 +161,15 @@ def test_a_verdict_naming_a_stylesheet_glob_is_judged_again_with_them(app, monke
     issues = orch._collect_requirement_issues()
     assert len(digests) == 2 and f"### {CARDS}" not in digests[0] and f"### {CARDS}" in digests[1]
     assert orch._requirement_verdicts[0]["status"] == "implemented", issues
+
+
+def test_a_stylesheet_edit_does_not_re_judge_a_page_citation(app, monkeypatch):
+    """The page imports the global stylesheet; its verified verdict rests on the page, not the CSS."""
+    line = "return books.map((b) => <a className={`book-card book-card--${b.genre}`}>{b.title}</a>);"
+    digests = _judge(monkeypatch, DISTINCT, {"status": "implemented", "note": "",
+                                             "evidence": [{"path": PAGE, "line": line}]})
+    orch = _orchestrator(app, DISTINCT)
+    orch._collect_requirement_issues()
+    _write(app, STYLES, STYLESHEET + ".book-card { color: red; }\n")
+    orch._collect_requirement_issues()
+    assert len(digests) == 1

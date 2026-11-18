@@ -414,9 +414,8 @@ def _is_judged_source(path: Path) -> bool:
 
 # A requirement about how the app looks, whose evidence may be a stylesheet rule.
 _APPEARANCE_RE = re.compile(
-    r"\b(?:colou?rs?|colou?red|styl(?:e|es|ed|ing)|css|fonts?|hover|cursor|themes?|dark\s+mode|background"
-    r"|borders?|shadows?|accent|align(?:ed|ment)?|spacing|margins?|padding|animat\w*|responsive|layout"
-    r"|appearance|visual(?:ly)?)\b",
+    r"\b(?:colou?rs?|colou?red|styled|styling|stylesheets?|css|fonts?|hover|cursor|dark\s+mode|borders?"
+    r"|shadows?|accent|spacing|margins?|padding|animat\w*|layout|appearance|visual(?:ly)?)\b",
     re.IGNORECASE,
 )
 
@@ -989,9 +988,10 @@ def _glob_matches(pattern: str, rel: str) -> bool:
 
 def resolved_focus_paths(files: dict[str, str], focus_paths: list | None) -> list[str]:
     """The first ten distinct judged files the focus paths name, each unambiguously (a path
-    or a suffix), or every file a glob matches. Capped after resolving: ten copies of one
-    path left the rest out (r13-p81)."""
-    resolved: list[str] = []
+    or a suffix), then the files globs match in the slots left: a broad glob must not crowd
+    out a named file. Capped after resolving: ten copies of one path left the rest out (r13-p81)."""
+    named: list[str] = []
+    globbed: list[str] = []
     for path in focus_paths or []:
         if not isinstance(path, str):
             continue
@@ -999,12 +999,12 @@ def resolved_focus_paths(files: dict[str, str], focus_paths: list | None) -> lis
         while path.startswith("./"):
             path = path[2:]
         if "*" in path:
-            candidates = sorted(rel for rel in files if _glob_matches(path, rel))
-        else:
-            candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
-            candidates = candidates if path and len(candidates) == 1 else []
-        resolved += [rel for rel in dict.fromkeys(candidates) if rel not in resolved]
-    return resolved[:_MAX_FOCUS_FILES]
+            globbed += sorted(rel for rel in files if _glob_matches(path, rel))
+            continue
+        candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
+        if path and len(candidates) == 1:
+            named.append(candidates[0])
+    return list(dict.fromkeys(named + globbed))[:_MAX_FOCUS_FILES]
 
 
 def build_app_digest_and_gaps(output_dir: str, *, focus_paths: list[str] | None = None,
@@ -2268,8 +2268,9 @@ class ImportIndex:
     def dependencies(self, cited: set[str]) -> set[str]:
         """What a cited file's behaviour rests on beyond its own bytes: its direct
         local imports, and the entry files mounting it (a file importing a cited
-        file that no judged file imports). One level only."""
-        imported = set().union(*(self.imports(rel) for rel in cited))
+        file that no judged file imports). One level only. A stylesheet a page imports is
+        not one: a style edit does not change what the page does."""
+        imported = {rel for rel in set().union(*(self.imports(rel) for rel in cited)) if not _is_stylesheet(rel)}
         entries = {other for rel in cited for other in self.importers(rel) if not self.importers(other)}
         return (imported | entries) - cited
 

@@ -682,16 +682,18 @@ name the files that judge saw. An answer naming a file that round left out gets
 one more round with that file shown, together with every other file the answer
 names (its citations, inspection paths and the files its note names), including
 those the round showed for another requirement. An inspection path may be a glob
-(``src/**/*.css``); it names every judged file it matches. An empty citation fails
-as "no source line is cited", never as a citation of code that exists nowhere.
+(``src/**/*.css``); the files globs match fill only the slots the named files leave.
+An empty citation fails as "no source line is cited", never as a citation of code
+that exists nowhere.
 
 Stylesheets (``.css``, ``.scss``, ``.sass``, ``.less``) are judged source: a
 stylesheet rule is a citation like any other line, and a rule inside a comment is
 not. The whole-app digest shows them, last, only when a requirement is about
-appearance (its text names a colour, style, font, hover, cursor, theme, border,
-spacing, layout and the like); otherwise they are listed as omitted, so a verdict
-naming one is judged once more with it shown. In a stylesheet a line starting with
-``#`` is an id selector and is kept.
+appearance (its text names a colour, font, hover, cursor, border, shadow, accent,
+spacing, layout, styling and the like); otherwise they are listed as omitted, so a
+verdict naming one is judged once more with it shown. In a stylesheet a line
+starting with ``#`` is an id selector and is kept. A stylesheet a cited page imports
+is not among the files the verdict rests on, so a style edit does not re-judge it.
 
 Two kinds of requirement cannot be shown by citing a line of code, and the
 extraction labels them: ``absence``, something the app must not have at all ("no

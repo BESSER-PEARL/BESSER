@@ -177,7 +177,8 @@ Feature flags
   regardless; the ``pip install --dry-run`` dependency check is gated on
   ``BESSER_LLM_ENABLE_SHELL_TOOLS`` instead. See :doc:`validation`.
 - ``BESSER_LLM_ENABLE_AUTO_FIX`` (on) -- Let Phase 3 spend LLM turns repairing
-  blocker-severity findings.
+  blocker-severity findings. Phase 2 then leaves part of ``max_turns`` to that
+  repair (see :doc:`runs`).
 - ``BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK`` (on) -- Let Phase 3 execute the
   generated backend: import the ORM module in a subprocess and run
   SQLAlchemy's ``configure_mappers()``, boot the app in isolation for the

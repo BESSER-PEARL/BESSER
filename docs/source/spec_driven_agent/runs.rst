@@ -27,6 +27,17 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - 120
      - 150
 
+``max_turns`` covers the customize loop (Phase 2) and the repair loop
+(Phase 3) together. With auto-fix on, Phase 2 stops 20 turns before the cap, or
+a quarter of the cap when that is less, and the repair loop gets the rest: with
+the default 120, Phase 2 may use 100. A cap under 40 is not split, since a
+quarter of it is less than one ten-turn fix attempt. A Phase 2 that uses its
+whole share with checklist items still open hands off to validation: those
+items become blockers there, so the run completes only when validation finds
+nothing left, and is reported incomplete otherwise. With no open item to bring
+back, it reports that the customization loop reached its step limit. Either
+way its trace's Phase 2 ``phase_exit`` names the reserve in ``stop_detail``. With auto-fix off, Phase 2 may use the whole cap.
+
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.
@@ -293,7 +304,8 @@ keys, always in this order:
   error``, ``internal error``, ``cancelled``, ``repeated edits did not land`` or
   ``handed off to validation``), ``stop_message`` (the run card's sentence for
   that ending, without its variable parts) and ``outcome``. ``turn limit`` means
-  the customization loop used every turn; a run whose customization was skipped
+  the customization loop used every turn it was allowed (see the turn split
+  above) with no open checklist item left to hand to validation; a run whose customization was skipped
   because the scaffold already covered the request ended ``finished``.
 - ``warnings``: the warnings shown to the user during the run (at most eight),
   each as a fixed sentence. A warning whose text can quote an error is left out.

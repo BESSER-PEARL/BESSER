@@ -89,6 +89,7 @@ _SIMPLE = (
     ("form route:", "A form in the user interface cannot be reached."),
     ("form json textarea:", "A form in the user interface asks for raw data instead of fields."),
     ("form field type:", "A form field does not match the type of value it collects."),
+    ("api call:", "A screen sends a request, or reads its answer, in a shape the backend does not use."),
     ("data contract", "The code does not match the class diagram (an identifier or a field type)."),
     ("model conformance:", "The backend does not match the latest changes to the class diagram."),
     ("missing module:", "The code imports a module that is not in the output, so the app cannot start."),

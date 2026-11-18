@@ -33,6 +33,8 @@ _JS_NONCODE = re.compile(
 class _Model:
     fields: frozenset[str]
     allows_extra: bool = False
+    # Fields with no default, by their own name; an aliased field is left out.
+    required: frozenset[str] = frozenset()
 
 
 def _name(node: ast.AST | None) -> str:
@@ -63,8 +65,10 @@ def _sources(workspace, changed_path=None, content=None):
             yield path.relative_to(root).as_posix(), text
 
 
-def _request_schemas(sources):
-    """Resolve literal route -> accepted field names without importing the app."""
+def _model_resolver(sources):
+    """``(modules, resolve)``: each parsed module's ``(tree, imports)``, and a
+    function from a class name to its ``_Model`` (None unless it is one
+    statically resolvable Pydantic model)."""
     modules, classes = {}, {}
     for path, text in sources:
         if not path.endswith(".py"):
@@ -90,7 +94,7 @@ def _request_schemas(sources):
             return None
         path, cls = classes[name][0]
         imports = modules[path][1]
-        fields, model_found, extra = set(), False, False
+        fields, required, model_found, extra = set(), set(), False, False
         for base in cls.bases:
             base_name = imports.get(_name(base), _name(base))
             if base_name == "BaseModel":
@@ -103,15 +107,20 @@ def _request_schemas(sources):
                     return None
                 model_found = True
                 fields.update(inherited.fields)
+                required.update(inherited.required)
                 extra = extra or inherited.allows_extra
         if not model_found:
             return None
         for stmt in cls.body:
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # Before-model validators can accept arbitrary legacy names.
-                if any(isinstance(d, ast.Call) and _name(d.func) == "model_validator"
-                       and any(k.arg == "mode" and isinstance(k.value, ast.Constant)
-                               and k.value.value == "before" for k in d.keywords)
+                # A model validator that runs before field validation can accept arbitrary
+                # legacy names and fill a missing required field (v1 ``pre=True`` too). A
+                # field validator cannot: a missing field fails before it runs.
+                if any(isinstance(d, ast.Call)
+                       and _name(d.func) in {"model_validator", "root_validator"}
+                       and any(isinstance(k.value, ast.Constant)
+                               and ((k.arg == "mode" and k.value.value in {"before", "wrap"})
+                                    or (k.arg == "pre" and k.value.value is True)) for k in d.keywords)
                        for d in stmt.decorator_list):
                     return None
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
@@ -122,9 +131,26 @@ def _request_schemas(sources):
                 if isinstance(annotation, ast.Subscript) and _name(annotation.value) == "ClassVar":
                     continue
                 fields.add(field)
-                if isinstance(stmt.value, ast.Call) and _name(stmt.value.func) == "Field":
-                    for keyword in stmt.value.keywords:
+                value = stmt.value
+                # ``x: T = Field(...)`` and ``x: Annotated[T, Field(...)]`` declare the same things.
+                field_calls = [call for call in (
+                    [value] + (annotation.slice.elts[1:] if isinstance(annotation, ast.Subscript)
+                               and _name(annotation.value) == "Annotated"
+                               and isinstance(annotation.slice, ast.Tuple) else []))
+                    if isinstance(call, ast.Call) and _name(call.func) == "Field"]
+                defaulted = value is not None and not (field_calls and field_calls[0] is value)
+                if not defaulted and not any(
+                        any(k.arg in {"default", "default_factory"} for k in call.keywords)
+                        or (call.args and not (isinstance(call.args[0], ast.Constant)
+                                               and call.args[0].value is Ellipsis))
+                        for call in field_calls):
+                    required.add(field)
+                else:
+                    required.discard(field)
+                for call in field_calls:
+                    for keyword in call.keywords:
                         if keyword.arg in {"alias", "validation_alias"}:
+                            required.discard(field)
                             if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
                                 fields.add(keyword.value.value)
                             else:
@@ -152,10 +178,16 @@ def _request_schemas(sources):
                     return None
                 if "extra" in pairs and isinstance(pairs["extra"], ast.Constant):
                     extra = pairs["extra"].value == "allow"
-        result = _Model(frozenset(fields), extra)
+        result = _Model(frozenset(fields), extra, frozenset(required))
         cache[name] = result
         return result
 
+    return modules, resolve
+
+
+def _request_schemas(sources):
+    """Resolve literal route -> accepted field names without importing the app."""
+    modules, resolve = _model_resolver(sources)
     routes = {}
     for path, (tree, imports) in modules.items():
         routers = {}

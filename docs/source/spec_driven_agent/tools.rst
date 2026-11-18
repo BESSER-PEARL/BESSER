@@ -447,7 +447,12 @@ Phase 2's system prompt gains a *runtime verification* runbook, and a probe
 script, ``.besser_probe.py``, is written to the workspace root. Its
 subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
 detached, list its routes and send requests, so the agent can run the app
-rather than only read it. The server ``up`` starts keeps running in the run's
+rather than only read it. ``routes`` prints, per route, the JSON body it reads
+as its top-level keys (``<- {"params": {...}}`` for a method route, whose
+values go inside that key) and what a 2xx answer is (``-> list`` or
+``-> object {...}`` with its keys): the response schema the app's OpenAPI
+declares, else what the handler's ``return`` statements send, read from its
+source as the ``api call:`` check reads it (see :doc:`validation`). The server ``up`` starts keeps running in the run's
 shell session, so ``routes`` and ``req`` reach that same server; when the
 session was restarted in between, they start their own, and the SQLite file
 keeps records either way. A new server takes the port of the previous one

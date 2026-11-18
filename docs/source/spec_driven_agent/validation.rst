@@ -74,6 +74,54 @@ that was already broken is never refused, so it can be repaired.
   Absence of a known stub is structural evidence, not proof of business behavior.
 - Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
   match no generated backend route.
+- API call shapes (``api call:``, blocker) — a frontend call with a literal or
+  template URL that resolves to exactly one route, checked against that
+  route's handler, which is read without importing the app. The calls read are
+  ``fetch``, ``axios.<method>`` (with or without a TypeScript type argument),
+  the ``axios({method, url, data})`` config form, an ``axios.create()``
+  instance defined in the file or imported from the file that defines it, and
+  a ``fetch`` wrapper function such as ``api(path, options)``, defined or
+  imported by name. A wrapper is followed only when it calls
+  ``fetch(BASE + path, ...)`` once, passes the caller's options on without a
+  method or body of its own, and returns the parsed JSON; an instance or base
+  whose URL adds a path (``${API}/v2``, or a constant declared with one) is not
+  followed, nor an instance with its own ``transformRequest`` or
+  ``transformResponse``.
+
+  * the JSON body: an object literal, written in place or in a variable
+    declared with it and otherwise only read, none of whose keys the route
+    reads, or one that leaves out a required field. A route with one Pydantic
+    model parameter reads the model's fields; otherwise the body has one
+    top-level key per body parameter, so a ``/methods/<name>/`` route with
+    ``params: dict = Body(embed=True)`` reads ``{"params": {...}}``, never the
+    values flat. A key sent beside ``params`` is reported only when the
+    handler reads it from inside ``params`` (``params.get('<key>')``); one it
+    takes elsewhere, such as an id from the path, is harmless.
+  * the response: when every ``return`` of the handler sends a dict literal
+    that is not handed to another function, the object's top-level keys. Code
+    that uses that object's data only as an array (``Array.isArray``,
+    ``.length``, ``.map()``, ``.filter()``, ``Array.isArray(x) ? x : []``, or
+    handing it to the setter of a ``useState([])`` whose state is used only as
+    an array) or reads only keys it does not have is reported, with the keys
+    it has. The generated relation routes answer
+    ``{<parent>_id, <end>_count, <end>: [...]}``.
+
+  Generated routes declare ``response_model=None``, so the app's OpenAPI has
+  no response schema to compare with; the handler's ``return`` statements are
+  what it sends. Only certain cases are reported. Left alone: a body with a
+  spread or a computed key, or one held in a variable that is changed
+  (``delete body.x`` included); a model with a model-level validator that runs
+  before field validation (``root_validator(pre=True)``, ``model_validator``
+  in before or wrap mode), which can fill a missing field (a field validator
+  cannot); a handler that takes the ``Request`` and can read the raw body
+  itself; data passed on or read by one of its real keys; Axios bodies when a
+  request interceptor or ``defaults.transformRequest`` is set, and Axios
+  responses when a response interceptor or ``defaults.transformResponse`` is;
+  and, for ``fetch`` and its
+  wrappers, a read of a key the success body lacks (the parsed body is the
+  error body too). A ``fetch`` method is the options object's own top-level
+  ``method``, wherever it is written. The same finding is attached to the
+  write that introduces it.
 - ``ruff`` lint, limited to defects that break at runtime (syntax errors, undefined
   names, redefinitions, repeated dict keys, invalid format strings and comparisons,
   ``raise NotImplemented``, a value returned from ``__init__``, a non-string in
@@ -493,7 +541,8 @@ Findings are classified into three severities:
        a method button that takes its row id from a table of another
        entity; frontend-contract and
        data-contract violations; create forms that cannot save (``api url:``,
-       ``form create target:``, ``form route:``, ``form json textarea:``); ``ruff`` **F821** / **F822** / **F823**
+       ``form create target:``, ``form route:``, ``form json textarea:``); frontend calls
+       whose body or response use contradicts the route (``api call:``); ``ruff`` **F821** / **F822** / **F823**
        (undefined name — the classic "ships green, boots dead" bug) and
        **F811** (redefinition, e.g. an ORM model shadowed by a Pydantic model
        of the same name); per-project toolchain errors from ``tsc`` /
@@ -501,7 +550,7 @@ Findings are classified into three severities:
        (``frontend build [...]``). By prefix, the blockers are ``Syntax error
        in``, ``Dependency conflict in``, ``... but it doesn't exist``,
        ``frontend contract:``, ``api url:``, ``form create target:``,
-       ``form route:``, ``form json textarea:``, ``data contract:``,
+       ``form route:``, ``form json textarea:``, ``api call:``, ``data contract:``,
        ``model conformance:``, ``model contract:``, ``missing module:``,
        ``mapper config:``, ``application startup:``, ``python contract:``
        (which also reports undefined names, those behind ``from x import *``

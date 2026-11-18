@@ -36,18 +36,29 @@ _SKIP_DIRS = {"node_modules", "dist", "build", ".next", ".git", ".besser_snapsho
 _MANIFEST_ROUTE_RE = re.compile(
     r"^ {2}([A-Z][A-Z, ]*?)[ \t]+(/\S*)[ \t]*$", re.MULTILINE
 )
-# The URL ends at its own closing quote: with options passed as a variable the
-# call does not match, rather than the URL running on to a later quote.
+# The URL ends at its own closing quote, rather than running on to a later quote.
 _FETCH_RE = re.compile(
-    r"\bfetch\s*\(\s*(?P<quote>[`\"'])(?P<url>(?:(?!(?P=quote))[^\n])*)(?P=quote)"
-    r"(?P<options>\s*,\s*\{.*?\})?\s*\)",
-    re.DOTALL,
-)
-_AXIOS_METHOD_RE = re.compile(
-    r"\baxios\s*\.\s*(?P<method>get|post|put|patch|delete|head|options)"
-    r"\s*\(\s*(?P<quote>[`\"'])(?P<url>.*?)(?P=quote)",
-    re.IGNORECASE | re.DOTALL,
-)
+    r"\bfetch\s*\(\s*(?P<quote>[`\"'])(?P<url>(?:(?!(?P=quote))[^\n])*)(?P=quote)")
+# Comments and string literals, blanked before brackets are counted.
+_NONCODE_RE = re.compile(
+    r'''"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`|//[^\r\n]*|/\*[\s\S]*?\*/''')
+_METHOD_KEY_RE = re.compile(r"(?<![\w$.])method(?![\w$])")
+_METHOD_VALUE_RE = re.compile(r"method\s*:\s*([\"'])([A-Za-z]+)\1")
+# A TypeScript type argument (``axios.get<Order[]>(``), nested one level at most.
+_TYPE_ARGUMENT = r"(?:\s*<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>)?"
+
+
+def _axios_method_re(clients) -> re.Pattern:
+    """``<client>.<method>(<literal url>`` for ``axios`` or the given axios instances."""
+    return re.compile(
+        r"(?<![\w$])(?:" + "|".join(map(re.escape, clients)) + r")\s*\.\s*"
+        r"(?P<method>(?i:get|post|put|patch|delete|head|options))" + _TYPE_ARGUMENT
+        + r"\s*\(\s*(?P<quote>[`\"'])(?P<url>.*?)(?P=quote)",
+        re.DOTALL,
+    )
+
+
+_AXIOS_METHOD_RE = _axios_method_re(("axios",))
 _AXIOS_CONFIG_RE = re.compile(r"\baxios\s*\(\s*\{(?P<body>.*?)\}\s*\)", re.DOTALL)
 _METHOD_FIELD_RE = re.compile(r"\bmethod\s*:\s*[\"']([A-Za-z]+)[\"']", re.IGNORECASE)
 _URL_FIELD_RE = re.compile(r"\burl\s*:\s*(?P<quote>[`\"'])(?P<url>.*?)(?P=quote)", re.DOTALL)
@@ -61,6 +72,11 @@ class FrontendCall:
     path: str
     file: str
     line: int
+    # Where the call starts and its URL literal ends, and "fetch" / "axios"
+    # ("axios-config" for the axios config form), for checks that read its arguments.
+    start: int = 0
+    url_end: int = 0
+    client: str = ""
 
 
 def _parse_manifest(manifest: str) -> dict[str, set[str]]:
@@ -105,17 +121,71 @@ def _line_number(content: str, offset: int) -> int:
     return content.count("\n", 0, offset) + 1
 
 
-def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
+def _skip_space(text: str, index: int) -> int:
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return index
+
+
+def _fetch_method(content: str, blanked: str, index: int) -> str | None:
+    """The method of ``fetch(url)`` or ``fetch(url, {...})``: the options' own
+    top-level ``method``, not one inside their body. None for options held in a
+    variable, or a ``method`` that is not a literal."""
+    index = _skip_space(blanked, index)
+    if blanked.startswith(")", index):
+        return "GET"
+    if not blanked.startswith(",", index):
+        return None
+    index = _skip_space(blanked, index + 1)
+    if not blanked.startswith("{", index):
+        return None
+    depth, method = 0, "GET"
+    for position in range(index, len(blanked)):
+        char = blanked[position]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return method if blanked.startswith(")", _skip_space(blanked, position + 1)) else None
+        elif depth == 1 and _METHOD_KEY_RE.match(blanked, position):
+            literal = _METHOD_VALUE_RE.match(content, position)
+            if literal is None:
+                return None
+            method = literal.group(2).upper()
+    return None
+
+
+def _calls_in_file(rel_path: str, content: str, clients=("axios",), helpers=()) -> list[FrontendCall]:
+    """Literal-URL calls; ``clients`` names the axios instances besides ``axios``, and
+    ``helpers`` the functions that call ``fetch(BASE + path, options)`` for their caller."""
     calls: list[FrontendCall] = []
+    blanked = None
+    if helpers:
+        blanked = _NONCODE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), content)
+        helper_calls = re.compile(
+            r"(?<![\w$.])(?:" + "|".join(map(re.escape, helpers)) + r")" + _TYPE_ARGUMENT
+            + r"\s*\(\s*(?P<quote>[`\"'])(?P<url>(?:(?!(?P=quote))[^\n])*)(?P=quote)")
+        for match in helper_calls.finditer(content):
+            path = _normalize_frontend_url(match.group("url"))
+            method = _fetch_method(content, blanked, match.end()) if path is not None else None
+            if method is not None:
+                calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start()),
+                                          match.start(), match.end("url") + 1, "fetch-helper"))
     for match in _FETCH_RE.finditer(content):
         path = _normalize_frontend_url(match.group("url"))
         if path is None:
             continue
-        method_match = _METHOD_FIELD_RE.search(match.group("options") or "")
-        method = method_match.group(1).upper() if method_match else "GET"
-        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start())))
+        if blanked is None:
+            blanked = _NONCODE_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), content)
+        method = _fetch_method(content, blanked, match.end())
+        if method is None:
+            continue
+        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start()),
+                                  match.start(), match.end("url") + 1, "fetch"))
 
-    for match in _AXIOS_METHOD_RE.finditer(content):
+    axios_calls = _AXIOS_METHOD_RE if tuple(clients) == ("axios",) else _axios_method_re(clients)
+    for match in axios_calls.finditer(content):
         path = _normalize_frontend_url(match.group("url"))
         if path is not None:
             calls.append(FrontendCall(
@@ -123,6 +193,9 @@ def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
                 path,
                 rel_path,
                 _line_number(content, match.start()),
+                match.start(),
+                match.end("url") + 1,
+                "axios",
             ))
 
     for match in _AXIOS_CONFIG_RE.finditer(content):
@@ -135,7 +208,8 @@ def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
             continue
         method_match = _METHOD_FIELD_RE.search(body)
         method = method_match.group(1).upper() if method_match else "GET"
-        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start())))
+        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start()),
+                                  match.start(), 0, "axios-config"))
     return calls
 
 

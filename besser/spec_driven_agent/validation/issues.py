@@ -216,6 +216,11 @@ def _classify_issue(message: str) -> ValidationIssue:
         return ValidationIssue("blocker", text)
     if lower.startswith("form field type:"):
         return ValidationIssue("warning", text)
+    # A frontend call whose JSON body or response use contradicts its route's
+    # handler (api_call_shapes.py): the data never reaches the handler, every
+    # call is a 422, or the screen reads keys the response does not have.
+    if lower.startswith("api call:"):
+        return ValidationIssue("blocker", text)
     # Data contract: the generated code disagrees with the domain model's
     # declared id types / server-owned fields, or fakes success for an
     # unimplemented method. High-precision patterns only (see

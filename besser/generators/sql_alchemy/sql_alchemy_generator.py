@@ -36,7 +36,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
     TYPES = {
         "int": "Integer_",
-        "str": "Text_",
+        # Oracle's TEXT is a CLOB, which CHECK constraints, equality filters and ORDER BY cannot compare.
+        "str": 'Text_().with_variant(String_(4000), "oracle")',
         "float": "Float_",
         "bool": "Boolean_",
         "time": "Time_",

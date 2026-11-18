@@ -9,11 +9,11 @@ import os
 import sys
 
 from sqlalchemy import String, Text
-from sqlalchemy.dialects import mysql, postgresql
+from sqlalchemy.dialects import mysql, oracle, postgresql
 from sqlalchemy.schema import CreateTable
 
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation, Class, DomainModel, IntegerType, Multiplicity, Property, StringType,
+    BinaryAssociation, Class, Constraint, DomainModel, IntegerType, Multiplicity, Property, StringType,
 )
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
@@ -41,12 +41,16 @@ def _library_model() -> DomainModel:
         Property(name="tags", type=tag, multiplicity=Multiplicity(0, "*")),
         Property(name="tagged", type=book, multiplicity=Multiplicity(0, "*")),
     })
-    return DomainModel(name="Library", types={author, book, tag}, associations={writes, tagged})
+    not_draft = Constraint(name="notDraft", context=book, language="OCL",
+                           expression="context Book inv: self.title <> 'draft'")
+    return DomainModel(name="Library", types={author, book, tag}, associations={writes, tagged},
+                       constraints={not_draft})
 
 
 def _import_generated(tmpdir, module_name: str):
     output_dir = tmpdir.mkdir(module_name)
-    SQLAlchemyGenerator(model=_library_model(), output_dir=str(output_dir)).generate(dbms="sqlite")
+    SQLAlchemyGenerator(model=_library_model(), output_dir=str(output_dir)).generate(
+        dbms="sqlite", ocl_check_constraints=True)
     spec = importlib.util.spec_from_file_location(module_name, os.path.join(str(output_dir), "sql_alchemy.py"))
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -92,3 +96,16 @@ def test_key_string_columns_keep_an_indexable_length(tmpdir):
     assert {f"{c.table.name}.{c.name}" for c in keyed} >= {
         "author.code", "book.isbn", "book.author_id", "tag.label", "tagged.tags",
     }
+
+
+def test_oracle_stores_plain_strings_as_comparable_varchar2(tmpdir):
+    """Oracle's TEXT is a CLOB, which a CHECK constraint, an equality filter or an
+    ORDER BY cannot compare (ORA-00932), so Oracle gets VARCHAR2(4000) instead."""
+    module = _import_generated(tmpdir, "string_oracle_module")
+    book = module.Base.metadata.tables["book"]
+
+    ddl = str(CreateTable(book).compile(dialect=oracle.dialect()))
+    title = next(line for line in ddl.splitlines() if line.strip().startswith("title "))
+    assert "VARCHAR2(4000" in title
+    assert "CLOB" not in ddl
+    assert "CHECK (title != 'draft')" in ddl

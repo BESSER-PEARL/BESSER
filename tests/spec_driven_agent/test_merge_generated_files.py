@@ -36,6 +36,7 @@ from besser.spec_driven_agent.state.generator_output import (  # noqa: E402
     attach_model,
     load_generator_output,
 )
+from besser.generators.sql_alchemy import SQLAlchemyGenerator  # noqa: E402
 from besser.utilities.provenance import get_besser_version  # noqa: E402
 from tests.spec_driven_agent.shelf_app import GENERATOR, generate_backend, shelf_model  # noqa: E402
 
@@ -435,7 +436,7 @@ def test_many_dropped_files_are_checked_in_one_pass_over_the_app(app):
 # -- a BESSER upgrade in between -------------------------------------------------------
 
 
-GENERATED = "    name: Mapped_[str] = mapped_column(Text_)"
+GENERATED = f"    name: Mapped_[str] = mapped_column({SQLAlchemyGenerator.TYPES['str']})"
 OLDER = "    name: Mapped_[str] = mapped_column(String_(100))"
 EDIT = "    # name is shown on the badge"
 

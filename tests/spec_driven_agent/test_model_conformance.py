@@ -347,6 +347,26 @@ def test_a_removed_id_attribute_is_not_the_generators_primary_key(tmp_path):
     assert model_conformance_issues(_app(tmp_path, FOLLOWED_ORM, FOLLOWED_SCHEMAS), old, new) == []
 
 
+def test_a_column_type_with_a_dialect_variant_is_still_read(tmp_path):
+    """``Text_().with_variant(...)`` is the generated str column; only the annotation was updated."""
+    orm = _HEADER + '''
+class Booking(Base):
+    __tablename__ = "booking"
+    id: Mapped_[int] = mapped_column(primary_key=True)
+    bookingNumber: Mapped_[int] = mapped_column(Text_().with_variant(String_(4000), "oracle"))
+'''
+    schemas = '''
+from pydantic import BaseModel
+
+class BookingCreate(BaseModel):
+    bookingNumber: int
+'''
+    old = _summary({"Booking": {"bookingNumber": "str"}})
+    new = _summary({"Booking": {"bookingNumber": "int"}})
+    assert _rules(model_conformance_issues(_app(tmp_path, orm, schemas), old, new)) == [
+        "Booking.bookingNumber changed type str -> int [orm]"]
+
+
 def test_non_primitive_type_changes_are_not_judged(tmp_path):
     old = _summary({"Booking": {"bookingNumber": "str"}})
     new = _summary({"Booking": {"bookingNumber": "any"}})

@@ -26,13 +26,13 @@ book_author_assoc = Table(
 class Author(Base):
     __tablename__ = "author"
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(Text)
-    email: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text().with_variant(String(4000), "oracle"))
+    email: Mapped[str] = mapped_column(Text().with_variant(String(4000), "oracle"))
 
 class Book(Base):
     __tablename__ = "book"
     id: Mapped[int] = mapped_column(primary_key=True)
-    title: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text().with_variant(String(4000), "oracle"))
     pages: Mapped[int] = mapped_column(Integer)
     release: Mapped[date] = mapped_column(Date)
     locatedIn_id: Mapped[int] = mapped_column(ForeignKey("library.id"), nullable=False)
@@ -40,8 +40,8 @@ class Book(Base):
 class Library(Base):
     __tablename__ = "library"
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(Text)
-    address: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text().with_variant(String(4000), "oracle"))
+    address: Mapped[str] = mapped_column(Text().with_variant(String(4000), "oracle"))
 
 
 #--- Relationships of the author table

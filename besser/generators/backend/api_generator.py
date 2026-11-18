@@ -228,9 +228,15 @@ def generate_modular_api(
     api_title: Optional[str] = None,
     api_description: Optional[str] = None,
     api_version: Optional[str] = None,
+    uniform_responses: bool = False,
 ) -> None:
     """Render ``main_api.py``, ``database.py``, ``bal_stdlib.py`` and one
     ``routers/<class>.py`` per class into ``output_dir``.
+
+    With ``uniform_responses``, ``POST /x/``, ``PUT /x/{x_id}/`` and the items of
+    ``GET /x/paginated/?detailed=true`` answer what ``GET /x/{x_id}/`` answers for
+    every class that is not an association class; without it they answer the bare
+    object unless the class has a to-many end.
 
     ``main_api.py`` keeps its historical filename (and still exposes the
     module-level ``app`` object) so that existing tooling which shells out to
@@ -295,6 +301,7 @@ def generate_modular_api(
                 "classes": classes,
                 "http_methods": http_methods,
                 "nested_creations": nested_creations,
+                "uniform_responses": uniform_responses,
                 "fkeys": fkeys,
                 "deferred_fks": deferred_fks,
                 "model": model,

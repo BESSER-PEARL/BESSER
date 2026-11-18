@@ -109,6 +109,8 @@ BASH_CASES = [
     (["besser", "generate", "sqlalchemy", "-o", ""], ["models"]),
     (["besser", "regenerate", "--option", "dbms=sqlite", "back"], ["backend"]),
     (["besser", "convert", "library.py", "-o", "n"], ["notes.txt"]),
+    (["besser", "model", "-f", ""], ["models", "library.py", "project.json"]),
+    (["besser", "model", "add-class", "Shelf", "--file", "l"], ["library.py"]),
 ]
 
 
@@ -130,3 +132,98 @@ def test_bash_completes(besser, tmp_path, words, expected):
     run = subprocess.run(["bash", "-c", program], cwd=tmp_path, capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stderr
     assert run.stdout.splitlines() == expected
+
+
+# zsh completes in its line editor only: a pseudo-terminal (zpty) runs an interactive zsh with compinit and
+# the script, the line is typed with a tab, and compadd, wrapped, prints each match it adds.
+ZSH_INIT = r"""
+PROMPT=
+autoload -U compinit; compinit -u -D
+bindkey '^I' complete-word
+null-line () { echo -E - $'\0' }
+compprefuncs=( null-line )
+comppostfuncs=( null-line exit )
+zstyle ':completion:*' list-grouped false
+zstyle ':completion:*' insert-tab false
+compadd () {
+    if [[ ${@[1,(i)(-|--)]} == *-(O|A|D)\ * ]]; then
+        builtin compadd "$@"
+        return $?
+    fi
+    typeset -a __hits
+    builtin compadd -A __hits "$@"
+    builtin compadd "$@"  # added too, so that _files sees the matches and tries no other tag
+    (( $#__hits )) || return 1
+    local hit
+    for hit in $__hits; do
+        echo -E - $hit
+    done
+}
+"""
+ZSH_CAPTURE = r"""
+zmodload zsh/zpty
+zpty z zsh -f -i
+zpty -w z "source ${(q)1}; source ${(q)2}"
+zpty -w z "$3"$'\t'
+integer seen=0
+while zpty -r z; do :; done | while IFS= read -r line; do
+    if [[ $line == *$'\0\r' ]]; then
+        (( seen++ )) && return 0 || continue
+    fi
+    (( seen )) && echo -E - ${line%$'\r'}
+done
+"""
+
+# The line typed so far and what each shell offers for its last word (a directory without its "/").
+SHELL_CASES = [
+    ("besser gen", ["generate", "generators"]),
+    ("besser generate sql", ["sql", "sqlalchemy"]),
+    ("besser completion ", ["bash", "fish", "zsh"]),
+    ("besser --js", ["--json"]),
+    ("besser validate --s", ["--strict"]),
+    ("besser generate sqlalchemy ", ["library.py", "models", "project.json"]),  # model files, not notes.txt
+    ("besser info l", ["library.py"]),
+    ("besser generate sqlalchemy -o ", ["models"]),  # a directory
+    ("besser generate sqlalchemy library.py -o out --option ", []),  # free text: no file
+    ("besser regenerate --option dbms=sqlite back", ["backend"]),
+    ("besser convert library.py -o n", ["notes.txt"]),  # any file
+    ("besser model -f ", ["library.py", "models", "project.json"]),
+    ("besser model add-class Shelf --file l", ["library.py"]),
+]
+
+
+def _completion_files(tmp_path):
+    for name in ("library.py", "project.json", "notes.txt"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+    (tmp_path / "models").mkdir()
+
+
+def _offered(lines: str) -> list[str]:
+    return sorted({line.split("\t")[0].rstrip("/") for line in lines.splitlines() if line})
+
+
+@pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh is not installed")
+@pytest.mark.parametrize(("line", "expected"), SHELL_CASES, ids=[line for line, _ in SHELL_CASES])
+def test_zsh_completes(besser, tmp_path, line, expected):
+    (tmp_path / "_besser").write_text(besser("completion", "zsh").stdout, encoding="utf-8")
+    (tmp_path / "init.zsh").write_text(ZSH_INIT, encoding="utf-8")
+    (tmp_path / "capture.zsh").write_text(ZSH_CAPTURE, encoding="utf-8")
+    _completion_files(tmp_path)
+    run = subprocess.run(["zsh", "-f", "capture.zsh", "init.zsh", "_besser", line], cwd=tmp_path,
+                         capture_output=True, text=True, check=False, timeout=60)
+    assert run.returncode == 0, run.stderr
+    assert _offered(run.stdout) == expected
+
+
+@pytest.mark.skipif(shutil.which("fish") is None, reason="fish is not installed")
+@pytest.mark.parametrize(("line", "expected"), SHELL_CASES, ids=[line for line, _ in SHELL_CASES])
+def test_fish_completes(besser, tmp_path, line, expected):
+    script = tmp_path / "besser.fish"
+    script.write_text(besser("completion", "fish").stdout, encoding="utf-8")
+    _completion_files(tmp_path)
+    run = subprocess.run(["fish", "--no-config", "-c", "source $argv[1]; complete -C $argv[2]", str(script), line],
+                         cwd=tmp_path, capture_output=True, text=True, check=False, timeout=60)
+    assert run.returncode == 0, run.stderr
+    # fish 4 adds its own fuzzy matches to the list (--json and --verbose for --s): keep what the word starts.
+    word = line.rsplit(" ", 1)[-1]
+    assert [offer for offer in _offered(run.stdout) if offer.startswith(word)] == expected

@@ -118,6 +118,14 @@ Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 ``ComponentDiagram``, ``DeploymentDiagram``, and ``KnowledgeGraphDiagram``. A
 single BPMN diagram payload has type ``BPMNDiagram``.
 
+A diagram's ``title`` names its model: ``json_to_buml_project`` names each
+model after it (GUI models included), and ``project_to_json`` titles each
+imported diagram after the model its section builds (``DomainModel(name="Library")``
+is the class diagram ``Library``), so a name survives B-UML -> JSON -> B-UML.
+A section header's title comes first; a model named as the default title
+(``Class_Diagram``), or one whose name the section does not spell out, gets the
+default title (``Class Diagram``).
+
 
 Class Diagrams: Element Timestamps
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

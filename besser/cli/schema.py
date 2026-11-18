@@ -164,7 +164,9 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
     "new": {
         "model": {"type": "string", "description": "the file written"},
         "kind": {"type": "string"},
-        "kinds": {"type": "array", "description": "with --list: per kind its kind, summary, models and generator"},
+        "kinds": {"type": "array", "description": "with --list: per kind its kind, summary, generators (the ids "
+                                                "that read it) and editor_diagram (its editor diagram type, "
+                                                "null when the editor has none)"},
     },
     "init": {
         "folder": {"type": "string", "description": "the project folder"},
@@ -173,7 +175,7 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
     "guide": {"guide": {"type": "string", "description": "the rules for a coding agent, as AGENTS.md has them"}},
     "schema": {
         "topic": {"type": "string"},
-        "topics": {"type": "array", "description": "without a topic: the topics there are"},
+        "topics": {"type": "array", "description": "without a topic: per topic its topic and summary"},
         "schema": {"type": "object", "description": "topics project and result: a JSON Schema"},
         "description": {"type": "object", "description": "a model kind: its classes, values and generators"},
         "example": {"type": "string", "description": "topic config: an example file"},
@@ -205,13 +207,17 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "model": {"type": "string"},
         "models": {"type": "array", "description": "per model: name, kind, type, model_name, current, counts, "
                                                    "elements; a domain model's classes (attributes with name, "
-                                                   "type, optional, default), enumerations, associations, "
-                                                   "constraints and backend_endpoints (per class, 'METHOD /path/')"},
+                                                   "type, optional, default, derived), enumerations, associations, "
+                                                   "constraints and backend_endpoints (per class, 'METHOD /path/'); a GUI "
+                                                   "model's screens (name, route, main, tables with name, class "
+                                                   "and columns, cards, charts, links, menu, and opens: the screens "
+                                                   "its buttons open)"},
         "generators": {**_STRINGS, "description": "the ids of the generators that can run on the file"},
         "classes": {"type": "array", "description": "with --class: per domain model holding it, the class's "
                                                     "model, name, is_abstract, parents, attributes, "
                                                     "inherited_attributes, methods, ends, inherited_ends, constraints, "
-                                                    "backend_endpoints and backend_code"},
+                                                    "backend_endpoints, backend_code and pages (the screens with a "
+                                                    "table of the class)"},
     },
     "model": {
         "model": {"type": "string", "description": "the .py model file changed"},
@@ -244,9 +250,11 @@ COMMAND_KEYS: dict[str, dict[str, Any]] = {
         "config": {"type": "string", "description": "the configuration file read"},
         "dry_run": {"type": "boolean"},
         "outputs": {"type": "array", "description": "as build"},
-        "test": {"type": ["object", "null"], "description": "the tests run after the build: command, exit_code, "
-                                                            "output_tail (the last lines), failing (the tests "
-                                                            "pytest's summary names); null when none ran"},
+        "test": {"type": ["object", "null"], "description": "the tests run after the build: command, exit_code "
+                                                            "(null when they timed out), timed_out (they ran past "
+                                                            "test_timeout and were stopped), output_tail (the last "
+                                                            "lines), failing (the tests pytest's summary names); "
+                                                            "null when none ran"},
     },
     "convert": {
         "input": {"type": "string"}, "inputs": _STRINGS, "output": {"type": "string"},

@@ -136,6 +136,29 @@ def test_it_lists_the_commands_as_tools(serve):
     assert tools["generate"]["annotations"]["destructiveHint"] is True
 
 
+def test_the_help_names_every_tool_the_server_serves(besser):
+    """The help listed six tools while the server served eight (new and schema were missing)."""
+    from besser.cli.mcp_server import tool_specs
+
+    listed = besser("mcp", "--help").stdout.split("exposing", 1)[1].split("as tools", 1)[0]
+
+    assert set(listed.replace(",", " ").replace(" and ", " ").split()) == set(tool_specs())
+
+
+def test_the_tool_list_and_the_results_are_read_by_a_model_so_they_stay_small(serve):
+    server = serve()
+    tools = server.request("tools/list")["result"]["tools"]
+    result = server.request("tools/call", {"name": "generators", "arguments": {}})["result"]
+
+    # An agent reads the descriptions and input schemas on every turn: the commands' names say they are
+    # the CLI's (the instructions say it once), and the root is in the instructions, not in each path.
+    described = "".join(tool["name"] + tool["description"] + json.dumps(tool["inputSchema"]) for tool in tools)
+    assert "the CLI's 'besser" not in described and "under the server's root" not in described
+    assert len(described) < 7600
+    # The JSON text is read on every call: no indentation.
+    assert "\n" not in result["content"][0]["text"]
+
+
 def test_with_exec_py_the_tools_that_load_models_are_not_read_only(serve):
     tools = {tool["name"]: tool for tool in serve("--exec-py").request("tools/list")["result"]["tools"]}
 
@@ -392,6 +415,25 @@ def test_for_client_makes_paths_relative_and_names_the_tool_arguments():
         "results": [{"errors": ["pass `force: true` to overwrite, `dry_run: true` and `strict: true`"]}],
         "generators": [{"description": "keeps --force as it is"}],
     }
+
+
+def test_for_client_names_every_flag_a_message_gives_as_its_tool_argument():
+    root = Path("/work")
+    output = {"errors": [
+        "/work/m.json is a file: -o takes a directory", "/work/out is a directory: -o takes a file",
+        "codedir is a directory: name what it holds with --from (code)",
+        "--class-diagram derives a class diagram from a knowledge graph",
+        "--use names 2 domain models of m.json (A, B)", "--use A is ambiguous",
+        "keep hand edits with 'besser regenerate' (see 'besser regenerate --help')",
+    ]}
+
+    assert for_client(output, root)["errors"] == [
+        "m.json is a file: `output_dir` takes a directory", "out is a directory: `output` takes a file",
+        "codedir is a directory: name what it holds with the `from` argument (code)",
+        "`class_diagram: true` derives a class diagram from a knowledge graph",
+        "the `use` argument names 2 domain models of m.json (A, B)", "the `use` argument A is ambiguous",
+        "keep hand edits with the `regenerate` tool (see the `regenerate` tool)",
+    ]
 
 
 def test_for_client_rewrites_only_paths_that_start_at_the_root():

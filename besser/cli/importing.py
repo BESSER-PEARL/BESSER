@@ -6,12 +6,38 @@ executed, and no importer calls a language model or the network.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 from besser.cli.loading import LoadedModel, LoadedModels, MissingDependencyError, ModelLoadError
 from besser.cli.loading import missing_backend_dependency_message
+
+
+class _Collect(logging.Handler):
+    """Keeps the messages logged at warning level or above."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+@contextlib.contextmanager
+def _logged_warnings() -> Iterator[list[str]]:
+    """The warnings logged while the block runs. They are the caller's to report: with this handler on the
+    root logger, Python no longer prints them on standard error itself."""
+    handler = _Collect()
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        yield handler.messages
+    finally:
+        root.removeHandler(handler)
 
 # What an importer returns: the model and what it could not take from the source.
 _Imported = tuple[Any, list[str]]
@@ -116,6 +142,10 @@ def _read_sdmx(paths: Sequence[Path]) -> _Imported:
     return sdmx_xml_to_buml(paths[0].read_bytes()), []
 
 
+# What ``--from code`` reads of a directory's Python sources: its help and its error say the same.
+_CODE_CLASSES = "SQLAlchemy models, Django models, Pydantic models and dataclasses"
+
+
 def _read_code(paths: Sequence[Path]) -> _Imported:
     try:
         from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.code_reverse import (
@@ -128,10 +158,7 @@ def _read_code(paths: Sequence[Path]) -> _Imported:
 
     analysis, model = analyze_repository(str(paths[0]))
     if model is None:
-        raise ModelLoadError(
-            f"{paths[0]}: no data classes found: the reader takes SQLAlchemy models, Django models, "
-            "Pydantic models and dataclasses from Python sources"
-        )
+        raise ModelLoadError(f"{paths[0]}: no data classes found: the reader takes {_CODE_CLASSES} from Python sources")
     return model, [f"relationship left out: {skipped}" for skipped in analysis.skipped_relationships]
 
 
@@ -148,7 +175,7 @@ IMPORT_FORMATS: tuple[ImportFormat, ...] = (
     ImportFormat("sdmx", (), "domain",
                  "an SDMX-ML 2.1 structure message (a downloaded .xml file)", _read_sdmx),
     ImportFormat("code", (), "domain",
-                 "a directory of Python code: its SQLAlchemy, Django or Pydantic models", _read_code,
+                 f"a directory of Python code: its {_CODE_CLASSES}", _read_code,
                  directory=True),
 )
 
@@ -177,16 +204,25 @@ def import_models(fmt: ImportFormat, inputs: Sequence[str]) -> tuple[LoadedModel
     for path in paths:
         if fmt.directory and not path.is_dir():
             raise ModelLoadError(f"{path}: --from {fmt.name} reads a directory")
+        if not fmt.directory and path.is_dir():
+            raise ModelLoadError(f"{path} is a directory: --from {fmt.name} reads a file")
         if not fmt.directory and not path.is_file():
             raise ModelLoadError(f"{path}: no such file")
     try:
-        model, warnings = fmt.read(paths)
+        with _logged_warnings() as logged:
+            model, warnings = fmt.read(paths)
+        # What an importer only logs (a dangling draw.io edge, the file cap of a code import) is a warning of
+        # the result, which a --json or MCP caller reads; a message it also returns is not repeated.
+        warnings = [*warnings, *(message for message in logged
+                                 if not any(message == said or message.endswith(f": {said}") for said in warnings))]
     except ModelLoadError:
         raise
     except Exception as exc:
         # The importers raise what their parsers and the metamodel setters raise.
         raise ModelLoadError(f"{paths[0]}: cannot be read as {fmt.name}: {type(exc).__name__}: {exc}") from exc
-    if model is None or (fmt.kind == "domain" and not (model.get_classes() or model.get_enumerations())):
+    empty = (model is None or (fmt.kind == "domain" and not (model.get_classes() or model.get_enumerations()))
+             or (fmt.kind == "kg" and not model.nodes))
+    if empty:
         raise ModelLoadError(f"{paths[0]}: no model found: it holds nothing the {fmt.name} import reads")
     name = getattr(model, "name", None) or fmt.kind
     loaded = LoadedModels(path=paths[0], models=[LoadedModel(name=name, kind=fmt.kind, model=model)],

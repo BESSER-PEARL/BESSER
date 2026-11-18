@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,7 @@ CONFIG_EXAMPLE = '''\
 
 model = "model.py"              # the model file every output reads, unless it names its own
 test = "python -m pytest -q"    # optional: what 'besser apply' runs after the build (no shell)
+test_timeout = 600              # optional: seconds before 'besser apply' stops the tests (default 600)
 
 [output.api]                    # one table per output; 'besser build api' builds this one alone
 generator = "backend"           # a generator id ('besser generators' lists them)
@@ -30,12 +32,26 @@ options = { dbms = "postgresql" }
 overwrite = false               # optional: true regenerates from scratch, discarding edits made in dir
 '''
 
+# Seconds 'besser apply' lets the test command run: minutes for a real suite, not forever for one that
+# starts a server or waits for input.
+DEFAULT_TEST_TIMEOUT = 600
+
 _OUTPUT_KEYS = {"generator": str, "dir": str, "model": str, "use": list, "options": dict, "overwrite": bool}
 _TYPE_NAMES = {str: "a string", list: "a list of strings", dict: "a table", bool: "true or false"}
 
 
 class ConfigError(Exception):
     """The configuration file is missing or not what ``besser build`` reads."""
+
+
+@dataclass(frozen=True)
+class TestConfig:
+    """What ``besser apply`` runs after the build: the ``test`` command line and its time limit."""
+
+    __test__ = False  # not a pytest test class, whatever its name
+
+    command: str | None
+    timeout: float = DEFAULT_TEST_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -68,23 +84,27 @@ def _read_config(path: str) -> dict[str, Any]:
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: not a TOML file: {exc}") from exc
 
-    unknown = sorted(set(data) - {"model", "test", "output"})
+    unknown = sorted(set(data) - {"model", "test", "test_timeout", "output"})
     if unknown:
-        raise ConfigError(f"{path}: unknown key {', '.join(unknown)}; the file takes 'model', 'test' and "
-                          "[output.NAME] tables")
+        raise ConfigError(f"{path}: unknown key {', '.join(unknown)}; the file takes 'model', 'test', "
+                          "'test_timeout' and [output.NAME] tables")
     for key, what in (("model", "the path of a model file"), ("test", "a command line")):
         if key in data and not isinstance(data[key], str):
             raise ConfigError(f"{path}: {key} must be a string, {what}")
+    timeout = data.get("test_timeout", DEFAULT_TEST_TIMEOUT)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not timeout > 0:
+        raise ConfigError(f"{path}: test_timeout must be a positive number of seconds")
     return data
 
 
-def load_test_command(path: str) -> str | None:
-    """The ``test`` command line of the configuration file at ``path``, or None when it has none.
+def load_test_config(path: str) -> TestConfig:
+    """The ``test`` command line of the configuration file at ``path`` (None when it has none) and its time limit.
 
     Raises:
         ConfigError: The file is missing, is not TOML, or holds a top-level key or value no command reads.
     """
-    return _read_config(path).get("test") or None
+    data = _read_config(path)
+    return TestConfig(data.get("test") or None, data.get("test_timeout", DEFAULT_TEST_TIMEOUT))
 
 
 def load_default_model(path: str) -> str | None:
@@ -111,6 +131,8 @@ def load_config(path: str) -> list[OutputConfig]:
         raise ConfigError(f"{path}: no output to build: add an [output.NAME] table with 'generator' and 'dir'")
 
     outputs = []
+    # A directory holds one generator's output and its record: a second would overwrite or refuse it.
+    dir_owners: dict[str, str] = {}
     for name, table in tables.items():
         where = f"{path}: [output.{name}]"
         unknown = sorted(set(table) - set(_OUTPUT_KEYS))
@@ -126,6 +148,11 @@ def load_config(path: str) -> list[OutputConfig]:
             missing.append("model (or a top-level model)")
         if missing:
             raise ConfigError(f"{where}: missing {', '.join(missing)}")
+        # As the file system names it: "out", "./out/" and the absolute path of out are one directory.
+        owner = dir_owners.setdefault(os.path.normcase(os.path.abspath(file.parent / table["dir"])), name)
+        if owner != name:
+            raise ConfigError(f"{where}: dir {table['dir']!r} is also the dir of [output.{owner}]: "
+                              "give each output its own directory")
         outputs.append(OutputConfig(
             name=name, generator=table["generator"],
             model=(file.parent / model).as_posix(), output_dir=(file.parent / table["dir"]).as_posix(),

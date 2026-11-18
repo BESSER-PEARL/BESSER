@@ -1,0 +1,49 @@
+"""The 'client' fixture of the generated API tests, for your own tests too.
+
+A test that takes 'client' gets a FastAPI TestClient on main_api.app, on an empty database: main_api is
+imported once, with DATABASE_URL set to a temporary SQLite file (never the app's own database), and every
+table is dropped and created again before each test. Custom code in extensions.py is loaded as in the app.
+"""
+
+import atexit
+import os
+import shutil
+import sys
+import tempfile
+
+import pytest
+
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _main_api():
+    """main_api, imported on a temporary SQLite database the first time."""
+    if "main_api" not in sys.modules:
+        if BACKEND_DIR not in sys.path:
+            sys.path.insert(0, BACKEND_DIR)
+        folder = tempfile.mkdtemp(prefix="besser_test_")
+        atexit.register(shutil.rmtree, folder, True)
+        os.environ["DATABASE_URL"] = "sqlite:///" + os.path.join(folder, "test.db")
+        cwd = os.getcwd()
+        os.chdir(folder)  # database.py makes the SQLite data/ folder in the working directory
+        try:
+            import main_api  # noqa: F401
+        finally:
+            os.chdir(cwd)
+    return sys.modules["main_api"]
+
+
+@pytest.fixture
+def client():
+    """A TestClient on the generated app, on an empty database."""
+    from fastapi.testclient import TestClient
+
+    app = _main_api().app
+    from database import SessionLocal
+    from sql_alchemy import Base
+
+    engine = SessionLocal.kw["bind"]
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    with TestClient(app) as test_client:
+        yield test_client

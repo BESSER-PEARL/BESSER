@@ -21,7 +21,7 @@
 {%- macro int_segment(end) -%}{% if pk_types.get(end.type_name, 'int') == 'int' %}:int{% endif %}{%- endmacro -%}
 {% macro link_attr_names(assoc_class_name, include_ids=true) %}({% for attribute in assoc_classes[assoc_class_name].attributes|sort(attribute='name') if include_ids or not attribute.is_id %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 {# Rendered once per class. Context: class (the owning class), classes (all classes in
-   the model), http_methods, nested_creations, fkeys, model, pk_types, assoc_classes,
+   the model), http_methods, nested_creations, uniform_responses, fkeys, model, pk_types, assoc_classes,
    assoc_by_association. Mirrors the per-class block that used to live inline in the
    monolithic main_api.py, with @app.* routes rewritten to @router.* and split into its
    own APIRouter file. Association-class links (e.g. Trip.seats -> Reservation rows) and
@@ -282,7 +282,8 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detai
     """Get paginated list of {{ class.name }} entities"""
     total = database.query({{ class.name }}).count()
     {{ class.name | lower}}_list = database.query({{ class.name }}).offset(skip).limit(limit).all()
-    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
+    {# uniform_responses: a detailed item is what GET /x/{x_id}/ answers (an association class answers its bare link there). #}
+    {% if (uniform_responses and not is_assoc_class) or ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     # By default, return flat entities (for charts/widgets)
     # Use detailed=true to get entities with relationships
     if not detailed:
@@ -764,7 +765,9 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endif %}
 
-    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
+    {# uniform_responses: answer what GET /x/{x_id}/ answers whatever the class's ends;
+       without it the wrapped shape only when there is a to-many end (the historical contract). #}
+    {% if uniform_responses or ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
     {{ mn_var[x[3]] }}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()
@@ -1193,7 +1196,9 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     database.commit()
     database.refresh(db_{{ class.name | lower }})
 
-    {% if ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
+    {# uniform_responses: answer what GET /x/{x_id}/ answers whatever the class's ends;
+       without it the wrapped shape only when there is a to-many end (the historical contract). #}
+    {% if uniform_responses or ns.end_name_multiple or ns.one_to_many or ns.assoc_links %}
     {# Return response with relationship IDs like GET endpoint #}
     {% for x in ns.end_name_multiple %}
     {{ mn_var[x[3]] }}_ids = database.query({{x[4]}}.c["{{x[3]}}"]).filter({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower}}.{{ pk }}).all()

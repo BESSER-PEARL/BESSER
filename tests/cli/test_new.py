@@ -1,6 +1,9 @@
 """``besser new``: a starter model file, of every kind, that the other commands accept as it is."""
 
+import ast
 import importlib.util
+import shlex
+import sys
 
 import pytest
 
@@ -50,6 +53,17 @@ def test_force_overwrites_an_existing_file(besser, write, tmp_path):
 
     assert besser("new", "model.py", "--force").returncode == 0
     assert "DomainModel(" in (tmp_path / "model.py").read_text()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows file names hold no quote nor backslash")
+@pytest.mark.parametrize("name", ['say """hi""".py', "back\\slash.py", "my model.py"])
+def test_any_file_name_gives_a_starter_that_loads_and_a_command_to_copy(besser, name, tmp_path):
+    assert besser("new", name).returncode == 0
+    run = besser("validate", name, "--strict")
+
+    assert run.returncode == 0 and run.stderr == ""  # no SyntaxError, no SyntaxWarning on an escape
+    shown = ast.get_docstring(ast.parse((tmp_path / name).read_text()))
+    assert f"besser validate {shlex.quote(name)} " in shown
 
 
 def test_a_name_that_is_not_a_model_file_is_a_usage_error(besser, tmp_path):
@@ -119,14 +133,18 @@ def test_the_generator_a_starter_suggests_runs_on_it(besser, kind):
 
 @pytest.mark.skipif(importlib.util.find_spec("fastapi") is None, reason="editor JSON needs the backend's packages")
 @pytest.mark.parametrize("kind", [kind for kind in STARTERS if kind == "project" or editor_diagram_type(kind)])
-def test_every_starter_is_also_an_editor_project(besser, kind):
+def test_every_starter_is_also_an_editor_project(besser, kind, tmp_path):
     assert besser("new", "model.json", "--kind", kind).returncode == 0
     validated = besser("validate", "model.json", "--strict", "--json")
     info = besser("info", "model.json", "--json").json
+    first = (tmp_path / "model.json").read_bytes()
 
     assert validated.returncode == 0, validated.stdout
     if kind != "project":
         assert kind in [model["kind"] for model in info["models"]]
+    # The same starter writes the same file: ids derived from the model, a fixed time.
+    assert besser("new", "model.json", "--kind", kind, "--force").returncode == 0
+    assert (tmp_path / "model.json").read_bytes() == first
 
 
 @pytest.mark.parametrize("kind", ["deployment", "feature"])
@@ -138,16 +156,24 @@ def test_a_kind_the_editor_has_no_diagram_for_is_a_py_file_only(besser, kind, tm
     assert not (tmp_path / "model.json").exists()
 
 
-def test_the_deployment_starter_generates_once_its_cluster_file_exists(besser, write):
+def test_the_deployment_starter_generates_once_its_cluster_file_exists(besser, write, tmp_path):
     besser("new", "model.py", "--kind", "deployment")
     without = besser("generate", "terraform", "model.py", "-o", "out", "--json")
+    left_out = (tmp_path / "out").exists()
+    dry_run = besser("generate", "terraform", "model.py", "-o", "out", "--json", "--dry-run")
     write("cluster.conf", 'project = "my-gcp-project"\n')
-    with_file = besser("generate", "terraform", "model.py", "-o", "out", "--force", "--json")
+    with_file = besser("generate", "terraform", "model.py", "-o", "out", "--json")
 
+    # The reason is in the result, which a --json caller or an MCP client reads, not only on standard error.
+    reason = "Error reading configuration file cluster.conf: [Errno 2] No such file or directory: 'cluster.conf'"
     assert without.returncode == 1
-    assert without.json["errors"] == ["the 'terraform' generator wrote no file; what it logged, on standard error, "
-                                      "says why"]
-    assert "cluster.conf" in without.stderr
+    assert without.json["errors"] == [f"the 'terraform' generator wrote no file; the last it printed and logged: "
+                                      f"{reason}"]
+    assert reason in without.stderr  # still logged on standard error, as it was
+    assert dry_run.returncode == 1 and dry_run.json["would_write"] == {}
+    assert dry_run.json["errors"] == [f"the 'terraform' generator would write no file; the last it printed and "
+                                      f"logged: {reason}"]
+    assert not left_out  # the folder the run created and wrote nothing in is removed
     assert with_file.returncode == 0 and with_file.json["files"]
 
 

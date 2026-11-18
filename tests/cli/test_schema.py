@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 
 import pytest
 
@@ -93,3 +94,14 @@ def test_every_command_prints_an_object_the_result_schema_accepts(besser, write,
         jsonschema.validate(result, schema)
         documented = set(schema["properties"]) | set(COMMAND_KEYS.get(result["command"], {}))
         assert set(result) <= documented, f"{arguments}: undocumented keys {set(result) - documented}"
+        for key, documentation in COMMAND_KEYS.get(result["command"], {}).items():
+            items = result.get(key)
+            if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+                continue
+            # A list of objects names each key of its items, in its description or its item schema.
+            named = set(re.findall(r"\w+", documentation.get("description", "")))
+            named |= set(documentation.get("items", {}).get("properties", {}))
+            for command in named & set(COMMAND_KEYS):  # "the object of the generate run": its keys
+                named |= set(schema["properties"]) | set(COMMAND_KEYS[command])
+            item_keys = {item_key for item in items for item_key in item}
+            assert item_keys <= named, f"{arguments}: {key} items have undocumented keys {item_keys - named}"

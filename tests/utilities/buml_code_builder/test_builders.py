@@ -778,6 +778,17 @@ class TestQuantumModelBuilder:
         assert "control_qubits" in code
         assert "ControlState.CONTROL" in code
 
+    def test_the_same_circuit_gives_the_same_code(self, tmp_path):
+        """Gate variables are numbered in order, not named after the gate object's id()."""
+        first, second = self._build_simple_circuit(), self._build_simple_circuit()
+        quantum_model_to_code(first, str(tmp_path / "first.py"))
+        quantum_model_to_code(second, str(tmp_path / "second.py"))
+
+        code = (tmp_path / "first.py").read_text(encoding="utf-8")
+        assert code == (tmp_path / "second.py").read_text(encoding="utf-8")
+        assert "gate_HadamardGate_1 = HadamardGate(target_qubit=0)" in code
+        assert "gate_Measurement_3 = Measurement(" in code
+
 
 # ---------------------------------------------------------------------------
 # agent_model_builder.py

@@ -99,6 +99,23 @@ class GeneratorSpec:
 _DOMAIN = frozenset({"domain"})
 _DOMAIN_GUI = frozenset({"domain", "gui"})
 _HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+# An option of the FastAPI backend, of ``backend`` and of ``web_app``'s backend. Off by default: deployed
+# apps and their clients read the historical shapes. ``besser init`` turns it on for a new project.
+_UNIFORM_RESPONSES = {
+    "type": "boolean",
+    "description": (
+        'POST /x/, PUT /x/{x_id}/ and the items of GET /x/paginated/?detailed=true answer what GET /x/{x_id}/ '
+        'answers ({"x": object} plus the ids per to-many end) for every class; off, only a class with a '
+        "to-many end answers that, others the bare object"
+    ),
+    "default": False,
+}
+# The backend's own API tests, written with it; shared by ``backend`` and ``web_app``.
+_API_TESTS = {
+    "type": "boolean",
+    "description": "Also generate the backend's tests/: a pytest 'client' fixture and a CRUD test of each class",
+    "default": False,
+}
 _DBMS = ["sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"]
 
 
@@ -225,6 +242,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
     GeneratorSpec(
         id="backend",
         class_path="besser.generators.backend:BackendGenerator",
+        extra_options={"uniform_responses": _UNIFORM_RESPONSES, "tests": _API_TESTS},
         category="web_framework",
         output_type="zip",
         file_extension=".zip",
@@ -253,6 +271,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         id="web_app",
         class_path="besser.generators.web_app:WebAppGenerator",
         models=("domain", "gui"),
+        extra_options={"uniform_responses": _UNIFORM_RESPONSES, "tests": _API_TESTS},
         category="web_framework",
         output_type="zip",
         file_extension=".zip",

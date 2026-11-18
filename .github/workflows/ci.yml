@@ -22,7 +22,8 @@ jobs:
     # tests/: a new directory lands in `other`.
     name: test (${{ matrix.python-version }}, ${{ matrix.part.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The suite takes 9 to 14 minutes on a hosted runner.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

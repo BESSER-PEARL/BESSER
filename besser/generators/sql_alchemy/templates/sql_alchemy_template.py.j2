@@ -111,13 +111,16 @@ class {{ class.name }}(
             {{parent.name}}{{ ", " if not loop.last else "):" }}
     {% endfor -%}
     {% else -%}
-    {% if class.name in concrete_parents -%}
+    {% if class.name in concrete_parents and class.specializations() -%}
     AbstractConcreteBase, Base):
     {% else -%}
         Base):
     {% endif -%}
     {% endif -%}
-    {%- if class.name in concrete_parents -%}
+    {%- if class.name in concrete_parents and not class.specializations() -%}
+    # No class specializes it yet: a polymorphic union over no table would fail every mapper.
+    __abstract__ = True
+    {%- elif class.name in concrete_parents -%}
     strict_attrs = True
     {%- else -%}
     __tablename__ = "{{class.name.lower()}}"

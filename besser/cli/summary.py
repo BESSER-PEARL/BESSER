@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
+from besser.BUML.metamodel.gui import Button, Chart, Link, LookupColumn, Menu, MetricCard, Table
 from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY, DomainModel
 from besser.cli.loading import LoadedModel
 from besser.utilities import sort_by_timestamp
+from besser.utilities.utils import display_order_key
 
 
 def _gui_counts(model: Any) -> dict[str, int]:
@@ -109,7 +111,7 @@ def _domain_details(model: DomainModel) -> dict[str, Any]:
                 "parents": sorted(_name(parent) for parent in cls.parents()),
                 "attributes": [
                     {"name": attribute.name, "type": _name(attribute.type), "optional": attribute.is_optional,
-                     "default": _plain(attribute.default_value)}
+                     "default": _plain(attribute.default_value), "derived": bool(attribute.is_derived)}
                     for attribute in sort_by_timestamp(cls.attributes)
                 ],
                 "methods": [method.name for method in sort_by_timestamp(cls.methods)],
@@ -138,6 +140,74 @@ def _domain_details(model: DomainModel) -> dict[str, Any]:
     }
 
 
+def _view_elements(container: Any) -> list[Any]:
+    """The view elements of a screen or container, at any depth, in name order."""
+    found = []
+    for element in sorted(getattr(container, "view_elements", None) or (), key=lambda e: e.name):
+        found.append(element)
+        found.extend(_view_elements(element))
+    return found
+
+
+def _column(column: Any) -> str:
+    """A table column as ``add-column`` takes it: an attribute, or ``end.attribute`` of a related object."""
+    if getattr(column, "field", None) is None:
+        return column.label
+    path = getattr(column, "path", None) if isinstance(column, LookupColumn) else None
+    return f"{_name(path)}.{_name(column.field)}" if path is not None else _name(column.field)
+
+
+def _computed(element: Any) -> str:
+    """What a card or chart shows, as ``add-card`` and ``add-chart`` take it: ``sum:Deal.amount by stage
+    where stage == 'WON'``."""
+    binding = getattr(element, "data_binding", None)
+    if binding is None:
+        return "unbound"
+    aggregation = getattr(binding, "aggregation", None)
+    text = f"{aggregation.name.lower()}:" if aggregation is not None else ""
+    text += _name(binding.domain_concept) if binding.domain_concept is not None else "?"
+    if getattr(binding, "data_field", None) is not None:
+        text += f".{_name(binding.data_field)}"
+    if getattr(binding, "label_field", None) is not None:
+        text += f" by {_name(binding.label_field)}"
+    if getattr(binding, "filter_expression", None):
+        text += f" where {binding.filter_expression}"
+    return text
+
+
+def _gui_screens(model: Any) -> list[dict[str, Any]]:
+    """Per screen of a GUI model, in the generators' order: its route, whether it is the main page, the
+    tables it shows (the class each is bound to and what its columns show), its cards and charts in the
+    page's order (their title and what they compute), whether it shows a menu, and the screens its
+    buttons open."""
+    screens = []
+    for module in sorted(model.modules, key=lambda m: m.name):
+        for screen in sorted(module.screens, key=lambda s: s.name):
+            elements = _view_elements(screen)
+            screens.append({
+                "name": screen.name,
+                "route": screen.route_path,
+                "main": bool(screen.is_main_page),
+                "tables": [
+                    {"name": table.name,
+                     "class": _name(getattr(table.data_binding, "domain_concept", None))
+                     if getattr(table, "data_binding", None) else None,
+                     "columns": [_column(column) for column in table.columns]}
+                    for table in elements if isinstance(table, Table)
+                ],
+                "cards": [{"title": card.metric_title, "shows": _computed(card)}
+                          for card in sorted(elements, key=display_order_key) if isinstance(card, MetricCard)],
+                "charts": [{"title": chart.title, "kind": type(chart).__name__.removesuffix("Chart").lower(),
+                            "shows": _computed(chart)}
+                           for chart in sorted(elements, key=display_order_key) if isinstance(chart, Chart)],
+                "menu": any(isinstance(element, Menu) for element in elements),
+                "links": [{"label": link.label, "url": link.url} for link in elements if isinstance(link, Link)],
+                "opens": sorted({element.targetScreen.name for element in elements
+                                 if isinstance(element, Button) and element.targetScreen is not None}),
+            })
+    return screens
+
+
 def describe_model(loaded: LoadedModel, current: bool = False) -> dict[str, Any]:
     """One model as ``besser info --json`` shows it: what it is, what it holds, and a domain model's content.
 
@@ -156,13 +226,16 @@ def describe_model(loaded: LoadedModel, current: bool = False) -> dict[str, Any]
         entry.update(_domain_details(loaded.model))
     else:
         entry["elements"] = _elements(loaded.kind, loaded.model)
+    if loaded.kind == "gui":
+        entry["screens"] = _gui_screens(loaded.model)
     return entry
 
 
 def attribute_text(attribute: dict[str, Any]) -> str:
     """An attribute as ``besser model add-attribute`` takes it: ``name:type``, ``?`` when optional, ``=default``."""
     text = f"{attribute['name']}:{attribute['type']}{'?' if attribute.get('optional') else ''}"
-    return text + (f"={attribute['default']!r}" if attribute.get("default") is not None else "")
+    text += f"={attribute['default']!r}" if attribute.get("default") is not None else ""
+    return text + (" (derived)" if attribute.get("derived") else "")
 
 
 def end_text(end: dict[str, Any]) -> str:
@@ -192,8 +265,29 @@ def compact_routes(routes: list[str]) -> list[str]:
     return [f"{'|'.join(methods)} {path}" for path, methods in verbs.items()]
 
 
-def summary_lines(entry: dict[str, Any]) -> list[str]:
-    """The lines of the text report for one ``describe_model`` entry."""
+# A domain model with more classes than this is summarised by 'besser info' as an overview (names only):
+# its full report grows with it, and whoever changes one class reads it all in every session.
+OVERVIEW_OVER = 20
+
+
+def screen_text(screen: dict[str, Any]) -> str:
+    """What a screen shows, as the report says it: its tables, cards, charts, links, menu and buttons."""
+    shown = [f"{table['class'] or 'unbound'} table {table['name']} ({', '.join(table['columns'])})"
+             for table in screen["tables"]]
+    shown += [f"card '{card['title']}' ({card['shows']})" for card in screen["cards"]]
+    shown += [f"{chart['kind']} chart '{chart['title']}' ({chart['shows']})" for chart in screen["charts"]]
+    shown += [f"link '{link['label']}' ({link['url']})" for link in screen["links"]]
+    if screen["menu"]:
+        shown.append("menu")
+    if screen["opens"]:
+        shown.append(f"buttons to {', '.join(screen['opens'])}")
+    main = " (main page)" if screen["main"] else ""
+    return f"screen {screen['name']}{main}, {screen['route']}: {'; '.join(shown) or 'no table'}"
+
+
+def summary_lines(entry: dict[str, Any], overview: bool = False) -> list[str]:
+    """The lines of the text report for one ``describe_model`` entry. ``overview``: the names only (the
+    classes and enumerations of a domain model, the screens of a GUI model with their routes)."""
     counts = ", ".join(
         f"{count} {_SINGULAR.get(noun, noun[:-1]) if count == 1 else noun}".replace("_", " ")
         for noun, count in entry["counts"].items() if count
@@ -205,8 +299,21 @@ def summary_lines(entry: dict[str, Any]) -> list[str]:
     if entry.get("current"):
         title += " (current in the editor)"
     lines = [f"  {title}{': ' + counts if counts else ''}"]
+    if overview and entry.get("kind") in ("domain", "gui"):
+        for label, key in (("classes", "classes"), ("enumerations", "enumerations")):
+            if entry.get(key):
+                lines.append(f"    {label}: {', '.join(item['name'] for item in entry[key])}")
+        if entry.get("screens"):
+            lines.append("    screens: " + ", ".join(
+                f"{screen['name']} {screen['route']}{' (main page)' if screen['main'] else ''}"
+                for screen in entry["screens"]))
+        return lines
     for collection, names in entry.get("elements", {}).items():
+        if collection == "screens" and "screens" in entry:
+            continue  # a line per screen, below
         lines.append(f"    {collection.replace('_', ' ')}: {', '.join(names)}")
+    for screen in entry.get("screens", []):
+        lines.append(f"    {screen_text(screen)}")
     for cls in entry.get("classes", []):
         header = f"{'abstract ' if cls['is_abstract'] else ''}class {cls['name']}"
         if cls["parents"]:
@@ -270,7 +377,7 @@ def describe_class(model: DomainModel, cls: Any) -> dict[str, Any]:
 
 def _attribute(attribute: Any) -> dict[str, Any]:
     return {"name": attribute.name, "type": _name(attribute.type), "optional": attribute.is_optional,
-            "default": _plain(attribute.default_value)}
+            "default": _plain(attribute.default_value), "derived": bool(attribute.is_derived)}
 
 
 def class_lines(entry: dict[str, Any]) -> list[str]:
@@ -285,4 +392,11 @@ def class_lines(entry: dict[str, Any]) -> list[str]:
         values = compact_routes(entry[key]) if key == "backend_endpoints" else entry[key]
         if values:
             lines.append(f"  {label}: {', '.join(values)}")
+    lines.extend(f"  page: {page}" for page in entry.get("pages", []))
     return lines
+
+
+def class_pages(gui_model: Any, class_name: str) -> list[str]:
+    """The screens of a GUI model that show the class ``class_name`` in a table, as the report says them."""
+    return [screen_text(screen) for screen in _gui_screens(gui_model)
+            if any(table["class"] == class_name for table in screen["tables"])]

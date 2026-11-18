@@ -140,6 +140,17 @@ def test_a_generator_without_regenerate_needs_overwrite_for_a_second_build(besse
     assert second.json["errors"][-1] == "bot: to overwrite it on every build, set 'overwrite = true' in [output.bot]"
 
 
+def test_outputs_whose_dirs_are_one_directory_spelled_two_ways_are_refused(besser, write, model, tmp_path):
+    write("conf/besser.toml", f'model = "../library.py"\n[output.a]\ngenerator = "python"\ndir = "out"\n'
+                              f'[output.b]\ngenerator = "sqlalchemy"\ndir = {(tmp_path / "conf" / "out").as_posix()!r}\n')
+
+    run = besser("build", "-c", "conf/besser.toml", "--json")
+
+    assert run.returncode == 2 and run.json["outputs"] == []
+    assert "is also the dir of [output.a]: give each output its own directory" in run.json["errors"][0]
+    assert not (tmp_path / "conf" / "out").exists()  # refused before anything is built
+
+
 def test_paths_are_relative_to_the_configuration_file(besser, write, model, tmp_path):
     write("conf/besser.toml", '[output.classes]\ngenerator = "python"\nmodel = "../library.py"\ndir = "out"\n')
 
@@ -152,14 +163,20 @@ def test_paths_are_relative_to_the_configuration_file(besser, write, model, tmp_
 @pytest.mark.parametrize("content, message", [
     (None, "besser.toml: no such file; 'besser schema config' prints an example to start from"),
     ("model = ", "besser.toml: not a TOML file: "),
-    ('modle = "library.py"\n', "besser.toml: unknown key modle; the file takes 'model', 'test' and "
-                                   "[output.NAME] tables"),
+    ('modle = "library.py"\n', "besser.toml: unknown key modle; the file takes 'model', 'test', "
+                                   "'test_timeout' and [output.NAME] tables"),
+    ('test_timeout = 0\n', "besser.toml: test_timeout must be a positive number of seconds"),
+    ('test_timeout = "10"\n', "besser.toml: test_timeout must be a positive number of seconds"),
     ('model = "library.py"\n', "besser.toml: no output to build: add an [output.NAME] table with 'generator' and 'dir'"),
     ('[output.a]\ngenerator = "python"\n', "besser.toml: [output.a]: missing dir, model (or a top-level model)"),
     ('[output.a]\ngenerator = "python"\ndir = "o"\nmodel = "m.py"\noption = {}\n',
      "besser.toml: [output.a]: unknown key option; an output takes generator, dir, model, use, options, overwrite"),
     ('[output.a]\ngenerator = "python"\ndir = "o"\nmodel = "m.py"\nuse = "x"\n',
      "besser.toml: [output.a]: use must be a list of strings"),
+    # Each generator records its output in its dir: a second one there would overwrite or refuse it.
+    ('model = "m.py"\n[output.a]\ngenerator = "python"\ndir = "o"\noverwrite = true\n'
+     '[output.b]\ngenerator = "sqlalchemy"\ndir = "./o/"\noverwrite = true\n',
+     "besser.toml: [output.b]: dir './o/' is also the dir of [output.a]: give each output its own directory"),
 ])
 def test_a_configuration_it_cannot_read_is_a_usage_error(besser, write, content, message):
     if content is not None:

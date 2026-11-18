@@ -51,6 +51,7 @@ from besser.generators.structural_utils import (
     is_server_owned_attribute,
 )
 from besser.utilities import sort_by_timestamp
+from besser.utilities.utils import display_order_key
 
 from .routes import page_route
 
@@ -148,7 +149,7 @@ class GuiSerializationMixin:
 
         # Sort elements by display_order to preserve JSON ordering
         elements = list(screen.view_elements)
-        elements.sort(key=lambda e: (e.display_order, e.name))
+        elements.sort(key=lambda e: (*display_order_key(e), e.name))
 
         for element in elements:
             node["components"].append(self._serialize_component(element))
@@ -183,7 +184,7 @@ class GuiSerializationMixin:
         if isinstance(element, ViewContainer):
             # Sort children by display_order to preserve JSON ordering
             children_list = list(element.view_elements)
-            children_list.sort(key=lambda e: (e.display_order, e.name))
+            children_list.sort(key=lambda e: (*display_order_key(e), e.name))
 
             children = [self._serialize_component(child) for child in children_list]
             if children:
@@ -1560,7 +1561,7 @@ class GuiSerializationMixin:
         if not items:
             return []
         # Sort by display_order if available (preserves JSON order), otherwise by name
-        return sorted(items, key=lambda item: (getattr(item, "display_order", 999999), getattr(item, "name", "").lower()))
+        return sorted(items, key=lambda item: (*display_order_key(item), getattr(item, "name", "").lower()))
 
     @staticmethod
     def _sorted_menu_items(items: Iterable[MenuItem]) -> List[MenuItem]:

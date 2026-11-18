@@ -8,6 +8,7 @@ from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.backend.api_generator import generate_modular_api
+from besser.generators.backend.api_tests import generate_api_tests
 from besser.generators.backend.docker_files import generate_docker_files
 from besser.generators.backend.nn_methods import NN_PACKAGE, TORCH_REQUIREMENT, generate_nn_methods
 
@@ -35,6 +36,14 @@ class BackendGenerator(GeneratorInterface):
         api_description (str, optional): Description shown in the generated API docs. Defaults to a generic
                                 description of the generated API.
         api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
+        uniform_responses (bool, optional): ``POST /x/``, ``PUT /x/{x_id}/`` and the items of
+                                ``GET /x/paginated/?detailed=true`` answer what ``GET /x/{x_id}/`` answers
+                                (``{"x": object}`` plus the ids per to-many end) for every class but an
+                                association class. Defaults to False: they answer that only when the class has a
+                                to-many end, else the bare object.
+        tests (bool, optional): Also write ``tests/conftest.py`` (a ``client`` fixture: a TestClient on an
+                                empty temporary SQLite database) and ``tests/test_generated_api.py`` (a create, read,
+                                list, update and delete test of each class). Defaults to False.
     """
 
     regenerable = True
@@ -42,7 +51,8 @@ class BackendGenerator(GeneratorInterface):
     extension_file = "extensions.py"
 
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
-                 api_title: str = None, api_description: str = None, api_version: str = None):
+                 api_title: str = None, api_description: str = None, api_version: str = None,
+                 uniform_responses: bool = False, tests: bool = False):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -57,6 +67,8 @@ class BackendGenerator(GeneratorInterface):
         self.api_title = api_title
         self.api_description = api_description
         self.api_version = api_version
+        self.uniform_responses = uniform_responses
+        self.tests = tests
         self.config = self.load_config()
         self.has_nn_methods = False
 
@@ -126,6 +138,7 @@ class BackendGenerator(GeneratorInterface):
             api_title=self.api_title,
             api_description=self.api_description,
             api_version=self.api_version,
+            uniform_responses=self.uniform_responses,
         )
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
@@ -136,6 +149,9 @@ class BackendGenerator(GeneratorInterface):
 
         # Methods implemented by a neural network: PyTorch modules + runtime + torch requirement.
         self.has_nn_methods = generate_nn_methods(self.model, backend_folder_path)
+
+        if self.tests:
+            generate_api_tests(self.model, self.http_methods, backend_folder_path)
 
         if self.docker_image:
             if self.config:

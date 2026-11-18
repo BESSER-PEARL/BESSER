@@ -3,6 +3,7 @@
 import configparser
 import importlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -254,3 +255,33 @@ def test_a_run_does_not_import_the_mcp_server():
     run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True, timeout=120)
 
     assert run.stdout.splitlines()[-1] == "False False"
+
+
+def test_json_is_one_line_off_a_terminal_and_indented_on_one(besser, monkeypatch, capsys):
+    piped = besser("--version", "--json")
+    assert piped.stdout.count("\n") == 1 and '"ok":true' in piped.stdout
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    main(["--version", "--json"])
+    assert capsys.readouterr().out.startswith('{\n  "ok": true,\n')
+
+
+def test_the_help_says_what_quiet_keeps_and_what_apply_exits_with(besser):
+    quiet_listing = besser("new", "--list", "-q")
+    missing_config = besser("apply")
+
+    assert quiet_listing.stdout and "new --list" in besser("--help").stdout
+    assert missing_config.returncode == 2 and "2 when besser.toml" in besser("apply", "--help").stdout
+
+
+@pytest.mark.parametrize("args", [("schema", "domain"), ("generators", "--json")])
+def test_a_reader_that_closes_the_pipe_early_gets_the_command_s_exit_status_and_no_traceback(tmp_path, args):
+    # As 'besser schema domain | head -1': the reader is gone before besser writes.
+    process = subprocess.Popen([sys.executable, "-m", "besser", *args], cwd=tmp_path, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, env={**os.environ, "BESSER_OUTPUT": "full"})
+    process.stdout.close()
+    stderr = process.stderr.read().decode()
+    process.wait(timeout=120)
+
+    assert process.returncode == 0, stderr
+    assert "BrokenPipeError" not in stderr and "Exception ignored" not in stderr

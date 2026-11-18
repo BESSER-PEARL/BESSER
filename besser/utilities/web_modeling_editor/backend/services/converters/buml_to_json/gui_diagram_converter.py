@@ -7,10 +7,10 @@ import inspect
 import json
 import logging
 import re
-import uuid
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 from besser.BUML.metamodel.gui import (
     Alert,
     Button,
@@ -1137,7 +1137,7 @@ def _element_ref(element: Any) -> Optional[str]:
         return element_id
     return getattr(element, "name", None)
 def _generate_id(prefix: str) -> str:
-    return f"{prefix}-{uuid.uuid4().hex[:10]}"
+    return f"{prefix}-{new_id().replace('-', '')[:10]}"
 def _enum_value(value: Any) -> Optional[str]:
     if value is None:
         return None

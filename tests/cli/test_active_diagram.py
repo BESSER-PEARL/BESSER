@@ -312,4 +312,4 @@ def test_the_current_diagram_of_several_types_at_once(besser, write, objects_pro
 
     marked = _info_current(besser, write("project.json", objects_project))
 
-    assert marked == {"Shop": False, "Class_Diagram": True, "First": True, "Second": False}
+    assert marked == {"Shop": False, "Books": True, "First": True, "Second": False}

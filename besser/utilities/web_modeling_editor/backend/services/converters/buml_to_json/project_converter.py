@@ -5,12 +5,18 @@ Supports both single-diagram and multi-diagram per type formats.
 """
 
 import ast
+import hashlib
+import json
 import logging
-import uuid
 import re
-from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import (
+    fixed_minted_values,
+    new_id,
+    next_id_scope,
+    now_iso,
+)
 from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.buml_code_builder.project_builder import is_user_reference_domain_model
 
@@ -67,6 +73,67 @@ def _parse_user_reference_section(section_code: str) -> Optional[DomainModel]:
     except Exception:  # noqa: BLE001 -- unparsable: let the class-diagram path report it
         return None
     return domain_model if is_user_reference_domain_model(domain_model) else None
+
+
+# The name json_to_buml gives a model whose diagram has no title, by model
+# variable prefix: such a name says nothing about the model, so its diagram
+# gets the default title back rather than this name.
+_UNTITLED_MODEL_NAMES = {
+    'domain_model': 'unnamed',
+    'object_model': 'Generated_Object_Model',
+    'agent': 'Generated_Agent',
+    'gui_model': 'GUI',
+    'quantum_model': 'Quantum_Circuit',
+    'kg_model': 'knowledge_graph',
+    'sm': 'Generated_State_Machine',
+    'nn_model': 'Neural_Network',
+    'bpmn_model': 'Generated_BPMN_Model',
+    'component_model': 'Generated_Component_Model',
+    'deployment_model': 'Generated_Deployment_Model',
+}
+
+
+def _assigned_model_name(section_code: str, variables: List[str]) -> Optional[str]:
+    """The name a section gives the model it binds to one of ``variables``, or ``None``.
+
+    Reads ``var = Kind(name="...")`` or ``var = Kind("...")`` (the code builder
+    writes one of these for every model); a section that does not parse, or
+    builds the model some other way, has no name here.
+    """
+    try:
+        tree = ast.parse(section_code)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if not isinstance(value, ast.Call):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id in variables for target in targets):
+            continue
+        arguments = [kw.value for kw in value.keywords if kw.arg == "name"] or value.args[:1]
+        if arguments and isinstance(arguments[0], ast.Constant) and isinstance(arguments[0].value, str):
+            return arguments[0].value or None
+    return None
+
+
+def _model_title(name: Optional[str], base_name: str, default_title: str) -> Optional[str]:
+    """The diagram title that gives a model back ``name`` on its way into B-UML, or ``None``.
+
+    A diagram's title is what json_to_buml names its model, so a model keeps its
+    name through the editor's JSON. A name that is the default title as json_to_buml
+    writes it ("Class_Diagram"), or the name it gives an untitled diagram, keeps the
+    default title.
+    """
+    if not name:
+        return None
+    if name in (default_title, default_title.replace(" ", "_"), _UNTITLED_MODEL_NAMES.get(base_name)):
+        return default_title
+    return name
 
 
 def _object_model_title(section_code: str) -> str:
@@ -244,8 +311,9 @@ def _convert_section(
     Returns:
         Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
     """
-    diagram_id = str(uuid.uuid4())
-    last_update = datetime.now(timezone.utc).isoformat()
+    next_id_scope()
+    diagram_id = new_id()
+    last_update = now_iso()
 
     try:
         if model_name == "domain_model":
@@ -398,11 +466,15 @@ def _fill_diagram_defaults(
     """
     filled: Dict[str, List[Dict[str, Any]]] = {}
     for diagram_type, title in DIAGRAM_DEFAULT_TITLES.items():
-        filled[diagram_type] = diagram_jsons.get(diagram_type) or [{
-            "id": str(uuid.uuid4()),
+        if diagram_jsons.get(diagram_type):
+            filled[diagram_type] = diagram_jsons[diagram_type]
+            continue
+        next_id_scope()
+        filled[diagram_type] = [{
+            "id": new_id(),
             "title": title,
             "model": empty_model(diagram_type),
-            "lastUpdate": datetime.now(timezone.utc).isoformat(),
+            "lastUpdate": now_iso(),
         }]
     # Keep any bucket of a type not listed above (canonical types first).
     for diagram_type, entries in diagram_jsons.items():
@@ -443,6 +515,7 @@ def _build_project_from_single_diagram(
         )
 
     title = DIAGRAM_DEFAULT_TITLES[diagram_type]
+    next_id_scope()
     try:
         if diagram_type == 'ClassDiagram':
             parsed = parse_buml_content(content, warnings)
@@ -469,10 +542,10 @@ def _build_project_from_single_diagram(
         ) from e
 
     filled_entry = {
-        "id": str(uuid.uuid4()),
+        "id": new_id(),
         "title": title,
         "model": model,
-        "lastUpdate": datetime.now(timezone.utc).isoformat(),
+        "lastUpdate": now_iso(),
     }
 
     diagram_jsons, current_diagram_indices = _fill_diagram_defaults(
@@ -480,14 +553,15 @@ def _build_project_from_single_diagram(
     )
     current_diagram_type = "BPMN" if diagram_type == "BPMNDiagram" else diagram_type
 
+    next_id_scope()
     return {
-        "id": str(uuid.uuid4()),
+        "id": new_id(),
         "type": "Project",
         "schemaVersion": 3,
         "name": "Imported Project",
         "description": "Imported from single-diagram BUML file",
         "owner": "Unknown",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "createdAt": now_iso(),
         "currentDiagramType": current_diagram_type,
         "currentDiagramIndices": current_diagram_indices,
         "diagrams": diagram_jsons,
@@ -499,7 +573,13 @@ def _build_project_from_single_diagram(
     }
 
 
-def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+def project_to_json(
+    content: str,
+    warnings: Optional[List[str]] = None,
+    *,
+    id_seed: Optional[str] = None,
+    timestamp: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Convert a BUML project content to JSON format matching the frontend structure.
 
@@ -509,14 +589,53 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
     wrapper — they are wrapped into a one-diagram project so that the
     Project Import flow works with any well-formed BUML file.
 
+    The ids (project, diagrams, elements) and timestamps (``createdAt``,
+    ``lastUpdate``) the conversion makes up are fresh by default, as the editor
+    wants on import. With ``id_seed`` every such id is derived from it, and with
+    ``timestamp`` every such time is that value (ISO 8601), so the same content
+    and the same arguments give the same JSON; pass both for that.
+
     Args:
         content: Project Python code as string
         warnings: Receives a message for every repair made to load a model
+        id_seed: Derive the minted ids from this string instead of minting fresh uuids
+        timestamp: Record this time instead of the current one
 
     Returns:
         Dictionary representing the complete project with all diagrams.
         Each diagram type maps to a list of diagram entries.
     """
+    if id_seed is None and timestamp is None:
+        return _project_to_json(content, warnings)
+    if id_seed is None or timestamp is None:
+        raise ValueError("project_to_json fixes the ids and the timestamps together: pass both or neither")
+    with fixed_minted_values(id_seed, timestamp):
+        return _project_to_json(content, warnings)
+
+
+# An editor id: a uuid, or what the GUI converter mints ("page-0123456789").
+_EDITOR_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[a-z-]+-[0-9a-f]{10}\b")
+
+
+def reproducible_project_to_json(
+    content: str, warnings: Optional[List[str]] = None, *, timestamp: str,
+) -> Dict[str, Any]:
+    """``project_to_json`` whose output depends on what it holds alone: the same models give the same JSON.
+
+    The ids are derived from a hash of the project without its ids (a first
+    conversion with a constant seed), so two B-UML files that differ only in
+    form (variable names, comments, a JSON -> B-UML round trip) give the same
+    ids, and different projects get different ones. Every time is ``timestamp``.
+    """
+    draft = project_to_json(content, [], id_seed="", timestamp=timestamp)
+    # In the converters' own order: sorting the keys would order elements by their ids.
+    held = _EDITOR_ID.sub("", json.dumps(draft))
+    seed = hashlib.sha256(held.encode("utf-8")).hexdigest()
+    return project_to_json(content, warnings, id_seed=seed, timestamp=timestamp)
+
+
+def _project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+    """``project_to_json`` with the ids and timestamps ``minted_values`` gives."""
     # Detect models included in the project
     model_match = re.search(r"models\s*=\s*\[(.*?)\]", content, re.DOTALL)
     if not model_match:
@@ -624,12 +743,17 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
             logger.info("No sections found for '%s' (keyword: %s), skipping", base_name, keyword)
             continue
 
+        variables = [name for name in model_names if model_aliases.get(re.sub(r'_\d+$', '', name),
+                                                                          re.sub(r'_\d+$', '', name)) == base_name]
         diagram_list = []
         for idx, (title, section_code) in enumerate(sections):
-            resolved_title = title if title else default_title
-            # Append index suffix for multi-diagram types (only when more than one)
-            if len(sections) > 1 and not title:
-                resolved_title = f"{default_title} {idx + 1}"
+            # A header's title, else the model's own name, else the default title
+            # (numbered when there are several).
+            resolved_title = title or _model_title(
+                _assigned_model_name(section_code, variables), base_name, default_title,
+            )
+            if not resolved_title:
+                resolved_title = f"{default_title} {idx + 1}" if len(sections) > 1 else default_title
 
             logger.debug(
                 "Converting section %d/%d for %s: '%s'",
@@ -668,8 +792,9 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
         result["owner"] = project_owner
         return result
 
-    project_id = str(uuid.uuid4())
-    created_at = datetime.now(timezone.utc).isoformat()
+    next_id_scope()
+    project_id = new_id()
+    created_at = now_iso()
 
     # Ensure every diagram type has at least one entry (empty default)
     diagram_jsons, current_diagram_indices = _fill_diagram_defaults(diagram_jsons)

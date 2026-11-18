@@ -25,7 +25,7 @@ FILE = "file"
 TEXT = "text"  # free text: nothing is offered
 
 # The metavars whose value is a path, and what completes it.
-_METAVAR_KINDS = {"DIR": DIRECTORY, "FILE": FILE}
+_METAVAR_KINDS = {"DIR": DIRECTORY, "FILE": FILE, "MODEL": MODEL}
 
 
 @dataclass(frozen=True)
@@ -337,23 +337,26 @@ def _fish_quote(text: str) -> str:
     return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _fish_arguments(value: Value) -> str:
-    """The ``complete`` arguments that offer ``value``."""
+def _fish_arguments(value: Value, fn: str) -> str:
+    """The ``complete`` arguments that offer ``value``; ``fn`` prefixes the script's helper functions."""
     if value.kind in ("words", GENERATOR):
         return "-a " + _fish_quote(" ".join(value.words))
     return {
-        MODEL: "-a '(__fish_complete_suffix .py) (__fish_complete_suffix .json)'",
+        # fish's __fish_complete_suffix lists every file, those of the suffix first: the script's own helper
+        # offers the model files and directories only, as bash and zsh do.
+        MODEL: f"-a '({fn}_model_files)'",
         DIRECTORY: "-a '(__fish_complete_directories)'",
         FILE: "-F",
     }.get(value.kind, "")
 
 
-def _fish_option(prog: str, condition: str, option: Option) -> str:
+def _fish_option(prog: str, fn: str, condition: str, option: Option) -> str:
     parts = [f"complete -c {prog} -n {_fish_quote(condition)}"]
     parts += [f"-s {name}" for name in option.short] + [f"-l {name}" for name in option.long]
     if option.value is not None:
-        parts.append("-r")
-        arguments = _fish_arguments(option.value)
+        # -x: a value, and no file unless the value is one (-F); -r alone would offer every file besides.
+        parts.append("-r" if option.value.kind == FILE else "-x")
+        arguments = _fish_arguments(option.value, fn)
         if arguments:
             parts.append(arguments)
     parts.append(f"-d {_fish_quote(option.help)}")
@@ -361,7 +364,7 @@ def _fish_option(prog: str, condition: str, option: Option) -> str:
 
 
 def render_fish(tree: Tree) -> str:
-    """A fish script of ``complete`` commands, with two helper functions."""
+    """A fish script of ``complete`` commands, with three helper functions."""
     prog, fn = tree.prog, "_" + _function_name(tree.prog)
     value_cases = []
     for command in tree.commands:
@@ -409,17 +412,28 @@ def render_fish(tree: Tree) -> str:
         "    end",
         "end",
         "",
+        "# The model files (.py, .json) and the directories the word being typed completes to.",
+        f"function {fn}_model_files",
+        "    for path in (commandline -ct)*",
+        "        if test -d $path",
+        "            echo $path/",
+        "        else if string match -q -r -- '\\.(py|json)$' $path",
+        "            echo $path",
+        "        end",
+        "    end",
+        "end",
+        "",
         f"complete -c {prog} -f",
     ]
     for command in tree.commands:
         lines.append(f"complete -c {prog} -n __fish_use_subcommand -a {command.name} -d {_fish_quote(command.help)}")
-    lines.extend(_fish_option(prog, "__fish_use_subcommand", option) for option in tree.root.options)
+    lines.extend(_fish_option(prog, fn, "__fish_use_subcommand", option) for option in tree.root.options)
     for command in tree.commands:
         lines.append("")
         condition = f"__fish_seen_subcommand_from {command.name}"
-        lines.extend(_fish_option(prog, condition, option) for option in command.options)
+        lines.extend(_fish_option(prog, fn, condition, option) for option in command.options)
         for index, positional in enumerate(command.positionals):
-            arguments = _fish_arguments(positional.value)
+            arguments = _fish_arguments(positional.value, fn)
             if arguments:
                 test = f"{fn}_positional {command.name} {index}" + (" +" if positional.many else "")
                 lines.append(f"complete -c {prog} -n {_fish_quote(test)} {arguments}")

@@ -155,7 +155,9 @@ def test_a_literal_used_as_a_default_cannot_be_removed(edit):
 def test_rename_a_class_renames_its_variable_and_the_name_only(edit):
     run, text = edit(INLINE, "rename", "Book", "Volume", output=None)
 
-    assert run.stdout == "model.py: renamed Book to Volume (variable book -> volume)\n"
+    # The end named after the old class is named, with the command that renames it.
+    assert run.stdout == ("model.py: renamed Book to Volume (variable book -> volume); ends still named after "
+                          "Book: Library.books (rename Library.books volumes)\n")
     removed, added = _changed_lines(INLINE, text)
     assert removed == ['book = Class(name="Book", attributes={',
                        '    Property(name="books", type=book, multiplicity=Multiplicity(0, "*")),',
@@ -163,6 +165,25 @@ def test_rename_a_class_renames_its_variable_and_the_name_only(edit):
     assert added == ['volume = Class(name="Volume", attributes={',
                      '    Property(name="books", type=volume, multiplicity=Multiplicity(0, "*")),',
                      '    types={library, volume},']
+
+
+@pytest.mark.parametrize("new_name, hint", [
+    ("Category", "rename Library.books categories"),  # not 'categorys'
+    ("Box", "rename Library.books boxes"),  # not 'boxs'
+])
+def test_the_hint_to_rename_an_end_spells_the_new_plural(edit, new_name, hint):
+    run, _ = edit(INLINE, "rename", "Book", new_name, output=None)
+
+    assert run.stdout.endswith(f"Library.books ({hint})\n")
+
+
+def test_an_end_named_with_a_plural_in_ies_is_named_in_the_hint(edit):
+    _, text = edit(INLINE, "rename", "Book", "Category")
+    _, text = edit(text, "rename", "Library.books", "categories")
+    run, _ = edit(text, "rename", "Category", "Topic", output=None)
+
+    assert run.stdout.endswith("ends still named after Category: Library.categories "
+                               "(rename Library.categories topics)\n")
 
 
 def test_rename_an_attribute_updates_the_constraints_that_name_it(edit):
@@ -201,6 +222,27 @@ def test_removing_what_other_code_uses_is_refused_with_the_lines(edit):
                           "change those lines first (model.py not changed)\n")
 
 
+# A class whose variable is spelled as keyword arguments and attributes of the file are: none of those is a use.
+SPELLED_AS_KEYWORDS = '''\
+from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
+
+label = Class(name="Label", attributes={Property(name="text", type=StringType)})
+book = Class(name="Book", attributes={Property(name="title", type=StringType)})
+shop = DomainModel(name="Shop", types={label, book})
+book.label = dict(label="spine")
+'''
+
+
+def test_a_name_spelled_like_the_variable_is_no_use_of_it(edit):
+    # Before: refused, "'Label' is still used on line 7"; and a rename turned label= into tag=.
+    run, text = edit(SPELLED_AS_KEYWORDS, "rename", "Label", "Tag")
+    assert run.returncode == 0, run.stderr
+    assert text.endswith('shop = DomainModel(name="Shop", types={tag, book})\nbook.label = dict(label="spine")\n')
+    run, text = edit(SPELLED_AS_KEYWORDS, "remove", "Label")
+    assert run.returncode == 0, run.stderr
+    assert "types={book}" in text and 'book.label = dict(label="spine")' in text
+
+
 def test_remove_a_class_takes_its_associations_along(edit, besser):
     run, text = edit(INLINE, "remove", "Library", output=None)
 
@@ -216,7 +258,8 @@ def test_remove_an_attribute(edit):
 
     assert run.returncode == 0
     removed, added = _changed_lines(INLINE, text)
-    assert removed == ['    Property(name="pages", type=IntegerType),'] and added == []
+    # IntegerType is no longer used: it leaves the import.
+    assert removed == ['    IntegerType,', '    Property(name="pages", type=IntegerType),'] and added == []
 
 
 def test_methods_and_constraints(edit, besser):
@@ -240,7 +283,14 @@ def test_a_change_that_makes_the_model_invalid_writes_nothing(edit):
 @pytest.mark.parametrize("args, message", [
     (("add-attribute", "Book", "isbn"), "'isbn' is not an attribute: write name:type"),
     (("add-attribute", "Book", "title:str"), "'title' exists already"),
-    (("add-attribute", "Book", "year:Date"), "has no class or enumeration named 'Date'"),
+    (("add-attribute", "Book", "year:Date"), "'Date' is not a type: did you mean date? write str, int, float, "
+                                             "bool, date, datetime, time, timedelta, any, or an enumeration "
+                                             "of Library (none)"),  # an attribute holds no class
+    (("add-method", "Book", "lend(to:Reader) -> bool"), "'Reader' is not a type: write str, int, float, bool, "
+                                                        "date, datetime, time, timedelta, any, or a class or "
+                                                        "enumeration of Library (Book, Library)"),
+    (("add-attribute", "Book", "price:decimal"), "'decimal' is not a type: write str, int,"),
+    (("add-attribute", "Book", "isbn:String"), "did you mean str?"),
     (("add-attribute", "Shelf", "year:int"), "has no class named 'Shelf' (it has: Book, Library)"),
     (("add-association", "x", "a:Book", "b:Library[1]"), "'a:Book' is not an association end"),
     (("rename", "Book.nope", "x"), "Book has no member named 'nope'"),
@@ -251,6 +301,61 @@ def test_a_change_that_does_not_apply_says_why_and_writes_nothing(edit, args, me
 
     assert run.returncode == 2 and text == INLINE
     assert message in run.stderr
+
+
+@pytest.mark.parametrize("args, command", [
+    # Library is written before Book: its attribute would refer to a variable not yet defined.
+    # Book has an end named library already: the suggested role is another.
+    (("add-attribute", "Library", "featured:Book"),
+     "besser model add-association library_featured library_featured:Library[*] featured:Book[1]"),
+    (("add-attribute", "Book", "shelf:Library?"),
+     "besser model add-association book_shelf book:Book[*] shelf:Library[0..1]"),
+])
+def test_an_attribute_typed_by_a_class_is_refused_with_the_association_to_add(edit, args, command):
+    run, text = edit(INLINE, *args)
+
+    assert run.returncode == 2 and text == INLINE
+    assert "an attribute cannot hold a class" in run.stderr and command in run.stderr
+    suggested, _ = edit(INLINE, *command.split()[2:])
+    assert suggested.returncode == 0, suggested.stderr
+
+
+def test_a_new_class_with_an_attribute_typed_by_a_class_is_refused(edit):
+    run, text = edit(INLINE, "add-class", "Loan", "due:date", "book:Book")
+
+    assert run.returncode == 2 and text == INLINE
+    assert "besser model add-association loan_book loan:Loan[*] book:Book[1]" in run.stderr
+
+
+def test_add_parent_makes_an_existing_class_specialize_another(edit, besser):
+    _, text = edit(INLINE, "add-class", "Ebook", "format:str")
+    run, after = edit(text, "add-parent", "Ebook", "Book", output=None)
+
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "model.py: made Ebook a Book\n"
+    assert _changed_lines(text, after) == ([], [
+        "    Generalization,", "    generalizations={Generalization(general=book, specific=ebook)},"])
+    assert besser("info", "model.py", "--class", "Ebook", "--json").json["classes"][0]["parents"] == ["Book"]
+    again, unchanged = edit(after, "add-parent", "Ebook", "Book")
+    assert again.returncode == 2 and "Ebook is a Book already" in again.stderr and unchanged == after
+    loop, _ = edit(after, "add-parent", "Book", "Ebook")
+    assert loop.returncode == 2 and "a class cannot specialize itself" in loop.stderr
+
+
+def test_an_association_end_is_named_by_its_association_too(edit, besser):
+    # The association's name is how add-association and info name it.
+    run, text = edit(INLINE, "rename", "library_books.books", "volumes", output=None)
+
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == "model.py: renamed library_books.books to library_books.volumes\n"
+    assert _changed_lines(INLINE, text)[1] == [
+        '    Property(name="volumes", type=book, multiplicity=Multiplicity(0, "*")),']
+    removed, text = edit(INLINE, "remove", "library_books.library")
+    assert removed.returncode == 0, removed.stderr
+    assert "library_books" not in text
+    missing, _ = edit(INLINE, "rename", "loans.books", "x")
+    assert missing.returncode == 2
+    assert "nor an association (it has: library_books)" in missing.stderr
 
 
 def test_batch_makes_every_change_in_one_write(edit, besser):
@@ -319,6 +424,35 @@ def test_windows_line_endings_are_kept(besser, tmp_path):
     data = (tmp_path / "model.py").read_bytes()
     assert run.returncode == 0 and b'    Property(name="isbn", type=StringType),\r\n' in data
     assert b"\n" not in data.replace(b"\r\n", b"")
+
+
+def test_a_file_with_carriage_return_line_ends_is_edited(besser, tmp_path):
+    # Python ends a line at a lone "\r" too (old Mac line ends): the change lands where ast places it.
+    (tmp_path / "model.py").write_bytes(INLINE.replace("\n", "\r").encode())
+
+    run = besser("model", "add-attribute", "Book", "isbn:str")
+
+    assert run.returncode == 0, run.stderr
+    assert 'Property(name="isbn", type=StringType)' in (tmp_path / "model.py").read_text()
+    assert "isbn:str" in besser("info", "model.py", "--class", "Book", output=None).stdout
+
+
+@pytest.mark.parametrize("separator", ["\x0c", " ", "\x1c", "\x85"])
+def test_a_character_python_does_not_end_a_line_with_does_not_shift_the_change(edit, separator):
+    # A form feed (a page break) or a line separator pasted into a comment is no line end for Python.
+    text = INLINE.replace("# Classes and their attributes", f"# Classes{separator} and their attributes")
+
+    run, after = edit(text, "add-attribute", "Book", "isbn:str")
+    renamed, renamed_text = edit(text, "rename", "Book", "Volume")
+
+    assert run.returncode == 0, run.stderr
+    assert after == text.replace('    Property(name="pages", type=IntegerType),\n',
+                                 '    Property(name="pages", type=IntegerType),\n'
+                                 '    Property(name="isbn", type=StringType),\n')
+    assert renamed.returncode == 0, renamed.stderr
+    assert _changed_lines(text, renamed_text)[1] == [
+        'volume = Class(name="Volume", attributes={', '    Property(name="books", type=volume, '
+        'multiplicity=Multiplicity(0, "*")),', '    types={library, volume},']
 
 
 def test_an_editor_json_file_is_refused(besser, write):
@@ -459,3 +593,44 @@ def test_validate_reports_a_default_that_is_no_literal_of_its_enumeration(besser
     assert run.returncode == 1
     assert ("error: Attribute 'genre' of class 'Book' has the default 'ESSAY', which is not a literal of its "
             "enumeration 'Genre' (NOVEL, POEM).") in run.stdout
+
+
+def test_a_method_without_code_says_what_its_route_answers(besser, model):
+    plain = besser("model", "-f", model, "add-method", "Book", "lend() -> bool", output=None)
+    # Before: "added Book.lend()", and a run read the generated router to learn that the route answers 501.
+    assert plain.stdout == (
+        "library.py: added Book.lend() without code: a generated backend answers 501 on POST "
+        "/book/{book_id}/methods/lend/ until it has some (--code 'def lend(self, ...): ...', run on the object and "
+        "saved)\n")
+    coded = besser("model", "-f", model, "add-method", "Book", "archive()", "--code", "def archive(self): pass",
+                   output=None)
+    assert coded.stdout == "library.py: added Book.archive()\n"
+
+
+def test_a_constraint_says_whether_a_generated_backend_enforces_it(besser, model):
+    # Before: "added constraint ..." only, and a run wrote a test to see whether its rule gave 422.
+    enforced = besser("model", "-f", model, "add-constraint", "Book", "self.pages >= 0", output=None)
+    assert enforced.stdout.endswith("on Book; a generated backend enforces it (422 on create and update)\n")
+    other = besser("model", "-f", model, "add-constraint", "Book", "self.title <> self.title.toUpper()", output=None)
+    assert other.stdout.endswith("a generated backend does not enforce this one: write the rule in extensions.py\n")
+
+
+def test_an_operation_typed_as_a_command_is_run_as_one(besser, model):
+    # Before: "invalid choice: 'add-attribute'" with the list of commands, and one more call.
+    run = besser("add-attribute", "Book", "isbn:str", "-f", model, output=None)
+    assert run.returncode == 0 and run.stdout == "library.py: added Book.isbn:str\n", run.stderr
+
+
+def test_a_method_written_on_one_line_is_stored_on_two(besser, model, tmp_path):
+    """Before: 'def shorten(self): self.pages = 1' was stored as written, the backend generator wrote a route
+    with no body, and every test of the generated backend failed on the syntax error (a run lost three calls)."""
+    run = besser("model", "-f", model, "add-method", "Book", "shorten()", "--code", "def shorten(self): self.pages = 1")
+    assert run.returncode == 0, run.stderr
+    namespace = {}
+    exec(compile((tmp_path / model).read_text(encoding="utf-8"), model, "exec"), namespace)  # noqa: S102
+    book = next(cls for cls in namespace["library_model"].get_classes() if cls.name == "Book")
+    assert next(iter(book.methods)).code == "def shorten(self):" + chr(10) + "    self.pages = 1"
+    refused = besser("model", "-f", model, "add-method", "Book", "broken()", "--code", "def broken(self) self.x")
+    assert refused.returncode == 2 and "--code is not Python" in refused.stderr
+    refused = besser("model", "-f", model, "add-method", "Book", "loose()", "--code", "x = 1")
+    assert refused.returncode == 2 and "--code must be one function: 'def loose(self, ...): ...'" in refused.stderr

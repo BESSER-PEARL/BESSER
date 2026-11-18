@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import dataclasses
+import importlib.util
 import json
 import logging
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
 from besser.cli import loading
 from besser.cli import schema as schema_module
-from besser.cli.agent_files import GUIDE, GeneratedDir, sync_ignore, write_agent_files
+from besser.cli.agent_files import GeneratedDir, guide_for, sync_guide, sync_ignore, write_agent_files
 from besser.cli.config import (
     CONFIG_EXAMPLE,
     CONFIG_FILENAME,
@@ -26,7 +29,7 @@ from besser.cli.config import (
     OutputConfig,
     load_config,
     load_default_model,
-    load_test_command,
+    load_test_config,
 )
 from besser.cli.importing import IMPORT_FORMATS, ImportFormat, format_of, import_format, import_models
 from besser.cli.discovery import SKIP_NO_MODEL, SKIP_PY, ModelFiles, SkippedFile, find_model_files
@@ -54,7 +57,14 @@ from besser.cli.output import (
 from besser.cli.model_edit import EditError, Edited, Operation, pick_domain_model, run_operation
 from besser.cli.ocl_check import OclOutcome, OclUnavailable, check_ocl, load_checker, parse_problems
 from besser.cli.starters import DEFAULT_KIND, STARTERS, starter_source
-from besser.cli.summary import class_lines, describe_class, describe_model, summary_lines
+from besser.cli.summary import (
+    OVERVIEW_OVER,
+    class_lines,
+    class_pages,
+    describe_class,
+    describe_model,
+    summary_lines,
+)
 from besser.generators import regeneration
 from besser.generators.registry import GENERATORS, GeneratorSpec, get_generator
 from besser.generators.runner import (
@@ -63,6 +73,7 @@ from besser.generators.runner import (
     regenerate_generator,
     run_generator,
 )
+from besser.utilities import sort_by_timestamp
 from besser.utilities.provenance import get_besser_version
 from besser.utilities.three_way_merge import merge_available
 
@@ -364,9 +375,30 @@ def validate(model_paths: Sequence[str], strict: bool = False, exec_py: bool = F
 # ── info ────────────────────────────────────────────────────────────────────
 
 
-def info(model_path: str, class_name: str | None = None) -> Result:
+def _starter_hint(model_path: str, loaded: LoadedModels) -> str | None:
+    """A line for a model file still as ``besser new`` or ``besser init`` wrote it: how to make it one's own.
+    Without it a session read the file, then its summary, to learn which classes to remove."""
+    path = Path(model_path)
+    try:
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not any(text == starter_source(kind, path.name).replace("\r\n", "\n") for kind in STARTERS):
+        return None
+    domains = loaded.of_kind("domain")
+    classes = [cls.name for domain in domains for cls in sort_by_timestamp(domain.model.get_classes())]
+    if not classes:
+        return None
+    name = domains[0].model.name
+    named = "" if name in classes else f"; 'rename {name} NAME' names the model after your application"
+    return (f"This is the starter of 'besser init': to replace it, start your 'besser model batch' with "
+            f"{', '.join(f'remove {cls}' for cls in classes)} (their associations and pages go with them){named}.")
+
+
+def info(model_path: str, class_name: str | None = None, everything: bool = False) -> Result:
     """Summarise the models of the file and name the generators that can run on it; or, with
-    ``class_name``, describe that class of its domain models."""
+    ``class_name``, describe that class of its domain models. A file with a large domain model (more
+    than ``OVERVIEW_OVER`` classes) gets an overview, the names only, unless ``everything``."""
     data: dict[str, Any] = {"model": model_path}
     try:
         loaded = load_models(model_path)
@@ -384,6 +416,8 @@ def info(model_path: str, class_name: str | None = None) -> Result:
     current = {id(marked.model) for marked in loaded.current.values()}
     models = []
     lines = [f"{loaded.path}: {plural(len(loaded.models), 'model')}"]
+    overview = not everything and any(len(model.model.get_classes()) > OVERVIEW_OVER
+                                      for model in loaded.of_kind("domain"))
     for model in loaded.models:
         is_current = id(model) in current
         try:
@@ -393,7 +427,13 @@ def info(model_path: str, class_name: str | None = None) -> Result:
                      "current": is_current, "counts": {}}
             warnings.append(f"{model.name}: cannot be summarised: {type(exc).__name__}: {exc}")
         models.append(entry)
-        lines.extend(summary_lines(entry))
+        lines.extend(summary_lines(entry, overview))
+    if overview:
+        lines.append(f"A large model: names only. 'besser info {loaded.path} --class X' shows a class in full with "
+                     f"its page; --all shows everything.")
+    hint = _starter_hint(model_path, loaded)
+    if hint:
+        lines.append(hint)
     runnable = [spec.id for spec in GENERATORS if all(loaded.of_kind(kind) for kind in spec.models)]
     generators_line = (f"Generators that read {'these models' if len(models) > 1 else 'this model'}: "
                        f"{', '.join(runnable) or 'none'}")
@@ -410,9 +450,17 @@ def _class_info(loaded: LoadedModels, class_name: str, data: dict[str, Any]) -> 
     found = [(model, cls) for model, cls in found if cls is not None]
     if not found:
         known = sorted({cls.name for model in loaded.of_kind("domain") for cls in model.model.get_classes()})
+        # A screen asked for as a class: say what it is and where it is described.
+        screens = [screen for gui in loaded.of_kind("gui") for module in gui.model.modules for screen in module.screens
+                   if class_name in (screen.name, screen.description, getattr(screen, "route_path", None))]
+        if screens:
+            return failure("info", f"'{class_name}' is a screen ({screens[0].route_path or screens[0].name}), not a "
+                                   f"class: 'besser info {loaded.path}' lists what each screen shows", EXIT_FAILED, data)
         return failure("info", f"{loaded.path} has no class named '{class_name}' (it has: {', '.join(known) or 'none'})",
                        EXIT_FAILED, data)
     entries = [{"model": model.name, **describe_class(model.model, cls)} for model, cls in found]
+    for entry in entries:  # and where the class shows: the screens with a table of it
+        entry["pages"] = [page for gui in loaded.of_kind("gui") for page in class_pages(gui.model, entry["name"])]
     lines = []
     for entry in entries:
         if len(entries) > 1:
@@ -463,10 +511,14 @@ def _generated_dirs(config_path: Path) -> list[GeneratedDir]:
         except ValueError:  # outside the project: nothing of the project to keep out of searches
             continue
         try:
-            extension_file = get_generator(output.generator).load_class().extension_file
+            spec = get_generator(output.generator)
+            extension_file, reads_gui = spec.load_class().extension_file, "gui" in spec.models
+            offered = spec.options
         except (KeyError, ImportError):  # an unknown generator: build reports it
-            extension_file = None
-        dirs.append(GeneratedDir(path, extension_file))
+            extension_file, reads_gui, offered = None, False, {}
+        on = {name: output.options.get(name) is True if name in offered else None
+              for name in ("tests", "uniform_responses")}
+        dirs.append(GeneratedDir(path, extension_file, reads_gui, on["tests"], on["uniform_responses"]))
     return dirs
 
 
@@ -545,18 +597,78 @@ def new(path: str | None, kind: str = DEFAULT_KIND, force: bool = False, list_ki
 # The output 'besser init' configures for a domain model: an API a coding agent can test.
 _INIT_GENERATOR = {DEFAULT_KIND: "backend"}
 _INIT_MODEL = "model.py"
+# The options of a new project's output, both off by default for older apps: the API's tests are generated
+# (a 'client' fixture, a CRUD test per class), and POST and PUT answer what GET does.
+_INIT_OPTIONS = {"backend": "{ tests = true, uniform_responses = true }",
+                 "web_app": "{ tests = true, uniform_responses = true }"}
+_INIT_CONFTEST = "conftest.py"
 
 
-def _init_config(kind: str) -> str | None:
-    """The ``besser.toml`` of a new project whose model is of ``kind``; None when no generator reads it."""
-    generator = _INIT_GENERATOR.get(kind) or STARTERS[kind].generator
+# Generators that write API tests (option 'tests'): the folder of their pytest fixtures in the output's dir.
+_INIT_TEST_FIXTURES = {"backend": ("tests",), "web_app": ("backend", "tests")}
+# What the generated API tests import; 'besser apply' runs them only when all are installed.
+_API_TEST_PACKAGES = ("pytest", "fastapi", "httpx")
+
+
+def _missing_test_packages() -> list[str]:
+    """The packages of ``_API_TEST_PACKAGES`` that this interpreter, the one 'besser apply' tests with, lacks."""
+    return [name for name in _API_TEST_PACKAGES if importlib.util.find_spec(name) is None]
+
+
+def _init_generator(kind: str) -> str | None:
+    return _INIT_GENERATOR.get(kind) or STARTERS[kind].generator
+
+
+def _init_config(kind: str, can_test: bool = True) -> str | None:
+    """The ``besser.toml`` of a new project whose model is of ``kind``; None when no generator reads it.
+    An output that can generate its API tests does, and ``test`` runs them unless ``can_test`` is false."""
+    generator = _init_generator(kind)
     if generator is None:
         return None
+    tests = generator in _INIT_TEST_FIXTURES
+    test = 'test = "python -m pytest -q"' if tests and can_test else '# test = "python -m pytest -q"'
     return (f'model = "{_INIT_MODEL}"\n'
-            '# test = "python -m pytest -q"   # what \'besser apply\' runs after the build\n\n'
+            f"{test}   # what 'besser apply' runs after the build\n\n"
             f"[output.{generator}]\n"
             f'generator = "{generator}"\n'
-            f'dir = "{generator}"\n')
+            f'dir = "{generator}"\n'
+            + (f"options = {_INIT_OPTIONS[generator]}\n" if generator in _INIT_OPTIONS else ""))
+
+
+def _fixture_import(config_path: Path) -> tuple[OutputConfig, tuple[str, ...]] | None:
+    """The first output of the ``besser.toml`` at ``config_path`` that generates its API tests, and the
+    module path of their ``conftest.py`` from the project folder; None when no output does (or its dir is
+    no importable path)."""
+    try:
+        outputs = load_config(str(config_path))
+    except ConfigError:
+        return None
+    for output in outputs:
+        folder = _INIT_TEST_FIXTURES.get(output.generator)
+        if folder is None or output.options.get("tests") is not True:
+            continue
+        try:
+            parts = (*Path(output.output_dir).relative_to(config_path.parent).parts, *folder)
+        except ValueError:  # outside the project
+            continue
+        if parts and all(part.isidentifier() for part in parts):
+            return output, parts
+    return None
+
+
+def _init_conftest(output: OutputConfig, parts: tuple[str, ...]) -> str:
+    """The project's ``conftest.py``: every test of the project gets the ``client`` fixture of the API tests
+    ``output`` generates in the folder ``parts``; before they exist it says what writes them."""
+    shown = "/".join((*parts, "conftest.py"))
+    return ('"""pytest fixtures for the tests of this project. client: a TestClient on the generated API, on an\n'
+            'empty temporary database (see the conftest.py it comes from)."""\n'
+            "import os\n\n"
+            f"if not os.path.isfile(os.path.join(os.path.dirname(__file__), {', '.join(map(repr, parts))}, "
+            "'conftest.py')):\n"
+            f"    raise ImportError(\"{shown} (the client fixture) is written by 'besser apply' from the output \"\n"
+            f"                      \"'{output.name}' of besser.toml (option tests = true): run it first. Changed \"\n"
+            "                      \"that output's dir, or turned the option off? Change this file too.\")\n"
+            f"from {'.'.join(parts)}.conftest import client  # noqa: E402,F401\n")
 
 
 def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
@@ -572,7 +684,8 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
     warnings: list[str] = []
     try:
         root.mkdir(parents=True, exist_ok=True)
-        planned = {_INIT_MODEL: starter_source(kind, _INIT_MODEL), CONFIG_FILENAME: _init_config(kind)}
+        missing = _missing_test_packages()
+        planned = {_INIT_MODEL: starter_source(kind, _INIT_MODEL), CONFIG_FILENAME: _init_config(kind, not missing)}
         for name, text in planned.items():
             target = root / name
             if text is None:
@@ -582,10 +695,31 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
             else:
                 target.write_text(text, encoding="utf-8")
                 files.append(target.as_posix())
+        # Read from the besser.toml in place, written or kept: importing a fixture it does not generate
+        # would break every test of the project.
+        fixture = _fixture_import(root / CONFIG_FILENAME) if (root / CONFIG_FILENAME).is_file() else None
+        conftest = _init_conftest(*fixture) if fixture else None
+        target = root / _INIT_CONFTEST
+        if fixture is None:
+            if (root / CONFIG_FILENAME).is_file() and (root / CONFIG_FILENAME).as_posix() not in files:
+                notes.append(f"no {_INIT_CONFTEST}: no output of {CONFIG_FILENAME} generates the API tests and "
+                             "their client fixture (options = { tests = true } on a backend or web_app output)")
+        elif target.exists():
+            line = f"from {'.'.join(fixture[1])}.conftest import client"
+            held = target.read_text(encoding="utf-8", errors="replace")
+            notes.append(f"kept {target.as_posix()}: it exists" + (
+                "" if line in held else f"; for the generated client fixture add '{line}' to it"))
+        else:
+            target.write_text(conftest, encoding="utf-8")
+            files.append(target.as_posix())
     except OSError as exc:
         return failure("init", f"cannot write in {root}: {exc}", EXIT_FAILED, data, cause=exc)
     files.extend(_write_agent_files(root, warnings, notes))
     brief = f"Set up {root.as_posix()}: wrote {', '.join(files) or 'nothing (all up to date)'}"
+    if missing and (root / CONFIG_FILENAME).as_posix() in files and conftest is not None:
+        # The generated tests are configured but 'test' is commented out: 'besser apply' would fail on an import.
+        brief += (f"; to run the generated API tests: pip install {' '.join(missing)}, "
+                  f"then uncomment 'test' in {CONFIG_FILENAME}")
     if (root / CONFIG_FILENAME).is_file():
         text = f"{brief}.\nNext: edit {_INIT_MODEL}, then run 'besser apply' (validate, build, test)."
     else:
@@ -598,8 +732,10 @@ def init(folder: str = ".", kind: str = DEFAULT_KIND) -> Result:
 
 
 def guide() -> Result:
-    """The guide a coding agent needs to work in a BESSER project: what 'new' and 'init' write to AGENTS.md."""
-    return Result(command="guide", data={"guide": GUIDE}, text=GUIDE.rstrip("\n"), text_is_result=True)
+    """The guide a coding agent needs to work in a BESSER project: what 'new' and 'init' write to AGENTS.md
+    in the current folder (the lines on the GUI model when an output of its besser.toml reads one)."""
+    text = guide_for(_generated_dirs(Path(CONFIG_FILENAME)))
+    return Result(command="guide", data={"guide": text}, text=text.rstrip("\n"), text_is_result=True)
 
 
 # ── generators ──────────────────────────────────────────────────────────────
@@ -961,6 +1097,103 @@ def _record_note(spec: GeneratorSpec, model_path: str, output_dir: str, option_a
             f"{_needs_regen_extra()}")
 
 
+# How many of the last lines a generator logged or printed a run that writes nothing reports: the reason
+# is at the end, and an agent reads every line it is given.
+_GENERATOR_SAID_LINES = 10
+
+
+class _Tee:
+    """``target``, a text stream, that also keeps the lines written to it in ``lines``."""
+
+    def __init__(self, target: Any, lines: collections.deque[str]):
+        self._target, self._lines, self._partial = target, lines, ""
+
+    def __getattr__(self, name: str) -> Any:  # flush, fileno, isatty, encoding, ...: the target's
+        return getattr(self._target, name)
+
+    def write(self, text: str) -> int:
+        self._target.write(text)
+        *complete, self._partial = (self._partial + text).split("\n")
+        self._lines.extend(line for line in complete if line.strip())
+        return len(text)
+
+    def close_line(self) -> None:
+        """Keep the last line, written without a newline."""
+        if self._partial.strip():
+            self._lines.append(self._partial)
+        self._partial = ""
+
+
+class _LogLines(logging.Handler):
+    """Keeps the messages logged at warning level or above; each still reaches standard error as it would
+    without this handler (Python's last-resort handler, when no other handler takes it)."""
+
+    def __init__(self, lines: collections.deque[str]):
+        super().__init__(logging.WARNING)
+        self._lines = lines
+
+    def _handled_elsewhere(self, name: str) -> bool:
+        logger: logging.Logger | None = logging.getLogger(name)
+        while logger is not None:
+            if any(handler is not self for handler in logger.handlers):
+                return True
+            logger = logger.parent if logger.propagate else None
+        return False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._lines.extend(line for line in record.getMessage().splitlines() if line.strip())
+        if logging.lastResort is not None and not self._handled_elsewhere(record.name):
+            logging.lastResort.handle(record)
+
+
+@contextlib.contextmanager
+def _generator_said() -> Iterator[collections.deque[str]]:
+    """Send what is printed to standard error (``stdout_to_stderr``) and keep the last lines a generator
+    prints or logs (warnings and errors) while it runs, for a run that writes nothing to say why."""
+    lines: collections.deque[str] = collections.deque(maxlen=_GENERATOR_SAID_LINES)
+    handler = _LogLines(lines)
+    root = logging.getLogger()
+    with stdout_to_stderr():
+        tee = _Tee(sys.stdout, lines)
+        root.addHandler(handler)
+        try:
+            with contextlib.redirect_stdout(tee):
+                yield lines
+        finally:
+            root.removeHandler(handler)
+            tee.close_line()
+
+
+def _wrote_nothing(spec: GeneratorSpec, said: Sequence[str], dry_run: bool) -> str:
+    """The error of a run that writes no file, with the reason the generator gave."""
+    head = f"the '{spec.id}' generator {'would write' if dry_run else 'wrote'} no file"
+    if not said:
+        return f"{head}, and printed and logged nothing that says why"
+    return f"{head}; the last it printed and logged: {' | '.join(line.strip() for line in said)}"
+
+
+def _created_by_run(output_dir: str) -> Path | None:
+    """The outermost folder of ``output_dir`` that does not exist yet, which a run would create."""
+    folder = Path(output_dir)
+    missing = None
+    for path in (folder, *folder.parents):
+        if os.path.lexists(path):
+            break
+        missing = path
+    return missing
+
+
+def _remove_empty_output(created: Path | None, output_dir: str, recorded: bool, had_record: bool) -> None:
+    """Undo what a run that wrote no file left: the record of nothing it wrote, and the folders it created
+    when they hold no file."""
+    record = Path(output_dir, regeneration.RECORD_FILENAME)
+    if recorded and not had_record:
+        with contextlib.suppress(FileNotFoundError):
+            record.unlink()
+    if created is not None and created.is_dir() and not _holds_a_file(created):
+        shutil.rmtree(created, ignore_errors=True)
+
+
 def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, option_assignments: list[str],
                       given: _GeneratorInput, data: dict[str, Any]) -> Result:
     """What ``generate`` would write, by file: new, changed or unchanged. Nothing is written.
@@ -969,7 +1202,7 @@ def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, opt
     """
     warnings, notes = given.warnings, given.notes
     try:
-        with stdout_to_stderr():
+        with _generator_said() as said:
             plan, data["recorded"] = _with_record(spec, output_dir, warnings, lambda record: preview_generator(
                 spec.id, given.models, output_dir, given.options, record=record))
     except regeneration.RegenerationError as exc:
@@ -980,6 +1213,11 @@ def _generate_dry_run(spec: GeneratorSpec, model_path: str, output_dir: str, opt
 
     if data["recorded"]:
         plan.pop(regeneration.RECORD_FILENAME, None)
+    if not plan:
+        data.update(recorded=False, would_write={})
+        return Result(command="generate", exit_code=EXIT_FAILED, warnings=warnings, notes=notes, data=data,
+                      errors=[_wrote_nothing(spec, said, dry_run=True)])
+    if data["recorded"]:
         notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=True))
     data["would_write"] = {Path(output_dir, rel).as_posix(): status for rel, status in plan.items()}
     if not spec.supports_regenerate and regeneration.CHANGED in plan.values():
@@ -1013,8 +1251,10 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
         return _generate_dry_run(spec, model_path, output_dir, option_assignments, given, data)
 
     warnings, notes = given.warnings, given.notes
+    created = _created_by_run(output_dir)
+    had_record = Path(output_dir, regeneration.RECORD_FILENAME).exists()
     try:
-        with stdout_to_stderr():
+        with _generator_said() as said:
             written, data["recorded"] = _with_record(spec, output_dir, warnings, lambda record: run_generator(
                 spec.id, given.models, output_dir, given.options, record=record))
     except regeneration.RegenerationError as exc:
@@ -1024,10 +1264,12 @@ def generate(generator_id: str, model_path: str, output_dir: str, option_assignm
         return _generator_failure("generate", spec, exc, warnings, data, notes)
 
     if not written:
-        # A generator that skips what it cannot generate logs why and returns: that is not a success.
+        # A generator that skips what it cannot generate logs why and returns: that is not a success, and
+        # the reason goes in the result, which a --json caller or an MCP client reads instead of standard error.
+        _remove_empty_output(created, output_dir, data["recorded"], had_record)
+        data["recorded"] = False
         return Result(command="generate", exit_code=EXIT_FAILED, warnings=warnings, notes=notes, data=data,
-                      errors=[f"the '{spec.id}' generator wrote no file; what it logged, on standard error, "
-                              "says why"])
+                      errors=[_wrote_nothing(spec, said, dry_run=False)])
     if data["recorded"]:
         notes.append(_record_note(spec, model_path, output_dir, option_assignments, given, dry_run=False))
     files = [Path(output_dir, path).as_posix() for path in written]
@@ -1168,6 +1410,8 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
             f"{_CONFLICT_MARKERS}, then run {rerun} again"
             for path in lists["conflicted"]
         ]
+    if not dry_run:
+        warnings.extend(_stale_databases(lists["written"] + lists["merged"]))
     files = [] if dry_run else sorted(lists["written"] + lists["merged"] + lists["conflicted"])
     lines = _regeneration_text(spec, model_path, output_dir, lists, adopt, dry_run)
     return Result(
@@ -1176,6 +1420,20 @@ def regenerate(generator_id: str, model_path: str, output_dir: str, option_assig
         # The files merged or in conflict are named by the warnings and errors; a dry run is read for its list.
         brief="" if dry_run else lines[0].rstrip(":"),
     )
+
+
+def _stale_databases(changed: Sequence[str]) -> list[str]:
+    """A warning per SQLite file left beside a backend whose tables just changed. The generated app creates
+    missing tables and never alters one, so on that file it answers 500 "Database operation failed", which
+    says nothing of the cause; the tests use a database of their own and stay green."""
+    warnings = []
+    for path in changed:
+        if Path(path).name == "sql_alchemy.py":
+            stale = sorted(file.as_posix() for file in Path(path).parent.glob("data/*.db"))
+            if stale:
+                warnings.append(f"the tables changed and {', '.join(stale)} still has the earlier ones: delete it "
+                                "before you start the backend (it would answer 500)")
+    return warnings
 
 
 def _regeneration_text(spec: GeneratorSpec, model_path: str, output_dir: str, lists: dict[str, list[str]],
@@ -1215,6 +1473,11 @@ def _write_buml(loaded: LoadedModels, output_path: Path) -> list[str]:
     return []
 
 
+# The creation, save and export time of every editor JSON file convert and new write: a fixed time
+# (the Unix epoch), so that a file's bytes depend on the model alone.
+_EDITOR_JSON_TIMESTAMP = "1970-01-01T00:00:00+00:00"
+
+
 def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
     """Write the models as an editor project export; returns the warnings.
 
@@ -1225,24 +1488,33 @@ def _write_editor_json(loaded: LoadedModels, output_path: Path) -> list[str]:
 
     try:
         from besser.utilities.web_modeling_editor.backend.constants.constants import API_VERSION, TEMP_DIR_PREFIX
-        from besser.utilities.web_modeling_editor.backend.services.converters import project_to_json
+        from besser.utilities.web_modeling_editor.backend.services.converters import (
+            reproducible_project_to_json,
+        )
     except ModuleNotFoundError as exc:
         if (exc.name or "").split(".")[0] in ("", "besser"):
             raise
         raise MissingDependencyError(missing_backend_dependency_message(exc)) from exc
 
-    warnings = [
-        f"{model.label} was left out: the editor has no diagram for a {model.kind} model"
-        for model in loaded.models if model.kind in _KINDS_WITHOUT_DIAGRAM
-    ]
+    left_out = [model for model in loaded.models if model.kind in _KINDS_WITHOUT_DIAGRAM]
+    if len(left_out) == len(loaded.models):
+        kinds = ", ".join(kind for kind, _ in loading.MODEL_KINDS if kind not in _KINDS_WITHOUT_DIAGRAM)
+        raise _Stopped(failure(
+            "convert", f"{output_path.name} is an editor project, which holds the models the editor has a diagram "
+                       f"for ({kinds}), and {loaded.path} holds none of them (it holds: "
+                       f"{', '.join(model.label for model in left_out)}): nothing was written; keep it as a .py file",
+        ))
+    warnings = [f"{model.label} was left out: the editor has no diagram for a {model.kind} model" for model in left_out]
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
         code_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=loaded.as_project(), file_path=code_path)
         repairs: list[str] = []
-        project = project_to_json(Path(code_path).read_text(encoding="utf-8"), repairs)
+        # Ids derived from the models and a fixed time, so the same models write the same file.
+        project = reproducible_project_to_json(Path(code_path).read_text(encoding="utf-8"), repairs,
+                                               timestamp=_EDITOR_JSON_TIMESTAMP)
     warnings.extend(repairs)
 
-    export = {"project": project, "exportedAt": datetime.now(timezone.utc).isoformat(), "version": API_VERSION}
+    export = {"project": project, "exportedAt": _EDITOR_JSON_TIMESTAMP, "version": API_VERSION}
     output_path.write_text(json.dumps(export, indent=2) + "\n", encoding="utf-8")
     return warnings
 
@@ -1318,25 +1590,38 @@ def _source_format(inputs: Sequence[str], source_format: str | None) -> ImportFo
 def _derive_class_diagrams(loaded: LoadedModels) -> tuple[LoadedModels, list[str]]:
     """``loaded`` with each knowledge graph replaced by the class diagram derived from it, and the warnings.
 
+    A class diagram with no class or enumeration is left out, with a warning.
+
     Raises:
-        _Stopped: The file holds no knowledge graph.
+        _Stopped: The file holds no knowledge graph, or none gives a class diagram with something in it.
     """
     from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 
-    if not loaded.of_kind("kg"):
+    graphs = loaded.of_kind("kg")
+    if not graphs:
         held = ", ".join(model.label for model in loaded.models)
         raise _Stopped(failure(
             "convert", f"--class-diagram derives a class diagram from a knowledge graph and {loaded.path} "
                        f"holds none (it holds: {held})",
         ))
-    models, warnings = [], []
+    models, warnings, empty = [], [], []
     for model in loaded.models:
         if model.kind != "kg":
             models.append(model)
             continue
         result = kg_to_class_diagram(model.model)
         warnings.extend(f"{model.name}: {warning.message}" for warning in result.warnings)
-        models.append(LoadedModel(name=result.domain_model.name, kind="domain", model=result.domain_model))
+        derived = result.domain_model
+        if derived.get_classes() or derived.get_enumerations():
+            models.append(LoadedModel(name=derived.name, kind="domain", model=derived))
+        else:
+            empty.append(model.label)
+    if len(empty) == len(graphs):
+        raise _Stopped(Result(command="convert", exit_code=EXIT_FAILED, warnings=warnings, errors=[
+            f"--class-diagram derived no class or enumeration from {loaded.path} ({', '.join(empty)}): "
+            "nothing was written"]))
+    warnings.extend(f"{label} was left out: --class-diagram derived no class or enumeration from it"
+                    for label in empty)
     # The file's own Project holds the graphs: the models are wrapped in a new one.
     return dataclasses.replace(loaded, models=models, project=None), warnings
 
@@ -1362,6 +1647,7 @@ def convert(inputs: str | Sequence[str], output_path: str, dry_run: bool = False
     if problem:
         return failure("convert", problem, data=data)
 
+    created = None if dry_run else _created_by_run(str(target.parent))
     try:
         fmt = _source_format(inputs, source_format)
         # Refused before the file is loaded (a .py model is executed): there is nothing to convert.
@@ -1388,7 +1674,8 @@ def convert(inputs: str | Sequence[str], output_path: str, dry_run: bool = False
             with stdout_to_stderr():
                 written_warnings = write(loaded, target)
         warnings.extend(written_warnings)
-    except _Stopped as stopped:
+    except _Stopped as stopped:  # a model the target format cannot hold: nothing was written
+        _remove_empty_output(created, str(target.parent), recorded=False, had_record=True)
         return dataclasses.replace(stopped.result, data=data)
     except ModelLoadError as exc:
         return failure("convert", str(exc), data=data, cause=exc)
@@ -1530,9 +1817,14 @@ def build(names: Sequence[str] = (), config_path: str = CONFIG_FILENAME, dry_run
     lines.append(verdict)
     if not dry_run:
         config_file = Path(config_path)
-        updated = sync_ignore(config_file.parent, _generated_dirs(config_file))
+        generated = _generated_dirs(config_file)
+        updated = sync_ignore(config_file.parent, generated)
         result.files.extend(updated)
         result.notes.extend(f"updated {path}: the generated folders of {config_path}" for path in updated)
+        # The guide says what the outputs and their options (tests, uniform_responses) give the agent.
+        guide = sync_guide(config_file.parent, generated)
+        result.files.extend(guide)
+        result.notes.extend(f"updated {path}: the guide follows the outputs of {config_path}" for path in guide)
     result.text = "\n".join(lines)
     # A dry run is read for its list of files.
     result.brief = "" if dry_run else f"{verdict}: {' '.join(briefs)}"
@@ -1549,6 +1841,9 @@ _TEST_TAIL_LINES = 40
 _PYTEST_SUMMARY = re.compile(r"^=+ short test summary info =+$")
 # The lines that name a failing test, in the output of a runner that prints no such section.
 _FAILURE_LINE = re.compile(r"^(FAILED|ERROR|FAIL:|ERROR:|not ok\b)")
+# unittest's header of a failing test; its traceback follows, between separator lines.
+_UNITTEST_FAILURE = re.compile(r"^(FAIL|ERROR): ")
+_UNITTEST_SEPARATOR = re.compile(r"^(={20,}|-{20,})$")
 # pytest's error lines ('E   SyntaxError: ...'): the cause, which its one-line summary cuts or leaves out.
 _PYTEST_ERROR_LINE = re.compile(r"^E( |$)")
 # How much of those error lines 'apply' prints: the first error or two, not every traceback.
@@ -1590,10 +1885,30 @@ def _failing_lines(output: list[str]) -> list[str]:
         summary = output[start + 1:]
         errored = any(line.startswith("ERROR ") for line in summary)
         return [*(_error_lines(output[:start]) if errored else []), *summary]
-    failures = [line for line in output if _FAILURE_LINE.match(line.strip())]
+    failures = []
+    for index, line in enumerate(output):
+        if _FAILURE_LINE.match(line.strip()):
+            failures.append(line)
+            if _UNITTEST_FAILURE.match(line):
+                failures.extend(_unittest_cause(output[index + 1:]))
     if failures:
         return [*failures, output[-1]] if output[-1] not in failures else failures
     return output[-_TEST_TAIL_LINES:]
+
+
+def _unittest_cause(block: list[str]) -> list[str]:
+    """The exception line of the traceback under one of unittest's 'FAIL:' or 'ERROR:' headers
+    ('AssertionError: 1 != 2'), indented under it; nothing when the block has none. Of chained exceptions
+    ('During handling of the above exception, ...'), the last traceback's: the one the test raised."""
+    in_traceback, cause = False, None
+    for line in block[1:]:  # past the dashes under the header
+        if _UNITTEST_SEPARATOR.match(line):
+            break
+        if line.startswith("Traceback "):
+            in_traceback, cause = True, None
+        elif in_traceback and cause is None and line.strip() and not line[0].isspace():
+            cause = line
+    return [f"    {cause}"] if cause else []
 
 
 def _failing_tests(output: list[str]) -> list[str]:
@@ -1613,12 +1928,64 @@ def _test_argv(command: str) -> list[str]:
     return argv
 
 
+# How long the test command's output may take to end once its processes are stopped: a process that left
+# their group (a daemon) can hold the pipes open, and what it would still print is then given up.
+_STOPPED_OUTPUT_SECONDS = 5
+
+
+def _stop_process_tree(process: subprocess.Popen) -> None:
+    """Kill ``process`` and every process it started: its process group on POSIX (it leads a session of
+    its own), its tree with ``taskkill`` on Windows."""
+    if os.name == "nt":
+        # A taskkill that is missing or hangs must not keep the test process itself alive (below).
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False,
+                           timeout=_STOPPED_OUTPUT_SECONDS)
+    else:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError):
+        process.kill()
+
+
+def _run_tests(argv: list[str], cwd: Path, timeout: float) -> tuple[int | None, str]:
+    """Run the test command; return its exit status, ``None`` when it ran past ``timeout`` seconds and was
+    stopped with every process it started, and its output (standard output, then standard error).
+
+    The command leads a process group (a session, on POSIX) of its own, so a server or a watcher it
+    starts is stopped with it; Ctrl-C, which that group does not receive from the terminal, stops it too.
+    """
+    group: dict[str, Any] = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                             else {"start_new_session": True})
+    # Wide lines: pytest cuts each line of its summary, cause included, at the terminal's width (80 in a pipe).
+    env = {**os.environ, "COLUMNS": os.environ.get("COLUMNS", "200")}
+    process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=env,
+                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", **group)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        return process.returncode, stdout + stderr
+    except subprocess.TimeoutExpired:
+        _stop_process_tree(process)
+        try:
+            stdout, stderr = process.communicate(timeout=_STOPPED_OUTPUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+        return None, (stdout or "") + (stderr or "")
+    except BaseException:  # Ctrl-C while the tests run
+        _stop_process_tree(process)
+        raise
+    finally:
+        for stream in (process.stdout, process.stderr):
+            stream.close()
+
+
 def apply(config_path: str = CONFIG_FILENAME) -> Result:
     """Build every output of the configuration file, then run its ``test`` command: one call per model change.
 
     The build validates each model first and generates nothing from one with errors. The tests run
     only after a build that succeeded, from the configuration file's folder, without a shell and
-    without besser's standard input. The one-line report always ends with what the tests did.
+    without besser's standard input, for at most ``test_timeout`` seconds. The one-line report always
+    ends with what the tests did.
     """
     built = build((), config_path=config_path, rerun="besser apply")
     result = dataclasses.replace(built, command="apply")
@@ -1626,32 +1993,54 @@ def apply(config_path: str = CONFIG_FILENAME) -> Result:
     if built.exit_code != EXIT_OK:
         return result
     try:
-        command = load_test_command(config_path)
+        test = load_test_config(config_path)
     except ConfigError as exc:  # build read the same file: only a change in between gets here
-        return failure("apply", str(exc), data=result.data, cause=exc)
+        return _tests_not_run(result, built, str(exc), EXIT_USAGE, exc)
+    command, config_name = test.command, Path(config_path).name
     if command is None:
         result.notes.append(f"no tests run: {config_path} has no 'test' command")
-        return _with_tests(result, built, f"none (set 'test' in {Path(config_path).name})")
+        return _with_tests(result, built, f"none (set 'test' in {config_name})")
     try:
-        process = subprocess.run(_test_argv(command), cwd=Path(config_path).parent, capture_output=True,
-                                 stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-                                 check=False)
+        returncode, printed = _run_tests(_test_argv(command), Path(config_path).parent, test.timeout)
     except (OSError, ValueError) as exc:
-        return failure("apply", f"cannot run the test command '{command}': {exc}", EXIT_FAILED, result.data, exc)
-    output = _ANSI.sub("", process.stdout + process.stderr).strip().splitlines()
+        return _tests_not_run(result, built, f"cannot run the test command '{command}': {exc}", EXIT_FAILED, exc)
+    output = _ANSI.sub("", printed).strip().splitlines()
     tail = output[-_TEST_TAIL_LINES:]
-    result.data["test"] = {"command": command, "exit_code": process.returncode, "output_tail": tail,
-                           "failing": _failing_tests(output)}
-    if process.returncode == _PYTEST_NO_TESTS and "pytest" in command:
-        return _with_tests(result, built, "none collected")
-    if process.returncode != 0:
+    result.data["test"] = {"command": command, "exit_code": returncode, "timed_out": returncode is None,
+                           "output_tail": tail, "failing": _failing_tests(output)}
+    if returncode is None:
         result.exit_code = EXIT_FAILED
-        result.errors.append(f"the tests failed (exit status {process.returncode}): {command}")
+        error = (f"the tests timed out after {test.timeout:g} s (test_timeout in {config_name}) and were stopped, "
+                 f"with the processes they started: {command}")
+        result.errors.append(error)
+        result.text = f"FAILED: {error}; build {built.brief}"
+        # The FAILED line says it: the error, for --json, is not printed a second time on standard error.
+        result.shown_in_text = frozenset({error})
+        result.brief = ""
+        return result
+    if returncode == _PYTEST_NO_TESTS and "pytest" in command:
+        return _with_tests(result, built, "none collected")
+    if returncode != 0:
+        result.exit_code = EXIT_FAILED
+        error = f"the tests failed (exit status {returncode}): {command}"
+        result.errors.append(error)
         result.text = "\n".join([*_failing_lines(output),
-                                 f"FAILED: tests (exit status {process.returncode}); build {built.brief}"])
+                                 f"FAILED: tests (exit status {returncode}); build {built.brief}"])
+        # The FAILED line says it: the error, for --json, is not printed a second time on standard error.
+        result.shown_in_text = frozenset({error})
         result.brief = ""
         return result
     return _with_tests(result, built, tail[-1].strip() if tail else "no output")
+
+
+def _tests_not_run(result: Result, built: Result, error: str, exit_code: int, cause: BaseException) -> Result:
+    """``result`` failed with ``error`` before the tests ran: the build's files, notes and report are kept."""
+    result.exit_code = exit_code
+    result.errors.append(error)
+    result.traceback = format_traceback(cause)
+    result.text = f"{built.text}\nFAILED: tests not run"
+    result.brief = f"FAILED: tests not run; build {built.brief}"
+    return result
 
 
 def _with_tests(result: Result, built: Result, outcome: str) -> Result:
@@ -1676,12 +2065,65 @@ def default_model_path(config_path: str = CONFIG_FILENAME) -> str:
 
 
 def _read_model_text(path: Path) -> str:
+    if path.is_dir():
+        raise _Stopped(failure("model", f"{path} is a directory: name the model file with -f FILE"))
     if not path.exists():
         raise _Stopped(failure("model", f"{path}: no such file; name the model file with -f FILE"))
     try:
         return path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise _Stopped(failure("model", f"{path}: cannot be read as UTF-8 text: {exc}")) from exc
+
+
+# Hand-written code is searched in files of these kinds, outside these folders.
+_CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".jsx")
+_SKIPPED_FOLDERS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".pytest_cache"}
+_MAX_LEFT_BEHIND = 20
+
+
+def _left_behind(model_path: Path, operations: Sequence[Operation]) -> list[str]:
+    """One warning per rename or removal whose old name hand-written code still uses: the files and lines,
+    so that nobody has to search for them. Generated files (those a ``.besser_generated.json`` records)
+    and the model file are not hand-written code."""
+    names = []
+    for operation in operations:
+        if operation.name in ("rename", "remove"):
+            path = str(operation.args["path"])
+            names.append((path, path.rsplit(".", 1)[-1], "." not in path))
+    if not names:
+        return []
+    root = model_path.resolve().parent
+    generated: set[Path] = set()
+    files: list[Path] = []
+    for folder, folders, entries in os.walk(root):
+        folders[:] = [name for name in folders if name not in _SKIPPED_FOLDERS]
+        if regeneration.RECORD_FILENAME in entries:
+            with contextlib.suppress(OSError, ValueError):
+                record = json.loads(Path(folder, regeneration.RECORD_FILENAME).read_text(encoding="utf-8"))
+                generated.update(Path(folder, rel).resolve() for rel in record.get("files", {}))
+        files += [Path(folder, name) for name in entries if name.endswith(_CODE_SUFFIXES)]
+    warnings = []
+    for path, name, is_type in names:
+        # A class also by its backend route (/contact/); any element by its name as a word.
+        pattern = re.compile(rf"\b{re.escape(name)}\b" + (rf"|/{re.escape(name.lower())}/" if is_type else ""))
+        found = []
+        for file in sorted(files):
+            if file.resolve() in generated or file.resolve() == model_path.resolve():
+                continue
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                found += [f"{file.relative_to(root).as_posix()}:{number}: {_cut(line.strip())}"
+                          for number, line in enumerate(file.read_text(encoding="utf-8").splitlines(), 1)
+                          if pattern.search(line)]
+        if found:
+            # The lines themselves: with only their numbers, the next thing done was to print them.
+            more = [f"and {len(found) - _MAX_LEFT_BEHIND} more lines"] if len(found) > _MAX_LEFT_BEHIND else []
+            warnings.append("\n  ".join([f"hand-written code still names {path}, on these lines:",
+                                         *found[:_MAX_LEFT_BEHIND], *more]))
+    return warnings
+
+
+def _cut(line: str, width: int = 140) -> str:
+    return line if len(line) <= width else line[:width - 3] + "..."
 
 
 def model(operations: Sequence[Operation], model_path: str | None = None, use: Sequence[str] = ()) -> Result:
@@ -1713,12 +2155,15 @@ def model(operations: Sequence[Operation], model_path: str | None = None, use: S
         except (ModelLoadError, EditError) as exc:
             return failure("model", f"{operation.line}: {exc} ({path} not changed)", data=data, cause=exc)
         try:
-            loaded_after = pick_domain_model(load_python_text(path, edited.text)[0], use)
+            all_after = load_python_text(path, edited.text)[0]
+            loaded_after = pick_domain_model(all_after, use)
         except (ModelLoadError, EditError) as exc:
             return failure("model", f"{operation.line}: the change would break {path} ({exc}); not changed: "
                                     "make it by hand", EXIT_FAILED, data, exc)
         # Checked on the model of this step: a later operation of a batch may rename or remove what it added.
         missed = edited.check(loaded_after.model)
+        if not missed and edited.gui_check is not None:
+            missed = edited.gui_check([gui.model for gui in all_after.of_kind("gui")])
         if missed:
             return failure("model", f"{operation.line}: the change did not land as expected ({missed}); {path} "
                                     "not changed: make it by hand", EXIT_FAILED, data)
@@ -1732,6 +2177,7 @@ def model(operations: Sequence[Operation], model_path: str | None = None, use: S
                       errors=[*new_errors, f"{path} not changed: the change makes the model invalid"])
     path.write_bytes((text.replace("\n", "\r\n") if crlf else text).encode("utf-8"))
     warnings = [warning for edited in edits for warning in edited.warnings]
+    warnings += _left_behind(path, operations)
     warnings += [f"still invalid: {error}" for error in after["errors"]]
     line = f"{path}: {'; '.join(edited.summary for edited in edits)}"
     return Result(command="model", files=[path.as_posix()], data=data, warnings=warnings, text=line, brief=line)

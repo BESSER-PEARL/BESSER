@@ -50,6 +50,13 @@ def parse_iso_timestamp(value: _Any) -> _Optional[_datetime.datetime]:
     return parsed
 
 
+def display_order_key(element: _Any) -> tuple:
+    """Sort key part for GUI elements: those with a ``display_order`` first, in that order, then the
+    others. Comparing ``None`` with a number raises, so a screen may mix both only through this key."""
+    order = getattr(element, "display_order", None)
+    return (order is None, order if order is not None else 0)
+
+
 def sort_by_timestamp(obj_set: set) -> list:
     """
     Sorts a set of objects by their `timestamp` attribute.

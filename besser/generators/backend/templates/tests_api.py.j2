@@ -1,0 +1,53 @@
+"""The create, read, list, update and delete routes of each class of {{ model.name }}.
+
+Each test posts a payload derived from the model (required attributes and association ends, OCL constraints
+satisfied), reads the object back, finds it in the list, updates it and deletes it, on an empty database (the
+'client' fixture, conftest.py). A class no valid payload can be derived for has a skipped test that says why.
+POST and PUT answer the object, or {"<class>": object, "<end>_ids": [...]}: both are read.
+"""
+
+from urllib.parse import quote
+
+import pytest
+
+
+def _object(body, key):
+    """The object of a response: the body, or the body's ``key`` when the object is wrapped."""
+    inner = body.get(key) if isinstance(body, dict) else None
+    return inner if isinstance(inner, dict) else body
+
+
+def _item(path, item_id):
+    return f"{path}{quote(str(item_id), safe='')}/"
+
+
+def _create(client, path, key, payload):
+    response = client.post(path, json=payload)
+    assert response.status_code in (200, 201), f"POST {path} {payload}: {response.status_code} {response.text}"
+    return _object(response.json(), key)
+
+
+def _read(client, path, key, item_id):
+    response = client.get(_item(path, item_id))
+    assert response.status_code == 200, f"GET {_item(path, item_id)}: {response.status_code} {response.text}"
+    return _object(response.json(), key)
+
+
+def _assert_fields(found, expected):
+    for name, value in expected.items():
+        assert found.get(name) == value, f"{name}: {found.get(name)!r}, expected {value!r}"
+{% for test in tests %}
+
+
+{% if test.skip %}
+@pytest.mark.skip(reason={{ test.skip_source }})
+def {{ test.name }}(client):
+    """{{ test.cls.name }}: skipped."""
+{% else %}
+def {{ test.name }}(client):
+    """{{ test.cls.name }}: create, read, list, update and delete."""
+{% for line in test.lines %}
+    {{ line }}
+{% endfor %}
+{% endif %}
+{% endfor %}

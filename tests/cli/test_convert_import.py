@@ -2,6 +2,7 @@
 
 import gzip
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -145,6 +146,52 @@ def test_python_data_classes_are_read_without_running_them(besser, write, tmp_pa
     assert run.returncode == 0, run.stderr
     assert _classes(besser, "app.py") == ["Author", "Book"]
     assert not (tmp_path / "ran.txt").exists()
+
+
+def test_what_an_import_only_logs_is_a_warning_of_the_result(monkeypatch, tmp_path, capsys):
+    from besser.cli.main import main
+    from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import code_reverse
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(code_reverse, "_MAX_PY_FILES", 1)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("from dataclasses import dataclass\n\n@dataclass\nclass Book:\n"
+                                           "    title: str\n", encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("", encoding="utf-8")
+
+    status = main(["convert", "src", "-o", "model.py", "--from", "code", "--json"])
+
+    assert status == 0
+    assert json.loads(capsys.readouterr().out)["warnings"] == ["Read only the first 1 Python files of src"]
+
+
+def test_an_rdf_file_with_no_triple_is_no_model(besser, write, tmp_path):
+    write("empty.ttl", "@prefix ex: <http://example.org/> .\n")
+    run = besser("convert", "empty.ttl", "-o", "graph.py", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == ["empty.ttl: no model found: it holds nothing the rdf import reads"]
+    assert not (tmp_path / "graph.py").exists()
+
+
+def test_a_class_diagram_derived_with_no_class_is_not_written(besser, write, tmp_path):
+    write("individual.ttl", '@prefix ex: <http://example.org/> .\nex:a ex:label "a value" .\n')
+    run = besser("convert", "individual.ttl", "-o", "classes.py", "--class-diagram", "--json")
+
+    assert run.returncode == 1
+    assert run.json["errors"] == ["--class-diagram derived no class or enumeration from individual.ttl "
+                                  "(knowledge_graph (KnowledgeGraph)): nothing was written"]
+    assert not (tmp_path / "classes.py").exists()
+
+
+def test_the_help_and_the_error_of_the_code_import_name_the_same_classes(besser, tmp_path):
+    (tmp_path / "empty").mkdir()
+    help_text = " ".join(besser("convert", "--help").stdout.split())
+    run = besser("convert", "empty", "-o", "empty.py", "--from", "code")
+
+    classes = "SQLAlchemy models, Django models, Pydantic models and dataclasses"
+    assert f"a directory of Python code: its {classes}" in help_text
+    assert run.stderr == f"error: empty: no data classes found: the reader takes {classes} from Python sources\n"
 
 
 def test_inputs_convert_cannot_read_are_usage_errors(besser, write, model):

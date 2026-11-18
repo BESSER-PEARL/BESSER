@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import re
 import shlex
 import sys
 import traceback
@@ -103,8 +105,9 @@ examples, in the order of a session:
 
 _MODEL_EDIT_EXAMPLES = """\
 attributes are name:type, name:type? (optional) or name:type=default; types as 'besser info'
-prints them (str, int, float, bool, date, datetime, time, timedelta, any) or a class or
-enumeration of the model; an association end is role:Class[multiplicity] ([1], [0..1], [*], [1..*]).
+prints them (str, int, float, bool, date, datetime, time, timedelta, any) or an enumeration of
+the model (a link to a class is an association); an association end is role:Class[multiplicity]
+([1], [0..1], [*], [1..*]).
 
 examples:
   besser model add-class Invoice number:str total:float paid:bool=false
@@ -113,10 +116,27 @@ examples:
   besser model set-enum Stage LEAD WON LOST
   besser model add-method Deal "discount(rate:float) -> float" --code "def discount(self, rate): ..."
   besser model add-constraint Deal "self.amount >= 0" --name amount_positive
-  besser model rename Customer Account          (also Class.attribute, Enum.LITERAL, association)
+  besser model add-parent Customer Party
+  besser model rename Customer Account          (also Class.attribute, Enum.LITERAL, association,
+                                                 association.end)
   besser model remove Contact.phone
+  besser model add-screen Invoice --title Bills (a page with a table of the class, in the GUI model)
+  besser model add-class Tag label:str --screen (a class and its page)
+  besser model add-menu                         (a menu with a link to every page, on every page)
+  besser model add-column Invoice customer.name --label Customer   (a column of a related object)
+  besser model order-columns Invoice number customer.name          (these columns first in its tables)
+  besser model add-page Overview --route /home --main              (a page for cards and charts)
+  besser model add-card Overview "Paid" sum:Invoice.total --where "paid == true"
+  besser model add-chart Overview "Invoices by status" count:Invoice --by status
   besser model batch - <<'EOF'                  (several changes, one write)
+  besser model set-attribute Book.pages :int?=0 (type, ? and default in place; = drops the default)
+  besser model set-multiplicity book_authors.authors "[*]"   (also Class.end)
+  besser model set-abstract Party true
+  besser model remove-parent Customer Party     (the class stays)
 """
+
+# What rename and remove take.
+_MODEL_PATH_HELP = "Class, Enumeration, association, association.end, constraint, Class.member or Enumeration.LITERAL"
 
 # Operation -> its arguments, named as the function of besser.cli.model_edit takes them.
 _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
@@ -125,10 +145,20 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("attributes",), {"nargs": "*", "metavar": "ATTRIBUTE", "help": "name:type, name:type? or name:type=default"}),
         (("--parent",), {"metavar": "CLASS", "help": "the class it specializes"}),
         (("--abstract",), {"action": "store_true", "help": "an abstract class"}),
+        (("--screen",), {"action": "store_true", "help": "and a screen with a table of it (see add-screen)"}),
+        (("--title",), {"help": "the screen's title (asks for the screen)"}),
+        (("--route",), {"metavar": "/PATH", "help": "the screen's address (asks for the screen)"}),
+        (("--rows",), {"metavar": "N", "type": int, "help": "rows its table shows a page (asks for the screen)"}),
     ],
     "add-attribute": [
         (("class_name",), {"metavar": "CLASS", "help": "the class"}),
         (("attributes",), {"nargs": "+", "metavar": "ATTRIBUTE", "help": "name:type, name:type? or name:type=default"}),
+        (("--derived",), {"action": "store_true", "help": "computed by the server: clients never send them (your "
+                                                          "code sets them)"}),
+    ],
+    "add-parent": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("parent",), {"metavar": "PARENT", "help": "the class it specializes"}),
     ],
     "add-association": [
         (("name",), {"help": "the association name"}),
@@ -146,16 +176,84 @@ _MODEL_OPERATION_ARGUMENTS: dict[str, list[tuple[tuple[str, ...], dict]]] = {
         (("expression",), {"help": "the OCL invariant, e.g. 'self.amount >= 0'"}),
         (("--name",), {"help": "the constraint name (default: <class>_rule_<n>)"}),
     ],
+    "add-screen": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class the screen's table shows"}),
+        (("--title",), {"help": "the screen's title (default: the plural of the class name)"}),
+        (("--route",), {"metavar": "/PATH", "help": "the page's address (default: the title's words, in lower case)"}),
+        (("--rows",), {"metavar": "N", "type": int, "help": "rows the table shows a page (default: 5)"}),
+    ],
+    "add-page": [
+        (("title",), {"help": "the page's title, also its heading"}),
+        (("--route",), {"metavar": "/PATH", "help": "the page's address (default: the title's words, in lower case)"}),
+        (("--main",), {"action": "store_true", "help": "make it the main page, the one the application opens on"}),
+    ],
+    "add-menu": [],
+    "add-column": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class whose tables get the column"}),
+        (("path",), {"metavar": "END.ATTRIBUTE", "help": "an association end to one object, then an attribute of "
+                                                         "its class: account.name (or an attribute of the class "
+                                                         "itself)"}),
+        (("--label",), {"help": "the column's label (default: the end's name)"}),
+    ],
+    "order-columns": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class whose tables are reordered"}),
+        (("columns",), {"metavar": "COLUMN", "nargs": "+",
+                        "help": "the columns that come first, in this order: an attribute, or end.attribute for a "
+                                "related object's column; the other columns follow as they were"}),
+    ],
+    "add-card": [
+        (("screen",), {"help": "the screen: its name, title or route"}),
+        (("title",), {"help": "the card's title"}),
+        (("value",), {"help": "sum:Class.attribute (also avg, min, max, median) or count:Class"}),
+        (("--where",), {"metavar": "CONDITION", "help": "only the objects where attribute == value (also != > >= < "
+                                                        "<=), several joined by 'and'"}),
+    ],
+    "add-link": [
+        (("screen",), {"help": "the screen: its name, title or route"}),
+        (("label",), {"help": "the link's text"}),
+        (("url",), {"metavar": "URL", "help": "/route of the application, or http(s)://... (a route of the backend "
+                                              "needs its whole address)"}),
+    ],
+    "add-chart": [
+        (("screen",), {"help": "the screen: its name, title or route"}),
+        (("title",), {"help": "the chart's title"}),
+        (("value",), {"help": "sum:Class.attribute (also avg, min, max, median) or count:Class"}),
+        (("--by",), {"required": True, "metavar": "ATTRIBUTE", "help": "the attribute of the class with one bar, "
+                                                                      "point or slice per value"}),
+        (("--kind",), {"choices": ["bar", "line", "pie"], "default": "bar", "help": "the chart (default: bar)"}),
+        (("--where",), {"metavar": "CONDITION", "help": "only the objects where attribute == value (also != > >= < "
+                                                        "<=), several joined by 'and'"}),
+    ],
     "set-enum": [
         (("name",), {"help": "the enumeration (created if missing)"}),
         (("literals",), {"nargs": "+", "metavar": "LITERAL", "help": "all its literals, in order"}),
     ],
     "rename": [
-        (("path",), {"help": "Class, Enumeration, association, constraint, Class.member or Enumeration.LITERAL"}),
+        (("path",), {"help": _MODEL_PATH_HELP}),
         (("new_name",), {"metavar": "NEW_NAME", "help": "the new name"}),
+        (("--keep-pages",), {"action": "store_true", "help": "the pages keep their titles, column labels and "
+                                                             "routes (default: those derived from the old name "
+                                                             "follow)"}),
     ],
     "remove": [
-        (("path",), {"help": "Class, Enumeration, association, constraint, Class.member or Enumeration.LITERAL"}),
+        (("path",), {"help": _MODEL_PATH_HELP}),
+    ],
+    "set-attribute": [
+        (("path",), {"metavar": "CLASS.ATTRIBUTE", "help": "the attribute"}),
+        (("spec",), {"metavar": "CHANGE", "help": "what changes, as add-attribute writes it without the name: "
+                                                  ":type, :type? (optional), =default, = (no default)"}),
+    ],
+    "set-multiplicity": [
+        (("path",), {"metavar": "END", "help": "the association end: association.end or Class.end"}),
+        (("multiplicity",), {"metavar": "MULTIPLICITY", "help": "[1], [0..1], [*], [1..*] or [n..m]"}),
+    ],
+    "set-abstract": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("abstract",), {"choices": ["true", "false"], "help": "true: abstract; false: concrete"}),
+    ],
+    "remove-parent": [
+        (("class_name",), {"metavar": "CLASS", "help": "the class"}),
+        (("parent",), {"metavar": "PARENT", "help": "the parent it no longer specializes"}),
     ],
 }
 
@@ -165,7 +263,8 @@ def _add_model_file_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-f", "--file", default=argparse.SUPPRESS, metavar="MODEL",
                         help="the .py model file (default: the model of besser.toml, else model.py)")
     parser.add_argument("--use", action="append", default=argparse.SUPPRESS, metavar="NAME",
-                        help="the domain model to change, when the file holds several")
+                        help="the domain model to change, or the GUI model add-screen adds to, when the file "
+                             "holds several; repeat to name one of each")
 
 
 class _UsageError(Exception):
@@ -197,7 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common.add_argument(
         "-q", "--quiet", action="store_true", default=argparse.SUPPRESS,
-        help="print only errors and the output of completion, generators, guide, info, schema and --version "
+        help="print only errors and the output of completion, generators, guide, info, new --list, schema and --version "
              "(and, with --strict, the warnings that fail the run)",
     )
     common.add_argument(
@@ -269,8 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
         "guide", "print the rules for a coding agent",
         "Print what a coding agent needs to work in a BESSER project, in about 3 KB: what not to read,\n"
         "the commands that change the model, the one command after a change, and where hand-written\n"
-        "code goes. 'besser new' and\n"
-        "'besser init' write it to AGENTS.md.",
+        "code goes; with the lines on screens when an output of besser.toml in the current folder reads\n"
+        "a GUI model (web_app). 'besser new' and 'besser init' write it to AGENTS.md.",
     )
 
     schema = add_command(
@@ -321,7 +420,10 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument("model", help=_MODEL_HELP)
     info.add_argument("--class", dest="class_name", metavar="CLASS",
                       help="describe one class in full: members, inherited attributes, association ends, "
-                           "constraints, and the backend's routes and code names for it")
+                           "constraints, the backend's routes and code names for it, and its page")
+    info.add_argument("--all", dest="everything", action="store_true",
+                      help="print a large model in full (by default one with more than 20 classes is "
+                           "summarised by its names)")
 
     add_command(
         "generators", "list the generators and their options",
@@ -390,17 +492,19 @@ def build_parser() -> argparse.ArgumentParser:
         "The one command to run after a model change: 'besser build' (each model is validated first),\n"
         "then, when the build succeeds, the 'test' command line of besser.toml, run from its folder\n"
         "without a shell. Prints one line when everything passes, the errors or the end of the\n"
-        "test output otherwise. Exit status 1 when the build or the tests fail.\n\n" + _EXECUTES_PYTHON,
+        "test output otherwise. Exit status 1 when the build or the tests fail, 2 when besser.toml, a model\n"
+        "or an output cannot be used (as for 'besser build').\n\n" + _EXECUTES_PYTHON,
     )
     apply.add_argument("-c", "--config", default=CONFIG_FILENAME, metavar="FILE",
                        help=f"the configuration file (default: {CONFIG_FILENAME} in the current directory)")
 
     model = add_command(
-        "model", "change the domain model of a .py file: add, rename, remove",
+        "model", "change the domain model of a .py file: add, rename, remove; add screens",
         "Change the domain model of a B-UML .py file with one command per change, instead of\n"
         "reading the file and editing it. Only the characters of the change are written: the\n"
         "rest of the file, comments and layout, stays as it is. The file is written only when\n"
-        "the result loads, holds the change and is as valid as before; one line says what changed.\n\n"
+        "the result loads, holds the change and is as valid as before; one line says what changed.\n"
+        "With a GUI model in the file, a class's tables follow its attributes; the line says so.\n\n"
         "operations:\n" + "".join(f"  {name:<16} {summary}\n" for name, (summary, _) in OPERATIONS.items())
         + "  batch            several operations, one per line of a file (- reads standard input), "
         "written together\n\n" + _MODEL_EDIT_EXAMPLES + "\n" + _EXECUTES_PYTHON,
@@ -459,9 +563,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = add_command(
         "mcp", "serve the commands to an AI agent over MCP (stdio)",
-        "Run a Model Context Protocol server on standard input and output, exposing validate,\n"
-        "info, generators, generate, regenerate and convert as tools to an MCP client (an AI\n"
-        "coding agent).\n\n"
+        "Run a Model Context Protocol server on standard input and output, exposing new,\n"
+        "schema, validate, info, generators, generate, regenerate and convert as tools to an\n"
+        "MCP client (an AI coding agent).\n\n"
         "Tools only read and write files under --root. A .py model is Python code: the tools\n"
         "load .json models only, unless --exec-py is given.\n\n"
         'Needs the MCP SDK (pip install "besser[mcp]").',
@@ -511,7 +615,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
     if args.command == "validate":
         return commands.validate(args.model, strict=args.strict, exec_py=args.exec_py, ocl=args.ocl)
     if args.command == "info":
-        return commands.info(args.model, args.class_name)
+        return commands.info(args.model, args.class_name, args.everything)
     if args.command == "generators":
         return commands.generators()
     if args.command == "generate":
@@ -541,10 +645,29 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Optional[
     return failure("", f"a command is required\n\n{parser.format_usage().strip()} (see '{PROG} --help')")
 
 
+def _route_argument(value: object) -> object:
+    """A route as it was typed, when an MSYS shell (Git Bash on Windows) rewrote it on the way: it turns an
+    argument that starts with ``/`` into a Windows path (``/dashboard`` -> ``C:/Program Files/Git/dashboard``,
+    ``/a/home`` -> ``A:/home``). No route is a Windows path, so the rewrite is undone."""
+    if os.name != "nt" or not os.environ.get("MSYSTEM") or not isinstance(value, str):
+        return value
+    text = value.replace("\\", "/")
+    root = os.path.dirname(os.environ.get("EXEPATH", "").rstrip("\\/")).replace("\\", "/")
+    for prefix in filter(None, (root, re.sub(r"/(usr|mingw64|mingw32)$", "", root))):
+        if text.lower().startswith(prefix.lower() + "/"):
+            return text[len(prefix):]
+    drive = re.fullmatch(r"([A-Za-z]):(/.*)", text)
+    return f"/{drive[1].lower()}{drive[2]}" if drive else value
+
+
 def _model_operation(args: argparse.Namespace) -> Operation:
     """The operation ``args`` (parsed by an operation's parser) names."""
     names = [argument[0].lstrip("-").replace("-", "_") for argument, _ in _MODEL_OPERATION_ARGUMENTS[args.operation]]
-    return Operation(args.operation, {name: getattr(args, name) for name in names})
+    values = {name: getattr(args, name) for name in names}
+    for name in ("route", "screen"):  # a screen is named by its route too
+        if name in values:
+            values[name] = _route_argument(values[name])
+    return Operation(args.operation, values)
 
 
 # The options of an operation's parser that are the whole batch's (an operation line's would be ignored).
@@ -609,6 +732,11 @@ def _verbosity(args: argparse.Namespace) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     """Run ``besser`` with ``argv`` (default: the process arguments) and return its exit status."""
     argv = sys.argv[1:] if argv is None else list(argv)
+    # An operation of 'besser model' typed as a command (besser add-menu) is run as one: refusing it cost a
+    # session a call, and no command has the name of an operation.
+    first = next((index for index, word in enumerate(argv) if not word.startswith("-")), None)
+    if first is not None and argv[first] in OPERATIONS:
+        argv.insert(first, "model")
     parser = build_parser()
     as_json = "--json" in argv
     set_verbosity(NORMAL)
@@ -629,7 +757,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         logging.disable(logging.NOTSET)
     if result is None:  # mcp served: standard output was the protocol's, and the session is over
         return EXIT_OK
-    print_result(result, as_json)
+    try:
+        print_result(result, as_json)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # The reader closed the pipe early ('besser schema domain | head -1'): what it read is the
+        # output, and the status stays the command's. Standard output goes to devnull so that the
+        # interpreter's flush at exit does not raise again.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     return result.exit_code
 
 

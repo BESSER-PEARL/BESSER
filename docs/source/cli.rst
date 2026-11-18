@@ -84,7 +84,7 @@ Every command takes these options, before or after the command name:
        ``convert``, ``new``). Errors are still printed, and so is the output of
        a command whose output is the result: ``completion`` (so
        ``eval "$(besser completion bash -q)"`` works), ``generators``,
-       ``info``, ``schema``, ``new --list`` and ``--version``. A ``validate --strict`` run that fails on
+       ``guide``, ``info``, ``schema``, ``new --list`` and ``--version``. A ``validate --strict`` run that fails on
        warnings alone prints ``error: N warnings (--strict)`` and the warnings.
        With ``--json`` the JSON object is still printed, whole.
    * - ``-v``, ``--verbose``
@@ -143,6 +143,10 @@ A ``<model>`` is one of:
    generates when it is loaded.
 
    A ``.json`` model is parsed as data and never executed.
+
+``info``, ``generate``, ``regenerate`` and ``convert`` take one model file; a
+directory given in its place is exit status 2, and the error says that
+``besser validate`` is the command that takes a directory.
 
 From a ``.py`` file, the command takes the models of the ``Project`` the file
 defines. Without a ``Project``, it takes every model bound to a top-level name
@@ -241,7 +245,8 @@ a generator that runs on it when one reads its kind.
 
 A ``.py`` file is a B-UML script, the format to write and edit. A ``.json``
 file is the same starter as an editor project (``besser new model.json --kind
-bpmn``), which needs the :ref:`backend packages <cli-model-files>`; the editor
+bpmn``), written as ``besser convert`` writes one, so the same kind and file
+name always give the same bytes. It needs the :ref:`backend packages <cli-model-files>`; the editor
 has no diagram for the ``deployment`` and ``feature`` kinds, which are ``.py``
 only. An existing file is kept unless you pass ``--force``.
 
@@ -272,17 +277,50 @@ repeats the other.
 .. code-block:: console
 
    $ besser init shop
-   Set up shop: wrote shop/model.py, shop/besser.toml, shop/AGENTS.md, shop/CLAUDE.md, shop/.ignore.
+   Set up shop: wrote shop/model.py, shop/besser.toml, shop/conftest.py, shop/AGENTS.md, shop/CLAUDE.md, shop/.ignore.
    Next: edit model.py, then run 'besser apply' (validate, build, test).
 
 Sets a folder (default: the current one) up as a project a coding agent can
 work in: the starter model of ``--kind`` as ``model.py``, a ``besser.toml``
 that builds it (a ``backend`` API into ``backend/`` for a class diagram, the
-generator ``new`` suggests for another kind) with a commented ``test`` line to
-fill in, and the agent files ``new`` writes. A ``model.py`` or ``besser.toml``
+generator ``new`` suggests for another kind), and the agent files ``new``
+writes. When that output is a ``backend`` or a ``web_app``, it generates its
+API tests (the ``tests`` option, see :doc:`generators/backend`),
+``test = "python -m pytest -q"`` runs them, and a ``conftest.py`` in the folder
+gives every test of the project, such as yours in ``tests/``, the generated
+``client`` fixture (``from backend.tests.conftest import client``; before the
+first build it says to run ``besser apply``). That ``conftest.py`` follows the
+``besser.toml`` in place: a kept one whose outputs do not generate their tests
+gets none, and a note says which option turns them on. So the
+first ``besser apply`` reports the generated tests passing:
+
+.. code-block:: console
+
+   $ besser apply
+   OK: 1 output, 0 failed: [backend] Generated 12 files in backend with the 'backend' generator; tests: 3 passed in 2.20s
+
+When the interpreter running ``besser`` lacks ``pytest``, ``fastapi`` or
+``httpx``, the ``test`` line is written commented out and the report says what
+to install, so that a first ``besser apply`` does not fail on an import the
+user did not choose. A ``model.py``, ``besser.toml`` or ``conftest.py``
 that exists is kept, and a note says so. A kind no generator reads gets
 neither a ``besser.toml`` nor the agent files, which describe the
-``besser apply`` loop; a note says so. ``.ignore`` then reads:
+``besser apply`` loop; a note says so. For a class diagram ``besser.toml`` reads:
+
+.. code-block:: toml
+
+   model = "model.py"
+   test = "python -m pytest -q"   # what 'besser apply' runs after the build
+
+   [output.backend]
+   generator = "backend"
+   dir = "backend"
+   options = { tests = true, uniform_responses = true }
+
+Both options are also on the ``web_app`` output of ``--kind gui``. ``uniform_responses`` makes
+``POST /x/`` and ``PUT /x/{x_id}/`` of the generated API answer what
+``GET /x/{x_id}/`` answers, for every class; it is off by default, for apps
+generated before it (see :ref:`backend-response-shapes`). ``.ignore`` then reads:
 
 .. code-block:: text
 
@@ -302,11 +340,32 @@ is left alone.
 ``besser guide``
 ----------------
 
-Prints the guide ``new`` and ``init`` write to ``AGENTS.md``, in about 3 KB (41
-lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
-commands, and what the ``backend``
-generator's API does, so that an agent needs neither the generated code nor
-this documentation. ``--json`` puts it in ``guide``.
+Prints the guide ``new`` and ``init`` write to ``AGENTS.md`` in the current
+folder, in under 4 KB (50 lines): the :ref:`defaults for coding agents <cli-agents>`, the ``besser model``
+commands, the names ``extensions.py`` imports, that ``besser apply`` runs the
+generated tests and gives the project's own tests a ``client`` fixture, and
+what the ``backend`` generator's API answers, so that an agent needs neither
+the generated code nor this documentation. The guide follows ``besser.toml``:
+
+* it names the project's file for hand-written backend code by its path
+  (``web_app/backend/extensions.py``), when the project has one such file;
+
+* an output that reads a GUI model (``web_app``, ``react``, ``flutter``) adds
+  16 lines (about 1,400 bytes) on pages: ``add-screen``, ``add-menu``,
+  ``add-column``, ``add-link``, ``add-page`` with its cards and charts, the
+  tables that follow their class, and that anything else on a page is an edit
+  of that page's generated file, which ``besser apply`` merges with later
+  model changes (it needs ``besser[regen]``);
+* a ``backend`` or ``web_app`` output without ``tests = true`` gets, in place
+  of the line on the generated tests, a ``tests/conftest.py`` to write with a
+  ``client`` fixture;
+* one without ``uniform_responses = true`` gets the two shapes ``POST`` and
+  ``PUT`` then answer, and how to read either.
+
+``besser init`` turns both options on, so a new project reads the short guide.
+``besser build`` (and so ``apply``) keeps the guide in ``AGENTS.md`` in step with
+``besser.toml``, as it keeps ``.ignore``; an ``AGENTS.md`` without the guide's block
+is left alone. ``--json`` puts it in ``guide``.
 
 ``besser schema``
 -----------------
@@ -349,16 +408,16 @@ argument name. Without a topic it lists the topics:
 
    Classes (from besser.BUML.metamodel.state_machine import ...), with their constructor arguments:
      ...
-     Event(name: str)
-         The representation of an event (i.e., external or internal stimuli or input) that may cause the transition of state in a state machine.
      State(sm: StateMachine, name: str, initial: bool = False, final: bool = False)
          A state of a state machine.
      StateMachine(name: str)
          A state machine model.
+     Session()
+         A user session in a state machine execution.
 
 With ``--json``, a kind's ``description`` gives each class's ``name``,
 ``signature``, ``doc``, ``bases``, ``abstract`` and ``parameters`` (``name``,
-``type``, ``default``, ``required``).
+``required``, ``type`` and, for an optional one, ``default``).
 
 ``besser validate``
 -------------------
@@ -518,7 +577,7 @@ and the constraint:
    $ besser validate books.py --ocl
    books.py: 2 models
      book_model (DomainModel): 1 error, 0 warnings
-       error: OCL constraint 'broken' on Book does not parse: line 1, column 37: Expression ends unexpectedly — the operand on the right is missing.
+       error: OCL constraint 'broken' on Book does not parse: line 1, column 37: Expression ends unexpectedly — the operand on the right is missing. (books.py, line 12)
      shelf (ObjectModel): 1 error, 0 warnings
        error: OCL constraint [Book inv positive_pages]: 'context Book inv positive_pages: self.pages > 0' - Constraint violation: Evaluates to False
    FAILED: 2 errors, 0 warnings
@@ -613,15 +672,18 @@ are warnings here, so ``info`` exits with status 0 on them. ``besser validate``
 is the command that fails on them. The model an editor project marks current is
 shown ``(current in the editor)``, and a note says when the file holds several
 models of a kind with none current (see :ref:`cli-several-diagrams`).
-``besser info --json`` gives ``models`` (``name``, ``kind``, ``type``,
-``model_name``, ``current``, ``counts`` and, for a domain model, ``classes``
+``besser info --json`` gives ``model`` (the file), ``models`` (``name``, ``kind``, ``type``,
+``model_name``, ``current``, ``counts``, for a GUI model ``screens`` (each
+with ``name``, ``route``, ``main``, ``tables``, each table's ``name``,
+``class`` and ``columns`` (attribute names), and ``opens``, the screens its
+buttons open) and, for a domain model, ``classes``
 (each attribute with ``name``, ``type``, ``optional`` and ``default``),
 ``enumerations``, ``associations``, ``constraints`` (``name``, ``context``,
 ``expression``) and ``backend_endpoints`` (class name -> ``"METHOD /path/"``
 for create, read, update, delete, bulk, count, paginated, search and each
 method, as the class has them); for the other kinds ``elements``, the
 names of what the model holds per collection, as in ``states: created, paid``)
-and ``generators``.
+and ``generators``; with ``--class``, ``classes`` (see :ref:`cli-json`).
 
 .. _cli-model:
 
@@ -641,9 +703,10 @@ and ``generators``.
 
 Changes the domain model of a B-UML ``.py`` file with one command per change,
 so that a coding agent does not read the file or write a script that patches
-it. The file is the one named by ``-f FILE``, else the ``model`` of
+it. The file is the one named by ``-f FILE`` (``--file``), else the ``model`` of
 ``besser.toml``, else ``model.py``; ``--use NAME`` picks the domain model when
-the file holds several.
+the file holds several, and the GUI model ``add-screen`` adds to (repeat it to
+name one of each).
 
 .. list-table::
    :header-rows: 1
@@ -651,40 +714,179 @@ the file holds several.
 
    * - Operation
      - What it does
-   * - ``add-class NAME [ATTRIBUTE...] [--parent CLASS] [--abstract]``
-     - A class, with its attributes and the generalization to its parent.
-   * - ``add-attribute CLASS ATTRIBUTE...``
+   * - ``add-class NAME [ATTRIBUTE...] [--parent CLASS] [--abstract] [--screen]``
+     - A class, with its attributes and the generalization to its parent;
+       ``--screen`` adds its screen too, as ``add-screen`` does.
+   * - ``add-attribute CLASS ATTRIBUTE... [--derived]``
      - Attributes: ``name:type``, ``name:type?`` (optional) or
-       ``name:type=default``. Types are written as ``besser info`` prints them
+       ``name:type=default``. With ``--derived`` the server computes them:
+       the generated API never takes them from a client (your code sets
+       them, for example in a SQLAlchemy ``before_insert`` /
+       ``before_update`` listener in ``extensions.py``), and ``besser info``
+       marks them ``(derived)``. Types are written as ``besser info`` prints them
        (``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``,
-       ``time``, ``timedelta``, ``any``) or name a class or enumeration.
+       ``time``, ``timedelta``, ``any``) or name an enumeration. A class is
+       no attribute type: the refusal gives the ``add-association`` command
+       that links the two classes. A table of the class gets a column for each,
+       as does a subclass's table that shows inherited columns (or whose class
+       inherited none yet).
+       A default is a literal of the type (``0``, ``0.5``, ``true``, text, a
+       literal's name); a ``date``, ``datetime``, ``time`` or ``timedelta``
+       takes none, since the generated backend cannot apply one and has no
+       ``now``: it stamps an attribute named ``created_at`` or ``updated_at``
+       itself.
+   * - ``add-parent CLASS PARENT``
+     - Makes an existing class specialize another (a generalization). Its
+       tables that would get a new attribute's column get one per attribute it
+       now inherits, after their columns.
    * - ``add-association NAME END END [--composite]``
      - A binary association; each end is ``role:Class[multiplicity]`` with
        ``[1]``, ``[0..1]``, ``[*]``, ``[1..*]`` or ``[n..m]``. ``--composite``
        makes the first end the whole.
    * - ``add-method CLASS 'name(param:type, ...) -> type' [--code CODE]``
-     - A method; ``--code`` is its Python code, which the ``backend`` runs.
+     - A method; ``--code`` is its Python code, which the ``backend`` runs on
+       the object and saves. Without ``--code`` the line says that the route of
+       the method answers 501 until it has code.
    * - ``add-constraint CLASS EXPRESSION [--name NAME]``
      - An OCL invariant on the class (``context ... inv`` is added when the
-       expression does not start with it). It must parse against the model
-       (see :ref:`OCL constraints <cli-ocl>`).
+       expression does not start with it), named ``<class>_rule_<n>`` without
+       ``--name``. It must parse against the model
+       (see :ref:`OCL constraints <cli-ocl>`). The line says whether a
+       generated backend enforces it (422 on create and update), by the
+       generators' own rule, or leaves the rule to ``extensions.py``.
+   * - ``add-screen CLASS [--title TITLE] [--route /PATH] [--rows N]``
+     - A screen of the file's GUI model (``--use`` names one when there are
+       several) that shows a table of the class: a column per attribute,
+       inherited ones first, labelled after it in words (``workEmail``: "Work
+       email"), with pagination and the buttons that add, edit and
+       delete an object. The screen is named after ``TITLE`` (default: the
+       plural of the class, ``Publishers``, ``Shelves``, ``People``; a name
+       already plural or uncountable, ``News``, is kept), which is also its heading, and
+       goes in the first module. Its address is ``--route`` (default: the
+       name in lower case, ``/publishers``). ``--rows`` sets the rows the table
+       shows a page (5 without it); given alone for a class that has its
+       screen, it changes the rows of that table. It joins the menu ``add-menu``
+       made and shows it; without a menu, a button on the main page opens it.
+       The line names the title when it is not the screen's name
+       (``added screen DealLines titled 'Deal lines'``).
+       Refused when the file has
+       no GUI model, the class has no attribute (own or inherited), a screen shows it already, or
+       a screen has its route or name but for case (the app's routes ignore case) or
+       would have the same page file but for case (the React generator names
+       it after the title, ``OrderLines`` -> ``Orderlines.tsx``, ``Order_lines``
+       -> ``OrderLines.tsx``: one file on macOS or Windows).
+   * - ``add-page TITLE [--route /PATH] [--main]``
+     - A screen with a heading only, for cards and charts; named, addressed
+       and linked as ``add-screen`` does. ``--main`` makes it the main page,
+       the one the application opens on (without a menu, it gets a button to
+       each other screen).
+   * - ``add-menu``
+     - A menu with a link to every screen, shown first on every screen. A
+       screen added later joins it, a removed one leaves it, and the link of
+       a screen renamed with its class follows it. It replaces the buttons that
+       only open a screen (what ``add-screen`` writes while there is no menu),
+       unless the file writes them inside a set. When such a menu exists
+       the line says so and changes nothing (an error would undo the batch
+       it is part of).
+   * - ``add-column CLASS END.ATTRIBUTE [--label LABEL]``
+     - A column, in the tables of the class, that shows an attribute of the
+       object an association end leads to (``account.name``); labelled after
+       the end without ``--label``. The end must lead to one object (``[1]``
+       or ``[0..1]``). The column goes with the attribute or the association
+       when they are removed. With an attribute of the class itself
+       (``add-column Invoice total``) it adds that column where a table lacks
+       it, and says "no change" where ``add-attribute`` added it already.
+   * - ``order-columns CLASS COLUMN...``
+     - Puts the columns named first, in that order, in every table of the
+       class; the other columns follow in the order they had. A column is
+       named as ``add-column`` takes it: an attribute, or ``end.attribute``
+       for a related object's. Only the places of the list's items change.
+   * - ``add-link SCREEN LABEL URL``
+     - A link on a screen: a route of the application (``/invoices``) or an
+       ``http(s)://`` address; a route of the backend needs its whole address.
+       ``besser info`` lists a screen's links, and a link to the backend
+       routes of a class (``.../invoice/export/``) follows a rename of the
+       class.
+   * - ``add-card SCREEN TITLE VALUE [--where CONDITION]``
+     - A metric card on a screen (named by its name, title or route), after
+       what the screen shows already. ``VALUE`` is ``sum:Class.attribute``
+       (also ``avg``, ``min``, ``max``, ``median``, of an ``int`` or ``float``
+       attribute) or ``count:Class``. ``--where`` keeps the objects that meet
+       conditions ``attribute == value`` (also ``!=``, ``>``, ``>=``, ``<``,
+       ``<=``) joined by ``and``; a condition the generated pages could not
+       read (``or``, an unknown attribute, a value that is no literal of the
+       attribute's enumeration) is refused, since they would drop it silently.
+   * - ``add-chart SCREEN TITLE VALUE --by ATTRIBUTE [--kind bar|line|pie] [--where CONDITION]``
+     - A chart with one bar, point or slice per value of ``ATTRIBUTE``, each
+       showing ``VALUE`` over the objects that have it; ``bar`` by default.
    * - ``set-enum NAME LITERAL...``
      - Creates the enumeration, or makes these its literals. A literal that
-       is an attribute's default is not removed.
-   * - ``rename PATH NEW_NAME``
-     - Renames a class, enumeration, association or constraint (``Name``), an
-       attribute, method or association end (``Class.member``) or a literal
-       (``Enumeration.LITERAL``). A variable that spells the old name is
-       renamed with it, and the OCL constraints that name it are updated:
-       only names, never text in quotes, and a member's name only where the
-       constraint navigates to that member (another class's member of the same
-       name stays). A literal's attribute defaults are renamed too.
+       is an attribute's default, or that a
+       constraint compares to, is not removed.
+   * - ``rename PATH NEW_NAME [--keep-pages]``
+     - Renames the domain model or the GUI model itself by its name, when no
+       element has that name (``rename Library Shop``: the API's title and
+       the database file follow the domain model's name). Otherwise it
+       renames a class, enumeration, association or constraint (``Name``), an
+       attribute, method or association end (``Class.member``; an end also
+       as ``association.end``) or a literal (``Enumeration.LITERAL``). A
+       variable that spells the old name is renamed with it, and the OCL
+       constraints that name it are updated: only names, never text in quotes,
+       and a member's name only where the constraint navigates to that member
+       (another class's member of the same name stays). A literal's attribute
+       defaults are renamed too, and its quoted name where a constraint compares
+       an attribute of its enumeration to it (``self.status <> 'Done'``); a
+       warning names a constraint where that cannot be told. Renaming a class names the association ends
+       still named after it, with the ``rename`` that changes each. A column
+       label derived from an attribute's name follows it, however the table's
+       columns are written (one list, ``.append(...)``, ``[...] + [...]``); a
+       column not written with the attribute's variable keeps its label, and a
+       warning names its table. So do the titles of
+       a class's screen, table, heading and the button that opens it, when they
+       are derived from its name (``Authors``, ``Author``): another title is kept.
+       A screen whose new name would be another screen's route or page file
+       but for case keeps all of its titles (heading, tables, buttons too), and a warning
+       says so. The route of such a screen follows too when it was derived
+       from its name, as does its link in a menu. With ``--keep-pages`` the
+       pages keep their titles, column labels and routes.
    * - ``remove PATH``
      - Removes the element. A class goes with its associations,
        generalizations and constraints; an association end with its
        association. An attribute or end a constraint navigates, or a literal
-       an attribute's default is, is not removed: the message names the
-       constraint or the attribute.
+       an attribute's default is or a constraint
+       compares to, is not removed: the message names the
+       constraint or the attribute. An attribute's columns go with it (in
+       its subclasses' tables too); a
+       class's tables go with it, with the screens that show nothing else and
+       the buttons that open them. When the main screen goes, the first screen
+       left (by module, then name, the generator's order) becomes the main
+       page, with a button to each other screen left (the line names it)
+       unless a menu links them. A column that shows the removed attribute
+       through an association end goes too, in any table.
+   * - ``set-attribute CLASS.ATTRIBUTE CHANGE``
+     - Changes an attribute where it is written, so the constraints, table
+       columns, objects and method code that refer to it keep doing so.
+       ``CHANGE`` is the ``add-attribute`` notation without the name, the parts
+       to change only: ``:int`` (type, required), ``:int?`` (optional),
+       ``=0`` (default), ``=`` (no default), or together (``:int?=0``). Refused
+       when a constraint uses the attribute as a value of another kind
+       (``self.pages > 0`` for a ``str``), an object holds a value of another
+       type, or the kept default does not fit the new type.
+   * - ``set-multiplicity END MULTIPLICITY``
+     - Changes the multiplicity of an association end (``association.end`` or
+       ``Class.end``) where it is written: ``[1]``, ``[0..1]``, ``[*]``,
+       ``[1..*]`` or ``[n..m]`` (brackets optional; quote them in a shell).
+       Refused when a constraint would no longer parse or an object model
+       would break the new bounds; the message names it.
+   * - ``set-abstract CLASS true|false``
+     - Makes a class abstract or concrete. Refused while an object model has
+       an object of the class; a warning says when no concrete class
+       specializes it.
+   * - ``remove-parent CLASS PARENT``
+     - Removes the generalization that makes the class a ``PARENT``; the
+       classes stay. The columns of what the class no longer inherits leave
+       the tables of the class and its subclasses. Refused when a constraint
+       or an object uses what it inherited.
    * - ``batch [FILE]``
      - The operations of ``FILE`` (``-``, the default, reads standard input),
        one per line as written after ``besser model``; blank lines and ``#``
@@ -704,14 +906,68 @@ form ``besser convert`` writes), inline in its set otherwise (the form
 ``besser new`` writes), on a line of its own in a set written one item per
 line. A new enumeration goes before the classes, a new class before the
 associations, and a metamodel name the file does not import is added to its
-``besser.BUML.metamodel.structural`` import. When the file builds an element
+``besser.BUML.metamodel.structural`` import, in order when its names are sorted;
+an import on one line that would grow past 120 characters is written one name
+a line. A metamodel name the change leaves unused leaves the import; one used
+anywhere else in the file stays. When the file builds an element
 with its own code (a helper function), the change is one statement after the
 line that defines its variable (``Stage.literals = {...}``); when the element
-has no variable either, or a removed element is still used elsewhere (a GUI
-model's column), the command refuses and names the lines to change by hand.
+has no variable either, or a removed element is still used elsewhere, the
+command refuses and names the lines to change by hand. A use is a reference
+to the variable in code: a keyword argument (``title=``) or an attribute
+(``x.title``) spelled the same is none, and a renamed variable leaves them as
+they are.
+
+In a file that also holds a GUI model (``besser init --kind gui`` writes one),
+the tables bound to a class (``DataBinding``) follow it, and each line says
+what changed in them:
+
+.. code-block:: console
+
+   $ besser model add-class Publisher name:str country:str --screen
+   model.py: added class Publisher with 2 attributes; added screen Publishers (table of Publisher: name, country; button on Authors)
+   $ besser model add-attribute Author bio:str?
+   model.py: added Author.bio:str?; column added to table author_table
+   $ besser model rename Author Writer
+   model.py: renamed Author to Writer (variable author -> writer); GUI titles Authors -> Writers (--keep-pages keeps them); ...
+   $ besser model remove Writer.email
+   model.py: removed Writer.email; its column from table author_table
+
+The pages these commands write look finished without hand-written CSS: the
+generated React application ships Tailwind, and the commands set its utility
+classes on the elements they create (``css_classes``). A screen holds the menu,
+as a navigation bar, and one container, a centred column with the heading
+(``h1``) and the page's content; a page's cards sit side by side in a row under
+the heading, whenever they were added, and a chart gets a panel. What a command
+adds to a page written otherwise (no such container) goes on the screen itself,
+as before.
+
+A column refers to its attribute's variable, so an attribute of a class with a
+table gets one (as the starter writes them), and ``add-screen`` gives one to
+the attributes written inside their class's set. A table the file builds
+its own way (in a function) gets no column: the attribute is added and a
+warning gives the column to add by hand. ``besser info`` lists each
+screen with its route, the class and columns of its tables, its cards and
+charts with what they compute, and whether it shows a menu. For a domain
+model of more than 20 classes it prints the names only (classes,
+enumerations, screens with their routes), since the full report grows with
+the model and is read at the start of every session; ``--class X`` then
+gives one class in full with the page that shows it, and ``--all`` the whole
+report.
 
 The file is written only when the new text loads, holds every change and has
 no validation error the old text did not have; one line says what changed.
+An operation typed as a command (``besser add-menu``) is run as
+``besser model add-menu``: no command has the name of an operation.
+After a ``rename`` or a ``remove``, a warning prints each hand-written line
+that still uses the old name, with its file and line number (code files outside
+the generated ones, such as ``extensions.py`` and your tests; at most 20
+lines), so that nobody has to search for them or print them.
+When a build changes the tables of a backend and an SQLite file of the app is
+still beside it (``data/*.db``), a warning names the file: the generated app
+creates missing tables and never alters one, so it would answer 500 on it.
+In Git Bash on Windows, a route typed as ``/overview`` reaches the command
+rewritten as a Windows path; the command reads it as typed.
 Otherwise nothing is written: exit status 2 when a change does not apply
 (an unknown class, an existing name, a malformed argument), 1 when it would
 make the model invalid or break the file. ``--json`` adds ``model`` and
@@ -776,12 +1032,17 @@ The command:
    the generator works with ``besser regenerate`` (``besser generators`` says
    which do), and says so in a note;
 #. prints the files the run created or rewrote. A generator that writes no
-   file has failed (exit status 1): it logged what it could not generate,
-   on standard error.
+   file has failed (exit status 1), and so has a dry run that would write
+   none. Such a generator usually logged what it could not generate: the
+   error gives the last 10 lines it printed and logged (``the 'terraform'
+   generator wrote no file; the last it printed and logged: Error reading
+   configuration file cluster.conf: ...``), so ``--json`` and MCP callers read
+   the reason in ``errors``. The directories the run created for its output
+   are removed when they hold no file.
 
 ``-o`` names a directory: a file there, or at one of its parents, is refused
 with exit status 2 before anything runs (``out is a file: -o takes a
-directory``).
+directory``, or ``out/api cannot be created: out is a file``).
 
 ``generate`` overwrites what it generates, so it refuses (exit status 2) a
 directory that is not empty, and nothing is written. ``--force`` writes into it
@@ -802,9 +1063,9 @@ with the same options; when ``pygit2`` is not installed, it ends with
 .. code-block:: console
 
    $ besser generate sqlalchemy library.py -o out --option dbms=postgresql
-   note: recorded the output in out/.besser_generated.json: 'besser regenerate sqlalchemy library.py -o out --option dbms=postgresql' brings it up to a changed model and keeps your edits
    Generated 1 file in out with the 'sqlalchemy' generator:
      out/sql_alchemy.py
+   note: recorded the output in out/.besser_generated.json: 'besser regenerate sqlalchemy library.py -o out --option dbms=postgresql' brings it up to a changed model and keeps your edits
 
 ``--use`` is given for each kind the file holds several models of, or for
 every kind when you gave ``--use``. Keep the record with the code (commit it).
@@ -827,10 +1088,10 @@ listed, and a note says the run would write it:
 .. code-block:: console
 
    $ besser generate python library.py -o out --dry-run
-   note: would record the output in out/.besser_generated.json: 'besser regenerate python library.py -o out' would then bring it up to a changed model and keep your edits
    Dry run: nothing was written.
    The 'python' generator would write 1 file in out (1 new):
      new  out/classes.py
+   note: would record the output in out/.besser_generated.json: 'besser regenerate python library.py -o out' would then bring it up to a changed model and keep your edits
 
 A dry run is refused where the run would be: ``-o`` naming a file, a
 directory that is not empty without ``--force``, a model with validation
@@ -996,7 +1257,7 @@ The command is refused with status 2, and nothing is written, when:
   Without edits to merge (a second ``besser build``, or a model change in files
   nobody edited) the command needs no ``pygit2``;
 * ``-o`` names a file, or a path under one (``out is a file: -o takes a
-  directory``);
+  directory``, ``out/api cannot be created: out is a file``);
 * the directory holds the output of another generator, a Spec-Driven Agent
   app, or conflict markers of the last run.
 
@@ -1020,8 +1281,9 @@ all (``besser schema config`` prints this example):
 
    model = "model.py"              # the model file every output reads, unless it names its own
    test = "python -m pytest -q"    # optional: what 'besser apply' runs after the build (no shell)
+   test_timeout = 600              # optional: seconds before 'besser apply' stops the tests (default 600)
 
-   [output.api]                    # one table per output; 'besser build api' builds this one alone
+   [output.api]                  # one table per output; 'besser build api' builds this one alone
    generator = "backend"           # a generator id ('besser generators' lists them)
    dir = "generated/api"           # where its code goes
    options = { http_methods = ["GET", "POST"] }   # the generator's options, typed
@@ -1038,12 +1300,14 @@ all (``besser schema config`` prints this example):
 
    $ besser build
    [api] backend: model.py -> generated/api: ok
-     Generated 11 files in generated/api with the 'backend' generator:
+     Generated 10 files in generated/api with the 'backend' generator:
        ...
    [db] sqlalchemy: model.py -> generated/db: ok
      Generated 1 file in generated/db with the 'sqlalchemy' generator:
        generated/db/sql_alchemy.py
    OK: 2 outputs, 0 failed
+   note: api: recorded the output in generated/api/.besser_generated.json: ...
+   note: db: recorded the output in generated/db/.besser_generated.json: ...
 
 Each output is built as the two commands above build it:
 
@@ -1058,8 +1322,8 @@ Each output is built as the two commands above build it:
 file than ``besser.toml`` in the current directory; ``--dry-run`` writes
 nothing and reports what each output would write. An output that fails does
 not stop the others, and the exit status is the worst output's. An unknown
-key, a value of the wrong type or a missing ``generator``, ``dir`` or model is
-exit status 2, naming the file and the table. With ``--json``, ``outputs``
+key, a value of the wrong type, a missing ``generator``, ``dir`` or model, or a
+``dir`` another output has is exit status 2, naming the file and the table. With ``--json``, ``outputs``
 holds, per output, its ``name`` and the whole object of the ``generate`` or
 ``regenerate`` run that built it; ``errors``, ``warnings`` and ``notes`` repeat
 their messages, each starting with the output's name, and ``files`` lists all
@@ -1075,6 +1339,10 @@ JavaScript, Java, SQL, CSS, YAML, ...; not JSON or plain text):
 .. code-block:: python
 
    # Generated by BESSER: edit the model, not this file. Custom code goes in extensions.py.
+
+That is the ``backend`` generator's line (``web_app`` names
+``backend/extensions.py``); the others end it with
+``Custom code goes outside this folder.``
 
 ``.besser_generated.json`` in the output directory lists every generated file.
 The ``backend`` generator (and the backend of ``web_app``) loads
@@ -1112,17 +1380,31 @@ one line when everything passes, and that line always ends with what the tests
 did: their last output line, ``tests: none collected`` (pytest found no test),
 or ``tests: none (set 'test' in besser.toml)`` when there is no ``test`` key.
 When the tests fail it prints only the failing tests, then a line starting with
-``FAILED: tests (exit status N)``, and exits with status 1: pytest's short test
+``FAILED: tests (exit status N)`` (said once: no ``error:`` line follows;
+``--json`` has the test command in ``errors``), and exits with status 1: pytest's short test
 summary (one line per failing test with its first error line, then the counts,
 preceded by pytest's first ``E`` lines, about 600 bytes, when a test module
 does not import, so the cause and its file are shown), else the lines that
-name a failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``) and the last line,
+name a failure (``FAILED``, ``ERROR``, ``FAIL:``, ``not ok``; under unittest's
+``FAIL:`` and ``ERROR:``, the exception line of its traceback) and the last line,
 else the last 40 lines of the output. Colour codes are removed first. A
 conflict left by the build says to resolve the markers, then run ``besser apply``
-again. ``-c FILE`` reads another configuration file. ``--json`` is the object of
+again.
+
+The tests run for at most ``test_timeout`` seconds (600 when ``besser.toml``
+does not set it), so a test command that starts a server or waits for input
+does not block ``apply`` for ever. The command runs in a process group of its
+own (a process tree on Windows); past the limit, it and every process it
+started are stopped, and ``apply`` prints one line,
+``FAILED: the tests timed out after N s (test_timeout in besser.toml) ...;
+build ...``, and exits with status 1. The build's files and notes are kept, as
+when the command cannot be started.
+
+``-c FILE`` reads another configuration file. ``--json`` is the object of
 ``build`` with ``command`` ``apply`` and ``test``: its ``command``,
-``exit_code``, ``output_tail`` and ``failing`` (the tests pytest's summary
-names), or ``null`` when no test ran.
+``exit_code`` (``null`` when the tests timed out), ``timed_out``,
+``output_tail`` (the last lines, up to where they were stopped) and
+``failing`` (the tests pytest's summary names), or ``null`` when no test ran.
 
 ``besser convert``
 ------------------
@@ -1138,7 +1420,17 @@ extensions:
 
 ``library.json`` has the format of an editor project export, so the editor
 imports it as a project. The ``.py`` output is the B-UML code the editor's own
-export writes. An existing output file is overwritten. With ``-`` as the
+export writes. Both outputs depend on the model alone: converting the same model
+again writes the same bytes, so a model under version control shows no change
+until the model does. The ids of a ``.json`` output (project, diagrams,
+elements) are derived from a hash of what the project holds, not of how its
+``.py`` file is written, so ``.json`` -> ``.py`` -> ``.json`` gives the same file
+back when the round trip keeps everything (see the limits below); its times
+(``createdAt``, ``lastUpdate``, ``exportedAt``) are fixed at
+``1970-01-01T00:00:00+00:00``;
+the editor's own import still gives each import fresh ids and the current time.
+The project takes the input file's name, so ``besser new`` of the same kind
+under the same file name also writes the same file. An existing output file is overwritten. With ``-`` as the
 input, the direction follows the output's extension and what standard input
 holds. ``-o`` names a file: a directory there, or a file at one of its parents,
 is exit status 2 (``out/library.json cannot be created: out is a file``).
@@ -1195,12 +1487,17 @@ of a ``.py`` or ``.json`` model file), the class diagram derived from it:
 classes, attributes, associations and OCL constraints. A knowledge graph is
 also written as RDF: ``-o`` with ``.ttl`` (Turtle), ``.owl`` or ``.rdf``
 (RDF/XML). An import is not validated: run ``besser validate`` on the result.
+What an importer could not take (a draw.io edge whose end is missing, the
+Python files past the code import's cap of 2000) is a warning of the result.
+An input that gives no model (an RDF file with no triple, a CSV or code import
+with no class) is exit status 2, and a class diagram derived with no class or
+enumeration is left out with a warning, or, when no graph gives one, is exit
+status 1; nothing is written then.
 
 ``--dry-run`` converts into a scratch file, so it fails and warns as the real
 conversion would, and says whether the output would be created, overwritten,
-or (for a ``.py`` output) left as it is because it holds the same; a ``.json``
-output gets new ids on every conversion, so it is always ``changed``. Nothing
-is written (``would_write`` in the JSON output):
+or left as it is because it holds the same. Nothing is written (``would_write``
+in the JSON output):
 
 .. code-block:: console
 
@@ -1211,10 +1508,17 @@ is written (``would_write`` in the JSON output):
 Both directions reuse the editor's converters, so they share their limits:
 
 * The editor has no diagram for a Terraform ``deployment`` model or a feature
-  model; converting to JSON leaves them out and says so in a warning.
-* A lone model takes the default title of its diagram (a ``DomainModel`` named
-  ``Library`` comes back as ``Class_Diagram``); its classes, attributes and
-  associations keep their names.
+  model; converting to JSON leaves them out and says so in a warning. A file
+  that holds nothing else is not converted (exit status 2, no file written):
+  the project would hold no model. RDF, likewise, is written from a knowledge
+  graph only, and a file that holds none is refused.
+* A model keeps its name: the JSON carries it as its diagram's title (a
+  ``DomainModel`` named ``Library`` is the class diagram ``Library``), and the
+  conversion back names the model after the title. The variable it was bound to
+  does not survive: the ``.py`` output binds each model to a variable named
+  after its kind (``domain_model``, ``object_model``, ``sm``, ``agent``,
+  ``gui_model``, ...). Name the model, not the variable, in ``--use`` and in
+  ``besser.toml``'s ``use``, and both keep working after a round trip.
 * A model written in Python has no layout: the converter computes the
   positions of its elements.
 * What a diagram cannot draw is not in the JSON: a state machine transition's
@@ -1251,7 +1555,8 @@ it.
 JSON output and exit status
 ---------------------------
 
-With ``--json``, standard output is exactly one JSON object. ``besser schema
+With ``--json``, standard output is exactly one JSON object: indented on a
+terminal, on one line otherwise (a program or an agent reads it). ``besser schema
 result`` prints its JSON Schema, and the test suite checks every command's
 output against it. These keys are on every command and are stable:
 
@@ -1308,8 +1613,8 @@ Each command adds its own:
        ``classes``: per domain model holding it, the class's ``model``,
        ``name``, ``is_abstract``, ``parents``, ``attributes``,
        ``inherited_attributes``, ``methods``, ``ends``, ``inherited_ends``,
-       ``constraints``,
-       ``backend_endpoints`` and ``backend_code``.
+       ``constraints``, ``backend_endpoints``, ``backend_code`` and ``pages``
+       (the screens with a table of the class).
    * - ``model``
      - ``model``, the file, and ``changes``: what each operation did (empty
        when nothing was written).
@@ -1342,9 +1647,10 @@ Each command adds its own:
      - ``config``, ``dry_run`` and ``outputs``: per output its ``name`` and
        the object of the run that built it.
    * - ``apply``
-     - The keys of ``build``, and ``test``: ``command``, ``exit_code``,
-       ``output_tail`` (the last lines of its output) and ``failing`` (the
-       tests pytest's short summary names), or ``null``.
+     - The keys of ``build``, and ``test``: ``command``, ``exit_code``
+       (``null`` when the tests timed out), ``timed_out``, ``output_tail``
+       (the last lines of its output) and ``failing`` (the tests pytest's
+       short summary names), or ``null``.
    * - ``init``
      - ``folder`` and ``kind``.
    * - ``guide``
@@ -1388,7 +1694,8 @@ and ``output`` on ``convert``.
        {"file": "library.py", "ok": true, "exit_code": 0, "errors": [], "warnings": [],
         "models": [{"file": "library.py", "name": "library_model", "...": "as in models"}]}
      ],
-     "skipped": []
+     "skipped": [],
+     "diagnostics": []
    }
 
 (Shortened: the command prints one key per line.)
@@ -1403,12 +1710,15 @@ and ``output`` on ``convert``.
      - Success.
    * - 1
      - The command ran and failed: validation errors (or warnings with
-       ``--strict``), a generator that raised, a conversion that failed,
-       conflicts left by ``regenerate``.
+       ``--strict``), a generator that raised or wrote nothing, a conversion
+       that failed, conflicts left by ``regenerate``, a ``besser model`` change
+       that would make the model invalid, tests that fail or time out in
+       ``apply``.
    * - 2
      - The command could not run: bad arguments, an unknown generator or
-       option, a model file that does not load, an output directory that
-       ``generate`` or ``regenerate`` refuses. Nothing was generated. A usage
+       option, a model file or ``besser.toml`` that does not load, an output
+       directory that ``generate`` or ``regenerate`` refuses, a ``besser model``
+       change that does not apply. Nothing was generated. A usage
        error is also a JSON object when ``--json`` is given.
 
 Standard output carries the result only. Whatever a model file or a generator
@@ -1563,10 +1873,10 @@ and what ``besser guide`` prints:
 
 .. code-block:: console
 
-   $ besser init                    # model.py, besser.toml, AGENTS.md, CLAUDE.md, .ignore
-   $ # edit model.py; fill in 'test' in besser.toml
+   $ besser init                    # model.py, besser.toml, conftest.py, AGENTS.md, CLAUDE.md, .ignore
+   $ # edit model.py
    $ besser apply
-   OK: 1 output, 0 failed: [backend] Generated 10 files in backend with the 'backend' generator; tests: 4 passed in 0.52s
+   OK: 1 output, 0 failed: [backend] Generated 12 files in backend with the 'backend' generator; tests: 3 passed in 2.20s
    $ besser info model.py           # the model and its routes, when the agent needs them
    $ # write extensions.py and its tests; for each model change, one shell call:
    $ besser model add-attribute Contact source:str? && besser apply

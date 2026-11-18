@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from besser.cli.loading import load_models
 from tests.cli.conftest import CLASS_DIAGRAM, LIBRARY_MODEL, PROJECT_EXPORT
 
@@ -50,6 +52,60 @@ def test_a_model_survives_the_round_trip(besser, model, tmp_path):
     [back] = load_models(tmp_path / "back.py").of_kind("domain")
     assert [association.name for association in back.model.associations] == ["holds"]
     assert besser("validate", "back.py", "--strict").returncode == 0
+
+
+def test_the_round_trip_keeps_the_model_name_so_use_still_finds_it(besser, model, tmp_path):
+    assert besser("convert", model, "-o", "project.json").returncode == 0
+    assert besser("convert", "project.json", "-o", "back.py").returncode == 0
+
+    [diagram] = json.loads((tmp_path / "project.json").read_text())["project"]["diagrams"]["ClassDiagram"]
+    assert diagram["title"] == "LibraryModel"
+    [back] = load_models(tmp_path / "back.py").of_kind("domain")
+    assert back.model.name == "LibraryModel"
+    run = besser("generate", "python", "back.py", "--use", "LibraryModel", "-o", "out")
+    assert run.returncode == 0, run.stderr
+
+
+def test_a_project_of_several_kinds_keeps_its_model_names_both_ways(besser, tmp_path):
+    assert besser("new", "project.py", "--kind", "project").returncode == 0
+    assert besser("convert", "project.py", "-o", "project.json").returncode == 0
+    assert besser("convert", "project.json", "-o", "back.py").returncode == 0
+    assert besser("convert", "back.py", "-o", "again.json").returncode == 0
+
+    def names(path):
+        return sorted((model.kind, model.model.name) for model in load_models(tmp_path / path).models)
+
+    def titles(path):
+        diagrams = json.loads((tmp_path / path).read_text())["project"]["diagrams"]
+        return sorted(diagram["title"] for entries in diagrams.values() for diagram in entries
+                      if diagram["model"].get("elements"))
+
+    assert names("back.py") == names("project.py") == [
+        ("domain", "Library"), ("object", "LibraryObjects"), ("state_machine", "BookLoan"),
+    ]
+    assert titles("again.json") == titles("project.json") == ["BookLoan", "Library", "LibraryObjects"]
+
+
+def test_the_same_model_converts_to_the_same_json(besser, model, tmp_path):
+    assert besser("convert", model, "-o", "project.json").returncode == 0
+    first = (tmp_path / "project.json").read_bytes()
+
+    assert besser("convert", model, "-o", "project.json").returncode == 0
+    assert (tmp_path / "project.json").read_bytes() == first
+    dry = besser("convert", model, "-o", "project.json", "--dry-run", "--json")
+    assert dry.json["would_write"] == {"project.json": "unchanged"}
+    assert json.loads(first)["exportedAt"] == json.loads(first)["project"]["createdAt"] == "1970-01-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize("kind", ["domain", "component", "bpmn"])
+def test_json_to_buml_to_json_gives_the_same_file(besser, kind, tmp_path):
+    besser("new", "model.py", "--kind", kind)
+    assert besser("convert", "model.py", "-o", "model.json").returncode == 0
+    assert besser("convert", "model.json", "-o", "back.py").returncode == 0
+    (tmp_path / "back.py").rename(tmp_path / "model.py")  # the file name is the project's name
+
+    assert besser("convert", "model.py", "-o", "again.json").returncode == 0
+    assert (tmp_path / "again.json").read_bytes() == (tmp_path / "model.json").read_bytes()
 
 
 def test_the_converted_project_is_one_the_cli_reads_back(besser, model):
@@ -191,3 +247,30 @@ def test_verbose_adds_the_traceback_of_a_failure(besser, write):
 
     assert run.returncode == 2 and run.stdout == ""
     assert "Traceback (most recent call last):" in run.stderr and "ZeroDivisionError" in run.stderr
+
+
+@pytest.mark.parametrize("kind, held", [("deployment", "library_deployment_model (DeploymentModel)"),
+                                        ("feature", "e_reader_features (FeatureModel)")])
+def test_a_file_whose_models_the_editor_has_no_diagram_for_is_not_written_as_an_empty_project(besser, kind, held,
+                                                                                              tmp_path):
+    besser("new", f"{kind}.py", "--kind", kind, "--no-agent-files")
+    run = besser("convert", f"{kind}.py", "-o", "out/project.json", "--json")
+
+    assert run.returncode == 2
+    assert run.json["errors"] == [
+        "project.json is an editor project, which holds the models the editor has a diagram for (domain, object, "
+        "gui, agent, state_machine, quantum, nn, bpmn, uml_deployment, component, kg), and "
+        f"{kind}.py holds none of them (it holds: {held}): nothing was written; keep it as a .py file"]
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_model_the_editor_has_no_diagram_for_is_left_out_of_a_project_that_holds_others(besser, tmp_path):
+    besser("new", "both.py", "--kind", "deployment", "--no-agent-files")
+    with (tmp_path / "both.py").open("a", encoding="utf-8") as both:
+        both.write(LIBRARY_MODEL)
+    run = besser("convert", "both.py", "-o", "project.json", "--json")
+
+    assert run.returncode == 0
+    assert run.json["warnings"] == ["library_deployment_model (DeploymentModel) was left out: the editor has no "
+                                    "diagram for a deployment model"]
+    assert [model.kind for model in load_models(tmp_path / "project.json").models] == ["domain"]

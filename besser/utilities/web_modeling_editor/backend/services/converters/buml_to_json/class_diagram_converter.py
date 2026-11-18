@@ -3,7 +3,7 @@ Domain model conversion from BUML to JSON format.
 """
 
 import logging
-import uuid
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 from besser.BUML.metamodel.structural import (
     Class, Property, Method, Parameter as StructuralParameter, DomainModel,
     PrimitiveDataType, Enumeration,
@@ -73,7 +73,7 @@ def _make_id_taker():
                 return element_id
             logger.warning("Replacing %s element id %.60r of %s %r with a new one.",
                            reason, element_id, type(element).__name__, getattr(element, "name", ""))
-        element_id = str(uuid.uuid4())
+        element_id = new_id()
         used.add(element_id)
         return element_id
 
@@ -700,7 +700,7 @@ def class_buml_to_json(domain_model):
             association_rel_id = association_by_name.get(type_obj.association.name)
             if association_rel_id:
                 # Create a ClassLinkRel relationship
-                rel_id = str(uuid.uuid4())
+                rel_id = new_id()
 
                 relationships[rel_id] = {
                     "id": rel_id,
@@ -723,7 +723,7 @@ def class_buml_to_json(domain_model):
     # Both are needed: the element for data, the link for visual layout.
     for type_obj in sorted(domain_model.constraints, key=lambda c: c.name):
         if isinstance(type_obj, Constraint) and type_obj.context in class_id_map:
-            rel_id = str(uuid.uuid4())
+            rel_id = new_id()
             relationships[rel_id] = {
                 "id": rel_id,
                 "name": "",
@@ -763,7 +763,7 @@ def class_buml_to_json(domain_model):
             for kind, constraints in (("precondition", getattr(method, "pre", []) or []),
                                        ("postcondition", getattr(method, "post", []) or [])):
                 for constraint in constraints:
-                    box_id = str(uuid.uuid4())
+                    box_id = new_id()
                     elements[box_id] = {
                         "id": box_id,
                         "type": "ClassOCLConstraint",
@@ -781,7 +781,7 @@ def class_buml_to_json(domain_model):
                     if getattr(constraint, "description", None):
                         elements[box_id]["description"] = constraint.description
                     _set_timestamp(elements[box_id], constraint)
-                    rel_id = str(uuid.uuid4())
+                    rel_id = new_id()
                     relationships[rel_id] = {
                         "id": rel_id,
                         "name": "",
@@ -806,7 +806,7 @@ def class_buml_to_json(domain_model):
 
     # Create comment elements from metadata descriptions
     for comment_text, linked_class_id in comments_to_create:
-        comment_id = str(uuid.uuid4())
+        comment_id = new_id()
         x, y = get_position()
 
         # Create comment element
@@ -824,7 +824,7 @@ def class_buml_to_json(domain_model):
         }
 
         # Create Link relationship from comment to class
-        rel_id = str(uuid.uuid4())
+        rel_id = new_id()
         relationships[rel_id] = {
             "id": rel_id,
             "name": "",
@@ -849,7 +849,7 @@ def class_buml_to_json(domain_model):
 
     # Handle domain model level comments (unlinked comments)
     if hasattr(domain_model, 'metadata') and domain_model.metadata and domain_model.metadata.description:
-        comment_id = str(uuid.uuid4())
+        comment_id = new_id()
         x, y = get_position()
 
         elements[comment_id] = {

@@ -6,8 +6,8 @@ inverse of ``json_to_buml.component_diagram_processor``.
 ``component_model_to_code`` and converts the model it defines.
 """
 
-import uuid
 
+from besser.utilities.web_modeling_editor.backend.services.converters.minted_values import new_id
 from besser.BUML.metamodel.uml_component import (
     AgentCategory,
     AgenticComponent,
@@ -64,7 +64,7 @@ def component_object_to_json(model: ComponentModel) -> dict:
     def id_for(obj) -> str:
         if obj not in id_map:
             stashed = (obj.layout or {}).get("id") if obj.layout else None
-            id_map[obj] = stashed or str(uuid.uuid4())
+            id_map[obj] = stashed or new_id()
         return id_map[obj]
 
     # Every component, including those reachable only through a Subsystem.

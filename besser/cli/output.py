@@ -50,10 +50,14 @@ def default_verbosity() -> int:
         if mode not in _OUTPUT_MODES:
             raise ValueError(f"{OUTPUT_ENV} must be 'full' or 'terse', not '{mode}'")
         return _OUTPUT_MODES[mode]
+    return NORMAL if _stdout_is_terminal() else TERSE
+
+
+def _stdout_is_terminal() -> bool:
     try:
-        return NORMAL if sys.stdout.isatty() else TERSE
+        return sys.stdout.isatty()
     except (AttributeError, ValueError):  # standard output replaced by an object without isatty, or closed
-        return TERSE
+        return False
 
 
 def set_verbosity(verbosity: int) -> None:
@@ -128,7 +132,11 @@ def print_result(result: Result, as_json: bool) -> None:
     if _verbosity == VERBOSE and result.traceback:
         print(result.traceback, file=sys.stderr, end="")
     if as_json:
-        print(json.dumps(result.as_json(), indent=2))
+        # Indented for a person at a terminal; on one line for a program or an agent, which pays per character.
+        if _stdout_is_terminal():
+            print(json.dumps(result.as_json(), indent=2))
+        else:
+            print(json.dumps(result.as_json(), separators=(",", ":")))
         return
     if _verbosity == QUIET:
         _print_quiet(result)

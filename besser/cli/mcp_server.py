@@ -41,9 +41,8 @@ from besser.utilities.provenance import get_besser_version
 SERVER_NAME = "besser"
 MCP_EXTRA = 'pip install "besser[mcp]"'
 
-_PATH = {"type": "string", "description": "a path under the server's root, relative to it or absolute"}
-_MODEL = {**_PATH, "description": "a model file under the server's root: an editor .json export, "
-                                  "or a B-UML .py file if the server allows it (--exec-py)"}
+_PATH = {"type": "string", "description": "a path, relative to the root or absolute"}
+_MODEL = {**_PATH, "description": "a model file: an editor .json export, or a B-UML .py file with --exec-py"}
 _OPTIONS = {
     "description": "generator options, as {name: value} or as a list of 'name=value' strings "
                    "(a list value is comma-separated there); the 'generators' tool lists each generator's options",
@@ -188,10 +187,15 @@ _QUOTED_COMMAND = re.compile(r"""(['"])besser ([a-z]+)(.*?)\1""")
 _FLAG_ARGUMENTS = (
     ("pass --exec-py", "restart the server with --exec-py"),
     ("--use NAME", "the `use` argument"),
+    ("--use", "the `use` argument"),
     ("--option", "the `options` argument"),
+    ("--from", "the `from` argument"),
+    # -o is `output_dir` where it takes a directory (generate, regenerate), `output` where a file (convert).
+    ("-o takes a directory", "`output_dir` takes a directory"),
+    ("-o takes a file", "`output` takes a file"),
 )
 # CLI flags that are a tool's boolean argument of the same name ("--dry-run" -> "dry_run: true").
-_BOOLEAN_FLAG = re.compile(r"--(force|adopt|strict|ocl|dry-run)\b")
+_BOOLEAN_FLAG = re.compile(r"--(force|adopt|strict|ocl|dry-run|class-diagram)\b")
 _MESSAGE_KEYS = frozenset({"errors", "warnings", "notes"})
 
 
@@ -243,6 +247,8 @@ def _tool_wording(message: str) -> str:
         if match.group(2) not in tool_specs():
             return match.group(0)
         arguments = _tool_call(match.group(2), match.group(3))
+        if arguments == "{}":  # the command alone ('besser regenerate')
+            return f"the `{match.group(2)}` tool"
         if arguments is None:
             flags = [_boolean_argument(flag) for flag in _BOOLEAN_FLAG.finditer(match.group(3))]
             return f"the `{match.group(2)}` tool" + (f" with {', '.join(flags)}" if flags else "")
@@ -350,9 +356,9 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
         ToolSpec(
             "new",
             "Write a starter model of a kind to edit: a small, commented B-UML .py script, or the same model "
-            "as an editor .json project (the CLI's 'besser new'). An existing file is refused unless force is true.",
+            "as an editor .json project. An existing file is refused unless force is true.",
             _object({
-                "path": {**_PATH, "description": "the .py or .json file to write, under the server's root"},
+                "path": {**_PATH, "description": "the .py or .json file to write"},
                 "kind": {"type": "string", "enum": list(STARTERS), "default": DEFAULT_KIND,
                          "description": "the kind of model to start from"},
                 "force": {"type": "boolean", "default": False, "description": "overwrite the file if it exists"},
@@ -363,17 +369,17 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
             "schema",
             "Describe a format: the B-UML classes of a model kind with their constructor arguments, the JSON "
             "Schema of an editor project ('project') or of what every tool returns ('result'), or the "
-            "besser.toml file ('config'); without a topic, the topics (the CLI's 'besser schema').",
+            "besser.toml file ('config'); without a topic, the topics.",
             _object({"topic": {"type": "string", "enum": commands.schema_topics()}}, []),
             False, _schema,
         ),
         ToolSpec(
             "validate",
-            "Load model files and run validate() on every model in them (the CLI's 'besser validate'). "
+            "Load model files and run validate() on every model in them. "
             "A directory is searched for model files. ok is false on errors, or on warnings with strict.",
             _object({
                 "paths": {"type": "array", "minItems": 1, "items": _MODEL,
-                          "description": "model files or directories of them, under the server's root"},
+                          "description": "model files or directories of them"},
                 "strict": {"type": "boolean", "default": False, "description": "fail on warnings too"},
                 "ocl": {"type": "boolean", "default": False,
                         "description": "also check OCL constraints: parse each, and evaluate the invariants on object models (for editor JSON only when the server was started with --exec-py)"},
@@ -383,7 +389,7 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
         ToolSpec(
             "info",
             "Summarise a model file: its models, the classes, attributes and associations of a domain model, "
-            "and the ids of the generators that can run on it (the CLI's 'besser info'); with 'class', "
+            "and the ids of the generators that can run on it; with 'class', "
             "that class in full.",
             _object({"model": _MODEL, "class": {"type": "string", "description": "a class to describe in full: "
                      "members, inherited attributes, association ends, constraints, backend routes"}}, ["model"]),
@@ -392,20 +398,20 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
         ToolSpec(
             "generators",
             "List the generators: id, the models each reads, its options as JSON Schema, and whether "
-            "regenerate supports it (the CLI's 'besser generators').",
+            "regenerate supports it.",
             _object({}, []),
             False, _generators,
         ),
         ToolSpec(
             "generate",
-            "Validate the models a generator reads, run it into output_dir and list the files written "
-            "(the CLI's 'besser generate'). A model with validation errors is not generated from. "
+            "Validate the models a generator reads, run it into output_dir and list the files written. "
+            "A model with validation errors is not generated from. "
             "A non-empty output_dir is refused unless force is true, which overwrites; to keep hand edits "
             "in generated code, use regenerate.",
             _object({
                 "generator": {"type": "string", "enum": generator_ids, "description": "the generator id"},
                 "model": _MODEL,
-                "output_dir": {**_PATH, "description": "the folder to write to, under the server's root"},
+                "output_dir": {**_PATH, "description": "the folder to write to"},
                 "options": _OPTIONS,
                 "use": _USE,
                 "force": {"type": "boolean", "default": False,
@@ -417,13 +423,13 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
         ToolSpec(
             "regenerate",
             "Bring generated code in output_dir up to a changed model and keep the edits made in it: a "
-            "three-way merge with the output recorded in .besser_generated.json (the CLI's 'besser regenerate'). "
+            "three-way merge with the output recorded in .besser_generated.json. "
             "Conflicts get conflict markers and ok false. Needs besser[regen].",
             _object({
                 "generator": {"type": "string", "enum": regenerate_ids,
-                              "description": "the generator id; only these generators support regenerate"},
+                              "description": "the generator id"},
                 "model": _MODEL,
-                "output_dir": {**_PATH, "description": "the folder holding the generated code, under the server's root"},
+                "output_dir": {**_PATH, "description": "the folder holding the generated code"},
                 "options": _OPTIONS,
                 "use": _USE,
                 "adopt": {"type": "boolean", "default": False,
@@ -438,12 +444,12 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
             "Convert a B-UML .py model to an editor .json project or the reverse, or import another notation "
             f"as a model ({', '.join(fmt.name for fmt in IMPORT_FORMATS)}); a knowledge graph is also written "
             "as RDF (.ttl, .owl, .rdf). What is read follows the input's extension, or 'from'; what is written, "
-            "the output's (the CLI's 'besser convert'). The output is overwritten.",
+            "the output's. The output is overwritten.",
             _object({
                 "input": {**_MODEL, "description": "the file to convert (.json, or .py if the server allows it) "
                                                    "or to import; a directory for from: code"},
                 "more_inputs": {"type": "array", "items": _PATH, "description": "further files, for from: csv"},
-                "output": {**_PATH, "description": "the .py, .json or RDF file to write, under the server's root"},
+                "output": {**_PATH, "description": "the .py, .json or RDF file to write"},
                 "from": {"type": "string", "enum": [fmt.name for fmt in IMPORT_FORMATS],
                          "description": "the notation of the input, when its extension does not say"},
                 "class_diagram": {"type": "boolean", "default": False,
@@ -458,8 +464,8 @@ def _tools(generator_ids: list[str], regenerate_ids: list[str]) -> tuple[ToolSpe
 def _instructions(tools: Tools) -> str:
     loads = ".json and .py models" if tools.exec_py else ".json models only (.py models need --exec-py)"
     return (
-        "BESSER's command line as tools, on B-UML model files: new, schema, validate, info, generators, "
-        f"generate, regenerate, convert. Start with new (a starter model) and schema (its classes). Paths are under {tools.root}. This server loads {loads}. "
+        "BESSER's command line as tools of the same names, on B-UML model files: new, schema, validate, info, "
+        f"generators, generate, regenerate, convert. Start with new (a starter model) and schema (its classes). Paths are under {tools.root}. This server loads {loads}. "
         "Each tool returns the CLI's --json object: ok, errors, warnings, notes, files and its own keys."
     )
 
@@ -517,7 +523,7 @@ def serve(root: str, exec_py: bool = False) -> Result | None:
         # In a worker thread, so the server keeps answering (pings) while a generator runs.
         output = await to_thread.run_sync(run_tool, params.name, params.arguments)
         return types.CallToolResult(
-            content=[types.TextContent(text=json.dumps(output, indent=2))],
+            content=[types.TextContent(text=json.dumps(output))],
             structured_content=output, is_error=not output["ok"],
         )
 

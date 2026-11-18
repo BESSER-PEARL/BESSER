@@ -7,7 +7,7 @@ from .state_machine_converter import state_machine_to_json, state_machine_object
 from .agent_diagram_converter import agent_buml_to_json, analyze_function_node
 from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json, parse_gui_buml_content
-from .project_converter import project_to_json, empty_model
+from .project_converter import project_to_json, reproducible_project_to_json, empty_model
 from .quantum_diagram_converter import quantum_circuit_to_json, quantum_circuit_to_editor_json, quantum_buml_to_json
 from .nn_diagram_converter import nn_model_to_json, nn_buml_to_json
 from .bpmn_diagram_converter import bpmn_object_to_json, bpmn_buml_to_json
@@ -26,6 +26,7 @@ __all__ = [
     'gui_buml_to_json',
     'parse_gui_buml_content',
     'project_to_json',
+    'reproducible_project_to_json',
     'empty_model',
     'quantum_circuit_to_json',
     'quantum_circuit_to_editor_json',

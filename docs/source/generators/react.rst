@@ -25,9 +25,14 @@ TableComponent
 
 Dynamic data tables with:
 
-- Sorting and filtering
+- Sorting and filtering; an enumeration column is filtered by choosing one of
+  its literals
+- Enumeration literals offered in the model's order (columns, Add/Edit dialog,
+  association class fields, method parameters)
 - Pagination
-- Add/Edit modals with form validation
+- Add/Edit modals with form validation; an empty field of an ``is_optional``
+  attribute (``"nullable": true`` in ``formColumns``) is saved as ``null``, not
+  ``""`` or ``0``
 - A confirmation prompt before a row's delete icon removes the record
 - Backend validation error display (keeps modal open on error)
 - Support for all relationship types (1:1, 1:N, N:M)
@@ -44,7 +49,8 @@ MethodButton
 
 Executes class and instance methods with:
 
-- Parameter input modal for methods with parameters
+- Parameter input modal for methods with parameters, each labelled by its
+  name made readable (``min_pages`` shows as "Min pages"), as in the table dialog
 - Automatic type handling (int, float, bool, string, date, time)
 - Detailed error display for 500 errors; a method modeled without an
   implementation (the backend answers 501) shows "This action is not
@@ -68,7 +74,8 @@ The table is the button's ``instance_source`` or, failing that, the table
 bound to the button's ``entity_class`` on the same screen. A create button
 with no such table on its screen navigates to the first screen that has one
 and opens its dialog there. Update and delete report "Select a row in the
-table first" when nothing is selected. A CRUD button with no bound table is
+table first" when nothing is selected; the confirmation prompt comes only once
+the action can run. A CRUD button with no bound table is
 rendered as a plain button.
 
 FormBlock
@@ -101,6 +108,14 @@ is opened through the router, so the app is not reloaded; any other URL, and a
 link with ``target="_blank"``, stays a plain anchor. When the GUI comes from the
 web editor, a link names its page by a ``data-navigate-to`` attribute or by a
 site-relative ``href`` matching the page's route, name or id.
+
+A ``<nav>`` bar's fixed ``height`` is generated as its ``min-height``, except for a
+bar that scrolls inside its height (an ``overflow`` other than ``visible``), one
+positioned ``fixed`` or ``absolute``, and one of height 0. On a screen
+640 px wide or narrower, the bar and its direct children wrap their items onto
+more lines (``src/index.css``), so its links stay on the screen and the bar grows
+to fit them. The rule is in the ``base`` layer: any rule of the design, such as
+a tab strip that scrolls sideways on a phone, takes precedence.
 
 A page's route is the route set on the page in the web editor when it is URL-safe
 (letters of any script, digits, ``_``, ``-`` and ``/``). Otherwise it is ``/`` and the page name
@@ -140,6 +155,8 @@ Visualization components including:
 - Bar charts
 - Pie charts
 - Data binding to backend entities
+- A series appears in the legend and tooltip under its ``label``; its ``name``
+  is the key of its values in the chart data
 - Aggregation: a series with an ``aggregation`` groups the records by its
   label field and shows one value per group (``count``, ``sum``, ``avg``,
   ``min``, ``max``, ``median``, ``first``, ``last``); a bound series without a
@@ -151,7 +168,9 @@ Visualization components including:
 
 Metric cards (``MetricCardBlock``) show their binding's ``aggregation`` over all
 records; without one, the sum of the bound field, or the number of records when
-no field is bound. A card whose binding has an ``endpoint`` fetches it instead
+no field is bound. No trend is computed: ``show_trend``, ``positive_color`` and
+``negative_color`` are carried in the page's metric data but draw nothing, and
+``MetricCardComponent`` takes no trend properties. A card whose binding has an ``endpoint`` fetches it instead
 of the CRUD list, and applies the binding's filter to the rows it returns. The response contract (an array of rows, or an object holding
 one under ``data``, ``results``, ``items``, ``records`` or ``list``) is described
 with ``DataBinding`` in :doc:`../buml_language/model_types/gui`. Tables, maps and
@@ -248,6 +267,7 @@ Generated Structure
    │   │   │   ├── LookupSelect.tsx
    │   │   │   ├── lookup.ts
    │   │   │   ├── dataVersion.ts
+   │   │   │   ├── humanize.ts
    │   │   │   └── MapBlock.tsx
    │   │   ├── InputComponents.tsx
    │   │   └── MethodButton.tsx

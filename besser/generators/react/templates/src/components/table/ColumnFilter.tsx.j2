@@ -7,6 +7,7 @@ interface ColumnFilterProps {
     label: string;
     type?: string;
     columnType?: string;
+    options?: string[];
   };
   onFilterChange: (field: string, value: string) => void;
   currentValue: string;
@@ -20,28 +21,13 @@ type FilterOperator =
 export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChange, currentValue }) => {
   const [isOpen, setIsOpen] = useState(false);
   
-  // Parse current filter value (format: "operator:value")
-  const parseFilterValue = (val: string): { operator: FilterOperator; value: string } => {
-    if (!val) return { operator: "contains", value: "" };
-    const parts = val.split(":");
-    if (parts.length === 1) return { operator: "contains", value: parts[0] };
-    return { operator: parts[0] as FilterOperator, value: parts.slice(1).join(":") };
-  };
-
-  const parsed = parseFilterValue(currentValue);
-  const [operator, setOperator] = useState<FilterOperator>(parsed.operator);
-  const [filterValue, setFilterValue] = useState(parsed.value);
-
-  useEffect(() => {
-    const parsed = parseFilterValue(currentValue);
-    setOperator(parsed.operator);
-    setFilterValue(parsed.value);
-  }, [currentValue]);
-
   // Determine column data type
-  const getColumnDataType = (): "string" | "number" | "date" | "datetime" | "time" | "boolean" => {
+  const getColumnDataType = (): "string" | "number" | "date" | "datetime" | "time" | "boolean" | "enum" => {
     const type = (column.type || column.columnType || "").toLowerCase();
-    
+
+    if (type === "enum" && column.options && column.options.length > 0) {
+      return "enum";
+    }
     if (type.includes("int") || type.includes("float") || type.includes("decimal") || type.includes("numeric")) {
       return "number";
     }
@@ -61,6 +47,27 @@ export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChan
   };
 
   const dataType = getColumnDataType();
+  const defaultOperator: FilterOperator =
+    dataType === "string" ? "contains" : dataType === "enum" ? "equals" : "eq";
+
+  // Parse current filter value (format: "operator:value")
+  const parseFilterValue = (val: string): { operator: FilterOperator; value: string } => {
+    if (!val) return { operator: defaultOperator, value: "" };
+    if (val === "empty" || val === "not_empty") return { operator: val, value: "" };
+    const parts = val.split(":");
+    if (parts.length === 1) return { operator: "contains", value: parts[0] };
+    return { operator: parts[0] as FilterOperator, value: parts.slice(1).join(":") };
+  };
+
+  const parsed = parseFilterValue(currentValue);
+  const [operator, setOperator] = useState<FilterOperator>(parsed.operator);
+  const [filterValue, setFilterValue] = useState(parsed.value);
+
+  useEffect(() => {
+    const parsed = parseFilterValue(currentValue);
+    setOperator(parsed.operator);
+    setFilterValue(parsed.value);
+  }, [currentValue]);
 
   // Get available operators based on data type
   const getOperators = (): { value: FilterOperator; label: string }[] => {
@@ -77,6 +84,14 @@ export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChan
       ];
     }
     
+    if (dataType === "enum") {
+      return [
+        { value: "equals", label: "equals" },
+        { value: "empty", label: "is empty" },
+        { value: "not_empty", label: "is not empty" },
+      ];
+    }
+
     if (dataType === "boolean") {
       return [
         { value: "eq", label: "= (equals)" },
@@ -108,7 +123,7 @@ export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChan
   };
 
   const handleClear = () => {
-    setOperator(dataType === "string" ? "contains" : "eq");
+    setOperator(defaultOperator);
     setFilterValue("");
     onFilterChange(column.field, "");
     setIsOpen(false);
@@ -188,9 +203,11 @@ export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChan
           >
             <div style={{ marginBottom: "12px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
               Filter {column.label}
-              <span style={{ fontSize: "11px", fontWeight: 400, color: "#64748b", marginLeft: "4px" }}>
-                ({dataType})
-              </span>
+              {dataType !== "enum" && (
+                <span style={{ fontSize: "11px", fontWeight: 400, color: "#64748b", marginLeft: "4px" }}>
+                  ({dataType})
+                </span>
+              )}
             </div>
 
             <div style={{ marginBottom: "8px" }}>
@@ -241,6 +258,28 @@ export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChan
                     <option value="">Select...</option>
                     <option value="true">True</option>
                     <option value="false">False</option>
+                  </select>
+                ) : dataType === "enum" ? (
+                  <select
+                    value={filterValue}
+                    onChange={(e) => setFilterValue(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "4px",
+                      fontSize: "13px",
+                      boxSizing: "border-box",
+                      backgroundColor: "white",
+                    }}
+                    autoFocus
+                  >
+                    <option value="">Select...</option>
+                    {column.options!.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
                   </select>
                 ) : (
                   <input

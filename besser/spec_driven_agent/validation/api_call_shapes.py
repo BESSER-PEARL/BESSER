@@ -41,10 +41,11 @@ from besser.spec_driven_agent.validation.route_returns import response_shape, ro
 PREFIX = "api call: "
 _MAX_FINDINGS = 10
 
-# Parameter markers FastAPI never reads from the JSON body, and those that make it a form.
+# Parameter markers FastAPI never reads from the JSON body; those that make it a form
+# or let the handler read the raw body itself; and injected parameters.
 _NOT_BODY = frozenset({"Depends", "Security", "Query", "Path", "Header", "Cookie"})
-_FORM = frozenset({"File", "Form", "UploadFile"})
-_INJECTED = frozenset({"Request", "Response", "BackgroundTasks", "WebSocket", "HTTPConnection",
+_OPEN_BODY = frozenset({"File", "Form", "UploadFile", "Request"})
+_INJECTED = frozenset({"Response", "BackgroundTasks", "WebSocket", "HTTPConnection",
                        "Session", "AsyncSession"})
 _SCALARS = frozenset({"str", "int", "float", "bool", "date", "datetime", "time", "UUID", "Decimal"})
 
@@ -112,7 +113,7 @@ def _body(function, path: str, imports: dict, resolve) -> _Body | None:
         type_name = imports.get(type_name, type_name)
         if kind in _NOT_BODY or type_name in _INJECTED or (arg.arg in path_params and kind != "Body"):
             continue
-        if kind in _FORM or type_name in _FORM:
+        if kind in _OPEN_BODY or type_name in _OPEN_BODY:
             return None
         model = resolve(type_name) if type_name else None
         if kind == "Body":

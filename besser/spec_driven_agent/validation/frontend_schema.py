@@ -113,10 +113,13 @@ def _model_resolver(sources):
             return None
         for stmt in cls.body:
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # Before-model validators can accept arbitrary legacy names.
-                if any(isinstance(d, ast.Call) and _name(d.func) == "model_validator"
-                       and any(k.arg == "mode" and isinstance(k.value, ast.Constant)
-                               and k.value.value == "before" for k in d.keywords)
+                # A validator that runs before field validation can accept arbitrary
+                # legacy names and fill a missing required field (v1 ``pre=True`` too).
+                if any(isinstance(d, ast.Call)
+                       and _name(d.func) in {"model_validator", "root_validator", "validator", "field_validator"}
+                       and any(isinstance(k.value, ast.Constant)
+                               and ((k.arg == "mode" and k.value.value in {"before", "wrap"})
+                                    or (k.arg == "pre" and k.value.value is True)) for k in d.keywords)
                        for d in stmt.decorator_list):
                     return None
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
@@ -128,16 +131,23 @@ def _model_resolver(sources):
                     continue
                 fields.add(field)
                 value = stmt.value
-                is_field = isinstance(value, ast.Call) and _name(value.func) == "Field"
-                if value is None or (is_field and not any(k.arg in {"default", "default_factory"}
-                                                           for k in value.keywords)
-                                     and (not value.args or (isinstance(value.args[0], ast.Constant)
-                                                             and value.args[0].value is Ellipsis))):
+                # ``x: T = Field(...)`` and ``x: Annotated[T, Field(...)]`` declare the same things.
+                field_calls = [call for call in (
+                    [value] + (annotation.slice.elts[1:] if isinstance(annotation, ast.Subscript)
+                               and _name(annotation.value) == "Annotated"
+                               and isinstance(annotation.slice, ast.Tuple) else []))
+                    if isinstance(call, ast.Call) and _name(call.func) == "Field"]
+                defaulted = value is not None and not (field_calls and field_calls[0] is value)
+                if not defaulted and not any(
+                        any(k.arg in {"default", "default_factory"} for k in call.keywords)
+                        or (call.args and not (isinstance(call.args[0], ast.Constant)
+                                               and call.args[0].value is Ellipsis))
+                        for call in field_calls):
                     required.add(field)
                 else:
                     required.discard(field)
-                if is_field:
-                    for keyword in value.keywords:
+                for call in field_calls:
+                    for keyword in call.keywords:
                         if keyword.arg in {"alias", "validation_alias"}:
                             required.discard(field)
                             if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):

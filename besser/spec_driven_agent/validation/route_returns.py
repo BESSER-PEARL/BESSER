@@ -94,7 +94,7 @@ def _shape(value, nodes):
     of it is a plain ``name = <literal>`` of one kind."""
     if not isinstance(value, ast.Name):
         return _literal_shape(value)
-    name, stores, assigned, extra = value.id, 0, [], set()
+    name, stores, assigned, extra, handed = value.id, 0, [], set(), False
     for node in nodes:
         if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store):
             stores += 1
@@ -108,12 +108,19 @@ def _shape(value, nodes):
                     extra.add(target.slice.value)
         elif isinstance(node, ast.AugAssign) and _name(node.target) == name:
             return None
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-              and _name(node.func.value) == name and node.func.attr in ("update", "setdefault", "pop", "clear")):
-            return None
+        elif isinstance(node, ast.Call):
+            if (isinstance(node.func, ast.Attribute) and _name(node.func.value) == name
+                    and node.func.attr in ("update", "setdefault", "pop", "clear")):
+                return None
+            # A function it is handed to can add or remove keys.
+            handed = handed or any(isinstance(item, ast.Name) and item.id == name for item in (
+                *(arg.value if isinstance(arg, ast.Starred) else arg for arg in node.args),
+                *(keyword.value for keyword in node.keywords)))
     # A binding that is not a plain assignment (a loop, ``with ... as``, unpacking) is a store too.
     if not assigned or stores != len(assigned) or None in assigned or len({kind for kind, _ in assigned}) != 1:
         return None
     if assigned[0][0] == "list":
         return "list", None
+    if handed:
+        return None
     return "object", frozenset().union(extra, *(keys for _, keys in assigned))

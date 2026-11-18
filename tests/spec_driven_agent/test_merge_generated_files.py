@@ -435,8 +435,8 @@ def test_many_dropped_files_are_checked_in_one_pass_over_the_app(app):
 # -- a BESSER upgrade in between -------------------------------------------------------
 
 
-GENERATED = "    name: Mapped_[str] = mapped_column(String_(100))"
-OLDER = "    name: Mapped_[str] = mapped_column(String_(80))"
+GENERATED = "    name: Mapped_[str] = mapped_column(Text_)"
+OLDER = "    name: Mapped_[str] = mapped_column(String_(100))"
 EDIT = "    # name is shown on the badge"
 
 

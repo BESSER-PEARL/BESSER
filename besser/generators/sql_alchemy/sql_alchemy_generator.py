@@ -36,7 +36,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
     TYPES = {
         "int": "Integer_",
-        "str": "String_(100)",
+        "str": "Text_",
         "float": "Float_",
         "bool": "Boolean_",
         "time": "Time_",
@@ -45,6 +45,9 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "timedelta": "Interval_",
         "any": "PickleType_",
     }
+
+    # Primary-key and unique ``str`` columns: MySQL, SQL Server and Oracle cannot index TEXT.
+    KEY_STRING_TYPE = "String_(255)"
 
     VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"}
     
@@ -282,7 +285,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
         env = Environment(loader=FileSystemLoader(templates_path))
         env.globals.update(normalize_code=normalize_method_code,
                            is_shadowed_by_association_end=is_shadowed_by_association_end,
-                           end_hidden_by_attribute=end_hidden_by_attribute)
+                           end_hidden_by_attribute=end_hidden_by_attribute,
+                           key_string_type=self.KEY_STRING_TYPE)
         # default_value reaches the metamodel unvalidated from request JSON and
         # used to be interpolated raw into the generated module — which
         # SQLGenerator then EXECUTES. These emit literals, never expressions.

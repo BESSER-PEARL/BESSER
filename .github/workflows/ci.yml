@@ -45,6 +45,11 @@ jobs:
       # path production actually takes.
       - name: Install bubblewrap (shell sandbox)
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # The React generator tests run generated TypeScript with Node.js
+      # (22.6+ strips the types); without it they skip.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
       # The nn extra (torch, numpy) lets the tests that run generated PyTorch
       # code (the forecaster, the backend's NN methods) run instead of skip.
       # Torch comes first from the CPU-only index: the default wheel pulls in

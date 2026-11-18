@@ -474,6 +474,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts: list[dict] = []
         self._requirement_verdicts_scope = ""  # the requirements and request they answered
         self._requirement_verdicts_key = ""  # the judge's cache key (source, requirements) they answer
+        # A modify run's judged files as the run found them (path -> sha256): a requirement to keep
+        # behaviour as it was is met by its files left unchanged.
+        self._seed_source_hashes: dict[str, str] | None = None
         # (requirement cache key, import index): one index per judged tree; see _import_index.
         self._import_index_cache: tuple[str, _requirements_ledger.ImportIndex] | None = None
         self._requirement_judgments: dict[str, list[dict]] = {}
@@ -4179,11 +4182,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # A partial/missing/unverified verdict about a file the digest left out or cut
         # was not judged on the code; it joins the focused round with that file shown
         # (the judge is told to answer unverified for code it was not shown).
+        # An absence is settled below, never by showing more code.
+        rejudgeable = [item for item in self._requirement_verdicts
+                       if item.get("kind") != _requirements_ledger.ABSENCE_KIND]
         unseen = {item["id"]: _requirements_ledger.named_digest_gaps(item, digest_gaps)
-                  for item in self._requirement_verdicts if item["status"] in ("partial", "missing", "unverified")}
+                  for item in rejudgeable if item["status"] in ("partial", "missing", "unverified")}
         unseen = {rid: paths for rid, paths in unseen.items() if paths}
-        unknown_ids = {item["id"] for item in self._requirement_verdicts
-                       if item["status"] == "unverified"} | set(unseen)
+        unknown_ids = {item["id"] for item in rejudgeable if item["status"] == "unverified"} | set(unseen)
         if (unknown_ids and cache_key not in self._requirement_evidence_retries
                 and len(self._requirement_judge_failures) < _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN
                 and self._verification_call_allowed()):
@@ -4197,7 +4202,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._requirement_judgments[cache_key] = verdicts
                 self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir, imports)
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
-            self._requirement_verdicts, self._ui_in_scope())
+            _requirements_ledger.settle_uncitable(self._requirement_verdicts, self.output_dir, imports,
+                                                  self._seed_source_hashes),
+            self._ui_in_scope())
         self._requirement_verdicts_scope = scope
         self._requirement_verdicts_key = cache_key
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)

@@ -693,6 +693,32 @@ spacing, layout and the like); otherwise they are listed as omitted, so a verdic
 naming one is judged once more with it shown. In a stylesheet a line starting with
 ``#`` is an id selector and is kept.
 
+Two kinds of requirement cannot be shown by citing a line of code, and the
+extraction labels them: ``absence``, something the app must not have at all ("no
+sign-in", never a refusal the app enforces), and ``preservation``, existing
+behaviour a change must keep working as it is. When the judge leaves one
+unverified, it is decided without a citation, and an absence is not sent to the
+focused round:
+
+- An absence that names sign-in or agents is checked in the app's files. A
+  sign-in library declared in a ``requirements*.txt`` or ``package.json``
+  dependency (``passlib``, ``python-jose``, ``next-auth``, ``jsonwebtoken`` ...), a
+  Python route with a ``login``, ``signup`` or ``auth`` segment, Python
+  code under an ``agents`` folder, or the BESSER Agentic Framework as a dependency
+  makes it ``missing``, a blocker naming what was found. When every part of its text
+  ("no sign-in and no agents") names one of these and none is found, it is
+  ``checked``: met, and the end-of-run report lists it as verified with what was
+  checked. Any other absence is ``not_provable``.
+- A preservation is ``checked`` when the files the judge named for it (inspection
+  paths and citations), and the files they import or are mounted by, are
+  byte-identical to the previous version: in a modify run the files as the run found
+  them, before its model sync and regeneration; otherwise the stored generator
+  output. Anything else, a changed file or no file named, is ``not_provable``.
+
+A ``not_provable`` requirement is a warning, ``requirement not provable:``, never a
+blocker; the report lists it as not verified, with the reason. A judge verdict of
+missing or partial for either kind stays a blocker.
+
 The recipe records, for each implemented requirement, ``verification`` and a
 ``verification_note`` giving its API half and its screens half apart. The API half
 is exercised when a ``test_api`` call that passed on the final tree hit the route

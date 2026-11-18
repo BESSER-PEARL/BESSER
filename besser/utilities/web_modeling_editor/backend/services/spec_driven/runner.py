@@ -63,7 +63,7 @@ from besser.spec_driven_agent.pipeline.constants import (
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
-from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
+from besser.spec_driven_agent.planning.requirements_ledger import CHECKED, NOT_PROVABLE, render_evidence
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_recap import NO_RULES_STATED
@@ -585,6 +585,11 @@ def build_verification_report(recipe: dict) -> VerificationReport:
                 # Clip the citation, not the note: a bare "implemented" would read as checked.
                 how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
             verified.append(_item("requirement", ident, what, how=how))
+        elif status == CHECKED:
+            # Met by a check other than a citation (an excluded feature not found, files unchanged).
+            verified.append(_item("requirement", ident, what, how=note))
+        elif status == NOT_PROVABLE:
+            not_verified.append(_item("requirement", ident, what, why=note))
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
                       else "the delivered code implements it only partly")

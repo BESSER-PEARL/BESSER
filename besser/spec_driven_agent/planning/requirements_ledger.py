@@ -66,6 +66,14 @@ _EXTRACTION_INCOMPLETE = (
     "verification obligation, not an application feature."
 )
 _STATUSES = ("implemented", "partial", "missing", "unverified")
+# Requirements no cited line can show: something the app must not have, and existing
+# behaviour a change must keep. Left unverified by the judge, ``settle_uncitable`` decides them.
+ABSENCE_KIND = "absence"
+PRESERVATION_KIND = "preservation"
+# Statuses it gives besides "missing": CHECKED, met as a check other than a citation shows
+# (its note says which); NOT_PROVABLE, reported and never a blocker.
+CHECKED = "checked"
+NOT_PROVABLE = "not_provable"
 
 # What the judge reads: the schemas and the ORM first (validators, unique
 # columns), then the backend code the model wrote or changed (where rules are
@@ -444,7 +452,10 @@ _EXTRACT_SYSTEM_PROMPT = (
     "for the shape a value must have; 'rule' for limits and cross-entity "
     "rules; 'computed' for values worked out rather than typed in; "
     "'transition' for state changes and when they are refused; 'action' for "
-    "named operations; 'ui' for screens and interactions.\n"
+    "named operations; 'ui' for screens and interactions; 'absence' for "
+    "something the app must not have at all (no sign-in, no admin area), never "
+    "a refusal or limit the app enforces (that is a 'rule'); 'preservation' "
+    "for existing behaviour a change must keep working as it is.\n"
     "- Skip the technology stack and instructions to the assistant.\n"
     "- Broad goals such as 'functional for any user' or 'no errors' do not add "
     "unstated authentication, authorization, user roles, integrations, or exhaustive "
@@ -470,7 +481,8 @@ _SUBMIT_REQUIREMENTS_TOOL = {
                         "kind": {
                             "type": "string",
                             "enum": ["validation", "uniqueness", "rule",
-                                     "computed", "transition", "action", "ui"],
+                                     "computed", "transition", "action", "ui",
+                                     ABSENCE_KIND, PRESERVATION_KIND],
                         },
                     },
                     "required": ["text"],
@@ -2424,6 +2436,130 @@ def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
             for v in verdicts]
 
 
+# What an absence requirement may name, the words that name it, how it reads when absent,
+# and the packages that bring it.
+_ABSENCE_TOPICS = (
+    # "auth" and its derivations, never "author".
+    ("authentication", re.compile(r"\b(?:auth|authenticat\w*|authori[sz]\w*|log(?:ging)?[\s-]?ins?"
+                                  r"|sign(?:ing)?[\s-]?(?:in|up)s?|passwords?)\b", re.I),
+     "no authentication library or sign-in route",
+     frozenset({"python-jose", "passlib", "pyjwt", "fastapi-users", "fastapi-login", "authlib", "flask-login",
+                "flask-jwt-extended", "djangorestframework-simplejwt", "django-allauth", "python-keycloak",
+                "next-auth", "@auth/core", "@auth0/auth0-react", "@auth0/auth0-spa-js", "@auth0/nextjs-auth0",
+                "jsonwebtoken", "passport", "keycloak-js", "oidc-client-ts", "react-oidc-context",
+                "@azure/msal-browser", "@azure/msal-react", "@clerk/clerk-react"})),
+    ("agents", re.compile(r"\b(?:agents?|chat\s?bots?)\b", re.I),
+     "no agents folder or agent library",
+     frozenset({"besser-agentic-framework"})),
+)
+_AUTH_ROUTE_SEGMENTS = frozenset({"login", "logout", "signin", "signup", "auth", "oauth"})
+_CLAUSE_RE = re.compile(r",|;|\b(?:and|or|nor)\b", re.I)
+_REQUIREMENTS_FILE_RE = re.compile(r"requirements[\w.-]*\.txt")
+
+
+def _declared_packages(output_dir: str) -> dict[str, str]:
+    """Runtime packages the app declares (``requirements*.txt``, ``package.json``
+    dependencies), lower-case with ``-`` for ``_``: name -> the manifest declaring it."""
+    base = Path(output_dir)
+    found: dict[str, str] = {}
+    for root, dirs, names in walk_plain(base):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _DIGEST_SKIP_DIRS]
+        for name in names:
+            if name != "package.json" and not _REQUIREMENTS_FILE_RE.fullmatch(name):
+                continue
+            path = Path(root, name)
+            try:
+                text = path.read_text(encoding="utf-8-sig", errors="ignore")
+                data = json.loads(text) if name == "package.json" else None
+            except (OSError, ValueError):
+                continue
+            if name == "package.json":
+                deps = list((data.get("dependencies") or {}) if isinstance(data, dict) else ())
+            else:
+                deps = [re.split(r"[\s\[<>=!~;@]", line.strip(), maxsplit=1)[0] for line in text.splitlines()
+                        if line.strip() and not line.strip().startswith(("#", "-"))]
+            for dep in deps:
+                found.setdefault(str(dep).lower().replace("_", "-"), path.relative_to(base).as_posix())
+    return found
+
+
+def _topic_found(topic: str, packages: frozenset[str], files: dict[str, str], declared: dict[str, str]) -> list[str]:
+    """Where the app has what an absence requirement excludes: a package of the topic, an
+    authentication route, or Python agent code under an ``agents`` folder."""
+    found = [f"{name} in {declared[name]}" for name in sorted(packages & set(declared))]
+    if topic == "authentication":
+        for rel, full in sorted(files.items()):
+            if rel.endswith(".py"):
+                found += sorted(f"route /{'/'.join(segments)} in {rel}" for _, segments, *_ in _declared_routes(full)
+                                if _AUTH_ROUTE_SEGMENTS & set(segments))
+    else:
+        folders = {"/".join(parts[:parts.index("agents") + 1]) for parts in (rel.split("/") for rel in files)
+                   if parts[-1].endswith(".py") and "agents" in parts[:-1]}
+        found += [f"agents folder {folder}" for folder in sorted(folders)]
+    return found
+
+
+def source_hashes(output_dir: str) -> dict[str, str]:
+    """sha256 of every judged file, by its path."""
+    return {rel: cited_file_hash(full) for rel, full in _source_files(output_dir).items()}
+
+
+def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex | None,
+                     baseline: dict[str, str] | None) -> list[dict]:
+    """The unverified absence and preservation verdicts, decided without a citation.
+
+    Absence: an excluded topic the tree has (``_ABSENCE_TOPICS``) is ``missing``, with
+    what was found; all of the text's topics absent is ``CHECKED``; anything else is
+    ``NOT_PROVABLE``. Preservation: ``CHECKED`` when the files the judge named for it, and
+    the files they rest on, are byte-identical to ``baseline`` (:func:`source_hashes` of the
+    previous version; the stored generator output when None), else ``NOT_PROVABLE``.
+    """
+    if not any(v.get("status") == "unverified" and v.get("kind") in (ABSENCE_KIND, PRESERVATION_KIND)
+               for v in verdicts):
+        return verdicts
+    files = _source_files(output_dir)
+    declared: dict[str, str] | None = None
+    settled = []
+    for verdict in verdicts:
+        kind = verdict.get("kind")
+        if verdict.get("status") != "unverified" or kind not in (ABSENCE_KIND, PRESERVATION_KIND):
+            settled.append(verdict)
+            continue
+        text = str(verdict.get("text") or "")
+        if kind == ABSENCE_KIND:
+            topics = [topic for topic in _ABSENCE_TOPICS if topic[1].search(text)]
+            declared = _declared_packages(output_dir) if topics and declared is None else declared
+            found = [where for name, _, _, packages in topics for where in _topic_found(name, packages, files, declared)]
+            checked = "; ".join(absent for _, _, absent, _ in topics)
+            if found:
+                status, note = "missing", "Found in the app: " + "; ".join(found[:5]) + "."
+            elif topics and all(any(words.search(clause) for _, words, _, _ in topics)
+                                for clause in _CLAUSE_RE.split(text) if re.search(r"\w", clause)):
+                status, note = CHECKED, f"Checked in the app's files: {checked}."
+            else:
+                status, note = NOT_PROVABLE, ("Something the app must not have cannot be shown by citing code"
+                                              + (f"; checked in the app's files: {checked}" if topics else "")
+                                              + ". Not counted as a blocker.")
+        else:
+            named = resolved_focus_paths(files, [*verdict.get("inspection_paths", []),
+                                                 *cited_paths(verdict.get("evidence"))])
+            if baseline is None:
+                baseline = {rel: hashlib.sha256(generated.encode("utf-8")).hexdigest()
+                            for rel, generated in _generator_baselines(output_dir, files).items()}
+            resting = sorted((imports or ImportIndex(output_dir, files)).dependencies(set(named))) if named else []
+            changed = [rel for rel in [*named, *resting] if baseline.get(rel) != cited_file_hash(files[rel])]
+            if named and not changed:
+                status, note = CHECKED, ("Unchanged since the previous version: " + ", ".join(named)
+                                         + (f", and the {len(resting)} file(s) they import or are mounted by"
+                                            if resting else "") + ".")
+            else:
+                status, note = NOT_PROVABLE, (
+                    "Behaviour kept as before is shown by its files being unchanged, not by citing code; "
+                    + (f"changed since the previous version: {', '.join(changed[:5])}" if changed
+                       else "no file implementing it was named") + ". Not counted as a blocker.")
+        settled.append({**verdict, "status": status, "evidence": "", "note": note})
+    return settled
+
 
 def ledger_issues(verdicts: list[dict]) -> list[str]:
     """Unresolved requirements block completion without claiming they are absent."""
@@ -2435,6 +2571,10 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         if status == "out_of_scope":
             # Unclassified prefix: a warning, never a blocker.
             issues.append(f"requirement out of scope: {label}{note}")
+            continue
+        if status == NOT_PROVABLE:
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement not provable: {label}{note}")
             continue
         if v.get("kind") == "verification":
             issues.append(f"requirement unverified: {label}{note}")

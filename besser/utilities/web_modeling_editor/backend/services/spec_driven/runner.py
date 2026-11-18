@@ -333,6 +333,8 @@ def _ran(verdict: dict) -> bool:
     """Whether a call to the running app exercised an implemented verdict. Recipes written before
     levels existed have none, and keep their old place among the verified."""
     return verdict.get("verification", "verified") in _RAN_LEVELS
+
+
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 _UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
@@ -2353,10 +2355,12 @@ class SmartGenerationRunner:
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
                 blocker_count=len(_unfixed_blockers), cost=final_cost,
             )
-            # A cancel can land after Phase 2 ended cleanly: the run is still cut short,
-            # and its reason says so before anything Phase 3 left.
+            # A cancel can land after Phase 2 ended cleanly. It cut the run short only when Phase 3
+            # saw it and stopped; then the reason says so before anything Phase 3 left.
             cancelled = self._facts.stopped_by == run_record.CANCELLED
-            if cancelled and exited_cleanly:
+            cut_by_cancel = (cancelled and exited_cleanly
+                             and bool(getattr(orchestrator, "_phase3_interrupted", True)))
+            if cut_by_cancel:
                 incomplete = True
                 incomplete_reason_msg = " ".join(filter(None, (self._facts.stop_message, incomplete_reason_msg)))
 
@@ -2374,7 +2378,7 @@ class SmartGenerationRunner:
                 # when the loop exited cleanly — a genuinely cut-short
                 # run keeps 0 so clients use their cut-short copy.
                 done_event.blockerCount = (
-                    len(_unfixed_blockers) if exited_cleanly and not cancelled else 0
+                    len(_unfixed_blockers) if exited_cleanly and not cut_by_cancel else 0
                 )
                 # Best-effort authorship split (generator vs. LLM) over the
                 # final tree — the headline telemetry metric. Never blocks the

@@ -166,11 +166,14 @@ class _BlockedOrchestrator(_Orchestrator):
 
     cancel = None
     severity, prefix = "blocker", "runtime: route"
+    # Whether Phase 3 saw the cancel and stopped, or had already finished when it came.
+    interrupted = True
 
     def _finish(self, method):
         out = super()._finish(method)
         cls = type(self)
         self._validation_issues = [ValidationIssue(cls.severity, f"{cls.prefix} {n} fails") for n in (1, 2)]
+        self._phase3_interrupted = cls.interrupted
         if type(self).cancel is not None:
             type(self).cancel.set()  # the cancel arrives after Phase 2 ended cleanly
         return out
@@ -189,10 +192,12 @@ def test_a_run_cut_short_logs_and_records_its_real_blocker_count(monkeypatch, ca
     assert " blockers=2 " in end
 
 
-def test_a_cancel_after_a_clean_phase_2_is_reported_as_cancelled_not_finished(monkeypatch):
+@pytest.mark.parametrize("interrupted", [True, False])
+def test_a_cancel_after_a_clean_phase_2_is_incomplete_only_when_it_cut_validation(monkeypatch, interrupted):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
     _BlockedOrchestrator.stop_reason, _BlockedOrchestrator.cancel = "completed", asyncio.Event()
+    monkeypatch.setattr(_BlockedOrchestrator, "interrupted", interrupted)
     # Checks that could not run: alone they leave a finished run complete.
     monkeypatch.setattr(_BlockedOrchestrator, "severity", "warning")
     monkeypatch.setattr(_BlockedOrchestrator, "prefix", "validation unverified: the boot check")
@@ -204,9 +209,13 @@ def test_a_cancel_after_a_clean_phase_2_is_reported_as_cancelled_not_finished(mo
         _BlockedOrchestrator.cancel = None
 
     assert done["cancelled"] is True and done["recipe"]["run"]["outcome"] == "cancelled"
-    # Cut short, not "finished with N unresolved issues".
-    assert (done["incomplete"], done["blockerCount"]) == (True, 0)
-    assert done["incompleteReason"] == "The run was cancelled before it finished."
+    if interrupted:
+        # Cut short, not "finished with N unresolved issues".
+        assert (done["incomplete"], done["blockerCount"]) == (True, 0)
+        assert done["incompleteReason"] == "The run was cancelled before it finished."
+    else:
+        # The cancel came after the work had finished: nothing was cut.
+        assert (done["incomplete"], done["blockerCount"], done["incompleteReason"]) == (False, 2, None)
 
 
 def test_a_cancel_after_a_clean_phase_2_with_defects_says_it_was_cancelled(monkeypatch):

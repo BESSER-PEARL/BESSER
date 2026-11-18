@@ -198,10 +198,11 @@ def test_a_recovered_ocl_constraint_moves_out_of_shipped_unenforced():
     assert "guestsWithinCapacity" in _ids(report.shippedUnenforced)
 
 
-@pytest.mark.parametrize("level, found_in_code", [("unverified", True), ("api_verified", False), (None, False)])
-def test_a_recovered_ocl_constraint_is_placed_by_its_verification_level(level, found_in_code):
+@pytest.mark.parametrize("level_fields, found_in_code", [
+    ({"verification": "unverified"}, True), ({"verification": None}, True),
+    ({"verification": "api_verified"}, False), ({}, False)])
+def test_a_recovered_ocl_constraint_is_placed_by_its_verification_level(level_fields, found_in_code):
     recipe = _hotel_recipe()
-    level_fields = {"verification": level} if level else {}
     recipe["requirements"][3] = _recovery_requirement(
         _NO_DOUBLE_BOOKING, 4, status="implemented",
         evidence="backend/routers/booking.py:        raise HTTPException(409, 'room already booked')", **level_fields)

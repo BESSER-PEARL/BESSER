@@ -348,8 +348,8 @@ def save_checkpoint(
 
 
 def _phase2_stop_reason(data: dict, phase: str) -> str:
-    """The saved Phase 2 stop reason. Older runs whose Phase 2 was skipped saved the then-default
-    "max_turns" with a clean exit; that Phase 2 finished."""
+    """The saved Phase 2 stop reason. A Phase 3 checkpoint with a clean Phase 2 exit and "max_turns"
+    loads as "completed": older runs whose Phase 2 was skipped saved that then-default."""
     reason = str(data.get("phase2_stop_reason", ""))
     if phase == "phase3" and data.get("phase2_exited_cleanly") is True and reason == "max_turns":
         return "completed"

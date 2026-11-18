@@ -109,7 +109,9 @@ link with ``target="_blank"``, stays a plain anchor. When the GUI comes from the
 web editor, a link names its page by a ``data-navigate-to`` attribute or by a
 site-relative ``href`` matching the page's route, name or id.
 
-A ``<nav>`` bar's fixed ``height`` is generated as its ``min-height``. On a screen
+A ``<nav>`` bar's fixed ``height`` is generated as its ``min-height``, except for a
+bar that scrolls inside its height (an ``overflow`` other than ``visible``), one
+positioned ``fixed`` or ``absolute``, and one of height 0. On a screen
 640 px wide or narrower, the bar and its direct children wrap their items onto
 more lines (``src/index.css``), so its links stay on the screen and the bar grows
 to fit them. The rule is in the ``base`` layer: any rule of the design, such as

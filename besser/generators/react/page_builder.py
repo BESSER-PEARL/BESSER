@@ -1164,9 +1164,14 @@ class PageBuilderMixin:
     def _nav_style(style: Dict[str, Any]) -> Dict[str, Any]:
         """A navigation bar's fixed height becomes its minimum height, so the bar
         grows when its items wrap on a narrow screen (``src/index.css``) instead
-        of spilling over the page."""
+        of spilling over the page. A bar that scrolls inside its height, is laid
+        out against the viewport (fixed, absolute) or is collapsed (0) keeps it."""
         height = str(style.get("height", "")).strip()
-        if not height or height == "auto" or "minHeight" in style:
+        if not height or height == "auto" or "minHeight" in style or re.fullmatch(r"0(\.0*)?[a-z%]*", height):
+            return style
+        if str(style.get("position", "")).strip() in ("fixed", "absolute"):
+            return style
+        if any(str(style.get(key, "visible")).strip() != "visible" for key in ("overflow", "overflowX", "overflowY")):
             return style
         style = {key: value for key, value in style.items() if key != "height"}
         style["minHeight"] = height

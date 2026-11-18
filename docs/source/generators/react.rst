@@ -27,7 +27,8 @@ Dynamic data tables with:
 
 - Sorting and filtering
 - Pagination
-- Add/Edit modals with form validation
+- Add/Edit modals with form validation; an optional field left empty is saved
+  as ``null``, not ``""`` or ``0``
 - A confirmation prompt before a row's delete icon removes the record
 - Backend validation error display (keeps modal open on error)
 - Support for all relationship types (1:1, 1:N, N:M)

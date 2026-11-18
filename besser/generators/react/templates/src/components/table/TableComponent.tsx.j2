@@ -1051,6 +1051,12 @@ export const TableComponent: React.FC<Props> = ({
                         // attribute's default (or reports it missing) instead of rejecting ""
                         return;
                       }
+                      if (!col.required && col.type !== 'list' && col.type !== 'bool' && col.type !== 'boolean'
+                          && (value === undefined || value === null || value === '')) {
+                        // An optional field left empty has no value: null, not "" or 0
+                        processedValues[col.field] = null;
+                        return;
+                      }
                       if (col.type === 'list') {
                         // Convert comma-separated string to array
                         processedValues[col.field] = typeof value === 'string' 

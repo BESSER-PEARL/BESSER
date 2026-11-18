@@ -641,11 +641,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # possible resume. Kept separate from ``self._validation_issues``
         # because those are about Phase 3 quality, not run completion.
         self._phase2_exited_cleanly: bool = False
-        # Why Phase 2 stopped. "completed" only when the LLM signalled
-        # end_turn; otherwise one of: "api_error", "cost_cap", "timeout",
-        # "cancelled", "max_turns". The runner reads this to decide whether
-        # to warn the user that the downloaded output may be incomplete.
-        self._phase2_stop_reason: str = "max_turns"
+        # Why Phase 2 stopped: "completed" when the LLM signalled end_turn or
+        # the scaffold already covered the request; otherwise one of
+        # "api_error", "cost_cap", "timeout", "cancelled", "max_turns" (set
+        # only when the loop used every turn). Empty until Phase 2 ends. The
+        # runner reads this to decide whether to warn the user that the
+        # downloaded output may be incomplete.
+        self._phase2_stop_reason: str = ""
         # Which branch produced that reason, when the reason alone is
         # ambiguous. "validation_required" is set both by the end_turn blocker
         # gate and by the bounded-inspection handoff, two exits of very
@@ -1977,6 +1979,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         self._generator_used,
                     )
                     self._phase2_exited_cleanly = True
+                    self._phase2_stop_reason = "completed"
+                    self._phase2_stop_detail = "scaffold already covers the request"
                     if self.on_progress:
                         self.on_progress(
                             1, "__customize_skipped__",
@@ -2320,6 +2324,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
+        else:
+            self._phase2_stop_reason = "max_turns"
 
     # Above this the request is not repeated as the first user message. The
     # system prompt already carries it whole ("## User request"), and a second

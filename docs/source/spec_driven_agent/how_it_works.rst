@@ -100,7 +100,8 @@ The three phases
    scaffold. Before the loop starts, a cheap *planning* call analyses the gap
    between the scaffold and the request and produces the task list; when it
    judges the scaffold already sufficient, Phase 2 is skipped entirely (a
-   create run only; a modify run always runs it). The planner labels each task
+   create run only; a modify run always runs it), and the run record says the
+   run finished, not that a limit stopped it. The planner labels each task
    as a change, or as removing the scaffold or switching its framework; the
    latter two are dropped, since the scaffold's stack is fixed. Only the
    planner's own empty list skips Phase 2: a list emptied by dropped tasks

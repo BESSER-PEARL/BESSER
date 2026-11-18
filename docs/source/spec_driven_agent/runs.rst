@@ -287,7 +287,9 @@ keys, always in this order:
   (``finished``, ``time limit``, ``cost limit``, ``turn limit``, ``provider
   error``, ``internal error``, ``cancelled``, ``repeated edits did not land`` or
   ``handed off to validation``), ``stop_message`` (the run card's sentence for
-  that ending, without its variable parts) and ``outcome``.
+  that ending, without its variable parts) and ``outcome``. ``turn limit`` means
+  the customization loop used every turn; a run whose customization was skipped
+  because the scaffold already covered the request ended ``finished``.
 - ``warnings``: the warnings shown to the user during the run (at most eight),
   each as a fixed sentence. A warning whose text can quote an error is left out.
 - ``duration_seconds``, ``phase_seconds`` (``select``, ``generate``, ``plan``,

@@ -593,6 +593,16 @@ def test_state_with_two_auto_transitions_is_rejected():
         process_agent_diagram(diagram)
 
 
+def test_auto_transition_next_to_another_transition_is_rejected():
+    """The quiz mistake: 'wrong answer' modelled as auto next to the intent transition of the same state."""
+    diagram = _live_testing_diagram()
+    # s-ask already has transitions to s-think (form) and s-files (intent); add an auto one
+    diagram["model"]["relationships"]["r-auto"] = _transition(
+        "r-auto", "s-ask", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    with pytest.raises(ValueError, match="next to .* other transition"):
+        process_agent_diagram(diagram)
+
+
 def test_custom_condition_code_is_wired_under_its_generated_name(tmp_path):
     """Two custom conditions with the same authored function name must not collide, and the
     transition must reference a function that exists."""

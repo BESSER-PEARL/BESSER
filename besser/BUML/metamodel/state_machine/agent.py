@@ -2593,9 +2593,11 @@ class Agent(StateMachine):
             )
 
     def _validate_auto_transitions(self, errors: list[str]):
-        """A state can have only one `auto` transition: it fires unconditionally, so a second
-        one could never be told apart from the first. A state shared by several flows should
-        use conditional transitions (e.g. a custom condition) instead."""
+        """An `auto` transition must be the only transition of its state (BAF raises
+        ``ConflictingAutoTransitionError`` otherwise): it fires unconditionally, so a second
+        one could not be told apart from the first and any other transition could never run.
+        A state shared by several flows should use conditional transitions (e.g. a custom
+        condition) instead."""
         for state in self.states:
             auto_destinations = []
             for transition in state.transitions:
@@ -2603,12 +2605,20 @@ class Agent(StateMachine):
                 condition_items = conditions if isinstance(conditions, list) else [conditions]
                 if any(isinstance(condition, Auto) for condition in condition_items):
                     auto_destinations.append(transition.dest.name)
+            other_transitions = len(state.transitions) - len(auto_destinations)
             if len(auto_destinations) > 1:
                 errors.append(
                     f"State '{state.name}' has {len(auto_destinations)} 'auto' transitions "
                     f"(to {', '.join(repr(name) for name in auto_destinations)}); a state can have only one. "
                     "Use transitions with a condition instead, e.g. a custom condition that checks a "
                     "session variable set by the state you came from."
+                )
+            elif auto_destinations and other_transitions:
+                errors.append(
+                    f"State '{state.name}' has an 'auto' transition (to {auto_destinations[0]!r}) next to "
+                    f"{other_transitions} other transition(s); an 'auto' transition fires at once, so it must be "
+                    "the only transition of its state. Use 'when_no_intent_matched' for \"anything else\", "
+                    "or remove the 'auto' transition."
                 )
 
     def _validate_transition_intent_references(self, errors: list[str]):

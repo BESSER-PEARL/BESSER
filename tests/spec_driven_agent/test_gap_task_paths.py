@@ -31,6 +31,8 @@ that matches none so the model stops hunting for it.
 """
 from __future__ import annotations
 
+import pytest
+
 from besser.spec_driven_agent.planning.gap_analyzer import _resolve_task_paths
 
 
@@ -130,3 +132,26 @@ def test_live_task_list_leaves_no_unresolved_path_unflagged():
         assert "web_app/frontend/src/pages/Booking.tsx" in phantom
     # The path-less task is untouched.
     assert out[5] == tasks[5]
+
+
+DOTTED_WORKSPACE = WORKSPACE + [".github/workflows/ci.yml", "web_app/backend/.env.example"]
+
+
+@pytest.mark.parametrize("task, expected", [
+    # A right path stays right when the same file is also named by a shorter suffix.
+    ("In web_app/backend/main_api.py register the new router; main_api.py must also expose /health.",
+     "In web_app/backend/main_api.py register the new router; "
+     "web_app/backend/main_api.py must also expose /health."),
+    ("Add a cancel button to pages/Booking.tsx (Booking.tsx currently has no actions column).",
+     "Add a cancel button to web_app/frontend/src/pages/Booking.tsx "
+     "(web_app/frontend/src/pages/Booking.tsx currently has no actions column)."),
+    ("Edit `backend/main_api.py` and 'main_api.py'.",
+     "Edit `web_app/backend/main_api.py` and 'web_app/backend/main_api.py'."),
+    ("Wire it in backend\\main_api.py.", "Wire it in web_app/backend/main_api.py."),
+    # A dot-directory keeps its dot.
+    ("Add a lint job to workflows/ci.yml.", "Add a lint job to .github/workflows/ci.yml."),
+    ("Add a lint job to .github/workflows/ci.yml.", "Add a lint job to .github/workflows/ci.yml."),
+    ("Add a lint job to ./.github/workflows/ci.yml.", "Add a lint job to ./.github/workflows/ci.yml."),
+])
+def test_repair_rewrites_whole_paths_only(task, expected):
+    assert _resolve_task_paths([task], DOTTED_WORKSPACE) == [expected]

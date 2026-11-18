@@ -25,7 +25,7 @@ def planted(tmp_path):
     secret.write_text(SECRET + "\n", encoding="utf-8")
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    (workspace / "app.py").write_bytes(b"print('hello')\n")
     try:
         os.symlink(secret, workspace / "leak.txt")
     except (OSError, NotImplementedError) as exc:
@@ -50,7 +50,7 @@ def test_list_files_does_not_expose_an_escaping_link(planted):
 
     result = call(executor, "list_files")
 
-    assert [f["path"] for f in result["files"]] == ["app.py"], result
+    assert result["files"].splitlines() == ["app.py 15"], result
 
 
 def test_list_files_survives_a_dangling_link(planted):

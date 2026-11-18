@@ -11,6 +11,7 @@ number without its derivation is an invitation to "tune" it blindly.
 
 from __future__ import annotations
 
+import fnmatch
 
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.state.checkpoint import (
@@ -18,6 +19,7 @@ from besser.spec_driven_agent.state.checkpoint import (
     _SNAPSHOT_DIR,
 )
 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
+from besser.spec_driven_agent.validation.issues import RUNTIME_CHECK_UNVERIFIED
 
 
 # Where a rollback parks the current tree while it restores. Living inside
@@ -39,28 +41,46 @@ WORKSPACE_SKIP_DIRS = frozenset(
     {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build"}
 )
 
-# The narrower set the frontend-source walks skip (build output only).
-FRONTEND_WALK_SKIP_DIRS = frozenset({"node_modules", "dist", "build"})
+# Append-only sidecar of untruncated write-tool inputs (see _LOG_VALUE_BUDGET).
+TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"
 
 # Run bookkeeping that a rollback must NOT revert. The snapshot predates them,
-# so restoring it would rewind the append-only trace and resurrect a stale
-# checkpoint, making a later resume replay work already on disk.
+# so restoring it would rewind the append-only trace and tool-input sidecar and
+# resurrect a stale checkpoint, making a later resume replay work already on disk.
 _ROLLBACK_PRESERVED = {
     TRACE_FILENAME,
     CHECKPOINT_FILENAME,
+    TOOL_INPUTS_FILENAME,
     ".besser_recipe.json",
     _SNAPSHOT_DIR,
     _SNAPSHOT_STAGING_DIR,
     _ROLLBACK_DISCARD_DIR,
 }
 
-# Dependency / build directories excluded from the recipe's output_files
-# manifest (mirrors the web runner's zip exclusions).
+# Dependency, build and run-internal directories that are not part of the app.
 _RECIPE_EXCLUDED_DIRS = {
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
-    ".next", ".gradle", "venv", ".venv", _SNAPSHOT_DIR,
+    ".next", ".gradle", "venv", ".venv", ".pytest_cache", _SNAPSHOT_DIR,
     _SNAPSHOT_STAGING_DIR, _ROLLBACK_DISCARD_DIR, COMMAND_OUTPUT_DIR,
 }
+
+# Files a build or a run of the app leaves behind (fnmatch globs).
+_EXCLUDED_OUTPUT_FILE_GLOBS = ("*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log")
+
+# Base names left out of everything a run delivers: the recipe's output_files
+# manifest, the download, the seed of a later run and a GitHub push. One list,
+# so the manifest cannot name a file the user does not receive.
+EXCLUDED_OUTPUT_NAMES = frozenset({*_RECIPE_EXCLUDED_DIRS, *_EXCLUDED_OUTPUT_FILE_GLOBS})
+
+# What installing and building put in a workspace, which nothing delivers or seeds:
+# the excluded folders without the run's own records.
+INSTALLED_AND_BUILT_DIRS = frozenset(_RECIPE_EXCLUDED_DIRS - {
+    _SNAPSHOT_DIR, _SNAPSHOT_STAGING_DIR, _ROLLBACK_DISCARD_DIR, COMMAND_OUTPUT_DIR})
+
+
+def is_excluded_output_file(name: str) -> bool:
+    """True for a file name the delivered output leaves out."""
+    return any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDED_OUTPUT_NAMES)
 
 # Written by a build or by running the app, never authored. Invisible to
 # ``_workspace_revision`` (not even by presence): the frontend build and the
@@ -71,12 +91,22 @@ _REVISION_IGNORED_SUFFIXES = (
     # SQLite's sidecar files next to a database (app.db-journal, -wal, -shm).
     "-journal", "-wal", "-shm",
 )
-# Caches and build or coverage output a test, lint or build run writes inside
-# the workspace (``obj`` is .NET's, ``.dart_tool`` Flutter's).
+# Caches a test, lint or build run writes wherever it runs. Nobody authors
+# source under these dot-names, so they count at any depth (``.dart_tool`` is
+# Flutter's).
 _REVISION_IGNORED_DIRS = frozenset({
-    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
-    "htmlcov", "coverage", "obj", ".dart_tool",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox", ".dart_tool",
 })
+# Report and build output under an ordinary folder name, ignored only in the
+# project the tool ran in: next to one of these manifests (a leading dot means
+# any file with that suffix) or at the workspace root. Anywhere else, e.g.
+# ``src/features/coverage/``, the folder is authored source.
+_REVISION_PROJECT_OUTPUT_DIRS = {
+    "coverage": ("package.json",),  # jest / vitest / c8
+    "htmlcov": ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
+                "pytest.ini", "tox.ini"),  # coverage.py / pytest-cov
+    "obj": (".csproj", ".fsproj", ".vbproj"),  # MSBuild intermediate output
+}
 # Data and media a running app writes (a CSV store, an uploaded photo): their
 # path counts, their content does not, so the app's own writes are no edit.
 _REVISION_PATH_ONLY_SUFFIXES = (
@@ -103,7 +133,8 @@ def _runtime_verdict(messages) -> int:
     """Worst runtime state the findings in ``messages`` establish.
 
     ``_RUNTIME_FAILED`` only on an OBSERVED failure, ``_RUNTIME_UNVERIFIED``
-    when the probe ran but could not settle a create/action, ``_RUNTIME_OK``
+    when the probe ran but could not settle a create/action or a runtime check
+    did not run, ``_RUNTIME_OK``
     otherwise. Callers must not read OK as "the app works" unless a backend
     was actually booted - see ``_probeable_backends``.
     """
@@ -115,6 +146,16 @@ def _runtime_verdict(messages) -> int:
         if lower.startswith(_RUNTIME_UNVERIFIED_PREFIXES):
             verdict = _RUNTIME_UNVERIFIED
     return verdict
+
+
+def _tool_use_blocks(content) -> list:
+    """Every tool call in an assistant reply, a nameless one included.
+
+    Each call needs its result in the next message, or both providers reject
+    the request that follows; a call with no name gets the executor's
+    "unknown tool" error like any other name it does not know.
+    """
+    return [block for block in content or [] if getattr(block, "type", None) == "tool_use"]
 
 
 def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -> str:
@@ -199,6 +240,16 @@ _PHASE3_NO_EDIT_REMINDER = (
     "excerpt), or write_file if the file has to be rewritten. Then keep going "
     "until every blocker is fixed.</system-reminder>"
 )
+# Sent when a verification-only attempt stops with listed creates not yet read back.
+_PHASE3_CREATE_EVIDENCE_REMINDER = (
+    "<system-reminder>These listed creates still have no read-back: {paths}. "
+    "Each is settled only by a test_api scenario that POSTs it and then, in that "
+    "same scenario, GETs the record by its id under the same path. A scenario "
+    "holds at most 20 requests, so split the endpoints across several scenarios, "
+    "each logging in first where the API requires it and creating the parents it "
+    "needs. No source edit is needed for these; your next call must be test_api."
+    "</system-reminder>"
+)
 
 # Consecutive no-progress rounds tolerated before the repair loop ends.
 #
@@ -247,7 +298,7 @@ _RUNTIME_OBSERVED_FAILURE_PREFIXES = (
 # does not parse, imports a module that is not there, or uses a name nothing
 # defines. Deterministic, not a guess about untried input.
 _RUNTIME_FATAL_SOURCE_PREFIXES = (
-    "syntax error in", "python contract:", "missing module:", "undefined name:",
+    "syntax error in", "python contract:", "missing module:",
 )
 _RUNTIME_FAILURE_PREFIXES = (
     _RUNTIME_OBSERVED_FAILURE_PREFIXES + _RUNTIME_FATAL_SOURCE_PREFIXES
@@ -256,10 +307,11 @@ _RUNTIME_FAILURE_PREFIXES = (
 # business rule legitimately refused, an action whose reachable state it could
 # not construct, or a probe that did not run at all. Not evidence of a defect,
 # and not evidence of a working app either. Only a spec-derived ``test_api``
-# scenario (see ``confirmed_create_paths``) turns one of these green.
+# scenario (see ``confirmed_create_paths``) turns one of these green. A runtime
+# check that did not run is a warning, not a blocker, but still unverified.
 _RUNTIME_UNVERIFIED_PREFIXES = (
     "runtime unverified:", "create unverified:", "action unverified:",
-    "api scenario:",
+    "api scenario:", RUNTIME_CHECK_UNVERIFIED,
 )
 
 # Generators that produce a WHOLE application, and the workspace folder each
@@ -305,4 +357,3 @@ _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY = {
 # recipe. Untruncated write-tool inputs go to TOOL_INPUTS_FILENAME.
 _LOG_VALUE_BUDGET = 500
 _WRITE_TOOLS_ON_RECORD = frozenset({"modify_file", "replace_file_lines", "write_file", "delete_file"})
-TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"

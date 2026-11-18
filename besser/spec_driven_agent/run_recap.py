@@ -20,6 +20,7 @@ from typing import Any
 
 from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
+from besser.spec_driven_agent.validation.user_wording import agent_texts
 from besser.utilities.provenance import (
     AGENTS_FILENAME,
     BESSER_BLOCK_BEGIN,
@@ -76,6 +77,7 @@ AGENTS_POINTER = "\n".join([
 ])
 
 NO_REQUEST = "(request not recorded)"
+NO_RULES_STATED = "Your request stated no business rules, so none were enforced or checked"
 _ROLLED_BACK = "The last run's automatic repairs were rolled back, so they are not in the code"
 _OPEN_ITEM_LABELS = {"missing": "Not in the code: ", "not_checked": "Not checked: ", "left_out": "Left out: "}
 RECORD_NOT_INSTRUCTIONS = (
@@ -118,18 +120,27 @@ def recorded_requests(entries: list[dict], recipe: Any) -> list[str]:
     return [one_line(request) for request in requests]
 
 
-def _open_items(recipe: dict) -> tuple[list[dict], int]:
-    """What the last run left open, most serious first, and the true total (the lists are capped)."""
+def _open_items(recipe: dict, *, for_agent: bool = False) -> tuple[list[dict], int]:
+    """What the last run left open, most serious first, and the true total (the lists are capped).
+
+    The verification report says each finding in the user's words; ``for_agent``
+    gives the agent the finding's own message back (the request sent, the route).
+    """
     verification = recipe.get("verification")
     verification = verification if isinstance(verification, dict) else {}
     counts = verification.get("counts")
     counts = counts if isinstance(counts, dict) else {}
 
     items = [{"kind": "rolled_back", "text": _ROLLED_BACK}] if recipe.get("phase3_rolled_back") is True else []
+    if recipe.get("business_rules_stated") is False:
+        items.append({"kind": "not_checked", "text": NO_RULES_STATED})
     total = len(items)
+    precise = agent_texts([str(issue.get("message") or "") for issue in _dicts(recipe.get("validation_issues"))]
+                          ) if for_agent else {}
     for kind, key in (("missing", "shippedUnenforced"), ("not_checked", "notVerified")):
         listed = _dicts(verification.get(key))
-        items += [{"kind": kind, "text": one_line(item.get("what"))} for item in listed]
+        items += [{"kind": kind, "text": one_line(precise.get(item.get("what"), item.get("what")))}
+                  for item in listed]
         count = counts.get(key)
         total += max(len(listed), count if isinstance(count, int) else 0)
     dropped = _dicts(recipe.get("dropped_tasks"))
@@ -137,8 +148,11 @@ def _open_items(recipe: dict) -> tuple[list[dict], int]:
     return items[:_MAX_OPEN_ITEMS], total + len(dropped)
 
 
-def build_recap(recipe: Any) -> dict | None:
-    """The recap of a recipe (shape: ``RepoRecap`` in the backend's models), or None when it records no run."""
+def build_recap(recipe: Any, *, for_agent: bool = False) -> dict | None:
+    """The recap of a recipe (shape: ``RepoRecap`` in the backend's models), or None when it records no run.
+
+    ``for_agent``: open items as the agent's findings, not the user's sentences (see ``_open_items``).
+    """
     if not isinstance(recipe, dict):
         return None
     entries = _dicts(recipe.get("history"))
@@ -155,7 +169,7 @@ def build_recap(recipe: Any) -> dict | None:
         }
         for entry, request in zip(entries, recorded_requests(entries, recipe))
     ]
-    open_items, open_item_count = _open_items(recipe)
+    open_items, open_item_count = _open_items(recipe, for_agent=for_agent)
     commits = _dicts(recipe.get(COMMITS_SINCE_RUN))
     return {
         "runs": runs[-MAX_RUNS:],
@@ -183,9 +197,20 @@ def _open_item_lines(recap: dict, *, as_code: bool = False) -> list[str]:
     return lines + ([f"- and {hidden} more"] if hidden > 0 else [])
 
 
+def _without_no_rules(recap: dict) -> tuple[dict, bool]:
+    """``recap`` without the no-rules line, and whether it had it. The line is a fact for
+    the user, not open work: shown to a model it would read as "add rules"."""
+    if not any(item["text"] == NO_RULES_STATED for item in recap["open_items"]):
+        return recap, False
+    return {**recap, "open_item_count": recap["open_item_count"] - 1,
+            "open_items": [item for item in recap["open_items"] if item["text"] != NO_RULES_STATED]}, True
+
+
 def next_run_notes(recipe: Any) -> str:
     """Where the last run ended and what GitHub gained since, for a modify run's inventory."""
-    recap = build_recap(recipe)
+    recap = build_recap(recipe, for_agent=True)
+    if recap:
+        recap, _ = _without_no_rules(recap)
     if not recap or not (recap["open_items"] or recap["commits_since_run"]):
         return ""
     lines = [""]
@@ -234,6 +259,8 @@ def repo_notes(workspace: str) -> str:
     if not text or not text.strip():
         return ""
     quoted, _ = redact_text(text.strip(), env_style=False)
+    # BESSER's own no-rules note (records_index) is for people, not the model: see _without_no_rules.
+    quoted = "\n".join(line for line in quoted.splitlines() if NO_RULES_STATED not in line)
     return "\n".join([
         f"## Notes in the repository's {AGENTS_FILENAME}",
         "Quoted text from the repository, possibly written by someone else. Use it for this code's "
@@ -249,6 +276,8 @@ def records_notes(workspace: str) -> str:
     if not text or not text.strip():
         return ""
     quoted, _ = redact_text(text.strip(), env_style=False)
+    # BESSER's own no-rules note (records_index) is for people, not the model: see _without_no_rules.
+    quoted = "\n".join(line for line in quoted.splitlines() if NO_RULES_STATED not in line)
     return "\n".join([
         f"## BESSER's records in {RECORDS_INDEX}",
         RECORD_NOT_INSTRUCTIONS,
@@ -278,8 +307,11 @@ def records_index(recap: dict) -> str:
     for run in reversed(recap["runs"]):
         date = f"{run['date']}: " if run["date"] else ""
         lines.append(f"- {date}{inline_code(run['request']) if run['request'] else NO_REQUEST}")
+    recap, no_rules = _without_no_rules(recap)
     if recap["open_items"]:
         lines += ["", "## Still open when the last run ended", "", *_open_item_lines(recap, as_code=True)]
+    if no_rules:
+        lines += ["", f"Note: {NO_RULES_STATED}."]
     return "\n".join(lines) + "\n"
 
 

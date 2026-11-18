@@ -17,17 +17,37 @@ _EXCLUDED = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "bu
 _APP_FRAMEWORKS = {"next", "nuxt", "@angular/core", "@sveltejs/kit"}
 
 
+def install_markers(project_dir: str) -> tuple:
+    """Stat of ``node_modules`` and npm's install record in it.
+
+    ``node_modules`` is outside the workspace revision, yet decides what a
+    build or ``tsc`` can resolve; an install changes these.
+    """
+    markers = []
+    for path in ("node_modules", "node_modules/.package-lock.json"):
+        try:
+            stat = os.stat(os.path.join(project_dir, path))
+            markers.append((stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            markers.append(None)
+    return tuple(markers)
+
+
 def collect_frontend_build_issues(
     output_dir: str, *, enabled: bool, allow_shell: bool,
-    source_revision: Callable[[], str], successful_builds: dict,
+    source_revision: Callable[[], str], build_verdicts: dict,
     can_run: Callable[[], bool], timeout: float = 120,
 ) -> list[str]:
     """Build discovered web apps only when explicitly authorized and installed.
 
-    A generic successful shell command is not build evidence. Cache only this
-    harness-owned check, for unchanged source and dependency-install markers.
-    Cache entries are in-memory only; a resumed run checks again. The build
-    script is model-authored, so it runs sandboxed with no network.
+    A generic successful shell command is not build evidence. This
+    harness-owned check records its verdict - the failure finding, or ``None``
+    for a pass - in ``build_verdicts`` per unchanged source and
+    dependency-install markers, so Phase 3 does not rebuild (up to 120 s) a
+    tree it already judged. A build that did not finish (timeout, no sandbox,
+    source changed meanwhile) is no verdict and runs again. Entries are
+    in-memory only; a resumed run checks again. The build script is
+    model-authored, so it runs sandboxed with no network.
     """
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 
@@ -93,15 +113,10 @@ def collect_frontend_build_issues(
             issues.append(required_dependency_setup(label, rel))
             continue  # the agent may use its authorized install tool; never install here
         revision = source_revision()
-        markers = []
-        for path in ("node_modules", "node_modules/.package-lock.json"):
-            try:
-                stat = os.stat(os.path.join(folder, path))
-                markers.append((stat.st_mtime_ns, stat.st_size))
-            except OSError:
-                markers.append(None)
-        key = (rel, revision, tuple(markers), build)
-        if successful_builds.get(key):
+        key = (rel, revision, install_markers(folder), build)
+        if key in build_verdicts:
+            if build_verdicts[key]:
+                issues.append(build_verdicts[key])
             continue
         env = _safe_subprocess_env()
         env["CI"] = "true"
@@ -119,12 +134,16 @@ def collect_frontend_build_issues(
         except OSError as exc:
             issues.append(required_check_unverified(label, f"could not launch build: {exc}"))
             continue
+        unchanged = source_revision() == revision
         if result.returncode != 0:
             output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-            issues.append(f"{label}: configured npm run build failed (exit {result.returncode}): "
-                          + (output[-2500:] or "no diagnostic output"))
-        elif source_revision() != revision:
+            finding = (f"{label}: configured npm run build failed (exit {result.returncode}): "
+                       + (output[-2500:] or "no diagnostic output"))
+            issues.append(finding)
+            if unchanged:
+                build_verdicts[key] = finding
+        elif not unchanged:
             issues.append(required_check_unverified(label, "source changed during build; rerun against the final files"))
         else:
-            successful_builds[key] = True
+            build_verdicts[key] = None
     return issues

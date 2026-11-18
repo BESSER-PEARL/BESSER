@@ -134,3 +134,83 @@ def test_the_lockfile_strip_keeps_the_npm_ci_fix(tmp_path):
     content = dockerfile.read_text(encoding="utf-8")
     assert "npm ci" not in content and "RUN npm install" in content
     assert "package-lock.json" not in content
+
+
+# --- What the workspace walks read (and skip) -------------------------------
+
+def _messages(orch) -> list[str]:
+    return [i.message for i in orch._collect_validation_issues()]
+
+
+def test_a_utf8_bom_or_a_coding_line_is_valid_python(tmp_path):
+    """Python reads both; a strict UTF-8 read called the BOM U+FEFF a syntax error
+    and crashed Phase 3 with UnicodeDecodeError on the latin-1 file."""
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "bom.py").write_bytes(b"\xef\xbb\xbfx = 1\n")
+    (tmp_path / "backend" / "legacy.py").write_bytes(b"# -*- coding: latin-1 -*-\nname = 'caf\xe9'\n")
+
+    orch = _orch(tmp_path)
+
+    assert [m for m in _messages(orch) if m.startswith("Syntax error")] == []
+    assert [m for m in orch._validate_phase1_output() if "syntax" in m] == []
+
+
+def test_an_undecodable_file_is_a_finding_not_a_crash(tmp_path):
+    (tmp_path / "bad.py").write_bytes(b"x = '\xff\xfe'\n")
+
+    syntax = [m for m in _messages(_orch(tmp_path)) if m.startswith("Syntax error")]
+
+    assert len(syntax) == 1 and syntax[0].startswith("Syntax error in bad.py line 1:")
+
+
+def test_installed_dependencies_are_not_the_app(tmp_path):
+    """npm and pip install other people's code: a Python 2 script or a
+    Dockerfile in a package is not a defect the model can fix, and the check
+    must not rewrite files there."""
+    vendored_dockerfile = "FROM node:20\nCOPY requirements.txt .\nRUN npm ci\n"
+    for vendored in ("frontend/node_modules/somepkg", ".venv/lib/site-packages/pkg"):
+        (tmp_path / vendored).mkdir(parents=True)
+        (tmp_path / vendored / "gen.py").write_text("print 'python 2'\n", encoding="utf-8")
+        (tmp_path / vendored / "Dockerfile").write_text(vendored_dockerfile, encoding="utf-8")
+    (tmp_path / "frontend" / "package.json").write_text("{}", encoding="utf-8")
+    orch = _orch(tmp_path)
+
+    assert [m for m in _messages(orch) if "node_modules" in m or ".venv" in m] == []
+    assert [m for m in orch._validate_phase1_output() if "node_modules" in m or ".venv" in m] == []
+    assert (tmp_path / "frontend/node_modules/somepkg/Dockerfile").read_text(
+        encoding="utf-8") == vendored_dockerfile
+
+
+def test_a_rival_framework_inside_a_virtualenv_is_not_a_switch(tmp_path):
+    (tmp_path / "backend" / ".venv" / "flask_ext").mkdir(parents=True)
+    (tmp_path / "backend" / ".venv" / "flask_ext" / "x.py").write_text(
+        "import flask\n", encoding="utf-8")
+    orch = _orch(tmp_path)
+    orch._generator_used = "generate_fastapi_backend"
+
+    assert orch._collect_framework_switch_issues() == []
+
+
+def test_an_unparseable_null_byte_does_not_abort_the_import_check(tmp_path, monkeypatch):
+    """Python 3.11's ast.parse raises ValueError, not SyntaxError, on a null byte."""
+    from besser.spec_driven_agent.validation import python_imports
+
+    (tmp_path / "nul.py").write_text("x = 1\n", encoding="utf-8")
+
+    def parse_like_3_11(source, *args, **kwargs):
+        raise ValueError("source code string cannot contain null bytes")
+
+    monkeypatch.setattr(python_imports, "parse_source", parse_like_3_11)
+    assert python_imports._unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_the_data_contract_sweep_skips_a_virtualenv(tmp_path):
+    from besser.spec_driven_agent.validation.contract_checks import _walk_python
+
+    (tmp_path / "backend" / ".venv").mkdir(parents=True)
+    (tmp_path / "backend" / ".venv" / "lib.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "backend" / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+    parsed = _walk_python(str(tmp_path))[0]
+
+    assert [rel for rel, *_ in parsed] == ["backend/app.py"]

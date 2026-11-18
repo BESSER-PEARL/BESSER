@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import fnmatch
+import copy
 import json
 import logging
 import os
@@ -29,7 +29,7 @@ import tempfile
 import time
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
 
@@ -41,10 +41,12 @@ from besser.spec_driven_agent.errors import (
     InvalidApiKeyError,
     UpstreamLLMError,
 )
-from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
-from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
+from besser.utilities.workspace_fs import (
+    copy_plain_file, copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, walk_plain,
+    write_atomic_plain,
+)
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
@@ -54,20 +56,30 @@ from besser.spec_driven_agent.providers.llm_client import (
     is_free_fallback_choice,
 )
 from besser.llm.catalog import load_model_catalog
+from besser.spec_driven_agent.pipeline.constants import (
+    EXCLUDED_OUTPUT_NAMES,
+    INSTALLED_AND_BUILT_DIRS,
+    is_excluded_output_file as _is_excluded_output_file,
+)
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
+from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
-from besser.spec_driven_agent.run_recap import migrate_agents_recap
+from besser.spec_driven_agent.run_recap import NO_RULES_STATED, migrate_agents_recap
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
+from besser.spec_driven_agent.state.recipe_size import MAX_RECIPE_BYTES
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
     inline_code,
     remove_readme_block,
     write_generation_provenance,
+)
+from besser.spec_driven_agent.validation.user_wording import (
+    Finding, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
 )
 from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
@@ -92,6 +104,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     telemetry,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
@@ -127,7 +141,15 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
-_DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
+# A run's download (the served file and its manifest) lives in ``<run dir>.download``,
+# outside the tree the run's shell can write, so neither can be swapped for a link.
+# Its ``besser_llm_`` prefix puts it under the run-root cleanup.
+_DOWNLOAD_DIR_SUFFIX = ".download"
+_DOWNLOAD_MANIFEST_NAME = "manifest.json"
+_DOWNLOAD_ARTIFACT_NAME = "artifact"
+_DOWNLOAD_DIR_RE = re.compile(
+    re.escape(LLM_TEMP_DIR_PREFIX) + r"(?P<run_id>[a-f0-9]{32})_[a-z0-9_]+" + re.escape(_DOWNLOAD_DIR_SUFFIX)
+)
 # Written into a run imported from GitHub: where it came from. Its ``.besser_``
 # prefix keeps it out of every push and download.
 GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
@@ -137,6 +159,9 @@ GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
+# Error codes a run that goes on to deliver output is shown as warnings.
+_WARNING_CODES = frozenset({"INCOMPLETE", "COST_CAP", "TIMEOUT"})
+
 # Upper bound on queued SSE events so a runaway worker can't exhaust
 # memory. 2048 is comfortably above the steady-state queue depth (one
 # event every ~50ms for a very chatty run × a drain loop that handles
@@ -144,45 +169,97 @@ _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 # memory at a few MB.
 _EVENT_QUEUE_MAXSIZE = 2048
 
-# Max size in bytes of the .besser_recipe.json file that's embedded in
-# the final DoneEvent. A malformed or maliciously huge recipe would
-# otherwise bloat the last SSE frame beyond any reasonable size.
-_MAX_RECIPE_BYTES = 256 * 1024  # 256 KB
-
 # Build-output dirs + runtime/artifact FILE globs that must never reach the
 # download zip OR a GitHub push. Fed to shutil.ignore_patterns (used by both
 # the modify/continue-from-repo SEED copy and the push copy), which fnmatches
-# base names, so file globs work alongside the directory names. The file
-# globs matter because a run leaves artifacts IN the workspace that the seed
-# would otherwise carry into the next run and the push would commit: the
-# download zip itself (besser_smart_*.zip) and the SQLite DB that seed_data /
-# a validation run creates (*.db) were both landing in the pushed repo.
-_EXCLUDED_OUTPUT_DIRS = {
-    # build-output / dependency directories
-    "target", "node_modules", "__pycache__", ".git", "dist", "build",
-    ".next", ".gradle", "venv", ".venv", ".besser_snapshot", ".pytest_cache",
-    # A rollback that could not complete parks the pre-rollback tree here
-    # rather than deleting it; it is recovery state, not deliverable output.
-    ".besser_rollback_discard",
-    # Untruncated run_command logs: a debugging aid for the agent, not output.
-    COMMAND_OUTPUT_DIR,
-    # runtime / build artifact files (never belong in source or a push)
-    "*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log",
-}
+# base names, so file globs work alongside the directory names. The engine
+# owns the list: its recipe manifest leaves out the same names.
+_EXCLUDED_OUTPUT_DIRS = EXCLUDED_OUTPUT_NAMES
 
 
-def _remove_run_dir(path: str) -> None:
-    """Delete a run's workspace and the sandbox ``$HOME`` beside it, ending the
-    run's shell session first so none of its processes outlive the folder."""
+def run_download_dir(workspace: str) -> str:
+    """Where the run's download and its manifest are kept: beside its workspace."""
+    return workspace.rstrip("/\\") + _DOWNLOAD_DIR_SUFFIX
+
+
+def _remove_run_workspace(path: str) -> None:
+    """Delete a run's workspace and the sandbox ``$HOME`` beside it, keeping its download,
+    ending the run's shell session first so none of its processes outlive the folder."""
     close_sessions_for(path)
     shutil.rmtree(path, ignore_errors=True)
     shutil.rmtree(sandbox_home(path), ignore_errors=True)
 
 
+def _remove_run_dir(path: str) -> None:
+    """Delete a run's workspace, its sandbox ``$HOME`` and its download."""
+    _remove_run_workspace(path)
+    shutil.rmtree(run_download_dir(path), ignore_errors=True)
 
-def _is_excluded_output_file(name: str) -> bool:
-    """True for a file the push's ``ignore_patterns`` would drop too."""
-    return any(fnmatch.fnmatch(name, pattern) for pattern in _EXCLUDED_OUTPUT_DIRS)
+
+def drop_installed_dependencies(workspace: str) -> None:
+    """Remove what a finished run installed and built: those folders and its sandbox ``$HOME``.
+
+    Hundreds of MB that nothing reads once the run is packaged: the download, a
+    push and a modify run's seed leave them out.
+    """
+    close_sessions_for(workspace)
+    shutil.rmtree(sandbox_home(workspace), ignore_errors=True)
+    for root, dirs, _files in walk_plain(workspace):
+        for name in [d for d in dirs if d in INSTALLED_AND_BUILT_DIRS]:
+            dirs.remove(name)
+            shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+
+
+def _expire_run(path: str, age: float) -> bool:
+    """Apply a finished run's two lifetimes; True when its download is gone too.
+
+    The workspace (what a modify run, a push and resume read) goes after
+    ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``; the download, a small archive, stays
+    for ``BESSER_LLM_ARCHIVE_TTL_SECONDS``.
+    """
+    settings = get_settings()
+    if age > settings.llm_archive_ttl_seconds:
+        _remove_run_dir(path)
+        return True
+    if age > settings.llm_download_ttl_seconds and os.path.isdir(path):
+        _remove_run_workspace(path)
+    return False
+
+
+
+# The range of a ZIP entry's DOS timestamp.
+_ZIP_FIRST_STAMP = (1980, 1, 1, 0, 0, 0)
+_ZIP_LAST_STAMP = (2107, 12, 31, 23, 59, 58)
+
+
+def _zip_plain_file(zf: zipfile.ZipFile, path: str, arcname: str, root: str) -> None:
+    """Add ``path`` to ``zf`` through a link-refusing open, so a file the run's
+    shell swaps for a link after the walk is left out, not read through."""
+    try:
+        with open_plain(path, "rb", root=root) as src:
+            info = os.fstat(src.fileno())
+            # ZIP stores years 1980-2107 only; a file touched outside them must not fail the packaging.
+            stamp = min(max(time.localtime(info.st_mtime)[:6], _ZIP_FIRST_STAMP), _ZIP_LAST_STAMP)
+            entry = zipfile.ZipInfo(arcname.replace(os.sep, "/"), stamp)
+            entry.external_attr = (info.st_mode & 0xFFFF) << 16  # keeps the executable bit, as zf.write does
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.file_size = info.st_size
+            with zf.open(entry, "w") as dst:
+                shutil.copyfileobj(src, dst)
+    except OSError:
+        logger.warning("Left %s out of the download: no longer a plain file", arcname)
+
+
+async def _stop_helper_task(task: asyncio.Task, run_id: str) -> None:
+    """Cancel one of a run's helper tasks; its own error is logged, not raised,
+    so it cannot skip stopping the worker and releasing the run."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Run %s: helper task %s failed", run_id, task.get_name())
 
 
 def _dir_has_user_output(path: Optional[str]) -> bool:
@@ -205,7 +282,7 @@ def _dir_has_user_output(path: Optional[str]) -> bool:
 # ----------------------------------------------------------------------
 # What the run verified, could not verify, and shipped unenforced
 # ----------------------------------------------------------------------
-# Per list, so a large model can't push the recipe past _MAX_RECIPE_BYTES on
+# Per list, so a large model can't push the recipe past MAX_RECIPE_BYTES on
 # the next run that reads it back. counts carries the true totals.
 _MAX_VERIFICATION_ITEMS = 25
 
@@ -235,6 +312,14 @@ _SKIPPED_CHECK_RE = re.compile(
 # prefixes (ruff, frontend/data contract, create contract) describe code that
 # was built and is defective, which is a different question.
 _UNENFORCED_PREFIXES = ("action contract:", "model contract:")
+# The ``why`` of a requirement the check could not confirm, and of a workflow that failed. A workflow
+# is a test the agent wrote for its own code, not a rule the user stated: when it fails, the test or the
+# app may be wrong, so it is a result to look at, not a rule shipped unenforced.
+_UNCONFIRMED = "the check could not confirm it in the delivered code"
+_WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it is not a rule from your "
+                    "request, and the test or the app may be wrong")
+# A judge note's citation annotation: a file path and a remark for the agent.
+_CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 _UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
 
 
@@ -319,8 +404,16 @@ def run_changes(recipe: dict) -> dict:
 _SUMMARY_ITEMS_PER_STATE = 8
 
 
+def redact_recipe_models(recipe: dict, provider: str) -> None:
+    """Replace the recipe's model ids with the public label: the recipe goes into GitHub pushes."""
+    usage = recipe.get("usage")
+    for holder, key in ((recipe, "llm_model"), (usage if isinstance(usage, dict) else {}, "model")):
+        if key in holder:
+            holder[key] = agent_trace.normalize_model_id(provider, holder[key])
+
+
 def run_summary_markdown(
-    recipe: dict, verification: VerificationReport, secrets: Iterable[str] = (),
+    recipe: dict, verification: VerificationReport, secrets: Iterable[str] = (), *, readme: bool = False,
 ) -> list[str]:
     """The run section of ``BESSER_GENERATION.md``: target and verification.
 
@@ -341,16 +434,52 @@ def run_summary_markdown(
         lines.append(f"- Built as: {one_line(target.get('description') or target.get('kind'))}")
     generator = recipe.get("generator_used")
     lines.append(f"- Base generator: {one_line(generator) if generator else 'none, written from scratch'}")
+    run = recipe.get("run") if isinstance(recipe.get("run"), dict) else None
+    if run:
+        lines.append(f"- Run: {run.get('mode')}, {run.get('mode_reason')}; ended: {run.get('stopped_by')}")
+        if run.get("models"):
+            lines.append(f"- Model: {', '.join(map(one_line, run['models']))} ({run.get('key_tier')})")
+    if readme:
+        lines.append("- How to run it: see `README.md`")
     lines.append(
         f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
         f"{counts.shippedUnenforced} checked and missing in the code")
-    for title, items in (("Missing in the code", verification.shippedUnenforced),
-                         ("Not checked", verification.notVerified)):
+    removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
+                     for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
+    note = recipe.get("runtime_files_note")
+    if removed or kept or note:
+        lines.append(
+            f"- Left out: {removed} file(s) the app wrote while it was test-run"
+            + (f"; {kept} more could not be removed and are still in the output" if kept else "")
+            + (f" ({one_line(note)})" if note else ""))
+    findings = {finding.sentence: finding for finding in map(user_finding, _issue_messages(recipe))}
+    for title, items, total in (("Missing in the code", verification.shippedUnenforced, counts.shippedUnenforced),
+                                ("Not checked", verification.notVerified, counts.notVerified)):
         if items:
+            entries = [(_summary_finding(item, findings),
+                        one_line(item.what) + (f": {one_line(item.why)}" if item.why else "")) for item in items]
+            shown, covered = summary_lines(entries, _SUMMARY_ITEMS_PER_STATE, quote=one_line)
             lines += ["", f"### {title}", ""]
-            lines += [f"- {one_line(item.what)}" + (f": {one_line(item.why)}" if item.why else "")
-                      for item in items[:_SUMMARY_ITEMS_PER_STATE]]
+            lines += [f"- {line}" for line in shown]
+            if max(total, len(items)) > covered:
+                lines.append(f"- and {max(total, len(items)) - covered} more")
     return lines
+
+
+def _issue_messages(recipe: dict) -> list[str]:
+    return [str(issue.get("message") or "") for issue in recipe.get("validation_issues") or []
+            if isinstance(issue, dict)]
+
+
+def _summary_finding(item: VerificationItem, findings: dict) -> Finding:
+    """The group a report item merges into in the summary: by its sentence, else by its kind."""
+    if item.what in findings:
+        return findings[item.what]
+    if item.kind == "requirement" and item.id and item.why == _UNCONFIRMED:
+        return Finding(item.what, "requirement_unconfirmed", item.id)
+    if item.kind == "api_workflow" and item.why == _WORKFLOW_FAILED:
+        return Finding(item.what, "workflow_failed", item.id)
+    return Finding(item.what)
 
 
 def build_verification_report(recipe: dict) -> VerificationReport:
@@ -370,11 +499,12 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         recipe.get(key) for key in
         ("requirements", "api_scenarios", "model_conversion_issues", "validation_issues")
     ):
-        # _read_recipe dropped an oversized/unreadable recipe. Empty lists here
-        # would read as "there was nothing to verify".
+        # _read_recipe could not read the recipe. Empty lists here would read
+        # as "there was nothing to verify".
         not_verified.append(_item(
-            "check", "", "everything this run did",
-            why=f"the run's own report could not be read ({recipe['warning']})",
+            "check", "", "the results of this run's checks",
+            why=f"the run's record could not be read ({recipe['warning']}), so they cannot be shown; "
+                "the record is kept unchanged",
         ))
 
     verdicts = [v for v in (recipe.get("requirements") or []) if isinstance(v, dict)]
@@ -405,7 +535,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             verified.append(_item(
                 "ocl_constraint", label, what,
                 how="rejected by the OCL converter, then recovered in code: "
-                    + str(verdict.get("evidence") or "no citation"),
+                    + (render_evidence(verdict.get("evidence")) or "no citation"),
             ))
             continue
         if is_dropped_by_model_change(issue):
@@ -440,21 +570,29 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         what = str(verdict.get("text") or "")
         note = str(verdict.get("note") or "")
         if status == "implemented":
-            verified.append(_item(
-                "requirement", ident, what,
-                how="implementation cited and re-checked against the delivered "
-                    f"source: {verdict.get('evidence') or 'no citation'}",
-            ))
+            how = ("implementation cited and re-checked against the delivered "
+                   f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}")
+            # api_verified: the API half ran, the screens did not; the note says which.
+            level = (str(verdict.get("verification_note") or "")
+                     if verdict.get("verification") in ("unverified", "api_verified") else "")
+            if level:
+                # Clip the citation, not the note: a bare "implemented" would read as checked.
+                how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
+            verified.append(_item("requirement", ident, what, how=how))
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
                       else "the delivered code implements it only partly")
+            note = _CITATION_NOTE_RE.sub("", note).strip()
             unenforced.append(_item(
                 "requirement", ident, what, why=f"{reason}{f'; {note}' if note else ''}",
             ))
         else:
-            not_verified.append(_item(
-                "requirement", ident, what, why=note or "no verdict was reached",
-            ))
+            # The judge's note argues about citations with the agent; the user needs the outcome.
+            not_verified.append(_item("requirement", ident, what, why=_UNCONFIRMED))
+
+    # 2b. An empty ledger is not a clean one: the request stated no rule to check.
+    if recipe.get("business_rules_stated") is False:
+        not_verified.append(_item("check", "", NO_RULES_STATED))
 
     # 3. API workflows — the only evidence in the recipe that something was
     #    actually RUN against the app rather than read.
@@ -464,7 +602,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         report = scenario.get("report") or {}
         requests = (scenario.get("scenario") or {}).get("requests") or []
         ident = str(scenario.get("scenario_id") or "")
-        what = f"API workflow '{ident}'"
+        what = f"Test workflow '{ident}'"
         ran = ", ".join(
             f"{r.get('method', '?')} {r.get('path', '?')}"
             for r in requests if isinstance(r, dict)
@@ -476,16 +614,15 @@ def build_verification_report(recipe: dict) -> VerificationReport:
                 how=f"{len(requests)} request(s) run against the app: {ran}",
             ))
         elif status == "failed":
-            unenforced.append(_item(
-                "api_workflow", ident, what,
-                why="exercised and failed: "
-                    + str(report.get("error") or "see the run report"),
-            ))
+            not_verified.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
         else:
-            not_verified.append(_item(
-                "api_workflow", ident, what,
-                why=str(report.get("error") or f"workflow status '{status}'"),
-            ))
+            not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
+    # Workflows the agent retired as replaced by another: not run at the end, so not evidence either way.
+    for retired in recipe.get("api_scenarios_retired") or []:
+        if isinstance(retired, dict):
+            ident = str(retired.get("scenario_id") or "")
+            not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
+                                      why=f"the agent retired it: {retired.get('reason') or 'no reason given'}"))
 
     # 3b. A run that judged its requirements but never ran the app has no
     #     runtime evidence at all. Silence here reads as "it works".
@@ -503,24 +640,18 @@ def build_verification_report(recipe: dict) -> VerificationReport:
         if not isinstance(issue, dict):
             continue
         message = str(issue.get("message") or "")
-        match = _SKIPPED_CHECK_RE.match(message)
-        if match:
+        # The message is written for the agent; the report says it in the user's words.
+        skipped = _SKIPPED_CHECK_RE.match(message)
+        if skipped:
             not_verified.append(_item(
-                "check", "", match.group("check"),
-                why=f"the check did not run ({match.group('reason') or 'no reason recorded'}), "
+                "check", "", plain_check(skipped.group("check")),
+                why=f"the check did not run ({plain_reason(skipped.group('reason') or 'no reason recorded')}), "
                     "so this result does not cover it",
             ))
-        elif message.startswith(_UNENFORCED_PREFIXES):
-            unenforced.append(_item(
-                "requirement", "", message.partition(": ")[2] or message,
-                why="the model states this operation and the delivered code "
-                    "does not implement it",
-            ))
         elif message.startswith(_UNCHECKED_PREFIXES):
-            not_verified.append(_item(
-                "check", "", message.partition(": ")[2] or message,
-                why="verification never established it; this is unknown, not absent",
-            ))
+            not_verified.append(_item("check", "", user_sentence(message)))
+        elif message.startswith(_UNENFORCED_PREFIXES):
+            unenforced.append(_item("requirement", "", user_sentence(message)))
 
     # 5. The requirements ledger can fail before producing a single verdict
     #    (extraction failed, verification budget exhausted). Its finding then
@@ -531,7 +662,7 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             message = str((issue or {}).get("message") or "")
             if message.startswith(("requirement unverified:", "requirement:")):
                 not_verified.append(_item(
-                    "check", "", "original-specification coverage", why=message,
+                    "check", "", "original-specification coverage", why=user_sentence(message),
                 ))
                 break
 
@@ -584,9 +715,9 @@ class SmartRunRegistry:
 
     The sibling ``GET /spec-driven/download/{run_id}`` endpoint reads entries
     non-destructively (``get``) so a failed blob fetch can be retried.
-    Cleanup is owned by the periodic sweep: anything older than
-    ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` is removed (entry + temp dir) by the
-    task started from the backend's lifespan.
+    Cleanup is owned by the periodic sweep started from the backend's
+    lifespan: a run's workspace goes after ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``,
+    its entry and download after ``BESSER_LLM_ARCHIVE_TTL_SECONDS``.
     """
 
     def __init__(self) -> None:
@@ -594,53 +725,40 @@ class SmartRunRegistry:
         self._lock = asyncio.Lock()
 
     async def put(self, run_id: str, entry: SmartRunEntry) -> None:
-        self._persist_download_manifest(run_id, entry)
+        """Register ``entry``, keeping its file and manifest in the run's download dir.
+
+        The file is copied there unless it is already there (a packaged ZIP), so
+        the download no longer depends on the workspace the run's shell can
+        still change. When it cannot be kept the run is still registered (push
+        and modify read its workspace) but its download answers 404.
+        """
+        try:
+            # Copying the artifact (tens of MB) is blocking file IO: keep it off the event loop.
+            entry = await asyncio.to_thread(self._store_download, run_id, entry)
+        except OSError:
+            logger.warning("Run %s: its download could not be kept; /download will answer 404",
+                           run_id, exc_info=True)
         async with self._lock:
             self._entries[run_id] = entry
 
     @staticmethod
-    def _persist_download_manifest(run_id: str, entry: SmartRunEntry) -> None:
-        """Best-effort persistence of non-secret download metadata."""
-        if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-            return
-        temp_dir = os.path.realpath(entry.temp_dir)
-        file_path = os.path.realpath(entry.file_path)
-        if not os.path.isdir(temp_dir) or not os.path.isfile(file_path):
-            return
-        try:
-            if os.path.commonpath([temp_dir, file_path]) != temp_dir:
-                return
-            relative_path = os.path.relpath(file_path, temp_dir)
-            manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
-            pending_path = manifest_path + ".tmp"
-            with open(pending_path, "w", encoding="utf-8") as handle:
-                json.dump(
-                    {
-                        "version": 1,
-                        "runId": run_id,
-                        "relativePath": relative_path,
-                        "fileName": entry.file_name,
-                        "isZip": entry.is_zip,
-                        "createdAt": entry.created_at,
-                    },
-                    handle,
-                    separators=(",", ":"),
-                )
-            os.replace(pending_path, manifest_path)
-        except (OSError, TypeError, ValueError):
-            logger.warning(
-                "Could not persist download metadata for run %s",
-                run_id,
-                exc_info=True,
-            )
+    def _store_download(run_id: str, entry: SmartRunEntry) -> SmartRunEntry:
+        download_dir = run_download_dir(entry.temp_dir)
+        os.makedirs(download_dir, exist_ok=True)
+        artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+        if os.path.abspath(entry.file_path) != os.path.abspath(artifact):
+            copy_plain_file(entry.file_path, artifact, root=entry.temp_dir, dst_root=download_dir)
+        write_atomic_plain(os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME), json.dumps({
+            "version": 2,
+            "runId": run_id,
+            "fileName": entry.file_name,
+            "isZip": entry.is_zip,
+            "createdAt": entry.created_at,
+        }, separators=(",", ":")), root=download_dir)
+        return dataclass_replace(entry, file_path=artifact)
 
-    async def restore_persisted(
-        self,
-        ttl_seconds: Optional[int] = None,
-    ) -> int:
-        """Rehydrate downloadable artifacts from persistent run workspaces."""
-        if ttl_seconds is None:
-            ttl_seconds = get_settings().llm_download_ttl_seconds
+    async def restore_persisted(self) -> int:
+        """Rehydrate downloadable artifacts from the run root's download dirs."""
         root = _run_workspace_root()
         now = time.time()
         restored: dict[str, SmartRunEntry] = {}
@@ -651,9 +769,7 @@ class SmartRunRegistry:
             return 0
 
         for name in names:
-            if not name.startswith(LLM_TEMP_DIR_PREFIX):
-                continue
-            entry = self._entry_from_workspace(root, name, now, ttl_seconds)
+            entry = self._entry_from_download_dir(root, name, now)
             if entry is not None:
                 restored[entry[0]] = entry[1]
 
@@ -666,61 +782,49 @@ class SmartRunRegistry:
             )
         return len(restored)
 
-    def _entry_from_workspace(
+    def _entry_from_download_dir(
         self,
         root: str,
         name: str,
         now: float,
-        ttl_seconds: int,
     ) -> Optional[tuple[str, "SmartRunEntry"]]:
-        """Parse one run workspace into a registry entry.
+        """Parse one ``<run dir>.download`` into a registry entry.
 
         Shared by ``restore_persisted`` (boot-time sweep of everything) and
         ``get`` (targeted lookup for a single run). Returns ``None`` for
-        anything unusable -- no manifest, expired, or a manifest that does not
-        agree with its own directory name.
+        anything unusable -- not a download dir, no manifest, expired, or a
+        manifest that does not agree with its directory name. A manifest in a
+        run workspace or its sandbox ``$HOME`` (where releases before this one
+        kept it, and where the run's shell can write one) is never read.
 
         Pure disk IO: the caller takes the lock.
         """
-        temp_dir = os.path.realpath(os.path.join(root, name))
-        manifest_path = os.path.join(temp_dir, _DOWNLOAD_MANIFEST_NAME)
+        match = _DOWNLOAD_DIR_RE.fullmatch(name)
+        if match is None:
+            return None
+        download_dir = os.path.join(root, name)
+        manifest_path = os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME)
+        data = read_run_json(manifest_path, _MAX_DOWNLOAD_MANIFEST_BYTES)
+        run_id = match["run_id"]
+        if not isinstance(data, dict) or data.get("runId") != run_id:
+            return None
+        workspace = download_dir[: -len(_DOWNLOAD_DIR_SUFFIX)]
         try:
-            if (
-                not os.path.isfile(manifest_path)
-                or os.path.getsize(manifest_path) > _MAX_DOWNLOAD_MANIFEST_BYTES
-            ):
-                return None
-            with open(manifest_path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            run_id = str(data.get("runId") or "")
-            if not re.fullmatch(r"[a-f0-9]{32}", run_id):
-                return None
-            if not name.startswith(f"{LLM_TEMP_DIR_PREFIX}{run_id}_"):
-                return None
             created_at = float(data["createdAt"])
-            if max(0.0, now - created_at) > max(1, ttl_seconds):
-                _remove_run_dir(temp_dir)
+            if _expire_run(workspace, max(0.0, now - created_at)):
                 return None
-            relative_path = str(data["relativePath"])
-            file_path = os.path.realpath(os.path.join(temp_dir, relative_path))
-            if (
-                os.path.commonpath([temp_dir, file_path]) != temp_dir
-                or not os.path.isfile(file_path)
-            ):
+            artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            if not is_plain_file(artifact, root=download_dir):
                 return None
             return run_id, SmartRunEntry(
-                file_path=file_path,
+                file_path=artifact,
                 file_name=str(data["fileName"]),
                 is_zip=bool(data["isZip"]),
-                temp_dir=temp_dir,
+                temp_dir=workspace,
                 created_at=created_at,
             )
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-            logger.warning(
-                "Ignoring invalid download metadata at %s",
-                manifest_path,
-                exc_info=True,
-            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Ignoring invalid download metadata at %s", manifest_path, exc_info=True)
             return None
 
     async def pop(self, run_id: str) -> Optional[SmartRunEntry]:
@@ -745,7 +849,7 @@ class SmartRunRegistry:
         if not re.fullmatch(r"[a-f0-9]{32}", run_id or ""):
             return None
 
-        # Targeted: only directories belonging to this run, not a full sweep.
+        # Targeted: only this run's download dirs, not a full sweep.
         root = _run_workspace_root()
         now = time.time()
         prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
@@ -755,9 +859,7 @@ class SmartRunRegistry:
             return None
 
         for name in names:
-            found = self._entry_from_workspace(
-                root, name, now, get_settings().llm_download_ttl_seconds
-            )
+            found = self._entry_from_download_dir(root, name, now)
             if found is None:
                 continue
             found_id, found_entry = found
@@ -769,7 +871,6 @@ class SmartRunRegistry:
 
     async def periodic_sweep(
         self,
-        ttl_seconds: Optional[int] = None,
         interval_seconds: int = _REGISTRY_SWEEP_INTERVAL_SECONDS,
     ) -> None:
         """Loop forever, sweeping expired entries every ``interval_seconds``.
@@ -777,8 +878,6 @@ class SmartRunRegistry:
         Caller is expected to start this as an ``asyncio.Task`` in the
         FastAPI lifespan and cancel it on shutdown.
         """
-        if ttl_seconds is None:
-            ttl_seconds = get_settings().llm_download_ttl_seconds
         while True:
             try:
                 await asyncio.sleep(interval_seconds)
@@ -786,7 +885,8 @@ class SmartRunRegistry:
                 raise
 
             now = time.time()
-            expired: list[tuple[str, SmartRunEntry]] = []
+            workspace_ttl = get_settings().llm_download_ttl_seconds
+            aged: list[tuple[str, SmartRunEntry, float]] = []
             async with self._lock:
                 for run_id, entry in list(self._entries.items()):
                     # Clamp against backwards clock movements: if the
@@ -795,21 +895,28 @@ class SmartRunRegistry:
                     # is treated as 0 rather than a negative value that
                     # would let the entry live forever.
                     age = max(0.0, now - entry.created_at)
-                    if age > ttl_seconds:
-                        expired.append((run_id, entry))
-                        self._entries.pop(run_id, None)
+                    if age > workspace_ttl:
+                        aged.append((run_id, entry, age))
 
-            for run_id, entry in expired:
+            swept = 0
+            for run_id, entry, age in aged:
                 try:
-                    _remove_run_dir(entry.temp_dir)
+                    # Off the loop: a large workspace or a busy shell session
+                    # takes seconds to remove and would stall every stream.
+                    gone = await asyncio.to_thread(_expire_run, entry.temp_dir, age)
                 except Exception:
                     logger.exception(
                         "Failed to remove temp dir for expired run %s", run_id
                     )
-            if expired:
+                    continue
+                if gone:
+                    swept += 1
+                    async with self._lock:
+                        self._entries.pop(run_id, None)
+            if swept:
                 logger.info(
                     "SmartRunRegistry: swept %d expired spec-driven run(s)",
-                    len(expired),
+                    swept,
                 )
 
 
@@ -853,9 +960,11 @@ def _locate_run_temp_dir(run_id: str) -> str | None:
     tempdir = _run_workspace_root()
     prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
     try:
+        # A dot marks a sibling (``.sandbox-home``, ``.download``), never a
+        # workspace: mkdtemp names have none, and the run's shell writes the home.
         candidates = [
             entry for entry in os.listdir(tempdir)
-            if entry.startswith(prefix)
+            if entry.startswith(prefix) and "." not in entry
         ]
     except OSError:
         return None
@@ -984,6 +1093,13 @@ class SmartGenerationRunner:
         self._attribution_ok = True
         self._t_blockers_found: Optional[int] = None
         self._t_stream_aborted: Optional[str] = None
+        # Set once the run is packaged: what ``release_disk`` may clear.
+        self._packaged_workspace: Optional[str] = None
+        # What the run's recipe section and log lines report; see run_record.
+        self._facts = run_record.RunFacts(
+            mode=mode, base_run_id=base_run_id,
+            mode_reason=run_record.RESUMED if resume_run_id else run_record.FRESH,
+        )
 
     async def generate_and_stream(
         self,
@@ -998,15 +1114,21 @@ class SmartGenerationRunner:
         for successful AND failed runs (failures are the friction data).
         Recording is best-effort and can never affect the stream itself.
         """
-        inner = self._generate_and_stream_impl(http_request=http_request)
+        # aclosing: closing this stream closes the run, which stops its worker.
+        inner = contextlib.aclosing(self._generate_and_stream_impl(http_request=http_request))
         if not self._is_study_run():
-            async for frame in inner:
-                yield frame
+            try:
+                async with inner as frames:
+                    async for frame in frames:
+                        yield frame
+            finally:
+                run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
             return
         try:
-            async for frame in inner:
-                self._telemetry_observe_frame(frame)
-                yield frame
+            async with inner as frames:
+                async for frame in frames:
+                    self._telemetry_observe_frame(frame)
+                    yield frame
         except GeneratorExit:
             # The consumer closed the stream (client disconnect) before a
             # terminal frame was delivered.
@@ -1016,7 +1138,26 @@ class SmartGenerationRunner:
             self._t_stream_aborted = "STREAM_CRASH"
             raise
         finally:
+            run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
             self._record_run_summary()
+
+    async def release_disk(self) -> None:
+        """Drop what a packaged run installed and built; called once its slot is free.
+
+        A run that kept its checkpoint loses them too (nothing in the editor
+        resumes a packaged run): its checkpoint records it, and a resume tells
+        the agent to install them again.
+        """
+        from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
+
+        workspace = self._packaged_workspace
+        if not workspace:
+            return
+        try:
+            await self._runtime.run_blocking(drop_installed_dependencies, workspace)
+            await self._runtime.run_blocking(mark_dependencies_removed, workspace)
+        except OSError:
+            logger.warning("Run %s: its installed dependencies could not be removed", self.run_id, exc_info=True)
 
     def _is_study_run(self) -> bool:
         """True when this run is recorded for a research study: it carries
@@ -1048,7 +1189,26 @@ class SmartGenerationRunner:
         return free_pilot_model() or self.request.llm_model
 
     def _sse(self, event) -> bytes:
-        """``format_sse`` that also redacts this run's own key, whatever its shape."""
+        """``format_sse`` that also redacts this run's own key, whatever its shape.
+
+        Every frame passes here, so this is also where the run's facts see its
+        phases, the warnings the user was shown, and how it ended.
+        """
+        if isinstance(event, StartEvent):
+            run_record.run_log.info(run_record.start_line(
+                self.run_id, self._facts, provider=self.request.provider, model=event.llmModel,
+                generator=getattr(self.request, "target_generator_override", None)))
+        elif isinstance(event, PhaseEvent):
+            self._facts.saw_phase(event.phase)
+        elif isinstance(event, ErrorEvent):
+            if event.code in _WARNING_CODES:
+                self._facts.saw_warning(event.message)
+            if event.code in ("COST_CAP", "TIMEOUT"):
+                self._facts.outcome = "budget_stop"
+            elif event.code == "CANCELLED":
+                self._facts.outcome = "cancelled"
+            elif event.code not in _WARNING_CODES:
+                self._facts.outcome = "failed"
         return format_sse(event, secrets=(self.request.resolved_api_key(),))
 
     async def _generate_and_stream_impl(
@@ -1184,6 +1344,7 @@ class SmartGenerationRunner:
                         "falling back to from-scratch generation",
                         self._base_run_id, self.run_id,
                     )
+                    self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_EXPIRED
                     # ``_seeded`` stays False → run_orchestrator uses run().
                 else:
                     try:
@@ -1193,6 +1354,7 @@ class SmartGenerationRunner:
                             self.temp_dir,
                         )
                         self._seeded = True
+                        self._facts.mode_reason = run_record.EDIT
                         # Lines that changed since the base run (a person
                         # editing the pushed repo) are attributed to a human.
                         self._attribution_ok = await self._runtime.run_blocking(
@@ -1215,6 +1377,7 @@ class SmartGenerationRunner:
                             self.run_id, self._base_run_id,
                         )
                         self._reset_temp_dir_after_failed_seed()
+                        self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_NOT_COPIED
                         yield self._sse(ErrorEvent(
                             code="INCOMPLETE",
                             message=(
@@ -1768,6 +1931,7 @@ class SmartGenerationRunner:
         # ---- 7. Drain the queue, yielding events ----------------------
         worker_exception: Optional[BaseException] = None
         result_path: Optional[str] = None
+        aborted = False
 
         try:
             while True:
@@ -1817,6 +1981,7 @@ class SmartGenerationRunner:
                 # the paid-for workspace: package it as INCOMPLETE instead.
                 if _dir_has_user_output(self.temp_dir):
                     result_path = self.temp_dir
+                    self._facts.late_error = run_record.PROVIDER_ERROR
                     self._late_internal_error = (
                         f"The model provider failed after generating files "
                         f"({str(exc)[:300]}), so the output may be incomplete."
@@ -1834,6 +1999,7 @@ class SmartGenerationRunner:
                 # Only when files were actually written; otherwise fail as before.
                 if _dir_has_user_output(self.temp_dir):
                     result_path = self.temp_dir
+                    self._facts.late_error = run_record.INTERNAL_ERROR
                     self._late_internal_error = (
                         "The run hit an internal error after generating files, "
                         "so the output may be incomplete."
@@ -1844,29 +2010,24 @@ class SmartGenerationRunner:
                         code="INTERNAL",
                         message="Internal server error",
                     ))
+        except BaseException:
+            # The stream was closed (GeneratorExit), cancelled or crashed:
+            # yielding now would swallow that or raise "ignored GeneratorExit".
+            aborted = True
+            raise
         finally:
-            emitter_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await emitter_task
-            disconnect_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await disconnect_task
-            watchdog_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watchdog_task
+            for helper in (emitter_task, disconnect_task, watchdog_task):
+                await _stop_helper_task(helper, self.run_id)
 
-            # Drain any events the emitter enqueued between the sentinel
-            # being put and the task being cancelled. These are cost
-            # ticks — not critical — but missing them can make the
-            # final `cost` event stale by up to the emitter interval.
-            while True:
-                try:
-                    leftover = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if leftover is None:
-                    continue
-                yield self._sse(leftover)
+            if not worker_task.done():
+                # The stream ended before the worker did: stop it and wait, so
+                # the run id and the slot are freed only once it has stopped.
+                logger.warning("Run %s: stream ended before its worker; cancelling the worker", self.run_id)
+                cancel_event.set()
+                await asyncio.wait({worker_task})
+            if aborted and not worker_task.cancelled() and worker_task.exception() is not None:
+                logger.warning("Run %s: worker failed after its stream ended: %r",
+                               self.run_id, worker_task.exception())
 
             # A caller-supplied reservation is owned by the durable stream
             # adapter, which releases it only after packaging and the terminal
@@ -1875,6 +2036,19 @@ class SmartGenerationRunner:
             if self._reserved_cancel_event is None:
                 await self._runtime.active_runs.release(self.run_id, cancel_event)
 
+            # Drain any events the emitter enqueued between the sentinel
+            # being put and the task being cancelled. These are cost
+            # ticks — not critical — but missing them can make the
+            # final `cost` event stale by up to the emitter interval.
+            while not aborted:
+                try:
+                    leftover = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if leftover is None:
+                    continue
+                yield self._sse(leftover)
+
             # Terminal events are mutually exclusive: CANCELLED (or
             # TIMEOUT when the watchdog fired) is emitted ONLY when the
             # cancellation actually interrupted the run. A run cancelled
@@ -1882,7 +2056,7 @@ class SmartGenerationRunner:
             # to the normal `done` path below — emitting both signals
             # contradicted the documented contract (CANCELLED is
             # terminal) and confused clients.
-            if cancel_event.is_set() and (worker_exception is not None or not result_path):
+            if not aborted and cancel_event.is_set() and (worker_exception is not None or not result_path):
                 if watchdog_fired["value"]:
                     yield self._sse(ErrorEvent(
                         code="TIMEOUT",
@@ -2053,7 +2227,7 @@ class SmartGenerationRunner:
                         f"The app was generated, but {len(_unfixed_blockers)} unresolved "
                         "implementation or verification issue(s) remain. "
                         "The generated app is not verified complete. First: "
-                        + _unfixed_blockers[0][:160]
+                        + user_sentence(_unfixed_blockers[0])
                     )
                     yield self._sse(ErrorEvent(
                         code="INCOMPLETE",
@@ -2123,6 +2297,12 @@ class SmartGenerationRunner:
                     message=_late_err + " You can run the generation again to continue.",
                 ))
 
+            self._facts.stop(
+                stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
+                timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
+                blocker_count=len(_unfixed_blockers) if exited_cleanly else 0, cost=final_cost,
+            )
+
             # ---- 10. Package the result and emit `done` ---------------
             try:
                 done_event, entry = await self._runtime.run_blocking(
@@ -2130,6 +2310,7 @@ class SmartGenerationRunner:
                 )
                 done_event.incomplete = incomplete
                 done_event.incompleteReason = incomplete_reason_msg
+                done_event.cancelled = self._facts.stopped_by == run_record.CANCELLED
                 # Completed-with-blockers vs cut-short need different
                 # client framing: a run whose loop finished but left
                 # completion-blocking issues did NOT "stop early". Only set
@@ -2158,6 +2339,10 @@ class SmartGenerationRunner:
                     orchestrator, "_updated_project_export", None
                 )
                 await self._runtime.registry.put(self.run_id, entry)
+                self._facts.archive_written = is_plain_file(
+                    os.path.join(run_download_dir(entry.temp_dir), _DOWNLOAD_ARTIFACT_NAME),
+                    root=run_download_dir(entry.temp_dir))
+                self._packaged_workspace = entry.temp_dir
                 yield self._sse(done_event)
             except _EmptyGenerationError as exc:
                 # Raised inside _package_result when the orchestrator
@@ -2194,6 +2379,17 @@ class SmartGenerationRunner:
         if self.temp_dir is None:
             raise RuntimeError("Runner has no temp_dir")
 
+        # What the app wrote while the agent test-ran it is not output. The
+        # orchestrator removes it before it writes the recipe; a run that
+        # ended without one still holds it, so remove it here as well.
+        runtime_files: dict = {}
+        remove_runtime_files = getattr(self._t_orchestrator, "remove_app_runtime_files", None)
+        if remove_runtime_files is not None:
+            try:
+                runtime_files = remove_runtime_files()
+            except Exception:
+                logger.exception("Removing the app's runtime files failed for run %s", self.run_id)
+
         # Every line that differs from the scaffold (or from the seed) was
         # written by the LLM; attribute it before the deterministic packaging
         # steps below change anything.
@@ -2209,7 +2405,7 @@ class SmartGenerationRunner:
         # deterministically before anything leaves the workspace — the same
         # tree feeds the download zip and the GitHub push.
         try:
-            frontend_repairs = ensure_frontend_scaffold(result_path)
+            frontend_repairs = ensure_frontend_scaffold(result_path, app_name=self.request.project.name)
             if frontend_repairs:
                 logger.info(
                     "spec-driven run %s frontend scaffold repairs: %s",
@@ -2242,8 +2438,15 @@ class SmartGenerationRunner:
                 list(scrub.redacted_files),
             )
 
-        recipe = self._read_recipe(result_path)
+        # This run's own record when its orchestrator wrote one; else the file, which is the
+        # base run's when this run failed before writing its own.
+        saved = getattr(self._t_orchestrator, "saved_recipe", None)
+        if isinstance(saved, dict):
+            recipe, rewritable = copy.deepcopy(saved), True
+        else:
+            recipe, rewritable = self._read_recipe(result_path)
         recipe["secret_findings"] = scrub.findings
+        recipe.update(runtime_files)
 
         # Agent Trace record (.agent-trace/<run id>.json): who wrote each line
         # of the delivered files. Built after the scrub, so a redacted line
@@ -2267,13 +2470,22 @@ class SmartGenerationRunner:
                 kind="check", what="everything this run did",
                 why="the run's verification report could not be built",
             )], counts=VerificationCounts(notVerified=1))
+        usage = getattr(self._t_client, "usage", None)
+        if callable(getattr(usage, "summary", None)):
+            # This run's spend: a run that failed before writing its recipe leaves the seeded base's here.
+            recipe["usage"] = usage.summary()
+        recipe["run"] = run_record.run_section(
+            self._facts, self._t_orchestrator, provider=self.request.provider,
+            models=[getattr(self._t_client, "model", None), getattr(usage, "served_model", None)],
+            request_chars=len(self.request.instructions),
+        )
+        redact_recipe_models(recipe, self.request.provider)
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
-        if os.path.isfile(recipe_path):
+        if rewritable and is_plain_file(recipe_path, root=result_path):
             try:
-                with open(recipe_path, "w", encoding="utf-8") as handle:
-                    json.dump(recipe, handle, indent=2)
+                write_atomic_plain(recipe_path, json.dumps(recipe, indent=2), root=result_path)
             except OSError:
                 logger.debug("Could not persist secret finding count", exc_info=True)
 
@@ -2282,7 +2494,8 @@ class SmartGenerationRunner:
         provenance_path = write_generation_provenance(result_path, "spec_driven_agent", {
             "base_generator": recipe.get("generator_used"),
             "llm_model": recipe.get("llm_model"),
-        }, run_summary_markdown(recipe, verification, (self.request.resolved_api_key(),)))
+        }, run_summary_markdown(recipe, verification, (self.request.resolved_api_key(),),
+                                readme=os.path.isfile(os.path.join(result_path, "README.md"))))
 
         # Collect every user file. Skips internal artefacts
         # (.besser_recipe.json etc.) AND build-output directories —
@@ -2333,18 +2546,21 @@ class SmartGenerationRunner:
             )
         else:
             zip_name = f"besser_smart_{self.run_id}.zip"
-            zip_path = os.path.join(self.temp_dir, zip_name)
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Written straight to the download dir, outside the tree the run's shell can write.
+            download_dir = run_download_dir(self.temp_dir)
+            os.makedirs(download_dir, exist_ok=True)
+            zip_path = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            with open_plain_write(zip_path, "wb", root=download_dir) as handle, \
+                    zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as zf:
                 for path in user_files:
-                    arcname = os.path.relpath(path, result_path)
-                    zf.write(path, arcname)
-                zf.write(provenance_path, PROVENANCE_FILENAME)
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
+                _zip_plain_file(zf, provenance_path, PROVENANCE_FILENAME, result_path)
                 for path in trace_files:
-                    zf.write(path, os.path.relpath(path, result_path))
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
                 for name in CARRIED_RUN_FILES:
                     path = os.path.join(result_path, name)
-                    if os.path.isfile(path) and is_plain_entry(path):
-                        zf.write(path, name)
+                    if is_plain_entry(path) and os.path.isfile(path):
+                        _zip_plain_file(zf, path, name, result_path)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
@@ -2415,30 +2631,31 @@ class SmartGenerationRunner:
             logger.exception("Agent Trace record failed for run %s", self.run_id)
             return None
 
-    def _read_recipe(self, result_path: str) -> dict:
+    def _read_recipe(self, result_path: str) -> tuple[dict, bool]:
+        """The recipe on disk, and whether packaging may rewrite it.
+
+        A file that cannot be read is kept as it is, so the record it holds is
+        never replaced by the packaging annotations alone.
+        """
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
-        if not os.path.isfile(recipe_path):
-            return {}
+        # Not a plain file (absent, or a link the model planted): never read through.
+        if not is_plain_file(recipe_path, root=result_path):
+            return {}, False
         try:
             size = os.path.getsize(recipe_path)
         except OSError:
-            return {}
-        if size > _MAX_RECIPE_BYTES:
+            return {}, False
+        if size > MAX_RECIPE_BYTES:
             logger.warning(
-                "Skipping .besser_recipe.json for run %s: size %d exceeds %d bytes",
-                self.run_id, size, _MAX_RECIPE_BYTES,
+                "Skipping .besser_recipe.json for run %s: size %d exceeds %d bytes; the file is kept unchanged",
+                self.run_id, size, MAX_RECIPE_BYTES,
             )
-            return {"warning": "recipe file exceeded size limit and was dropped"}
-        try:
-            with open(recipe_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            logger.exception(
-                "Failed to read .besser_recipe.json for run %s", self.run_id
-            )
-        return {}
+            return {"warning": f"it is {size} bytes, over the {MAX_RECIPE_BYTES}-byte limit"}, False
+        data = read_run_json(recipe_path, MAX_RECIPE_BYTES)
+        if isinstance(data, dict):
+            return data, True
+        logger.warning("Ignoring unreadable .besser_recipe.json for run %s; the file is kept unchanged", self.run_id)
+        return {"warning": "it is not a JSON object"}, False
 
     def _reset_temp_dir_after_failed_seed(self) -> None:
         """Wipe a partially-seeded temp dir and re-allocate a clean one.
@@ -2725,6 +2942,22 @@ class SmartGenerationRunner:
             )
 
     def _cleanup_temp_dir(self) -> None:
+        """Delete this run's workspace after a failure, unless it can be resumed."""
+        if self._resume_run_id:
+            # The workspace is the interrupted attempt's: its files, checkpoint
+            # and download outlive a failed resume, so the user can retry with
+            # the right input. The 24 h temp cleanup removes it.
+            logger.warning("Run %s: resume failed; keeping its workspace for another resume", self.run_id)
+            self._drop_dependencies_of_kept_workspace()
+            return
+        from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+
+        if self.temp_dir and os.path.isfile(os.path.join(self.temp_dir, CHECKPOINT_FILENAME)):
+            # A checkpoint makes the run resumable, and an abandoned run has
+            # already told its client so (``resumeAvailable``).
+            logger.warning("Run %s failed after a checkpoint; keeping its workspace for resume", self.run_id)
+            self._drop_dependencies_of_kept_workspace()
+            return
         if self.temp_dir and os.path.isdir(self.temp_dir):
             try:
                 _remove_run_dir(self.temp_dir)
@@ -2733,3 +2966,20 @@ class SmartGenerationRunner:
                     "Failed to clean up temp dir for run %s", self.run_id
                 )
         self.temp_dir = None
+
+    def _drop_dependencies_of_kept_workspace(self) -> None:
+        """Keep a failed run's files for a resume, but not what it installed and built.
+
+        Failed runs are not in the registry, so ``release_disk`` never reaches them
+        and the 24 h temp cleanup is all that would remove them; a resume installs
+        the dependencies again (``mark_dependencies_removed``).
+        """
+        from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
+
+        if not (self.temp_dir and os.path.isdir(self.temp_dir)):
+            return
+        try:
+            drop_installed_dependencies(self.temp_dir)
+            mark_dependencies_removed(self.temp_dir)
+        except OSError:
+            logger.warning("Run %s: its installed dependencies could not be removed", self.run_id, exc_info=True)

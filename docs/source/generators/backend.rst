@@ -212,6 +212,51 @@ CRUD Operations
      - ``/{entity}/bulk/``
      - Bulk delete by IDs
 
+How the model shapes these endpoints:
+
+* An **abstract class** has no endpoint that creates a record (no ``POST
+  /{entity}/`` and no bulk create): records are created through the concrete
+  subclasses. Its other endpoints read, change, link and delete the records of
+  its subclasses.
+* The **search filters** are the text, number and boolean attributes of the
+  class and its parents, except derived attributes (their stored value is not
+  kept up to date by the generated code) and **stored secrets**.
+* The search endpoint does not filter by an attribute whose name marks a
+  stored secret, since a partial match would reveal its value one character at
+  a time, but every other endpoint stores and returns it like any other
+  attribute: an application that stores credentials must leave them out of its
+  own responses. The name of a text attribute is read as camelCase or
+  snake_case words, and marks a stored secret when its last word, or the word
+  before a last ``hash``, is ``password``, ``passwd``, ``pwd``,
+  ``passphrase``, ``passcode``, ``secret`` or ``salt`` (``passwordHash``,
+  ``clientSecret``), or when it is ``token`` alone or after ``access``,
+  ``refresh``, ``auth``, ``api``, ``reset`` or ``session``
+  (``refreshToken``). Any other last word keeps the filter (``passwordHint``,
+  ``tokenCount``, ``inviteToken``).
+* An association **from a class to itself** has a field, and for a
+  many-to-many a link endpoint, for each of its two ends. The id lists of a
+  many-to-many are returned as ``<target class>_ids``; when that does not tell
+  two ends apart (an association to the same class, or two many-to-many
+  associations to one class) each list is named after its end, ``<end>_ids``.
+* When an attribute and an **association end share a name**, the association
+  end is generated and the attribute is left out (model validation warns about
+  the clash).
+* A ``DELETE`` that would leave another record without a link it requires is
+  refused with ``409`` and a message naming that record, including when the
+  record is required by a part that would be deleted with its whole.
+
+Known limits:
+
+* An association from a class to itself carried by an association class is
+  not supported (the generated app does not start serving).
+* A record that is, directly or through others, one of its own parts cannot be
+  deleted (``409``) until the cycle is broken. In a one-to-many from a class to
+  itself that is not a composition, deleting a record whose to-one end points
+  at the record itself answers ``500``; clear that end with an update first.
+* With ``nested_creations=True``, a many-to-many end that carries a new object
+  instead of an id answers ``500``; create the related record first and send
+  its id.
+
 .. versionchanged:: 8.0.0
    The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``
    schemas) no longer accept fields the server owns: an attribute named ``id``

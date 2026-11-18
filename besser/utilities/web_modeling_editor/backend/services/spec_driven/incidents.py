@@ -15,10 +15,10 @@ import json
 import logging
 import os
 import re
-import shutil
 import threading
 
 from besser.utilities.secret_redaction import redact_text
+from besser.utilities.workspace_fs import copy_plain_file
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,6 @@ def persist_run_trace(
             return
         dest = os.path.join(dest_dir, f"{safe_id}.besser_trace.jsonl")
         with _LOCK:
-            shutil.copyfile(trace_path, dest)
+            copy_plain_file(trace_path, dest)  # never follows a link the run planted at its trace
     except Exception:  # pragma: no cover — must never break a run
         logger.debug("Could not persist run trace for %s", run_id, exc_info=True)

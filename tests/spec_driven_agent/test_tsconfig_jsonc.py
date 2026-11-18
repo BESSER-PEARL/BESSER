@@ -31,6 +31,10 @@ VITE_TSCONFIG_APP = """{
 
 @pytest.mark.parametrize("path", [
     "frontend/tsconfig.app.json", "tsconfig.json", "web/jsconfig.json", ".vscode/settings.json",
+    # Other configs whose tools read them as JSONC / JSON5.
+    "frontend/.eslintrc.json", ".devcontainer/devcontainer.json", ".devcontainer.json",
+    "frontend/.babelrc.json", "frontend/babel.config.json", "api-extractor.json",
+    "frontend/.vscode/launch.json", "settings.jsonc",
 ])
 def test_jsonc_config_is_not_a_parse_error(path):
     assert diagnose_written_content(path, VITE_TSCONFIG_APP) == []
@@ -39,6 +43,12 @@ def test_jsonc_config_is_not_a_parse_error(path):
 def test_plain_json_stays_strict():
     findings = diagnose_written_content("frontend/package.json", '{"name": "app",}\n')
     assert findings and findings[0]["code"] == "parse"
+
+
+def test_a_broken_jsonc_file_is_reported():
+    findings = diagnose_written_content("frontend/.eslintrc.json", '{\n  // rules\n  "extends": [\n}\n')
+    assert findings and findings[0]["code"] == "parse"
+    assert diagnose_written_content("deno.jsonc", '{\n  // x\n  "tasks": \n}\n')[0]["code"] == "parse"
 
 
 def test_broken_tsconfig_is_still_reported_on_its_line():

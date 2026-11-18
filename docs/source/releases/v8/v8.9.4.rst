@@ -1,0 +1,162 @@
+Version 8.9.4
+=============
+
+Patch release: **a first wave of security fixes for the backend and the
+generators, code generated from the Library template that runs, agents
+without an LLM that understand their training sentences, and editor and
+assistant follow-ups to v8.9.3**. No metamodel change and no new endpoint;
+``POST /besser_api/deploy-app`` is now refused to hosted callers, and the
+Python generators answer 400 for a model name that is not a valid identifier.
+
+Highlights
+----------
+
+* **Agent generation no longer runs the user's code in the backend.**
+  Generating an agent (``/generate-output``, including the multi-language
+  path) and ``/transform-agent-model-json`` wrote the agent model as Python
+  and then imported that module, which ran the agent's code actions and tool
+  code inside the backend process. The BAF generator now receives the
+  in-memory model; the model file is still written and shipped in the ZIP, but
+  never imported
+  (`#769 <https://github.com/BESSER-PEARL/BESSER/pull/769>`_).
+* **Local Docker deployment is local only.** ``POST /besser_api/deploy-app``
+  ran ``docker-compose`` on the backend's host for any caller, with no timeout,
+  and answered 200 even when ``docker-compose`` failed. The new
+  ``BESSER_ENABLE_DOCKER_DEPLOY`` setting controls it: ``true`` serves every
+  caller, ``false`` refuses every caller (403), and unset serves only a request
+  from the backend's own machine (a loopback connection with no ``Forwarded``,
+  ``X-Forwarded-For`` or ``X-Real-IP`` header), which is what the editor's
+  *Deploy locally* sends on a local install. A failed ``docker-compose``
+  answers 502, a timeout 504 (600 s for compose, 30 s for queries), with the
+  details in the server log only. ``docker-compose.prod.yml`` sets it to
+  ``false``
+  (`#770 <https://github.com/BESSER-PEARL/BESSER/pull/770>`_).
+* **Security: OCL invariants are checked for syntax only on the server by
+  default;** ``BESSER_ENABLE_OCL_EVALUATION=true`` re-enables their evaluation
+  against object and user diagrams in ``/validate-diagram``
+  (`#782 <https://github.com/BESSER-PEARL/BESSER/pull/782>`_).
+* **Model names that would break Python code are refused before generation.**
+  The SQLAlchemy, SQL, Python classes, Pydantic, FastAPI backend and Django
+  generators check every name they write into code with
+  ``DomainModel.invalid_identifier_names()`` and raise
+  ``InvalidIdentifierError``, so ``/generate-output`` answers 400 instead of
+  rendering the name verbatim. Saved models with such names still load
+  (`#771 <https://github.com/BESSER-PEARL/BESSER/pull/771>`_).
+* **Free text is escaped in generated code.** Quotes and line breaks in
+  descriptions, replies and other free text could end a string literal in the
+  generated BAF agent, RDF, Terraform and Flutter code. Shared Jinja filters
+  (``py_str``, ``ttl_str``, ``hcl_str``, ``dart_str``, ``yaml_str``) now escape
+  them at each of these places
+  (`#772 <https://github.com/BESSER-PEARL/BESSER/pull/772>`_).
+* **A slow generator no longer stalls the backend.** Code generation, image
+  to model conversion and the Render deployment call moved off the event loop,
+  so one long request no longer blocks the others, and a generator's child process (Django's
+  ``startproject`` / ``startapp``, the SQL generator's DDL script) is killed
+  after ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT`` seconds (default ``120``); the
+  request then answers 504
+  (`#767 <https://github.com/BESSER-PEARL/BESSER/pull/767>`_).
+* **The Spec-Driven Agent no longer reads a missing command as a pass.**
+  ``run_command`` answered exit code 0 and success when a command's binary was
+  missing, so a build that never ran counted as a passed check. It now keeps
+  the real exit code and output and adds ``missing_command``, a bounded
+  ``stderr_tail`` and a note. Workspace paths are confined once, by resolving
+  links and comparing whole path components, so a sibling directory whose
+  name starts with the workspace's is no longer accepted
+  (`#768 <https://github.com/BESSER-PEARL/BESSER/pull/768>`_).
+* **Code generated from the Library template runs.** The Django output no
+  longer glues the method after an OCL ``clean()`` onto its ``raise``; the
+  FastAPI backend imports ``get_<class>`` before a method endpoint resolves a
+  class-typed parameter, and an optional enumeration left empty no longer
+  fails on ``None.name``. The Supabase generator adds the ``id`` key every
+  foreign key references to a class without an identifier, and uses a plain
+  ``id`` attribute as that key instead of adding a second ``id`` column
+  (`#775 <https://github.com/BESSER-PEARL/BESSER/pull/775>`_).
+* **Agents without an LLM understand their training sentences.** With no
+  intent classifier set, a generated agent was configured with an LLM
+  classifier naming an empty LLM, so every message, training sentences
+  included, got the fallback reply. An agent with no LLM now gets the classical
+  classifier, which needs PyTorch: the generator logs a warning and the
+  generated script and ``readme.txt`` say so, and the Render blueprints
+  install PyTorch when the generated agent needs it. An agent with an LLM is
+  unchanged
+  (`#780 <https://github.com/BESSER-PEARL/BESSER/pull/780>`_).
+
+Other changes
+-------------
+
+* **Django generation works without an activated environment.** The Django
+  generator ran ``django-admin`` from ``PATH``, so a Python started by path
+  without its virtual environment activated failed with "install Django"
+  although Django was importable. It now runs ``python -m django`` with the
+  current interpreter
+  (`#776 <https://github.com/BESSER-PEARL/BESSER/pull/776>`_).
+* **The test suite runs in parallel.** ``pytest-xdist`` is in the ``dev``
+  extra and CI runs ``pytest -n auto``; ``testpaths`` is ``tests``
+  (`#777 <https://github.com/BESSER-PEARL/BESSER/pull/777>`_).
+
+Web Modeling Editor
+-------------------
+
+The editor's version, shown in its About dialog and stamped into JSON
+exports, is ``8.9.4``. The ``frontend`` submodule points at the editor's
+v8.9.4 release
+(`#280 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/280>`_),
+which brings
+`#277 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/277>`_
+and
+`#276 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/276>`_:
+
+* **Old browser projects open again.** A project stored in the browser before
+  the quantum circuit and BPMN diagram types was refused on load, although the
+  migration that runs next adds both.
+* **The project description is a hint, not a value.** The create-project
+  forms pre-filled "Modern workspace project for UML, GUI and quantum
+  modeling." as the description, and it ended up in GitHub repository
+  descriptions and READMEs. The field now starts empty with a hint, and that
+  exact text saved in an older project is no longer sent to the backend or
+  GitHub.
+* **The assistant tells the agent why a generation was declined.** A
+  generation the user declines over validation warnings now reports the
+  reason (``warnings_declined``) to the agent, and is covered by a test.
+* **Fewer type errors.** The themed SVG shapes declare their colour props and
+  the agent's modification types gained the class and attribute flags it
+  sends: ``tsc`` reports 83 errors instead of 350.
+* **The auto-fix line no longer keeps spinning.** When the agent answered the
+  editor's repair request with a message or an error instead of a model, or
+  sent a model the editor could not apply, "Validation found N issue(s) in the
+  diagram — fixing them now…" never settled. It is now replaced with "The
+  assistant could not fix N validation issue(s) automatically:" and the
+  issues; only replies to the repair's own turn settle it
+  (`#276 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/276>`_).
+
+Modeling agent
+--------------
+
+Deploy the modeling agent ``v8.1.2`` alongside
+(`modeling-agent#73 <https://github.com/BESSER-PEARL/modeling-agent/pull/73>`_):
+
+* *Promote attribute* now links the new class as a part of the original one,
+  the way the editor draws a composition
+  (`modeling-agent#71 <https://github.com/BESSER-PEARL/modeling-agent/pull/71>`_).
+* **Honest modification and repair replies.** A modification reply names the
+  real member instead of whatever the model wrote (prose, garbled tokens or
+  internal context), and asks which member was meant when it is in no class;
+  the create reply no longer counts the invariant the mandatory-cycle guard
+  adds as a rule the user mentioned; and a failed auto-fix replies "The diagram
+  is unchanged…" instead of asking the user to rephrase a message they never
+  wrote, while the editor lists the open issues
+  (`modeling-agent#70 <https://github.com/BESSER-PEARL/modeling-agent/pull/70>`_).
+
+Upgrade notes
+-------------
+
+* ``POST /besser_api/deploy-app`` is refused (403) to any caller that is not
+  on the backend's own machine unless ``BESSER_ENABLE_DOCKER_DEPLOY=true``.
+  On a hosted server, set it to ``false`` on the backend service, as
+  ``docker-compose.prod.yml`` does.
+* A model with a class, attribute or other code name that is not a valid
+  Python identifier (``2nd``, ``price$``) now fails generation with the
+  Python generators (400) instead of producing code that does not run.
+* A generated agent with no LLM needs PyTorch to run.
+* ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT`` (default ``120``) bounds a
+  generator's child process; raise it on a slow host.

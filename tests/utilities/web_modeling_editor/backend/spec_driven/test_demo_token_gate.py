@@ -165,3 +165,17 @@ def test_resume_refuses_an_unauthorised_sponsored_run(_demo_enabled):
 def test_the_secret_never_appears_in_the_models_repr():
     """demo_token is a SecretStr — a logged request must not leak it."""
     assert DEMO_TOKEN not in repr(_request(demo_token=DEMO_TOKEN))
+
+
+def test_a_422_does_not_echo_the_demo_token(_demo_enabled):
+    """A model-validator failure carries the whole body as pydantic's ``input``."""
+    response = _post(
+        "/besser_api/spec-driven/generate",
+        _sponsored_body(
+            demo_token=DEMO_TOKEN,
+            skip_deterministic_generator=True,
+            target_generator_override="generate_fastapi_backend",
+        ),
+    )
+    assert response.status_code == 422
+    assert DEMO_TOKEN not in response.text

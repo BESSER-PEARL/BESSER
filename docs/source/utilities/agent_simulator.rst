@@ -256,8 +256,9 @@ Operations
 ----------
 
 Build the image from the repository root, so it ships this checkout's
-``besser`` package. The GitHub ``Deploy WME to EC2`` workflow has an
-``agent_simulator`` target that builds, pushes and restarts it:
+``besser`` package. The GitHub ``Deploy WME`` workflow has an
+``agent_simulator`` target that builds and pushes it; watchtower on the host
+then installs it:
 
 .. code-block:: bash
 

@@ -310,8 +310,28 @@ def test_a_long_repetitive_file_reconciles_quickly(tmp_path):
 def test_model_ids_use_the_provider_prefix():
     assert at.normalize_model_id("openai", "gpt-4o") == "openai/gpt-4o"
     assert at.normalize_model_id("anthropic", "anthropic/claude") == "anthropic/claude"
-    assert at.normalize_model_id("free", "qwen-coder") == "qwen-coder"
     assert at.normalize_model_id("openai", "") is None
+
+
+@pytest.mark.parametrize("provider", ["free", "sponsored", "pia", "gateway", "local"])
+def test_a_hosted_route_never_publishes_its_provider_side_model_id(provider):
+    for model in ("vendor-x/secret-model:free", "secret-model-contributor", "plain"):
+        assert at.normalize_model_id(provider, model) == provider
+
+
+@pytest.mark.parametrize("model", ["gpt 4o", "m" * 101, "sk-" + "a1B2" * 12, "gpt-4o\nsecret"])
+def test_a_public_provider_model_that_is_not_a_plain_id_is_not_published(model):
+    assert at.normalize_model_id("openai", model) == "openai"
+
+
+def test_the_run_recipe_publishes_only_the_public_model_label():
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import redact_recipe_models
+    recipe = {"llm_model": "vendor-x/secret-model:free", "usage": {"model": "vendor-x/secret-model:free", "api_calls": 3}}
+    redact_recipe_models(recipe, "gateway")
+    assert recipe == {"llm_model": "gateway", "usage": {"model": "gateway", "api_calls": 3}}
+    recipe = {"llm_model": "gpt-4o", "usage": {"model": "gpt-4o"}}
+    redact_recipe_models(recipe, "openai")
+    assert recipe["llm_model"] == recipe["usage"]["model"] == "openai/gpt-4o"
 
 
 def test_a_generator_rerun_does_not_take_over_the_models_files(tmp_path):

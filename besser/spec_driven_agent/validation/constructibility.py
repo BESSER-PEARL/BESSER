@@ -47,6 +47,11 @@ given only the symptom tends to spend its fix attempts elsewhere. The line
 feeds the fix prompt's excerpt. When the refusal is a NOT NULL violation, the
 column is named too, and the create-time-rule advice is left out.
 
+A login-protected app is logged into once, on the first 401/403, as an
+account the probe registers through the app's own register/login routes; never
+by overriding its auth dependency, which would also lift the role and
+ownership rules a real user meets.
+
 Runs in two halves. The parent (``collect_constructibility_report``) is
 ordinary orchestrator code; it also hands the child the modelled action list
 in a JSON file, since the model is what states an action's parameters. The
@@ -73,12 +78,19 @@ import subprocess
 import sys
 import tempfile
 
+if __name__ == "__main__":  # the child, run by path beside api_probe.py and without ``besser``
+    from api_probe import name_words as _name_tokens
+else:
+    from besser.spec_driven_agent.validation.api_probe import name_words as _name_tokens
+
 logger = logging.getLogger(__name__)
 
 PREFIX = "create contract:"
 UNVERIFIED_PREFIX = "create unverified:"
 ACTION_PREFIX = "action call:"
 ACTION_UNVERIFIED_PREFIX = "action unverified:"
+# A warning (issues.py default): account records anyone can change in an app with its own login.
+OPEN_ACCOUNT_PREFIX = "open account writes:"
 
 _PROBE_TIMEOUT_SECONDS = 90
 _MARKER = "BESSER_CONSTRUCTIBILITY_REPORT:"
@@ -113,7 +125,7 @@ def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 
     model_actions = _model_actions(domain_model)
-    abstract = _abstract_entities(domain_model)
+    abstract = abstract_entities(domain_model)
     issues: list[str] = []
     backends: list[dict] = []
     for folder in _fastapi_backends(output_dir):
@@ -130,7 +142,7 @@ def collect_constructibility_issues(output_dir: str, domain_model=None) -> list[
     return collect_constructibility_report(output_dir, domain_model)["issues"]
 
 
-def _abstract_entities(domain_model) -> list[str]:
+def abstract_entities(domain_model) -> list[str]:
     """Class names the model marks ``is_abstract``.
 
     Read defensively: an older serializer, or a model with no such notion,
@@ -309,15 +321,22 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                           f"attempted input: {payload}")
                 if attempt.get("outcome") == "unauthorized":
                     reason += "; this endpoint requires authentication"
+                    login = report.get("auth") or {}
+                    if login.get("source"):
+                        reason += f" and still refused the probe after it logged in through {login['source']}"
+                    elif login.get("error"):
+                        reason += f", and the probe could not log in ({login['error']})"
             else:
                 unresolved = entry.get("unresolved") or []
                 reason = ("no request could be constructed; unresolved related IDs: "
                           + json.dumps(unresolved, sort_keys=True))
             text = (
                 f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - {reason}. "
-                "These guessed inputs do not prove this endpoint is broken. Use test_api "
-                "with valid specification-based fixtures and read the persisted result; "
-                "do not remove business validation to satisfy guessed samples"
+                "These guessed inputs do not prove this endpoint is broken. To settle it, "
+                f"one test_api scenario must POST {entry['path']} with valid specification-based "
+                "fixtures (logging in first where the API requires it) and then GET that "
+                f"record by its id under {entry['path']}; a create that is not read back "
+                "stays unverified; do not remove business validation to satisfy guessed samples"
             )
         site = entry.get("site")
         column = attempt.get("missing_column")
@@ -357,7 +376,23 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                 "aggregate-creation workflow (such as nested creation), retaining the rule"
             )
         issues.append(text)
+    for entry in report.get("unprobed_creates") or []:
+        issues.append(
+            f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - its body {entry['schema']} is no table's own and "
+            f"its handler uses {', '.join(entry['tables'])}, so the probe could not tell which record it creates. "
+            f"This does not prove the endpoint is broken. To settle it, one test_api scenario must POST "
+            f"{entry['path']} with valid specification-based fixtures (logging in first where the API requires "
+            "it) and then GET that record by its id; a create that is not read back stays unverified")
     issues.extend(_action_issue_text(entry, rel) for entry in report.get("actions") or [])
+    for entry in report.get("open_account_writes") or []:
+        if entry.get("routes"):
+            issues.append(
+                f"{OPEN_ACCOUNT_PREFIX} {rel}: {', '.join(entry['routes'])} changed a {entry['table']} record "
+                f"for a request with no credentials, in an app with its own login (POST {entry['login']})")
+        for taken in entry.get("fields") or []:
+            issues.append(
+                f"{OPEN_ACCOUNT_PREFIX} {rel}: {taken['route']} let one logged-in account change "
+                f"{', '.join(taken['fields'])} of another {entry['table']} record")
     return issues
 
 
@@ -842,6 +877,71 @@ def _handler_site(app, path: str, entity: str) -> dict | None:
     return None
 
 
+class _Unknowable(Exception):
+    """The tables behind a handler cannot be read."""
+
+
+def _foreign(read):
+    """``read()``, an attribute lookup on app code; whatever that code raises is ``_Unknowable``."""
+    try:
+        return read()
+    except Exception as exc:  # a module ``__getattr__`` or a ``__wrapped__`` cycle may raise anything
+        raise _Unknowable(f"{type(exc).__name__}: {exc}") from exc
+
+
+def _tables_behind(app, path: str, orm: dict) -> list[str]:
+    """The ORM classes the ``POST path`` handler instantiates, in its own code or in app
+    functions it calls; a class it only reads (``db.query(User)``) creates nothing.
+    Raises ``_Unknowable`` when the handler's code cannot be read."""
+    import ast
+    import inspect
+    import textwrap
+    import types
+
+    root = os.getcwd()
+    found: set = set()
+    seen: set = set()
+
+    def visit(fn) -> None:
+        fn = _foreign(lambda: inspect.unwrap(fn))
+        if not isinstance(fn, types.FunctionType) or fn.__code__ in seen:
+            return
+        seen.add(fn.__code__)
+        if fn.__code__.co_filename.startswith("<"):
+            return  # ``<frozen os>``, ``<string>``: no source file to read, so no app code to follow
+        try:
+            if os.path.commonpath([os.path.abspath(fn.__code__.co_filename), root]) != root:
+                return  # a library function: the classes it builds are not the app's tables
+        except ValueError:
+            return  # another drive
+        try:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        except (OSError, TypeError, SyntaxError) as exc:
+            raise _Unknowable(f"{type(exc).__name__}: {exc}") from exc
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):  # ``NoteRow(...)``, ``helper(...)``
+                name, value = node.func.id, fn.__globals__.get(node.func.id)
+            elif isinstance(node.func, ast.Attribute):  # ``models.NoteRow(...)``, ``service.add(...)``
+                name, base = node.func.attr, None
+                if isinstance(node.func.value, ast.Name):
+                    base = fn.__globals__.get(node.func.value.id)
+                value = (_foreign(lambda: getattr(base, name, None))
+                         if isinstance(base, types.ModuleType) else None)
+            else:
+                continue
+            if name in orm:
+                found.add(name)
+            elif isinstance(value, types.FunctionType):
+                visit(value)
+
+    for route in _routes(app):
+        if getattr(route, "path", None) == path and "POST" in (getattr(route, "methods", None) or ()):
+            visit(route.endpoint)
+    return sorted(found)
+
+
 # ---------------------------------------------------------------------------
 # Action/method endpoints: ``POST /<entity>/{id}/methods/<action>/``
 #
@@ -1200,6 +1300,367 @@ async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasse
     return reports, calls, ordinal
 
 
+# ---------------------------------------------------------------------------
+# Logging in: only through the app's own routes, as any visitor could
+# ---------------------------------------------------------------------------
+
+_REGISTER_PATH = re.compile(r"/(register|signup|sign-up|sign_up)/?$", re.I)
+_LOGIN_PATH = re.compile(r"/(login|signin|sign-in|sign_in|token)/?$", re.I)
+_TOKEN_KEYS = ("access_token", "accessToken", "token", "jwt", "id_token")
+# Whole words of a field name (adjacent pairs joined: ``isSuperUser``, ``account_type``).
+_PRIVILEGE_WORDS = frozenset({"role", "admin", "administrator", "superuser", "staff", "permission", "scope",
+                              "privilege", "manager", "owner", "moderator", "accounttype", "usertype"})
+# A required box every visitor must tick to register (terms, consent, age) grants nothing, so the
+# probe ticks one whose every word is listed below and whose name reads as a consent: it names a
+# consent document ("terms", "userAgreement"), an acceptance of a subject ("privacy_policy_accepted",
+# "marketing_opt_in"), a document and its qualifier ("privacy_policy"), "newsletter", "remember me"
+# or an age ("is_adult", "over 18", "18 or older"). Any other boolean is a choice.
+_CONSENT_DOCUMENTS = frozenset({"terms", "tos", "eula", "consent", "agreement", "privacy", "gdpr", "cookie",
+                                "cookies", "legal"})
+_CONSENT_ITSELF = frozenset({"terms", "tos", "eula", "consent", "agreement"})
+_CONSENT_SUBJECTS = _CONSENT_DOCUMENTS | {"newsletter", "marketing", "age", "adult"}
+_CONSENT_QUALIFIERS = frozenset({"policy", "conditions", "service", "use"})
+_ACCEPT_WORDS = frozenset({"accept", "accepted", "accepts", "agree", "agreed", "agrees", "acknowledge",
+                           "acknowledged", "confirm", "confirmed", "confirmation", "given", "opt", "read"})
+_CONSENT_FILLERS = frozenset({"is", "has", "i", "have", "to", "the", "of", "and", "in", "me", "user", "signup",
+                              "data", "processing", "over", "or", "older", "remember"})
+_BARE_CONSENT = (["newsletter"], ["remember", "me"], ["adult"])
+_AGE_RE = re.compile(r"\bover \d+\b|\b\d+ or older\b")
+# A required number naming a rank picks the account's standing, like a reference to another record;
+# so does one whose last word is a group or an access grant ("user_group", "access_rights").
+_RANK_WORDS = frozenset({"level", "tier", "rank", "grade", "clearance", "plan"})
+_GRANT_WORDS = frozenset({"group", "access", "authority", "rights"})
+_PROBE_USERNAME = "probe_auth_user"
+_PROBE_EMAIL = "probe.auth.user@example.com"
+_PROBE_PASSWORD = "Probe-Passw0rd-2817"
+# The account-write step's second account: registered after the probe's own, so never the first.
+_MEMBER_IDENTITY = ("probe_member_user", "probe.member.user@example.com")
+
+
+def _auth_routes(spec: dict) -> dict:
+    """Unsecured, untemplated POST register/login routes; an OAuth2 ``tokenUrl`` wins for login."""
+    found: dict = {}
+    for path, ops in spec.get("paths", {}).items():
+        op = ops.get("post")
+        if not op or op.get("security") or "{" in path:
+            continue
+        if _REGISTER_PATH.search(path):
+            found.setdefault("register", (path, op))
+        elif _LOGIN_PATH.search(path):
+            found.setdefault("login", (path, op))
+    for scheme in (spec.get("components", {}).get("securitySchemes") or {}).values():
+        token_url = ((scheme.get("flows") or {}).get("password") or {}).get("tokenUrl")
+        op = (spec.get("paths", {}).get("/" + str(token_url or "").lstrip("/")) or {}).get("post")
+        if token_url and op:
+            found["login"] = ("/" + token_url.lstrip("/"), op)
+    return found
+
+
+def _body_schema(op: dict, schemas: dict) -> tuple[str | None, dict]:
+    """``(httpx body keyword, resolved body schema)``, or ``(None, {})`` without a JSON or form body."""
+    content = (op.get("requestBody") or {}).get("content") or {}
+    if "application/json" in content:
+        kind, media = "json", content["application/json"]
+    elif "application/x-www-form-urlencoded" in content or "multipart/form-data" in content:
+        kind = "data"
+        media = content.get("application/x-www-form-urlencoded") or content["multipart/form-data"]
+    else:
+        return None, {}
+    return kind, _resolve(media.get("schema") or {}, schemas)
+
+
+def _is_consent(tokens: list[str]) -> bool:
+    """Whether a boolean's name words state consent, an age or "remember me" and nothing else."""
+    known = _CONSENT_SUBJECTS | _CONSENT_QUALIFIERS | _ACCEPT_WORDS | _CONSENT_FILLERS
+    if not all(t in known or t.isdigit() for t in tokens):
+        return False
+    documents = [k for k, t in enumerate(tokens) if t in _CONSENT_DOCUMENTS]
+    if not documents and any(t in _CONSENT_QUALIFIERS for t in tokens):
+        return False  # "has_policy", "service_policy": a qualifier of no document
+    return (any(t in _CONSENT_ITSELF for t in tokens)
+            or (any(t in _ACCEPT_WORDS for t in tokens) and any(t in _CONSENT_SUBJECTS for t in tokens))
+            or any(tokens[k + 1:k + 2] in (["policy"], ["conditions"]) for k in documents)
+            or [t for t in tokens if t not in ("is", "has")] in _BARE_CONSENT
+            or bool(_AGE_RE.search(" ".join(tokens))))
+
+
+def _choice(field: str, schema: dict) -> str | None:
+    """Why a value for ``field`` would choose what kind of account the probe gets, or None.
+
+    Only plain text or numbers under a name that is no privilege, reference or
+    rank, and consent boxes, are free input; another boolean, an enum/Literal,
+    an object/array or a privilege-named field is a choice.
+    """
+    tokens = _name_tokens(field)
+    words = {*tokens, *(a + b for a, b in zip(tokens, tokens[1:]))}
+    words |= {word[:-1] for word in words if word.endswith("s")}
+    if words & _PRIVILEGE_WORDS:
+        return "a privilege-named field"
+    if "enum" in schema or "const" in schema:
+        return "one of fixed values"
+    if schema.get("type") == "boolean" and _is_consent(tokens):
+        return None
+    if schema.get("type") in ("integer", "number") and (
+            (len(tokens) > 1 and tokens[-1] == "id") or words & _RANK_WORDS or _GRANT_WORDS.intersection(tokens[-1:])):
+        return "a reference to another record or a rank"
+    if schema.get("type") not in ("string", "integer", "number"):
+        return f"a {schema.get('type') or 'untyped'} value"
+    return None
+
+
+def _credential_body(op: dict, schemas: dict,
+                     identity: tuple[str, str] = (_PROBE_USERNAME, _PROBE_EMAIL)) -> tuple[str | None, object]:
+    """``(httpx body keyword, body)`` for a register/login route, or ``(None, why)``.
+
+    ``identity`` is the ``(username, email)`` the account is registered under.
+    """
+    username, email = identity
+    kind, schema = _body_schema(op, schemas)
+    if kind is None:
+        return None, "no JSON or form request body"
+    body: dict = {}
+    for field, raw in schema.get("properties", {}).items():
+        resolved, low = _resolve(raw, schemas), field.lower()
+        choice = _choice(field, resolved)
+        if choice:
+            if field in schema.get("required", []):
+                return None, f"it requires `{field}` ({choice}), a choice the probe does not make for its account"
+        elif "password" in low:
+            body[field] = _PROBE_PASSWORD
+        elif "email" in low or resolved.get("format") == "email":
+            body[field] = email
+        elif low in ("username", "user_name", "login", "name"):
+            body[field] = username
+        elif field in schema.get("required", []):
+            # A birth date lies about 33 years back; any other date tomorrow.
+            past = "birth" in low or "dob" in _name_tokens(field)
+            body[field] = _sample(field, resolved, -12_000 if past else 1, entity="probeauth")
+    return kind, body
+
+
+def _find_token(body) -> str | None:
+    for value in (body, *(body.values() if isinstance(body, dict) else ())):
+        if isinstance(value, dict):
+            token = next((value[k] for k in _TOKEN_KEYS if isinstance(value.get(k), str) and value[k]), None)
+            if token:
+                return token
+    return None
+
+
+async def _discovered_login(client, spec: dict, schemas: dict,
+                            identity: tuple[str, str] = (_PROBE_USERNAME, _PROBE_EMAIL)
+                            ) -> tuple[dict | None, str, str]:
+    """Register (when offered) and log in a probe account; ``(headers, error, identity)``.
+
+    Empty headers mean a session cookie, which the client's jar carries. A
+    failed registration still tries the login route.
+    """
+    routes = _auth_routes(spec)
+    if not routes:
+        return None, "the OpenAPI document lists no unsecured register or login route", ""
+    token, errors, done = None, [], set()
+    for step in ("register", "login"):
+        if step not in routes:
+            continue
+        path, op = routes[step]
+        kind, body = _credential_body(op, schemas, identity)
+        if kind is None:
+            errors.append(f"POST {path}: {body}")
+            continue
+        response = await client.post(path, **{kind: body})
+        if not 200 <= response.status_code < 300:
+            errors.append(f"POST {path} answered {response.status_code}: {response.text[:120]}")
+            continue
+        done.add(step)
+        try:
+            token = _find_token(response.json()) or token
+        except ValueError:
+            pass
+    if ("login" if "login" in routes else "register") not in done:
+        return None, "; ".join(errors), ""
+    identity = ("a new account the probe registered" if "register" in done
+                else "the probe's own credentials, without registering")
+    return ({"Authorization": f"Bearer {token}"} if token else {}), "", identity
+
+
+async def _log_in(client, spec: dict, schemas: dict, retry) -> tuple[dict, tuple | None]:
+    """Log ``client`` in after ``retry``'s request was refused 401/403.
+
+    A login counts only if that request then gets past the wall; the retried
+    result is returned with the record. Never raises.
+    """
+    try:
+        headers, error, identity = await _discovered_login(client, spec, schemas)
+        if headers is not None:
+            client.headers.update(headers)
+            retried = await retry()
+            if retried[1] not in (401, 403):
+                return {"source": "its register/login routes", "identity": identity,
+                        "credential": sorted(headers) or "session cookie"}, retried
+            # 403 to a request that carried the account's credential: the route needs a
+            # privilege or a step (such as a CSRF token) the probe does not take.
+            refused = retried[1] == 403 and bool(headers or len(client.cookies))
+            for name in headers:
+                client.headers.pop(name, None)
+            error = (f"{identity} was refused 403 ({retried[2][:120]}), so the route needs a privilege "
+                     "or a step, such as a CSRF token, the probe does not take" if refused else
+                     f"the refused request still answered {retried[1]} after logging in ({retried[2][:120]})")
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"[:160]
+    client.cookies.clear()
+    return {"error": f"its register/login routes: {error}"[:400]}, None
+
+
+_ACCOUNT_WRITE_METHODS = ("put", "patch", "delete")
+_CREDENTIAL_WORDS = frozenset({"password", "passwd", "passphrase", "hash", "secret"})
+_CHANGED_PASSWORD = "Probe-Changed-Passw0rd-2817"
+
+
+def _sensitive_value(field: str, schema: dict, current) -> object | None:
+    """A new value for a credential or privilege field, or None when the probe would only guess."""
+    if _CREDENTIAL_WORDS.intersection(_name_tokens(field)):
+        return _CHANGED_PASSWORD if schema.get("type", "string") == "string" else None
+    if _choice(field, schema) != "a privilege-named field":
+        return None
+    literals = [v for v in schema.get("enum") or [] if v != current]
+    if literals:
+        return next((v for v in literals if "admin" in str(v).lower()), literals[-1])
+    if schema.get("type") == "boolean":
+        return current is not True
+    if schema.get("type") == "string":
+        return "admin" if current != "admin" else "administrator"
+    return None
+
+
+def _field_in(body, field: str):
+    """``field`` in a response record, at the top or in its one wrapper; ``_MISSING_FIELD`` if absent."""
+    for record in (body, *(body.values() if isinstance(body, dict) else ())):
+        if isinstance(record, dict) and field in record:
+            return record[field]
+    return _MISSING_FIELD
+
+
+_MISSING_FIELD = object()
+
+
+async def _logs_in_as(client, op: dict, schemas: dict, payload: dict, password: str) -> bool:
+    """Whether the login route accepts ``payload``'s identity with ``password``."""
+    kind, schema = _body_schema(op, schemas)
+    if kind is None:
+        return False
+    body: dict = {}
+    for field in schema.get("properties", {}):
+        if "password" in field.lower():
+            body[field] = password
+        elif field in payload:
+            body[field] = payload[field]
+        elif field in schema.get("required", []):
+            return False
+    client.cookies.clear()
+    response = await client.post(op["_path"], **{kind: body})
+    client.cookies.clear()  # the session must not make later requests of ``client`` logged in
+    return 200 <= response.status_code < 300
+
+
+async def _open_account_writes(app, spec: dict, schemas: dict, orm: dict, creates: dict, create_fresh,
+                               read_back, anonymous, member, probe_registered: bool) -> tuple[list[dict], str]:
+    """Writes to account records that the app's own login does not stop; ``(found, not_checked)``.
+
+    Asked only of an app with its own register and login routes; the account table is what
+    register instantiates, and its routes are those under its generic create path. Each write
+    gets a fresh record, created as the probe:
+
+    - ``routes``: PUT/PATCH/DELETE that answer 2xx to a request with no credentials;
+    - ``fields``: a credential or privilege field (password, role, is_admin) that ``member``, a
+      second account registered after the probe's own, changed on that other record: shown by a
+      read of the record for a privilege, by logging in as the record with the new password for a
+      credential.
+
+    A guard's own 422 (a missing header) is not a write that got through. A POST is never listed:
+    an open create is how a visitor signs up. ``not_checked`` says why the logged-in writes were
+    not asked, when the second account could not log in.
+    """
+    routes = _auth_routes(spec)
+    if not {"register", "login"} <= routes.keys():
+        return [], ""
+    try:
+        accounts = _tables_behind(app, routes["register"][0], orm)
+    except _Unknowable:
+        return [], ""
+    member_state: list[str] = []  # "" once logged in, else why not; tried once, on the first refusal
+
+    async def member_logged_in() -> bool:
+        if not member_state:
+            try:
+                if not probe_registered:  # so the second account is never the app's first
+                    await _discovered_login(anonymous, spec, schemas)
+                    anonymous.cookies.clear()
+                headers, error, _identity = await _discovered_login(member, spec, schemas, _MEMBER_IDENTITY)
+            except Exception as exc:  # the app's own exception, re-raised by the transport
+                headers, error = None, f"{type(exc).__name__}: {exc}"
+            if headers is not None:
+                member.headers.update(headers)
+            member_state.append("" if headers is not None else f"the second account could not log in: {error}"[:300])
+        return not member_state[0]
+
+    login_op = {**routes["login"][1], "_path": routes["login"][0]}
+    found: list[dict] = []
+    for table in accounts:
+        if table not in creates or _REGISTER_PATH.search(creates[table][0]):
+            continue
+        collection = creates[table][0].rstrip("/") + "/"
+        opened: list[str] = []
+        taken: list[dict] = []
+        for path, ops in sorted(spec.get("paths", {}).items()):
+            if not path.startswith(collection) or path == collection or path.count("{") > 1:
+                continue
+            for method in _ACCOUNT_WRITE_METHODS:
+                op = ops.get(method)
+                if not op:
+                    continue
+                fresh = await create_fresh(table)
+                if fresh is None:
+                    continue
+                record_id, payload = fresh
+                kind, body_schema = _body_schema(op, schemas)
+                body = {} if kind is None else {kind: [record_id] if body_schema.get("type") == "array" else payload}
+                url = re.sub(r"\{[^/{}]+\}", str(record_id), path, count=1)
+                try:
+                    response = await anonymous.request(method.upper(), url, **body)
+                except Exception:
+                    continue
+                if 200 <= response.status_code < 300:
+                    opened.append(f"{method.upper()} {path}")
+                    continue
+                if method == "delete" or kind is None or "{" not in path:
+                    continue
+                changes = {}
+                for field, raw in body_schema.get("properties", {}).items():
+                    value = _sensitive_value(field, _resolve(raw, schemas), payload.get(field))
+                    if value is not None:
+                        changes[field] = value
+                if not changes or not await member_logged_in():
+                    continue
+                try:
+                    response = await member.request(method.upper(), url, **{kind: {**payload, **changes}})
+                    if not 200 <= response.status_code < 300:
+                        continue
+                    stored = await read_back(table, record_id)
+                    proven = [field for field, value in changes.items()
+                              if value != _CHANGED_PASSWORD and stored is not None
+                              and _field_in(stored, field) == value]
+                    if _CHANGED_PASSWORD in changes.values() and await _logs_in_as(
+                            anonymous, login_op, schemas, payload, _CHANGED_PASSWORD):
+                        proven += [field for field, value in changes.items() if value == _CHANGED_PASSWORD]
+                except Exception:
+                    continue
+                if proven:
+                    taken.append({"route": f"{method.upper()} {path}", "fields": sorted(proven)})
+        if opened or taken:
+            found.append({"table": table, "login": routes["login"][0], "routes": opened, "fields": taken})
+    return found, (member_state[0] if member_state else "")
+
+
 def _load_model_actions() -> dict:
     """The modelled action list the parent wrote out, if it had a model."""
     path = os.environ.get(_ACTIONS_ENV)
@@ -1300,6 +1761,9 @@ def _probe_cwd() -> dict:
     abstract = {name.strip() for name in
                 (os.environ.get(_ABSTRACT_ENV) or "").split(",") if name.strip()}
     skipped_abstract: list = []
+    skipped_non_entity: list = []
+    other_tables: dict = {}  # ``<X>Create`` bodies with no ORM class ``X``
+    unprobed_creates: list = []
     for path, ops in spec.get("paths", {}).items():
         body = (ops.get("post") or {}).get("requestBody", {})
         ref = body.get("content", {}).get("application/json", {}).get("schema", {}).get("$ref", "")
@@ -1311,7 +1775,26 @@ def _probe_cwd() -> dict:
                 # concrete subclass carries the same rows.
                 skipped_abstract.append(entity)
                 continue
+            if entity not in orm:
+                other_tables[entity] = (path, schema_name)
+                continue
             creates[entity] = (path, schema_name)
+    for entity, (path, schema_name) in other_tables.items():
+        # A ``*Create`` body whose handler instantiates no table (a signup, a login form), or
+        # whose handler cannot be read, persists no record a test_api read-back could confirm:
+        # reporting it unverified is a blocker no edit clears. One table it instantiates
+        # (``NoteRow`` for ``NoteCreate``) is probed as that table; a table with its own
+        # create route is probed there.
+        try:
+            tables = [name for name in _tables_behind(app, path, orm) if name not in creates]
+        except _Unknowable:
+            tables = []
+        if len(tables) == 1:
+            creates[tables[0]] = (path, schema_name)
+        elif tables:
+            unprobed_creates.append({"path": path, "schema": schema_name, "tables": tables})
+        else:
+            skipped_non_entity.append(entity)
 
     import asyncio
 
@@ -1321,14 +1804,24 @@ def _probe_cwd() -> dict:
         pending = dict(creates)
         ordinal = 0
         transport = httpx.ASGITransport(app=app)
+        auth: dict = {}
         async with httpx.AsyncClient(transport=transport, base_url="http://probe") as client:
-            async def request(path, payload, variant):
+            async def post(path, payload):
                 try:
                     response = await client.post(path, json=payload)
-                    status, text = response.status_code, response.text or ""
+                    return response, response.status_code, response.text or ""
                 except Exception as exc:
-                    response, status = None, "EXC"
-                    text = f"{type(exc).__name__}: {exc}"
+                    return None, "EXC", f"{type(exc).__name__}: {exc}"
+
+            async def request(path, payload, variant):
+                response, status, text = await post(path, payload)
+                if status in (401, 403) and not auth:
+                    # Kept apart from the create's result: evidence that auth is enforced.
+                    auth.update(refused=f"POST {path}", anonymous_status=status)
+                    record, retried = await _log_in(client, spec, schemas, lambda: post(path, payload))
+                    auth.update(record)
+                    if retried is not None:
+                        response, status, text = retried
                 attempt = {
                     "variant": " ".join(str(v) for v in variant),
                     "status": status, "outcome": _outcome(status),
@@ -1369,8 +1862,6 @@ def _probe_cwd() -> dict:
             while pending and progress:
                 progress = False
                 for entity, (path, schema_name) in list(pending.items()):
-                    if entity not in orm:
-                        continue  # cannot tell attributes from foreign keys: unprovable
                     schema = schemas[schema_name]
                     _, unresolved = _build_payload(
                         schema, schemas, orm[entity], ids, subclasses, ("base",))
@@ -1437,20 +1928,57 @@ def _probe_cwd() -> dict:
                     schemas[schema_name], schemas, orm.get(entity, {}), ids, subclasses, ("base",))
                 entities[entity] = {"path": path, "verdict": "unresolved", "unresolved": unresolved}
 
-            actions, action_calls, _ordinal = await _probe_actions(
+            actions, action_calls, ordinal = await _probe_actions(
                 app, spec, request, read_state, schemas, orm, subclasses, unique_fields,
                 creates, entities, ids, ordinal, _load_model_actions())
-        return {"entities": entities, "actions": actions, "action_calls": action_calls}
+
+            async def create_fresh(table):
+                """``(id, payload)`` of a new ``table`` record, created as the probe, or None."""
+                nonlocal ordinal
+                path, schema_name = creates[table]
+                new_id, ordinal = await _create_instance(
+                    request, schemas[schema_name], schemas, orm, subclasses, unique_fields,
+                    table, path, ids, ("base",), ordinal, ("account-fresh", table))
+                if new_id is None:
+                    return None
+                payload, _ = _build_payload(
+                    schemas[schema_name], schemas, orm.get(table, {}), ids, subclasses, ("base",),
+                    entity=table, ordinal=ordinal, unique_fields=unique_fields.get(table, frozenset()))
+                return new_id, payload
+
+            read_routes = _read_routes(spec, creates)
+
+            async def read_back(table, record_id):
+                """The record as the app serves it to the probe, or None."""
+                return (await read_state(read_routes.get(table), record_id, {}))["entity"]
+
+            async with httpx.AsyncClient(transport=transport, base_url="http://probe") as anonymous:
+                async with httpx.AsyncClient(transport=transport, base_url="http://probe") as member:
+                    # The probe's own account was registered only if a request was refused.
+                    open_writes, not_checked = await _open_account_writes(
+                        app, spec, schemas, orm, creates, create_fresh, read_back, anonymous, member,
+                        probe_registered=bool(auth))
+        return {"entities": entities, "actions": actions, "action_calls": action_calls,
+                "auth": auth, "open_account_writes": open_writes, "account_writes_not_checked": not_checked}
 
     try:
         result = asyncio.run(run())
     except Exception as exc:
         return {"boot": "probe_error", "error": f"{type(exc).__name__}: {exc}"[:300]}
-    return {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
-            "action_calls": result["action_calls"],
-            # Named so a reader can tell "not probed because the model says
-            # it is abstract" from "probed and passed".
-            "skipped_abstract": sorted(set(skipped_abstract))}
+    report = {"boot": "ok", "entities": result["entities"], "actions": result["actions"],
+              "action_calls": result["action_calls"],
+              # Named so a reader can tell "not probed because the model says
+              # it is abstract" from "probed and passed".
+              "skipped_abstract": sorted(set(skipped_abstract)),
+              "skipped_non_entity": sorted(set(skipped_non_entity)),
+              "unprobed_creates": unprobed_creates}
+    if result["auth"]:
+        report["auth"] = result["auth"]
+    if result["open_account_writes"]:
+        report["open_account_writes"] = result["open_account_writes"]
+    if result["account_writes_not_checked"]:
+        report["account_writes_not_checked"] = result["account_writes_not_checked"]
+    return report
 
 
 if __name__ == "__main__":

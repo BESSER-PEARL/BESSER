@@ -103,7 +103,7 @@ def test_the_judge_step_reports_entity_gaps_as_warnings(tmp_path, monkeypatch):
                  "status": "partial" if "Tag" in r["text"] else "implemented"} for r in requirements]
 
     monkeypatch.setattr(requirements_ledger, "judge_coverage", judge)
-    monkeypatch.setattr(requirements_ledger, "verify_evidence", lambda verdicts, output_dir: verdicts)
+    monkeypatch.setattr(requirements_ledger, "verify_evidence", lambda verdicts, output_dir, *_: verdicts)
     issues = orch._collect_requirement_issues()
     assert seen == [TAG, TODO]
     assert [_classify_issue(i).severity for i in issues] == ["warning"]

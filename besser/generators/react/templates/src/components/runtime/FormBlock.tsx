@@ -1,5 +1,6 @@
 import React, { CSSProperties, useState } from "react";
 import axios from "axios";
+import { notifyDataChanged } from "./dataVersion";
 
 export interface FormBlockField {
   // Name of the control in the form, the attribute it sets, and its type
@@ -14,6 +15,8 @@ export interface FormBlockProps {
   entity?: string;
   fields: FormBlockField[];
   submitLabel?: string;
+  // Design classes of the form's own submit button
+  submitClassName?: string;
   className?: string;
   style?: CSSProperties;
   children?: React.ReactNode;
@@ -60,6 +63,7 @@ export const FormBlock: React.FC<FormBlockProps> = ({
   entity,
   fields,
   submitLabel = "Submit",
+  submitClassName,
   className,
   style,
   children,
@@ -87,6 +91,7 @@ export const FormBlock: React.FC<FormBlockProps> = ({
     setStatus(null);
     try {
       await axios.post(url, payload);
+      notifyDataChanged();
       form.reset();
       setStatus({ ok: true, text: `${entity || "Record"} saved.` });
     } catch (err) {
@@ -100,7 +105,7 @@ export const FormBlock: React.FC<FormBlockProps> = ({
   return (
     <form id={id} className={className} style={style} onSubmit={handleSubmit}>
       {children}
-      <button type="submit" disabled={saving}>
+      <button type="submit" className={submitClassName} disabled={saving}>
         {saving ? "Saving..." : submitLabel}
       </button>
       {status && (

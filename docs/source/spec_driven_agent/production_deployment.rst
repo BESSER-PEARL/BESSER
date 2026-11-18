@@ -51,7 +51,8 @@ cleaned store for that reason.
    The worker must use the ``smartgen_worker`` image. Left on the ``backend``
    image, it starts normally but has no compilers and no bubblewrap: every
    ``run_command`` is refused and Phase 3 cannot compile TypeScript, Rust or
-   Kotlin output. The deploy workflow refuses to deploy in that state.
+   Kotlin output. Check the host's compose file before a deploy (the
+   workflow cannot reach the host to do it).
 
 The worker service
 ------------------
@@ -183,7 +184,15 @@ Sandbox and network
   ``/usr/local`` and ``/root`` are read-only. The telemetry folder and the
   incident log folder (``BESSER_INCIDENT_LOG_DIR``, default
   ``/app/incidents``, which names other runs) are masked from every run.
-  Deleting a run removes its sandbox ``$HOME`` along with its workspace.
+  Deleting a run removes its sandbox ``$HOME`` along with its workspace; a
+  packaged run loses its sandbox ``$HOME`` and what it installed and built once
+  it has freed its slot, a resumable one included (see :doc:`configuration`).
+- A finished run's download (its ZIP or single file, and a manifest naming the
+  run) is kept in ``<run dir>.download``, which the run's shell cannot see, and
+  is opened without following links. A manifest inside a workspace or a
+  sandbox ``$HOME`` is never read. Runs finished before this layout (a
+  ``.besser_download.json`` in the workspace) are not restored after the
+  upgrade: their download, push and modify answer as expired.
 - ``cargo check`` has no network, so only crates that the run already fetched
   through ``run_command`` resolve. Otherwise the check is reported as
   "dependencies could not be fetched", a skipped check rather than a compile
@@ -193,9 +202,11 @@ Sandbox and network
   still has outbound internet for the LLM endpoints.
 - It publishes ``127.0.0.1:9001`` only, so the host's reverse proxy must
   route ``/besser_api/spec-driven/`` to it, except
-  ``/besser_api/spec-driven/push-to-github`` and
-  ``/besser_api/spec-driven/import-github-run``, which stay on the backend
-  with the rest of ``/besser_api/``.
+  ``/besser_api/spec-driven/push-to-github``,
+  ``/besser_api/spec-driven/import-github-run`` and
+  ``/besser_api/spec-driven/import-generated-code``, which stay on the backend
+  with the rest of ``/besser_api/``: they need the GitHub session, which only
+  the backend holds, and the worker answers them with a 401.
 - Give ``/besser_api/transform-agent-model-json`` (agent personalization) a
   ``proxy_read_timeout`` of about 600 s. It makes one LLM call per selected
   option in sequence, so several options exceed nginx's 60 s default and
@@ -204,14 +215,27 @@ Sandbox and network
 Deploying
 ---------
 
-The *Deploy WME to EC2* workflow (``target: backend`` or ``all``) builds and
-pushes both images, then recreates ``besser-wme-backend`` and
-``besser-wme-smartgen``. Before it builds anything, it reads the host's
-compose file and stops, with nothing pushed or restarted, when a service it
-would deploy is not defined there or when ``besser-wme-smartgen`` is not on the
-``smartgen_worker`` image. After the restart it compares ``BESSER_BUILD_SHA``
-in both containers with the commit it built, then checks that the API answers
-``200``.
+The *Deploy WME* workflow builds the images for its ``target`` and pushes
+them to ``:latest``; it never logs in to the host. The production host (a LIST
+VM reachable only over the LIST VPN) runs watchtower, which pulls new
+``:latest`` images every 30 minutes and recreates the containers. Each image is
+pushed with Buildx as an OCI index, and the workflow stops unless the registry
+then serves that digest for ``:latest``: Artifactory serves a tag's existing
+index in preference to a plain manifest, so a plain ``docker push`` reports
+success and leaves ``:latest`` on the previous image. The frontend is built
+with the editor, backend and assistant URLs and the PostHog key baked in;
+without them the assistant connects to ``ws://localhost:8765``. The key comes
+from the repository variable ``FRONTEND_POSTHOG_KEY``, and the workflow stops
+before pushing anything when it is not set. The modeling agent (``target:
+agent`` or ``all``) is built from ``main`` of ``BESSER-PEARL/modeling-agent``.
+
+The workflow then waits, up to 45 minutes, until the public URL serves the new
+build: ``/besser_api/`` reports the commit just built as ``besser_build``, and
+``/`` links the entry bundle of the frontend image just built. The worker, the
+agent and the agent simulator have no public build stamp; they are pushed
+before the backend, so a watchtower pass that installed the new backend also
+saw them. Compose, ``.env``, catalog and reverse-proxy changes are not part of
+the workflow: make them on the host over the VPN.
 
 The model catalog (``BESSER_MODEL_CATALOG``) is validated strictly at startup:
 an unknown key, a value of the wrong type or a ``base_url`` without a host
@@ -222,7 +246,7 @@ are about to deploy before you deploy:
 .. code-block:: bash
 
    docker run --rm -e BESSER_MODEL_CATALOG=/catalog.json \
-     -v /home/ec2-user/model_catalog.json:/catalog.json:ro <backend image> \
+     -v ./model_catalog.json:/catalog.json:ro <backend image> \
      python -c "from besser.llm.catalog import load_model_catalog as l; print(sorted(l().providers))"
 
 It prints the provider ids, or a ``ModelCatalogError`` naming the field.

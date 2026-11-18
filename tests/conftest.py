@@ -9,8 +9,17 @@ Fixtures defined here are automatically available to all tests under
 the ``tests/`` directory without explicit imports.
 """
 
+import os
+
 import pytest
-from besser.BUML.metamodel.structural import (
+
+# One thread per process for torch and BLAS, in this process and in the ones
+# the tests start. Their default is one thread per core: the models here are
+# too small to gain from that, and under `pytest -n auto` every worker would
+# start that many, several times more threads than cores.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+from besser.BUML.metamodel.structural import (  # noqa: E402
     Class, DomainModel, Property, BinaryAssociation, Multiplicity,
     Enumeration, EnumerationLiteral,
     StringType, IntegerType, FloatType, BooleanType, DateType,

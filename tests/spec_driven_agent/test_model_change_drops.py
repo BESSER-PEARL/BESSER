@@ -28,7 +28,6 @@ from besser.BUML.metamodel.structural import (
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_system_prompt
 from besser.spec_driven_agent.model_serializer import serialize_domain_model
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.planning.gap_analyzer import _note_rejected_constraints
 from besser.spec_driven_agent.planning.model_change import model_summary
 from besser.spec_driven_agent.planning.model_rules import converted_rule_fingerprints
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.ocl_parser import (
@@ -155,7 +154,8 @@ def test_rule_on_a_removed_attribute_is_dropped(tmp_path, monkeypatch):
     assert "self.pages" not in prompt
     assert "Where the model disagrees with your specification" not in prompt
 
-    assert [t for t in _note_rejected_constraints(current, []) if "positivePages" in t] == []
+    # No checklist item recovers it (the harness is the one producer of these items).
+    assert [t for t in orch._deterministic_gap_tasks() if "positivePages" in str(t)] == []
 
     report = build_verification_report({"model_conversion_issues": current.conversion_issues})
     [item] = report.shippedUnenforced
@@ -331,6 +331,50 @@ def test_phase3_fix_prompt_lists_a_dropped_rule_as_dropped(tmp_path):
     orch.domain_model.conversion_issues[0]["dropped_by_model_change"] = ["Book.pages"]
     with patch.object(client, "chat", wraps=client.chat) as spy:
         orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
-    prompt = spy.call_args_list[0].kwargs["messages"][0]["content"]
+    # The run-constant sections (the model among them) are in the system prompt.
+    call = spy.call_args_list[0].kwargs
+    prompt = call["system"] + "\n" + call["messages"][0]["content"]
     assert DROPPED_RULES_NOTE in prompt
     assert "self.pages" not in prompt and "Recover model constraint" not in prompt
+
+
+def test_a_resumed_modify_run_keeps_the_drop_and_the_seed_blockers(tmp_path, monkeypatch):
+    """resume() rebuilt neither the drop marks nor the seed run's state: the
+    rule went back on the recovery path (#659) and the seed blockers vanished.
+    By then the workspace recipe is the interrupted run's own, no record of
+    the seed run."""
+    previous = _with_rules(_model(), PAGES_RULE)
+    seed = _seed(tmp_path, previous)
+    recipe_path = tmp_path / "app" / ".besser_recipe.json"
+    recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
+    recipe["validation_issues"] = [{"severity": "blocker", "message": "create contract: POST /book/ returns 500"}]
+    recipe_path.write_text(json.dumps(recipe), encoding="utf-8")
+
+    def orchestrator(model):
+        return LLMOrchestrator(
+            llm_client=_Client(), domain_model=model, output_dir=seed,
+            enable_tracing=False, enable_checkpointing=True, enable_toolchain_validation=False,
+        )
+
+    for name in ("_create_snapshot", "_run_phase3_validation", "_remove_snapshot"):
+        monkeypatch.setattr(LLMOrchestrator, name, lambda *a, **k: None)
+    first = orchestrator(_with_rules(_model(book=("title:str",)), PAGES_RULE))
+    monkeypatch.setattr(first, "_run_phase2", lambda instructions, extra_issues=None: (
+        first._save_checkpoint_for_turn(1, [{"role": "user", "content": instructions}], instructions)))
+    first.modify("update the app to the new model")  # Phase 2 stopped early: the checkpoint stays
+    assert first._seed_unresolved_issues
+
+    current = _with_rules(_model(book=("title:str",)), PAGES_RULE)
+    resumed = orchestrator(current)
+    phase2_issues: list[str] = []
+    monkeypatch.setattr(resumed, "_run_phase2", lambda instructions, extra_issues=None: (
+        phase2_issues.extend(extra_issues)))
+    monkeypatch.setattr(resumed, "_save_recipe", lambda instructions, elapsed: None)
+    resumed.resume("update the app to the new model")
+
+    assert current.conversion_issues[0]["dropped_by_model_change"] == ["Book.pages"]
+    assert _recover_texts(resumed) == []
+    assert resumed._seed_unresolved_issues == first._seed_unresolved_issues
+    # The resumed Phase 2 prompt opens with the same model change and seed debt.
+    assert phase2_issues[0] == resumed._render_model_change()
+    assert first._seed_unresolved_issues[0] in phase2_issues

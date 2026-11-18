@@ -219,6 +219,15 @@ export const parseFilterExpression = (filter: unknown): ParsedFilter | null => {
   };
 };
 
+// ISO 8601 date or date-time, as the backend serialises date and datetime attributes.
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
+const parseIsoDate = (text: string): number | null => {
+  if (!ISO_DATE_PATTERN.test(text)) return null;
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
 const toNumberOrDate = (value: any): number | null => {
   if (value === null || value === undefined) return null;
   if (typeof value === "number" && !Number.isNaN(value)) return value;
@@ -227,8 +236,7 @@ const toNumberOrDate = (value: any): number | null => {
     const trimmed = value.trim();
     if (trimmed.length === 0) return null;
     if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-    const parsed = Date.parse(trimmed);
-    return Number.isNaN(parsed) ? null : parsed;
+    return parseIsoDate(trimmed);
   }
   return null;
 };
@@ -241,9 +249,7 @@ const normalizeForEquality = (value: any): any => {
     const trimmed = value.trim();
     if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === "true";
     if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-    const parsed = Date.parse(trimmed);
-    if (!Number.isNaN(parsed) && !/^-?\d+(\.\d+)?$/.test(trimmed)) return parsed;
-    return trimmed.toLowerCase();
+    return parseIsoDate(trimmed) ?? trimmed.toLowerCase();
   }
   return value;
 };

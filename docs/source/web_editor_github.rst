@@ -312,7 +312,7 @@ Coming back to a repository
 ---------------------------
 
 A finished run lives on the server only for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``
-(30 minutes by default). The repository is what lasts, so that is what a later
+(3 hours by default; its download stays for ``BESSER_LLM_ARCHIVE_TTL_SECONDS``). The repository is what lasts, so that is what a later
 request continues from.
 
 **The base of the next run.** When the project is linked to a repository and its

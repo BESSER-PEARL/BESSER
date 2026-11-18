@@ -172,3 +172,58 @@ class TestFilenameSanitization:
         )
         safe = _safe_attachment_filename("out\x00put.zip", "fallback.zip")
         assert "\x00" not in safe
+
+
+class TestValidationErrorsDoNotEchoSecrets:
+    """A failing model validator puts the whole request body in pydantic's
+    ``input``; the 422 must not send the API key or demo secret back."""
+
+    API_KEY = "sk-ant-api03-REAL-KEY-0123456789abcdefghijklmnopqrstuvwxyz"
+    DEMO = "the-demo-secret-value"
+
+    def _post(self, path: str, body: dict):
+        import asyncio
+
+        import httpx
+        from httpx._transports.asgi import ASGITransport
+
+        from besser.utilities.web_modeling_editor.backend.backend import app
+
+        async def go():
+            async with httpx.AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://testserver"
+            ) as ac:
+                return await ac.post(path, json=body)
+
+        return asyncio.run(go())
+
+    def _body(self, **overrides) -> dict:
+        from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
+            _build_project_body,
+        )
+
+        body = _build_project_body()
+        body.update(api_key=self.API_KEY, provider="anthropic", demo_token=self.DEMO, **overrides)
+        return body
+
+    @pytest.mark.parametrize(
+        "path", ["/besser_api/spec-driven/generate", "/besser_api/spec-driven/resume/" + "a" * 32]
+    )
+    def test_model_validator_422_does_not_echo_secrets(self, path):
+        response = self._post(path, self._body(
+            skip_deterministic_generator=True,
+            target_generator_override="generate_fastapi_backend",
+        ))
+        assert response.status_code == 422
+        assert self.API_KEY not in response.text
+        assert self.DEMO not in response.text
+        detail = response.json()["detail"]
+        assert detail and {"type", "loc", "msg"} <= set(detail[0])
+        assert "cannot be combined" in detail[0]["msg"]
+
+    def test_field_error_still_names_the_field(self):
+        response = self._post("/besser_api/spec-driven/generate", self._body(max_turns="many"))
+        assert response.status_code == 422
+        assert self.API_KEY not in response.text
+        locs = [tuple(err["loc"]) for err in response.json()["detail"]]
+        assert ("body", "max_turns") in locs

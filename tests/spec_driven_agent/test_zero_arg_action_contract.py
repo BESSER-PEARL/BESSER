@@ -164,6 +164,34 @@ def test_a_required_request_model_in_the_signature_is_a_blocker():
     assert "renewal" in messages[0]
 
 
+def test_annotated_dependencies_are_not_demands():
+    """FastAPI fills `Annotated[T, Depends(...)]` parameters, directly or
+    through a module-level alias; the caller supplies nothing."""
+    content = (
+        _HEADER
+        + "from typing import Annotated\n"
+        "SessionDep = Annotated[Session, Depends(get_db)]\n\n"
+        '@router.post("/loan/{loan_id}/methods/renew/", response_model=None)\n'
+        "def renew(loan_id: int, session: SessionDep,\n"
+        "          db: Annotated[Session, Depends(get_db)],\n"
+        "          current_user: Annotated[dict, Security(get_current_user)]):\n"
+        "    return {\"success\": True}\n"
+    )
+    assert _messages(content) == []
+
+
+def test_an_annotated_query_parameter_without_default_is_a_demand():
+    content = (
+        _HEADER
+        + "from typing import Annotated\n"
+        '@router.post("/loan/{loan_id}/methods/renew/", response_model=None)\n'
+        "def renew(loan_id: int, days: Annotated[int, Query(gt=0)]):\n"
+        "    return {\"success\": True}\n"
+    )
+    messages = _messages(content)
+    assert len(messages) == 1 and "`days`" in messages[0]
+
+
 def test_an_alias_fallback_chain_is_a_demand():
     """gpt-5.6-terra-l49zhafg: `.get("dueDate") or .get("due_date")`."""
     messages = _messages(_handler(

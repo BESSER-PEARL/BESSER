@@ -33,6 +33,7 @@ Additional infrastructure:
 - **``services/cleanup.py``** -- Background temp-file cleanup (removes stale directories every hour)
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError``, ``ConfigurationError`` and ``UpstreamError`` (an external service such as GitHub refused or failed; carries the HTTP status).
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
+- **Request validation (422)** -- ``backend.py`` replaces FastAPI's handler: each ``detail`` entry keeps ``type``, ``loc`` and ``msg`` but drops pydantic's ``input`` and ``ctx``, since a failing model validator puts the whole request body there, API keys included.
 - **``services/generation/``** -- Generator dispatch behind ``/generate-output`` and ``/generate-output-from-project``: ``dispatch.py`` picks the path from the generator's registry entry (``category``, ``required_diagram_type``, ``output_type``; ``needs_beyond_one_diagram`` refuses a generator one diagram cannot feed; generators with request options have a builder in ``_CLASS_DIAGRAM_BUILDERS``, which maps the request config to the generator's options) and runs it through ``besser.generators.runner.run_generator``, the calling contract shared with the :doc:`besser command <cli>`, ``agents.py`` generates agents (BAF), ``downloads.py`` packs the output as a ``GeneratedOutput`` (a ZIP with its provenance file, or one file with its version comment), which the router sends as the download
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``github_sync.py`` (a run pushed to GitHub, a GitHub repo imported as a run), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
@@ -85,7 +86,9 @@ by a dependency in ``dependencies.py``:
 - ``app.state.kg_consistency_slots`` (``KgConsistencySlotsDep``) -- the
   ``KG_CONSISTENCY_MAX_CONCURRENT`` cap on knowledge graph consistency checks;
 - ``app.state.sdmx_import_slots`` (``SdmxImportSlotsDep``) -- the
-  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports.
+  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports;
+- ``app.state.semantic_check_slots`` (``SemanticCheckSlotsDep``) -- the
+  ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` cap on semantic checks.
 
 Two applications in one process share none of this state. The sign-in stores
 are encrypted files, so two applications configured with the same paths still
@@ -474,13 +477,13 @@ have no safe place for one and are returned unchanged.
 Spec-Driven Agent
 ^^^^^^^^^^^^^^^^^
 
-Eleven endpoints under ``/spec-driven/*`` back the
+Twelve endpoints under ``/spec-driven/*`` back the
 :doc:`Spec-Driven Agent <spec_driven_agent/index>` -- the hybrid pipeline that
 runs a deterministic generator, lets an LLM customise its output, then validates
 and repairs the result: ``generate``, ``preview``, ``config``,
 ``runs/{run_id}``, ``runs/{run_id}/events``, ``runs/{run_id}/events.json``,
 ``resume/{run_id}``, ``cancel/{run_id}``, ``download/{run_id}``,
-``push-to-github`` and ``import-github-run``.
+``push-to-github``, ``import-github-run`` and ``import-generated-code``.
 
 They are documented once, with the agent, rather than twice: see
 :doc:`spec_driven_agent/api` for the endpoint table, the request contract, the
@@ -503,8 +506,9 @@ Backend-side notes that do not belong in the contract:
   Each push renders the block again in
   place, and a run seeded from the repo starts without it, so its lines are never
   attributed to a person.
-- ``/spec-driven/push-to-github`` and ``/spec-driven/import-github-run`` require
-  the ``X-GitHub-Session`` header, like the other GitHub endpoints below.
+- ``/spec-driven/push-to-github``, ``/spec-driven/import-github-run`` and
+  ``/spec-driven/import-generated-code`` require the ``X-GitHub-Session``
+  header, like the other GitHub endpoints below.
 - ``/spec-driven/import-github-run`` answers ``422`` for an owner or repository
   name that does not match ``^[A-Za-z0-9_.-]+$`` or consists only of dots
   (both are interpolated into GitHub API paths) and for a ``model_path`` that
@@ -641,6 +645,9 @@ Validation
   For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
   consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
+- ``POST /semantic-consistency-check`` -- Checks the satisfiability of a class diagram and its OCL constraints with
+  the Alloy Analyzer (see :doc:`utilities/object_diagram_generator`)
+- ``POST /generate-object-diagram`` -- Same search, but returns the instance found as an object diagram
 
 Deployment
 ^^^^^^^^^^
@@ -960,13 +967,20 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
   ``llm_model`` and ``api_key`` in the request body, so they also accept
   Anthropic, Mistral and Nebius keys.
 
+- ``JAVA_HOME`` and ``BESSER_ALLOY_JAR`` -- The Java installation and the Alloy Analyzer jar that
+  ``/semantic-consistency-check`` and ``/generate-object-diagram`` run (see
+  :doc:`utilities/object_diagram_generator`). The backend Docker image sets both.
+
 **Spec-Driven Agent (all optional):**
 
 The agent's ``BESSER_LLM_*``, ``BESSER_FREE_LLM_*``,
-``BESSER_SPONSORED_LLM_*`` and ``BESSER_DEMO_TOKEN`` variables -- the keyless
-tiers, the caps and their hard limits, the feature flags, the context budgets,
-and the durable-run storage paths -- are documented in one place, with the
-agent: :doc:`spec_driven_agent/configuration`.
+``BESSER_SPONSORED_LLM_*``, ``BESSER_DEMO_TOKEN`` and ``BESSER_MODEL_CATALOG``
+variables -- the keyless tiers, the model catalog, the caps and their hard
+limits, the feature flags, the shell sandbox, the context budgets, and the
+durable-run storage paths -- are documented in one place, with the agent:
+:doc:`spec_driven_agent/configuration`. The caps, flags, run lifecycle and
+demo token are on ``BackendSettings``; the rest are on the agent's
+``AgentSettings`` (``besser/spec_driven_agent/settings.py``).
 
 **Telemetry, research study mode (all optional):**
 
@@ -1052,6 +1066,17 @@ gateway.
 - ``AGENT_SIMULATOR_MEMORY_MB``, ``AGENT_SIMULATOR_CPU_CORES``,
   ``AGENT_SIMULATOR_DISK_MB``, ``AGENT_SIMULATOR_QUOTA_ENABLED`` -- Values
   reported by ``/limits``.
+
+**Semantic check** (``POST /semantic-consistency-check`` and ``/generate-object-diagram``,
+read once at startup):
+
+- ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` (``1``) -- Checks running at once, each in
+  its own Alloy Analyzer JVM; more are answered with 503. A client that disconnects
+  stops its JVM and frees its slot.
+- ``BESSER_ALLOY_MAX_HEAP_MB`` (``1024``) -- Maximum heap of each JVM (``-Xmx``). It
+  bounds the heap only: the SAT solver's own memory comes on top. A 9-class model
+  searched up to the largest scope used about 500 MB per check with a heap of 1024 or
+  384 MB alike, so plan that much free memory per concurrent check.
 
 
 Generator Configuration

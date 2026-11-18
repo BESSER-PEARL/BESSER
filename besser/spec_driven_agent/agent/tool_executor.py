@@ -83,6 +83,7 @@ from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_gen
 from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.spec_driven_agent.state.generator_output import store_written_files
 from besser.spec_driven_agent.validation import frontend_source
+from besser.spec_driven_agent.validation.frontend_resolution import _strip_comments
 
 logger = logging.getLogger(__name__)
 
@@ -540,40 +541,47 @@ def _anchored_occurrences(content: str, old_text: str) -> list[int]:
     return out
 
 
+# A column-0 TS/JS declaration and its name (none for `export default class extends X`).
 _TOP_LEVEL_DECL_RE = re.compile(
     r"^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?"
-    r"(?:function\*?|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)",
+    r"(?:function\*?|class|(?:const\s+)?enum|const|let|var|interface|type)\s+"
+    r"(?!(?:extends|implements)\b)([A-Za-z_$][\w$]*)",
     re.MULTILINE,
 )
+_EXPORT_DEFAULT_RE = re.compile(r"^export\s+default\b", re.MULTILINE)
+_ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
+# A rewrite of a large file shorter than this share of its lines has left code out.
+_MIN_REWRITE_SHARE = 0.6
 
 
-def _top_level_names(rel_path: str, source: str) -> set[str] | None:
-    """Names a Python or TS/JS module defines at top level; ``None`` when not listable."""
-    if frontend_source.supports(rel_path):
-        return set(_TOP_LEVEL_DECL_RE.findall(source))
-    if not rel_path.lower().endswith(".py"):
+def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None:
+    """Why a whole rewrite of a large generated frontend file may lose code.
+
+    ``""`` when it keeps the file's code; ``None`` when the file is not frontend
+    source with listable declarations, which keeps the two-attempt rule.
+    """
+    if not frontend_source.supports(rel_path) or "frontend" not in rel_path.split("/")[:-1]:
         return None
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):
+    old_code, new_code = _strip_comments(before, rel_path), _strip_comments(after, rel_path)
+    old_names = set(_TOP_LEVEL_DECL_RE.findall(old_code))
+    if not old_names:
         return None
-    names: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.Assign):
-            names.update(target.id for target in node.targets if isinstance(target, ast.Name))
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)
-    return names
-
-
-def _dropped_definitions(rel_path: str, before: str, after: str) -> list[str] | None:
-    """Top-level names ``before`` defines and ``after`` does not; ``None`` when either is not listable."""
-    old, new = _top_level_names(rel_path, before), _top_level_names(rel_path, after)
-    if old is None or new is None:
-        return None
-    return sorted(old - new)
+    old_lines, new_lines = before.count("\n") + 1, after.count("\n") + 1
+    if new_lines < _MIN_REWRITE_SHARE * old_lines:
+        return f"this rewrite has {new_lines} lines, under {_MIN_REWRITE_SHARE:.0%} of the file's {old_lines}"
+    dropped = sorted(old_names - set(_TOP_LEVEL_DECL_RE.findall(new_code)))
+    if dropped:
+        shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
+        return f"this rewrite drops {len(dropped)} of its declarations: {shown}"
+    if _EXPORT_DEFAULT_RE.search(old_code) and not _EXPORT_DEFAULT_RE.search(new_code):
+        return "this rewrite drops its `export default`"
+    old_routes, new_routes = (len(_ROUTE_ELEMENT_RE.findall(code)) for code in (old_code, new_code))
+    if new_routes < old_routes:
+        return f"this rewrite has {new_routes} <Route> elements where the file has {old_routes}"
+    elision = find_elision(after)
+    if elision and elision[1].strip() not in elided_lines(before):
+        return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
+    return ""
 
 
 def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int] | None:
@@ -2901,15 +2909,15 @@ class ToolExecutor:
         # safest on a SMALL file (<=200 lines), which the model can reproduce
         # faithfully after one read; it is a large file that risks dropping
         # code. So small generated files unlock write_file immediately; a
-        # large one is rewritten only when the rewrite keeps every top-level
-        # definition, or after two modify_file attempts.
+        # large one after two modify_file attempts, or at once for a frontend
+        # rewrite that keeps the file's code (_frontend_rewrite_loss).
         if rel_path in self._generator_files and os.path.isfile(path):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
                 existing = f.read()
             existing_lines = existing.count("\n") + 1
             if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-                dropped = _dropped_definitions(rel_path, existing, args["content"])
-                if dropped is None:
+                loss = _frontend_rewrite_loss(rel_path, existing, args["content"])
+                if loss is None:
                     return {
                         "error": (
                             f"'{rel_path}' was created by a BESSER generator and is large "
@@ -2918,15 +2926,13 @@ class ToolExecutor:
                             "unlocks for this file after two modify_file attempts."
                         ),
                     }
-                if dropped:
-                    shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
+                if loss:
                     return {
                         "error": (
                             f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines) "
-                            f"and this rewrite drops {len(dropped)} of its top-level definitions: "
-                            f"{shown}. Keep them in the content, or remove them with modify_file "
-                            "first if removing them is the change you want. write_file also "
-                            "unlocks for this file after two modify_file attempts."
+                            f"and {loss}. Rewrite it in full keeping that code, or use modify_file "
+                            "for targeted edits. write_file also unlocks for this file after two "
+                            "modify_file attempts."
                         ),
                     }
             # Rewrite allowed (large file, or repeated modifies already tried) — log it

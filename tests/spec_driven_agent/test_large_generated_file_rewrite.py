@@ -1,28 +1,44 @@
-"""A full rewrite of a large generated file is judged by what it keeps, not by a ritual.
+"""A full rewrite of a large generated frontend file is judged by what it keeps.
 
 Over 200 lines, ``write_file`` on a generator file was refused until two
 ``modify_file`` attempts had been made, whatever the content: a page the
 request asked to redesign was generated in full, thrown away, and generated
-again after two edits - which then unlocked even a rewrite dropping
-everything. The risk the rule stands for is lost scaffold code (classes,
-routes, components); a rewrite that keeps every top-level definition is
-accepted at once, and one that drops some is refused naming them.
+again after two edits. A frontend page or component rewrite that keeps its
+code is now accepted at once. Everything else keeps the two-attempt rule:
+backend files (scaffold lost there is routers, middleware and ORM classes,
+which no name check sees), files whose declarations cannot be listed, and a
+frontend rewrite that shrinks the file, abbreviates it, or drops a
+declaration, its default export or a route.
 """
 import json
 import os
+import re
+
+import pytest
 
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
-ROUTER = "".join(
-    f"@router.get('/order/{n}')\ndef read_order_{n}():\n    return {{'n': {n}}}\n\n\n"
-    for n in range(45)
-)
-PAGE = (
-    'import React from "react";\n\n'
-    "const OrderList: React.FC = () => {\n  return (\n    <div>\n"
-    + "".join(f'      <p className="row-{n}">Order {n}</p>\n' for n in range(220))
-    + "    </div>\n  );\n};\n\nexport default OrderList;\n"
-)
+UNLOCK = "after two modify_file attempts"
+
+ROW_LINES = [f'      <p className="row-{n}">Order {n}</p>\n' for n in range(220)]
+ROWS = "".join(ROW_LINES)
+PAGE = ('import React from "react";\n\nconst OrderList: React.FC = () => {\n  return (\n    <div>\n'
+        + ROWS + "    </div>\n  );\n};\n\nexport default OrderList;\n")
+APP = ('import { Routes, Route } from "react-router-dom";\nimport OrderList from "./pages/OrderList";\n\n'
+       "function App() {\n  return (\n    <Routes>\n"
+       + "".join(f'      <Route path="/p{n}" element={{<OrderList />}} />\n' for n in range(210))
+       + "    </Routes>\n  );\n}\n\nexport default App;\n")
+ROUTES = "".join(
+    f'@app.get("/order{n}/")\ndef get_order_{n}():\n    x = {n}\n    return {{"n": x}}\n\n\n' for n in range(40))
+MAIN = ("from fastapi import FastAPI\nfrom routers import order_router\n\napp = FastAPI()\n\n"
+        "app.add_middleware(object)\napp.include_router(order_router.router)\n\n" + ROUTES
+        + 'if __name__ == "__main__":\n    run(app)\n')
+ORM = "Base = declarative_base()\n\n" + "".join(
+    f"class Model{n}(Base):\n    __tablename__ = 'm{n}'\n    a = 1\n    b = 2\n\n\n" for n in range(40))
+CONFIG = "export default {\n" + "".join(f'  route{n}: "/r{n}",\n' for n in range(220)) + "};\n"
+BARREL = "".join(f'export {{ Thing{n} }} from "./thing{n}";\n' for n in range(210))
+
+PAGE_PATH = "web_app/frontend/src/pages/OrderList.tsx"
 
 
 def _generated(tmp_path, rel, content):
@@ -36,40 +52,64 @@ def _generated(tmp_path, rel, content):
     return executor
 
 
-def _write(executor, rel, content):
-    return json.loads(executor.execute("write_file", {"path": rel, "content": content}))
+def _write(tmp_path, rel, before, after):
+    executor = _generated(tmp_path, rel, before)
+    return json.loads(executor.execute("write_file", {"path": rel, "content": after}))
 
 
-def test_a_rewrite_keeping_every_definition_is_accepted_at_once(tmp_path):
-    rel = "backend/routers/order.py"
-    executor = _generated(tmp_path, rel, "from fastapi import APIRouter\nrouter = APIRouter()\n\n" + ROUTER)
-    rewrite = ("from fastapi import APIRouter, HTTPException\nrouter = APIRouter()\n\n"
-               + ROUTER.replace("return {'n': 3}", "raise HTTPException(404)"))
-    assert _write(executor, rel, rewrite).get("status") == "written"
+def test_a_redesigned_page_that_keeps_its_code_is_accepted_at_once(tmp_path):
+    redesigned = PAGE.replace('import React from "react";', 'import React, { useState } from "react";').replace(
+        "  return (\n", "  const [page] = useState(0);\n  return (\n").replace("<p className", "<li className")
+    redesigned = redesigned.replace("</p>", "</li>")
+    assert _write(tmp_path, PAGE_PATH, PAGE, redesigned).get("status") == "written"
 
 
-def test_a_redesigned_page_that_keeps_its_component_is_accepted(tmp_path):
-    rel = "frontend/src/pages/OrderList.tsx"
-    executor = _generated(tmp_path, rel, PAGE)
-    redesigned = ('import React, { useState } from "react";\n\n'
-                  "const OrderList: React.FC = () => {\n  const [page] = useState(0);\n"
-                  "  return <section>{page}</section>;\n};\n\nexport default OrderList;\n")
-    assert _write(executor, rel, redesigned).get("status") == "written"
+def test_a_page_rewrite_dropping_a_declaration_is_refused_and_names_it(tmp_path):
+    before = PAGE.replace("export default OrderList;", "export const OrderBadge = () => null;\n\nexport default OrderList;")
+    refused = _write(tmp_path, PAGE_PATH, before, PAGE)
+    assert "OrderBadge" in refused.get("error", ""), refused
 
 
-def test_a_rewrite_dropping_definitions_is_refused_and_names_them(tmp_path):
-    rel = "backend/routers/order.py"
-    executor = _generated(tmp_path, rel, "from fastapi import APIRouter\nrouter = APIRouter()\n\n" + ROUTER)
-    truncated = "from fastapi import APIRouter\nrouter = APIRouter()\n\n" + ROUTER.split("@router.get('/order/40')")[0]
-    refused = _write(executor, rel, truncated)
-    assert "error" in refused
-    for n in range(40, 45):
-        assert f"read_order_{n}" in refused["error"]
-    assert "read_order_39" not in refused["error"]
+ELIDED_PAGE = PAGE.replace(ROWS, "      {/* ... existing rows unchanged ... */}\n" + "".join(ROW_LINES[:180]))
+NO_DEFAULT = PAGE.replace("\nexport default OrderList;\n", "\nexport { OrderList };\n")
+IN_COMMENT = PAGE.replace("const OrderList: React.FC", "/*\nconst OrderList = old\n*/\nconst Other: React.FC").replace(
+    "export default OrderList;", "export default Other;")
+
+
+@pytest.mark.parametrize("rel,before,after", [
+    pytest.param(PAGE_PATH, PAGE, PAGE.replace(ROWS, "".join(ROW_LINES[:70])), id="shrinks-below-60-percent"),
+    pytest.param(PAGE_PATH, PAGE, ELIDED_PAGE, id="jsx-elided-to-a-comment"),
+    pytest.param(PAGE_PATH, PAGE, NO_DEFAULT, id="export-default-dropped"),
+    pytest.param(PAGE_PATH, PAGE, IN_COMMENT, id="name-kept-only-in-a-comment"),
+    pytest.param("web_app/frontend/src/App.tsx", APP,
+                 APP.replace('      <Route path="/p7" element={<OrderList />} />\n', ""), id="a-route-dropped"),
+    pytest.param("web_app/frontend/src/routes.ts", CONFIG, CONFIG.replace('  route3: "/r3",\n', ""),
+                 id="no-column-0-declarations"),
+    pytest.param("web_app/frontend/src/index.ts", BARREL, BARREL.replace('export { Thing3 } from "./thing3";\n', ""),
+                 id="barrel-re-export-dropped"),
+    pytest.param("web_app/backend/main_api.py", MAIN, MAIN.replace("app.include_router(order_router.router)\n", ""),
+                 id="py-include-router-dropped"),
+    pytest.param("web_app/backend/main_api.py", MAIN, MAIN.replace("@app.get(", "# @app.get("),
+                 id="py-route-decorators-commented-out"),
+    pytest.param("web_app/backend/main_api.py", MAIN,
+                 re.sub(r"(def get_order_\d+\(\):\n)    x = \d+\n", r"\1    ...  # unchanged\n", MAIN),
+                 id="py-bodies-elided"),
+    pytest.param("web_app/backend/sql_alchemy.py", ORM,
+                 re.sub(r"(class Model\d+\(Base\):\n)(    .*\n)+", r"\1    pass\n", ORM), id="py-orm-classes-stubbed"),
+])
+def test_a_rewrite_that_may_lose_scaffold_keeps_the_two_attempt_rule(tmp_path, rel, before, after):
+    refused = _write(tmp_path, rel, before, after)
+    assert UNLOCK in refused.get("error", ""), refused
 
 
 def test_a_file_whose_definitions_cannot_be_listed_keeps_the_old_rule(tmp_path):
-    rel = "frontend/src/styles/theme.css"
-    executor = _generated(tmp_path, rel, "".join(f".row-{n} {{ color: red; }}\n" for n in range(250)))
-    refused = _write(executor, rel, ".row-0 { color: blue; }\n")
-    assert "after two modify_file attempts" in refused.get("error", ""), refused
+    rel = "web_app/frontend/src/styles/theme.css"
+    css = "".join(f".row-{n} {{ color: red; }}\n" for n in range(250))
+    assert UNLOCK in _write(tmp_path, rel, css, css.replace("red", "blue")).get("error", "")
+
+
+def test_declaration_names_are_not_keywords():
+    from besser.spec_driven_agent.agent.tool_executor import _TOP_LEVEL_DECL_RE
+
+    source = "export default class extends Base {}\nexport const enum Status { A }\nexport async function load() {}\n"
+    assert _TOP_LEVEL_DECL_RE.findall(source) == ["Status", "load"]

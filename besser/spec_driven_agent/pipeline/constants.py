@@ -268,6 +268,12 @@ _PHASE3_CREATE_EVIDENCE_REMINDER = (
 # 6% and cut 4% (n=116) - so the streak still ends at two.
 _PHASE3_NO_PROGRESS_ROUNDS = 2
 
+# Turns of ``max_turns`` Phase 2 leaves to the repair loop: enough full fix
+# attempts for the no-progress guard above to decide, but never more than
+# 1/_PHASE3_RESERVE_MAX_FRACTION of the cap, so a small cap stays mostly Phase 2's.
+_PHASE3_TURN_RESERVE = _PHASE3_NO_PROGRESS_ROUNDS * _PHASE3_FIX_TURNS
+_PHASE3_RESERVE_MAX_FRACTION = 4
+
 # Rounds that edit the tree without improving its score before the loop ends.
 # The unchanged-state guard cannot see these: its key includes a content hash
 # of every source file, so ANY write - including a different useless one each

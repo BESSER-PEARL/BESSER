@@ -235,6 +235,8 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _PHASE3_NO_EDIT_REMINDER,
     _PHASE3_NO_PROGRESS_ROUNDS,
     _PHASE3_PLATEAU_ROUNDS,
+    _PHASE3_RESERVE_MAX_FRACTION,
+    _PHASE3_TURN_RESERVE,
     _READONLY_TOOLS,
     _RECIPE_EXCLUDED_DIRS,
     _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
@@ -2037,7 +2039,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         observed_plans = {self._repair_obligations_revision()}
         inspection_nudged = False
         self._phase2_inspection_handoff = ""
-        for turn in range(start_turn, self.max_turns):
+        phase2_turns = self._phase2_turn_limit()
+        for turn in range(start_turn, phase2_turns):
             self.total_turns = turn + 1
             self._trace.write(EVENT_TURN_START, turn=turn + 1)
 
@@ -2320,6 +2323,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
+        else:
+            # No break: Phase 2 used every turn of its share.
+            self._phase2_stop_reason = "max_turns"
+            if phase2_turns < self.max_turns:
+                self._phase2_stop_detail = (
+                    f"{self.max_turns - phase2_turns} of {self.max_turns} turns "
+                    "reserved for validation and repair"
+                )
+                logger.warning("Phase 2 reached its turn limit (%d); %s",
+                               phase2_turns, self._phase2_stop_detail)
+
+    def _phase2_turn_limit(self) -> int:
+        """Turns of ``max_turns`` Phase 2 may use; the rest is kept for Phase 3's repair loop."""
+        if not self.auto_fix_issues:
+            return self.max_turns
+        reserve = min(_PHASE3_TURN_RESERVE, self.max_turns // _PHASE3_RESERVE_MAX_FRACTION)
+        return self.max_turns - reserve
 
     # Above this the request is not repeated as the first user message. The
     # system prompt already carries it whole ("## User request"), and a second

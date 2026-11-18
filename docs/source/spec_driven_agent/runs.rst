@@ -27,6 +27,14 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - 120
      - 150
 
+``max_turns`` covers the customize loop (Phase 2) and the repair loop
+(Phase 3) together. With auto-fix on, Phase 2 stops 20 turns before the cap, or
+a quarter of the cap when that is less (a cap under 4 is not split), and the
+repair loop gets the rest: with the default 120, Phase 2 may use 100. A run
+whose Phase 2 stops there reports that the customization loop reached its step
+limit; its trace's Phase 2 ``phase_exit`` carries the reserve as
+``stop_detail``. With auto-fix off, Phase 2 may use the whole cap.
+
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.

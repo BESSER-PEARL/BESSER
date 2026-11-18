@@ -271,6 +271,7 @@ _PHASE3_NO_PROGRESS_ROUNDS = 2
 # Turns of ``max_turns`` Phase 2 leaves to the repair loop: enough full fix
 # attempts for the no-progress guard above to decide, but never more than
 # 1/_PHASE3_RESERVE_MAX_FRACTION of the cap, so a small cap stays mostly Phase 2's.
+# A share smaller than one fix attempt is not reserved at all.
 _PHASE3_TURN_RESERVE = _PHASE3_NO_PROGRESS_ROUNDS * _PHASE3_FIX_TURNS
 _PHASE3_RESERVE_MAX_FRACTION = 4
 

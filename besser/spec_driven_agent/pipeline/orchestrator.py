@@ -2075,7 +2075,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "cost_cap"
                 break
 
-            logger.info("LLM generation turn %d/%d", turn + 1, self.max_turns)
+            logger.info("LLM generation turn %d/%d", turn + 1, phase2_turns)
 
             messages = self._maybe_compact(messages)
 
@@ -2324,22 +2324,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
         else:
-            # No break: Phase 2 used every turn of its share.
-            self._phase2_stop_reason = "max_turns"
+            # No break: Phase 2 used every turn it may use. Out of its share it
+            # hands off like the inspection limit: open checklist items return
+            # in Phase 3 as blockers, so only a clean validation completes the run.
             if phase2_turns < self.max_turns:
+                self._phase2_stop_reason = "validation_required"
                 self._phase2_stop_detail = (
-                    f"{self.max_turns - phase2_turns} of {self.max_turns} turns "
-                    "reserved for validation and repair"
+                    f"turn share used ({self.max_turns - phase2_turns} of {self.max_turns} "
+                    "turns reserved for validation and repair)"
                 )
-                logger.warning("Phase 2 reached its turn limit (%d); %s",
-                               phase2_turns, self._phase2_stop_detail)
+                logger.warning("Phase 2 used its %d turns; %s", phase2_turns, self._phase2_stop_detail)
+            else:
+                self._phase2_stop_reason = "max_turns"
 
     def _phase2_turn_limit(self) -> int:
         """Turns of ``max_turns`` Phase 2 may use; the rest is kept for Phase 3's repair loop."""
         if not self.auto_fix_issues:
             return self.max_turns
         reserve = min(_PHASE3_TURN_RESERVE, self.max_turns // _PHASE3_RESERVE_MAX_FRACTION)
-        return self.max_turns - reserve
+        return self.max_turns - (reserve if reserve >= _PHASE3_FIX_TURNS else 0)
 
     # Above this the request is not repeated as the first user message. The
     # system prompt already carries it whole ("## User request"), and a second

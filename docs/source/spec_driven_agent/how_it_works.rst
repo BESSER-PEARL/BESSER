@@ -166,9 +166,9 @@ The three phases
    Findings are classified by severity, and **blocker**-level issues drive a
    bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
    and as many as the turns Phase 2 left over, each round up to ten LLM turns.
-   With auto-fix on, Phase 2 always leaves this loop part of ``max_turns``
-   (see :doc:`runs`), so a model that never ends its turn still has its
-   output checked and repaired. The loop stops when blockers
+   With auto-fix on, Phase 2 leaves this loop part of ``max_turns`` (see
+   :doc:`runs`), so a model that never ends its turn still has its output
+   checked and repaired. The loop stops when blockers
    reach zero, after two consecutive rounds without progress, or after three
    rounds that change the tree without improving it. Every strictly better
    tree is re-snapshotted, ranked by whether the app boots, then backends the

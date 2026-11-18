@@ -111,6 +111,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     CostEvent,
     DoneEvent,
     ErrorEvent,
+    FindingsEvent,
     ModelUpdateEvent,
     PhaseEvent,
     PhaseUpdateEvent,
@@ -297,6 +298,10 @@ _MAX_WHAT = 1300
 _MAX_WHY = 1200
 _MAX_HOW = 320
 _TRUNCATION_MARK = " …[truncated]"
+# A findings event lists this many blockers, each clipped: enough to read which
+# checks failed, while a 300-error tsc run stays a small frame.
+_MAX_FINDINGS_LISTED = 20
+_MAX_FINDING_CHARS = 300
 
 # ``_check_did_not_run`` / ``required_check_unverified`` wording. Follow the
 # convention rather than re-deriving which checks were skipped.
@@ -1122,7 +1127,8 @@ class SmartGenerationRunner:
                     async for frame in frames:
                         yield frame
             finally:
-                run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
+                run_record.run_log.info(run_record.end_line(
+                    self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
             return
         try:
             async with inner as frames:
@@ -1138,7 +1144,8 @@ class SmartGenerationRunner:
             self._t_stream_aborted = "STREAM_CRASH"
             raise
         finally:
-            run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
+            run_record.run_log.info(run_record.end_line(
+                self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
             self._record_run_summary()
 
     async def release_disk(self) -> None:
@@ -1200,6 +1207,8 @@ class SmartGenerationRunner:
                 generator=getattr(self.request, "target_generator_override", None)))
         elif isinstance(event, PhaseEvent):
             self._facts.saw_phase(event.phase)
+            if event.elapsedSeconds is None:  # yielded directly, not through the worker queue
+                event = event.model_copy(update=self._run_totals())
         elif isinstance(event, ErrorEvent):
             if event.code in _WARNING_CODES:
                 self._facts.saw_warning(event.message)
@@ -1210,6 +1219,19 @@ class SmartGenerationRunner:
             elif event.code not in _WARNING_CODES:
                 self._facts.outcome = "failed"
         return format_sse(event, secrets=(self.request.resolved_api_key(),))
+
+    def _run_totals(self) -> dict[str, Any]:
+        """The run's cost, turns and elapsed seconds so far, as the ``cost`` event reports them."""
+        usage = getattr(self._t_client, "usage", None)
+        try:
+            cost_usd = float(usage.estimated_cost) if usage is not None else 0.0
+        except Exception:
+            cost_usd = 0.0
+        return {
+            "usd": _user_facing_cost(usage, cost_usd) if usage is not None else 0.0,
+            "turns": getattr(self._t_orchestrator, "total_turns", 0) or 0,
+            "elapsedSeconds": round(time.monotonic() - (self._started_at or time.monotonic()), 2),
+        }
 
     async def _generate_and_stream_impl(
         self,
@@ -1523,6 +1545,9 @@ class SmartGenerationRunner:
         model_state: dict[str, str] = {"current": llm_model}
 
         def _put(event: BaseSseEvent) -> None:
+            if isinstance(event, PhaseEvent):
+                # Stamped as the phase starts, not when the consumer gets to it.
+                event = event.model_copy(update=self._run_totals())
             try:
                 loop.call_soon_threadsafe(_put_in_loop, event)
             except RuntimeError:
@@ -1583,6 +1608,18 @@ class SmartGenerationRunner:
                     "PhaseUpdateEvent emission failed (phase=%s)", phase, exc_info=True
                 )
 
+        def on_findings(attempt: int, issues: list, restored: bool = False) -> None:
+            """One Phase 3 validation round, for the run card's findings and repairs."""
+            # The done event's definition, so the last round and the run's blocker count agree.
+            blockers = [i.message for i in issues if is_completion_issue(i)]
+            _put(FindingsEvent(
+                attempt=attempt,
+                blockers=[_clip(m, _MAX_FINDING_CHARS) for m in blockers[:_MAX_FINDINGS_LISTED]],
+                blockerCount=len(blockers),
+                issueCount=len(issues),
+                restored=restored,
+            ))
+
         def on_progress(turn: int, tool: str, status: str,
                         detail: str | None = None) -> None:
             # Any tool/phase activity ends the current turn's prose; the
@@ -1610,9 +1647,16 @@ class SmartGenerationRunner:
                     ),
                 ))
                 return
+            if tool == "__validating__":
+                # Phase 3 started. Fix-loop tool calls belong to this row:
+                # never open a customize row after it (a run that skipped Phase 2).
+                phase_state["customize_sent"] = True
+                _put(PhaseEvent(phase="validate", message="Validating"))
+                return
             if tool == "validation":
+                # The first check's result, on the row announced above.
                 self._note_validation_counts(status)
-                _put(PhaseEvent(phase="validate", message=status))
+                _put(PhaseUpdateEvent(phase="validate", details="", message=status))
                 return
             if tool == "gap_analysis":
                 # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm
@@ -1735,6 +1779,7 @@ class SmartGenerationRunner:
             on_progress=on_progress,
             on_text=on_text,
             on_phase_details=on_phase_details,
+            on_findings=on_findings,
             use_streaming=True,
             should_continue=should_continue,
             # Carry through the assembled primary so the orchestrator
@@ -1790,16 +1835,9 @@ class SmartGenerationRunner:
                     await asyncio.sleep(get_settings().llm_cost_emitter_interval_seconds)
                 except asyncio.CancelledError:
                     raise
-                elapsed = time.monotonic() - (self._started_at or time.monotonic())
-                try:
-                    cost_usd = float(client.usage.estimated_cost)
-                except Exception:
-                    cost_usd = 0.0
                 try:
                     queue.put_nowait(CostEvent(
-                        usd=_user_facing_cost(client.usage, cost_usd),
-                        turns=getattr(orchestrator, "total_turns", 0),
-                        elapsedSeconds=round(elapsed, 2),
+                        **self._run_totals(),
                         servedModel=getattr(client.usage, "served_model", None),
                     ))
                 except Exception:
@@ -2625,6 +2663,8 @@ class SmartGenerationRunner:
             )
             path = agent_trace.write_trace_record(result_path, record, self.run_id)
             share = agent_trace.ai_share(state, self.run_id)
+            by_kind = record["metadata"][agent_trace.METADATA_KEY]["lines"]
+            self._facts.lines = {"total": sum(by_kind.values()), **by_kind, "ai_this_run": share["aiLinesThisRun"]}
             share["tracePath"] = os.path.relpath(path, result_path).replace(os.sep, "/")
             return share
         except Exception:

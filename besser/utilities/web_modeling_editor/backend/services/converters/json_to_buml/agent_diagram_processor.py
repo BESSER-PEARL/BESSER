@@ -6,6 +6,10 @@ import re
 import logging
 import operator
 
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.condition_code import (
+    rename_condition_function,
+)
+
 from deep_translator import GoogleTranslator
 
 from besser.BUML.metamodel.state_machine.state_machine import (
@@ -1008,9 +1012,7 @@ def process_agent_diagram(json_data):
                         # function must carry that name whatever the author called it (the
                         # editor's template is ``def condition(...)``): two transitions would
                         # otherwise collide, or reference a function that does not exist.
-                        custom_condition.code = re.sub(
-                            r"(?m)^(\s*)def\s+\w+\s*\(", rf"\1def {generated_name}(", custom_condition_code, count=1
-                        )
+                        custom_condition.code = rename_condition_function(custom_condition_code, generated_name)
                         condition_objects.append(custom_condition)
 
                     transition_builder = None

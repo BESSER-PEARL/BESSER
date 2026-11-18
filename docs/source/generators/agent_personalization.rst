@@ -151,6 +151,26 @@ In ``FULL`` mode the generator produces, in addition to the usual
 personalization artefacts. ``CODE_ONLY`` skips personalization entirely. See
 :doc:`baf` for the full mode reference.
 
+What Gets Personalized
+~~~~~~~~~~~~~~~~~~~~~~
+
+- **Plain text replies** (``AgentReply``): the whole text.
+- **Markdown replies** (``WebSocketReplyMarkdown``): the prose, line by line. Markdown
+  formatting is never lost: list markers, heading hashes and quote markers are kept
+  outside the text the LLM sees, and a rewrite that drops or changes a line's inline
+  markup (bold, emphasis, links, inline code, ``{placeholders}``) is undone for that line.
+  Left exactly as written, because they never reach the LLM: **table rows**, **fenced code
+  blocks**, **indented code** (lines indented by four spaces or more that are not list
+  items; nested list items are personalized), blank lines and rules. A table or an
+  indented block in a Markdown reply therefore stays in the source language.
+- **Option buttons** (``WebSocketReplyOptions``): the button texts are only
+  *translated*, never restyled, because a click comes back as the label's text. An intent
+  training sentence equal to a button text gets the same translation, so a click keeps
+  matching its intent. The optional ``label`` shown with the buttons is personalized like
+  any reply.
+- **Not personalized**: HTML and speech replies, LLM / RAG / database replies (they
+  generate their own text) and custom code.
+
 
 Recommendation Backends
 -----------------------

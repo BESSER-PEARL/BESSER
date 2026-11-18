@@ -625,6 +625,25 @@ def test_custom_condition_code_is_wired_under_its_generated_name(tmp_path):
         assert re.search(rf"^def {name}\(", code, re.M), f"{name} is used but never defined"
 
 
+def test_a_helper_above_a_custom_condition_is_not_the_function_that_gets_renamed(tmp_path):
+    import re
+
+    from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
+
+    diagram = _live_testing_diagram()
+    code = ("def _came_from_q1(session):\n    return session.get('came_from') == 'q1'\n\n"
+            "def condition(session):\n    return _came_from_q1(session)")
+    diagram["model"]["relationships"]["r-c1"] = _transition(
+        "r-c1", "s-files", "s-think", transitionType="custom", custom={"event": "None", "condition": [code]})
+    agent = process_agent_diagram(diagram)
+    BAFGenerator(agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    generated = (tmp_path / f"{agent.name}.py").read_text(encoding="utf-8")
+
+    (used,) = re.findall(r"\.when_condition\((\w+)\)", generated)
+    assert re.search(rf"^def {used}\(", generated, re.M)
+    assert re.search(r"^def _came_from_q1\(", generated, re.M)
+
+
 def test_undesigned_agent_gui_becomes_empty_gui_model():
     diagram = _live_testing_diagram()
     diagram["model"]["components"]["gui-1"]["guiModel"] = None

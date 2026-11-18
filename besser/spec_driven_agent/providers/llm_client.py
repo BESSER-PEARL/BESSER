@@ -491,8 +491,12 @@ def _is_model_unavailable(error: Exception) -> bool:
 
 
 # 403s that refuse one model, not the key: the model is outside the plan, or its
-# free period ended (Command Code: "The free <model> window has ended").
-_MODEL_ACCESS_DENIED_MARKERS = ("model_not_in_plan", "window has ended")
+# free period ended (Command Code: "The free <model> window has ended" /
+# "tier has ended" / "tier ended on"), it was withdrawn, or it is region-locked.
+_MODEL_ACCESS_DENIED_MARKERS = (
+    "model_not_in_plan", "window has ended", "tier has ended", "tier ended on",
+    "is no longer available", "isn't available in your region",
+)
 
 
 def _is_model_access_denied(error: Exception) -> bool:

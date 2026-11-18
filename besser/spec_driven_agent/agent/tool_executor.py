@@ -2021,6 +2021,8 @@ class ToolExecutor:
         "generate_sqlalchemy": (
             "To change the database: modify the create_engine() call. "
             "To add indexes: find the Column definition and add index=True. "
+            "A str column is Text, which MySQL, SQL Server and Oracle cannot index: change it to "
+            "String_(255) before adding index=True or unique=True to it. "
             "To add constraints: add __table_args__ to the class."
         ),
         "generate_fastapi_backend": (
@@ -2036,6 +2038,8 @@ class ToolExecutor:
             "endpoints in routers/<Class>.py. "
             "To add a new endpoint: add it to the appropriate routers/<Class>.py (use @router), "
             "or create a new router file and register it with include_router() in main_api.py. "
+            "A str column is Text, which MySQL, SQL Server and Oracle cannot index: change it to "
+            "String_(255) before adding index=True or unique=True to it. "
             "NEVER rewrite these files — use modify_file for surgical edits."
         ),
         "generate_django": (

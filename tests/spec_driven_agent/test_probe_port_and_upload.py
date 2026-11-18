@@ -143,3 +143,59 @@ def test_req_names_a_file_it_cannot_read(tmp_path, capsys):
     ns.update(ensure_up=lambda: 1 / 0)
     assert ns["cmd_req"](["POST", "/order/import", "-F", "file=@missing.pdf"]) == 2
     assert "BAD_FORM" in capsys.readouterr().out
+
+
+# --- a JSON body the shell cannot mangle ------------------------------------
+
+def _sent_body(tmp_path, argv, monkeypatch=None, stdin=None):
+    workspace(tmp_path)
+    ns = load_probe(tmp_path)
+    seen = {}
+
+    def request(method, path, body, port, **_kwargs):
+        seen["body"] = body
+        return 201, "{}"
+
+    if stdin is not None:
+        import io
+        monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    ns.update(ensure_up=lambda: 5001, request=request)
+    return ns["cmd_req"](argv), seen.get("body")
+
+
+def test_req_reads_the_body_from_stdin(tmp_path, monkeypatch):
+    code, body = _sent_body(tmp_path, ["POST", "/book", "-"], monkeypatch,
+                            stdin='{"title": "It\'s here", "pages": 3}\n')
+    assert (code, body) == (0, {"title": "It's here", "pages": 3})
+
+
+def test_req_reads_the_body_from_a_file(tmp_path):
+    (tmp_path / "book.json").write_text('{"title": "x"}', encoding="utf-8")
+    code, body = _sent_body(tmp_path, ["POST", "/book", "@%s" % (tmp_path / "book.json")])
+    assert (code, body) == (0, {"title": "x"})
+
+
+def test_a_body_whose_quotes_the_shell_removed_gets_the_quoting_advice(tmp_path, capsys):
+    # bash turns  req POST /book {"title":"Clean Code"}  into these arguments.
+    code, body = _sent_body(tmp_path, ["POST", "/book", "{title:Clean", "Code}"])
+    out = capsys.readouterr().out
+    assert code == 2 and body is None
+    assert "single quotes" in out and "stdin" in out
+
+
+def test_an_unknown_option_is_named_instead_of_read_as_json(tmp_path, capsys):
+    code, _ = _sent_body(tmp_path, ["POST", "/book", '{"title": ""}', "--expect", "400"])
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "--expect" in out and "BAD_JSON" not in out
+
+
+def test_the_runbook_quotes_every_json_body_it_shows(tmp_path):
+    """Bash strips the double quotes of an unquoted body, so a copied example must quote it."""
+    import re
+
+    from besser.spec_driven_agent.agent.runbook import runbook_section
+
+    section = runbook_section(str(workspace(tmp_path)))
+    bodies = re.findall(r"req \w+ \S+ (\S*\{\S*)", section)
+    assert bodies and all(body.startswith("'") or body == "{}" for body in bodies), bodies

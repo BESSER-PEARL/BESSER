@@ -448,7 +448,11 @@ shell session, so ``routes`` and ``req`` reach that same server; when the
 session was restarted in between, they start their own, and the SQLite file
 keeps records either way. A new server takes the port of the previous one
 again while nothing else holds it, so a command or script written with that
-port keeps working after a restart. ``req`` sends
+port keeps working after a restart. ``req`` takes a JSON body as one argument
+in single quotes (unquoted, the shell strips its double quotes), from a file
+as ``@body.json``, or from standard input as ``-``, for instance a quoted
+here-document; a body whose quotes the shell removed, or an option ``req``
+does not have, is refused with a message saying which. ``req`` sends
 extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
 prints only their names. It sends form fields and files as
 ``multipart/form-data`` with curl's syntax, ``-F "name=value"`` and

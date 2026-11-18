@@ -285,7 +285,9 @@ tracebacks. Run these from the workspace root, exactly as written:
 python {PROBE_FILENAME} up                       # boot; prints BOOT_OK / BOOT_FAILED
 python {PROBE_FILENAME} routes                   # the paths and schemas the app REALLY has
 python {PROBE_FILENAME} req GET /health
-python {PROBE_FILENAME} req POST /<entity> {{"field": "value"}}
+python {PROBE_FILENAME} req POST /<entity> '{{"field": "value"}}'   # JSON body in single quotes
+python {PROBE_FILENAME} req POST /<entity> @body.json            # body from a file; - reads stdin
+python {PROBE_FILENAME} req POST /<entity>/upload -F "file=@sample.pdf"   # multipart upload
 python {PROBE_FILENAME} req POST /<entity>/<id>/<action> {{}}
 python {PROBE_FILENAME} req GET /<entity> -H "Authorization: Bearer <token>"
 python {PROBE_FILENAME} log 60                   # last 60 lines of the server log
@@ -349,7 +351,7 @@ Run-internal helper written by the BESSER generator; not part of the app.
 
     python .besser_probe.py up
     python .besser_probe.py routes
-    python .besser_probe.py req POST /book {"title": "x"}
+    python .besser_probe.py req POST /book '{"title": "x"}'
     python .besser_probe.py req GET /book -H "Authorization: Bearer <token>"
     python .besser_probe.py req POST /book/upload -F "file=@cover.png" -F "title=x"
     python .besser_probe.py log 60
@@ -788,9 +790,14 @@ def cmd_req(argv):
         print('BAD_FORM %s\nNEXT: pass a field as -F "name=value" and a file as -F "file=@path".' % exc)
         return 2
     if len(argv) < 2:
-        print("USAGE: req <METHOD> <PATH> [JSON | -F name=value -F file=@path] [-H 'Name: value']")
+        print("USAGE: req <METHOD> <PATH> ['JSON' | @file.json | - | -F name=value -F file=@path] [-H 'Name: value']")
         return 2
     method, path = argv[0], argv[1]
+    unknown = [arg for arg in argv[2:] if arg.startswith("--")]
+    if unknown:
+        print("UNKNOWN_OPTION %s\nNEXT: req takes METHOD PATH, then one JSON body (or -F "
+              "fields) and -H headers; read the status it prints yourself." % " ".join(unknown))
+        return 2
     raw = " ".join(argv[2:]).strip()
     # A quote style that one shell strips and the other passes through must not
     # decide whether a request happens: cmd.exe keeps the single quotes bash
@@ -801,12 +808,26 @@ def cmd_req(argv):
     if raw and form is not None:
         print("BAD_FORM a request carries a JSON body or -F fields, not both.")
         return 2
+    if raw == "-":
+        raw = sys.stdin.read().strip()
+    elif raw.startswith("@"):
+        try:
+            with open(raw[1:], encoding="utf-8") as handle:
+                raw = handle.read().strip()
+        except OSError as exc:
+            print("BAD_BODY %s\nNEXT: name a JSON file that exists, e.g. @body.json." % exc)
+            return 2
     if raw:
         try:
             body = json.loads(raw)
         except ValueError as exc:
-            print("BAD_JSON %s\nNEXT: pass the body as one JSON object, e.g. "
-                  '{"title": "x"}. Quote it for your shell.' % exc)
+            if raw[:1] in "{[" and '"' not in raw:
+                advice = "your shell removed the double quotes. Wrap the body in single quotes"
+            else:
+                advice = "pass the body as one JSON value in single quotes"
+            print("BAD_JSON %s\nNEXT: %s: '{\"title\": \"x\"}'. For a body with a single quote "
+                  "in it, pass - and send the JSON on stdin (a <<'EOF' here-document), "
+                  "or @file.json." % (exc, advice))
             return 2
     elif method.upper() in ("POST", "PUT", "PATCH") and form is None:
         body = {}                       # the literal {} a generated button sends

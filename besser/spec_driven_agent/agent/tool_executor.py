@@ -466,20 +466,24 @@ def _joins_commands_unconditionally(command: str) -> bool:
 
 
 _CD_FAILED_RE = re.compile(r"\bcd: (.+?): No such file or directory")
+# The line's first cd: a later one runs wherever the earlier ones left the shell.
+_FIRST_CD_RE = re.compile(r"(?:^|[;&|(\n])\s*cd\s+(['\"]?)([^\s;&|)'\"]+)\1")
 
 
-def _cd_hint(stderr: str, workspace: str, started_in: str | None) -> str | None:
-    """One line for a relative ``cd P`` that failed off the workspace root while ``P`` exists from the root."""
-    if started_in in (None, "."):
+def _cd_hint(stderr: str, command: str, workspace: str, started_in: str | None) -> str | None:
+    """One line for the line's first ``cd P``, relative, that failed off the workspace
+    root while ``P`` exists from the root, inside the workspace."""
+    first_cd = _FIRST_CD_RE.search(command)
+    if started_in in (None, ".") or first_cd is None:
         return None
-    for target in _CD_FAILED_RE.findall(stderr):
-        if os.path.isabs(target) or target.startswith("~") or not os.path.isdir(os.path.join(workspace, target)):
-            continue
-        from_here = os.path.relpath(os.path.join(workspace, target),
-                                    os.path.join(workspace, started_in)).replace(os.sep, "/")
-        return (f"The shell was in {started_in}, not the workspace root, and {target} is a path from the root: "
-                f"use cd {from_here} from here, or working_dir='{target}'.")
-    return None
+    target = first_cd.group(2)
+    from_root = _normalize_path_for_comparison(os.path.realpath(os.path.join(workspace, target)))
+    if (target not in _CD_FAILED_RE.findall(stderr) or os.path.isabs(target) or target.startswith("~")
+            or os.path.commonpath([from_root, workspace]) != workspace or not os.path.isdir(from_root)):
+        return None
+    from_here = os.path.relpath(from_root, os.path.join(workspace, started_in)).replace(os.sep, "/")
+    return (f"The shell was in {started_in}, not the workspace root, and {target} is a path from the root: "
+            f"use cd {from_here} from here, or working_dir='{target}'.")
 
 
 def ends_shell_session(method):
@@ -3722,7 +3726,7 @@ class ToolExecutor:
                 "new line and stderr reports a failure, so an earlier command did not do its job: "
                 "read stderr, and join commands with && to stop at the first failure."
             )
-        cd_hint = _cd_hint(raw_stderr, self.workspace, started_in)
+        cd_hint = _cd_hint(raw_stderr, command, self.workspace, started_in)
         if cd_hint:
             payload["cd_hint"] = cd_hint
         # A missing binary is a failure like any other: the model must not

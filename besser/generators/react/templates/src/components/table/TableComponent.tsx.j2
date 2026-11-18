@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useTableContext } from "../../contexts/TableContext";
 import { notifyDataChanged, useDataVersion } from "../runtime/dataVersion";
 import { coerceLookupTarget, fetchLookupOptions, lookupOptionLabel, lookupOptionValue } from "../runtime/lookup";
+import { humanize } from "../runtime/humanize";
 import { ColumnFilter } from "./ColumnFilter";
 import { ColumnSort } from "./ColumnSort";
 import "./TableComponent.css";
@@ -65,18 +66,6 @@ interface Props {
 // Stable fallbacks: a fresh `[]` per render would invalidate the columns ->
 // formColumns memo chain on every render and re-trigger the modal effects.
 const EMPTY_COLUMNS: any[] = [];
-
-const humanize = (value: string): string => {
-  if (!value) {
-    return "";
-  }
-  return value
-    .replace(/[_-]+/g, " ")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^./, (str) => str.toUpperCase());
-};
 
 const formatCellValue = (value: any): string => {
   if (value === null || value === undefined) {

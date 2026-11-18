@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useTableContext } from "../contexts/TableContext";
 import { notifyDataChanged } from "./runtime/dataVersion";
+import { humanize } from "./runtime/humanize";
 
 export interface MethodParameter {
   name: string;
@@ -429,7 +430,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
               boxSizing: "border-box",
             }}
           >
-            <option value="">-- Select {param.name} --</option>
+            <option value="">-- Select {humanize(param.name)} --</option>
             {options.map((option: any) => {
               const optionId = option?.id ?? option?.ID ?? option?.Id;
               if (optionId === undefined || optionId === null) {
@@ -468,7 +469,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
             boxSizing: "border-box",
           }}
         >
-          <option value="">-- Select {param.name} --</option>
+          <option value="">-- Select {humanize(param.name)} --</option>
           {(param.options || []).map((option) => (
             <option key={option} value={option}>
               {option}
@@ -827,13 +828,8 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
                     color: "#334155",
                     fontSize: "14px"
                   }}>
-                    {param.name}
+                    {humanize(param.name)}
                     {param.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
-                    {param.type && (
-                      <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px", fontWeight: 400 }}>
-                        ({param.type})
-                      </span>
-                    )}
                     {param.default !== undefined && (
                       <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px", fontWeight: 400 }}>
                         {" "}default: {String(param.default)}

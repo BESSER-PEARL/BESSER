@@ -45,7 +45,8 @@ MethodButton
 
 Executes class and instance methods with:
 
-- Parameter input modal for methods with parameters
+- Parameter input modal for methods with parameters, each labelled by its
+  name made readable (``min_pages`` shows as "Min pages"), as in the table dialog
 - Automatic type handling (int, float, bool, string, date, time)
 - Detailed error display for 500 errors; a method modeled without an
   implementation (the backend answers 501) shows "This action is not
@@ -257,6 +258,7 @@ Generated Structure
    │   │   │   ├── LookupSelect.tsx
    │   │   │   ├── lookup.ts
    │   │   │   ├── dataVersion.ts
+   │   │   │   ├── humanize.ts
    │   │   │   └── MapBlock.tsx
    │   │   ├── InputComponents.tsx
    │   │   └── MethodButton.tsx

@@ -464,6 +464,23 @@ def _joins_commands_unconditionally(command: str) -> bool:
     return commands + bool(words) >= 2
 
 
+_CD_FAILED_RE = re.compile(r"\bcd: (.+?): No such file or directory")
+
+
+def _cd_hint(stderr: str, workspace: str, started_in: str | None) -> str | None:
+    """One line for a relative ``cd P`` that failed off the workspace root while ``P`` exists from the root."""
+    if started_in in (None, "."):
+        return None
+    for target in _CD_FAILED_RE.findall(stderr):
+        if os.path.isabs(target) or target.startswith("~") or not os.path.isdir(os.path.join(workspace, target)):
+            continue
+        from_here = os.path.relpath(os.path.join(workspace, target),
+                                    os.path.join(workspace, started_in)).replace(os.sep, "/")
+        return (f"The shell was in {started_in}, not the workspace root, and {target} is a path from the root: "
+                f"use cd {from_here} from here, or working_dir='{target}'.")
+    return None
+
+
 def ends_shell_session(method):
     """Close ``self.executor``'s shell session when a run entry point returns
     or raises: its servers must not outlive the run."""
@@ -3623,6 +3640,7 @@ class ToolExecutor:
         logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
         # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
         carried_over = None if working_dir else self._shell.relative_cwd()
+        started_in = carried_over or os.path.relpath(start_dir, self.workspace).replace(os.sep, "/")
         located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
                    if carried_over not in (None, ".") else {})
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
@@ -3700,6 +3718,9 @@ class ToolExecutor:
                 "new line and stderr reports a failure, so an earlier command did not do its job: "
                 "read stderr, and join commands with && to stop at the first failure."
             )
+        cd_hint = _cd_hint(raw_stderr, self.workspace, started_in)
+        if cd_hint:
+            payload["cd_hint"] = cd_hint
         # A missing binary is a failure like any other: the model must not
         # read a check whose tool is absent as a passed one.
         if result.returncode != 0 and _looks_like_command_not_found(stderr):

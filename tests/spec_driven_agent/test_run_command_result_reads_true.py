@@ -82,3 +82,35 @@ def test_a_failing_line_keeps_its_own_report(tmp_path):
     result = _run(_executor(tmp_path), "python seed.py; false", returncode=1, stderr=_ENOENT)
 
     assert result["success"] is False and "note" not in result
+
+
+_CD_FAILED = "bash: line 2: cd: app/frontend: No such file or directory\n"
+
+
+def test_a_failed_cd_off_the_root_names_the_shell_directory_and_the_root_relative_path(tmp_path):
+    executor = _executor(tmp_path)
+    os.makedirs(tmp_path / "app" / "backend")
+    os.makedirs(tmp_path / "app" / "frontend")
+    executor._shell.cwd = str(tmp_path / "app" / "backend")
+
+    result = _run(executor, "cd app/frontend && npm run build", returncode=1, stderr=_CD_FAILED)
+
+    hint = result["cd_hint"]
+    assert "app/backend" in hint and "../frontend" in hint and "working_dir" in hint
+    assert "\n" not in hint
+
+
+@pytest.mark.parametrize("cwd, made", [
+    (".", ["app/frontend"]),          # at the root the path really is missing
+    ("app/backend", []),              # missing from the root too: nothing to point at
+])
+def test_no_cd_hint_when_the_root_does_not_explain_the_failure(tmp_path, cwd, made):
+    executor = _executor(tmp_path)
+    os.makedirs(tmp_path / "app" / "backend")
+    for rel in made:
+        os.makedirs(tmp_path / rel, exist_ok=True)
+    executor._shell.cwd = str(tmp_path / cwd)
+
+    result = _run(executor, "cd app/frontend && npm run build", returncode=1, stderr=_CD_FAILED)
+
+    assert "cd_hint" not in result

@@ -1256,6 +1256,12 @@ class ToolExecutor:
 
     def _do_done(self, args: dict) -> dict:
         """action='done' — also the `done_ids`+`evidence` verb inside a mixed call."""
+        if args.get("ids") is None and args.get("id") is None:
+            # The reply names closed items `done_ids`, and evidence names its item.
+            fallback = args.get("done_ids")
+            if fallback is None and isinstance(args.get("evidence"), list):
+                fallback = [e.get("id") for e in args["evidence"] if isinstance(e, dict) and "id" in e] or None
+            args = {**args, "ids": fallback}
         ids, bad = self._requested_task_ids(args)
         if not ids:
             return {"error": (

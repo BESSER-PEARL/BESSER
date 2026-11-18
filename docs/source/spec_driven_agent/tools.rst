@@ -105,6 +105,8 @@ refused with an error rather than returning no matches.
 failed check, not success. Without a verifier, supply
 ``evidence=[{"id": N, "path": "...", "quote": "..."}]`` from a successful current
 write; this records implementation, with acceptance still unverified.
+The ids may also come as ``done_ids``, the key the reply lists them under;
+with no ids at all, ``done`` closes the items its evidence names.
 Already-correct scaffold code can instead use ``existing=true`` after reading
 the file and citing executable evidence. This records an existing implementation,
 not a fabricated write or a passing business test.

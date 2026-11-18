@@ -61,6 +61,11 @@ class FrontendCall:
     path: str
     file: str
     line: int
+    # Where the call starts and its URL literal ends, and "fetch" / "axios"
+    # ("" for the axios config form), for checks that read its arguments.
+    start: int = 0
+    url_end: int = 0
+    client: str = ""
 
 
 def _parse_manifest(manifest: str) -> dict[str, set[str]]:
@@ -113,7 +118,8 @@ def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
             continue
         method_match = _METHOD_FIELD_RE.search(match.group("options") or "")
         method = method_match.group(1).upper() if method_match else "GET"
-        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start())))
+        calls.append(FrontendCall(method, path, rel_path, _line_number(content, match.start()),
+                                  match.start(), match.end("url") + 1, "fetch"))
 
     for match in _AXIOS_METHOD_RE.finditer(content):
         path = _normalize_frontend_url(match.group("url"))
@@ -123,6 +129,9 @@ def _calls_in_file(rel_path: str, content: str) -> list[FrontendCall]:
                 path,
                 rel_path,
                 _line_number(content, match.start()),
+                match.start(),
+                match.end("url") + 1,
+                "axios",
             ))
 
     for match in _AXIOS_CONFIG_RE.finditer(content):

@@ -33,6 +33,8 @@ _JS_NONCODE = re.compile(
 class _Model:
     fields: frozenset[str]
     allows_extra: bool = False
+    # Fields with no default, by their own name; an aliased field is left out.
+    required: frozenset[str] = frozenset()
 
 
 def _name(node: ast.AST | None) -> str:
@@ -63,8 +65,10 @@ def _sources(workspace, changed_path=None, content=None):
             yield path.relative_to(root).as_posix(), text
 
 
-def _request_schemas(sources):
-    """Resolve literal route -> accepted field names without importing the app."""
+def _model_resolver(sources):
+    """``(modules, resolve)``: each parsed module's ``(tree, imports)``, and a
+    function from a class name to its ``_Model`` (None unless it is one
+    statically resolvable Pydantic model)."""
     modules, classes = {}, {}
     for path, text in sources:
         if not path.endswith(".py"):
@@ -90,7 +94,7 @@ def _request_schemas(sources):
             return None
         path, cls = classes[name][0]
         imports = modules[path][1]
-        fields, model_found, extra = set(), False, False
+        fields, required, model_found, extra = set(), set(), False, False
         for base in cls.bases:
             base_name = imports.get(_name(base), _name(base))
             if base_name == "BaseModel":
@@ -103,6 +107,7 @@ def _request_schemas(sources):
                     return None
                 model_found = True
                 fields.update(inherited.fields)
+                required.update(inherited.required)
                 extra = extra or inherited.allows_extra
         if not model_found:
             return None
@@ -122,9 +127,19 @@ def _request_schemas(sources):
                 if isinstance(annotation, ast.Subscript) and _name(annotation.value) == "ClassVar":
                     continue
                 fields.add(field)
-                if isinstance(stmt.value, ast.Call) and _name(stmt.value.func) == "Field":
-                    for keyword in stmt.value.keywords:
+                value = stmt.value
+                is_field = isinstance(value, ast.Call) and _name(value.func) == "Field"
+                if value is None or (is_field and not any(k.arg in {"default", "default_factory"}
+                                                           for k in value.keywords)
+                                     and (not value.args or (isinstance(value.args[0], ast.Constant)
+                                                             and value.args[0].value is Ellipsis))):
+                    required.add(field)
+                else:
+                    required.discard(field)
+                if is_field:
+                    for keyword in value.keywords:
                         if keyword.arg in {"alias", "validation_alias"}:
+                            required.discard(field)
                             if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
                                 fields.add(keyword.value.value)
                             else:
@@ -152,10 +167,16 @@ def _request_schemas(sources):
                     return None
                 if "extra" in pairs and isinstance(pairs["extra"], ast.Constant):
                     extra = pairs["extra"].value == "allow"
-        result = _Model(frozenset(fields), extra)
+        result = _Model(frozenset(fields), extra, frozenset(required))
         cache[name] = result
         return result
 
+    return modules, resolve
+
+
+def _request_schemas(sources):
+    """Resolve literal route -> accepted field names without importing the app."""
+    modules, resolve = _model_resolver(sources)
     routes = {}
     for path, (tree, imports) in modules.items():
         routers = {}

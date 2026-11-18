@@ -2907,6 +2907,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_issues
 
         raw.extend(collect_frontend_schema_issues(self.output_dir))
+        try:
+            from besser.spec_driven_agent.validation.api_call_shapes import collect_api_call_issues
+
+            raw.extend(collect_api_call_issues(self.output_dir))
+        except Exception as exc:
+            logger.warning("API call shape validation failed", exc_info=True)
+            raw.append(_check_did_not_run("the API call shape check", f"it crashed: {type(exc).__name__}"))
         # Only a finding that PROVES the app cannot boot may skip the probe.
         # Skipping on any static finding (a frontend field, a schema mismatch)
         # means a weak model, which always leaves something static behind,

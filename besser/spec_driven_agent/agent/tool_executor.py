@@ -1647,6 +1647,13 @@ class ToolExecutor:
                 # An optional cross-file check must not erase parser findings
                 # already collected for the successful write.
                 logger.debug("Frontend/schema write diagnostics failed", exc_info=True)
+            try:
+                from besser.spec_driven_agent.validation.api_call_shapes import collect_api_call_diagnostics
+
+                diagnostics.extend(self._cross_file_findings("api-call", rel_path, content,
+                    collect_api_call_diagnostics(self.workspace, changed_path=rel_path, content=content)))
+            except Exception:
+                logger.debug("API call shape write diagnostics failed", exc_info=True)
         if diagnostics:
             result["diagnostics"] = diagnostics
             result["diagnostic_message"] = (

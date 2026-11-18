@@ -74,6 +74,28 @@ that was already broken is never refused, so it can be repaired.
   Absence of a known stub is structural evidence, not proof of business behavior.
 - Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
   match no generated backend route.
+- API call shapes (``api call:``, blocker) — a literal ``fetch`` or Axios call
+  whose URL resolves to exactly one route, checked against that route's
+  handler, which is read without importing the app:
+
+  * the JSON body: an object literal none of whose keys the route reads, or one
+    that leaves out a required field. A route with one Pydantic model parameter
+    reads the model's fields; otherwise the body has one top-level key per body
+    parameter, so a ``/methods/<name>/`` route with ``params: dict =
+    Body(embed=True)`` reads ``{"params": {...}}``, never the values flat.
+  * the response: when every ``return`` of the handler sends a dict literal,
+    the object's top-level keys. Code that uses that object's data only as an
+    array (``Array.isArray``, ``.length``, ``.map()``, ``.filter()``, ...) or
+    reads only keys it does not have is reported, with the keys it has. The
+    generated relation routes answer ``{<parent>_id, <end>_count, <end>: [...]}``.
+
+  Generated routes declare ``response_model=None``, so the app's OpenAPI has
+  no response schema to compare with; the handler's ``return`` statements are
+  what it sends. Only certain cases are reported: a body with a spread or a
+  computed key, data passed on or read by one of its real keys, an Axios
+  response interceptor, and, for ``fetch``, a read of a key the success body
+  lacks (``await response.json()`` is the error body too) are left alone. The
+  same finding is attached to the write that introduces it.
 - ``ruff`` lint, limited to defects that break at runtime (syntax errors, undefined
   names, redefinitions, repeated dict keys, invalid format strings and comparisons,
   ``raise NotImplemented``, a value returned from ``__init__``, a non-string in
@@ -483,7 +505,8 @@ Findings are classified into three severities:
        a method button that takes its row id from a table of another
        entity; frontend-contract and
        data-contract violations; create forms that cannot save (``api url:``,
-       ``form create target:``, ``form route:``, ``form json textarea:``); ``ruff`` **F821** / **F822** / **F823**
+       ``form create target:``, ``form route:``, ``form json textarea:``); frontend calls
+       whose body or response use contradicts the route (``api call:``); ``ruff`` **F821** / **F822** / **F823**
        (undefined name — the classic "ships green, boots dead" bug) and
        **F811** (redefinition, e.g. an ORM model shadowed by a Pydantic model
        of the same name); per-project toolchain errors from ``tsc`` /
@@ -491,7 +514,7 @@ Findings are classified into three severities:
        (``frontend build [...]``). By prefix, the blockers are ``Syntax error
        in``, ``Dependency conflict in``, ``... but it doesn't exist``,
        ``frontend contract:``, ``api url:``, ``form create target:``,
-       ``form route:``, ``form json textarea:``, ``data contract:``,
+       ``form route:``, ``form json textarea:``, ``api call:``, ``data contract:``,
        ``model conformance:``, ``model contract:``, ``missing module:``,
        ``mapper config:``, ``application startup:``, ``python contract:``
        (which also reports undefined names, those behind ``from x import *``

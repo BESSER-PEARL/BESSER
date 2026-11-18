@@ -32,10 +32,11 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
 a quarter of the cap when that is less, and the repair loop gets the rest: with
 the default 120, Phase 2 may use 100. A cap under 40 is not split, since a
 quarter of it is less than one ten-turn fix attempt. A Phase 2 that uses its
-whole share hands off to validation: its open checklist items become blockers
-there, so the run completes only when validation finds nothing left, and is
-reported incomplete otherwise. Its trace's Phase 2 ``phase_exit`` names the reserve in
-``stop_detail``. With auto-fix off, Phase 2 may use the whole cap.
+whole share with checklist items still open hands off to validation: those
+items become blockers there, so the run completes only when validation finds
+nothing left, and is reported incomplete otherwise. With no open item to bring
+back, it reports that the customization loop reached its step limit. Either
+way its trace's Phase 2 ``phase_exit`` names the reserve in ``stop_detail``. With auto-fix off, Phase 2 may use the whole cap.
 
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a

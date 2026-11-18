@@ -2324,18 +2324,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
         else:
-            # No break: Phase 2 used every turn it may use. Out of its share it
-            # hands off like the inspection limit: open checklist items return
-            # in Phase 3 as blockers, so only a clean validation completes the run.
-            if phase2_turns < self.max_turns:
-                self._phase2_stop_reason = "validation_required"
+            # No break: Phase 2 used every turn it may use. Out of its share with
+            # checklist items open, it hands off like the inspection limit: Phase 3
+            # re-raises them as blockers, so only a clean validation completes the
+            # run. With nothing to re-raise, the cut stays a turn limit.
+            reserved = phase2_turns < self.max_turns
+            if reserved:
                 self._phase2_stop_detail = (
                     f"turn share used ({self.max_turns - phase2_turns} of {self.max_turns} "
                     "turns reserved for validation and repair)"
                 )
                 logger.warning("Phase 2 used its %d turns; %s", phase2_turns, self._phase2_stop_detail)
-            else:
-                self._phase2_stop_reason = "max_turns"
+            unfinished = self.executor.open_tasks() or self.executor.blocked_tasks()
+            self._phase2_stop_reason = "validation_required" if reserved and unfinished else "max_turns"
 
     def _phase2_turn_limit(self) -> int:
         """Turns of ``max_turns`` Phase 2 may use; the rest is kept for Phase 3's repair loop."""

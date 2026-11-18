@@ -67,6 +67,10 @@ second refused edit on a file (with no landed edit between), the step is to read
 the whole file and ``write_file`` it back; two targeted edit attempts of either
 kind also unlock ``write_file`` where it is otherwise held back (a large
 generated file, a modify run). The orchestrator's reminders repeat that step.
+A generated file over 200 lines needs no such attempts when the rewrite keeps
+every top-level definition the file has (Python classes, functions and
+assigned names; TypeScript/JavaScript declarations): a rewrite that drops some
+is refused with their names, and other file types keep the two-attempt rule.
 Repeated failures do not permanently freeze the file; an agent that ignores
 recovery is still bounded by the loop and run budgets.
 

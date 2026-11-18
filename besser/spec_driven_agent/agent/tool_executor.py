@@ -540,6 +540,42 @@ def _anchored_occurrences(content: str, old_text: str) -> list[int]:
     return out
 
 
+_TOP_LEVEL_DECL_RE = re.compile(
+    r"^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?"
+    r"(?:function\*?|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)",
+    re.MULTILINE,
+)
+
+
+def _top_level_names(rel_path: str, source: str) -> set[str] | None:
+    """Names a Python or TS/JS module defines at top level; ``None`` when not listable."""
+    if frontend_source.supports(rel_path):
+        return set(_TOP_LEVEL_DECL_RE.findall(source))
+    if not rel_path.lower().endswith(".py"):
+        return None
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(target.id for target in node.targets if isinstance(target, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def _dropped_definitions(rel_path: str, before: str, after: str) -> list[str] | None:
+    """Top-level names ``before`` defines and ``after`` does not; ``None`` when either is not listable."""
+    old, new = _top_level_names(rel_path, before), _top_level_names(rel_path, after)
+    if old is None or new is None:
+        return None
+    return sorted(old - new)
+
+
 def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int] | None:
     """``(message, line)`` when ``after`` no longer parses although ``before``
     did; ``None`` otherwise (unsupported language, or already broken).
@@ -2864,21 +2900,35 @@ class ToolExecutor:
         # Size rule: a whole-file rewrite is cheapest and
         # safest on a SMALL file (<=200 lines), which the model can reproduce
         # faithfully after one read; it is a large file that risks dropping
-        # code. So small generated files unlock write_file immediately and
-        # large ones keep the targeted-edit requirement until two modify_file
-        # attempts have been made.
+        # code. So small generated files unlock write_file immediately; a
+        # large one is rewritten only when the rewrite keeps every top-level
+        # definition, or after two modify_file attempts.
         if rel_path in self._generator_files and os.path.isfile(path):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
-                existing_lines = f.read().count("\n") + 1
+                existing = f.read()
+            existing_lines = existing.count("\n") + 1
             if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-                return {
-                    "error": (
-                        f"'{rel_path}' was created by a BESSER generator and is large "
-                        f"({existing_lines} lines) - too large to reproduce faithfully "
-                        "from one read. Use modify_file for targeted edits. write_file "
-                        "unlocks for this file after two modify_file attempts."
-                    ),
-                }
+                dropped = _dropped_definitions(rel_path, existing, args["content"])
+                if dropped is None:
+                    return {
+                        "error": (
+                            f"'{rel_path}' was created by a BESSER generator and is large "
+                            f"({existing_lines} lines) - too large to reproduce faithfully "
+                            "from one read. Use modify_file for targeted edits. write_file "
+                            "unlocks for this file after two modify_file attempts."
+                        ),
+                    }
+                if dropped:
+                    shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
+                    return {
+                        "error": (
+                            f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines) "
+                            f"and this rewrite drops {len(dropped)} of its top-level definitions: "
+                            f"{shown}. Keep them in the content, or remove them with modify_file "
+                            "first if removing them is the change you want. write_file also "
+                            "unlocks for this file after two modify_file attempts."
+                        ),
+                    }
             # Rewrite allowed (large file, or repeated modifies already tried) — log it
             logger.info(
                 "Allowing rewrite of generated file: %s (%d lines, %d prior targeted edits)",

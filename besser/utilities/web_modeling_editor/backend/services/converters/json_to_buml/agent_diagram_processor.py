@@ -2,7 +2,6 @@
 Agent diagram processing for converting JSON to BUML format.
 """
 
-import re
 import logging
 import operator
 

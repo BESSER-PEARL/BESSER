@@ -12,7 +12,7 @@ they are plain helpers composed by the public generator, in the same way
 import os
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment
 
 from besser.BUML.metamodel.structural import (
     Class,
@@ -21,6 +21,9 @@ from besser.BUML.metamodel.structural import (
     DomainModel,
     Enumeration,
     TimeType,
+)
+from besser.utilities.generation_trace import (
+    FileTrace, TraceSource, extract_trace_regions, traced_environment,
 )
 from besser.generators.spring.java_types import (
     is_many,
@@ -39,7 +42,7 @@ RANGE_FINDER_TYPES = (DateType.name, DateTimeType.name, TimeType.name)
 
 def build_environment(**options) -> Environment:
     """Environment: A Jinja2 environment bound to the Spring template folder."""
-    return Environment(loader=FileSystemLoader(TEMPLATES_PATH), **options)
+    return traced_environment(TEMPLATES_PATH, **options)
 
 
 class SpringSubGenerator:
@@ -48,6 +51,8 @@ class SpringSubGenerator:
     def __init__(self, model: DomainModel, output_dir: str | Path):
         self.model: DomainModel = model
         self.output_dir: Path = Path(output_dir)
+        #: What each file written so far was rendered from, by path relative to ``output_dir``.
+        self.traced_files: dict[str, FileTrace] = {}
         self.enumerations: set[Enumeration] = model.get_enumerations()
         self.classes: list[Class] = model.classes_sorted_by_inheritance()
         # Names of every user-defined type, used to tell a class/enum reference
@@ -90,12 +95,14 @@ class SpringSubGenerator:
                     "return_value": f"ArrayList<{class_name}>",
                     "name": f"findAllBy{finder_suffix}Between",
                     "parameter": f"{parameter_type} start, {parameter_type} end",
+                    "element": attr,
                 })
 
             methods.append({
                 "return_value": f"ArrayList<{class_name}>",
                 "name": f"findAllBy{finder_suffix}",
                 "parameter": f"{parameter_type} {to_java_field_name(attr.name)}",
+                "element": attr,
             })
 
         if methods:
@@ -103,11 +110,18 @@ class SpringSubGenerator:
 
         return sorted(methods, key=lambda method: method["name"])
 
-    def write(self, relative_path: str | Path, content: str) -> str:
-        """str: Write ``content`` under the output directory, creating parents."""
+    def write(self, relative_path: str | Path, content: str, *sources: TraceSource | None) -> str:
+        """str: Write ``content`` under the output directory, creating parents.
+
+        ``content`` is a template render: its trace markers are removed and the regions they delimit
+        are recorded in ``traced_files`` (with ``sources``, the elements the whole file is generated from).
+        """
+        code, regions = extract_trace_regions(content)
         file_path = self.output_dir / relative_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
         # newline="\n" keeps the generated Java byte-identical across platforms.
         with open(file_path, mode="w", encoding="utf-8", newline="\n") as file:
-            file.write(content)
+            file.write(code)
+        self.traced_files[Path(relative_path).as_posix()] = FileTrace(
+            tuple(regions), tuple(source for source in sources if source is not None))
         return str(file_path)

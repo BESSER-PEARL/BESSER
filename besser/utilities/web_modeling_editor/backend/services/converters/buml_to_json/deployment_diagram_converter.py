@@ -9,7 +9,6 @@ loads a BUML file produced by ``deployment_model_to_code``.
 """
 
 import logging
-import uuid
 
 from besser.BUML.metamodel.structural import (
     Multiplicity,
@@ -37,6 +36,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.stereotype
     format_artifact_stereotype,
     format_node_stereotype,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import element_id_taker
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
 )
@@ -66,10 +66,11 @@ def deployment_object_to_json(model: DeploymentModel) -> dict:
     relationships: dict = {}
     id_map: dict = {}
 
+    take_id = element_id_taker()
+
     def id_for(obj) -> str:
         if obj not in id_map:
-            stashed = (obj.layout or {}).get("id") if obj.layout else None
-            id_map[obj] = stashed or str(uuid.uuid4())
+            id_map[obj] = take_id(obj)
         return id_map[obj]
 
     all_nodes = sort_by_timestamp(model.all_nodes())

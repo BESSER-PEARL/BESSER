@@ -1,0 +1,282 @@
+"""
+Trace file JSON (the ``trace`` of a project export) -> TraceModel.
+
+The inverse of ``buml_to_json/trace_converter.py``. Unlike the diagram
+processors it is strict: a trace is a record, so a missing or malformed field
+is a ConversionError naming it, never a silently defaulted value.
+"""
+
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional
+
+from besser.BUML.metamodel.traceability import (
+    LLM, AIEvidence, Agent, ChangeEvent, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
+    Conversation, Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, ModelGenerator,
+    ModelingSession, Person, PromptArtifact,
+    RequirementArtifact, RequirementExtraction, RequirementKind, RuleEvidence, ToolCall, TraceLink, TraceModel,
+)
+from besser.BUML.metamodel.traceability.traceability import link_artifacts
+from besser.utilities.utils import parse_iso_timestamp
+from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_MAX_ELEMENTS, TRACE_SCHEMA_VERSION
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+_ACTOR_TYPES = {"Person": Person, "Agent": Agent}
+_OPERATION_TYPES = {
+    "ModelingSession": ModelingSession, "CodeGeneration": CodeGeneration,
+    "RequirementExtraction": RequirementExtraction, "Conversation": Conversation,
+}
+_TOOL_TYPES = {"Editor": Editor, "CodeGenerator": CodeGenerator, "ModelGenerator": ModelGenerator, "LLM": LLM}
+
+
+def _field(data: Dict[str, Any], key: str, where: str, optional: bool = False) -> Any:
+    if not isinstance(data, dict):
+        raise ConversionError(f"{where} must be an object.")
+    if key not in data or data[key] is None:
+        if optional:
+            return None
+        raise ConversionError(f"{where} is missing '{key}'.")
+    return data[key]
+
+
+def _list(data: Dict[str, Any], key: str, where: str) -> List[Any]:
+    value = data.get(key, [])
+    if not isinstance(value, list):
+        raise ConversionError(f"{where}.{key} must be a list.")
+    return value
+
+
+def _timestamp(data: Dict[str, Any], key: str, where: str, optional: bool = False) -> Optional[datetime]:
+    raw = _field(data, key, where, optional)
+    if raw is None:
+        return None
+    parsed = parse_iso_timestamp(raw)
+    if parsed is None:
+        raise ConversionError(f"{where}.{key} is not an ISO 8601 timestamp: {raw!r}.")
+    return parsed
+
+
+def _enum(enum_type, data: Dict[str, Any], key: str, where: str):
+    raw = _field(data, key, where)
+    try:
+        return enum_type(raw)
+    except ValueError:
+        raise ConversionError(
+            f"{where}.{key} must be one of {[e.value for e in enum_type]}, got {raw!r}.") from None
+
+
+def _resolve(index: Dict[str, Any], ref_id: Any, what: str, where: str):
+    if not isinstance(ref_id, str) or ref_id not in index:
+        raise ConversionError(f"{where} references unknown {what} {ref_id!r}.")
+    return index[ref_id]
+
+
+def _confidence(raw: dict, where: str) -> Optional[Confidence]:
+    """The optional ``confidence`` of a trace link or an operation."""
+    raw_conf = raw.get("confidence")
+    if raw_conf is None:
+        return None
+    cwhere = f"Confidence of {where}"
+    return _build(
+        Confidence, cwhere, value=_field(raw_conf, "value", cwhere),
+        explanation=_field(raw_conf, "explanation", cwhere, optional=True),
+        id=_field(raw_conf, "id", cwhere), timestamp=_timestamp(raw_conf, "timestamp", cwhere))
+
+
+def _build(factory: Callable, where: str, **kwargs):
+    """Call a metamodel constructor, reporting its validation error as a ConversionError."""
+    try:
+        return factory(**kwargs)
+    except (TypeError, ValueError) as error:
+        raise ConversionError(f"{where}: {error}") from error
+
+
+# How a trace of an older schema version becomes one of the next. Version 6 added
+# ``CodeArtifact.revisionOfId``, optional: a version 5 trace is a valid version 6 one.
+_MIGRATIONS: Dict[int, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
+    5: lambda data: data,
+}
+
+
+def _migrated(data: Dict[str, Any]) -> Dict[str, Any]:
+    """``data`` brought to ``TRACE_SCHEMA_VERSION``.
+
+    Raises:
+        ConversionError: If its version is neither the current one nor one with a migration.
+    """
+    version = _field(data, "schemaVersion", "Trace")
+    readable = sorted([*_MIGRATIONS, TRACE_SCHEMA_VERSION])
+    if version not in readable:
+        raise ConversionError(f"Unsupported trace schemaVersion {version!r}; expected one of {readable}.")
+    while version != TRACE_SCHEMA_VERSION:
+        data = {**_MIGRATIONS[version](data), "schemaVersion": version + 1}
+        version += 1
+    return data
+
+
+def process_trace(data: Dict[str, Any]) -> TraceModel:
+    """Build a TraceModel from trace file JSON of the current schema version or an older one
+    (migrated on read, see ``_MIGRATIONS``).
+
+    Raises:
+        ConversionError: If the JSON is not a valid trace of a supported schema version.
+    """
+    data = _migrated(data)
+    for key in ("actors", "tools", "artifacts", "operations", "traceLinks"):
+        count = len(_list(data, key, "Trace"))
+        if count > TRACE_MAX_ELEMENTS:
+            raise ConversionError(f"The trace holds {count} {key}, more than the {TRACE_MAX_ELEMENTS} a trace may hold.")
+
+    actors, tools, artifacts, logs, operations = {}, {}, {}, {}, {}
+
+    for raw in _list(data, "actors", "Trace"):
+        where = f"Actor {raw.get('id') if isinstance(raw, dict) else raw!r}"
+        kind = _resolve(_ACTOR_TYPES, _field(raw, "type", where), "actor type", where)
+        kwargs = {"name": _field(raw, "name", where), "id": _field(raw, "id", where),
+                  "timestamp": _timestamp(raw, "timestamp", where)}
+        if kind is Agent:
+            kwargs["version"] = _field(raw, "version", where, optional=True)
+        actors[kwargs["id"]] = _build(kind, where, **kwargs)
+
+    for raw in _list(data, "tools", "Trace"):
+        where = f"Tool {raw.get('id') if isinstance(raw, dict) else raw!r}"
+        kind = _resolve(_TOOL_TYPES, _field(raw, "type", where), "tool type", where)
+        kwargs = {"name": _field(raw, "name", where), "version": _field(raw, "version", where, optional=True),
+                  "id": _field(raw, "id", where), "timestamp": _timestamp(raw, "timestamp", where)}
+        if kind is LLM:
+            kwargs["provider"] = _field(raw, "provider", where)
+        tools[kwargs["id"]] = _build(kind, where, **kwargs)
+
+    raw_artifacts = _list(data, "artifacts", "Trace")
+    for raw in raw_artifacts:
+        where = f"Artifact {raw.get('id') if isinstance(raw, dict) else raw!r}"
+        kind = _field(raw, "type", where)
+        common = {"name": _field(raw, "name", where), "id": _field(raw, "id", where),
+                  "timestamp": _timestamp(raw, "timestamp", where)}
+        if kind == "ModelArtifact":
+            artifact = _build(ModelArtifact, where, element_id=_field(raw, "elementId", where),
+                              element_type=_field(raw, "elementType", where), **common)
+        elif kind == "CodeArtifact":
+            artifact = _build(CodeArtifact, where, path=_field(raw, "path", where),
+                              content_hash=_field(raw, "contentHash", where),
+                              content=_field(raw, "content", where, optional=True),
+                              start_line=_field(raw, "startLine", where, optional=True),
+                              end_line=_field(raw, "endLine", where, optional=True), **common)
+        elif kind == "PromptArtifact":
+            artifact = _build(PromptArtifact, where, content=_field(raw, "content", where),
+                              content_hash=_field(raw, "contentHash", where), **common)
+        elif kind == "RequirementArtifact":
+            artifact = _build(RequirementArtifact, where, quote=_field(raw, "quote", where),
+                              kind=_enum(RequirementKind, raw, "kind", where), **common)
+        else:
+            raise ConversionError(f"{where} has unknown type {kind!r}.")
+        if artifact.id in artifacts:
+            raise ConversionError(f"Artifact id {artifact.id!r} is used twice.")
+        artifacts[artifact.id] = artifact
+    # Parents and revised versions can come later in the list, so they are wired once every artifact exists,
+    # all at once: set one by one, each would walk the chain above it (quadratic over a long chain).
+    parents, revisions = [], []
+    for raw in raw_artifacts:
+        where = f"Artifact {raw['id']!r}"
+        artifact = artifacts[raw["id"]]
+        parent_id = raw.get("parentId")
+        revision_of_id = raw.get("revisionOfId")
+        if revision_of_id is not None and not isinstance(artifact, CodeArtifact):
+            raise ConversionError(f"{where} is a {type(artifact).__name__}: only a CodeArtifact has revisionOfId.")
+        if parent_id is not None:
+            parents.append((artifact, _resolve(artifacts, parent_id, "artifact", where)))
+        if revision_of_id is not None:
+            revisions.append((artifact, _resolve(artifacts, revision_of_id, "artifact", where)))
+    try:
+        link_artifacts(parents, revisions)
+    except (TypeError, ValueError) as error:
+        raise ConversionError(f"Trace artifacts: {error}") from error
+
+    trace = TraceModel(project_id=data.get("projectId"), actors=list(actors.values()),
+                       tools=list(tools.values()), artifacts=list(artifacts.values()))
+
+    for raw in _list(data, "operations", "Trace"):
+        where = f"Operation {raw.get('id') if isinstance(raw, dict) else raw!r}"
+        kind = _field(raw, "type", where)
+        if kind not in _OPERATION_TYPES:
+            raise ConversionError(f"{where} has unknown type {kind!r}; expected one of {sorted(_OPERATION_TYPES)}.")
+        if kind != "ModelingSession" and _list(raw, "changes", where):
+            raise ConversionError(f"{where} is a {kind}: only a ModelingSession has changes.")
+        op_changes = []
+        for raw_change in _list(raw, "changes", where):
+            cwhere = f"ChangeEvent {raw_change.get('id') if isinstance(raw_change, dict) else raw_change!r}"
+            change = _build(
+                ChangeEvent, cwhere, kind=_enum(ChangeKind, raw_change, "kind", cwhere),
+                artifact=_resolve(artifacts, _field(raw_change, "artifactId", cwhere), "artifact", cwhere),
+                feature=_field(raw_change, "feature", cwhere, optional=True),
+                old_value=_field(raw_change, "oldValue", cwhere, optional=True),
+                new_value=_field(raw_change, "newValue", cwhere, optional=True),
+                id=_field(raw_change, "id", cwhere), timestamp=_timestamp(raw_change, "timestamp", cwhere))
+            op_changes.append(change)
+        op_calls = []
+        for raw_call in _list(raw, "toolCalls", where):
+            twhere = f"ToolCall {raw_call.get('id') if isinstance(raw_call, dict) else raw_call!r}"
+            call_logs = []
+            for raw_log in _list(raw_call, "logs", twhere):
+                lwhere = f"LogRecord {raw_log.get('id') if isinstance(raw_log, dict) else raw_log!r}"
+                log = _build(
+                    LogRecord, lwhere, content=_field(raw_log, "content", lwhere),
+                    sequence_number=_field(raw_log, "sequenceNumber", lwhere),
+                    log_type=_enum(LogType, raw_log, "logType", lwhere),
+                    id=_field(raw_log, "id", lwhere), timestamp=_timestamp(raw_log, "timestamp", lwhere))
+                logs[log.id] = log
+                call_logs.append(log)
+            op_calls.append(_build(
+                ToolCall, twhere, tool=_resolve(tools, _field(raw_call, "toolId", twhere), "tool", twhere),
+                sequence_number=_field(raw_call, "sequenceNumber", twhere),
+                status=_enum(ExecutionStatus, raw_call, "status", twhere),
+                started_at=_timestamp(raw_call, "startedAt", twhere),
+                ended_at=_timestamp(raw_call, "endedAt", twhere, optional=True),
+                input_tokens=_field(raw_call, "inputTokens", twhere, optional=True),
+                output_tokens=_field(raw_call, "outputTokens", twhere, optional=True),
+                logs=call_logs, id=_field(raw_call, "id", twhere)))
+        common = {
+            "performed_by": [_resolve(actors, i, "actor", where) for i in _list(raw, "performedBy", where)],
+            "status": _enum(ExecutionStatus, raw, "status", where),
+            "started_at": _timestamp(raw, "startedAt", where),
+            "ended_at": _timestamp(raw, "endedAt", where, optional=True),
+            "tool_calls": op_calls,
+            "reads": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "reads", where)],
+            "writes": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "writes", where)],
+            "confidence": _confidence(raw, where),
+            "id": _field(raw, "id", where),
+        }
+        if kind == "ModelingSession":
+            operation = _build(ModelingSession, where, changes=op_changes, **common)
+        else:
+            operation = _build(_OPERATION_TYPES[kind], where, **common)
+        operations[operation.id] = operation
+        trace.add_operation(operation)
+
+    for raw in _list(data, "traceLinks", "Trace"):
+        where = f"TraceLink {raw.get('id') if isinstance(raw, dict) else raw!r}"
+        evidence = {}
+        for raw_ev in _list(raw, "evidence", where):
+            ewhere = f"Evidence {raw_ev.get('id') if isinstance(raw_ev, dict) else raw_ev!r}"
+            kind = _field(raw_ev, "type", ewhere)
+            common = {"id": _field(raw_ev, "id", ewhere), "timestamp": _timestamp(raw_ev, "timestamp", ewhere),
+                      "logs": [_resolve(logs, i, "log record", ewhere) for i in _list(raw_ev, "logIds", ewhere)]}
+            if kind == "RuleEvidence":
+                ev = _build(RuleEvidence, ewhere, rule=_field(raw_ev, "rule", ewhere), **common)
+            elif kind == "AIEvidence":
+                ev = _build(AIEvidence, ewhere, algorithm=_field(raw_ev, "algorithm", ewhere), **common)
+            else:
+                raise ConversionError(f"{ewhere} has unknown type {kind!r}.")
+            evidence[ev.id] = ev
+        confidence = _confidence(raw, where)
+        trace.add_trace_link(_build(
+            TraceLink, where,
+            source=_resolve(artifacts, _field(raw, "sourceId", where), "artifact", where),
+            target=_resolve(artifacts, _field(raw, "targetId", where), "artifact", where),
+            operation=_resolve(operations, _field(raw, "operationId", where), "operation", where),
+            evidence=list(evidence.values()), confidence=confidence,
+            id=_field(raw, "id", where), timestamp=_timestamp(raw, "timestamp", where)))
+
+    result = trace.validate(raise_exception=False)
+    if not result["success"]:
+        raise ConversionError("Invalid trace: " + "; ".join(result["errors"]))
+    return trace

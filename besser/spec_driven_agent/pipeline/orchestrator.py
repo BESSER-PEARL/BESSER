@@ -202,14 +202,17 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
     EVENT_ERROR,
     EVENT_COST_UPDATE,
+    EVENT_GENERATOR_OUTPUT,
     EVENT_LLM_CALL,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
+    EVENT_REQUIREMENTS,
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
     EVENT_TARGET,
     EVENT_TOOL_CALL,
+    EVENT_TURN_END,
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
     TRACE_FILENAME,
@@ -349,6 +352,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
+        stated_requirements: list[dict] | None = None,
         assembly_issues: list[dict] | None = None,
     ):
         self.client = llm_client
@@ -424,6 +428,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self.executor.app_validator = self._validate_app
         self.executor.time_left = self._time_left
+        # Each generator call's files and traced regions go to the run log, which
+        # the run trace is built from (state/trace_model.py).
+        self.executor.on_generated = self._record_generator_output
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[tuple, dict] | None = None
         self._api_scenarios: dict[str, dict] = {}
@@ -471,6 +478,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # extracted; the verdicts of the last pass go to the recipe.
         self.enable_requirements_ledger = enable_requirements_ledger
         self._requirements: list[dict] | None = None
+        # Requirements the editor sent ({"id", "text", "kind"}, the modeling
+        # assistant's extraction): the ledger is built from them instead of
+        # extracting again, so its verdicts name the trace's requirements.
+        self._stated_requirements = stated_requirements
+        # Where the ledger came from, for the recipe: "editor", "extracted" or None.
+        self._requirements_source: str | None = None
         self._requirement_verdicts: list[dict] = []
         self._requirement_verdicts_scope = ""  # the requirements and request they answered
         self._requirement_verdicts_key = ""  # the judge's cache key (source, requirements) they answer
@@ -597,7 +610,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # can disable them without polluting the working tree.
         self.run_id = run_id
         self._trace: TraceWriter | NullTraceWriter = (
-            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind)
+            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind,
+                        usage=self._run_usage_counters)
             if enable_tracing
             else NullTraceWriter()
         )
@@ -1135,6 +1149,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._start_time is None:
             return None
         return self.max_runtime_seconds - (time.monotonic() - self._start_time)
+
+    def _run_usage_counters(self) -> dict[str, Any]:
+        """The client's cumulative token counters and the model serving it, for the run log."""
+        usage = self.client.usage
+        counters = {key: int(getattr(usage, key, 0) or 0) for key in (
+            "api_calls", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")}
+        counters["model"] = getattr(usage, "served_model", None) or getattr(self.client, "model", None)
+        return counters
+
+    def _safe_usage_counters(self) -> dict[str, Any]:
+        """:meth:`_run_usage_counters`, or ``{}`` for a client that keeps none (a test double)."""
+        try:
+            return self._run_usage_counters()
+        except Exception:
+            return {}
+
+    def _record_generator_output(self, record: dict) -> None:
+        """Log one generator call's files (see ``ToolExecutor.on_generated``)."""
+        self._trace.write(EVENT_GENERATOR_OUTPUT, **record)
 
     def _run_phase1(self, instructions: str) -> None:
         """Select and run the best generator, then inventory the output."""
@@ -2089,6 +2122,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = str(e)
                 self._phase2_quota_exhausted = _is_quota_exhausted(e)
                 break
+            self._trace.write(EVENT_TURN_END, turn=turn + 1)
 
             # The call may have switched the client to its outage
             # fallback model mid-flight — surface that to the UI.
@@ -4335,17 +4369,37 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ], sort_keys=True).encode("utf-8")).hexdigest()
 
     def _extract_requirements(self, instructions: str) -> None:
+        if self._stated_requirements is not None:
+            self._requirements = _requirements_ledger.stated_requirements_ledger(
+                self._stated_requirements, instructions)
+            self._stated_requirements = None  # decided once: used, or extract below
+            if self._requirements is not None:
+                self._requirements_source = "editor"
+                self._trace.write(EVENT_REQUIREMENTS, source="editor", items=self._requirements)
+                return
         # One initial attempt and one recovery attempt; failed extraction stays
         # unknown instead of being cached forever as a successful empty list.
         if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
             return
         self._requirement_extraction_attempts += 1
+        before = self._safe_usage_counters()
         with self._traced_llm_call("requirements_extraction") as call:
             self._requirements = _requirements_ledger.extract_requirements(
                 instructions, self.client, can_call=self._verification_call_allowed)
             call["outcome"] = "failed" if self._requirements is None else "ok"
             call["requirements"] = len(self._requirements or [])
-        if self._requirements is None:
+        if self._requirements is not None:
+            self._requirements_source = "extracted"
+            after = self._safe_usage_counters()
+            # The extraction's own tokens, so the run trace can give the
+            # RequirementExtraction its LLM call (and not count them twice).
+            self._trace.write(
+                EVENT_REQUIREMENTS, source="extracted", items=self._requirements,
+                extraction_usage={key: after[key] - before.get(key, 0)
+                                  for key in after if isinstance(after[key], int)},
+                model=after.get("model"),
+            )
+        else:
             # extract_requirements has five silent None paths; an empty list
             # in the recipe would read as "the user asked for nothing" rather
             # than "we never looked".
@@ -5418,6 +5472,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 **self._checks_that_ran()),
             # False: the request and the model state no business rule, so none was checked.
             "business_rules_stated": self._business_rules_stated(),
+            # "editor" when the ledger is the modeling assistant's extraction
+            # (verdicts carry its trace id as "ref"), "extracted" when the run
+            # extracted it, None when no ledger was built.
+            "requirements_source": self._requirements_source,
             "api_scenarios": api_scenario_snapshot(self._api_scenarios.values(), include_reports=True),
             "api_scenarios_retired": list(self._retired_api_scenarios),
             "model_conversion_issues": getattr(self.domain_model, "conversion_issues", []) or [],

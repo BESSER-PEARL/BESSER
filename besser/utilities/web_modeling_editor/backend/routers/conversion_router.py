@@ -36,7 +36,6 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 # BESSER utilities
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
-from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
@@ -64,6 +63,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_component_diagram,
     process_deployment_diagram,
     json_to_buml_project,
+    process_trace,
     # BUML to JSON converters
     class_buml_to_json,
     parse_buml_content,
@@ -96,6 +96,10 @@ from besser.utilities.web_modeling_editor.backend.services.svg_postprocess impor
     fit_svg_viewbox_to_content,
 )
 from besser.utilities.web_modeling_editor.backend.services.kg.payloads import parse_kg_diagram
+from besser.utilities.web_modeling_editor.backend.services.traceability import (
+    import_project_trace,
+    project_code_with_trace,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -118,6 +122,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     ALLOWED_SPREADSHEET_EXTENSIONS,
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_BUML_EXTENSIONS,
+    EXPORT_WARNING_HEADER,
 )
 from besser.utilities.web_modeling_editor.backend.dependencies import SdmxImportSlotsDep, SettingsDep
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
@@ -195,21 +200,24 @@ router = APIRouter(prefix="/besser_api", tags=["conversion"])
 @router.post("/export-project-as-buml")
 @handle_endpoint_errors("export_project_as_buml")
 async def export_project_as_buml(settings: SettingsDep, input_data: ProjectInput = Body(...)):
-    buml_project = json_to_buml_project(input_data)
+    """The project as a B-UML file, with its trace when that keeps it importable.
 
-    errors = buml_project._cross_diagram_errors["errors"]
-    if errors:
-        raise ConversionError("Cannot export project: " + "; ".join(errors))
+    When the trace is left out (``project_code_with_trace``), the ``X-BESSER-Warning`` header says so.
+    """
+    def export() -> tuple[str, str | None]:
+        buml_project = json_to_buml_project(input_data)
+        errors = buml_project._cross_diagram_errors["errors"]
+        if errors:
+            raise ConversionError("Cannot export project: " + "; ".join(errors))
+        trace = process_trace(input_data.trace) if input_data.trace is not None else None
+        return project_code_with_trace(buml_project, trace, settings.buml_emit_ids)
 
-    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
-        output_file_path = os.path.join(temp_dir, "project.py")
-        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=settings.buml_emit_ids)
-        file_content = await read_file_async(output_file_path, "r", encoding="utf-8")
-        return Response(
-            content=file_content,
-            media_type="text/plain",
-            headers={"Content-Disposition": 'attachment; filename="project.py"'},
-        )
+    # Converting a project and its trace is CPU work: off the event loop.
+    file_content, warning = await asyncio.to_thread(export)
+    headers = {"Content-Disposition": 'attachment; filename="project.py"'}
+    if warning:
+        headers[EXPORT_WARNING_HEADER] = warning
+    return Response(content=file_content, media_type="text/plain", headers=headers)
 
 
 @router.post("/export-buml")
@@ -373,9 +381,10 @@ async def export_buml(input_data: DiagramInput, settings: SettingsDep):
             )
 
 
-def _import_repair_warnings(repairs: list[str]) -> list[dict] | None:
-    """What the import changed to load a BUML file, in the response's warning shape."""
-    return [{"code": "buml-import-repaired", "message": message} for message in repairs] or None
+def _import_repair_warnings(repairs: list[str], trace_warnings: list[str] = ()) -> list[dict] | None:
+    """What the import changed or left out to load a BUML file, in the response's warning shape."""
+    return ([{"code": "buml-import-repaired", "message": message} for message in repairs]
+            + [{"code": "trace-not-imported", "message": message} for message in trace_warnings]) or None
 
 
 @router.post("/get-project-json-model", response_model=ProjectExportResponse)
@@ -386,14 +395,20 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
     validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
-    repairs: list[str] = []
-    parsed_project = project_to_json(buml_content, repairs)
+    def convert():
+        repairs: list[str] = []
+        parsed_project = project_to_json(buml_content, repairs)
+        trace, trace_warnings = import_project_trace(buml_content, parsed_project)
+        return parsed_project, trace, _import_repair_warnings(repairs, trace_warnings)
 
+    # Loading a project and its trace is CPU work: off the event loop.
+    parsed_project, trace, warnings = await asyncio.to_thread(convert)
     return {
         "project": parsed_project,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION,
-        "warnings": _import_repair_warnings(repairs),
+        "trace": trace,
+        "warnings": warnings,
     }
 
 @router.post("/get-json-model", response_model=DiagramExportResponse)

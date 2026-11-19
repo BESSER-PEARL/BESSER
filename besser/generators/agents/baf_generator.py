@@ -5,22 +5,26 @@ import textwrap
 from enum import Enum
 from typing import Optional
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment
 import json
 import re
 
 from besser.BUML.metamodel.state_machine.agent import Agent, GUIReplyAction
 from besser.utilities.template_escaping import register_escaping_filters
 from besser.BUML.metamodel.structural import Method
+from besser.BUML.metamodel.traceability import LLM
 from besser.generators import GeneratorInterface
 
-from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
+from besser.generators.agents.agent_personalization import (
+    DEFAULT_OPENAI_MODEL, configure_agent, flatten_agent_config_structure, personalization_uses_llm,
+)
 from besser.generators.agents.deployment_components import materialize_deployment_components
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
-from besser.utilities.buml_code_builder.common import safe_var_name
+from besser.utilities.buml_code_builder.common import identifier_part, safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
+from besser.utilities.generation_trace import trace_source, traced_environment
 from besser.utilities.path_utils import normalize_relative_path
 
 logger = logging.getLogger(__name__)
@@ -370,6 +374,22 @@ class BAFGenerator(GeneratorInterface):
             changed only when its ``db1`` is missing or still holds placeholders (see
             :func:`link_default_database`). ``WebAppGenerator`` uses it to connect the
             agent to the web app's database.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, each file written with the elements it
+            was rendered from: in ``<agent>.py`` the lines of each intent, entity, state (its creation and
+            its behaviour) with its body, fallback body and transitions, in ``tools.py`` those of each
+            tool; ``config.yaml`` and ``readme.txt`` name the agent as source, a skill file its skill, a
+            ``guis/`` module its GUI model. Only elements with an ``id`` are recorded.
+        ai_files (set[str]): The files, by path relative to the output directory, an LLM produced or
+            modified in this run: the personalization step (``configure_agent`` with an OpenAI key)
+            rewrites the agent's replies and training sentences, so ``personalized_agent_model.py``,
+            ``personalized_agent_model.json`` and ``<agent>.py`` are listed when it asked the LLM
+            (``personalization_uses_llm``). Their regions are not deterministic template output:
+            pass this set as ``ai_files`` to ``build_generation_trace``, which records them as AI
+            evidence of an LLM call instead of a rule. Empty when no LLM was involved.
+        ai_llm (LLM): The LLM the personalization step asked (OpenAI's ``DEFAULT_OPENAI_MODEL``), when
+            ``ai_files`` is not empty; pass it as ``llm`` to ``build_generation_trace``.
     """
     def __init__(
         self,
@@ -387,6 +407,7 @@ class BAFGenerator(GeneratorInterface):
         default_db: Optional[dict] = None,
     ):
         super().__init__(model, output_dir)
+        self.ai_files: set[str] = set()
         self.bind_host = bind_host
         self.default_db = dict(default_db) if default_db else None
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
@@ -526,11 +547,7 @@ class BAFGenerator(GeneratorInterface):
         )
 
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(
-            loader=FileSystemLoader(templates_path),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
+        env = traced_environment(templates_path, trim_blocks=True, lstrip_blocks=True)
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
@@ -546,7 +563,7 @@ class BAFGenerator(GeneratorInterface):
         register_escaping_filters(env)
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
-        agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
+        agent_file = f"{self.model.name}.py"
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         config_for_personalization = dict(self.config) if self.config else None
@@ -560,12 +577,18 @@ class BAFGenerator(GeneratorInterface):
             # config consumed by ``configure_agent``. We no longer ship a
             # generator for the legacy format, so skip the pass entirely when
             # only legacy rules are present.
+            llm_personalized = False
             if 'personalizationrules' not in config_for_personalization:
                 configure_agent(
                     self.model,
                     config_for_personalization,
                     openai_api_key=self.openai_api_key,
                 )
+                llm_personalized = personalization_uses_llm(config_for_personalization)
+            if llm_personalized:
+                # The model now holds LLM-written text: record it, so a trace does not call it deterministic.
+                self.ai_files.update((agent_file, "personalized_agent_model.py"))
+                self.ai_llm = LLM(DEFAULT_OPENAI_MODEL, "openai")
 
             # Persist personalized agent python for downstream conversion.
             agent_model_to_code(self.model, personalized_agent_path)
@@ -586,6 +609,8 @@ class BAFGenerator(GeneratorInterface):
                 personalized_json = agent_buml_to_json(personalized_code)
                 with open(personalized_json_path, "w", encoding="utf-8") as jf:
                     json.dump(personalized_json, jf, indent=2)
+                if llm_personalized:
+                    self.ai_files.add("personalized_agent_model.json")
                 logger.info("Personalized agent JSON generated at %s", personalized_json_path)
             except Exception:
                 logger.exception("Failed to convert personalized agent to JSON")
@@ -620,68 +645,59 @@ class BAFGenerator(GeneratorInterface):
 
         if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             logger.info("Generating agent with personalization mappings")
-            with open(agent_path, mode="w", encoding="utf-8") as f:
-                generated_code = agent_template.render(
-                    agent=self.model,
-                    config=self.config,
-                    personalization_mapping=config_for_personalization['personalizationMapping'],
-                    test_mode=self.test_mode,
-                    gui_modules=list(gui_modules),
-                    a2a=self.a2a_descriptor,
-                    deployment_component_bindings=deployment_component_bindings,
-                    ic_llm_name=ic_llm_name,
-                    classical_ic_fallback=classical_ic_fallback,
-                )
-                f.write(generated_code)
+            rendered = agent_template.render(
+                agent=self.model,
+                config=self.config,
+                personalization_mapping=config_for_personalization['personalizationMapping'],
+                test_mode=self.test_mode,
+                gui_modules=list(gui_modules),
+                a2a=self.a2a_descriptor,
+                deployment_component_bindings=deployment_component_bindings,
+                ic_llm_name=ic_llm_name,
+                classical_ic_fallback=classical_ic_fallback,
+            )
+            self._write_traced(agent_file, rendered, trace_source(self.model, "baf_agent_template.py.j2#agent"))
         else:
-            with open(agent_path, mode="w", encoding="utf-8") as f:
-                # TODO: how to handle llm variable names that are used in bodies?
-                generated_code = agent_template.render(
-                    agent=self.model,
-                    config=self.config,
-                    test_mode=self.test_mode,
-                    gui_modules=list(gui_modules),
-                    a2a=self.a2a_descriptor,
-                    deployment_component_bindings=deployment_component_bindings,
-                    ic_llm_name=ic_llm_name,
-                    classical_ic_fallback=classical_ic_fallback,
-                )
-                f.write(generated_code)
-            logger.info("Agent script generated at %s", agent_path)
+            # TODO: how to handle llm variable names that are used in bodies?
+            rendered = agent_template.render(
+                agent=self.model,
+                config=self.config,
+                test_mode=self.test_mode,
+                gui_modules=list(gui_modules),
+                a2a=self.a2a_descriptor,
+                deployment_component_bindings=deployment_component_bindings,
+                ic_llm_name=ic_llm_name,
+                classical_ic_fallback=classical_ic_fallback,
+            )
+            self._write_traced(agent_file, rendered, trace_source(self.model, "baf_agent_template.py.j2#agent"))
+            logger.info("Agent script generated at %s", self.build_generation_path(agent_file))
         if generate_code_assets:
             config_path = self.build_generation_path(file_name="config.yaml")
-            with open(config_path, mode="w", encoding="utf-8") as f:
-                if self.config_yaml is not None:
-                    config_yaml = sqlite_database_to_file(self.config_yaml)
-                    if self.default_db:
-                        config_yaml = link_default_database(config_yaml, self.default_db)
-                    f.write(config_yaml)
-                else:
-                    config_template = env.get_template('baf_config_template.py.j2')
-                    properties = sorted(self.model.properties, key=lambda prop: prop.section)
-                    f.write(config_template.render(properties=properties, agent=self.model,
-                                                   bind_host=self.bind_host,
-                                                   default_db=self.default_db))
+            if self.config_yaml is not None:
+                config_yaml = sqlite_database_to_file(self.config_yaml)
+                if self.default_db:
+                    config_yaml = link_default_database(config_yaml, self.default_db)
+                self._write_file("config.yaml", config_yaml, trace_source(self.model, "config.yaml#agent"))
+            else:
+                config_template = env.get_template('baf_config_template.py.j2')
+                properties = sorted(self.model.properties, key=lambda prop: prop.section)
+                self._write_traced("config.yaml", config_template.render(
+                    properties=properties, agent=self.model, bind_host=self.bind_host, default_db=self.default_db),
+                    trace_source(self.model, "baf_config_template.py.j2#config"))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')
             readme_path = self.build_generation_path(file_name="readme.txt")
-            with open(readme_path, mode="w", encoding="utf-8") as f:
-                generated_code = readme_template.render(agent=self.model, classical_ic_fallback=classical_ic_fallback)
-                f.write(generated_code)
+            self._write_traced("readme.txt", readme_template.render(
+                agent=self.model, classical_ic_fallback=classical_ic_fallback),
+                trace_source(self.model, "readme.txt.j2#readme"))
             logger.info("Agent readme file generated at %s", readme_path)
 
             # Generate tools.py — one file containing all tool function definitions
             tools = getattr(self.model, 'tools', []) or []
             if tools and not self.deployment_component_metadata:
                 tools_path = self.build_generation_path(file_name="tools.py")
-                with open(tools_path, mode="w", encoding="utf-8") as f:
-                    f.write("# Auto-generated tool definitions\n\n")
-                    for tool in tools:
-                        f.write(tool.code)
-                        if not tool.code.endswith('\n'):
-                            f.write('\n')
-                        f.write('\n')
+                self._write_traced("tools.py", env.get_template('tools.py.j2').render(tools=tools))
                 logger.info("Tools file generated at %s", tools_path)
 
             # Generate skills/ directory — one .md file per skill
@@ -690,9 +706,8 @@ class BAFGenerator(GeneratorInterface):
                 skills_dir = os.path.join(self.build_generation_dir(), "skills")
                 os.makedirs(skills_dir, exist_ok=True)
                 for skill in skills:
-                    skill_file = os.path.join(skills_dir, f"{skill.name}.md")
-                    with open(skill_file, mode="w", encoding="utf-8") as f:
-                        f.write(skill.content)
+                    self._write_file(f"skills/{identifier_part(skill.name)}.md", skill.content,
+                                       trace_source(skill, "skill.md#skill"))
                 logger.info("Skills directory generated at %s", skills_dir)
 
             # Test sessions run generated agents in an isolated sandbox folder.
@@ -748,4 +763,7 @@ class BAFGenerator(GeneratorInterface):
             gui_model_to_code(gui_model, gui_file_path, model_var_name="gui_model")
             with open(gui_file_path, mode="a", encoding="utf-8") as gf:
                 gf.write(gui_template.render(gui_action=gui_action))
+            with open(gui_file_path, encoding="utf-8", newline="") as gf:
+                gui_code = gf.read()
+            self._write_traced(f"guis/{module}.py", gui_code, trace_source(gui_model, "agent_gui.py.j2#gui"))
         logger.info("GUIs directory generated at %s", guis_dir)

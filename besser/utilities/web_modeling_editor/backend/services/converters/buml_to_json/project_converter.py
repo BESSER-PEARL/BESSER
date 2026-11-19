@@ -13,6 +13,8 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.buml_code_builder.project_builder import is_user_reference_domain_model
+from besser.utilities.buml_code_builder.trace_model_builder import TRACE_SECTION_KEYWORD
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
 from .state_machine_converter import state_machine_to_json
@@ -25,6 +27,8 @@ from .bpmn_diagram_converter import bpmn_buml_to_json
 from .kg_diagram_converter import kg_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
+from .trace_converter import parse_trace_code, trace_buml_to_json
+from .trace_matching import match_trace_to_project
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +87,7 @@ def _object_model_title(section_code: str) -> str:
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
     'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
-    'BPMN', 'KNOWLEDGE_GRAPH', 'COMPONENT', 'DEPLOYMENT',
+    'BPMN', 'KNOWLEDGE_GRAPH', 'COMPONENT', 'DEPLOYMENT', TRACE_SECTION_KEYWORD,
 ]
 
 
@@ -139,7 +143,13 @@ def _build_section_boundary_pattern() -> str:
     keyword_alts = '|'.join(re.escape(kw) for kw in ALL_SECTION_KEYWORDS)
     # Match both old format: # KEYWORD MODEL #
     # and new numbered format: # KEYWORD MODEL 1: "Title" #
-    return rf'#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION'
+    # A header is a line of its own: the same words inside a string (a generated file a trace
+    # keeps, which may hold a model's own banner) are not one.
+    return rf'(?m)^[ \t]*(?:#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION)'
+
+
+# The header line the project definition starts with (``# PROJECT DEFINITION #``), as a line of its own.
+_PROJECT_DEFINITION_HEADER = re.compile(r"(?m)^[ \t]*# PROJECT DEFINITION\b")
 
 
 def _has_code(section_code: str) -> bool:
@@ -170,9 +180,10 @@ def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
     #   # KEYWORD MODEL 1 #                        (numbered, no title)
     #   # KEYWORD MODEL 1: "Some Title" #          (numbered with title)
     #   #  KEYWORD MODEL  #                        (extra whitespace, e.g. GUI)
+    # A header is a line of its own (see _build_section_boundary_pattern).
     header_pattern = re.compile(
-        rf'#\s*{re.escape(keyword)}\s+MODEL(?:\s+(\d+))?(?:\s*:\s*"([^"]*)")?\s*#',
-        re.IGNORECASE
+        rf'^[ \t]*#\s*{re.escape(keyword)}\s+MODEL(?:\s+(\d+))?(?:\s*:\s*"([^"]*)")?\s*#',
+        re.IGNORECASE | re.MULTILINE
     )
 
     boundary_pattern = _build_section_boundary_pattern()
@@ -517,8 +528,11 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
         Dictionary representing the complete project with all diagrams.
         Each diagram type maps to a list of diagram entries.
     """
-    # Detect models included in the project
-    model_match = re.search(r"models\s*=\s*\[(.*?)\]", content, re.DOTALL)
+    # Detect models included in the project. The project definition closes the file: read it from
+    # its last header line, not from the same words in a string (the owner, a file a trace keeps).
+    headers = list(_PROJECT_DEFINITION_HEADER.finditer(content))
+    project_code = content[headers[-1].start():] if headers else content
+    model_match = re.search(r"models\s*=\s*\[(.*?)\]", project_code, re.DOTALL)
     if not model_match:
         # No Project(...) wrapper — fall back to single-diagram detection so
         # plain class/agent/state-machine/GUI/NN files can still be imported.
@@ -531,9 +545,9 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
     logger.debug("Detected model names in project: %s", model_names)
 
     # Extract project metadata
-    project_name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
-    project_desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
-    project_owner_match = re.search(r'owner\s*=\s*"(.*?)"', content)
+    project_name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', project_code)
+    project_desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', project_code)
+    project_owner_match = re.search(r'owner\s*=\s*"(.*?)"', project_code)
 
     project_name = project_name_match.group(1) if project_name_match else "Unnamed Project"
     project_description = project_desc_match.group(1) if project_desc_match else "No description"
@@ -691,3 +705,32 @@ def project_to_json(content: str, warnings: Optional[List[str]] = None) -> Dict[
             "collaborationEnabled": False,
         },
     }
+
+
+_DOMAIN_MODEL_NAME = re.compile(r'DomainModel\(\s*name\s*=\s*"((?:[^"\\]|\\.)*)"')
+
+
+def project_trace_to_json(content: str, project: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The trace file JSON of a project file's TRACEABILITY section, or None when it has none.
+
+    The trace is not one of the project's models (it is not in ``models=[...]``),
+    so it is found by its section banner alone. It references the elements of the
+    structural sections, so it is loaded after them, then matched by name to
+    ``project``, the project imported from the same file, whose elements have new ids.
+
+    Raises:
+        ConversionError: If the section does not load as a TraceModel.
+    """
+    sections = _extract_all_sections(content, TRACE_SECTION_KEYWORD)
+    if not sections:
+        return None
+    if len(sections) > 1:
+        raise ConversionError(f"A project file holds one traceability section, found {len(sections)}.")
+    structural = _extract_all_sections(content, SECTION_CONFIG["domain_model"][0])
+    trace = parse_trace_code(sections[0][1], context_code="\n".join(code for _, code in structural))
+    class_sections = [code for _, code in structural if _parse_user_reference_section(code) is None]
+    model_names = [(_DOMAIN_MODEL_NAME.search(code) or [None, None])[1] for code in class_sections]
+    unmatched = match_trace_to_project(trace, project, model_names)
+    if unmatched:
+        logger.info("%d trace artifact(s) match no imported element (deleted elements keep their old id).", unmatched)
+    return trace_buml_to_json(trace)

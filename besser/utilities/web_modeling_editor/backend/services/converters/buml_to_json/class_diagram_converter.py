@@ -35,7 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers.mu
     format_multiplicity_label,
 )
 from besser.utilities.utils import explicit_timestamp_iso, sort_by_timestamp
-from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import is_valid_element_id
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import element_id_taker
 
 
 def _set_timestamp(target: dict, element) -> dict:
@@ -52,34 +52,6 @@ def _set_timestamp(target: dict, element) -> dict:
     return target
 
 
-def _make_id_taker():
-    """Return ``take(element)``: the element's own ``id`` while valid and unused, else a fresh uuid.
-
-    Reusing the id keeps it stable across round trips; the uniqueness check
-    keeps two elements that share an id (a copied element, a merged model)
-    from overwriting each other in the JSON maps.
-    """
-    used = set()
-
-    def take(element) -> str:
-        element_id = getattr(element, "id", None)
-        if element_id is not None:
-            if not is_valid_element_id(element_id):
-                reason = "invalid"
-            elif element_id in used:
-                reason = "duplicate"
-            else:
-                used.add(element_id)
-                return element_id
-            logger.warning("Replacing %s element id %.60r of %s %r with a new one.",
-                           reason, element_id, type(element).__name__, getattr(element, "name", ""))
-        element_id = str(uuid.uuid4())
-        used.add(element_id)
-        return element_id
-
-    return take
-
-
 def fresh_primitive_types() -> dict:
     """Per-load copies of the primitive types, so an upload never holds the shared singletons."""
     return {
@@ -92,6 +64,43 @@ def fresh_primitive_types() -> dict:
         "DateTimeType": PrimitiveDataType("datetime"),
         "TimeDeltaType": PrimitiveDataType("timedelta"),
         "AnyType": PrimitiveDataType("any"),
+    }
+
+
+def structural_allowed_names() -> dict:
+    """The names structural B-UML code may use, for ``safe_load_buml``; everything else is refused.
+
+    Shared with the loaders of sections that build on a structural model (a project's trace).
+    """
+    return {
+        "Class": Class,
+        "Property": Property,
+        "Method": Method,
+        "Parameter": StructuralParameter,
+        "PrimitiveDataType": PrimitiveDataType,
+        "BinaryAssociation": BinaryAssociation,
+        "Constraint": Constraint,
+        "Multiplicity": Multiplicity,
+        "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
+        "Generalization": Generalization,
+        "Enumeration": Enumeration,
+        "EnumerationLiteral": EnumerationLiteral,
+        "DomainModel": DomainModel,
+        "AssociationClass": AssociationClass,
+        "Metadata": Metadata,
+        "MethodImplementationType": MethodImplementationType,
+        # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+        "datetime": SAFE_DATETIME_MODULE,
+        "set": set,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
+        **fresh_primitive_types(),
+        # No-op stub: project-exported files often end with a
+        # `project = Project(name=..., models=[domain_model], ...)` tail.
+        # The class converter only cares about the DomainModel; swallowing
+        # the Project(...) call with a stub keeps the sandbox import-tolerant.
+        "Project": lambda *args, **kwargs: None,
     }
 
 
@@ -135,34 +144,8 @@ def parse_buml_content(content: str, warnings: list[str] | None = None) -> Domai
         # Allowlist of names that may appear in the BUML source. Everything
         # else is rejected by the safe loader.
         allowed_names = {
-            "Class": Class,
-            "Property": Property,
-            "Method": Method,
-            "Parameter": StructuralParameter,
-            "PrimitiveDataType": PrimitiveDataType,
+            **structural_allowed_names(),
             "BinaryAssociation": _repairing_binary_association(warnings),
-            "Constraint": Constraint,
-            "Multiplicity": Multiplicity,
-            "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
-            "Generalization": Generalization,
-            "Enumeration": Enumeration,
-            "EnumerationLiteral": EnumerationLiteral,
-            "DomainModel": DomainModel,
-            "AssociationClass": AssociationClass,
-            "Metadata": Metadata,
-            "MethodImplementationType": MethodImplementationType,
-            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
-            "datetime": SAFE_DATETIME_MODULE,
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            **fresh_primitive_types(),
-            # No-op stub: project-exported files often end with a
-            # `project = Project(name=..., models=[domain_model], ...)` tail.
-            # The class converter only cares about the DomainModel; swallowing
-            # the Project(...) call with a stub keeps the sandbox import-tolerant.
-            "Project": lambda *args, **kwargs: None,
         }
 
         # Ensure we have a string before preprocessing
@@ -255,7 +238,7 @@ def class_buml_to_json(domain_model):
 
     # First pass: Create all class and enumeration elements
     class_id_map = {}  # Store mapping between Class objects and their IDs
-    take_id = _make_id_taker()
+    take_id = element_id_taker()
 
     # Sort types/constraints by name for deterministic output across runs.
     for type_obj in sorted(
@@ -763,7 +746,7 @@ def class_buml_to_json(domain_model):
             for kind, constraints in (("precondition", getattr(method, "pre", []) or []),
                                        ("postcondition", getattr(method, "post", []) or [])):
                 for constraint in constraints:
-                    box_id = str(uuid.uuid4())
+                    box_id = take_id(constraint)
                     elements[box_id] = {
                         "id": box_id,
                         "type": "ClassOCLConstraint",

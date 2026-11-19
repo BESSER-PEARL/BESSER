@@ -110,7 +110,16 @@ PRIMITIVE_TYPE_MAPPING = {
     'any': 'AnyType'
 }
 
-# Names a generated structural script imports (plus ``datetime``, which rebuilds
+#: The name a trace section imports each traceability metaclass under (``Person as TracePerson``),
+#: so a model class called ``Person`` cannot shadow it. Reserved, like the other imports.
+TRACE_IMPORT_NAMES = {name: name if name.startswith("Trace") else f"Trace{name}" for name in (
+    "TraceModel", "Person", "Agent", "Editor", "CodeGenerator", "ModelGenerator", "LLM", "ModelArtifact",
+    "CodeArtifact", "PromptArtifact", "RequirementArtifact", "RequirementKind", "ModelingSession",
+    "CodeGeneration", "RequirementExtraction", "Conversation", "ExecutionStatus", "ChangeEvent", "ChangeKind",
+    "ToolCall", "LogRecord", "LogType", "RuleEvidence", "AIEvidence", "Confidence", "TraceLink",
+)}
+
+# Names a generated structural script (or its trace section) imports (plus ``datetime``, which rebuilds
 # element timestamps and object slot values). A class or enumeration variable
 # with one of these names would shadow the import, so it gets a suffix.
 RESERVED_NAMES = [
@@ -121,6 +130,7 @@ RESERVED_NAMES = [
     'TimeType', 'DateType', 'DateTimeType', 'TimeDeltaType',
     'AnyType', 'Constraint', 'AssociationClass', 'Metadata', 'MethodImplementationType',
     'ObjectModel', 'datetime',
+    *TRACE_IMPORT_NAMES.values(),
 ]
 
 

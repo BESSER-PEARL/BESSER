@@ -17,7 +17,8 @@ import math
 import os
 import re
 import xml.etree.ElementTree as ET
-from typing import Optional
+from typing import List, Optional, Tuple
+from xml.parsers import expat
 
 from besser.BUML.metamodel.bpmn import (
     Activity,
@@ -48,6 +49,7 @@ from besser.BUML.metamodel.bpmn import (
     Transaction,
 )
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import FileTrace, TraceRegion, element_ref, trace_source
 from besser.utilities.utils import sort_by_timestamp
 
 
@@ -295,6 +297,14 @@ class BPMNGenerator(GeneratorInterface):
         model (BPMNModel): The BPMN model to serialise.
         output_dir (str, optional): Directory for the ``.bpmn`` output file.
         file_name (str, optional): Output filename (default ``"bpmn_diagram.bpmn"``).
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, the ``.bpmn`` file with the model as source
+            and the lines of each XML element emitted for a model element that has an ``id`` (a model converted
+            from the web editor gives each element its editor id; ``layout["id"]`` only names its XML element).
+            Regions are rule ``bpmn_generator#<xml tag>``, and
+            ``bpmn_generator#shape`` / ``#edge`` for the diagram-interchange shape or edge of the element.
+            A process, a lane set or a derived data-store/object definition has no editor id and no region.
     """
 
     regenerable = True
@@ -377,7 +387,50 @@ class BPMNGenerator(GeneratorInterface):
         ET.indent(definitions, space="  ")
         tree = ET.ElementTree(definitions)
         tree.write(output_path, encoding="UTF-8", xml_declaration=True)
+        self._record_trace(output_path)
         return output_path
+
+    # --- tracing ------------------------------------------------------------
+
+    def _record_trace(self, output_path: str) -> None:
+        """Map each XML element emitted for a model element back to it, by line range of the written file.
+
+        The file is read back and its elements located with the XML parser's own line numbers; an element is
+        matched to its model element through the id the generator gave it (``_id_for``), so the mapping is
+        exact whatever id the model element had (a clash or a non-NCName editor id is renamed).
+        """
+        with open(output_path, encoding="utf-8", newline="") as f:
+            text = f.read()
+        objects = {xml_id: obj for obj, xml_id in self._id_for.items()}
+        regions: List[TraceRegion] = []
+        open_elements: List[Tuple[str, Optional[object], int]] = []
+
+        def region_of(tag: str, obj, start: int, end: int) -> None:
+            ref = element_ref(obj)
+            if ref is None:
+                return
+            rule = {"BPMNShape": "shape", "BPMNEdge": "edge"}.get(tag, tag)
+            regions.append(TraceRegion(ref.element_id, ref.element_type, obj.name or ref.element_id,
+                                       f"bpmn_generator#{rule}", start, end))
+
+        parser = expat.ParserCreate()
+
+        def start_element(name, attributes):
+            tag = name.split(":")[-1]
+            ref = attributes.get("bpmnElement") if tag in ("BPMNShape", "BPMNEdge") else attributes.get("id")
+            open_elements.append((tag, objects.get(ref), parser.CurrentLineNumber))
+
+        def end_element(_name):
+            tag, obj, start = open_elements.pop()
+            if obj is not None:
+                region_of(tag, obj, start, parser.CurrentLineNumber)
+
+        parser.StartElementHandler, parser.EndElementHandler = start_element, end_element
+        parser.Parse(text.encode("utf-8"), True)
+        regions.sort(key=lambda r: (r.start_line, -r.end_line))
+        source = trace_source(self.model, "bpmn_generator#definitions")
+        self.traced_files[self._file_name.replace(os.sep, "/")] = FileTrace(
+            tuple(regions), (source,) if source else ())
 
     # --- id strategy --------------------------------------------------------
 

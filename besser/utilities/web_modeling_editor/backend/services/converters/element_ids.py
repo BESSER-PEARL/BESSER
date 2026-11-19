@@ -2,6 +2,7 @@
 
 import logging
 import re
+import uuid
 
 from besser.BUML.metamodel.structural import DomainModel, Enumeration
 
@@ -18,6 +19,64 @@ _ELEMENT_ID_PATTERN = re.compile(rf"[A-Za-z0-9_:-]{{1,{MAX_ELEMENT_ID_LENGTH}}}"
 def is_valid_element_id(value) -> bool:
     """True when ``value`` can be used as an editor element id."""
     return isinstance(value, str) and bool(_ELEMENT_ID_PATTERN.fullmatch(value)) and value != "__proto__"
+
+
+class EditorIds:
+    """Gives the elements of one model their editor ids (``Element.id``), each id at most once.
+
+    A trace refers to a model element by the id the editor gave it, so a processor that builds
+    an element from an editor element gives it that element's id. An id that is not a valid
+    editor id, or that another element of the model already has, is not given (and logged): the
+    element is then rendered untraced, which changes nothing else.
+    """
+
+    def __init__(self):
+        self._used = set()
+
+    def assign(self, element, editor_id) -> bool:
+        """Give ``element`` the id ``editor_id``; True when it was given."""
+        if element is None or not is_valid_element_id(editor_id):
+            return False
+        if editor_id in self._used:
+            logger.warning("%s %r has the editor id %.60r of another element; it is left without one.",
+                           type(element).__name__, getattr(element, "name", ""), editor_id)
+            return False
+        element.id = editor_id
+        self._used.add(editor_id)
+        return True
+
+
+def element_id_taker():
+    """Return ``take(element)``: the id to write for ``element`` in the editor JSON.
+
+    The element's own ``id`` while it is valid and unused, else the editor id a processor kept in
+    its ``layout`` (BPMN, deployment and component elements), else a fresh uuid. Reusing the id
+    keeps it stable across a JSON -> B-UML -> JSON round trip, so a trace that refers to the
+    element still finds it; the uniqueness check keeps two elements that share an id (a copied
+    element, a merged model) from overwriting each other in the JSON maps. Each call returns a
+    taker with its own record of the ids used.
+    """
+    used = set()
+
+    def take(element) -> str:
+        element_id = getattr(element, "id", None)
+        if element_id is not None:
+            if is_valid_element_id(element_id) and element_id not in used:
+                used.add(element_id)
+                return element_id
+            reason = "duplicate" if element_id in used else "invalid"
+            logger.warning("Replacing %s element id %.60r of %s %r with a new one.",
+                           reason, element_id, type(element).__name__, getattr(element, "name", ""))
+        layout = getattr(element, "layout", None)
+        stashed = layout.get("id") if isinstance(layout, dict) else None
+        if isinstance(stashed, str) and stashed and stashed not in used:
+            used.add(stashed)
+            return stashed
+        element_id = str(uuid.uuid4())
+        used.add(element_id)
+        return element_id
+
+    return take
 
 
 def adopt_element_ids(model: DomainModel, previous: DomainModel) -> None:

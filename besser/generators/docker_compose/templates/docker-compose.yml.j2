@@ -2,6 +2,7 @@
 
 services:
 {% for svc in services %}
+{% trace service_elements.get(svc.name), "service" %}
   {{ svc.name }}:
 {% if svc.stereotypes %}
     # stereotypes: {{ svc.stereotypes }}
@@ -32,11 +33,14 @@ services:
     deploy:
       replicas: {{ svc.replicas }}
 {% endif %}
+{% endtrace %}
 {% endfor %}
 {% if networks %}
 
 networks:
 {% for net in networks %}
+{% trace network_elements.get(net.name), "network" %}
   {{ net.name }}: {}{{ net.kind_comment }}
+{% endtrace %}
 {% endfor %}
 {% endif %}

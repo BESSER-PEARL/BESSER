@@ -235,3 +235,17 @@ Ports, bind addresses and security
   to ``LLMOpenAI`` (``gpt-4o-mini``), so set the OpenAI API key in its
   ``config.yaml``. A voting merge whose producers resolve to no running service
   also falls back to a single LLM merge instead of a vote.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` records which lines of the generated files come from which element
+of the deployment model: in ``docker-compose.yml`` the lines of each service (``service``, from its artifact) and of
+each node's network (``network``); each ``<service>/Dockerfile`` names its artifact as source; and the traces of the
+BAF generator that baked an agent (see :doc:`baf`) are merged under ``<service>/``. Only elements with an ``id``
+are recorded, and recording them does not change the generated files. The bridging ``*_link`` networks come from
+communication paths, which have no region. The web editor's deployment processor gives every node, artifact,
+interface and drawn relationship its editor element id, so a diagram drawn there is traced by element.
+``generator.ai_files`` lists the baked files an LLM personalization wrote (``<service>/<file>``), and
+``generator.ai_llm`` that LLM: their element traces are left out, and a trace links them by the LLM's AI evidence.
+See :doc:`traceable_generator`.

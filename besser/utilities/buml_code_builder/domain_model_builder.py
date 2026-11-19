@@ -7,7 +7,7 @@ This module generates Python code for BUML domain models and object models.
 import keyword
 import logging
 import os
-from typing import Optional
+from typing import Dict, Optional
 from besser.BUML.metamodel.structural.structural import (
     Class,
     DomainModel,
@@ -192,6 +192,7 @@ def domain_model_to_code(
     metadata_var_name: Optional[str] = None,
     object_model_var_name: str = "object_model",
     emit_ids: bool = False,
+    variables: Optional[Dict[str, str]] = None,
 ):
     """
     Generates Python code for a B-UML model and writes it to a specified file.
@@ -208,6 +209,9 @@ def domain_model_to_code(
             is included. Defaults to "object_model".
         emit_ids (bool, optional): Write each element's ``id`` as an ``id="..."`` argument.
             Off by default: BESSER releases before ``Element.id`` cannot load such a file.
+        variables (dict, optional): Filled with the variable each association is written to, keyed by
+            the association's id, for a trace written after the model to reference it. Their names are
+            minted while writing (``books``, ``books_1``), so no caller can derive them.
 
     Outputs:
         - A Python file containing the base code representation of the B-UML domain model
@@ -629,6 +633,10 @@ def domain_model_to_code(
         all_assoc_names = ', '.join([element_vars.name_for(assoc) for assoc in regular_associations] +
                                     [element_vars.name_for(ac.association) for ac in association_classes])
         f.write(f"    associations={_set_literal(all_assoc_names)},\n")
+        if variables is not None:
+            for assoc in regular_associations + association_class_associations:
+                if assoc.id:
+                    variables[assoc.id] = element_vars.name_for(assoc)
 
         if hasattr(model, 'constraints') and model.constraints:
             constraints_str = ', '.join(element_vars.name_for(c) for c in sort(model.constraints))

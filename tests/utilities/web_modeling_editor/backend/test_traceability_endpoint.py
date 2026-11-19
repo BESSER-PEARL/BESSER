@@ -1,0 +1,215 @@
+"""``POST /besser_api/traceability/generate-output`` and the trace file converters it uses."""
+
+import base64
+import copy
+
+import pytest
+
+from besser.utilities.web_modeling_editor.backend.services.converters import (
+    class_buml_to_json,
+    process_trace,
+    trace_buml_to_json,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+URL = "/besser_api/traceability/generate-output"
+
+
+@pytest.fixture
+def payload(library_book_author_model):
+    return {
+        "id": "diagram-1",
+        "title": "Library",
+        "model": class_buml_to_json(library_book_author_model),
+        "generator": "sqlalchemy",
+        "config": {"dbms": "sqlite"},
+        "actorName": "BESSER User",
+    }
+
+
+@pytest.fixture
+def traced(client, payload):
+    response = client.post(URL, json=payload)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_file_is_the_plain_download(client, payload, traced):
+    plain = client.post("/besser_api/generate-output", json={k: v for k, v in payload.items() if k != "actorName"})
+    assert plain.status_code == 200
+    assert base64.b64decode(traced["contentBase64"]) == plain.content
+    assert traced["fileName"] == "sql_alchemy.py"
+
+
+def test_trace_links_each_class_to_its_definition_line(payload, traced):
+    trace = traced["trace"]
+    lines = base64.b64decode(traced["contentBase64"]).decode("utf-8").split("\n")
+    artifacts = {a["id"]: a for a in trace["artifacts"]}
+    class_ids = {e["id"]: e["name"] for e in payload["model"]["elements"].values() if e["type"] == "Class"}
+    linked = {}
+    for link in trace["traceLinks"]:
+        source, target = artifacts[link["sourceId"]], artifacts[link["targetId"]]
+        if source.get("elementId") in class_ids and link["evidence"][0]["rule"].endswith("#class"):
+            linked[class_ids[source["elementId"]]] = lines[target["startLine"] - 1]
+    assert set(linked) == {"Library", "Book", "Author"}
+    for name, line in linked.items():
+        assert line.startswith(f"class {name}(")
+
+
+def test_trace_records_actor_tool_and_model(traced):
+    trace = traced["trace"]
+    assert [(a["type"], a["name"]) for a in trace["actors"]] == [("Person", "BESSER User")]
+    assert [(t["type"], t["name"]) for t in trace["tools"]] == [("CodeGenerator", "sqlalchemy")]
+    (operation,) = trace["operations"]
+    assert operation["type"] == "CodeGeneration" and operation["status"] == "SUCCEEDED"
+    assert "changes" not in operation
+    model = next(a for a in trace["artifacts"] if a.get("elementType") == "DomainModel")
+    assert model["elementId"] == "diagram-1" and model["id"] in operation["reads"]
+    file = next(a for a in trace["artifacts"] if a["type"] == "CodeArtifact" and "startLine" not in a)
+    assert file["content"] == base64.b64decode(traced["contentBase64"]).decode("utf-8")
+
+
+def test_blank_actor_is_anonymous(client, payload):
+    response = client.post(URL, json={**payload, "actorName": "   "})
+    assert response.json()["trace"]["actors"][0]["name"] == "anonymous"
+
+
+def test_an_unknown_generator_is_refused_as_by_the_plain_endpoint(client, payload):
+    response = client.post(URL, json={**payload, "generator": "nope"})
+    plain = client.post("/besser_api/generate-output", json={k: v for k, v in payload.items() if k != "actorName"}
+                        | {"generator": "nope"})
+    assert response.status_code == plain.status_code == 400
+    assert response.json()["detail"] == plain.json()["detail"]
+
+
+def test_diagram_id_is_required(client, payload):
+    response = client.post(URL, json={**payload, "id": None})
+    assert response.status_code == 400
+
+
+def test_trace_file_round_trips(traced):
+    trace = traced["trace"]
+    assert trace_buml_to_json(process_trace(trace)) == trace
+
+
+def test_trace_with_edits_round_trips(traced):
+    trace = copy.deepcopy(traced["trace"])
+    class_artifact = next(a for a in trace["artifacts"] if a.get("elementType") == "Class")
+    trace["projectId"] = "project-1"
+    trace["operations"].append({
+        "id": "op-edit", "type": "ModelingSession", "status": "SUCCEEDED",
+        "startedAt": "2026-10-29T10:00:00.000Z", "endedAt": "2026-10-29T10:05:00.000Z",
+        "performedBy": [trace["actors"][0]["id"]], "toolCalls": [], "reads": [], "writes": [],
+        "changes": [{"id": "ch-1", "kind": "UPDATED", "artifactId": class_artifact["id"], "feature": "name",
+                     "oldValue": "Libro", "newValue": "Book", "timestamp": "2026-10-29T10:01:00.000Z"}],
+    })
+    trace["actors"].append({"id": "assistant", "type": "Agent", "name": "BESSER modeling assistant",
+                            "timestamp": "2026-10-29T09:59:00.000Z"})
+    trace["artifacts"].append({"id": "prompt-1", "type": "PromptArtifact", "name": "Library",
+                               "timestamp": "2026-10-29T09:58:00.000Z", "content": "Books have a title.",
+                               "contentHash": "h"})
+    trace["artifacts"].append({"id": "prompt-1:R1", "type": "RequirementArtifact", "name": "A book has a title",
+                               "timestamp": "2026-10-29T09:58:00.000Z", "quote": "Books have a title",
+                               "kind": "data"})
+    trace["tools"].append({"id": "llm", "type": "LLM", "name": "gpt-6-luna", "provider": "openai",
+                           "timestamp": "2026-10-29T09:58:00.000Z"})
+    trace["operations"].append({
+        "id": "op-chat", "type": "Conversation", "status": "SUCCEEDED", "startedAt": "2026-10-29T09:58:00.000Z",
+        "performedBy": [trace["actors"][0]["id"], "assistant"], "toolCalls": [], "reads": ["prompt-1"],
+        "writes": [],
+    })
+    trace["operations"].append({
+        "id": "op-extraction", "type": "RequirementExtraction", "status": "SUCCEEDED",
+        "startedAt": "2026-10-29T09:58:00.000Z", "performedBy": ["assistant"],
+        "toolCalls": [{"id": "call-x", "toolId": "llm", "sequenceNumber": 0, "status": "SUCCEEDED",
+                       "startedAt": "2026-10-29T09:58:00.000Z", "logs": []}],
+        "reads": ["prompt-1"], "writes": ["prompt-1:R1"],
+    })
+    trace["tools"].append({"id": "gui-generator", "type": "ModelGenerator", "name": "BESSER GUI generator",
+                           "timestamp": "2026-10-29T10:06:00.000Z"})
+    trace["artifacts"].append({"id": "page-1", "type": "ModelArtifact", "name": "Book", "elementId": "page-1",
+                               "elementType": "Screen", "timestamp": "2026-10-29T10:06:00.000Z"})
+    trace["operations"].append({
+        "id": "op-derivation", "type": "ModelingSession", "status": "SUCCEEDED",
+        "startedAt": "2026-10-29T10:06:00.000Z", "performedBy": [trace["actors"][0]["id"]],
+        "toolCalls": [{"id": "call-g", "toolId": "gui-generator", "sequenceNumber": 0, "status": "SUCCEEDED",
+                       "startedAt": "2026-10-29T10:06:00.000Z", "logs": []}],
+        "reads": [class_artifact["id"]], "writes": [],
+        "changes": [{"id": "ch-g", "kind": "CREATED", "artifactId": "page-1",
+                     "timestamp": "2026-10-29T10:06:00.000Z"}],
+    })
+    assert trace_buml_to_json(process_trace(trace)) == trace
+
+
+@pytest.mark.parametrize("corrupt, message", [
+    (lambda t: t["operations"][0].update(type="CODE_GENERATION"), "unknown type"),
+    (lambda t: t["operations"][0].update(changes=[{"id": "c"}]), "only a ModelingSession has changes"),
+    (lambda t: t.update(schemaVersion=99), "schemaVersion"),
+    (lambda t: t["traceLinks"][0].update(sourceId="missing"), "unknown artifact"),
+    (lambda t: t["operations"][0].update(startedAt="yesterday"), "ISO 8601"),
+    (lambda t: t["operations"][0].update(status="DONE"), "must be one of"),
+    (lambda t: t["artifacts"][0].pop("name"), "missing 'name'"),
+    (lambda t: t["artifacts"].append({"id": "r", "type": "RequirementArtifact", "name": "R", "quote": "q",
+                                      "kind": "feature", "timestamp": "2026-10-29T09:58:00.000Z"}),
+     "must be one of"),
+    (lambda t: t["operations"][0].update(performedBy=[]), "at least one Actor"),
+    (lambda t: t["operations"][0].update(type="RequirementExtraction"), "RequirementExtraction that calls no LLM"),
+])
+def test_invalid_trace_is_a_conversion_error(traced, corrupt, message):
+    trace = copy.deepcopy(traced["trace"])
+    corrupt(trace)
+    with pytest.raises(ConversionError, match=message):
+        process_trace(trace)
+
+
+# ---------------------------------------------------------------- the backend: a ZIP of many files
+
+def _zip_entries(data: bytes) -> dict:
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+@pytest.fixture
+def traced_backend(client, payload):
+    response = client.post(URL, json={**payload, "generator": "backend", "config": {}})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_backend_delivery_is_the_plain_download(client, payload, traced_backend):
+    plain = client.post("/besser_api/generate-output", json={**payload, "generator": "backend", "config": {}})
+    assert plain.status_code == 200
+    assert traced_backend["fileName"] == "fastapi_backend.zip" and traced_backend["mediaType"] == "application/zip"
+    # Same entries, same bytes (only the archive's timestamps may differ).
+    assert _zip_entries(base64.b64decode(traced_backend["contentBase64"])) == _zip_entries(plain.content)
+
+
+def test_backend_trace_covers_its_files_and_points_at_their_lines(payload, traced_backend):
+    trace = traced_backend["trace"]
+    assert trace_buml_to_json(process_trace(trace)) == trace
+    entries = {name: data.decode("utf-8") for name, data in
+               _zip_entries(base64.b64decode(traced_backend["contentBase64"])).items()}
+    artifacts = {a["id"]: a for a in trace["artifacts"]}
+    files = {a["path"]: a for a in artifacts.values() if a["type"] == "CodeArtifact" and "startLine" not in a}
+    # Every generated text file is in the trace (the provenance note is added to the ZIP, not generated).
+    assert set(files) == set(entries) - {"BESSER_GENERATION.md"}
+    classes = {e["id"]: e["name"] for e in payload["model"]["elements"].values() if e["type"] == "Class"}
+    whole_files, lines = {}, {}
+    for link in trace["traceLinks"]:
+        source, target = artifacts[link["sourceId"]], artifacts[link["targetId"]]
+        if source.get("elementId") not in classes:
+            continue
+        name, rule = classes[source["elementId"]], link["evidence"][0]["rule"].split("#")[1]
+        if "startLine" in target:
+            lines[(name, target["path"], rule)] = entries[target["path"]].split("\n")[target["startLine"] - 1]
+        else:
+            whole_files.setdefault(name, set()).add(target["path"])
+    for name in classes.values():
+        assert f"routers/{name.lower()}.py" in whole_files[name]
+        assert lines[(name, "pydantic_classes.py", "class")].startswith(f"class {name}Create(")
+        assert lines[(name, "sql_alchemy.py", "class")].startswith(f"class {name}(")
+        assert f"{name.lower()}_router.router" in lines[(name, "main_api.py", "router_include")]
+    # Every file keeps its content as delivered, with fragments or without (database.py, the routers).
+    assert {path: f.get("content") for path, f in files.items()} == {path: entries[path] for path in files}

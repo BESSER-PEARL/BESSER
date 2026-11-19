@@ -185,6 +185,10 @@ class VerificationItem(BaseModel):
     what: str
     how: Optional[str] = None
     why: Optional[str] = None
+    # A requirement item's RequirementArtifact id in the run's trace (``DoneEvent.trace``):
+    # the editor's id for a requirement it sent, ``<runId>:R<n>`` for one the run extracted.
+    # ``id`` keeps the ``R<n>`` label the run's messages use.
+    traceRef: Optional[str] = None
 
 
 class VerificationCounts(BaseModel):
@@ -274,6 +278,14 @@ class DoneEvent(BaseSseEvent):
     # written by any run's LLM, ``aiLinesThisRun`` only this run's. Best-effort:
     # ``None`` when the record could not be built.
     aiShare: Optional[dict[str, Any]] = None
+    # The run's trace: a trace-file fragment (``projectId`` null, the JSON of
+    # ``trace_buml_to_json``, as the traced generation endpoints return) that the
+    # editor merges into the project trace. One CodeGeneration ``spec-driven:<runId>``
+    # with the generator and LLM calls, the files they wrote, the requirements and the
+    # judge's requirement -> code links (see ``state/trace_model.py``). ``None`` when the
+    # request did not set ``traceabilityEnabled`` or it could not be built; the same JSON
+    # ships in the ZIP as ``.besser_trace_model.json``.
+    trace: Optional[dict[str, Any]] = None
     # What this run changed, for the card's "What changed" summary.
     # ``mode`` is "create" for a new app and "modify" for an update of an
     # existing one; ``changedFiles`` are the paths the agent wrote, edited or

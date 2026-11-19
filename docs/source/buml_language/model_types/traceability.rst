@@ -1,0 +1,259 @@
+Traceability model
+==================
+
+The traceability metamodel records what happened to the artifacts of a project
+and how they are related: which model elements were created or changed, by whom
+and with which tool, and which generated code comes from which element. A trace
+is stored apart from the models it describes, so recording traces never changes
+a model file.
+
+The metamodel follows `W3C PROV <https://www.w3.org/TR/prov-o/>`_: an
+``Artifact`` is a ``prov:Entity``, an ``Operation`` is a ``prov:Activity`` and an
+``Actor`` is a ``prov:Agent``.
+
+Concepts
+--------
+
+- **TraceModel** -- the root: every artifact, operation, actor, tool and trace link
+  recorded for one project. It is a ``Model``.
+- **Artifact** -- something an operation reads, writes or changes. An artifact
+  can be a fragment of another one (``parent``).
+
+  - **ModelArtifact** -- a model or a model element. When the element is at hand (a
+    trace loaded with its model, as in a project exported to Python), the artifact
+    references it (``element``) and takes its name, metaclass and id from it.
+    Otherwise it records them: the element's persistent id (``Element.id``, the
+    editor element id), its name and its B-UML metaclass name (``DomainModel``,
+    ``Class``, ``Property``, ``BinaryAssociation``, ...). A record is what lets a trace
+    keep the history of deleted elements and live apart from the model, as the
+    editor's JSON does; ``ModelArtifact.resolve(model)`` finds the live element in
+    any kind of B-UML model (domain, GUI, state machine or agent, object, neural
+    network, quantum, BPMN, deployment, ...).
+    The model artifacts of a project form one tree per model: a model (a
+    diagram, of any type) has no ``parent``, its elements are its fragments,
+    and their members (attributes, literals) are theirs. An operation can
+    change or read several models, and a generator can read several.
+  - **CodeArtifact** -- a generated file, or a line range of one, with the SHA-256 of
+    its content. The content itself may be kept too. An artifact is written by one
+    operation, so a file changed by a later one (an LLM editing a generated file) is a
+    new version: a new ``CodeArtifact`` written by the edit, whose ``revision_of`` is the
+    version it changed (``prov:wasRevisionOf``). The generated version keeps the links
+    the generator made; the edit's links go to the new version.
+  - **PromptArtifact** -- a message given to an agent, with its SHA-256. A message is
+    kept as an artifact only when something is derived from it (it is the source of a
+    trace link); the other messages of a conversation stay in the logs of its tool calls.
+  - **RequirementArtifact** -- one atomic requirement stated in a prompt: the statement
+    (its ``name``), the words of the prompt that state it (``quote``) and what it asks
+    for (``RequirementKind``: ``data``, ``uniqueness``, ``validation``, ``rule``,
+    ``computed``, ``transition``, ``action``, ``ui``, ``integration``, ``quality``,
+    ``technical``). The assistant extracts the requirements of an application request
+    before modeling it; a link from the ``PromptArtifact`` records where each comes
+    from, and links from it to model elements record what realizes it. A requirement
+    with no link to the model is one the model does not cover.
+
+- **Operation** -- an activity, performed by one or more **Actors** (``Person``,
+  ``Agent``). It has a status (``ExecutionStatus``) and start/end times, reads and
+  writes artifacts, and reaches its **Tools** (``Editor``, ``CodeGenerator``, ``ModelGenerator``, ``LLM``)
+  only through its **ToolCalls**; the tools it used (``Operation.tools``) are derived
+  from them. It may have a **Confidence** in its result, as a trace link may (none is
+  computed yet). ``Operation`` is abstract; its kind is its class:
+
+  - **ModelingSession** -- edits made to models, recorded as its **ChangeEvents** (at least one).
+    Whether a person or the assistant made them is told by the actors (a ``Person``,
+    an ``Agent``, or both), not by the kind of operation; how, by its tool calls: an ``Editor``
+    for edits made in the editor, a deterministic ``ModelGenerator`` for a model derived from
+    another in one run (a GUI generated from a class diagram), linked from what it was derived from.
+  - **CodeGeneration** -- a generation run, deriving code from models; it calls at least
+    one ``CodeGenerator`` or ``LLM`` (a deterministic generator, or an LLM writing the
+    code; its links' evidence tells which). It is a **Transformation** (abstract): an operation that
+    derives new artifacts and the trace links to them, and edits nothing.
+  - **RequirementExtraction** -- a text-to-model **Transformation**: the atomic requirements a
+    prompt states, derived by an ``LLM``. It reads the ``PromptArtifact``, writes one
+    ``RequirementArtifact`` per requirement (and nothing else) and links the prompt to each;
+    it calls at least one ``LLM``. When the editor holds no prompt stating the requirements
+    (the request was sent before the page was reloaded), it reads none and links none.
+  - **Conversation** -- a dialogue between a user and an agent (the BESSER assistant);
+    each turn is a tool call to the agent's ``LLM``, holding the turn's messages. At
+    least one actor is an ``Agent``. What it leads
+    to varies, so it is not a ``Transformation``: a clarification question writes
+    nothing; what a turn leads to is a separate operation: a ``RequirementExtraction`` of the
+    requirements its prompt states, a ``ModelingSession`` for an edit, a ``CodeGeneration`` for
+    a generation. A chain such as prompt -> requirement -> class -> code is made of trace links,
+    each made by the operation that took that step.
+
+- **ToolCall** -- one use of a tool within an operation: an LLM prompted, a generator
+  run, an editor session. It calls one tool, has its own ``ExecutionStatus``, start/end
+  times and position in the operation (``sequence_number``), and holds the messages
+  exchanged with the tool, in order (**LogRecord**: a request, an intermediate message,
+  an answer, an error, ... by ``LogType``; none for an editor session). A call to an
+  ``LLM`` can record the tokens it read and wrote (``input_tokens``,
+  ``output_tokens``), what the call cost; only a call to an LLM records them.
+- **ChangeEvent** -- one granular effect of a ``ModelingSession`` on one artifact: ``CREATED``,
+  ``UPDATED`` or ``DELETED`` (``ChangeKind``). An update names the changed ``feature``
+  (``name``, ``type``, ``multiplicity``, ...) with its old and new values.
+- **TraceLink** -- a directed link from a source artifact to a target artifact (a
+  class and the lines generated from it), made by an operation. **Evidence** says why
+  it holds: ``RuleEvidence`` (a deterministic rule, such as a generator template
+  block) or ``AIEvidence`` (an AI technique, such as the LLM behind an assistant
+  edit). Any evidence can rest on log records, the messages it is based on: an AI
+  decision's prompt and answer, a generator's log of the run. **Confidence** says how
+  sure it is.
+
+Whether a link still holds is the derived attribute ``TraceLink./outOfDate``, a set of
+``OutOfDateReason`` values computed by ``TraceModel.out_of_date`` and never stored; it is
+empty while the link holds (other tools call an out-of-date link *suspect*):
+
+- ``SOURCE_CHANGED`` -- the source, or a fragment of it, changed after the link was made: the
+  target (the generated code) may no longer match it.
+- ``TARGET_CHANGED`` -- the target, or a fragment of it, was edited after the link was made:
+  it may no longer be what was derived (a class the assistant made, then edited by hand).
+- ``UPSTREAM_CHANGED`` -- neither end changed, but a link into the source has a changed
+  source, or is itself upstream changed: the source may need updating, and this link with it.
+
+Changes made by the operation that made the link are part of making it and do not count.
+Only a changed source travels downstream: an edited target is the source of the next link,
+which sees the edit as its own changed source. An edit of code is not a change of the version
+a link points at: it is a new ``CodeArtifact`` version that revises it (``revision_of``), so a
+link into code is not ``TARGET_CHANGED``, and that the code was edited since is told by the
+newer version.
+``TraceModel.validate()`` checks that every reference stays inside the trace (an artifact's
+parent, the version a revision revises, an operation's actors and artifacts, a tool call's
+tool, a link's ends and operation, the log records any evidence rests on, which must be
+messages of a tool call of the trace), that ids are unique, that no artifact is written by two
+operations and that the tool calls of an operation have distinct sequence numbers. It also
+checks each kind of operation: a ``ModelingSession`` has at least one change, a
+``CodeGeneration`` calls a ``CodeGenerator`` or an ``LLM``, a ``RequirementExtraction`` calls an
+``LLM`` and writes only requirements, and a ``Conversation`` has an ``Agent`` among its actors.
+
+A check is not a concept of its own. A validation gate's outcome (tests run on generated
+code, a linter) is recorded in the ``LogRecord`` messages of the tool call that ran it
+(``INFO``, ``ERROR``). A judge's verdict that code realizes a requirement is a trace link
+from the ``RequirementArtifact`` to the code, with ``AIEvidence`` (the judge, with its
+prompt and answer as log records) and a ``Confidence`` whose ``explanation`` gives the
+verdict's reason.
+
+Names are free text (a project owner is "BESSER User"), so trace elements inherit
+``Element`` rather than ``NamedElement``. Every trace element has an ``id`` (a UUID
+unless given) and a ``timestamp`` in UTC.
+
+Example
+-------
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.traceability import (
+        CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ModelArtifact, Person,
+        RuleEvidence, ToolCall, TraceLink, TraceModel,
+    )
+
+    owner = Person("BESSER User")
+    generator = CodeGenerator("sqlalchemy", "8.5.0")
+    book = ModelArtifact("Book", element_id="class-1", element_type="Class")
+    file = CodeArtifact("sql_alchemy.py", path="sql_alchemy.py", content_hash="...")
+    lines = CodeArtifact("Book (108-140)", path="sql_alchemy.py", content_hash="...",
+                         start_line=108, end_line=140, parent=file)
+
+    generation = CodeGeneration([owner], tool_calls=[ToolCall(generator, 0)],
+                                reads=[book], writes=[file, lines])
+    evidence = RuleEvidence("sql_alchemy_template.py.j2#class")
+    link = TraceLink(book, lines, generation, [evidence], Confidence(1.0))
+
+    trace = TraceModel(project_id="my-project", artifacts=[book, file, lines],
+                       operations=[generation], trace_links=[link],
+                       actors=[owner], tools=[generator])
+    trace.validate()
+
+Traces from code generation
+---------------------------
+
+A generator records which lines come from which element by wrapping template blocks
+in the ``{% trace %}`` tag of ``besser.utilities.generation_trace``::
+
+    {% trace class, "class" %}
+    class {{ class.name }}(Base):
+        __tablename__ = "{{ class.name.lower() }}"
+    {% endtrace %}
+
+The tag leaves the generated text unchanged; ``extract_trace_regions`` returns the
+line range of each block (and the element's owner, so an attribute's or method's
+block nests under its class). A specialisation is recorded under the metaclass the
+editor names it by: an ``OCLConstraint`` parsed from an OCL box is a ``Constraint``. A file generated as a whole from one element -- a backend router from
+its class -- records it as a ``TraceSource`` instead (``trace_source(element, rule)``).
+A generator exposes both per file as ``traced_files``, a ``FileTrace`` by path in
+its output folder (see :doc:`../../generators/traceable_generator`).
+
+``build_generation_trace`` takes the files of a run (``GeneratedFile``: path,
+content, ``FileTrace``; ``collect_generated_files`` reads them from an output folder)
+and the models it read (``input_model``: id, metaclass, name), and builds its
+``TraceModel``: one ``CodeGeneration`` operation, a link from every model to every
+file, from each whole-file source to its file, and from each element to each of its
+blocks, with the template rule as evidence and confidence 1. A generator that records
+nothing still gets the links from its models to its files. A file's content is kept when it is under the size
+cap, so the views can show it and its blocks' lines; above it only its hash is. A trace is exported and
+shared while the delivered files keep their keys, so the content it keeps has every credential replaced by
+``[REDACTED]`` (``secret_redaction.redact_shared_file``: provider tokens, a ``.env`` file's assignments, a
+YAML file's credential lines, a quoted literal such as Django's ``SECRET_KEY = "..."``); the line
+count is kept, so its blocks' lines still point at it. ``contentHash`` stays the SHA-256 of the
+delivered file, so a redacted content does not hash to it. A credential spanning lines (a private key)
+leaves the file with its hash only.
+Elements without an ``id`` (a model built in Python rather than in the editor) are
+rendered untraced. The editor's processors give each element they build the id the
+editor records it by (see :ref:`traceable-generator-coverage` for what each
+generator traces and which elements have no id). An OCL box of the editor holding
+one constraint gives the constraint the box's ``id``; a box holding several is split
+into constraints without one. A file an LLM step of a generator wrote (the agent
+personalization) is linked by ``AIEvidence`` of that LLM, which the operation also
+calls, rather than by a rule.
+
+In the web editor
+-----------------
+
+The editor records traces per project while *Record traces for this project* is
+on, on the project's *Traceability* page (opt-in: off for a new project). Edits of every
+diagram type are recorded as modeling sessions (each with one call to the editor),
+under the B-UML metaclasses of the elements; every generation, with any generator,
+as a generation run (one call to the generator), its links reaching the generated
+lines where the generator traces elements; and the exchange with the modeling
+assistant as conversations. A
+Spec-Driven Agent run is recorded from the trace its ``done`` event carries: one generation run
+with a call per generator run and per LLM turn, the files the LLM wrote or edited (an edited
+generated file as a new version), and the judge's links from the requirements to the code (see
+:ref:`spec-driven-run-trace`). The trace is kept in the browser apart from the project, and
+travels with a project export when asked for: in a JSON export as the JSON form of
+this metamodel (see ``trace_converter.py`` / ``trace_processor.py`` in the backend
+converters), in a B-UML export as its Python form (below). The JSON form carries a
+``schemaVersion`` (6: ``revisionOfId`` on a code artifact; 5: requirement artifacts);
+the backend reads version 5 too, upgrading it on read. See
+:doc:`../../web_editor`.
+
+Python form
+-----------
+
+``trace_model_to_code`` (:doc:`../../utilities/buml_code_builder`) writes a trace
+as Python that rebuilds it, ids and timestamps included, but not the contents of
+generated files (their hashes, paths and line ranges are written). A project exported as
+B-UML with its trace has it as a ``TRACEABILITY`` section bound to
+``trace_model``, after the models it is about. It imports the metaclasses under a
+``Trace`` prefix (``Person as TracePerson``; ``TraceModel`` and ``TraceLink`` keep
+their names), so a class called ``Person`` or ``Agent`` neither hides one nor is
+replaced by one; a class named like one of those imports gets a ``_`` suffix on its
+variable, like a class named ``Class``. It references their elements
+instead of repeating them -- ``TraceModelArtifact(element=domain_model)``,
+``TraceModelArtifact(element=Library)``, ``TraceModelArtifact(element=Library_name)`` -- for
+the models, classes, enumerations, attributes, methods and associations, which the
+structural sections bind to variables. The other elements (generalizations,
+literals, constraints) and deleted ones stay records. Running the file gives you
+the ``TraceModel``, whose artifacts point at the real B-UML objects::
+
+    namespace = {}
+    exec(open("library.py").read(), namespace)
+    trace = namespace["trace_model"]
+    for link in trace.trace_links:
+        print(link.source.name, "->", link.target.name, trace.out_of_date(link))
+
+The structural sections carry no element ids, so importing the file gives every
+element a new id. The importer loads the trace after the structural sections and
+matches each model artifact to the imported diagrams by qualified name
+(``Library``, ``Library.name``, an association's name, ``Genre.NOVEL``), which is
+exact inside one diagram; a deleted element matches nothing and keeps its recorded
+id.

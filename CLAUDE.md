@@ -94,7 +94,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 
 | Path | What |
 |------|------|
-| `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
+| `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/`, `traceability/` (traces kept apart from models) |
 | `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, knowledge graph ↔ OWL/RDF/SHACL: import, export and the projection the conversion reads (`kg_rdf/`), KG → class diagram (`kg_to_buml/`) |
 | `besser/llm/` | What every LLM call shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional retries, errors that never echo the provider's body), the one retry policy (`retry.py`, also used by the Spec-Driven Agent's clients), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers, the model catalog (`catalog.py`) and per-model token prices (`pricing.py`), both reading `data/`. The agent's provider clients are still in `spec_driven_agent/providers/llm_client.py` (they move with its split). `besser.utilities.llm_utils` re-exports the old names |
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
@@ -102,13 +102,13 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools) |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app state on `app.state` — spec-driven runs, GitHub sign-in stores, agent-simulator limits, KG/SDMX slots — handed to routes by `dependencies.py`) |
-| `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |
+| `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api, traceability): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` (`GeneratorInfo`, derived from `besser/generators/registry.py`) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins. Deploy-time configuration (the `BESSER_LLM_*` caps and flags, SDMX, agent simulation) is `BackendSettings` in `…/backend/settings.py` |
-| `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
+| `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`, `traceability.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
-| `…/backend/services/generation/` | Generator dispatch behind `/generate-output*`: `dispatch.py` (path from the registry entry, per-generator option builders), `agents.py` (BAF), `downloads.py` (`GeneratedOutput`: ZIP + provenance, or one file + version comment) |
+| `…/backend/services/generation/` | Generator dispatch behind `/generate-output*` and the traced `/traceability/generate-output*`: `dispatch.py` (path from the registry entry, per-generator option builders; every path returns a `Generation`: download + diagrams read), `agents.py` (BAF), `downloads.py` (`GeneratedOutput`: ZIP + provenance, or one file + version comment, with the generators' `traced_files` by delivered path) |
 | `…/backend/services/deployment/` | Docker Compose deploy, the GitHub API client (`github_service.py`), repo model files, model merge, Render blueprints |
 | `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py` (endpoints under `/besser_api/kg`): request parsing, Refine-KG decisions, the user's-own-LLM adapter, the consistency check under its concurrency cap |
 | `…/backend/services/spec_driven/` | Spec-Driven service layer (see below) |
@@ -150,7 +150,11 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
 - `planning/gap_analyzer.py` — produces the Phase 2 checklist. Its return value is load-bearing: `None` =
   analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
 - `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.
-- `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and trace files.
+- `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and run log (`.besser_trace.jsonl`).
+- `state/trace_model.py` — the run trace: a B-UML `TraceModel` fragment built at packaging from the run log,
+  the recipe and the attribution, sent as `done.trace` and zipped as `.besser_trace_model.json`, only when the
+  request sets `traceabilityEnabled` (opt-in). Three names,
+  three records: run log, Agent Trace record, run trace (see the agent's README).
 - `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,
   updated on generator writes, on seeding and at packaging) and the run's Agent Trace record
   (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).
@@ -254,8 +258,32 @@ in one response. (Spec-Driven code validation is a separate, fourth layer; see a
    snapshots of `test_generator_registry.py`
 
 Walkthrough: `docs/source/generators/build_generator.rst` and `docs/source/contributing/create_generator.rst`.
+
 The NN generators register like any other: their modules do not import `torch` / `tensorflow`. The Spec-Driven
 Agent is not in `SUPPORTED_GENERATORS`; it has its own router rather than `/generate-output`.
+
+### Making a generator traceable
+Every generator already gets file-level trace links (each input model -> each text file it writes) from the
+traced endpoints, with no code. Instrumenting adds which lines come from which element; full guide:
+`docs/source/generators/traceable_generator.rst`. Helpers: `besser/utilities/generation_trace.py` and
+`GeneratorInterface`.
+1. Build the Jinja env with `traced_environment(templates_dir_or_loader, **env_options)` (adds `TraceExtension`).
+2. In templates wrap an element's block in `{% trace element, "label" %}…{% endtrace %}` (rule
+   `<template>#<label>`; label defaults to the metaclass). Elements without an `id` render untraced.
+3. Write each render with `self._write_traced(relative_path, rendered, *sources, output_dir=None)`: strips the
+   markers, writes UTF-8 with `\n` endings and records `self.traced_files[relative_path]` (a `FileTrace`). A file
+   generated as a whole from one element passes `trace_source(element, rule)` as a source. Text that is not a
+   render (a user's own config) goes through `self._write_file` (no extraction). Never assign
+   `traced_files` (a property, always present, `{}` by default).
+4. A composite calls `self._merge_traced_files(child, prefix)` after `child.generate()` (`prefix` = the child's
+   folder relative to the composite's output dir, `""` if the same). Files an LLM step wrote go in `ai_files`
+   (with `ai_llm`); merging moves a child's there too, and a trace links them by `AIEvidence`, not a rule.
+5. Test that `traced_files` points at the right lines and that a model with ids generates the same bytes as
+   one without (`tests/generators/backend/test_backend_trace.py`). The backend needs no change: it reads
+   `traced_files` from the generator instance after any run.
+6. Elements drawn in the editor get their ids from the `json_to_buml` processors (`converters/element_ids.py`:
+   `EditorIds` gives each element the id the editor's trace records it by, once per model). A new element kind a
+   generator traces needs its processor to set it, and `test_traced_generation_all.py` to check it.
 
 ### Pitfalls
 1. **Keep converters symmetric**: if `json_to_buml` supports a feature, `buml_to_json` must too

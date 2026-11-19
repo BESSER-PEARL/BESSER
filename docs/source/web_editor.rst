@@ -62,6 +62,102 @@ The metamodel is described in :doc:`buml_language/model_types/knowledge_graph`.
 The endpoints behind these actions are listed under *Knowledge Graph* in
 :doc:`web_editor_backend`.
 
+Traceability
+------------
+
+The *Traceability* page (in the project section of the sidebar, next to *Settings*)
+records and shows what happened to the project's models and the code generated from
+them, for every diagram type. Recording is opt-in: it is off for a new project, and
+*Record traces for this project* on that page turns it on or off.
+
+* **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
+  class, attribute, method, enumeration, association, generalization or OCL
+  constraint) become modeling sessions, attributed to the project owner (or
+  ``anonymous``) and, for assistant edits, to the assistant. Layout changes are not
+  recorded, and quick successive edits of one element are merged. GUI-diagram edits are
+  recorded the same way for pages and the components that show, edit or act on data
+  (tables, charts, metric cards, maps, agent components, forms, inputs, buttons, menus;
+  not text, images or layout containers), each linked from the class-diagram elements it
+  is bound to (a table from its class, a button from its method). A table's columns are
+  recorded as its parts, known by the field they show: a field column linked from its
+  attribute, a lookup column from the association it follows and the attribute it displays.
+  The editor gives each of those components a persistent id to know it from one
+  save to the next. A GUI the editor generates from the class diagram (*Auto-generate*) is
+  one modeling session of the *BESSER GUI generator*, recorded once the generator is done:
+  every page it replaced and every element it made, each page linked from the class it was
+  generated for. Its links stay current until the GUI is edited again. A GUI the assistant
+  writes is its edit, linked from the request. Edits of the other diagrams (object, user,
+  state machine, agent, BPMN, neural network, quantum circuit, component, deployment,
+  knowledge graph) are recorded element by element the same way, layout aside. A
+  generation with any generator records which files each diagram it read produced and,
+  for the generators that trace elements, which lines each element produced (a class
+  and its attributes, a page and its components, an agent state, a BPMN task, a network
+  layer, a quantum gate, ...; see :ref:`traceable-generator-coverage`). A file the
+  agent personalization's LLM rewrote is recorded as the LLM's work. A chat
+  with the modeling assistant is a conversation: each request is a turn holding the
+  request, the assistant's progress messages and its answer or error (a message is
+  kept up to 10,000 characters). The assistant does not report the model it answers
+  with, so the editor records the modeling agent's default, ``gpt-6-luna`` (OpenAI);
+  a deployment or a user's own key can change it. The
+  elements an assistant edit created or changed are linked from the request that
+  asked for it, kept then as a prompt, so the lineage reads request -> element ->
+  code. A conversation ends with *New chat* or after ten idle minutes. Before it
+  builds a whole class diagram from a request of 250 characters or more, the
+  assistant extracts the requirements the request states. The editor records that
+  extraction as an operation of its own, a call to the model the assistant reports,
+  writing one requirement per statement (its words, the quote of the request that
+  states it and its kind) linked from the prompt that states them, and links each
+  requirement to the elements the assistant says realize it: request -> requirement
+  -> element -> code. Such an element is linked from its requirement only; an element
+  no requirement covers (an identifier, a helper enumeration) stays linked from the
+  request directly, which shows what the assistant added on its own. When the
+  assistant builds from an earlier request (after you confirm a replace, or choose
+  *Update model + generate*), the requirements and the elements are linked from that
+  earlier request, not from your reply; that needs the requirements to find it, so a
+  request too short for them keeps the link from your reply. A Spec-Driven *Generate the code*
+  run is judged against the newest requirements whose model still stands, whatever
+  their kinds: once the elements the assistant built with them are deleted (the model
+  rebuilt from another request, a file or by hand), the run extracts its own.
+* **Shown.** A *Timeline* of sessions, requirement extractions, generation runs and conversations, each naming the models
+  (diagrams) it changed or read; *Diagrams*, a tree of the project's diagrams, their
+  elements and the elements' members, where a diagram shows the whole files generated
+  from it, an element its lines, and both their history; and a *Coverage* matrix of
+  generation runs against each diagram (its whole files) and its elements, where
+  anything changed after a run is marked *out of date* (its generated code may no longer match);
+  and a *Lineage* graph of the whole project, or of one diagram or element: what was
+  derived from what, following trace links in both directions, column by column. It
+  starts with the diagrams, prompts, requirements and generation runs, the links between them
+  bundled (a pill counts them); clicking one shows its parts that take part in links
+  (a diagram's elements, an element's attributes, methods and constraints, a run's
+  files, a file's fragments), and the links then reach them. *Expand all*, zoom and
+  *Full screen* help with large projects. Selecting a part highlights its links and
+  lists them. Links are coloured by their evidence (a generator rule, an AI step),
+  thicker with higher confidence, which a pill shows when below certain. A link is
+  *out of date* (solid amber) when its source changed since it was made, or its target
+  was edited since (a class the assistant made, then changed by hand), and *upstream
+  changed* (dashed amber) when neither end changed but something its source was
+  derived from did. Selecting a link shows its evidence, the operation, actor and tool
+  that made it, and each reason it is out of date with the changes behind it. The lineage
+  shows the project as it is: older generation runs, and deleted elements with their links,
+  show only with *Show history* (a deleted element struck through). The *Diagrams* tab keeps
+  deleted elements, struck through, with their history.
+* **Stored.** In the browser (IndexedDB), apart from the project. Deleting the
+  project deletes its trace, and *Clear* on the page deletes it alone. The newest five
+  runs of each generator keep their trace links; older runs keep only their files and
+  hashes, so the trace stops growing with every generation.
+* **Exported with the project.** Once a trace has been recorded, the *Export
+  Project* dialog lists *Traceability* next to the diagrams. Ticked (it is off by
+  default), the trace goes into the JSON export as ``trace`` beside ``project``, or
+  into the B-UML export as a ``TRACEABILITY`` section. The JSON export keeps the
+  generated files' contents; the B-UML one keeps their hashes, paths and line ranges
+  only, so the file stays small, and leaves the trace out (saying so) when the file
+  would still be over the 2 MB a B-UML import accepts. Importing either file restores
+  the trace under the new project. Importing a B-UML file with a trace also turns
+  recording on, because a B-UML file carries no project settings. A trace that cannot
+  be read is skipped with a warning, and the project imports without it.
+
+The trace format is the :doc:`traceability metamodel <buml_language/model_types/traceability>`.
+
 Run or extend the editor
 ------------------------
 

@@ -59,6 +59,11 @@ This method will generate a modular project (rather than one large file) so each
    + ``sql_alchemy.py``: Includes SQL Alchemy database models.
    + ``pydantic_classes.py``: Consists of Pydantic validation models.
    + ``requirements.txt``: The dependencies of the generated application.
+   + ``api_contract.json``: Every route of the generated API as data: method, path, path and query parameters, the
+     ``<Class>Create`` body keys with their types and enumeration literals, what each route returns (including
+     its wrappers, such as ``{"task": ..., "tag_ids": [...]}`` from GET by id), the id type, pagination and the
+     two error shapes. The :doc:`react` generator renders its typed API client from the same data.
+   + ``API.md``: The same contract as a compact reference for people and coding agents.
 
 Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
 

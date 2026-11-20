@@ -1,5 +1,6 @@
 import React, { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../../api/generated/client";
 import { createPortal } from "react-dom";
 import { useTableContext } from "../../contexts/TableContext";
 import { notifyDataChanged, useDataVersion } from "../runtime/dataVersion";
@@ -130,7 +131,7 @@ export const TableComponent: React.FC<Props> = ({
           ? `/${id}/`
           : "";
     if (!endpoint) return;
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+    const backendBase = API_BASE_URL;
     
     // Check if table has lookup columns - if so, request detailed data with joins
     const hasLookupColumns = options?.columns?.some(
@@ -770,7 +771,7 @@ export const TableComponent: React.FC<Props> = ({
     const endpoint = getEndpoint();
     const rowId = getRowId(row);
     const url = endpoint.replace(/\/$/, "");
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+    const backendBase = API_BASE_URL;
     const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
     try {
       await axios.delete(fullUrl);
@@ -989,7 +990,7 @@ export const TableComponent: React.FC<Props> = ({
                   
                   setValidationError("");
                   const endpoint = getEndpoint();
-                  const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+                  const backendBase = API_BASE_URL;
                   
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};

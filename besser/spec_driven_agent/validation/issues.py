@@ -312,6 +312,9 @@ def _classify_issue(message: str) -> ValidationIssue:
         return ValidationIssue("blocker", text)
     if lower.startswith("form field type:"):
         return ValidationIssue("warning", text)
+    # Reserved for ui_probe.py screen findings; a warning until their precision is measured.
+    if lower.startswith("screen:"):
+        return ValidationIssue("warning", text)
     # A project agent the web app leaves out because no screen uses it: a notice, never repaired.
     if lower.startswith("agent left out:"):
         return ValidationIssue("warning", text)

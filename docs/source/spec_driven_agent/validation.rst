@@ -83,8 +83,11 @@ that was already broken is never refused, so it can be repaired.
 - Generated model-action contracts — actual handler paths and functions, with
   deterministic checks for missing handlers and known unimplemented bodies.
   Absence of a known stub is structural evidence, not proof of business behavior.
-- Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
-  match no generated backend route.
+- Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs, and
+  the generated client's ``apiRequest(<METHOD>, <path>)`` calls, that match no
+  generated backend route, and calls of a typed client function
+  (``bookApi.create``) the generated client does not have. The typed functions
+  are resolved to their routes through the app's ``api_contract.json``.
 - API call shapes (``api call:``, blocker) — a frontend call with a literal or
   template URL that resolves to exactly one route, checked against that
   route's handler, which is read without importing the app. The calls read are
@@ -92,7 +95,10 @@ that was already broken is never refused, so it can be repaired.
   the ``axios({method, url, data})`` config form, an ``axios.create()``
   instance defined in the file or imported from the file that defines it, and
   a ``fetch`` wrapper function such as ``api(path, options)``, defined or
-  imported by name. A wrapper is followed only when it calls
+  imported by name, the generated client's ``apiRequest`` (its body is the
+  ``body`` option) and its typed ``create``/``update`` functions (their body is
+  the last argument, cast or not; their responses are already unwrapped and are
+  not checked). A wrapper is followed only when it calls
   ``fetch(BASE + path, ...)`` once, passes the caller's options on without a
   method or body of its own, and returns the parsed JSON; an instance or base
   whose URL adds a path (``${API}/v2``, or a constant declared with one) is not
@@ -248,6 +254,68 @@ finish (a timeout, no sandbox, an unreachable package index, unfetched crates)
 gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
+
+Once a frontend's build has passed on the current tree, Phase 3 opens its
+screens in a headless browser (``validation/ui_probe.py``). Inside the same
+no-network sandbox it first creates records through the app's own API with the
+create probe described above, into a scratch SQLite database, then boots the
+generated FastAPI backend on that database (on every local port the built
+bundle calls), serves the build output under its base path (``vite build --base
+/app/`` included; ``index.html`` for page loads, the backend for any other path
+the build does not hold) and opens each screen in a fresh tab: ``/``, every path
+the router declares (``<Route path>``, nested relative routes,
+``createBrowserRouter`` objects and their ``children``, the scaffold's
+``ui_components.json``), then same-origin links found on the opened pages that
+match a declared route (any link, when a route's path is computed), which is how
+a ``/orders/:id`` screen is reached. A page that is still empty once the network
+is quiet is looked at again for up to 3 seconds, so a late first render is not
+called empty. At most 25 screens, 15 seconds each and 150 seconds in all for
+every frontend of the run together (less when the run has less time left).
+Nothing is clicked or typed, so forms and buttons are not exercised.
+
+Every finding is a ``screen warning:``; nothing from this check blocks, counts
+as a blocker or is sent to repair, on a fix run too. A finding names the route
+and, when the router names it, the page's source file:
+
+- a page that showed nothing (no text and no visible control anywhere in the
+  body, portals included), with what it was opened with: no signed-in user, and
+  the check's sample records or an empty database;
+- an uncaught exception, said apart for a page that still rendered;
+- React Router's default error page, which hides a render error from the
+  exception log, and console errors;
+- a 5xx from the app's backend, a 4xx, a request to a local address nothing
+  answers, and a page that did not settle (a request still open, or a fetch
+  loop);
+- a created record that the API lists but whose text is not found in the page
+  text or form fields (input and textarea values, select options) of any opened
+  screen, naming the screens that load its list route, or saying that none
+  does. The create probe's own text samples (``p3-order-title``) are the markers
+  looked for; a value drawn on a canvas or shown only as an image is not seen.
+
+A warning that starts with ``not checked:`` says what the check could not look
+at, not what the app does: a 5xx "in the sandbox (no network there)" when the
+backend's log for that screen shows a connection or name-resolution error, a
+screen the check could not finish, a backend that did not start for the check,
+the time limit stopping it, and records it could not check (its sample was
+refused or needs a record it could not create first, the record has no text
+field, its list route needs a parent record, or the API lists it only to a
+signed-in user).
+
+A screen that threw and showed nothing is also written to the trace, under the
+``screen_blocker_candidates`` key of the ``phase3_screens`` phase's exit, so the
+precision of that rule can be measured on real runs before it blocks anything.
+``screens: not run (reason)`` -- no browser, no Node.js, no sandbox, no build
+output, or the check turned off -- is a note that does not withhold verified
+completion.
+
+The browser is a Chromium-family binary found on ``PATH``
+(``chromium-headless-shell`` in the worker image), driven over the DevTools
+protocol by a Node.js script that uses Node 22's built-in WebSocket; nothing is
+downloaded. WebGL runs in software (SwiftShader). CORS is not judged, since the
+deployed origins are unknown, and host names other than ``localhost`` resolve to
+nothing. Results are reused for an unchanged tree; a check that did not run is
+tried again, and a check stopped midway keeps the screens it opened. Its time
+shows in the trace as the ``phase3_screens`` phase.
 
 Generated create probes use distinct fixture values and native association-link
 payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
@@ -1046,6 +1114,11 @@ broken artifact as a green success is worse than spending a few more turns.
    declares no create form (``allowCreate: false``, ``readOnly: true``), or a
    page that renders the component with ``readOnly`` or
    ``allowCreate={false}``, is not credited with one.
+   Through the generated typed client, only ``<x>Api.create`` (or ``bulkCreate``)
+   credits a create, to the class whose create route it posts to; a page that only
+   reads another class (``projectApi.list()``) is not credited with its create. An
+   import line names a module, not an entity: importing ``../api/generated/client``
+   says nothing about a class named ``Client``.
 
 .. warning::
    Validation includes isolated backend execution, not a deployment or full

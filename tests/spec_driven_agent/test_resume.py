@@ -449,9 +449,8 @@ def _resume_without_llm(model, tmp_path, monkeypatch, instructions="Build a blog
     return resumed
 
 
-def test_resume_keeps_the_writes_an_open_item_already_had(simple_model, tmp_path, monkeypatch):
-    """An item closes once every file it names was written: one write before the
-    crash and one after it are both counted."""
+def test_resume_keeps_the_edits_an_open_item_already_had(simple_model, tmp_path, monkeypatch):
+    """The edits recorded for an item, quoted in its finding, include those made before the crash."""
     crashed = LLMOrchestrator(
         llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
         use_streaming=False, enable_tracing=False,
@@ -467,7 +466,8 @@ def test_resume_keeps_the_writes_an_open_item_already_had(simple_model, tmp_path
     assert resumed.executor.task_snapshot()[0]["written"] == ["slug.py"]
     resumed.executor.execute_typed("write_file", {"path": "urls.py", "content": "ROUTES = []\n"})
 
-    assert resumed.executor.autoclose_verified_tasks() == [{"id": 1, "label": "Add slugs in slug.py and urls.py"}]
+    assert resumed.executor.task_snapshot()[0]["written"] == ["slug.py", "urls.py"]
+    assert resumed.executor.open_tasks(), "an edit never closes an item"
 
 
 def test_a_resumed_run_updates_its_history_entry(simple_model, tmp_path):

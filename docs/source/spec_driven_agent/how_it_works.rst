@@ -301,15 +301,15 @@ reading a trace and wondering why a run did what it did.
        frontend files exist). Ending the turn also runs ``validate_app``; a
        blocker from its static frontend checks is sent back to the model once
        before Phase 2 ends. The harness closes an item itself when its check
-       passes, or, for an item with no check, once the model's writes have
-       touched every file the item names (and the app declares any route it
-       names); the model closes the others with ``task_list(action='done')``,
-       without quoting code. Work the model cannot finish is recorded with
-       ``action='blocked'`` and stops holding the gate. An item the user did
-       not ask for is closed honestly with ``task_list(action='drop', id=N,
-       reason=...)`` rather than marked done. In Phase 3 only an item whose
-       check fails is a blocker; an item nothing settled is listed in the run
-       report as not confirmed.
+       passes, and refuses ``done`` while the check fails; the model closes
+       an item without a check with ``task_list(action='done')``, without
+       quoting code. An edit to a file the item names never closes it. Work
+       the model cannot finish is recorded with ``action='blocked'`` and
+       stops holding the gate. An item the user did not ask for is closed
+       honestly with ``task_list(action='drop', id=N, reason=...)`` rather
+       than marked done. In Phase 3 only an item whose check fails is a
+       blocker; an item nothing closed is listed in the run report as not
+       confirmed.
    * - Per-write diagnostics
      - Every file the model writes is parsed immediately — ``ast`` plus
        pyflakes' undefined-name checks for Python, a structural scanner for

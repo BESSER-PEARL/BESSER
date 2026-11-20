@@ -53,7 +53,7 @@ def _hard_blockers(issues: list) -> list:
 # the ledger's could-not-verify bucket, which the UI already renders separately.
 _UNKNOWN_PREFIXES = (
     "requirement unverified:", "requirement partial:", "task unverified:",
-    "task incomplete:", "runtime unverified:", "create unverified:", "action unverified:",
+    "runtime unverified:", "create unverified:", "action unverified:",
     "validation unverified:", "verification setup:", "api scenario:",
     "requirement:",
 )

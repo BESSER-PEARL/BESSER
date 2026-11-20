@@ -408,9 +408,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "while items are open. Batch them: one task per call wastes a turn "
             "each, and you have a limited number of turns. An item with a machine "
             "check closes by itself once the check passes, and done is refused while "
-            "it fails. An item that names files also closes by itself once your "
-            "edits have touched each of them. Closing an item is bookkeeping: the "
-            "harness still checks the app."
+            "it fails. Any other item closes only when you mark it done. Closing an "
+            "item is bookkeeping: the harness still checks the app."
         ),
         "input_schema": {
             "type": "object",

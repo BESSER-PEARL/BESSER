@@ -78,7 +78,6 @@ from besser.spec_driven_agent.agent.edit_apply import (
 )
 from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
 from besser.spec_driven_agent.planning.gap_analyzer import task_paths
-from besser.spec_driven_agent.planning.requested_routes import requested_routes, route_declared
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
@@ -124,8 +123,6 @@ def _file_lock(path: str):
 ToolExecutionStatus = Literal["ok", "error", "skipped"]
 
 
-# Statuses of a file tool that changed the file; a checklist item counts them as touching it.
-_LANDED_WRITE_STATUSES = frozenset({"written", "modified", "deleted"})
 # Characters of a task's text shown when a result only needs to name the item:
 # enough to recognise it; the full text is one task_list 'list' away.
 _TASK_LABEL_CHARS = 80
@@ -1067,8 +1064,7 @@ class ToolExecutor:
 
         An entry may be a plain string, or a dict ``{"text": ...,
         "verify": callable}``. A deterministic verifier must pass before the
-        item closes. Without one, the item closes on the model's word or once
-        every file its text names was written (``autoclose_verified_tasks``).
+        item closes. Without one, the item closes on the model's word.
         """
         self._tasks = []
         for i, t in enumerate(tasks or []):
@@ -1077,10 +1073,12 @@ class ToolExecutor:
                 verify = t.get("verify")
                 kind = t.get("kind")
                 planning_notes = [note for note in (t.get("planning_notes") or []) if isinstance(note, str)]
+                action = t.get("_action_contract")
             else:
                 text, verify = str(t).strip(), None
                 kind = None
                 planning_notes = []
+                action = None
             if text:
                 self._tasks.append(
                     {"id": len(self._tasks) + 1, "text": text,
@@ -1089,28 +1087,26 @@ class ToolExecutor:
                      "files": task_paths(text),
                      **({"kind": kind} if isinstance(kind, str) and kind else {}),
                      **({"planning_notes": planning_notes} if planning_notes else {}),
+                     **({"_action_contract": list(action)} if action else {}),
                      "blocked": False}
                 )
 
     def autoclose_verified_tasks(self) -> list[dict]:
-        """Close open items the run's own state settles.
+        """Close open items whose deterministic verifier now passes.
 
-        An item with a deterministic verifier closes when it passes. Any other
-        unblocked item closes once a successful write touched every file its
-        text names since it was created, and the app declares every HTTP route
-        it names (``_settled_by_writes``). Checklist bookkeeping otherwise costs
-        more turns than the edits, and a model that never learns the protocol
-        still gets credit for what it built.
+        A task with a real verifier does not need the model to argue for it:
+        the harness can see the endpoint is implemented, and checklist
+        bookkeeping otherwise costs more turns than the edits. Checking here
+        also means a model that never learns the checklist protocol still gets
+        credit for what it built. Any other item closes only on the model's word.
         """
         closed = []
         for task in self._tasks:
-            if task.get("done") or task.get("dropped"):
-                continue
             verify = task.get("verify")
-            if verify is None and task.get("blocked"):
+            if verify is None or task.get("done") or task.get("dropped"):
                 continue
             try:
-                passed = bool(verify()) if verify is not None else self._settled_by_writes(task)
+                passed = bool(verify())
             except Exception:
                 continue
             if not passed:
@@ -1120,28 +1116,32 @@ class ToolExecutor:
             with self._autoclose_lock:
                 if task.get("done") or task.get("dropped"):
                     continue
-                task.update(done=True, verification="verified" if verify is not None else "written",
-                            blocked=False)
+                task.update(done=True, verification="verified", blocked=False)
                 task.pop("blocked_reason", None)
             closed.append({"id": task["id"], "label": _task_label(task["text"])})
         return closed
 
-    def _settled_by_writes(self, task: dict) -> bool:
-        """Every file the item names was written since it was created, and every
-        HTTP route it names is declared by the app's source."""
-        files = task.get("files")
-        if not files or not set(files) <= set(task.get("written") or ()):
-            return False
-        return all(route_declared(self.workspace, method, path)
-                   for method, path in requested_routes(task["text"]))
-
     def _note_task_write(self, rel_path: str) -> None:
-        """Record a landed write on every open item that names ``rel_path``."""
+        """Record an edit that changed ``rel_path`` on every open item whose text
+        names it: reported with the item, never a reason to close it."""
         with self._autoclose_lock:
             for task in self._tasks:
                 if (not task["done"] and rel_path in (task.get("files") or ())
                         and rel_path not in task.setdefault("written", [])):
                     task["written"].append(rel_path)
+
+    def task_writes(self) -> dict[int, list[str]]:
+        """Each item's recorded edits, for :meth:`restore_task_writes` after a rollback."""
+        return {t["id"]: list(t["written"]) for t in self._tasks if "written" in t}
+
+    def restore_task_writes(self, marks: dict[int, list[str]]) -> None:
+        """Forget the edits a rollback discarded: keep only those recorded at ``marks``."""
+        with self._autoclose_lock:
+            for task in self._tasks:
+                if task["id"] in marks:
+                    task["written"] = list(marks[task["id"]])
+                else:
+                    task.pop("written", None)
 
     def reopen_unverifiable_tasks(self) -> list[int]:
         """Re-run verifiers on completed items and reopen those that now fail.
@@ -1177,7 +1177,7 @@ class ToolExecutor:
             {"id": t["id"], "text": t["text"], "done": bool(t["done"]),
              "blocked": bool(t.get("blocked")),
              "verification": t.get("verification", "unverified"),
-             **{key: t[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written") if key in t}}
+             **{key: t[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract") if key in t}}
             for t in self._tasks
         ]
 
@@ -1213,7 +1213,7 @@ class ToolExecutor:
                 "blocked": item.get("blocked") is True,
                 "verification": item.get("verification", "unverified"),
                 "files": task_paths(text),
-                **{key: item[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written") if key in item},
+                **{key: item[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract") if key in item},
             })
         self._tasks = restored
 
@@ -1831,9 +1831,6 @@ class ToolExecutor:
                 raw_result = handler(self, arguments)
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)
-                    if (raw_result.get("status") in _LANDED_WRITE_STATUSES
-                            and self._result_status(raw_result) == "ok"):
-                        self._note_task_write(arguments["path"])
             payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
             return ToolExecutionResult(self._result_status(payload), payload)
         except Exception as e:
@@ -2813,6 +2810,7 @@ class ToolExecutor:
         after, auto_imports = self._repair_imports(args["path"], after)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
             target.write(after)
+        self._note_task_write(args["path"])
         result = {"status": "modified", "path": args["path"], "replacements": 1,
                   "matched_by": "read_bound_range", "snippet": _changed_region(before, after)}
         if stripped_numbering:
@@ -2995,6 +2993,8 @@ class ToolExecutor:
         makedirs_plain(os.path.dirname(path), root=self.workspace)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
+        if before != args["content"]:
+            self._note_task_write(args["path"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
         if unnumbered is not None:
             result["note"] = _GUTTER_STRIPPED_NOTE
@@ -3445,6 +3445,7 @@ class ToolExecutor:
             f.write(new_content)
         digest = self._content_digest(new_content)
         self._edit_receipts[receipt_key] = digest
+        self._note_task_write(args["path"])
         self._failed_modifies.pop(rel_path, None)
         self._last_missed_old_text.pop(rel_path, None)
         self._clear_rejections(rel_path)

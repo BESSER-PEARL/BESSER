@@ -339,3 +339,25 @@ def test_backend_ask_seeds_no_deterministic_frontend_task(tmp_path, monkeypatch)
     orch._run_phase2("Build an invoicing backend", extra_issues=[])
     assert orch._end_turn_task_nudges == 0
     assert orch.executor._tasks == []
+
+
+def test_a_never_passing_check_cannot_hold_phase2_open(tmp_path, monkeypatch):
+    """Refused closes no longer block the item after three tries: the end-turn
+    nudge cap (two more for a checked item) is what ends Phase 2."""
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: [])
+    monkeypatch.setattr(LLMOrchestrator, "_deterministic_gap_tasks",
+                        lambda self: [{"text": "Build the frontend", "verify": lambda: False}])
+    turns = []
+    for n in range(20):
+        turns += [_tool_use("task_list", f"t{n}", {"action": "done", "id": 1}), _end_turn()]
+    client = _ScriptedClient(turns)
+    orch = _make_orch(tmp_path, client)
+    orch._generator_used = "generate_fastapi_backend"
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    cap = orch._MAX_TASK_NUDGES + 2
+    assert orch._end_turn_task_nudges == cap
+    assert client.chat_calls == 2 * (cap + 1)
+    assert orch._phase2_stop_reason == "completed"
+    assert [t["text"] for t in orch.executor.open_tasks()] == ["Build the frontend"]

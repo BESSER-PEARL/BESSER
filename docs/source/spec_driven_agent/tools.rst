@@ -118,16 +118,19 @@ while it fails; a verifier exception is a failed check, not success. An item
 without a verifier closes on the model's word, with no code to quote. The ids
 may also come as ``done_ids``, the key the reply lists them under.
 
-The harness also closes items from what the run did, after every successful
-``write_file``, ``modify_file``, ``replace_file_lines`` or ``delete_file``: an
-item with a verifier once it passes, and any other item once a landed write
-has touched every file its text names since the item was created. An item
-"names" a file only by a path written in its text (``backend/routers/order.py``),
-matched exactly against the written path; the planner's paths are first
+After every successful edit the harness re-runs the verifiers and closes the
+items whose check now passes. Nothing else closes an item: an edit to a file
+an item names is recorded with the item (as ``written``) and quoted in its
+"not confirmed" finding, but it does not show the item is done. An item names
+a file only by a path written in its text (``backend/routers/order.py``),
+matched exactly against the edited path; the planner's paths are first
 repaired against the workspace (a suffix matching exactly one file becomes
-that file's path). An item that also names an HTTP route (``GET /stats``)
-closes only once the app's source declares it. A refused or failed write, or
-an edit reported as ``no_change`` or ``already_applied``, touches nothing.
+that file's path). Only an edit that changed the file after the item was
+created is recorded: a refused or failed call, an identical rewrite and an
+edit a Phase 3 rollback discarded are not. A named path that is not a
+workspace file is reported as absent; the item for a modeled rule the
+generators could not enforce names ``routers/<class>.py``, relative to the
+backend folder, so its finding says no workspace file is there.
 
 ``action='blocked'`` requires a reason and records required work the model
 could not finish; the item stops holding the end-turn gate. A later passing

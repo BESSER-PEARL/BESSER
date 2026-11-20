@@ -1553,6 +1553,7 @@ class Phase3RepairMixin:
             os.replace(staging_path, snapshot_path)
             # The calls whose edits the snapshot holds; a restore discards the later ones.
             self._snapshot_calls = len(self.tool_calls_log)
+            self._snapshot_task_writes = self.executor.task_writes()
             logger.info("Snapshot created at %s", snapshot_path)
             return True
         except Exception as e:
@@ -1629,6 +1630,7 @@ class Phase3RepairMixin:
         if self._snapshot_calls is not None:
             for call in self.tool_calls_log[self._snapshot_calls:]:
                 call["rolled_back"] = True
+            self.executor.restore_task_writes(self._snapshot_task_writes)
         logger.info("Restored from snapshot")
         return True
 

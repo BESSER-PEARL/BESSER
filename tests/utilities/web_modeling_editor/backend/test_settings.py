@@ -40,6 +40,16 @@ def _env_int(name, default):
     return parsed if parsed > 0 else default
 
 
+def _env_days(name, default):
+    value = (os.environ.get(name) or "").strip()
+    if not value:
+        return default
+    try:
+        return max(int(value), 0)
+    except ValueError:
+        return default
+
+
 def _env_bool(name, default):
     value = os.environ.get(name)
     if value is None:
@@ -146,6 +156,8 @@ ROWS = [
      lambda: _env_path("BESSER_LLM_RUN_WORKSPACE_ROOT"), lambda s: s.llm_run_workspace_root),
     ("llm_max_concurrent_runs", "BESSER_LLM_MAX_CONCURRENT_RUNS", 10,
      lambda: _env_int("BESSER_LLM_MAX_CONCURRENT_RUNS", 10), lambda s: s.llm_max_concurrent_runs),
+    ("llm_run_evidence_retention_days", "BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS", 30,
+     lambda: _env_days("BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS", 30), lambda s: s.llm_run_evidence_retention_days),
     ("llm_run_store_path", "BESSER_LLM_RUN_STORE_PATH", None,
      _old_run_store_path,
      lambda s: s.llm_run_store_path or os.path.join(tempfile.gettempdir(), "x.db")),

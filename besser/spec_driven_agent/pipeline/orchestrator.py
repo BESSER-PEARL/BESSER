@@ -19,6 +19,7 @@ Phase 3 (validation & fix):
 """
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -86,6 +87,7 @@ from besser.spec_driven_agent.state.checkpoint import (
 )
 from besser.spec_driven_agent.errors import (
     CheckpointMismatchError,
+    DeadlineReached,
     EmptyInstructionsError,
     InvalidApiKeyError,
 )
@@ -145,7 +147,8 @@ from besser.spec_driven_agent.agent.runbook import (
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.agent.tools import dumps_for_model
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.docker_context import (
     compose_build_contexts,
@@ -353,6 +356,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         run_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
+        # Given every trace record with its uncut tool inputs and results (the
+        # backend keeps them server-side); None writes nothing besides the trace.
+        run_evidence: Callable[[dict], None] | None = None,
         # Both default OFF: they enable run_command / install_dependencies, the
         # arbitrary-shell capability the hosted gate exists to withhold. Opt in
         # explicitly; generation does not need them.
@@ -443,7 +449,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self.executor.app_validator = self._validate_app
         self.executor.requirement_citer = self._cite_requirements
-        self.executor.time_left = self._time_left
+        # The run's cap and cancel, read by every LLM call and command it starts.
+        self.deadline = Deadline(
+            self._time_left, lambda: self._should_continue is None or self._should_continue())
+        self.executor.time_left = self.deadline.work_remaining
         # Each generator call's files and traced regions go to the run log, which
         # the run trace is built from (state/trace_model.py).
         self.executor.on_generated = self._record_generator_output
@@ -539,6 +548,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.tool_calls_log: list[dict] = []
         # ``tool_calls_log`` length at the last snapshot (None: none taken by this process).
         self._snapshot_calls: int | None = None
+        self._snapshot_task_writes: dict[int, list[str]] = {}
         self.total_turns = 0
         # (loop key, succeeded) per non-readonly call. Success matters: counting
         # names alone flags a run of SUCCESSFUL edits as a loop.
@@ -641,10 +651,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.run_id = run_id
         self._trace: TraceWriter | NullTraceWriter = (
             TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind,
-                        usage=self._run_usage_counters)
+                        usage=self._run_usage_counters, mirror=run_evidence)
             if enable_tracing
             else NullTraceWriter()
         )
+        self._keeps_run_evidence = enable_tracing and run_evidence is not None
         self._checkpointing_enabled = enable_checkpointing
         # Fingerprint is stable over the run; compute once so resume
         # validation doesn't re-hash on every turn.
@@ -835,6 +846,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # ==================================================================
 
     @ends_shell_session
+    @under_deadline
     def run(self, instructions: str) -> str:
         """Run the three-phase generation. Returns path to output directory."""
         if not instructions or not instructions.strip():
@@ -975,6 +987,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
     @ends_shell_session
+    @under_deadline
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
 
@@ -2160,6 +2173,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # not a misleading INTERNAL/api_error or a fake "incomplete
                 # success".
                 raise
+            except DeadlineReached as e:
+                logger.warning("Phase 2 stopped on turn %d: %s", turn + 1, e)
+                self._phase2_stop_reason = "cancelled" if e.cancelled else "timeout"
+                break
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
                 self._phase2_stop_reason = "api_error"
@@ -2248,8 +2265,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             f"{listing}\n"
                             "Finish each one now. If an item is already "
                             "complete, mark it with task_list(action='done', "
-                            "id=N, evidence=[{id, path, quote}]) when no verifier "
-                            "is attached. If required work cannot be finished, "
+                            "ids=[...]). If required work cannot be finished, "
                             "record task_list(action='blocked', id=N, reason=...). "
                             "If the user did not ask for it, close it "
                             "honestly with task_list(action='drop', id=N, "
@@ -2298,7 +2314,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "<system-reminder>You have inspected/planned without changing source for "
                         f"{no_source_progress} turns. New successful reads are useful, but inspection is bounded. "
                         "Use the code already inspected to implement one coherent missing behavior, "
-                        "or use test_api/task_list evidence to verify behavior already present. "
+                        "or use test_api to verify behavior already present. "
                         "Do not make cosmetic edits to reset progress or repeat unchanged reads. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
                         "The next stage will retain unresolved work, not treat inspection as completion.</system-reminder>"
@@ -2647,7 +2663,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         tool_results: list[dict] = []
         with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
-            futures = {pool.submit(_run_group, blocks): blocks
+            # Each group runs in a copy of this thread's context: the run's deadline and id.
+            futures = {pool.submit(contextvars.copy_context().run, _run_group, blocks): blocks
                        for blocks in groups.values()}
             for future in as_completed(futures):
                 blocks = futures[future]
@@ -2689,8 +2706,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         elif tool_name == "task_list":
             # Bookkeeping is not a loop when it works, which is why task_list
             # is read-only for loop purposes. A streak of REFUSED calls (e.g.
-            # marking tasks done one per turn, each rejected for supplying no
-            # evidence) is a loop. _is_stuck only fires when every call in the window
+            # marking items done one per turn while their checks fail) is a
+            # loop. _is_stuck only fires when every call in the window
             # failed, so a healthy batch still never trips it.
             loop_key = "task_list"
         else:
@@ -2730,7 +2747,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                   getattr(self, "_blocks_in_turn", 1)),
             )
 
+        started = time.monotonic()
         execution = self.executor.execute_typed(tool_name, block.input)
+        seconds = round(time.monotonic() - started, 3)
         # A landed edit may have satisfied a checkable item. Close it here
         # rather than making the model spend turns arguing for it.
         if execution.succeeded and tool_name in _WRITE_TOOLS_ON_RECORD:
@@ -2769,7 +2788,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "Marking an item done is bookkeeping, not progress, and the "
                 "checklist will keep refusing items you have not implemented. "
                 "Stop closing items: open the file named by the next unresolved "
-                "task and make the change, then cite it."
+                "task and make the change; a checked item closes by itself once its check passes."
             )
             result = dumps_for_model(result_obj)
 
@@ -2797,10 +2816,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._record_full_tool_input(turn + 1, tool_name, block.input, success, execution.status)
         self._trace.write(
             EVENT_TOOL_CALL,
+            # Unredacted but for test_api header values: the record redacts it, the run's own key first.
+            uncut=({"input": _without_header_values(tool_name, block.input), "result": result}
+                   if self._keeps_run_evidence else None),
             turn=turn + 1,
             tool=tool_name,
             success=success,
             status=execution.status,
+            seconds=seconds,
             input=logged_input,
             # How many calls the model batched into this turn (1 = no batching).
             blocks_in_turn=getattr(self, "_blocks_in_turn", 1),
@@ -3659,7 +3682,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
             allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
-            build_verdicts=build_verdicts, can_run=self._verification_call_allowed,
+            build_verdicts=build_verdicts, can_run=self._checks_allowed,
             timeout=remaining,
         ))
         raw_issues.extend(self._collect_screen_issues())
@@ -3983,6 +4006,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return self._action_endpoints
 
     def _collect_task_issues(self) -> list[str]:
+        """A finding per checklist item no check closed."""
         conversion_requirements = [item for item in self._requirements_for_validation()
                                    if item.get("conversion_issue_id")]
         verified_conversion_texts = set()
@@ -3998,29 +4022,54 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ) if item["status"] == "implemented"}
             verified_conversion_texts = {item["text"] for item in conversion_requirements
                                          if item["id"] in verified_ids}
+        # A Phase 3 edit can satisfy a formerly open or blocked item: settle
+        # every item from the current tree first, never from a claim.
+        self.executor.autoclose_verified_tasks()
         issues = []
+        stubs: list[str] | None = None  # the ``action contract:`` findings, read once if needed
         for task in self.executor.open_tasks() + self.executor.blocked_tasks():
             if task["text"] in verified_conversion_texts:
                 task.update(done=True, blocked=False, verification="evidence_checked")
                 task.pop("blocked_reason", None)
                 continue
+            text = task["text"]  # Verbatim: the fix prompt cites a requirement's exact text by id.
             verify = task.get("verify")
-            if verify is not None:
-                try:
-                    if verify():
-                        # A Phase 3 edit can satisfy a formerly blocked structural
-                        # task; evaluate the real callback, never trust the claim.
-                        self.executor._task_list({"action": "done", "id": task["id"]})
-                        continue
-                except Exception:
-                    pass  # The task remains unresolved, not successful.
+            try:
+                failed = verify is not None and not verify()
+            except Exception:
+                failed = False  # The check could not run: unknown, not a defect.
+            if failed:
+                if task.get("_action_contract") and stubs is None:
+                    stubs = action_implementation_issues(self.output_dir, self._expected_action_endpoints())
+                if not _action_already_reported(task.get("_action_contract"), stubs or ()):
+                    issues.append(
+                        f"task incomplete: task {task['id']} is not done: {text}. Its deterministic "
+                        "check fails on the current source; implement the required work."
+                    )
+                continue
+            blocked = (f" The agent recorded it as blocked: {task['blocked_reason']}."
+                       if task.get("blocked_reason") else "")
+            # Only an observed failure blocks: an item nothing closed is reported, not repaired.
             issues.append(
-                f"task unverified: task {task['id']} remains unresolved: {task['text']}. "
-                f"{task.get('blocked_reason', '')} Inspect and implement the required work; "
-                "record exact current evidence with task_list (existing=true is allowed "
-                "for an implementation already present; acceptance still needs verification)."
+                f"task unverified: task {task['id']} was not confirmed: {text}.{blocked} "
+                f"{_named_file_edits(task, self.output_dir)}Nothing closed it; the other checks still cover the app."
             )
+        unchecked = self._unchecked_task_texts()
+        for task in self.executor.unverified_tasks():
+            if task["text"] in unchecked:
+                issues.append(
+                    f"task unverified: task {task['id']} was closed by the agent, not checked: "
+                    f"{task['text']}. No other check covers this item."
+                )
         return issues
+
+    def _unchecked_task_texts(self) -> set[str]:
+        """Harness items no other check covers: modeled rules the generators could not
+        enforce, and derived attributes (seeded as in ``_deterministic_gap_tasks``)."""
+        texts = set(self._unenforced_rule_tasks())
+        if not self._modify_mode and self._scaffold_family() == "fastapi":
+            texts.update(derived_attribute_tasks(self.domain_model))
+        return texts
 
     def _unenforced_rule_tasks(self) -> list[str]:
         """One task per modeled OCL rule the generators could not enforce.
@@ -4287,11 +4336,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "the requirements judge",
             "it returned no verdicts; coverage of the original specification has not been verified",
         )
-        judge_stopped = ("requirement unverified: verification stopped or budget exhausted; "
-                         "original-specification coverage is not verified.")
+        cuts = self.deadline.cuts  # a judge call the deadline stopped is not a judge failure
+
+        def judge_stopped() -> str:
+            reason = (self._budget_stop_reason()
+                      or (self.deadline.last_cut if self.deadline.cuts != cuts else "verification stopped"))
+            return (f"requirement unverified: not checked, {reason}; "
+                    "original-specification coverage is not verified.")
         if verdicts is None:
             if not self._verification_call_allowed():
-                return [judge_stopped]
+                return [judge_stopped()]
             if cache_key in self._requirement_judge_failures:
                 return [judge_failed]  # the same prompt already failed; asking again re-rolls a full-price call
             if len(self._requirement_judge_failures) >= _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN:
@@ -4321,8 +4375,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 verdicts = sorted([*kept.values(), *verdicts], key=lambda item: item["id"])
                 checked = None
         if verdicts is None:
-            if not self._verification_call_allowed():
-                return [judge_stopped]  # a stop mid-judgment is not a judge failure
+            if not self._verification_call_allowed() or self.deadline.cuts != cuts:
+                return [judge_stopped()]  # a stop mid-judgment is not a judge failure
             self._requirement_judge_failures.add(cache_key)
             return [judge_failed]
         # Cache successful judgments only, keyed to the full bytes of the judged
@@ -4692,13 +4746,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """What a set of verdicts answered: the requirements and the request."""
         return json.dumps([requirements, self._instructions], sort_keys=True)
 
-    def _verification_call_allowed(self) -> bool:
-        """Do not start a paid extraction/judgment after a stop or spend cap."""
+    def _checks_allowed(self) -> bool:
+        """A deterministic check may start: not cancelled, spend left, and time
+        before the cap for it (LLM calls need more, see ``_budget_stop_reason``)."""
         return not (
-            (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
-            or (self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds)
-            or (self._should_continue is not None and not self._should_continue())
+            self.deadline.cancelled or self.deadline.checks_out_of_time()
+            or (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
         )
+
+    def _verification_call_allowed(self) -> bool:
+        """Do not start a paid extraction/judgment after a stop or spend cap,
+        or with too little time left for it to finish."""
+        return not self._budget_stop_reason()
 
     @staticmethod
     def _is_project_tool_output(rel: str, names_by_dir: dict[str, set[str]]) -> bool:
@@ -4868,7 +4927,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return [_check_did_not_run(f"the dependency check for {rel}", str(exc))]
         except Exception as exc:
             # A timeout is "not checked", never "no conflict".
-            reason = ("timed out after 30s"
+            reason = (timeout_cause(exc, "timed out after 30s")
                       if isinstance(exc, subprocess.TimeoutExpired)
                       else type(exc).__name__)
             return [_check_did_not_run(f"the dependency check for {rel}", reason)]
@@ -4938,6 +4997,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Interactive error feedback
     # ==================================================================
 
+    @under_deadline
     def fix_error(self, error_message: str) -> str:
         """
         Fix a user-reported error. The LLM analyzes it and either:
@@ -5037,6 +5097,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             except InvalidApiKeyError:
                 # The caller must report the bad key, not a fix summary.
                 raise
+            except DeadlineReached as e:
+                return stopped(str(e), turn)
             except Exception as e:
                 logger.error("Fix cycle API call failed: %s", e)
                 return stopped(f"the LLM call failed: {e}", turn)
@@ -5081,16 +5143,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _budget_stop_reason(self) -> str:
         """Why the run may not start another billable call, or "" if it may.
 
-        Same comparisons as ``_verification_call_allowed``: a cap exactly
-        reached is spent.
+        A cap exactly reached is spent; a call is not started with less time
+        left than it needs (``Deadline.out_of_time``).
         """
-        if self._should_continue is not None and not self._should_continue():
+        if self.deadline.cancelled:
             return "the run was cancelled"
         if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
                     f"(${self.client.usage.estimated_cost:.2f} used)")
-        if self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds:
-            return f"the {self.max_runtime_seconds}s runtime cap was reached"
+        if self.deadline.out_of_time():
+            return f"too little of the {self.max_runtime_seconds}s runtime cap is left"
         return ""
 
     # ==================================================================
@@ -5876,7 +5938,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             }
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
-            self.saved_recipe, text = bounded_recipe(recipe)
+            self.saved_recipe, text = bounded_recipe(recipe, full_record=(
+                f"full record kept server-side under run {self.run_id}" if self._keeps_run_evidence else ""))
             with open_plain_write(recipe_path, "w", root=self.output_dir, encoding="utf-8") as f:
                 f.write(text)
         except Exception as e:
@@ -5919,6 +5982,41 @@ _ADVISORY_PREFIX = "advisory, not a blocker: "
 
 # Focused re-judge rounds per judged source: the first, and one more for files it left out.
 _REJUDGE_ROUNDS = 2
+
+
+def _named_file_edits(task: dict, workspace: str) -> str:
+    """Whether the run edited the files a checklist item names, as a sentence ('' when it names none).
+
+    A named path that is not a workspace file (``routers/x.py`` for ``backend/routers/x.py``)
+    is said to be absent, not untouched.
+    """
+    written = task.get("written") or ()
+    named = task.get("files") or []
+    absent = [path for path in named
+              if path not in written and not os.path.isfile(os.path.join(workspace, path))]
+    files = [path for path in named if path not in absent]
+    note = f"No workspace file is at {', '.join(absent)}. " if absent else ""
+    if not files:
+        return note
+    edited = [path for path in files if path in written]
+    if len(edited) == len(files):
+        said = f"Every file it names was edited ({', '.join(files)}); that alone does not show it is done. "
+    elif edited:
+        rest = [path for path in files if path not in edited]
+        said = (f"Some of the files it names were edited. Edited: {', '.join(edited)}; "
+                f"not touched: {', '.join(rest)}. ")
+    else:
+        said = f"The files it names were not touched ({', '.join(files)}). "
+    return said + note
+
+
+def _action_already_reported(action, reported) -> bool:
+    """An ``action contract:`` finding already names the stub handler of this item."""
+    if not action:
+        return False
+    path, _function, method, route = action
+    head, served = f"action contract: {path} line ", f": {method} {route} ("
+    return any(str(message).startswith(head) and served in str(message) for message in reported)
 
 
 def _check_reason(note: str) -> str:
@@ -6042,13 +6140,18 @@ def _redact_for_trace(value: Any) -> Any:
     return value
 
 
-def _trace_safe_input(tool_name: str, data: Any) -> Any:
-    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+def _without_header_values(tool_name: str, data: Any) -> Any:
+    """A tool input with test_api's header values hidden."""
     if tool_name == "test_api" and isinstance(data, dict) and "requests" in data:
         from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
 
         data = {**data, "requests": redact_scenario_headers(data["requests"])}
-    return _sanitize_for_log(_redact_for_trace(data))
+    return data
+
+
+def _trace_safe_input(tool_name: str, data: Any) -> Any:
+    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+    return _sanitize_for_log(_redact_for_trace(_without_header_values(tool_name, data)))
 
 
 def _trace_result_excerpt(result: Any) -> dict:

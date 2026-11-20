@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
 from besser.spec_driven_agent.validation.issues import required_check_unverified, required_dependency_setup
 from besser.utilities.workspace_fs import walk_plain
 
@@ -128,8 +128,8 @@ def collect_frontend_build_issues(
         except SandboxUnavailable as exc:
             issues.append(required_check_unverified(label, str(exc)))
             continue
-        except subprocess.TimeoutExpired:
-            issues.append(required_check_unverified(label, "configured build timed out"))
+        except subprocess.TimeoutExpired as exc:
+            issues.append(required_check_unverified(label, timeout_cause(exc, "configured build timed out")))
             continue
         except OSError as exc:
             issues.append(required_check_unverified(label, f"could not launch build: {exc}"))

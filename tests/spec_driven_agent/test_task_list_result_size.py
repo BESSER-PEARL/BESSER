@@ -45,12 +45,10 @@ def test_done_lists_what_is_open_by_label_only(tmp_path):
 
 def test_a_refusal_does_not_repeat_the_task_text(tmp_path):
     executor = _executor(tmp_path)
-    for _ in range(3):  # refused, refused, then blocked
+    for _ in range(3):
         raw = executor.execute("task_list", {"action": "done", "ids": [1]})
         assert "execute_bill0_registerPayment" not in raw
-    assert executor.blocked_tasks()[0]["id"] == 1
-    already = executor.execute("task_list", {"action": "done", "ids": [1]})
-    assert "execute_bill0_registerPayment" not in already
+        assert "NOT done" in raw
 
 
 def test_list_keeps_full_text_for_owed_work_only(tmp_path):

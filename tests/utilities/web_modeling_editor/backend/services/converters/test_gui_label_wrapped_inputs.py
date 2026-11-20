@@ -104,3 +104,12 @@ def test_a_labelled_input_naming_another_class_does_not_unbind_the_form():
     form = _form_of(import_gui([_form(_label(_input(type="checkbox", name="pinned"), " Pinned"))], classes))
     # Read without the labelled input, as before such inputs were kept: Task
     assert _bound_class(form) == "Task"
+
+
+def test_a_consent_checkbox_in_a_text_block_does_not_unbind_the_form():
+    """A GrapesJS text block (``type: text`` on a div) around an input is read like a label."""
+    block = {"type": "text", "tagName": "div", "components": [
+        _input(type="checkbox", name="agree"), _text(" I accept the terms")]}
+    form = _form_of(import_gui([_form(block)], _classes("Task")))
+
+    assert _bound_class(form) == "Task"

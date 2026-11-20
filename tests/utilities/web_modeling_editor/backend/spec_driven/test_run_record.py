@@ -347,7 +347,8 @@ def test_the_run_log_has_its_own_handler_once_the_backend_enables_it():
     written nowhere; the run log gets one of its own at startup, and only one."""
     import io
 
-    before = (list(run_record.run_log.handlers), run_record.run_log.level)
+    package_log = logging.getLogger("besser")
+    before = (list(run_record.run_log.handlers), run_record.run_log.level, list(package_log.handlers))
     try:
         run_record.enable_run_log()
         run_record.enable_run_log()
@@ -356,7 +357,7 @@ def test_the_run_log_has_its_own_handler_once_the_backend_enables_it():
         run_record.run_log.info("spec-driven run start run_id=abc")
         assert written.getvalue().splitlines() == ["INFO:     spec-driven run start run_id=abc"]
     finally:
-        run_record.run_log.handlers[:], run_record.run_log.level = before
+        run_record.run_log.handlers[:], run_record.run_log.level, package_log.handlers[:] = before
 
 
 def test_the_backend_enables_the_run_log_at_startup():

@@ -676,6 +676,9 @@ class SmartPreviewResponse(ResponseModel):
     model_summary: SmartPreviewModelSummaryResponse
     # Modify with a known base run only; None = unknown, keep modifying.
     model_change: Optional[ModelChangeResponse]
+    # Modify only: whether the base run can still be edited (its workspace, else its
+    # download, is kept). False: a modify run of it builds the app again from scratch.
+    base_available: Optional[bool] = None
 
 
 class SpecDrivenCapsResponse(ResponseModel):

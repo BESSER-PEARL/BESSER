@@ -480,7 +480,7 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
     use preceding response JSON only, preserving types for whole JSON values.
     """
     from besser.spec_driven_agent.validation.constructibility import _fastapi_backends, _SKIP_DIRS
-    from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+    from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 
     try:
@@ -524,8 +524,11 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
                 )
             except SandboxUnavailable as exc:
                 return _error(str(exc), "probe_error", backend=relative)
-            except subprocess.TimeoutExpired:
-                return _error(f"API scenario timed out after {min(_PROBE_TIMEOUT_SECONDS, 60)}s", "timeout", backend=relative)
+            except subprocess.TimeoutExpired as exc:
+                own = f"timed out after {min(_PROBE_TIMEOUT_SECONDS, 60)}s"
+                cause = timeout_cause(exc, own)
+                return _error(f"API scenario {own}" if cause == own else f"API scenario stopped: {cause}",
+                              "timeout", backend=relative)
             for line in reversed((result.stdout or "").splitlines()):
                 if line.startswith(_MARKER):
                     report = json.loads(line[len(_MARKER):])

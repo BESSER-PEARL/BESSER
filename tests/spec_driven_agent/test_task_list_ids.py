@@ -1,9 +1,6 @@
-"""One rule for a task id wherever task_list takes one: ``ids``, ``id``, evidence, drop, blocked.
+"""One rule for a task id wherever task_list takes one: ``ids``, ``id``, drop, blocked.
 
-``ids`` accepted ``"1"`` but evidence was matched with ``!=``, so a model that
-sent string ids had valid evidence ignored and the task recorded BLOCKED after
-three attempts with a false reason. ``drop`` refused ``"1"`` yet dropped task 1
-for ``true``.
+``drop`` refused ``"1"`` yet dropped task 1 for ``true``.
 """
 
 import json
@@ -17,13 +14,11 @@ from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 def executor(tmp_path):
     executor = ToolExecutor(workspace=str(tmp_path))
     executor.set_tasks(["Add a health endpoint", "Add a version endpoint"])
-    executor._write_file({"path": "app.py", "content": "def health():\n    return {'ok': True}\n"})
     return executor
 
 
-def test_string_ids_in_evidence_count(executor):
-    result = executor._task_list({"action": "done", "ids": ["1"],
-                                  "evidence": [{"id": "1", "path": "app.py", "quote": "def health():"}]})
+def test_string_ids_count(executor):
+    result = executor._task_list({"action": "done", "ids": ["1"]})
     assert result["done_ids"] == [1], result
     assert "error" not in result
 
@@ -42,15 +37,13 @@ def test_drop_rejects_what_is_not_an_id(executor, bad):
 
 @pytest.mark.parametrize("bad", [True, 1.5, float("inf"), float("nan")])
 def test_done_rejects_what_is_not_an_id(executor, bad):
-    result = executor._task_list({"action": "done", "ids": [bad],
-                                  "evidence": [{"id": 1, "path": "app.py", "quote": "def health():"}]})
+    result = executor._task_list({"action": "done", "ids": [bad]})
     assert "error" in result and result.get("done_ids", []) == []
     assert len(executor.open_tasks()) == 2
 
 
 def test_an_integral_float_is_an_id(executor):
-    result = executor._task_list({"action": "done", "ids": [1.0],
-                                  "evidence": [{"id": 1.0, "path": "app.py", "quote": "def health():"}]})
+    result = executor._task_list({"action": "done", "ids": [1.0]})
     assert result["done_ids"] == [1]
 
 
@@ -67,20 +60,11 @@ def test_blocked_takes_the_same_ids(executor):
 
 def test_done_accepts_the_done_ids_key_its_own_reply_uses(executor):
     """Every done reply lists ``done_ids``; a model that sends that key back meant those ids."""
-    result = executor._task_list({"action": "done", "done_ids": [1],
-                                  "evidence": [{"id": 1, "path": "app.py", "quote": "def health():"}]})
+    result = executor._task_list({"action": "done", "done_ids": [1]})
     assert "error" not in result, result
     assert result["done_ids"] == [1]
-
-
-def test_done_without_ids_closes_the_items_its_evidence_names(executor):
-    result = executor._task_list({"action": "done",
-                                  "evidence": [{"id": 1, "path": "app.py", "quote": "def health():"}]})
-    assert "error" not in result, result
-    assert result["done_ids"] == [1]
-    assert [t["id"] for t in executor.open_tasks()] == [2]
 
 
 def test_the_missing_ids_error_names_every_key_done_accepts(executor):
     error = executor._task_list({"action": "done"})["error"]
-    assert "`ids`" in error and "`done_ids`" in error and "evidence" in error
+    assert "`ids`" in error and "`done_ids`" in error

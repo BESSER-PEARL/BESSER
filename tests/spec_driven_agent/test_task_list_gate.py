@@ -91,9 +91,7 @@ def test_task_list_tool_crud(tmp_path):
     assert listing["open"] == 2
     assert listing["tasks"][0] == {"id": 1, "text": "Add auth", "status": "open"}
 
-    executor._write_file({"path": "auth.py", "content": "enabled = True\n"})
-    done = json.loads(executor.execute("task_list", {"action": "done", "id": 1,
-        "evidence": [{"id": 1, "path": "auth.py", "quote": "enabled = True"}]}))
+    done = json.loads(executor.execute("task_list", {"action": "done", "id": 1}))
     assert done["open_remaining"] == 1
     assert done["open_items"] == [{"id": 2, "label": "Style the pages"}]
 
@@ -111,9 +109,7 @@ def test_task_snapshot_restore_preserves_done_state_and_verifier(tmp_path):
         {"text": "Build frontend", "verify": lambda: True},
         "Write README",
     ])
-    executor._write_file({"path": "README.md", "content": "Run python main.py\n"})
-    json.loads(executor.execute("task_list", {"action": "done", "id": 2,
-        "evidence": [{"id": 2, "path": "README.md", "quote": "Run python main.py"}]}))
+    json.loads(executor.execute("task_list", {"action": "done", "id": 2}))
     snapshot = executor.task_snapshot()
 
     restored = ToolExecutor(workspace=str(tmp_path))
@@ -188,10 +184,8 @@ def test_end_turn_with_closed_checklist_finishes_immediately(tmp_path, monkeypat
     client = _ScriptedClient([
         _tool_use("write_file", "w1", {"path": "auth.py", "content": "enabled = True\n"}),
         _tool_use("write_file", "w2", {"path": "style.css", "content": "body { color: black; }\n"}),
-        _tool_use("task_list", "t1", {"action": "done", "id": 1,
-            "evidence": [{"id": 1, "path": "auth.py", "quote": "enabled = True"}]}),
-        _tool_use("task_list", "t2", {"action": "done", "id": 2,
-            "evidence": [{"id": 2, "path": "style.css", "quote": "body { color: black; }"}]}),
+        _tool_use("task_list", "t1", {"action": "done", "id": 1}),
+        _tool_use("task_list", "t2", {"action": "done", "id": 2}),
         _end_turn(),
     ])
     orch = _make_orch(tmp_path, client)
@@ -345,3 +339,25 @@ def test_backend_ask_seeds_no_deterministic_frontend_task(tmp_path, monkeypatch)
     orch._run_phase2("Build an invoicing backend", extra_issues=[])
     assert orch._end_turn_task_nudges == 0
     assert orch.executor._tasks == []
+
+
+def test_a_never_passing_check_cannot_hold_phase2_open(tmp_path, monkeypatch):
+    """Refused closes no longer block the item after three tries: the end-turn
+    nudge cap (two more for a checked item) is what ends Phase 2."""
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: [])
+    monkeypatch.setattr(LLMOrchestrator, "_deterministic_gap_tasks",
+                        lambda self: [{"text": "Build the frontend", "verify": lambda: False}])
+    turns = []
+    for n in range(20):
+        turns += [_tool_use("task_list", f"t{n}", {"action": "done", "id": 1}), _end_turn()]
+    client = _ScriptedClient(turns)
+    orch = _make_orch(tmp_path, client)
+    orch._generator_used = "generate_fastapi_backend"
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    cap = orch._MAX_TASK_NUDGES + 2
+    assert orch._end_turn_task_nudges == cap
+    assert client.chat_calls == 2 * (cap + 1)
+    assert orch._phase2_stop_reason == "completed"
+    assert [t["text"] for t in orch.executor.open_tasks()] == ["Build the frontend"]

@@ -15,6 +15,7 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.spec_driven_agent.execution.deadline import Deadline
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
@@ -682,3 +683,40 @@ class TestRegistrySweep:
                 runner_module._remove_run_dir(tmp)
 
         asyncio.run(_test())
+
+
+class _BlockedOrchestrator(_FakeOrchestrator):
+    """Inside a call that only a cancel pushed to the run's deadline ends."""
+
+    started = threading.Event()
+    stopped_by_cancel: Optional[bool] = None
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.deadline = Deadline(lambda: None)
+
+    def run(self, instructions: str) -> str:
+        type(self).started.set()
+        type(self).stopped_by_cancel = self.deadline.wait(30)
+        return super().run(instructions)
+
+
+class TestCancelReachesTheWorker:
+    def test_a_cancel_stops_the_call_in_flight_not_the_next_turn(self, monkeypatch):
+        monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
+        monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+        _BlockedOrchestrator.started.clear()
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
+
+        async def scenario() -> float:
+            frames = asyncio.create_task(_collect_frames(runner))
+            assert await asyncio.to_thread(_BlockedOrchestrator.started.wait, 10)
+            asked = time.monotonic()
+            assert await current_runtime().active_runs.request_cancellation(runner.run_id)
+            await frames
+            return time.monotonic() - asked
+
+        elapsed = asyncio.run(scenario())
+
+        assert _BlockedOrchestrator.stopped_by_cancel is True
+        assert elapsed < 5, f"the cancel took {elapsed:.1f}s to reach the running call"

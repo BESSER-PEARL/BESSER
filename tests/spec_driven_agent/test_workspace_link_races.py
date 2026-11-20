@@ -153,15 +153,6 @@ def test_search_does_not_follow_a_swapped_link(monkeypatch, setup):
     assert result["matches"] == [], result
 
 
-def test_task_evidence_does_not_read_through_a_swapped_link(monkeypatch, setup):
-    executor, rel, _ = arm(monkeypatch, setup, LEAF, SECRET)
-
-    _, error = executor._task_implementation_evidence(1, {"evidence": [
-        {"id": 1, "path": rel, "quote": "sk-live-must-not-leak"}], "existing": True})
-
-    assert error and "not a readable workspace file" in error, error
-
-
 # -- FIFOs: never opened, never block the per-path lock ---------------------
 
 needs_mkfifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no mkfifo on this platform")

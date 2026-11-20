@@ -228,6 +228,7 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
     """Execute the child, sandboxed with no network, on a scratch copy of
     ``folder`` (inside the run ``workspace``); never raises. ``database``, a
     SQLite file path, keeps what the probe created for the caller."""
+    from besser.spec_driven_agent.execution.process import timeout_cause
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
     from besser.utilities.workspace_fs import copytree_plain
 
@@ -257,9 +258,9 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
             )
         except SandboxUnavailable as exc:
             return {"boot": "probe_error", "error": str(exc)}
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             return {"boot": "probe_error",
-                    "error": f"timed out after {int(timeout)}s"}
+                    "error": timeout_cause(exc, f"timed out after {int(timeout)}s")}
         except OSError as exc:
             return {"boot": "probe_error", "error": f"could not be launched: {exc}"}
         for line in reversed((result.stdout or "").splitlines()):

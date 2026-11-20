@@ -1204,7 +1204,10 @@ whose request runs the cited code: its decorator, its handler (also one register
 with ``add_api_route``), or a function of the same file the handler calls or names in
 ``Depends(...)`` (not a parameter, variable or nested function of the handler with
 that name), under the literal ``prefix=`` of its router (a router whose prefix
-is not a literal verifies nothing). An abridged citation ("a ... b") counts a route
+is not a literal verifies nothing). A call FastAPI refused before the handler ran
+(its request-validation 422, a ``detail`` list of ``loc``/``msg`` errors) hit no
+handler and exercises nothing; a refusal the handler raised, any 4xx a dependency or
+the handler answered, still counts. An abridged citation ("a ... b") counts a route
 only when the route runs every part of it; when a part is too short to locate, the
 parts left may be code several routes share, so it counts no route ("API: not run
 (a part of the abridged citation is too short to tell its route)"). The note names that call ("API: a passing

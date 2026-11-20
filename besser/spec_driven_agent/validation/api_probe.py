@@ -449,6 +449,20 @@ def declares_failure(body) -> bool:
     return any(declares_failure(value) for value in body.values() if isinstance(value, (dict, list)))
 
 
+def request_validation_refusal(response: dict) -> bool:
+    """Whether a reported response is FastAPI's request-validation 422: a ``detail`` list of
+    ``loc``/``msg`` errors, answered before the handler ran. A body cut at the report's
+    size limit is judged on how it starts."""
+    if response.get("status") != 422:
+        return False
+    body = response.get("json")
+    if isinstance(body, str):
+        return body.startswith('{"detail": [{')
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return (isinstance(detail, list) and bool(detail)
+            and all(isinstance(error, dict) and "loc" in error and "msg" in error for error in detail))
+
+
 def _records(value):
     if isinstance(value, dict):
         if type(value.get("id")) in (int, str):

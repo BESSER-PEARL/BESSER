@@ -5707,7 +5707,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _checks_that_ran(self) -> dict:
         """What ran on the delivered tree: a passing frontend build, and the calls of the
-        API workflows that passed on it."""
+        API workflows that passed on it that reached their handler (a request-validation
+        422 did not)."""
+        from besser.spec_driven_agent.validation.api_probe import request_validation_refusal
+
         revision = self._workspace_revision()
         passed = [record["report"] for record in self._api_scenarios.values()
                   if record["revision"] == revision and record["report"].get("status") == "passed"]
@@ -5718,7 +5721,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                else "not_run" if self._has_frontend_files() else "none"),
             "exercised": {(str(response.get("method", "")).upper(), str(response.get("path", "")))
                           for report in passed for response in report.get("responses") or []
-                          if isinstance(response, dict) and response.get("path")},
+                          if isinstance(response, dict) and response.get("path")
+                          and not request_validation_refusal(response)},
             "workflows_passed": len(passed),
         }
 

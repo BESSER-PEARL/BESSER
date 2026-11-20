@@ -109,6 +109,11 @@ _GAP_CLAUSES = {
 }
 
 
+# The outcomes of a run that finished without being cut short, other than ``completed``: the run
+# store's status and the telemetry outcome carry them as they are.
+FINISHED_UNCLEAN = ("completed_with_blockers", "completed_unverified")
+
+
 def as_gap(gap) -> tuple[str, str, bool]:
     """``(class, reason, configured_off)`` of a gap given with or without its third member."""
     kind, reason, *rest = gap

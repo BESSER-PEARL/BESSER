@@ -119,9 +119,10 @@ Troubleshooting a run
        delivered.
    * - ``INCOMPLETE`` warning
      - The customization loop was cut short (a provider rate-limit, the turn
-       cap, or a provider failure after files were already written). Output is
-       still returned; the ``done`` event sets ``incomplete`` so the client
-       can say so.
+       cap, or a provider failure after files were already written), or it
+       finished and validation left a defect that stops the app working, or a
+       fix run could not confirm the reported failure fixed. Output is still
+       returned; the ``done`` event sets ``incomplete`` so the client can say so.
    * - ``UPSTREAM_LLM`` error
      - The provider failed before the run wrote any file (rate limit,
        overload, timeout). Usually transient — retry. A timeout switches
@@ -152,7 +153,10 @@ Troubleshooting a run
        ``incomplete: false`` and ``unverified: true`` was not verified: a whole
        class of checks left no evidence, and ``unverifiedReason`` says which.
        Findings that are not confirmed are counted in ``notConfirmedCount`` and
-       listed under ``notVerified`` in the ``verification`` report.
+       listed under ``notVerified`` in the ``verification`` report. The event's
+       ``outcome`` names how the run ended in one word: ``completed_with_blockers``
+       when a blocker remains that does not make it incomplete (a requirement
+       found missing, a failed test workflow).
    * - "What counts against my budget?"
      - Only the paid LLM calls (generator selection, the planning pass, a
        modify run's model sync, the customize loop, requirement extraction and

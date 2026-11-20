@@ -2617,6 +2617,7 @@ class SmartGenerationRunner:
                 done_event.unverifiedReason = (run_record.not_verified_message(
                     _run_gaps, updated=self._facts.mode == "modify") if unverified else None)
                 done_event.checksOff = [kind for kind, _, off in _gaps if off]
+                done_event.outcome = self._facts.outcome
                 done_event.notConfirmedCount = _not_confirmed
                 done_event.unresolvedBlockerCount = len(_unfixed_blockers)
                 # Completed-with-blockers vs cut-short need different
@@ -3207,7 +3208,10 @@ class SmartGenerationRunner:
         try:
             done = self._t_done_payload
             if done is not None:
-                outcome = "incomplete" if done.get("incomplete") else "success"
+                # "success" is a completed run only; the record's other finished outcomes are their own values.
+                outcome = ("incomplete" if done.get("incomplete")
+                           else done.get("outcome") if done.get("outcome") in run_record.FINISHED_UNCLEAN
+                           else "success")
             elif self._t_last_error_code:
                 outcome = f"failed:{self._t_last_error_code}"
             elif self._t_stream_aborted:

@@ -321,6 +321,11 @@ class DoneEvent(BaseSseEvent):
     # tools. A property of the server, the same on every run there, so it never sets
     # ``unverified``; the editor may say it once. Additive.
     checksOff: list[str] = Field(default_factory=list)
+    # How the run ended, the run record's ``outcome``: ``completed``,
+    # ``completed_with_blockers``, ``completed_unverified``, ``cancelled``,
+    # ``budget_stop`` or ``failed``. The run's stored status and its telemetry
+    # derive from it. Additive.
+    outcome: Optional[str] = None
     # What the run verified, could not verify, and shipped unenforced. This is
     # the field to render: blockerCount is one number over all three states.
     # Additive — existing clients that ignore it are unaffected.

@@ -433,6 +433,10 @@ SSE event types
        ``The app was generated, but it was never started, so nothing shows it
        runs (its startup timed out).`` (``The app was updated, but ...`` on a
        modify run); it is ``null`` otherwise.
+       ``outcome`` is the run record's outcome (``completed``,
+       ``completed_with_blockers``, ``completed_unverified``, ``cancelled``,
+       ``budget_stop`` or ``failed``, see :ref:`spec-driven-run-record`); the
+       run's stored status and its telemetry derive from it.
        ``checksOff`` lists the classes (``requirements``, ``runtime``,
        ``build``) the server has switched off (the requirements check, the
        startup check, the build check or shell tools): the same on every run

@@ -581,7 +581,7 @@ _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
 _MIN_REWRITE_SHARE = 0.6
 # A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
 _COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
-# Fewer lost lines beside a new "remaining ... unchanged" comment is an edit, not left-out code.
+# Fewer lost lines beside a new "remaining unchanged" comment is an edit, not left-out code.
 _PLACEHOLDER_MIN_REPLACED = 3
 
 

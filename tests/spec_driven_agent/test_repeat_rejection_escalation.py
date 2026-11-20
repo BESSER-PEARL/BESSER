@@ -11,11 +11,16 @@ from __future__ import annotations
 
 import json
 import os
+from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
-from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.errors import InvalidApiKeyError
+from besser.spec_driven_agent.providers import llm_client
+from besser.spec_driven_agent.providers.llm_client import OpenAIProvider, UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
@@ -152,6 +157,65 @@ def test_a_client_without_force_tool_still_gets_the_message_and_the_stop(simple_
     orch.run("Build an app")
     assert orch._phase2_stop_reason == "stuck_edit_loop"
     assert any("read_file on the WHOLE file" in t for t in client.texts_seen)
+
+
+def _openai_endpoint(monkeypatch, fail):
+    """An OpenAIProvider whose endpoint answers through ``fail(kwargs)``: an
+    error to raise, or None to reply. Returns it and the requests it got."""
+    requests = []
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        error = fail(kwargs)
+        if error is not None:
+            raise error
+        message = SimpleNamespace(content="done", tool_calls=None)
+        return SimpleNamespace(
+            model=kwargs["model"], choices=[SimpleNamespace(message=message, finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=1, prompt_tokens_details=None))
+
+    completions = SimpleNamespace(create=create)
+    monkeypatch.setattr(llm_client, "openai_client",
+                        lambda **kw: SimpleNamespace(chat=SimpleNamespace(completions=completions)))
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+    return OpenAIProvider(api_key="sk-test", model="gpt-4o",
+                          base_url="https://gateway.example.invalid/v1"), requests
+
+
+def _status_error(cls, status, message):
+    request = httpx.Request("POST", "https://gateway.example.invalid/v1/chat/completions")
+    return cls(f"Error code: {status} - {message}",
+               response=httpx.Response(status, request=request), body=None)
+
+
+def test_a_rejected_forced_tool_choice_resends_the_turn_unforced(simple_model, tmp_path, monkeypatch):
+    """The force only steers. An endpoint that rejects a named tool_choice
+    must not end the phase as 'this model can't run the agent'."""
+    rejected = _status_error(openai.BadRequestError, 400,
+                             "tool_choice of type 'function' is not supported")
+    provider, requests = _openai_endpoint(
+        monkeypatch, lambda kwargs: rejected if "tool_choice" in kwargs else None)
+    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
+                           output_dir=str(tmp_path), use_streaming=False)
+    orch._force_tool_next = "read_file"
+
+    reply = orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
+
+    assert reply["stop_reason"] == "end_turn"
+    assert [("tool_choice" in kwargs) for kwargs in requests] == [True, False]
+    assert orch._force_tool_next is None
+
+
+def test_a_rejected_key_on_a_forced_call_is_not_resent(simple_model, tmp_path, monkeypatch):
+    provider, requests = _openai_endpoint(
+        monkeypatch, lambda kwargs: _status_error(openai.AuthenticationError, 401, "bad key"))
+    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
+                           output_dir=str(tmp_path), use_streaming=False)
+    orch._force_tool_next = "read_file"
+
+    with pytest.raises(InvalidApiKeyError):
+        orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
+    assert len(requests) == 1
 
 
 def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_path):

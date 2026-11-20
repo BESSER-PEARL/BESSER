@@ -67,6 +67,9 @@ second refused edit on a file (with no landed edit between), the step is to read
 the whole file and ``write_file`` it back; two targeted edit attempts of either
 kind also unlock ``write_file`` where it is otherwise held back (a large
 generated file, a modify run). The orchestrator's reminders repeat that step.
+When the step names a tool, the next turn asks for it (``tool_choice``); if the
+provider fails that request (an endpoint that rejects a named ``tool_choice``),
+the same turn is sent again without it.
 A generated frontend page or component (``.tsx``, ``.jsx``, ``.ts`` or ``.js``
 under a ``frontend`` folder) over 200 lines needs no such attempts when the
 rewrite keeps its code: at least 60% of its non-blank lines, every column-0

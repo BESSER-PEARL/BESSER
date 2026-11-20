@@ -148,3 +148,22 @@ def test_a_redesign_with_a_new_comment_using_an_omission_word_is_accepted(tmp_pa
     redesigned = PAGE.replace("  return (\n", "  // Count the remaining rows before showing the footer\n  return (\n")
     redesigned = redesigned.replace("<p className", "<li className").replace("</p>", "</li>")
     assert _write(tmp_path, PAGE_PATH, PAGE, redesigned).get("status") == "written"
+
+
+SECTION = "".join(f'      <div className="card">\n        <span>{{order.total}}</span>\n      </div>\n' for _ in range(7))
+SECTIONS = PAGE.replace("    </div>\n  );", "    </div>\n" + "".join(
+    f'    <section className="s{n}">\n{SECTION}    </section>\n' for n in range(3)) + "  );")
+
+
+def test_a_placeholder_for_a_repeated_section_is_refused(tmp_path):
+    """The replaced lines still appear in the other sections, but fewer times than before."""
+    after = SECTIONS.replace('    <section className="s2">\n' + SECTION,
+                             '    <section className="s2">\n      {/* cards same as above */}\n')
+    error = _write(tmp_path, PAGE_PATH, SECTIONS, after).get("error", "")
+    assert "placeholder comment" in error and "cards same as above" in error, error
+
+
+def test_a_placeholder_added_apart_from_the_rows_it_drops_is_refused(tmp_path):
+    after = PAGE.replace("    <div>\n", "    <div>\n" + PLACEHOLDER_TAIL, 1).replace("".join(ROW_LINES[170:]), "")
+    error = _write(tmp_path, PAGE_PATH, PAGE, after).get("error", "")
+    assert "removes 50 lines" in error and "remaining rows unchanged" in error, error

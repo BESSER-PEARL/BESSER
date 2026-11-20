@@ -589,20 +589,29 @@ def _placeholder_comments(source: str) -> set[str]:
             if _COMMENT_ONLY_LINE_RE.match(line) and any(p in line.lower() for p in _OMISSION_PHRASES)}
 
 
-def _placeholder_standing_in(before: str, after: str) -> tuple[str, int] | None:
-    """``(comment, lines)`` for a new placeholder comment that takes the place of at least
-    ``_PLACEHOLDER_MIN_REPLACED`` lines the rewrite no longer has anywhere; else None."""
+def _placeholder_standing_in(before: str, after: str) -> str | None:
+    """Why a new placeholder comment stands in for code: it takes the place of at least
+    ``_PLACEHOLDER_MIN_REPLACED`` lines the rewrite has fewer copies of, or it is added
+    while a block of that many such lines is deleted elsewhere; else None."""
     new = _placeholder_comments(after) - _placeholder_comments(before)
     if not new:
         return None
     old, cur = ([line.strip() for line in text.splitlines() if line.strip()] for text in (before, after))
-    kept = set(cur)
+    missing = Counter(old) - Counter(cur)
+    replaced, inserted, deleted = None, None, 0
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, cur, autojunk=False).get_opcodes():
+        lost = sum((Counter(old[i1:i2]) & missing).values())
         comment = next((line for line in cur[j1:j2] if line in new), None)
-        if tag == "replace" and comment:
-            lost = sum(1 for line in old[i1:i2] if line not in kept)
-            if lost >= _PLACEHOLDER_MIN_REPLACED:
-                return comment, lost
+        if tag == "replace" and comment and lost >= _PLACEHOLDER_MIN_REPLACED:
+            replaced = replaced or f"this rewrite replaces {lost} lines with a placeholder comment ({comment[:80]})"
+        elif tag == "insert" and comment:
+            inserted = inserted or comment
+        elif tag == "delete":
+            deleted = max(deleted, lost)
+    if replaced:
+        return replaced
+    if inserted and deleted >= _PLACEHOLDER_MIN_REPLACED:
+        return f"this rewrite removes {deleted} lines and adds a placeholder comment ({inserted[:80]})"
     return None
 
 
@@ -636,7 +645,7 @@ def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None
         return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
     placeholder = _placeholder_standing_in(before, after)
     if placeholder:
-        return f"this rewrite replaces {placeholder[1]} lines with a placeholder comment ({placeholder[0][:80]})"
+        return placeholder
     return ""
 
 

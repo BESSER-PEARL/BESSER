@@ -29,7 +29,10 @@ A second table gives, per run and phase (P2, P3 repair turns, and the calls
 outside the loop), fresh input, cache-read, cache-write and output tokens, cost,
 the cache hit ratio, the cache misses, and the seconds the loop's model calls
 and tool batches took. A loop turn's tokens are the difference of two
-``cost_update`` records less the ``llm_call`` records between them. A cache miss is a turn that read under 0.9 of the previous turn's prompt
+``cost_update`` records less the ``llm_call`` records between them; a resumed
+run (a second ``run_start`` with the same run id) continues its run, on a new
+client whose token counters restart while its cost was seeded with the spend so
+far. A cache miss is a turn that read under 0.9 of the previous turn's prompt
 from the cache although the history was not rewritten: same conversation, no
 ``compaction`` or ``eviction`` record, a prompt that did not shrink. A turn that
 read under 0.9 of its own, smaller prompt with no such record is listed apart,
@@ -142,12 +145,19 @@ class _Meter:
         self.started: float | None = None
         self.answered: float | None = None
         self.first_ts: float | None = None
+        self.wall_before = 0.0      # seconds of the parts of the run before a resume
 
     def read(self, kind: str, payload: dict, ts: float | None, phase: str | None) -> None:
+        if kind == "run_start" and payload.get("resumed"):
+            # A new client: its token counters restart; its cost was seeded with the spend so far.
+            self.counted = dict.fromkeys(_COUNTERS, 0)
+            self.counted_cost += self.outside_cost
+            self.outside, self.outside_cost = dict.fromkeys(_COUNTERS, 0), 0.0
+            self.wall_before, self.first_ts = self.run.wall_seconds or 0.0, None
         if ts is not None:
             if self.first_ts is None:
                 self.first_ts = ts
-            self.run.wall_seconds = ts - self.first_ts
+            self.run.wall_seconds = self.wall_before + ts - self.first_ts
         if kind in ("compaction", "eviction") or (kind == "phase_enter" and (
                 str(payload.get("phase", "")).startswith("phase2") or payload.get("phase") == "phase3_fix_attempt")):
             self.new_context = True
@@ -170,8 +180,6 @@ class _Meter:
     def _turn(self, payload: dict, phase: str | None) -> None:
         counters = {key: int(payload.get(key) or 0) for key in _COUNTERS}
         cost = float(payload.get("estimated_cost_usd") or 0)
-        if any(counters[key] < self.counted[key] for key in _COUNTERS):   # a resumed run: a new client
-            self.counted, self.counted_cost = dict.fromkeys(_COUNTERS, 0), 0.0
         delta = {key: max(counters[key] - self.counted[key] - self.outside[key], 0) for key in _COUNTERS}
         self.run.turns.append(Turn(
             turn=int(payload.get("turn") or 0), phase=phase, fresh=delta["input_tokens"],
@@ -200,7 +208,7 @@ def _in_model_order(calls: list[Call]) -> list[Call]:
 
 
 def read_trace(path: str) -> list[Run]:
-    """One :class:`Run` per ``run_start`` in a run log."""
+    """One :class:`Run` per ``run_start`` in a run log; a resume continues the run it resumes."""
     runs: list[Run] = []
     meter: _Meter | None = None
     phase, attempt = None, None
@@ -213,8 +221,10 @@ def read_trace(path: str) -> list[Run]:
             kind, payload = event.get("event"), event.get("payload") or {}
             ts = event.get("ts") if isinstance(event.get("ts"), (int, float)) else None
             if kind == "run_start" or not runs:
-                runs.append(Run(source=path, run_id=str(event.get("run_id") or "")))
-                meter = _Meter(runs[-1])
+                run_id = str(event.get("run_id") or "")
+                if not (payload.get("resumed") and runs and runs[-1].run_id == run_id):
+                    runs.append(Run(source=path, run_id=run_id))
+                    meter = _Meter(runs[-1])
                 phase, attempt = None, None
                 if kind == "run_start":
                     meter.read(kind, payload, ts, phase)

@@ -160,6 +160,34 @@ def test_totals_count_each_run_once(tmp_path):
     assert figures["purposes"]["requirements_judge"]["calls"] == 2
 
 
+def test_a_resumed_run_keeps_the_turns_of_both_parts(tmp_path):
+    """A resume keeps the run id and appends to the same run log; its new client's token
+    counters restart at zero while its cost is seeded with what the run already spent."""
+    log = _Log()
+    log.event("run_start", at=1_000.0)
+    log.event("phase_enter", phase="phase2")
+    log.turn(1, 10_000, cost=0.01, start=1_001.0, answered=1_002.0)
+    log.turn(2, 10_000, cost=0.01, start=1_003.0, answered=1_004.0)
+    log.event("run_end", at=1_010.0)
+    log.counters = dict.fromkeys(log.counters, 0)
+    log.event("run_start", at=5_000.0, resumed=True, resume_from_turn=2, resume_phase="phase2")
+    log.event("phase_enter", phase="phase2_resume")
+    log.turn(3, 20_000, cost=0.02, start=5_001.0, answered=5_002.0)
+    log.turn(4, 20_000, cost=0.02, start=5_003.0, answered=5_004.0)
+    log.turn(5, 20_000, cost=0.02, start=5_005.0, answered=5_006.0)
+    log.event("run_end", at=5_020.0)
+
+    run = _one_run(tmp_path, log)
+    figures = totals([run])
+
+    assert [turn.turn for turn in run.turns] == [1, 2, 3, 4, 5]
+    assert [turn.fresh for turn in run.turns] == [10_000, 10_000, 20_000, 20_000, 20_000]
+    assert [turn.cost for turn in run.turns] == pytest.approx([0.01, 0.01, 0.02, 0.02, 0.02])
+    assert (figures["runs"], figures["turns"], figures["fresh"]) == (1, 5, 80_000)
+    assert figures["cost"] == pytest.approx(0.08)
+    assert run.wall_seconds == pytest.approx(30.0)      # the time between the parts is not the run's
+
+
 def test_a_turns_calls_are_read_in_the_order_the_model_emitted_them(tmp_path):
     log = _Log()
     log.event("run_start", at=1_000.0)

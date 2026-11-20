@@ -11,6 +11,8 @@ that dropped half of a generated module's functions.
 
 import os
 
+import pytest
+
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
@@ -184,6 +186,78 @@ def test_a_whole_range_edit_that_keeps_the_code_lands(tmp_path):
                   start_line=1, end_line=read["end_line"], new_text=source + "def extra():\n    return 1\n")
 
     assert edited.get("status") == "modified", edited
+
+
+_LONG_TOTAL = (
+    "def total(items):\n    result = 0\n    for item in items:\n        price = item.price\n"
+    "        qty = item.qty\n        line = price * qty\n        if line < 0:\n            line = 0\n"
+    "        result = result + line\n    if result < 0:\n        result = 0\n    return result\n")
+_CALLS = "".join(f"app.include_router(r{i}.router)\n" for i in range(8))
+_STEPS = "".join(f"- step {i}: run the thing number {i}\n" for i in range(24))
+_TABLE = ("    <table>\n      <tbody>\n        {rows.map(row => (\n        <tr>\n"
+          + "".join(f"          <td>{{row.c{i}}}</td>\n" for i in range(12))
+          + "        </tr>\n        ))}\n      </tbody>\n    </table>\n")
+# Edits that make a modify-run file shorter over 57-77% of its non-blank lines:
+# each landed before range edits were held to the rewrite rule, and must still land.
+_SHRINKING_EDITS = {
+    "simplify a function": (
+        "app/calc.py",
+        "import math\n\n" + _LONG_TOTAL + "\n\ndef label(x):\n    return str(x)\n\n\n"
+        "def rounded(x):\n    return math.floor(x)\n",
+        _LONG_TOTAL,
+        "def total(items):\n    return max(0, sum(max(0, i.price * i.qty) for i in items))\n"),
+    "fold registrations into a loop": (
+        "backend/main.py",
+        "from fastapi import FastAPI\nfrom routers import " + ", ".join(f"r{i}" for i in range(8))
+        + "\n\napp = FastAPI()\n\n" + _CALLS + "\n\n@app.get('/health')\ndef health():\n    return {'ok': True}\n",
+        _CALLS,
+        "for _m in (" + ", ".join(f"r{i}" for i in range(8)) + "):\n    app.include_router(_m.router)\n"),
+    "shorten a document section": (
+        "README.md",
+        "# Project\n\nIntro line.\n\n## Setup\n\n" + _STEPS + "\n## Usage\n\nRun it.\nMore text.\nEven more.\n",
+        _STEPS,
+        "Run `make setup`.\n"),
+    "replace markup with a component": (
+        "frontend/src/Page.tsx",
+        "import React from 'react';\nimport { Grid } from './Grid';\n\nexport function Page({ rows }) {\n"
+        "  return (\n" + _TABLE + "  );\n}\n\nexport default Page;\n",
+        _TABLE,
+        "    <Grid rows={rows} />\n"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_SHRINKING_EDITS))
+def test_a_shrinking_edit_over_part_of_a_file_lands_in_a_modify_run(tmp_path, case):
+    rel, source, old, new = _SHRINKING_EDITS[case]
+    executor = _modify_run(tmp_path, rel, source)
+    call(executor, "read_file", path=rel)
+    start =source[:source.index(old)].count("\n") + 1
+
+    by_quote = call(executor, "modify_file", path=rel, old_text=old, new_text=new)
+    assert by_quote.get("status") == "modified", by_quote
+
+    _seed(str(tmp_path), rel, source)
+    read = call(executor, "read_file", path=rel)
+    by_range = call(executor, "replace_file_lines", path=rel, read_id=read["read_id"],
+                    start_line=start, end_line=start + old.count("\n") - 1, new_text=new)
+    assert by_range.get("status") == "modified", by_range
+    with open(tmp_path / rel, encoding="utf-8") as handle:
+        assert handle.read() == source.replace(old, new)
+
+
+def test_replace_all_is_measured_over_every_occurrence(tmp_path):
+    """Each occurrence is a small span; together they rewrite the whole file to half its lines."""
+    rel = "docs/checklist.md"
+    block = "- [ ] open item\n  owner: none\n"
+    executor = _modify_run(tmp_path, rel, block * 15)
+    call(executor, "read_file", path=rel)
+
+    refused = call(executor, "modify_file", path=rel, old_text=block, new_text="- [ ] open item\n",
+                   replace_all=True)
+
+    assert refused.get("rejection_kind") == "rewrite_loss", refused
+    with open(tmp_path / rel, encoding="utf-8") as handle:
+        assert handle.read() == block * 15
 
 
 def test_removing_a_large_part_of_a_small_file_on_purpose_still_lands(tmp_path):

@@ -113,8 +113,8 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "(located_range, with a read_id for replace_file_lines). already_applied: this "
             "exact edit landed before and the file is unchanged since; possible_replay: a "
             "duplicate-looking insertion, refused. An edit that would leave a parseable file "
-            "unparseable or unimportable is refused; new code over 40% of a file is held to "
-            "write_file's rewrite rule."
+            "unparseable or unimportable is refused; new code spanning 90% or more of a file "
+            "is held to write_file's rewrite rule."
         ),
         "input_schema": {
             "type": "object",
@@ -143,8 +143,8 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "before another range edit on the same file. new_text is the complete literal "
             "replacement (empty deletes the lines; to insert, include the anchor line). "
             "Refused, the file unchanged, for unseen lines, abbreviated code, or a replacement "
-            "that breaks the file's syntax or import; new code over 40% of a file is held to "
-            "write_file's rewrite rule."
+            "that breaks the file's syntax or import; new code spanning 90% or more of a file "
+            "is held to write_file's rewrite rule."
         ),
         "input_schema": {
             "type": "object",

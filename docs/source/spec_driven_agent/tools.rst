@@ -88,8 +88,11 @@ block of three or more such lines is deleted elsewhere, however much the
 rewrite adds. A rewrite that misses one is refused saying which
 (``rejection_kind`` ``rewrite_loss``), whatever edits came before it. The
 same rule holds a ``modify_file`` or ``replace_file_lines`` edit that writes
-new code over 40% or more of the file's non-blank lines, so a whole-range edit
-cannot apply a rewrite the rule refused. An empty replacement is a removal and
+new code over 90% or more of the file's non-blank lines (with ``replace_all``,
+counting every occurrence), so a whole-range edit cannot apply a rewrite the
+rule refused. An edit over less of the file is a targeted edit and is not held
+to it, however much shorter it makes the file (simplifying a function, folding
+calls into a loop). An empty replacement is a removal and
 lands however much it spans: for a removal the model means to make, the
 refusal says to replace only that code's own lines with nothing (naming the
 ``read_id`` of its whole-file read), and for a rename to edit only the line

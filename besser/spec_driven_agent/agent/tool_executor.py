@@ -567,9 +567,9 @@ _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
 _REEXPORT_RE = re.compile(r"^export\s+(?:type\s+)?(?:\*|\{)[^;\n]*\bfrom\b", re.MULTILINE)
 # A rewrite of a large file shorter than this share of its non-blank lines has left code out.
 _MIN_REWRITE_SHARE = 0.6
-# A range edit over this share of a file's non-blank lines can leave it under that share,
+# A range edit over at least this share of a file's non-blank lines rewrites the file,
 # so one that writes new code there is held to the rewrite rule.
-_REWRITE_SPAN_SHARE = 1 - _MIN_REWRITE_SHARE
+_REWRITE_SPAN_SHARE = 0.9
 # Above these sizes a rewrite of a file this run did not create must keep its code.
 _GENERATED_REWRITE_LINES = 200
 _MODIFY_RUN_REWRITE_LINES = 15
@@ -660,11 +660,11 @@ def _non_blank_lines(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip())
 
 
-def _rewrites_most_of(before: str, replaced: str, replacement: str) -> bool:
+def _rewrites_whole_file(before: str, replaced: str, replacement: str, times: int = 1) -> bool:
     """True when an edit writes new code over at least ``_REWRITE_SPAN_SHARE`` of the
-    file; a pure removal (blank replacement) is a targeted edit."""
+    file (``replaced`` counted ``times``); a pure removal (blank replacement) is a targeted edit."""
     return bool(replacement.strip()) and (
-        _non_blank_lines(replaced) >= _REWRITE_SPAN_SHARE * _non_blank_lines(before))
+        times * _non_blank_lines(replaced) >= _REWRITE_SPAN_SHARE * _non_blank_lines(before))
 
 
 def _rewrite_loss(rel_path: str, before: str, after: str) -> str:
@@ -2915,7 +2915,7 @@ class ToolExecutor:
                              "read_file on the region to see what is actually there, then send "
                              "the change you meant - or mark the task blocked with a reason.",
                     "status": "no_change", "replacements": 0}
-        if _rewrites_most_of(before, old, replacement):
+        if _rewrites_whole_file(before, old, replacement):
             refusal = self._rewrite_refusal(args["path"].replace("\\", "/"), path, before, after)
             if refusal:
                 return refusal
@@ -3031,7 +3031,7 @@ class ToolExecutor:
             refusal = self._rewrite_refusal(rel_path, path, before, args["content"])
             if refusal:
                 return refusal
-            broke =_new_syntax_error(rel_path, before, args["content"])
+            broke = _new_syntax_error(rel_path, before, args["content"])
             if broke:
                 msg, line_no = broke
                 return {
@@ -3495,7 +3495,7 @@ class ToolExecutor:
                          "this is not evidence of completion. Read the current region for a different change.",
             }
 
-        if _rewrites_most_of(content, old_text, new_text):
+        if _rewrites_whole_file(content, old_text, new_text, occurrences if replace_all and occurrences else 1):
             refusal = self._rewrite_refusal(rel_path, path, content, new_content)
             if refusal:
                 self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1

@@ -257,10 +257,15 @@ Model change in the preview
 ---------------------------
 
 With ``mode: "modify"`` and a
-``base_run_id`` whose workspace is still available, the ``/preview`` response
+``base_run_id`` whose workspace or ZIP download is still available, the ``/preview`` response
 carries ``model_change``: how the project's class diagram relates to the one
 the base run was built from. It is ``null`` for ``mode: "generate"``, an
 unknown or expired base run, or a base run without a recorded class model.
+The response also carries ``base_available``: ``true`` when a modify run can
+edit the base run (see :ref:`spec-driven-modify-mode`), ``false`` when it would
+build the app again from scratch (the base is unknown, its workspace and its ZIP
+download are gone, or its output was a single file), ``null`` for ``mode:
+"generate"`` and for a modify request without ``base_run_id``.
 
 .. list-table::
    :header-rows: 1

@@ -92,6 +92,13 @@ is a targeted edit's job, and is not caught here. Repeated failures do not
 permanently freeze the file; an agent that ignores recovery is still bounded
 by the loop and run budgets.
 
+``delete_file`` removes one regular file, for every model alike: whether a
+delete runs never depends on the model. When other files still import what was
+deleted, the result lists those imports under ``still_imported`` (the same
+unresolved-import findings validation reports, new since the delete), so the
+model can change or remove them; the build and startup checks catch any it
+leaves.
+
 ``read_file`` returns a ``read_id`` tied to the resolved path, whole-file content
 hash, and actually displayed lines. ``replace_file_lines`` accepts that ID,
 1-based inclusive ``start_line``/``end_line``, and complete ``new_text``. It does

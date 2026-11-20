@@ -199,14 +199,9 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "delete_file",
         "description": (
-            "Delete a file from the workspace. Use it only for a file YOU "
-            "created this run and no longer want — a scratch module, a "
-            "duplicate you superseded. Never delete a generated scaffold "
-            "file: the framework is fixed, and a protected run refuses it. "
-            "To change a generated file, edit it with modify_file (or "
-            "write_file after reading it in full). "
-            "Only deletes regular files (not directories). Path must be "
-            "relative to the workspace root."
+            "Delete one regular file (not a directory), by its path relative to the "
+            "workspace root. The result lists the files that still import what was "
+            "deleted (still_imported). To change a generated file, edit it instead."
         ),
         "input_schema": {
             "type": "object",

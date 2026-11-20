@@ -97,7 +97,6 @@ from besser.spec_driven_agent.planning.gap_analyzer import (
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
-from besser.llm.pricing import is_free_local_model
 from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
@@ -451,11 +450,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Phase 3 reports each validation round: (attempt, issues, restored=False).
         self.on_findings = on_findings
         self.use_streaming = use_streaming
-        # Weak / free-tier open models (e.g. qwen3-coder) ignore "don't switch
-        # frameworks" and delete the whole deterministic scaffold to rebuild it.
-        # Make that scaffold delete-proof for them only; capable cloud models are
-        # unaffected and keep full delete_file.
-        _model_name = (getattr(self.client, "model", "") or "").lower()
         self.executor = ToolExecutor(
             workspace=self.output_dir,
             domain_model=domain_model,
@@ -466,7 +460,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             object_model=object_model,
             bpmn_model=bpmn_model,
             nn_model=nn_model,
-            protect_scaffold=is_free_local_model(_model_name),
             per_write_diagnostics=per_write_diagnostics,
             # The executor enforces this too. Hiding the tools from the
             # advertised list is not a gate: the model can name a tool it was

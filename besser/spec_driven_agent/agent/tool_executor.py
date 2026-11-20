@@ -877,7 +877,6 @@ class ToolExecutor:
         object_model: Any = None,
         bpmn_model: Any = None,
         nn_model: Any = None,
-        protect_scaffold: bool = False,
         per_write_diagnostics: bool = True,
         allow_shell: bool = False,
         app_name: str | None = None,
@@ -966,12 +965,6 @@ class ToolExecutor:
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
         self.requirement_citer = None  # validate_app citations; supplied by the orchestrator
         self.api_tester = None
-        # When True (weak / free-tier models only), the deterministic Phase-1
-        # scaffold is IMMUTABLE to delete_file: the model may edit those files
-        # in place but cannot tear them down and rebuild in another framework.
-        # Observed with the free qwen tier deleting a whole FastAPI backend to
-        # rewrite it in Flask; capable cloud models keep full delete_file.
-        self._protect_scaffold = protect_scaffold
         self._per_write_diagnostics = per_write_diagnostics
         # Data contract from the domain model (id types, server-owned
         # fields). Every write_file/modify_file result carries the lint
@@ -3487,12 +3480,12 @@ class ToolExecutor:
         self._append_write_feedback(result, rel_path, new_content)
         return result
 
-    def _scaffold_edit_route(self, rel_path: str, path: str) -> str:
-        """The write route ``_write_file`` permits for a generator file."""
-        return (
-            "Edit it in place with modify_file, or read it in full and "
-            "write_file it back keeping its code."
-        )
+    def _import_findings(self) -> list[str]:
+        """The workspace's Python and frontend imports that resolve to no file."""
+        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
+        from besser.spec_driven_agent.validation.python_imports import _unresolvable_local_imports
+
+        return [*_unresolvable_local_imports(self.workspace), *collect_frontend_resolution_issues(self.workspace)]
 
     def _delete_file(self, args: dict) -> dict:
         """Delete a regular file from the workspace.
@@ -3501,7 +3494,7 @@ class ToolExecutor:
         recursively wipe a tree, and an accidental glob expansion at the
         prompt level would be catastrophic. Path traversal is blocked by
         ``_safe_path`` (same containment check used by every other file
-        tool).
+        tool). The result names the imports the delete left unresolved.
         """
         path = self._safe_path(args["path"])
         if not os.path.exists(path):
@@ -3513,25 +3506,17 @@ class ToolExecutor:
                     "delete_file only removes regular files."
                 ),
             }
-        # Scaffold protection (weak / free-tier models only): the deterministic
-        # Phase-1 scaffold is the app's foundation and must not be torn down and
-        # rebuilt in another framework. Files the model created this run are not
-        # tracked here, so it can still delete its own junk.
-        rel_path = args["path"].replace("\\", "/")
-        if self._protect_scaffold and rel_path in self._generator_files:
-            return {
-                "error": (
-                    f"Refused to delete: '{args['path']}' is part of the generated "
-                    "scaffold — the app's foundation. Do NOT remove or replace it. "
-                    f"{self._scaffold_edit_route(rel_path, path)} Keep the existing "
-                    "framework and build on top of what is already generated."
-                ),
-            }
+        unresolved_before = set(self._import_findings())
         try:
             remove_plain(path, root=self.workspace)
         except OSError as exc:
             return {"error": f"Failed to delete {args['path']}: {exc}"}
-        return {"status": "deleted", "path": args["path"]}
+        result = {"status": "deleted", "path": args["path"]}
+        still_imported = [finding for finding in self._import_findings() if finding not in unresolved_before]
+        if still_imported:
+            result["still_imported"] = still_imported[:10]
+            result["note"] = "Other files still import what was deleted: change or remove those imports."
+        return result
 
     def _search_in_files(self, args: dict) -> dict:
         """Search for a pattern across workspace files."""

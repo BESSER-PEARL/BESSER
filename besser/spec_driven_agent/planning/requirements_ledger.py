@@ -845,8 +845,8 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     """What the user's messages since the previous run ask of the app ``previous`` describes.
 
     The new messages are the later messages of ``instructions`` after those it shares, from the
-    start, with ``previous_instructions`` (the previous run's), and the newest one when there are
-    none. Returns ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the
+    start, with ``previous_instructions`` (the previous run's); when there are none, nothing is
+    new if the first message is unchanged, else the newest message is. Returns ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the
     ids of ``previous`` a new message changes, asks for again or removes, and whether the messages
     only ask to retry or finish earlier work. When the new messages are empty or are only the
     previous run's newest message, that is decided without a call. None when no real provider is
@@ -858,9 +858,10 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     seen, messages = later_messages(previous_instructions or ""), later_messages(instructions)
     # A retry is sent but not kept in the conversation, so only the shared start was the previous run's.
     shared = next((i for i, (a, b) in enumerate(zip(seen, messages)) if a != b), min(len(seen), len(messages)))
-    earlier_messages = messages[:shared]
-    new = messages[shared:] or [latest_user_message(instructions)]
-    if not any(new) or new == [latest_user_message(previous_instructions or "")]:
+    earlier_messages, fresh = messages[:shared], messages[shared:]
+    same_start = _first_message(instructions) == _first_message(previous_instructions or "")
+    new = fresh or [latest_user_message(instructions)]
+    if (not fresh and same_start) or not any(new) or new == [latest_user_message(previous_instructions or "")]:
         return {"requirements": [], "replaces": set(), "continues": True}
     earlier = _first_message(instructions)
     prompt = "\n\n".join([

@@ -1029,7 +1029,8 @@ new; a retry the conversation did not keep does not make the messages before it
 new), with the earlier conversation and the numbered requirements as context, so
 "retry", "yes" or "the same for the other screen" resolve. When the new messages
 are empty or are only the previous run's newest message (the same request sent
-again), the run continues earlier work without that call. Any other message is
+again, also the request as it was before a retry the conversation did not keep),
+the run continues earlier work without that call. Any other message is
 extracted, also one that repeats an older message of the previous run (a change
 asked for, reversed and asked for again). Their requirements follow the previous ones.
 The extraction also names the previous requirements a new message changes, asks

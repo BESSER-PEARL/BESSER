@@ -296,6 +296,22 @@ def test_a_retry_the_conversation_did_not_keep_does_not_make_earlier_messages_ne
     assert LATEST in new and EXPORT not in new and EXPORT in earlier
 
 
+@pytest.mark.parametrize("before, now", [
+    ((RETRY,), ()),
+    ((EXPORT, RETRY), (EXPORT,)),
+])
+def test_the_request_before_a_retry_the_conversation_did_not_keep_needs_no_call(tmp_path, before, now):
+    """The next run re-sends the request as it was before the retry: no message is new."""
+    _seed(tmp_path, instructions=_instructions(*before))
+    client = _Client({"requirements": [NEW], "replaces": [], "continues_earlier_work": False})
+    orch = _orchestrator(tmp_path, client, instructions=_instructions(*now))
+
+    orch._extract_requirements(orch._instructions)
+
+    assert client.prompts == []
+    assert orch._follow_up_continues is True
+
+
 def test_a_new_request_without_later_messages_is_still_extracted(tmp_path):
     _seed(tmp_path)
     client = _Client({"requirements": [NEW], "replaces": [], "continues_earlier_work": False})

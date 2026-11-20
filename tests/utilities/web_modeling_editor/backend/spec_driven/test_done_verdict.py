@@ -317,6 +317,31 @@ def test_a_dependency_install_left_undone_is_not_an_unresolved_blocker(monkeypat
         _cleanup()
 
 
+def test_a_dependency_install_left_open_by_a_late_error_is_settled(monkeypatch):
+    """The orchestrator raised after Phase 3 began: its exit, which settles an open setup, never ran."""
+    from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+    from besser.spec_driven_agent.validation.issues import _classify_issue, required_dependency_setup
+
+    class RaisesInPhase3(_StubOrchestrator):
+        _settle_open_setup = LLMOrchestrator._settle_open_setup
+
+        def run(self, instructions):
+            self._finish("run")
+            self.phase3_started_at = 1.0
+            self._validation_issues = [_classify_issue(required_dependency_setup("tsc [frontend]", "frontend"))]
+            raise ValueError("internal failure during validation")
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", RaisesInPhase3)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    try:
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+        run = done["recipe"]["run"]
+        assert done["incomplete"] is True
+        assert run["counts"]["blockers"] == 0 and run["counts"]["not_confirmed"] == 1
+    finally:
+        _cleanup()
+
+
 def test_a_check_switched_off_on_the_server_is_not_a_not_verified_run(monkeypatch):
     class ToolchainOff(_StubOrchestrator):
         def __init__(self, **kwargs):

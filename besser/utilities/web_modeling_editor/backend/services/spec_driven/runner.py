@@ -2435,6 +2435,10 @@ class SmartGenerationRunner:
                 or stop_reason == "validation_required"
             )
 
+            # A run that raised after Phase 3 began skipped the settlement at its exit.
+            if (getattr(self, "_late_internal_error", None)
+                    and getattr(orchestrator, "phase3_started_at", None) is not None):
+                orchestrator._settle_open_setup()
             # Blockers include requirements found missing, not only compile/startup
             # failures; a check that reached no conclusion is not confirmed, not a blocker.
             _final_issues = getattr(orchestrator, "_validation_issues", None) or []

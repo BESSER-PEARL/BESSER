@@ -746,7 +746,8 @@ those citations were real code doing the job across several lines.
 Two findings of the same "could not check" kind stay blockers. ``verification
 setup:`` asks the agent to install the project's declared dependencies, which it
 is allowed to do, so that the compile and build checks behind it can run; one
-still open when Phase 3 ends is rewritten once as ``validation unverified: <check>
+still open when Phase 3 ends, or when an error stops the run after Phase 3 began, is
+rewritten once as ``validation unverified: <check>
 did not run completely (its project dependencies were not installed)``, so the
 trace, the recipe, the counts, telemetry and the report all read it as not
 confirmed, and the run reports its frontend as never built (below). A

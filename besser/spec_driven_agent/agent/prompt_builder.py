@@ -860,7 +860,7 @@ def _render_gap_section(gap_tasks: list[str] | None) -> str:
     return (
         "\n\n### Focused checklist (from gap analysis)\n"
         "This list is loaded into the `task_list` tool (its description covers "
-        "done with evidence, blocked and add). Work through it, marking each item "
+        "done, blocked and add). Work through it, marking each item "
         "done as you complete it. If an item is wrong or out of scope for the user "
         "request, close it with task_list(action='drop', id=N, reason=...) - never "
         "mark undone work done.\n\n"

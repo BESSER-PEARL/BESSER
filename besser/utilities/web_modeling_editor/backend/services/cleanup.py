@@ -47,6 +47,7 @@ def cleanup_old_temp_files(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:
 
     Errors on individual directories are logged and silently skipped so
     that one problematic entry does not prevent the rest from being cleaned.
+    Run records past their retention go too (``prune_run_evidence``).
     """
     cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
@@ -87,6 +88,9 @@ def cleanup_old_temp_files(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:
 
     if removed:
         logger.info("Cleaned up %d stale BESSER temp directories", removed)
+    # Imported here: the spec_driven package imports this module.
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_evidence import prune_run_evidence
+    prune_run_evidence()
 
 
 async def _periodic_cleanup(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:

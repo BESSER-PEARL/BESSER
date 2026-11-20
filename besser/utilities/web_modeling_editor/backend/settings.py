@@ -59,6 +59,17 @@ def _number_or_default(parse):
     return validate
 
 
+def _days(value) -> int:
+    """A blank or unparsable value gives the default; a negative one is 0."""
+    raw = str(value).strip()
+    if not raw:
+        raise PydanticUseDefault()
+    try:
+        return max(int(raw), 0)
+    except ValueError:
+        raise PydanticUseDefault() from None
+
+
 def _flag(value) -> bool:
     """Set means on only for 1/true/yes/on; set but blank is off."""
     return str(value).strip().lower() in _TRUTHY
@@ -93,6 +104,7 @@ def _simulator_url(value) -> str:
 _PositiveInt = Annotated[int, BeforeValidator(_positive(int))]
 _PositiveFloat = Annotated[float, BeforeValidator(_positive(float))]
 _Flag = Annotated[bool, BeforeValidator(_flag)]
+_Days = Annotated[int, BeforeValidator(_days)]
 _FlagOrDefault = Annotated[bool, BeforeValidator(_flag_or_default)]
 _FlagOrUnset = Annotated[Optional[bool], BeforeValidator(_flag_or_default)]
 _IntOrDefault = Annotated[Optional[int], BeforeValidator(_number_or_default(int))]
@@ -177,6 +189,10 @@ class BackendSettings(BaseSettings):
     llm_max_concurrent_runs: _PositiveInt = Field(
         10, validation_alias="BESSER_LLM_MAX_CONCURRENT_RUNS",
         description="Runs (and other LLM jobs) allowed at once.")
+    llm_run_evidence_retention_days: _Days = Field(
+        30, validation_alias="BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS",
+        description="Days a run's full record is kept in the runs/ folder of BESSER_INCIDENT_LOG_DIR, "
+                    "when that is set; 0 (or less) keeps none. Read per call.")
     llm_run_store_path: _AbsPath = Field(
         None, validation_alias="BESSER_LLM_RUN_STORE_PATH",
         description="SQLite file of the durable run store (unset: the system temp dir). Read per call.")
@@ -230,8 +246,8 @@ class BackendSettings(BaseSettings):
         description="Token GET /telemetry/report requires; unset answers 404. Read per call.")
     incident_log_dir: Optional[str] = Field(
         None, validation_alias="BESSER_INCIDENT_LOG_DIR",
-        description="Incident log directory (unset: /app/incidents); set, it also keeps run traces. "
-                    "Read per call.")
+        description="Incident log directory (unset or blank: /app/incidents); set, it also keeps run "
+                    "traces and each run's full record (runs/). Read per call.")
 
     # -- SDMX import ---------------------------------------------------------
     # The largest message seen (Eurostat Comext DS-045409) is 23.6 MB; parsing
@@ -362,6 +378,15 @@ class BackendSettings(BaseSettings):
         self.llm_archive_ttl_seconds = min(max(self.llm_archive_ttl_seconds, self.llm_download_ttl_seconds),
                                            TEMP_DIR_MAX_AGE_HOURS * 3600)
         return self
+
+
+def server_secrets() -> tuple[str, ...]:
+    """Every secret this server holds (tokens, passwords) that is set, for literal redaction."""
+    from besser.spec_driven_agent.settings import AgentSettings
+
+    return tuple(value.get_secret_value() for settings in (BackendSettings(), AgentSettings())
+                 for value in (getattr(settings, name) for name in type(settings).model_fields)
+                 if isinstance(value, SecretStr) and value.get_secret_value())
 
 
 @functools.cache

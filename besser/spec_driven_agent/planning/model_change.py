@@ -373,8 +373,13 @@ def compare_with_base(workspace: str, domain_model) -> ModelChange | None:
     """
     if domain_model is None:
         return None
-    text = read_plain_text(os.path.join(workspace, ".besser_recipe.json"), root=workspace)
-    if text is None:
+    return compare_with_recipe(read_plain_text(os.path.join(workspace, ".besser_recipe.json"), root=workspace),
+                               domain_model)
+
+
+def compare_with_recipe(text: str | None, domain_model) -> ModelChange | None:
+    """:func:`compare_with_base` on a recipe's text; ``None`` when either side is missing."""
+    if text is None or domain_model is None:
         return None
     try:
         recorded = json.loads(text).get("model") or {}

@@ -159,9 +159,11 @@ satisfy it. The JSX rule matters even where build verification is enabled:
 no build check can see it. A Vite project counts as using the automatic runtime
 only when its ``vite.config`` imports ``@vitejs/plugin-react`` and calls it
 inside ``plugins: [...]``. Declaring the package in ``package.json``, or naming
-it in a comment, does not enable it. A ``package.json`` dependency whose version
-is ``"latest"``, ``"*"``, ``"x"`` or empty is a blocker naming the file and the
-package: the install would depend on whatever npm publishes that day.
+it in a comment, does not enable it. Dependencies whose version is ``"latest"``,
+``"*"``, ``"x"``, empty or another dist-tag are one warning per ``package.json``,
+naming the packages: the install still works, but takes whatever npm publishes
+that day, so the build is not reproducible. The warning points at the lockfile
+when the project has one and never suggests a version number.
 
 Create forms are checked statically against the backend's ``*Create`` Pydantic
 schemas, because the runtime probes drive HTTP and never render a page. Each
@@ -557,7 +559,10 @@ Findings are classified into three severities:
        or a fixed fact may keep a fixed reply; the citation is the line that
        reads or writes the records);
        partial requirements and unverified evidence (distinct from proven missing
-       behavior); unresolved checklist work and unimplemented action contracts;
+       behavior); a checklist item whose deterministic check fails (an action
+       handler still a stub, a requested route the app does not declare, a
+       missing frontend; a stub already reported as an ``action contract:``
+       is not reported a second time) and unimplemented action contracts;
        a method button that takes its row id from a table of another
        entity; frontend-contract and
        data-contract violations; create forms that cannot save (``api url:``,
@@ -577,7 +582,7 @@ Findings are classified into three severities:
        included), ``runtime unverified:``, ``api scenario:``,
        ``create contract:``, ``action call:``, ``requirement:``,
        ``requirement partial:``, ``requirement unverified:``,
-       ``action contract:``, ``task unverified:``, ``verification setup:``
+       ``action contract:``, ``task incomplete:``, ``verification setup:``
        (dependencies a permitted install would provide), ``tsc [``,
        ``cargo [``, ``kotlinc [`` and ``frontend build [``. These drive the
        auto-fix loop.
@@ -587,7 +592,21 @@ Findings are classified into three severities:
        cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, ``agent left out:`` (the project has an
+       now), ``task unverified:`` (a checklist item nothing closed: no
+       passing check and no ``task_list`` done, or the model recorded it as
+       ``blocked``, whose reason is shown; the finding says whether the files
+       the item names were edited. It is also raised when the model closes
+       one of the harness's own items that no other check covers (a modeled
+       rule the generators could not enforce, a derived attribute, or the
+       initial value of a derived enumeration attribute; they are marked when
+       the checklist is seeded, so a run resumed from a checkpoint written
+       before that mark existed does not report them) on its word alone. The run report lists it as not confirmed; it is not a
+       blocker, not counted in the blocker number, not sent to the repair
+       loop, and on a fix run it is not promoted to the reported failure. A
+       missing behavior behind it is still caught by the build, startup and
+       create checks and by the requirements judge when the request states
+       it),
+       ``form field type:``, ``agent left out:`` (the project has an
        agent diagram, and the web app generator's output has no ``agents``
        folder because it was generated when no screen held an agent
        component; read from the files, so a modify run that changes the GUI
@@ -862,8 +881,10 @@ is not among the files the verdict rests on, so a style edit does not re-judge i
 
 Two kinds of requirement cannot be shown by citing a line of code, and the
 extraction labels them: ``absence``, something the app must not have at all ("no
-data export", never a refusal the app enforces), and ``preservation``, existing
-behaviour a change must keep working as it is. When the judge leaves one
+data export", or data invented beyond a given source such as an imported file;
+never a refusal the app enforces), and ``preservation``, existing behaviour a
+change must keep working as it is. Neither needs an enforcing line: a citation
+of where the data comes from can verify an absence. When the judge leaves one
 unverified, it is settled without a citation, never as met, and an unverified
 absence is not sent to the focused round:
 
@@ -883,11 +904,20 @@ missing or partial for either kind stays a blocker.
 
 The recipe records, for each implemented requirement, ``verification`` and a
 ``verification_note`` giving its API half and its screens half apart. The API half
-is exercised when a ``test_api`` call that passed on the final tree hit the route
-a cited line is on (its decorator or handler), or, when no cited line is on a route,
-any route of a cited backend file (under the literal ``prefix=`` of its router there;
-a router whose prefix is not a literal verifies nothing); the note names that call
-("API: a passing workflow called GET /x/, the cited route"). No check renders a
+is exercised only when a ``test_api`` call that passed on the final tree hit a route
+whose request runs the cited code: its decorator, its handler (also one registered
+with ``add_api_route``), or a function of the same file the handler calls or names in
+``Depends(...)`` (not a parameter, variable or nested function of the handler with
+that name), under the literal ``prefix=`` of its router (a router whose prefix
+is not a literal verifies nothing). An abridged citation ("a ... b") counts a route
+only when the route runs every part of it; when a part is too short to locate, the
+parts left may be code several routes share, so it counts no route ("API: not run
+(a part of the abridged citation is too short to tell its route)"). The note names that call ("API: a passing
+workflow called GET /x/, the cited route"). A call to another route of the same file
+proves nothing; a citation no route runs (a model, an import) is found in the code
+whatever ran: "API: not run (no cited line is in a route handler)", and cited backend
+code whose routes the check cannot read (not Python) says "API: not run (the check
+cannot read the routes of the cited code)". No check renders a
 screen, so a cited frontend file is never exercised, and the note says why: "screens:
 not run (the frontend builds)", "(the frontend build failed)", "(the frontend build
 check did not run)" or "(no frontend)". ``verified`` means every cited half was

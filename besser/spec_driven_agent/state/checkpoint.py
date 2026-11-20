@@ -103,7 +103,7 @@ class Checkpoint:
     # What the workspace held when the run started (``None``: an older
     # checkpoint). The run never deletes these as files the app wrote.
     files_at_start: list[str] | None = None
-    # What ``task_list`` evidence is checked against (``ToolExecutor.evidence_snapshot``).
+    # The paths the model has seen (``ToolExecutor.evidence_snapshot``).
     write_evidence: dict = field(default_factory=dict)
     # The requirements ledger (``None``: not extracted). Phase 2 and Phase 3
     # hold the run to one list; a resume must not extract a second one.

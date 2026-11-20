@@ -27,6 +27,7 @@ where shell tools are enabled - 21 of the 24 are that shape.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -34,6 +35,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.validation.frontend_resolution import (
     collect_frontend_resolution_issues,
 )
+from besser.spec_driven_agent.validation.issues import _classify_issue
 
 
 class _Client:
@@ -314,9 +316,9 @@ def test_the_deterministic_repair_runs_before_the_detector(tmp_path):
     assert not [b for b in blockers if "React is not defined" in b], blockers
 
 
-# Written by the model in run p5-expense-tracker rep0 (one of 8 of 24 eval runs
-# with "latest" versions). npm 10.8.2, the version in the worker and grader
-# images, then failed: "Cannot read properties of null (reading 'edgesOut')".
+# A dependency with no version range installs whatever npm publishes that day:
+# the build is not reproducible, but it installs and builds. It is reported,
+# never a blocker, and the finding names no version of its own.
 _LATEST_MANIFEST = {
     "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
     "dependencies": {"react": "latest", "react-dom": "latest",
@@ -325,29 +327,40 @@ _LATEST_MANIFEST = {
 }
 
 
-def test_a_dependency_without_a_version_range_is_a_blocker_naming_it(tmp_path):
+def test_dependencies_without_a_version_range_are_one_warning_naming_them(tmp_path):
     workspace = _frontend(tmp_path, manifest=_LATEST_MANIFEST, files={})
 
-    issues = collect_frontend_resolution_issues(workspace)
+    [issue] = collect_frontend_resolution_issues(workspace)
 
-    assert len(issues) == 4, issues
-    assert all(i.startswith("frontend contract: frontend/package.json dependencies ")
-               for i in issues)
-    assert {"'react'", "'react-dom'", "'react-router-dom'", "'vite'"} == {
-        i.split()[4] for i in issues}
+    assert _classify_issue(issue).severity == "warning"
+    assert issue.startswith("frontend dependency: frontend/package.json ")
+    for name in ("'react'", "'react-dom'", "'react-router-dom'", "'vite'"):
+        assert name in issue
+    assert "'@vitejs/plugin-react'" not in issue
+    assert not re.search(r"\d+\.\d+", issue), "the finding must not suggest a version"
 
 
-@pytest.mark.parametrize("version", ["latest", "*", "x", "X", "", " latest "])
+def test_the_fix_points_at_the_lockfile_when_there_is_one(tmp_path):
+    workspace = _frontend(tmp_path, manifest=_LATEST_MANIFEST,
+                          files={"package-lock.json": "{}"})
+
+    [issue] = collect_frontend_resolution_issues(workspace)
+
+    assert "package-lock.json" in issue
+
+
+@pytest.mark.parametrize("version", ["latest", "*", "x", "X", "", " latest ", "next", "beta"])
 def test_every_unpinned_spelling_is_flagged(tmp_path, version):
     workspace = _frontend(tmp_path, manifest={"devDependencies": {"vite": version}}, files={})
 
     [issue] = collect_frontend_resolution_issues(workspace)
 
-    assert issue.startswith("frontend contract: frontend/package.json devDependencies 'vite'")
+    assert issue.startswith("frontend dependency: frontend/package.json ")
+    assert "'vite'" in issue
 
 
-@pytest.mark.parametrize("version", ["^5.4.8", "~5.4.0", "5.x", ">=5 <6", "5.4.8",
-                                     "npm:vite@^5.4.8", "file:../vite"])
+@pytest.mark.parametrize("version", ["^5.4.8", "~5.4.0", "5.x", ">=5 <6", "5.4.8", "v5.4.8",
+                                     "npm:vite@^5.4.8", "file:../vite", "user/vite#main"])
 def test_a_real_range_stays_quiet(tmp_path, version):
     workspace = _frontend(
         tmp_path,
@@ -358,10 +371,12 @@ def test_a_real_range_stays_quiet(tmp_path, version):
     assert collect_frontend_resolution_issues(workspace) == []
 
 
-def test_phase_3_reports_a_latest_version_as_a_blocker(tmp_path):
+def test_phase_3_reports_a_latest_version_without_blocking_and_keeps_real_defects(tmp_path):
     from besser.BUML.metamodel.structural import Class, DomainModel
 
-    workspace = _frontend(tmp_path, manifest=_LATEST_MANIFEST, files={})
+    workspace = _frontend(tmp_path, manifest=_LATEST_MANIFEST, files={
+        "src/main.jsx": "import React from 'react';\nimport './index.css';\n",
+    })
     orch = LLMOrchestrator(
         llm_client=_Client(),
         domain_model=DomainModel(name="Shop", types={Class(name="Order")}),
@@ -370,7 +385,10 @@ def test_phase_3_reports_a_latest_version_as_a_blocker(tmp_path):
         enable_toolchain_validation=False,
     )
 
-    blockers = [i.message for i in orch._collect_validation_issues()
-                if i.severity == "blocker"]
+    issues = orch._collect_validation_issues()
+    blockers = [i.message for i in issues if i.severity == "blocker"]
+    warnings = [i.message for i in issues if i.severity == "warning"]
 
-    assert [b for b in blockers if "package.json dependencies 'vite'" in b], blockers
+    assert not [b for b in blockers if "'vite'" in b], blockers
+    assert [w for w in warnings if w.startswith("frontend dependency:") and "'vite'" in w], warnings
+    assert [b for b in blockers if b.startswith("frontend contract:") and "./index.css" in b], blockers

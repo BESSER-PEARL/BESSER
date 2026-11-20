@@ -210,14 +210,14 @@ def test_a_repair_attempt_is_not_forced_to_edit_when_no_blocker_names_a_file(tmp
 # (d) Only unverified findings start no repair attempt
 # ----------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Q1: with no observed failure and one open checklist item ('task unverified:', a "
-    "blocker), Phase 3 starts a repair attempt and spends two model turns on it."))
 def test_only_unverified_findings_start_no_repair_attempt(tmp_path, monkeypatch):
+    """No observed failure and one open checklist item: it is reported as a warning, not repaired."""
     _no_app_boot(monkeypatch)
     agent, entry = _run(tmp_path, shelf_script(close_last_task=False), 4,
                         phase3_calls=[("read_file", {"path": "backend/routers/shelf_stats.py"})])
-    assert entry["blockers"] and all(b.startswith("task unverified:") for b in entry["blockers"])
+    assert entry["open"] == [TASKS[1]] and entry["blockers"] == []
+    assert [i.severity for i in agent.orchestrator._validation_issues
+            if i.message.startswith("task unverified:")] == ["warning"]
     assert not agent.sent["phase3"]
 
 

@@ -41,6 +41,7 @@ carry over.
 
 import atexit
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -55,9 +56,11 @@ import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 
+from besser.spec_driven_agent.execution.deadline import OUT_OF_TIME, current_deadline
 from besser.spec_driven_agent.execution.process import (
     FLOOD_NOTE,
     MAX_CAPTURE_BYTES,
+    CommandStopped,
     _safe_subprocess_env,
     decode_output,
     run_bounded,
@@ -575,6 +578,8 @@ class ShellResult:
     # False when background processes did not survive this command.
     persistent: bool = False
     notes: list[str] = field(default_factory=list)
+    # Why the run's cancel or cap stopped the command (or kept it from starting); "" otherwise.
+    stopped: str = ""
 
 
 class ShellSession:
@@ -640,7 +645,16 @@ class ShellSession:
         """Run one command; ``working_dir`` runs it elsewhere without moving the shell.
 
         Raises :class:`SandboxUnavailable` when the command must not run.
+        Inside a run its timeout ends at the run's cap, and a cancel stops it.
         """
+        deadline = current_deadline()
+        cut_by_run = False
+        if deadline is not None:
+            reason = deadline.command_stop_reason()
+            if reason:
+                return ShellResult(None, "", "", stopped=reason)
+            own_timeout, timeout = timeout, deadline.command_timeout(timeout)
+            cut_by_run = timeout < own_timeout
         with self._run_lock:
             notes: list[str] = []
             start = working_dir or self.cwd
@@ -653,6 +667,8 @@ class ShellSession:
                 result, cwd, env = self._run_sandboxed(plan, command, start, timeout, notes)
             else:
                 result, cwd, env = self._run_unconfined(command, start, timeout)
+            if result.timed_out and not result.stopped and cut_by_run:
+                result.stopped = OUT_OF_TIME
             if adopt_state:
                 self._adopt(cwd, env, follow_cwd=working_dir is None, notes=result.notes)
             self._last_used = time.monotonic()
@@ -701,8 +717,11 @@ class ShellSession:
                         "This command ran in a one-off sandbox (the server's shell sessions "
                         "are all in use), so processes it left running were stopped when it "
                         "returned.")
+            deadline = current_deadline()
             try:
-                reply = proc.run(command, cwd, self.env, timeout)
+                # A cancel ends the whole sandbox: every process in it, at once.
+                with deadline.on_cancel(proc.kill) if deadline is not None else contextlib.nullcontext():
+                    reply = proc.run(command, cwd, self.env, timeout)
             except _SessionDied as exc:
                 logger.warning("shell session for %s ended mid-command: %s", self.workspace, exc)
                 with self._state_lock:
@@ -710,6 +729,8 @@ class ShellSession:
                         self._detach(None)
                 if persistent:
                     proc.close()
+                if deadline is not None and deadline.cancelled:
+                    return ShellResult(None, "", "", stopped=deadline.command_stop_reason()), None, None
                 return ShellResult(None, "", (
                     "The shell session ended while this command ran (its supervisor was "
                     "stopped); every process in it was stopped. The next command starts a "
@@ -726,6 +747,8 @@ class ShellSession:
             stderr += FLOOD_NOTE
         result = ShellResult(reply.get("exit_code"), stdout, stderr,
                              timed_out=bool(reply.get("timed_out")), persistent=persistent)
+        if result.timed_out and deadline is not None:
+            result.stopped = deadline.command_stop_reason()
         if reply.get("note"):
             result.notes.append(str(reply["note"]))
         return result, reply.get("cwd"), reply.get("env")
@@ -738,8 +761,9 @@ class ShellSession:
             try:
                 completed = run_bounded(args, timeout=timeout, cwd=cwd, env=env, shell=shell)
             except subprocess.TimeoutExpired as exc:
-                return ShellResult(None, exc.output or "", exc.stderr or "", timed_out=True), \
-                    None, None
+                stopped = exc.reason if isinstance(exc, CommandStopped) else ""
+                return ShellResult(None, exc.output or "", exc.stderr or "", timed_out=True,
+                                   stopped=stopped), None, None
             new_cwd, new_env, code = reader()
             returncode = completed.returncode if code is None else code
             return ShellResult(returncode, completed.stdout or "", completed.stderr or ""), \

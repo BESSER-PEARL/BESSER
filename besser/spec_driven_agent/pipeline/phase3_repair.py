@@ -28,7 +28,7 @@ from collections import Counter
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
-from besser.spec_driven_agent.errors import InvalidApiKeyError
+from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError
 from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints,
@@ -134,7 +134,7 @@ def _cite_ledger_requirements(message: str, requirements: list[dict]) -> str:
 
     A conversion-recovery requirement runs to ~900 chars and was pasted three
     times per prompt: the ledger, its ``requirement:`` blocker and its
-    ``task unverified:`` blocker. The ledger keeps the one full copy.
+    ``task incomplete:`` blocker. The ledger keeps the one full copy.
     """
     for requirement in requirements:
         rid, text = f"R{requirement['id']}", requirement["text"]
@@ -243,9 +243,13 @@ class Phase3RepairMixin:
             self._phase2_stop_reason = "completed"
 
     def _phase3_stop_requested(self, *, check_turn_budget: bool = True) -> str | None:
-        """One stop gate for repair turns and the validation calls between them."""
+        """One stop gate for repair turns and the validation calls between them.
+
+        ``check_turn_budget=False`` asks for validation only, which needs time
+        before the cap for its checks; a repair turn needs time for an LLM call.
+        """
         reason = None
-        if self._start_time is not None and time.monotonic() - self._start_time > self.max_runtime_seconds:
+        if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
         elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             reason = "cost budget exhausted"
@@ -255,32 +259,31 @@ class Phase3RepairMixin:
             # No further edit turn, but final verification of the last accepted
             # tool batch may still run. Do not poison that check as cancelled.
             return "turn budget exhausted"
-        elif self._should_continue is not None and not self._should_continue():
+        elif self.deadline.cancelled:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
             if self._phase3_interrupt_detail:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
+        elif check_turn_budget and self.deadline.out_of_time():
+            # Like the turn budget: no further repair turn, but the attempt
+            # so far is still checked.
+            return "runtime budget exhausted"
         if reason:
             self._phase3_interrupted = True
         return reason
 
     def _repair_obligations_revision(self) -> str:
-        """Test corrections, checklist evidence and accepted requirement citations are
-        progress without source edits: a fix attempt that moves one is checked again.
+        """Test corrections and checklist changes are progress without source edits,
+        and so are requirement citations ``validate_app`` accepted: a fix attempt
+        that moves one is checked again.
 
-        Two things deliberately do NOT move it, because neither discharges
-        anything:
-
-        * ``attempts`` in the task snapshot - a REFUSED ``task_list(done=...)``
-          increments it, so failing to close an item would read as closing one;
-        * the scenario KEY - the model may pass its own ``scenario_id``, so
-          re-registering identical requests under a new name would mint a new
-          entry. Only distinct scenario CONTENT counts, so a rename is not a
-          new obligation.
+        The scenario KEY deliberately does NOT move it: the model may pass its
+        own ``scenario_id``, so re-registering identical requests under a new
+        name would mint a new entry. Only distinct scenario CONTENT counts, so
+        a rename is not a new obligation.
         """
-        tasks = [{k: v for k, v in task.items() if k != "attempts"}
-                 for task in self.executor.task_snapshot()]
+        tasks = self.executor.task_snapshot()
         scenarios = sorted(
             json.dumps(record["scenario"], sort_keys=True)
             for record in self._api_scenarios.values()
@@ -947,7 +950,7 @@ class Phase3RepairMixin:
         # A verified existing implementation or corrected test need not mutate
         # production code.
         verification_only = all(issue.message.startswith((
-            "requirement unverified:", "task unverified:", "api scenario:",
+            "requirement unverified:", "api scenario:",
             "runtime unverified:", "create unverified:", "verification setup:",
         )) for issue in blockers)
 
@@ -1152,8 +1155,11 @@ class Phase3RepairMixin:
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
                     turn, exc,
                 )
+                if isinstance(exc, DeadlineReached) and not exc.cancelled:
+                    return edits  # no time for another turn; the attempt so far is still checked
                 self._phase3_interrupted = True
-                self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
+                self._phase3_interrupt_detail = (str(exc) if isinstance(exc, DeadlineReached)
+                                                 else f"provider call failed: {type(exc).__name__}")
                 return edits
             # Repair calls can trigger the outage fallback too, as in Phase 2.
             self._notify_model_switch()
@@ -1350,7 +1356,7 @@ class Phase3RepairMixin:
             return 0, message
         if message.startswith(("data contract:", "runtime unverified:")):
             return 1, message
-        if message.startswith(("requirement", "task unverified:")):
+        if message.startswith(("requirement", "task incomplete:")):
             return 3, message
         return 2, message
 
@@ -1393,6 +1399,7 @@ class Phase3RepairMixin:
             os.replace(staging_path, snapshot_path)
             # The calls whose edits the snapshot holds; a restore discards the later ones.
             self._snapshot_calls = len(self.tool_calls_log)
+            self._snapshot_task_writes = self.executor.task_writes()
             logger.info("Snapshot created at %s", snapshot_path)
             return True
         except Exception as e:
@@ -1469,6 +1476,7 @@ class Phase3RepairMixin:
         if self._snapshot_calls is not None:
             for call in self.tool_calls_log[self._snapshot_calls:]:
                 call["rolled_back"] = True
+            self.executor.restore_task_writes(self._snapshot_task_writes)
         logger.info("Restored from snapshot")
         return True
 

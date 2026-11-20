@@ -45,6 +45,7 @@ from besser.spec_driven_agent.agent.tools import (
     INVALID_ARGUMENTS_KEY,
     get_all_tools_including_generators,
 )
+from besser.spec_driven_agent.execution.deadline import OUT_OF_TIME
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
     _safe_subprocess_env,
@@ -77,6 +78,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     strip_read_display,
 )
 from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
+from besser.spec_driven_agent.planning.gap_analyzer import task_paths
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
@@ -122,9 +124,6 @@ def _file_lock(path: str):
 ToolExecutionStatus = Literal["ok", "error", "skipped"]
 
 
-# A task whose verifier keeps refusing is retried at most this many times;
-# unbounded retries can livelock a run until the turn cap.
-_MAX_TASK_VERIFY_ATTEMPTS = 3
 # Characters of a task's text shown when a result only needs to name the item:
 # enough to recognise it; the full text is one task_list 'list' away.
 _TASK_LABEL_CHARS = 80
@@ -582,7 +581,7 @@ _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
 _MIN_REWRITE_SHARE = 0.6
 # A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
 _COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
-# Fewer lost lines beside a new "remaining ... unchanged" comment is an edit, not left-out code.
+# Fewer lost lines beside a new "remaining unchanged" comment is an edit, not left-out code.
 _PLACEHOLDER_MIN_REPLACED = 3
 
 
@@ -945,7 +944,6 @@ class ToolExecutor:
         # Receipts bind the exact request to the entire successful post-write
         # state. They are intentionally not inferred from resumed file contents.
         self._edit_receipts: dict[tuple[str, str, str, bool], str] = {}
-        self._successful_writes: dict[str, str] = {}
         # A range edit names a server-issued read, not model-reconstructed old
         # code. Bind the visible lines to the resolved file and its full digest.
         # These capabilities deliberately expire on resume (read again).
@@ -1100,8 +1098,7 @@ class ToolExecutor:
 
         An entry may be a plain string, or a dict ``{"text": ...,
         "verify": callable}``. A deterministic verifier must pass before the
-        item is verified. Without one, explicit current write evidence can
-        record implementation only; acceptance remains unverified.
+        item closes. Without one, the item closes on the model's word.
         """
         self._tasks = []
         for i, t in enumerate(tasks or []):
@@ -1110,18 +1107,23 @@ class ToolExecutor:
                 verify = t.get("verify")
                 kind = t.get("kind")
                 planning_notes = [note for note in (t.get("planning_notes") or []) if isinstance(note, str)]
+                action = t.get("_action_contract")
             else:
                 text, verify = str(t).strip(), None
                 kind = None
                 planning_notes = []
+                action = None
             if text:
                 self._tasks.append(
                     {"id": len(self._tasks) + 1, "text": text,
                      "done": False, "verify": verify,
                      "verification": "unverified",
+                     "files": task_paths(text),
                      **({"kind": kind} if isinstance(kind, str) and kind else {}),
                      **({"planning_notes": planning_notes} if planning_notes else {}),
-                     "attempts": 0, "blocked": False}
+                     **({"_action_contract": list(action)} if action else {}),
+                     **({"unchecked": True} if isinstance(t, dict) and t.get("unchecked") is True else {}),
+                     "blocked": False}
                 )
 
     def autoclose_verified_tasks(self) -> list[dict]:
@@ -1131,10 +1133,7 @@ class ToolExecutor:
         the harness can see the endpoint is implemented, and checklist
         bookkeeping otherwise costs more turns than the edits. Checking here
         also means a model that never learns the checklist protocol still gets
-        credit for what it built.
-
-        Only verifier-backed items qualify. An evidence-only task still needs
-        the model to cite its work, because nothing here can judge it.
+        credit for what it built. Any other item closes only on the model's word.
         """
         closed = []
         for task in self._tasks:
@@ -1157,14 +1156,35 @@ class ToolExecutor:
             closed.append({"id": task["id"], "label": _task_label(task["text"])})
         return closed
 
+    def _note_task_write(self, rel_path: str) -> None:
+        """Record an edit that changed ``rel_path`` on every open item whose text
+        names it: reported with the item, never a reason to close it."""
+        with self._autoclose_lock:
+            for task in self._tasks:
+                if (not task["done"] and rel_path in (task.get("files") or ())
+                        and rel_path not in task.setdefault("written", [])):
+                    task["written"].append(rel_path)
+
+    def task_writes(self) -> dict[int, list[str]]:
+        """Each item's recorded edits, for :meth:`restore_task_writes` after a rollback."""
+        return {t["id"]: list(t["written"]) for t in self._tasks if "written" in t}
+
+    def restore_task_writes(self, marks: dict[int, list[str]]) -> None:
+        """Forget the edits a rollback discarded: keep only those recorded at ``marks``."""
+        with self._autoclose_lock:
+            for task in self._tasks:
+                if task["id"] in marks:
+                    task["written"] = list(marks[task["id"]])
+                else:
+                    task.pop("written", None)
+
     def reopen_unverifiable_tasks(self) -> list[int]:
         """Re-run verifiers on completed items and reopen those that now fail.
 
         Restoring the pre-Phase-3 tree undoes the code but not the checklist,
         so work Phase 3 implemented would otherwise stay done/verified over
         restored stubs. Only items with a deterministic verifier can be
-        re-judged; evidence-only completions are left alone rather than
-        guessed at.
+        re-judged; other completions are left alone rather than guessed at.
         """
         reopened = []
         for task in self._tasks:
@@ -1190,10 +1210,9 @@ class ToolExecutor:
         """
         return [
             {"id": t["id"], "text": t["text"], "done": bool(t["done"]),
-             "attempts": int(t.get("attempts") or 0),
              "blocked": bool(t.get("blocked")),
              "verification": t.get("verification", "unverified"),
-             **{key: t[key] for key in ("blocked_reason", "dropped", "implementation_evidence", "planning_notes", "kind") if key in t}}
+             **{key: t[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract", "unchecked") if key in t}}
             for t in self._tasks
         ]
 
@@ -1226,115 +1245,38 @@ class ToolExecutor:
                 "text": text,
                 "done": item.get("done") is True,
                 "verify": verifiers.get(text),
-                "attempts": int(item.get("attempts") or 0),
                 "blocked": item.get("blocked") is True,
                 "verification": item.get("verification", "unverified"),
-                **{key: item[key] for key in ("blocked_reason", "dropped", "implementation_evidence", "planning_notes", "kind") if key in item},
+                "files": task_paths(text),
+                **{key: item[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract", "unchecked") if key in item},
             })
         self._tasks = restored
 
     def evidence_snapshot(self) -> dict:
-        """The writes and reads ``task_list`` evidence is checked against, for a checkpoint."""
-        return {
-            "successful_writes": {
-                os.path.relpath(path, self.workspace).replace("\\", "/"): digest
-                for path, digest in self._successful_writes.items()},
-            "known_paths": sorted(self._known_paths),
-        }
+        """The paths the model has seen this run, for a checkpoint."""
+        return {"known_paths": sorted(self._known_paths)}
 
     def restore_evidence(self, snapshot: dict) -> None:
-        """Restore :meth:`evidence_snapshot`: an edit made before a resume still counts.
-
-        A write is matched by the digest of the file it left, so a file changed
-        since then is still refused.
-        """
-        writes = snapshot.get("successful_writes")
-        if isinstance(writes, dict):
-            self._successful_writes.update({
-                os.path.normcase(os.path.join(self.workspace, rel)): digest
-                for rel, digest in writes.items() if isinstance(rel, str) and isinstance(digest, str)})
+        """Restore :meth:`evidence_snapshot`."""
         self._known_paths.update(p for p in snapshot.get("known_paths") or [] if isinstance(p, str))
 
     def open_tasks(self) -> list[dict]:
         """Checklist items still to do.
 
-        A BLOCKED item is excluded: its verifier has refused
-        ``_MAX_TASK_VERIFY_ATTEMPTS`` times, so leaving it open would keep the
-        run going until the turn cap for work that cannot be signed off. It is
-        reported through :meth:`blocked_tasks` instead.
+        A BLOCKED item is excluded: the model recorded it as work it cannot
+        finish, so it no longer holds the end-turn gate. It is reported through
+        :meth:`blocked_tasks` instead.
         """
         return [t for t in self._tasks if not t["done"] and not t.get("blocked")]
 
     def blocked_tasks(self) -> list[dict]:
-        """Unresolved items, explicitly blocked or refused too many times."""
+        """Unresolved items the model recorded as blocked."""
         return [t for t in self._tasks if t.get("blocked")]
 
     def unverified_tasks(self) -> list[dict]:
         """Implemented checklist items whose acceptance has not been checked."""
         return [t for t in self._tasks if t["done"] and not t.get("dropped")
                 and t.get("verification", "unverified") != "verified"]
-
-    def _task_implementation_evidence(self, task_id: int, args: dict) -> tuple[list[dict], str | None]:
-        """Validate modification evidence, never treat it as acceptance proof."""
-        evidence = args.get("evidence")
-        if not isinstance(evidence, list) or not evidence or len(evidence) > 20:
-            return [], "no verifier is attached; provide evidence=[{id, path, quote}] from actual successful writes, or mark blocked with a reason"
-        accepted = []
-        for item in evidence:
-            if not isinstance(item, dict) or _task_id(item.get("id")) != task_id:
-                continue
-            rel, quote = item.get("path"), item.get("quote")
-            if not isinstance(rel, str) or not isinstance(quote, str) or not quote.strip() or len(quote) > 4000:
-                return [], "each evidence item requires a path and a non-empty exact quote of at most 4000 characters"
-            try:
-                path = self._safe_path(rel)
-                with open_plain(path, "r", root=self.workspace, encoding="utf-8") as source:
-                    content = source.read()
-            except (ValueError, OSError, UnicodeError):
-                return [], f"evidence path is not a readable workspace file: {rel}"
-            # read_file numbers every line, so a quote copied straight out of
-            # it never matches; strip that prefix as modify_file's ladder does,
-            # or implemented tasks end up BLOCKED.
-            if quote not in content:
-                unnumbered = _strip_line_numbers(quote.splitlines())
-                if unnumbered is not None and "\n".join(unnumbered) in content:
-                    quote = "\n".join(unnumbered)
-            digest = self._content_digest(content)
-            origin = "written"
-            if self._successful_writes.get(os.path.normcase(path)) != digest:
-                if args.get("existing") is not True:
-                    return [], (f"no successful write matches the current contents of {rel}; "
-                                "if this implementation already exists, read it and submit "
-                                "existing=true with exact executable evidence (acceptance remains unverified)")
-                if os.path.relpath(path, self.workspace).replace("\\", "/") not in self._known_paths:
-                    return [], f"read {rel} before citing an existing implementation"
-                from besser.spec_driven_agent.planning.requirements_ledger import verify_evidence
-                task = next((t for t in self._tasks if t["id"] == task_id), {})
-                evidence_kind = task.get("kind")
-                if not isinstance(evidence_kind, str) or evidence_kind not in (
-                    "validation", "uniqueness", "rule", "computed", "transition", "action", "ui",
-                ):
-                    evidence_kind = "implementation"
-                checked = verify_evidence([{
-                    "id": task_id, "text": task.get("text", ""),
-                    # An untyped planning task is not necessarily an action:
-                    # unique columns, defaults and declarative UI bindings can
-                    # already implement it. Evidence is not acceptance proof.
-                    "kind": evidence_kind,
-                    "status": "implemented", "evidence": f"{rel}: {quote}",
-                }], self.workspace)
-                if not checked or checked[0]["status"] != "implemented":
-                    detail = checked[0].get("note", "") if checked else "no valid citation"
-                    return [], ("existing implementation evidence could not be verified: "
-                                f"{detail}; cite the actual implementation; acceptance remains unverified")
-                origin = "existing"
-            if quote not in content:
-                return [], f"evidence quote is not present in {rel}"
-            accepted.append({"path": os.path.relpath(path, self.workspace).replace("\\", "/"),
-                             "quote": quote, "sha256": digest, "origin": origin})
-        if not accepted:
-            return [], f"no implementation evidence supplied for task {task_id}"
-        return accepted, None
 
     @staticmethod
     def _requested_task_ids(args: dict) -> tuple[list[int], list]:
@@ -1410,26 +1352,25 @@ class ToolExecutor:
         return {"error": f"Unknown action '{action}'. Use list | done | add | drop | blocked | mixed."}
 
     def _do_done(self, args: dict) -> dict:
-        """action='done' — also the `done_ids`+`evidence` verb inside a mixed call."""
+        """action='done' — also the `done_ids` verb inside a mixed call.
+
+        An item with a deterministic verifier closes only when it passes; any
+        other item closes on the model's word. What nothing confirmed is
+        reported as such at validation, never as a defect.
+        """
         if args.get("ids") is None and args.get("id") is None:
-            # The reply names closed items `done_ids`, and evidence names its item.
-            fallback = args.get("done_ids")
-            if fallback is None and isinstance(args.get("evidence"), list):
-                fallback = [e.get("id") for e in args["evidence"] if isinstance(e, dict) and "id" in e] or None
-            args = {**args, "ids": fallback}
+            # The reply names closed items `done_ids`.
+            args = {**args, "ids": args.get("done_ids")}
         ids, bad = self._requested_task_ids(args)
         if not ids:
             return {"error": (
                 "action='done' requires `id` (an integer) or `ids` (a list of integers; "
-                "`done_ids` works too), or evidence entries carrying their item's id. "
-                "Use action='list' to see ids."
+                "`done_ids` works too). Use action='list' to see ids."
                 + (f" Not integers: {bad}." if bad else "")
             )}
 
         done: list[int] = []
         refused: list[dict] = []
-        blocked: list[dict] = []
-        already_blocked: list[dict] = []
         unknown: list[int] = []
         by_id = {t["id"]: t for t in self._tasks}
 
@@ -1438,48 +1379,21 @@ class ToolExecutor:
             if t is None:
                 unknown.append(task_id)
                 continue
-            was_blocked = bool(t.get("blocked"))
             if t["done"]:
                 done.append(task_id)
                 continue
             verify = t.get("verify")
-            reason = None
             if verify is not None:
                 try:
                     verified = bool(verify())
+                    reason = "its check still fails"
                 except Exception as exc:
                     verified = False
                     reason = f"verification could not run ({type(exc).__name__}): {str(exc)[:300]}"
-                if verified:
-                    t["verification"] = "verified"
-                elif reason is None:
-                    reason = "its check still fails"
-            else:
-                evidence, reason = self._task_implementation_evidence(task_id, args)
-                if reason is None:
-                    t["implementation_evidence"] = evidence
-                    t["verification"] = "unverified"
-            if reason is not None:
-                if was_blocked:
-                    # A later repair may make the check pass. Re-evaluate
-                    # it, but do not reopen another retry budget on failure.
-                    already_blocked.append({"id": task_id, "reason": t.get("blocked_reason", reason)})
+                if not verified:
+                    refused.append({"id": task_id, "reason": reason})
                     continue
-                # Bound retries, including broken/missing verifiers.
-                t["attempts"] = int(t.get("attempts") or 0) + 1
-                if t["attempts"] >= _MAX_TASK_VERIFY_ATTEMPTS:
-                    # Preserve the unresolved requirement without livelock.
-                    t["blocked"] = True
-                    t["blocked_reason"] = reason
-                    blocked.append({"id": task_id, "reason": reason})
-                else:
-                    refused.append({
-                        "id": task_id,
-                        "attempts": t["attempts"],
-                        "remaining_attempts": _MAX_TASK_VERIFY_ATTEMPTS - t["attempts"],
-                        "reason": reason,
-                    })
-                continue
+                t["verification"] = "verified"
             t["done"] = True
             t["blocked"] = False
             t.pop("blocked_reason", None)
@@ -1497,24 +1411,11 @@ class ToolExecutor:
         }
         if len(ids) == 1:
             result["id"] = ids[0]
-        if result["unverified_ids"]:
-            result["verification_note"] = "Write evidence records implementation only; requirement acceptance is still unverified."
-        if already_blocked:
-            result["already_blocked"] = already_blocked
-            if not done and not refused and not blocked and not unknown:
-                result["status"] = "blocked"
         if refused:
             result["refused"] = refused
             result["advice"] = (
-                "Do the work for the refused items, then mark them done. "
-                "You may pass several ids at once: ids=[1,2,3]."
-            )
-        if blocked:
-            result["blocked"] = blocked
-            result["advice"] = (
-                f"These items failed their check {_MAX_TASK_VERIFY_ATTEMPTS} "
-                "times and are now recorded as BLOCKED. Do NOT call task_list "
-                "for them again - move on to the remaining work."
+                "The harness re-runs these checks after every edit and closes an item "
+                "itself once its check passes: make the change rather than calling done again."
             )
         if unknown:
             result["unknown_ids"] = unknown
@@ -1524,21 +1425,8 @@ class ToolExecutor:
             # payload carries an "error" key, and the loop guards, tracing
             # and "don't re-attempt" memory all depend on seeing a call that
             # accepted nothing as one. `advice` already says what to do next.
-            parts = []
-            for item in refused:
-                parts.append(
-                    f"Task {item['id']} is NOT done - {item['reason']} "
-                    f"(attempt {item['attempts']} of {_MAX_TASK_VERIFY_ATTEMPTS})."
-                )
-            for item in blocked:
-                parts.append(
-                    f"Task {item['id']} is NOT done and is now BLOCKED "
-                    f"after {_MAX_TASK_VERIFY_ATTEMPTS} failed checks."
-                )
-            for task_id in unknown:
-                parts.append(
-                    f"No task with id {task_id}. Use action='list' to see ids."
-                )
+            parts = [f"Task {item['id']} is NOT done - {item['reason']}." for item in refused]
+            parts += [f"No task with id {task_id}. Use action='list' to see ids." for task_id in unknown]
             if parts:
                 result["error"] = " ".join(parts)
         return result
@@ -1617,7 +1505,7 @@ class ToolExecutor:
                 ids.append(existing["id"])
                 continue
             new_id = max((t["id"] for t in self._tasks), default=0) + 1
-            self._tasks.append({"id": new_id, "text": text, "done": False})
+            self._tasks.append({"id": new_id, "text": text, "done": False, "files": task_paths(text)})
             ids.append(new_id)
             appended.add(new_id)
         if batched:
@@ -1639,8 +1527,8 @@ class ToolExecutor:
         Each verb here
         reuses the EXACT single-action handler that ``action='done'`` /
         ``'add'`` / ``'drop'`` / ``'blocked'`` calls, so every gate
-        (evidence, deterministic verifiers, the block-after-N-attempts guard,
-        drop's reason requirement) still applies per item, unchanged.
+        (deterministic verifiers, drop's and blocked's reason requirement)
+        still applies per item, unchanged.
 
         The response nests each verb's own result under ``results`` so a
         model can tell which parts succeeded and which were refused: a mixed
@@ -1671,9 +1559,7 @@ class ToolExecutor:
                 succeeded = True
 
         if done_ids is not None:
-            _record("done", self._do_done({
-                "ids": done_ids, "evidence": args.get("evidence"), "existing": args.get("existing"),
-            }))
+            _record("done", self._do_done({"ids": done_ids}))
 
         if add_texts is not None:
             _record("add", self._do_add({"texts": add_texts}))
@@ -2966,7 +2852,7 @@ class ToolExecutor:
         after, auto_imports = self._repair_imports(args["path"], after)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
             target.write(after)
-        self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
+        self._note_task_write(args["path"])
         result = {"status": "modified", "path": args["path"], "replacements": 1,
                   "matched_by": "read_bound_range", "snippet": _changed_region(before, after)}
         if stripped_numbering:
@@ -3150,7 +3036,7 @@ class ToolExecutor:
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
         if before != args["content"]:
-            self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
+            self._note_task_write(args["path"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
         if unnumbered is not None:
             result["note"] = _GUTTER_STRIPPED_NOTE
@@ -3601,7 +3487,7 @@ class ToolExecutor:
             f.write(new_content)
         digest = self._content_digest(new_content)
         self._edit_receipts[receipt_key] = digest
-        self._successful_writes[os.path.normcase(path)] = digest
+        self._note_task_write(args["path"])
         self._failed_modifies.pop(rel_path, None)
         self._last_missed_old_text.pop(rel_path, None)
         self._clear_rejections(rel_path)
@@ -3839,6 +3725,9 @@ class ToolExecutor:
         working_dir = args.get("working_dir")
         start_dir = self._safe_cwd(working_dir) if working_dir else None
         timeout = self._command_timeout(args.get("timeout"))
+        left = self.time_left() if self.time_left else None
+        # The run's time left, not the command's own limit, sets its timeout.
+        cut_by_run = left is not None and left <= timeout
 
         # Refuse obviously-destructive or exfil commands before we hand
         # them to the shell. Returned as a normal tool error so the LLM
@@ -3852,6 +3741,9 @@ class ToolExecutor:
                 "exit_code": None,
                 "success": False,
             }
+        if left is not None and left < 1:
+            return {"error": f"Command stopped: {OUT_OF_TIME}. It was not run.",
+                    "stopped": OUT_OF_TIME, "command": command}
 
         logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
         # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
@@ -3903,6 +3795,17 @@ class ToolExecutor:
         if result.notes:
             extra["notes"] = result.notes
 
+        stopped = result.stopped or (OUT_OF_TIME if result.timed_out and cut_by_run else "")
+        if stopped:
+            return {
+                "error": f"Command stopped: {stopped}. It was not run, or was killed "
+                         "with everything it started.",
+                "stopped": stopped,
+                "command": command,
+                "stdout": self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2),
+                "stderr": self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True),
+                **extra,
+            }
         if result.timed_out:
             # What it printed before the kill is often the reason it hung.
             survivors = (" The shell session and processes earlier commands left "

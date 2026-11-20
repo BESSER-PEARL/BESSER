@@ -16,6 +16,8 @@ import path from "node:path";
 const MARKER = "BESSER_SCREEN_REPORT:";
 const QUIET_MS = 500;
 const RECHECK_MS = 250;
+// How long a page that is still empty once idle is looked at again: a late first render.
+const LATE_RENDER_MS = 3000;
 const MAX_TEXT = 400;
 const MAX_REQUESTS = 40;
 const MAX_CALLS = 60;
@@ -32,7 +34,7 @@ const MIME = {
 };
 // What the page shows: text or a visible control anywhere in the body (a portal renders
 // outside the app's root), React Router's default error page, the links, and which of the
-// configured texts appear.
+// configured texts appear in the page text or in a form control's value or options.
 const RENDERED_JS = (markers) => `(() => {
   const body = document.body;
   if (!body) return { rendered: false, links: [], found: [] };
@@ -40,7 +42,10 @@ const RENDERED_JS = (markers) => `(() => {
   const media = body.querySelector("img,svg,canvas,video,input,button,select,textarea,iframe,table");
   const lines = text.split("\\n").map((line) => line.trim()).filter(Boolean);
   const at = lines.indexOf("Unexpected Application Error!");
-  const lower = text.toLowerCase();
+  const values = Array.from(document.querySelectorAll("input,textarea,select"), (field) =>
+    field.tagName === "SELECT" ? Array.from(field.options, (option) => option.text + " " + option.value).join(" ")
+      : field.value || "");
+  const lower = (text + " " + values.join(" ")).toLowerCase();
   return {
     rendered: text.length > 0 || media !== null,
     error_page: at >= 0 ? (lines[at + 1] || "") : null,
@@ -441,8 +446,9 @@ async function visit(cdp, url, ownPorts) {
     }
     await look();
     // A first render can come later than the network goes quiet (a timer, a lazy chunk):
-    // look again while the page is still empty, up to the screen's limit.
-    while (!screen.rendered && Date.now() + RECHECK_MS < end) {
+    // look again while the page is still empty, for a few seconds.
+    const lateEnd = Math.min(end, Date.now() + LATE_RENDER_MS);
+    while (!screen.rendered && Date.now() + RECHECK_MS < lateEnd) {
       await sleep(RECHECK_MS);
       await look();
     }

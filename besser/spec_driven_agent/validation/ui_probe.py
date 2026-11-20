@@ -18,7 +18,9 @@ when a page links to them.
 Every finding is a ``screen warning:`` naming the route and, when the router
 names it, the page's source file: an uncaught exception, a page that shows
 nothing, React Router's error page, a 4xx or 5xx, a console error, and a
-created record the API lists but no opened screen shows. A screen that throws
+created record the API lists whose text no opened screen's page text or form
+fields contain. One starting ``not checked:`` says what the check could not look
+at. A screen that throws
 and shows nothing is also returned as a blocker candidate, so the precision of
 that rule can be measured from real runs before it blocks anything.
 
@@ -49,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 WARNING_PREFIX = "screen warning:"
 NOT_RUN_PREFIX = "screens: not run"
+# Opens a warning that says what the check could not look at, not what the app does.
+COVERAGE = "not checked:"
 # The trace key of screens that threw and showed nothing (see the module docstring).
 BLOCKER_CANDIDATES = "screen_blocker_candidates"
 
@@ -376,7 +380,7 @@ def _seed(backend: str, database: str, output_dir: str, domain_model, timeout: f
         attempts = [a for a in entry.get("attempts") or [] if a.get("outcome") == "created"]
         texts = sorted({text for attempt in attempts for text in _payload_texts(attempt.get("payload"))})
         if not attempts:
-            skipped[entity] = "it could not be created through the API"
+            skipped[entity] = _refusal(entry)
         elif "{" in str(entry.get("path")):
             skipped[entity] = "its list route needs a parent record"
         elif not texts:
@@ -386,6 +390,19 @@ def _seed(backend: str, database: str, output_dir: str, domain_model, timeout: f
     return created, skipped
 
 
+def _refusal(entry: dict) -> str:
+    """Why the create probe has no record of an entity: its guessed sample, not the app, is in question."""
+    needs = sorted({str(pair[1]) for pair in entry.get("unresolved") or [] if len(pair) > 1})
+    if needs:
+        return f"the check could not first create the {' and '.join(needs)} it needs"
+    status = next((a.get("status") for a in reversed(entry.get("attempts") or []) if a.get("status")), None)
+    return "the check's sample was refused" + (f" ({status})" if status else "")
+
+
+def _article(word: str) -> str:
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
 def _route_serves(route: str, path: str) -> bool:
     from besser.spec_driven_agent.planning.mutation_inventory import route_serves
 
@@ -393,7 +410,7 @@ def _route_serves(route: str, path: str) -> bool:
 
 
 def _data_findings(label: str, created: dict, skipped: dict, listed: dict, screens: list[dict]) -> list[str]:
-    """Records the API lists that no opened screen shows."""
+    """Records the API lists whose text no opened screen's page text or form fields contain."""
     issues, unchecked = [], dict(skipped)
     for entity, record in sorted(created.items()):
         path = record["path"]
@@ -409,11 +426,11 @@ def _data_findings(label: str, created: dict, skipped: dict, listed: dict, scree
                           for call in screen.get("calls") or [])]
         where = (f"screens that load GET {path}: {_listed(loading, 5)}" if loading
                  else f"no opened screen loads GET {path}")
-        issues.append(f"{WARNING_PREFIX} {label} created a {entity} through the API (POST {path}) and the API "
-                      f"lists it, but none of its text ({_listed(record['texts'], 2)}) appears on any of the "
-                      f"{len(screens)} opened screen(s); {where}")
+        issues.append(f"{WARNING_PREFIX} {label} created {_article(entity)} {entity} through the API (POST {path}) "
+                      f"and the API lists it, but its text ({_listed(record['texts'], 2)}) was not found in the "
+                      f"page text or form fields of any of the {len(screens)} opened screen(s); {where}")
     if unchecked:
-        issues.append(f"{WARNING_PREFIX} {label} records not checked on the screens: "
+        issues.append(f"{WARNING_PREFIX} {label} {COVERAGE} records on the screens: "
                       + "; ".join(f"{entity} ({why})" if entity != "*" else why
                                   for entity, why in sorted(unchecked.items())))
     return issues
@@ -441,12 +458,13 @@ def _listed(items: list[str], limit: int = 3) -> str:
     return ", ".join(items[:limit]) + (f" (+{len(items) - limit} more)" if len(items) > limit else "")
 
 
-def _screen_findings(screen: dict) -> tuple[list[str], str]:
-    """The warning parts of one opened screen, and why it is a blocker candidate ("" when not)."""
+def _screen_findings(screen: dict, sample_records: bool) -> tuple[list[str], list[str], str]:
+    """One opened screen's warning parts, the parts that say what was not checked, and why it is a
+    blocker candidate ("" when not). ``sample_records``: the check created records before opening it."""
     # The browser asks for /favicon.ico on its own; the app never requested it.
     requests = [r for r in screen.get("requests") or [] if not _shown_url(r.get("url")).startswith("/favicon.ico")]
     exceptions = screen.get("exceptions") or []
-    parts = []
+    parts, coverage = [], []
     seconds = round((screen.get("ms") or 0) / 1000, 1)
     backend_down = any(r.get("own") and r.get("unreachable") for r in requests)
     script_missing = any(r.get("type") == "Script" and "status" not in r and not _is_local(r.get("url", ""))
@@ -464,7 +482,8 @@ def _screen_findings(screen: dict) -> tuple[list[str], str]:
             parts.append(f"an uncaught {first} was thrown and the page showed nothing{cause}")
             candidate = first
     elif not shown:
-        parts.append(f"the page showed nothing with an empty database and no signed-in user "
+        data = "the check's sample records" if sample_records else "an empty database"
+        parts.append(f"the page showed nothing with no signed-in user and {data} "
                      f"(no text and no control after {seconds}s){cause}" if screen.get("idle")
                      else f"nothing shown yet after {seconds}s with requests still pending")
     elif not screen.get("idle") and not screen.get("error"):
@@ -477,9 +496,11 @@ def _screen_findings(screen: dict) -> tuple[list[str], str]:
     server_errors = [f"{r.get('method')} {_shown_url(r.get('url'))} answered {r['status']}"
                      for r in requests if isinstance(r.get("status"), int) and r["status"] >= 500
                      and r.get("own") and not r.get("unreachable")]
-    if server_errors:
-        parts.append(f"{_listed(server_errors)} in the sandbox (no network there; the backend log shows a "
-                     "connection error)" if sandbox_network else f"{_listed(server_errors)} from the app's backend")
+    if server_errors and sandbox_network:
+        coverage.append(f"{_listed(server_errors)} in the sandbox (no network there; the backend log shows a "
+                        "connection error)")
+    elif server_errors:
+        parts.append(f"{_listed(server_errors)} from the app's backend")
     refused = [f"{r.get('method')} {_shown_url(r.get('url'))} answered {r['status']}"
                for r in requests if isinstance(r.get("status"), int) and 400 <= r["status"] < 500]
     if refused:
@@ -504,8 +525,8 @@ def _screen_findings(screen: dict) -> tuple[list[str], str]:
     if console:
         parts.append(f"{len(console)} console error(s), first: {_first_line(console[0])}")
     if screen.get("error"):
-        parts.append(f"the check could not finish this screen: {_first_line(screen['error'])}")
-    return parts, candidate
+        coverage.append(f"the check could not finish this screen: {_first_line(screen['error'])}")
+    return parts, coverage, candidate
 
 
 def _matching_file(route: str, routes: _Routes, rel: str) -> str:
@@ -545,6 +566,7 @@ def _run_driver(config: dict, *, workspace: str, work: str, env: dict, timeout: 
     The driver prints its report after every screen, so a run stopped midway keeps
     the screens already opened (``stopped`` says why).
     """
+    from besser.spec_driven_agent.execution.process import timeout_cause
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 
     node = shutil.which("node")
@@ -559,7 +581,7 @@ def _run_driver(config: dict, *, workspace: str, work: str, env: dict, timeout: 
     except SandboxUnavailable as exc:
         return {"not_run": str(exc)}
     except subprocess.TimeoutExpired as exc:  # also the run's own stop (a subclass)
-        why = getattr(exc, "reason", None) or f"timed out after {int(timeout)}s"
+        why = timeout_cause(exc, f"timed out after {int(timeout)}s")
         partial = _last_report(exc.output if isinstance(exc.output, str) else "")
         return {**partial, "stopped": why} if partial and partial.get("screens") else {"not_run": why}
     except OSError as exc:
@@ -637,15 +659,17 @@ def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
         issues.append(not_run(f"{label} {report['error']}"))
         return result
     if backend and backend_state.get("status") != "up":
-        issues.append(f"{WARNING_PREFIX} {label} the backend did not start for the screen check "
+        issues.append(f"{WARNING_PREFIX} {label} {COVERAGE} the backend did not start for the screen check "
                       f"({backend_state.get('status')}): {_first_line(backend_state.get('log'))}")
     for screen in screens:
         route = screen.get("route") or "/"
         file = _matching_file(route, routes, rel)
         where = f"{label} route {route}" + (f" ({file})" if file else "")
-        parts, candidate = _screen_findings(screen)
+        parts, coverage, candidate = _screen_findings(screen, bool(created))
         if parts:
             issues.append(f"{WARNING_PREFIX} {where}: " + "; ".join(parts))
+        if coverage:
+            issues.append(f"{WARNING_PREFIX} {where}: {COVERAGE} " + "; ".join(coverage))
         if candidate:
             result["candidates"].append({"project": rel, "route": route, "file": file, "exception": candidate})
         result["screens"].append({"project": rel, "route": route, "file": file,
@@ -656,7 +680,7 @@ def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
     left = report.get("unvisited") or []
     stop = report.get("stopped") or ("the time limit" if report.get("timed_out") else report.get("error"))
     if stop:
-        issues.append(f"{WARNING_PREFIX} {label} {_first_line(stop)} stopped the check after {len(screens)} "
+        issues.append(f"{WARNING_PREFIX} {label} {COVERAGE} {_first_line(stop)} stopped the check after {len(screens)} "
                       "screen(s)" + (f"; not opened: {_listed(left, 5)}" if left else ""))
     return result
 

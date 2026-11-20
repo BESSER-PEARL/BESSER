@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -82,7 +83,6 @@ def lab(tmp_path_factory):
     _copy(root)
     _declare(root, *LAB)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(ui_probe, "SCREEN_SECONDS", 5)
         return _run(root, patch)
 
 
@@ -113,11 +113,19 @@ def test_an_exception_on_a_page_that_rendered_is_worded_as_such(lab):
 
 
 @needs_browser
-def test_an_empty_screen_says_the_database_is_empty(lab):
+def test_an_empty_screen_says_what_it_was_opened_with(lab):
+    # The fixture's backend has no entity the check can create, so its database stays empty.
     for route in ("/empty", "/items", "/protected"):
         found = _by_route(lab["issues"], route)
-        assert len(found) == 1 and "the page showed nothing with an empty database and no signed-in user" in found[0]
+        assert len(found) == 1 and "the page showed nothing with no signed-in user and an empty database" in found[0]
     assert "GET /api/me answered 404" in _by_route(lab["issues"], "/profile")[0]
+
+
+@needs_browser
+def test_an_empty_page_is_looked_at_again_for_a_few_seconds_not_the_screens_limit(lab):
+    seconds = {screen["route"]: screen["seconds"] for screen in lab["screens"]}
+    assert ui_probe.SCREEN_SECONDS == 15
+    assert seconds["/empty"] < 10 and seconds["/protected"] < 10, seconds
 
 
 @needs_browser
@@ -132,8 +140,11 @@ def test_a_500_is_told_apart_from_a_backend_that_needs_a_network(lab):
         "screen warning: [frontend] route /server-error (frontend/src/pages/Report.jsx): "
         "GET /api/report answered 500 from the app's backend"]
     assert _by_route(lab["issues"], "/quote") == [
-        "screen warning: [frontend] route /quote: GET /api/quote answered 500 in the sandbox "
+        "screen warning: [frontend] route /quote: not checked: GET /api/quote answered 500 in the sandbox "
         "(no network there; the backend log shows a connection error)"]
+    assert user_sentence(_by_route(lab["issues"], "/quote")[0]) == (
+        "Part of the app's screens could not be checked in a browser; the run's detailed report says what "
+        "was not covered.")
 
 
 @needs_browser
@@ -179,8 +190,8 @@ def test_a_healthy_app_has_no_findings(tmp_path, monkeypatch):
 
 @pytest.fixture
 def shop(tmp_path):
-    """A generated backend (Order, Product, Customer, Tag) and a frontend that lists orders by
-    title, products by price only, and customers nowhere."""
+    """A generated backend (Order, Product, Customer, Item, Tag) and a frontend that shows orders
+    in input fields, customers as a select's options, products by price only, and items nowhere."""
     from besser.BUML.metamodel.structural import Class, DomainModel, FloatType, IntegerType, Property, StringType
     from besser.generators.backend import BackendGenerator
 
@@ -191,6 +202,7 @@ def shop(tmp_path):
         Class(name="Product", attributes={Property(name="label", type=StringType),
                                           Property(name="price", type=FloatType)}),
         Class(name="Customer", attributes={Property(name="fullName", type=StringType)}),
+        Class(name="Item", attributes={Property(name="name", type=StringType)}),
         Class(name="Tag", attributes={Property(name="weight", type=IntegerType)})})
     BackendGenerator(model=model, output_dir=str(root / "backend")).generate()
     (root / "frontend" / "dist" / "assets").mkdir(parents=True)
@@ -203,36 +215,49 @@ def shop(tmp_path):
         'const show = (text) => { const p = document.createElement("p"); p.textContent = text; root.append(p); };\n'
         'const list = (path, field) => fetch(path).then((r) => r.json())\n'
         '  .then((rows) => rows.forEach((row) => show(String(row[field]))));\n'
+        'const rows = (path) => fetch(path).then((r) => r.json());\n'
         'if (route === "/") show("Shop");\n'
-        'else if (route === "/orders") { show("Orders"); list("/order/", "title"); }\n'
+        'else if (route === "/orders") rows("/order/").then((all) => all.forEach((row) => {\n'
+        '  const field = document.createElement("input"); field.value = row.title; root.append(field); }));\n'
+        'else if (route === "/customers") rows("/customer/").then((all) => {\n'
+        '  const pick = document.createElement("select"); root.append(pick);\n'
+        '  all.forEach((row) => pick.append(new Option(row.fullName, row.id))); });\n'
         'else if (route === "/products") { show("Products"); list("/product/", "price"); }\n')
     (root / "frontend" / "src" / "App.jsx").write_text(
         '<Routes><Route path="/" element={<p />} /><Route path="/orders" element={<p />} />'
-        '<Route path="/products" element={<p />} /></Routes>\n')
+        '<Route path="/customers" element={<p />} /><Route path="/products" element={<p />} /></Routes>\n')
     return root
 
 
 @needs_browser
-def test_a_created_record_no_opened_screen_shows_is_reported(shop, monkeypatch):
+def test_a_created_record_whose_text_no_opened_screen_shows_is_reported(shop, monkeypatch):
     report = _run(shop, monkeypatch)
-    assert report["issues"] == [
-        "screen warning: [frontend] created a Customer through the API (POST /customer/) and the API lists it, "
-        "but none of its text (p4-customer-fullname) appears on any of the 3 opened screen(s); "
-        "no opened screen loads GET /customer/",
-        "screen warning: [frontend] created a Product through the API (POST /product/) and the API lists it, "
-        "but none of its text (p2-product-label) appears on any of the 3 opened screen(s); "
-        "screens that load GET /product/: /products",
-        "screen warning: [frontend] records not checked on the screens: Tag (it has no text field to look for)",
-    ]
-    assert user_sentence(report["issues"][0]) == (
-        "A Customer created through the app's API does not appear on any screen that was opened.")
+    # Orders (in input fields) and customers (a select's options) are found.
+    item, product, tag = report["issues"]
+    assert re.fullmatch(
+        r"screen warning: \[frontend\] created an Item through the API \(POST /item/\) and the API lists it, but "
+        r"its text \(p\d-item-name\) was not found in the page text or form fields of any of the 4 opened "
+        r"screen\(s\); no opened screen loads GET /item/", item), item
+    assert re.fullmatch(
+        r"screen warning: \[frontend\] created a Product .* screens that load GET /product/: /products", product)
+    assert tag == "screen warning: [frontend] not checked: records on the screens: Tag (it has no text field to look for)"
+    assert user_sentence(item) == ("An Item was created through the app's API, but its text was not found in the "
+                                   "page text or form fields of any screen that was opened.")
+    assert user_sentence(tag).startswith("Part of the app's screens could not be checked")
 
 
 def test_a_record_the_api_does_not_list_is_not_checked():
     created = {"Order": {"path": "/order/", "texts": ["p1-order-title"]}}
     screens = [{"route": "/", "found": [], "calls": []}]
     assert ui_probe._data_findings("[web]", created, {}, {"Order": {"status": 401, "listed": False}}, screens) == [
-        "screen warning: [web] records not checked on the screens: Order (GET /order/ answered 401)"]
+        "screen warning: [web] not checked: records on the screens: Order (GET /order/ answered 401)"]
+
+
+def test_a_record_the_check_could_not_create_blames_the_sample_not_the_app():
+    assert ui_probe._refusal({"verdict": "rejected", "attempts": [{"status": 400}]}) == (
+        "the check's sample was refused (400)")
+    assert ui_probe._refusal({"verdict": "unresolved", "unresolved": [["team", "Team"]]}) == (
+        "the check could not first create the Team it needs")
 
 
 # ------------------------------------------------------------- optional, bounded
@@ -276,7 +301,8 @@ def test_one_deadline_bounds_the_whole_check(tmp_path, monkeypatch):
     report = _run(root, monkeypatch, timeout=30)
     assert [screen["route"] for screen in report["screens"]] == ["/", "/slow"]
     assert [issue for issue in report["issues"] if "stopped the check" in issue] == [
-        "screen warning: [frontend] the time limit stopped the check after 2 screen(s); not opened: /throws"]
+        "screen warning: [frontend] not checked: the time limit stopped the check after 2 screen(s); "
+        "not opened: /throws"]
 
 
 def test_every_frontend_shares_one_deadline(tmp_path, monkeypatch):
@@ -357,8 +383,8 @@ def test_a_crash_caused_elsewhere_names_its_cause():
                                    "own": True, "unreachable": True}]}
     cdn = {**crash, "requests": [{"method": "GET", "url": "https://cdn.example.org/lib.js", "type": "Script",
                                   "error": "net::ERR_NAME_NOT_RESOLVED", "own": False}]}
-    assert ui_probe._screen_findings(down)[0][0].endswith("(the app's backend was not reachable)")
-    assert ui_probe._screen_findings(cdn)[0][0].endswith("(an external script could not load without a network)")
+    assert ui_probe._screen_findings(down, False)[0][0].endswith("(the app's backend was not reachable)")
+    assert ui_probe._screen_findings(cdn, False)[0][0].endswith("(an external script could not load without a network)")
 
 
 # ------------------------------------------------------------------ the sandbox
@@ -412,15 +438,16 @@ def test_a_stopped_check_keeps_the_screens_it_opened(tmp_path, monkeypatch):
     def confined(argv, **kwargs):
         if argv[1] != ui_probe._DRIVER:
             return subprocess.CompletedProcess(argv, 0, "", "")
-        stop = subprocess.TimeoutExpired(argv, 30, output=_driver_report(screens=[opened], unvisited=["/empty"]))
-        stop.reason = "the run was cancelled"  # what the run's own stop carries
-        raise stop
+        from besser.spec_driven_agent.execution.process import CommandStopped
+
+        raise CommandStopped(argv, 30, "the run was cancelled",
+                             output=_driver_report(screens=[opened], unvisited=["/empty"]))
 
     monkeypatch.setattr(sandbox_mod, "run_confined", confined)
     report = collect_screen_report(str(root), ["frontend"])
     assert [screen["route"] for screen in report["screens"]] == ["/throws"]
     assert report["candidates"][0]["route"] == "/throws"
-    assert ("screen warning: [frontend] the run was cancelled stopped the check after 1 screen(s); "
+    assert ("screen warning: [frontend] not checked: the run was cancelled stopped the check after 1 screen(s); "
             "not opened: /empty") in report["issues"]
 
 

@@ -36,6 +36,14 @@ stamped with the commit they were built from (``BESSER_BUILD_SHA``).
        (about 300 MB; ``--build-arg SCREEN_CHECK_BROWSER=0`` leaves it out); no
        ``git``.
 
+The screen check's browser is Debian's ``chromium-headless-shell`` package at
+whatever version trixie ships when the image is built; it is not pinned, so a
+rebuild picks up Debian's security updates, and ``chromium-headless-shell
+--version`` in the verification below records which one a deploy carries. It
+runs WebGL in software (``--enable-unsafe-swiftshader``): a page that animates a
+3D canvas costs the worker CPU for as long as its screen is open (15 seconds at
+most).
+
 The ``Dockerfile`` requires BuildKit (the default builder in current Docker
 releases; set ``DOCKER_BUILDKIT=1`` on older ones): the proxy certificates are
 read through a ``RUN --mount=type=bind`` of ``ca-certs-extra/``, so they never

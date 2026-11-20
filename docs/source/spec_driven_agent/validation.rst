@@ -262,31 +262,38 @@ the router declares (``<Route path>``, nested relative routes,
 ``ui_components.json``), then same-origin links found on the opened pages that
 match a declared route (any link, when a route's path is computed), which is how
 a ``/orders/:id`` screen is reached. A page that is still empty once the network
-is quiet is looked at again until the screen's limit, so a late first render is
-not called empty. At most 25 screens, 15 seconds each and 150 seconds in all for
+is quiet is looked at again for up to 3 seconds, so a late first render is not
+called empty. At most 25 screens, 15 seconds each and 150 seconds in all for
 every frontend of the run together (less when the run has less time left).
 Nothing is clicked or typed, so forms and buttons are not exercised.
 
 Every finding is a ``screen warning:``; nothing from this check blocks, counts
-as a blocker or is sent to repair. A finding names the route and, when the
-router names it, the page's source file:
+as a blocker or is sent to repair, on a fix run too. A finding names the route
+and, when the router names it, the page's source file:
 
 - a page that showed nothing (no text and no visible control anywhere in the
-  body, portals included), worded as showing nothing with an empty database and
-  no signed-in user;
+  body, portals included), with what it was opened with: no signed-in user, and
+  the check's sample records or an empty database;
 - an uncaught exception, said apart for a page that still rendered;
 - React Router's default error page, which hides a render error from the
   exception log, and console errors;
-- a 5xx from the app's backend, or "in the sandbox (no network there)" when the
-  backend's log for that screen shows a connection or name-resolution error, a
-  4xx, a request to a local address nothing answers, and a page that did not
-  settle (a request still open, or a fetch loop);
-- a created record that the API lists but whose text appears on none of the
-  opened screens, naming the screens that load its list route, or saying that
-  none does. The create probe's own text samples (``p3-order-title``) are the
-  markers looked for. A record the probe could not create, one without a text
-  field, one whose list route needs a parent record, and one the API does not
-  list without signing in are named as not checked.
+- a 5xx from the app's backend, a 4xx, a request to a local address nothing
+  answers, and a page that did not settle (a request still open, or a fetch
+  loop);
+- a created record that the API lists but whose text is not found in the page
+  text or form fields (input and textarea values, select options) of any opened
+  screen, naming the screens that load its list route, or saying that none
+  does. The create probe's own text samples (``p3-order-title``) are the markers
+  looked for; a value drawn on a canvas or shown only as an image is not seen.
+
+A warning that starts with ``not checked:`` says what the check could not look
+at, not what the app does: a 5xx "in the sandbox (no network there)" when the
+backend's log for that screen shows a connection or name-resolution error, a
+screen the check could not finish, a backend that did not start for the check,
+the time limit stopping it, and records it could not check (its sample was
+refused or needs a record it could not create first, the record has no text
+field, its list route needs a parent record, or the API lists it only to a
+signed-in user).
 
 A screen that threw and showed nothing is also written to the trace, under the
 ``screen_blocker_candidates`` key of the ``phase3_screens`` phase's exit, so the

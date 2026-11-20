@@ -642,7 +642,8 @@ def _sample(field: str, schema: dict, day_offset: int, *,
         if fmt == "date":
             return (_dt.date.today() + _dt.timedelta(days=day_offset)).isoformat()
         if fmt == "date-time":
-            return (_dt.datetime.now() + _dt.timedelta(days=day_offset)).isoformat()
+            # Noon, not now: the input is quoted in findings that repair attempts compare.
+            return _dt.datetime.combine(_dt.date.today() + _dt.timedelta(days=day_offset), _dt.time(12)).isoformat()
         if fmt == "time":
             return "12:00:00"
         if "email" in low or fmt == "email":

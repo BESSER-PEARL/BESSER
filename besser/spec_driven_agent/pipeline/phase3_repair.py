@@ -108,6 +108,11 @@ _FIX_PROMPT_MAX_SCOPE_FILES = 40
 _LINE_NUMBERS_RE = re.compile(r"line \d+|:\d+(?::\d+)?|\(\d+,\d+\)")
 # The route a runtime finding names: ``create contract: backend: POST /order/ - ...``.
 _POST_ROUTE_RE = re.compile(r": POST (\S+) - ")
+# What a runtime finding tests: its kind, backend and route. Its text is the error seen there.
+_RUNTIME_TARGET_RE = re.compile(
+    r"(?:runtime unverified: )?(create contract|action call|create unverified|action unverified): (\S+): POST (\S+) - ")
+# The probe's generated input, quoted in a runtime finding: not part of the error.
+_PROBE_INPUT_RE = re.compile(r"attempted input: .*?(?=\. Th(?:is|ese) )", re.S)
 
 
 def clip_finding(text: str) -> str:
@@ -117,6 +122,19 @@ def clip_finding(text: str) -> str:
     head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
     cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
     return f"{text[:head]} [... {cut} chars cut ...] {text[-_FIX_PROMPT_BLOCKER_TAIL_CHARS:]}"
+
+
+def _finding_key(message: str):
+    """What a finding tests, as attempts compare findings: a runtime finding by its kind,
+    backend and route, any other by its message with line numbers masked (an edit moves
+    the lines of the errors it leaves)."""
+    target = _RUNTIME_TARGET_RE.match(message)
+    return target.groups() if target else _LINE_NUMBERS_RE.sub("#", message)
+
+
+def _finding_text(message: str) -> str:
+    """The error a finding reports, with line numbers and the probe's input masked."""
+    return _LINE_NUMBERS_RE.sub("#", _PROBE_INPUT_RE.sub("attempted input: #", message))
 
 
 def _blocker_kind(message: str) -> str:
@@ -629,7 +647,8 @@ class Phase3RepairMixin:
                 break
             seen.add(state)
             self._repair_last_outcome = self._attempt_outcome(
-                attempts_run, retired, len(blockers_after), round_calls, source_changed)
+                attempts_run, retired, self._still_failing(current_blockers, blockers_after),
+                len(blockers_after), round_calls, source_changed)
             current_issues, current_blockers, current_score = list(issues_after), blockers_after, score_after
             checkpoint_progress()
 
@@ -655,15 +674,27 @@ class Phase3RepairMixin:
     @staticmethod
     def _blocker_key(issue: ValidationIssue):
         """What blocks, as attempts compare: a requirement by id (its status is compared
-        apart, see ``_retired``), anything else by its message with line numbers masked
-        (an edit moves the lines of the errors it leaves)."""
+        apart, see ``_retired``), anything else by what it tests (``_finding_key``)."""
         requirement = requirement_status(issue.message)
-        return ("requirement", requirement[0]) if requirement else _LINE_NUMBERS_RE.sub("#", issue.message)
+        return ("requirement", requirement[0]) if requirement else _finding_key(issue.message)
 
     def _blocker_state_key(self, blockers: list[ValidationIssue]) -> frozenset:
-        """A blocker set as the repeated-state check compares it, statuses included."""
-        return frozenset(Counter((self._blocker_key(issue), requirement_status(issue.message))
+        """A blocker set as the repeated-state check compares it, statuses and runtime errors included."""
+        return frozenset(Counter((self._blocker_key(issue), requirement_status(issue.message),
+                                  _finding_text(issue.message) if _RUNTIME_TARGET_RE.match(issue.message) else None)
                                  for issue in blockers).items())
+
+    @staticmethod
+    def _still_failing(before: list[ValidationIssue], after: list[ValidationIssue]) -> list[str]:
+        """The runtime blockers of ``after`` that test what a blocker of ``before`` tested, now
+        with another error: neither retired nor added."""
+        errors: dict = {}
+        for issue in before:
+            if _RUNTIME_TARGET_RE.match(issue.message):
+                errors.setdefault(_finding_key(issue.message), set()).add(_finding_text(issue.message))
+        return [issue.message for issue in after
+                if _finding_key(issue.message) in errors
+                and _finding_text(issue.message) not in errors[_finding_key(issue.message)]]
 
     def _retired(self, before: list[ValidationIssue], after: list[ValidationIssue],
                  judged_after: bool = True) -> list[str]:
@@ -735,8 +766,10 @@ class Phase3RepairMixin:
                           after_facts: list | None = None) -> str | None:
         """Why an attempt is not kept (or, with no edit, does not continue the loop), or None.
 
-        Kept only if (1) it retired a blocker it faced (``_retired``); (2) every
-        observed failure it added (``unresolved_defects``) belongs to a check
+        Kept only if (1) it retired a blocker it faced (``_retired``), or a runtime
+        blocker now fails with another error (``_still_failing``); (2) every
+        observed failure it added (``unresolved_defects``, compared by what it
+        tests) belongs to a check
         family that could not run before (``hidden``): fixing the front failure
         of a layer shows what it hid; (3) the blocker count, leaving out the
         added findings of those families, is no higher, a requirement whose
@@ -750,14 +783,14 @@ class Phase3RepairMixin:
         def excused(message: str) -> bool:
             return could_not_run(message, hidden) or reachable_finding(message)
 
-        if not self._retired(before, after, judged_after):
+        if not self._retired(before, after, judged_after) and not self._still_failing(before, after):
             return f"it retired none of the {counted(len(before), 'blocker')} it faced"
         # A requirement verdict is a judgment, never an observed failure.
-        observed_before = Counter(_LINE_NUMBERS_RE.sub("#", i.message) for i in unresolved_defects(before)
+        observed_before = Counter(_finding_key(i.message) for i in unresolved_defects(before)
                                   if not requirement_status(i.message))
         added = [i.message for i in unresolved_defects(after)
                  if not requirement_status(i.message) and not excused(i.message)
-                 and _LINE_NUMBERS_RE.sub("#", i.message) not in observed_before]
+                 and _finding_key(i.message) not in observed_before]
         if added:
             return f"it added an observed failure: {added[0][:300]}"
         new_keys = Counter(self._blocker_key(i) for i in after) - Counter(self._blocker_key(i) for i in before)
@@ -807,15 +840,16 @@ class Phase3RepairMixin:
         return [f"{item.get('tool')} on {item.get('path')}: {str(item.get('error', ''))[:200]}"
                 for item in failures[-5:]]
 
-    def _attempt_outcome(self, attempt: int, retired: list[str], remaining: int,
+    def _attempt_outcome(self, attempt: int, retired: list[str], still_failing: list[str], remaining: int,
                          calls: list[dict], source_changed: bool) -> str:
         """What a kept attempt did, for the next attempt's prompt."""
         edited = _edited_paths(calls)
         what = f"edited {', '.join(edited)}" if source_changed and edited else "settled evidence without an edit"
         return (f"Fix attempt {attempt} was kept. It {what} and retired "
-                f"{counted(len(retired), 'blocker')}: "
-                + "; ".join(message[:160] for message in retired[:5])
+                f"{counted(len(retired), 'blocker')}"
+                + (": " + "; ".join(message[:160] for message in retired[:5]) if retired else "")
                 + (f" (+{len(retired) - 5} more)" if len(retired) > 5 else "")
+                + "".join(f". Still failing, now: {message[:300]}" for message in still_failing[:5])
                 + f". {counted(remaining, 'blocker')} remain, listed below.")
 
     def _only_unlocated_citations_remain(self, blockers: list[ValidationIssue]) -> bool:

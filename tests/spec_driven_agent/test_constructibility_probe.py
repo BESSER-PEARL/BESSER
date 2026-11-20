@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -423,6 +424,13 @@ def test_inherited_unique_identity_and_contact_fixtures_do_not_collide(workspace
     assert _sample("badge", {"type": "integer"}, 1, ordinal=1, unique=True) != _sample(
         "badge", {"type": "integer"}, 1, ordinal=2, unique=True)
     assert orm.read_text(encoding="utf-8") == source
+
+
+def test_a_date_time_fixture_is_the_same_on_every_probe():
+    """The input is quoted in the finding; a clock reading made it differ on each re-check."""
+    first = _sample("placed_at", {"type": "string", "format": "date-time"}, 1)
+    time.sleep(0.02)
+    assert _sample("placed_at", {"type": "string", "format": "date-time"}, 1) == first
 
 
 # ------------------------------------------------------------- network guard

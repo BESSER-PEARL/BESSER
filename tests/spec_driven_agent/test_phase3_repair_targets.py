@@ -759,3 +759,34 @@ def test_needed_for_where_it_is_not_offered_is_ignored(tmp_path):
         "needed_for": "a blocker"})
 
     assert result.succeeded
+
+
+# ---------------------------------------------------------------- judged by what was tested
+
+CRASH_TOTAL = B("blocker", "create contract: backend: POST /order/ - observed a server failure creating Order "
+                           "(500: IntegrityError NOT NULL constraint failed: order.total)")
+
+
+def test_a_create_that_still_crashes_with_another_error_is_still_failing_not_retired(tmp_path):
+    orch, client = _cycle(tmp_path, [[CRASH_TOTAL]], _tools(FIX_ORDER), _done(), entry=(CREATE,), on_check=_probe(
+        _backend({"Order": ORDER}), _backend({"Order": ORDER})))
+
+    assert not orch._phase3_rolled_back, orch._phase3_exit_reason
+    second = client.requests[2]["messages"][0]["content"]
+    assert "retired 0 blockers. Still failing, now: " + CRASH_TOTAL.message in second
+
+
+def _crash(placed_at: str) -> ValidationIssue:
+    return B("blocker", "create contract: backend: POST /order/ - observed a server/persistence failure creating "
+                        f'Order (500: Internal Server Error); attempted input: {{"placed_at": "{placed_at}"}}. '
+                        "This is one observed failure, not proof that every valid request fails.")
+
+
+def test_a_create_whose_only_change_is_the_probe_input_is_not_retired(tmp_path):
+    before, after = _crash("2030-01-01T10:00:00.120000"), _crash("2030-01-01T10:00:03.450000")
+    orch, client = _cycle(tmp_path, [[after], [before]], _tools(FIX_ORDER), entry=(before,), on_check=_probe(
+        _backend({"Order": ORDER}), _backend({"Order": ORDER})))
+
+    assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 1 blocker it faced"
+    assert len(client.requests) == 2, "no progress, so no second attempt"
+

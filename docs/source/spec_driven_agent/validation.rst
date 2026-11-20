@@ -889,7 +889,8 @@ is what protects the tree.
 
 An attempt that edited the tree is kept only if all of these hold:
 
-1. It retired at least one blocker it faced. Attempts compare requirements by
+1. It retired at least one blocker it faced, or a runtime blocker it faced now
+   fails with another error. Attempts compare requirements by
    id and status rank, since a re-judge rewords its note: a requirement is
    retired when its status rises (missing to partial is progress, though it
    still blocks), or when it no longer has a blocker and the judge ran on the
@@ -897,9 +898,16 @@ An attempt that edited the tree is kept only if all of these hold:
    deferred, failed or was stopped, or the requirements could not be extracted,
    is not retired. Missing and unsupported rank
    the same, so turning one into the other is neither progress nor a fall.
-   Other findings are compared with line and column numbers ignored, since an
-   edit moves the errors it leaves; any other number (``/e2/`` against
-   ``/e3/``) tells them apart.
+   A runtime finding (``create contract:``, ``action call:``, ``create
+   unverified:``, ``action unverified:``) is compared by what it tests: its
+   kind, backend and route. The same route failing with another message is
+   neither retired nor added; the next attempt's prompt says it is still
+   failing and quotes the new error, and the probe's generated input quoted in
+   the message is not part of the comparison (a date-time fixture is noon on
+   its day, not the current time). Other findings are compared by their
+   message with line and column numbers ignored, since an edit moves the
+   errors it leaves; any other number (``/e2/`` against ``/e3/``) tells them
+   apart.
 2. Every observed failure it added (a check that watched something fail, not a
    judgment or an unknown) belongs to a check family that could not run on the
    tree before it. Fixing the front failure of a layer shows what it hid: a
@@ -969,7 +977,8 @@ so stopping a run does not trigger another paid coverage judgment.
 Repair prompts retain the original specification, current files/symbols, actual
 action handlers and recent rejected operations. Each attempt is a new
 conversation, so its prompt also lists the files the run has edited and, after a
-kept attempt, what that attempt edited and which blockers it retired. The parts that are fixed for the
+kept attempt, what that attempt edited, which blockers it retired and which are
+still failing with another error. The parts that are fixed for the
 run (the original specification, the inspection handoff, the domain model and the
 requirements ledger) form the system prompt, identical in every repair round so
 the provider can serve it from its prompt cache; each round's message carries the

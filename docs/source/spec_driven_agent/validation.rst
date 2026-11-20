@@ -1081,14 +1081,13 @@ out or shown as edits are listed; a partial, missing or unverified verdict namin
 one is judged once more with that file shown whole. The focused round shows up to
 ten distinct files, taken from each requirement's files in turn, so one
 requirement's files cannot crowd out another's. That focused answer replaces the
-verdict when it is a verified "implemented". A missing or partial answer about a
-verdict the check left unverified (its citation refuted or not located, or the judge
-not shown the code) becomes its status: the judge now says it is not done, so it is a
-``requirement:`` or ``requirement partial:`` blocker. A missing or partial verdict
-keeps its status whatever the focused round answers. Otherwise the checked verdict
-keeps its status, and it takes
+verdict only when it is a verified "implemented"; otherwise a missing or partial
+from it proves no absence, so the checked verdict keeps its status, and it takes
 the focused judge's citation (when it gave one), note and inspection paths, which
-name the files that judge saw. An answer naming a file that round left out gets
+name the files that judge saw. The exception is a refuted citation (``requirement
+unsupported:``), whose file that round shows whole: a missing or partial answer about
+it becomes the requirement's status, a ``requirement:`` or ``requirement partial:``
+blocker. An answer naming a file that round left out gets
 one more round with that file shown, together with every other file the answer
 names (its citations, inspection paths and the files its note names), including
 those the round showed for another requirement. An inspection path may be a glob

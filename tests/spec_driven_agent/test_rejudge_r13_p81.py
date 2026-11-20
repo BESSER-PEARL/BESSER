@@ -255,9 +255,15 @@ def test_a_refuted_verdict_with_no_rejudge_answer_stays_a_blocker(refuted, monke
     assert _r9(refuted._collect_requirement_issues()).startswith("requirement unsupported:")
 
 
-def test_an_unlocated_citation_takes_the_rejudges_missing(refuted, monkeypatch):
-    misquoted = {**NO_OP, "evidence": [{"path": SCHEMA, "line": "return v.upper()"}]}
-    missing = {**REFERENCE_RULE, "status": "missing", "evidence": [], "note": "nothing checks the code"}
-    _judge(monkeypatch, refuted, [misquoted], [missing])
+@pytest.mark.parametrize("first", [
+    pytest.param({**NO_OP, "evidence": [{"path": SCHEMA, "line": "return v.upper()"}]}, id="citation not located"),
+    pytest.param({**REFERENCE_RULE, "status": "unverified", "evidence": [], "note": "not shown",
+                  "inspection_paths": [SCHEMA]}, id="judge answered unverified"),
+])
+@pytest.mark.parametrize("status", ["missing", "partial"])
+def test_a_focused_missing_proves_no_absence_unless_the_citation_was_refuted(refuted, monkeypatch, first, status):
+    """The focused digest omits most of the app: only a refuted citation's own file, shown whole, settles it."""
+    answer = {**REFERENCE_RULE, "status": status, "evidence": [], "note": "nothing checks the code"}
+    _judge(monkeypatch, refuted, [first], [answer])
 
-    assert _r9(refuted._collect_requirement_issues()).startswith("requirement: ")
+    assert _r9(refuted._collect_requirement_issues()).startswith("requirement unverified:")

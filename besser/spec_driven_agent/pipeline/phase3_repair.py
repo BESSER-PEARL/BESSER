@@ -116,6 +116,8 @@ _RUNTIME_TARGET_RE = re.compile(
     r"(?:runtime unverified: )?(create contract|action call|create unverified|action unverified): (\S+): POST (\S+) - ")
 # The probe's generated input, quoted in a runtime finding: not part of the error.
 _PROBE_INPUT_RE = re.compile(r"attempted input: .*?(?=\. Th(?:is|ese) )", re.S)
+# An object's memory address in an exception text (``<Order at 0x7f...>``): new in every process.
+_ADDRESS_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
 # Characters of the current text of the files the blockers name, pasted into a fix prompt.
 _FIX_PROMPT_FILE_CHARS = 24_000
 
@@ -138,8 +140,9 @@ def _finding_key(message: str):
 
 
 def _finding_text(message: str) -> str:
-    """The error a finding reports, with line numbers and the probe's input masked."""
-    return _LINE_NUMBERS_RE.sub("#", _PROBE_INPUT_RE.sub("attempted input: #", message))
+    """The error a finding reports, with line numbers, memory addresses and the probe's input masked."""
+    text = _PROBE_INPUT_RE.sub("attempted input: #", message)
+    return _LINE_NUMBERS_RE.sub("#", _ADDRESS_RE.sub("0x#", text))
 
 
 def _blocker_kind(message: str) -> str:

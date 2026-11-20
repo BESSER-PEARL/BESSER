@@ -801,6 +801,20 @@ def test_a_create_whose_only_change_is_the_probe_input_is_not_retired(tmp_path):
     assert len(client.requests) == 2, "no progress, so no second attempt"
 
 
+def _detached(address: str) -> ValidationIssue:
+    return B("blocker", "create contract: backend: POST /order/ - observed a server/persistence failure creating "
+                        f"Order (EXC: DetachedInstanceError: Parent instance <Order at {address}> is not bound to a "
+                        "Session; lazy load operation of attribute 'customer' cannot proceed)")
+
+
+def test_a_create_whose_error_differs_only_by_a_memory_address_is_not_still_failing(tmp_path):
+    before, after = _detached("0x7f3a1c2b4d50"), _detached("0x7f3a1c2b9e10")
+    orch, client = _cycle(tmp_path, [[after], [before]], _tools(FIX_ORDER), entry=(before,))
+
+    assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 1 blocker it faced"
+    assert len(client.requests) == 2, "no progress, so no second attempt"
+
+
 @pytest.mark.parametrize("entry, before", [
     pytest.param((CREATE,), {"Order": ORDER, "Customer": CUSTOMER}, id="the crashing create"),
     pytest.param((IN_ORDER,), {"Order": ("/order/", "created"), "Customer": CUSTOMER}, id="a working create"),

@@ -913,11 +913,12 @@ that edited the tree is kept only if all of these hold:
    unverified:``, ``action unverified:``) is compared by what it tests: its
    kind, backend and route. The same route failing with another message is
    neither retired nor added; the next attempt's prompt says it is still
-   failing and quotes the new error, and the probe's generated input quoted in
-   the message is not part of the comparison. Other findings are compared by
-   their message with line and column numbers ignored, since an edit moves
-   the errors it leaves; any other number (``/e2/`` against ``/e3/``) tells them
-   apart.
+   failing and quotes the new error. The probe's generated input quoted in the
+   message is not part of the comparison, nor is a memory address
+   (``0x7f...``) an exception text prints, new in every process. Other
+   findings are compared by their message with line and column numbers
+   ignored, since an edit moves the errors it leaves; any other number
+   (``/e2/`` against ``/e3/``) tells them apart.
 2. Every observed failure it added (a check that watched something fail, not a
    judgment or an unknown) belongs to a check family that could not run on the
    tree before it. Fixing the front failure of a layer shows what it hid: a

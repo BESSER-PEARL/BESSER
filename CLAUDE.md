@@ -79,7 +79,9 @@ PIA, and the key dialog's model lists, come from the model catalog (`BESSER_MODE
 `besser/llm/data/model_catalog.json`).
 
 ### Docker images
-The root `Dockerfile` has two targets. `backend` is Python + requirements + `besser`, no compilers.
+The root `Dockerfile` has two production targets (plus `lab-editor` and `lab` for the BESSER Lab's local
+one-container mode, `docker-compose.lab.yml`, and a final `default` stage, the worker again, for a build without
+`--target`). `backend` is Python + requirements + `besser`, no compilers.
 `smartgen-worker` adds Node 22/`tsc`, JDK 21, Rust, `kotlinc`, build-essential and bubblewrap, for the
 Spec-Driven Agent's Phase 3 and `run_command`. Production runs `backend:latest` for the backend service
 and `smartgen_worker:latest` for `besser-wme-smartgen`; the local `docker-compose.yml` builds the worker

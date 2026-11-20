@@ -77,6 +77,24 @@ def test_lifecycle_partly_merged_then_merged_and_closable(lab, lab_env):  # noqa
     assert (again.status, again.thread) == ("closed", closed.thread)
 
 
+def test_two_viewers_auto_closing_at_once_both_get_the_closed_change(lab, lab_env):  # noqa: F811
+    """Every tab showing a merged change closes it; the second close waits for the first, not change_busy."""
+    service = make_service(lab.workspace)
+    change_id = lab.change.id
+    lab.write(REPO_BESSER, "besser/note.py", "NOTE = 1\n")
+    _open(service, change_id)
+    lab.fake.merge_pull(lab.remote(REPO_BESSER), 1)
+
+    async def both():
+        return await asyncio.gather(service.close(JORDI, change_id), service.close(JORDI, change_id))
+
+    first, second = asyncio.run(both())
+
+    assert (first.status, first.outcome) == (second.status, second.outcome) == ("closed", "merged")
+    assert second.thread == first.thread
+    assert [action for action, _ in _audit(service)].count("change_closed") == 1
+
+
 def test_closed_unmerged_pull_requests_close_the_change_on_a_click(lab, lab_env):  # noqa: F811
     service = make_service(lab.workspace)
     change_id = lab.change.id

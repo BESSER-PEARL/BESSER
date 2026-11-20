@@ -38,6 +38,7 @@ from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests imp
     LAB_BLOCK_END,
     PullRequestError,
     PullRequestInfo,
+    PullRequestInputError,
     PullRequestSignInError,
     compose_lab_block,
     default_title,
@@ -378,7 +379,7 @@ def test_closing_an_issue_the_change_did_not_start_from_is_refused(lab):
     lab.change.issues = [{"repo": "besser", "number": 744, "title": "Notes", "closes": False}]
     lab.write(REPO_BESSER, "besser/note.py", "NOTE = 1\n")
 
-    with pytest.raises(PullRequestError, match="besser#745 is not an issue of this change"):
+    with pytest.raises(PullRequestInputError, match="besser#745 is not an issue of this change"):
         lab.open(closes_issues=[IssueRef("besser", 745)])
     assert lab.pushes() == [] and lab.requests == []
 

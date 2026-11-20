@@ -242,7 +242,7 @@ class LabPullRequest(ResponseModel):
 class LabIssue(ResponseModel):
     """An issue a change started from."""
 
-    repo: str
+    repo: LabRepoKey
     number: int
     title: str
     #: The user ticked "Closes" for it: the pull request body closes it at release.
@@ -446,7 +446,7 @@ class LabChangesResponse(ResponseModel):
 class LabRepoBaseStatus(ResponseModel):
     """Where a change's repository started, and how far its base moved since."""
 
-    repo: str
+    repo: LabRepoKey
     upstream: str
     branch: str
     #: The base commit the change started from.

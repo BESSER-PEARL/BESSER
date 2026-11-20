@@ -332,3 +332,9 @@ def test_local_container_can_sandbox_and_keeps_its_workspace_in_a_volume():
     for name in environment:
         if name.startswith("BESSER_LAB_"):
             assert name in _lab_setting_names()
+
+
+def test_the_lab_editor_listens_on_loopback_only():
+    """The editor's Express server binds HOST (every interface without it); on the host only nginx reaches it."""
+    unit = (SCRIPTS / "besser-lab-editor.service").read_text(encoding="utf-8").splitlines()
+    assert "Environment=HOST=127.0.0.1" in unit

@@ -29,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.services.lab.audit import Audi
 from besser.utilities.web_modeling_editor.backend.services.lab.preview import read_log_tail
 from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
     PullRequestError,
+    PullRequestInputError,
     PullRequestSignInError,
 )
 from tests.spec_driven_agent.lab.conftest import (  # noqa: F401
@@ -237,6 +238,10 @@ def test_closing_an_issue_the_change_did_not_start_from_is_400(client, lab, monk
     pushed = []
 
     async def open_pull_requests(user, change_id, *, title, body, closes_issues):
+        # The service's rule (pull_requests._closing_issues), raised before anything is pushed.
+        if any((ref.repo, ref.number) != ("besser", 744) for ref in closes_issues):
+            raise PullRequestInputError("frontend#12 is not an issue of this change: its pull requests close only "
+                                        "the issues the change started from.")
         pushed.append([(ref.repo, ref.number) for ref in closes_issues])
         return [], "No check ran."
 
@@ -244,7 +249,8 @@ def test_closing_an_issue_the_change_did_not_start_from_is_400(client, lab, monk
 
     refused = client.post("/besser_api/lab/pull-request", headers=session("ana"), json={
         "changeId": change.id, "closesIssues": [{"repo": "besser", "number": 744}, {"repo": "frontend", "number": 12}]})
-    assert refused.status_code == 400 and "frontend#12 is not an issue of this change" in refused.json()["detail"]
+    assert refused.status_code == 400 and refused.json()["detail"]["code"] == "bad_request"
+    assert "frontend#12 is not an issue of this change" in refused.json()["detail"]["message"]
     assert pushed == []
 
     allowed = client.post("/besser_api/lab/pull-request", headers=session("ana"), json={

@@ -17,10 +17,12 @@ ExecStartPre=/bin/rm -rf /var/lib/besser-lab-editor/build
 ExecStartPre=/bin/cp -R /opt/besser-lab/app/besser/utilities/web_modeling_editor/frontend/build /var/lib/besser-lab-editor/build
 # "-": the folder exists only once the copy above is made. The server finds ../webapp from here.
 WorkingDirectory=-/var/lib/besser-lab-editor/build/server
+# Loopback only: nginx is its one client (port 8080 is fixed in the server).
+Environment=HOST=127.0.0.1
 ExecStart=/opt/besser-lab/node/bin/node bundle.js
 Restart=on-failure
 RestartSec=5
-# The server listens on every interface (port 8080 is fixed in it); only loopback, i.e. nginx, may talk to it.
+# And should HOST be lost, only loopback, i.e. nginx, may talk to it.
 IPAddressAllow=localhost
 IPAddressDeny=any
 ProtectHome=yes

@@ -101,6 +101,11 @@ class PullRequestError(Exception):
     """A pull request action (open, push, status, update from base) failed; the message is safe to show."""
 
 
+class PullRequestInputError(PullRequestError):
+    """The request names something the change does not have (an issue it did not start from): the request is
+    wrong, not the change's state."""
+
+
 class PullRequestSignInError(PullRequestError):
     """GitHub refused the user's sign-in (the token): only signing in again helps."""
 
@@ -386,8 +391,8 @@ def _closing_issues(change: LabChange, closes_issues: Optional[Sequence[IssueRef
     unknown = sorted(wanted - known)
     if unknown:
         names = ", ".join(f"{repo}#{number}" for repo, number in unknown)
-        raise PullRequestError(f"{names} is not an issue of this change: its pull requests close only the issues "
-                               "the change started from.")
+        raise PullRequestInputError(f"{names} is not an issue of this change: its pull requests close only the issues "
+                                    "the change started from.")
     return wanted
 
 

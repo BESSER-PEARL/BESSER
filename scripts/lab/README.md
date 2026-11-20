@@ -33,7 +33,7 @@ No preview block routes to port 9000. Every block admits only `LAB_ALLOW_CIDRS`.
 |---|---|---|
 | lab backend (`besser-lab.service`, user `besser-lab`) | `127.0.0.1:9000` | `/opt/besser-lab/app` (BESSER at `LAB_APP_REF`), venv `/opt/besser-lab/venv` |
 | preview LLM proxy, inside the lab backend | `127.0.0.1:9300` | only when the preview is on and `BESSER_LAB_PREVIEW_OPENAI_API_KEY` is set |
-| lab editor (`besser-lab-editor.service`, a dynamic user) | port 8080, loopback only (`IPAddressDeny`) | a copy of `/opt/besser-lab/app/besser/utilities/web_modeling_editor/frontend/build` (built with `LAB_BUILD=true`) |
+| lab editor (`besser-lab-editor.service`, a dynamic user) | port 8080, loopback only (`HOST=127.0.0.1`, `IPAddressDeny`) | a copy of `/opt/besser-lab/app/besser/utilities/web_modeling_editor/frontend/build` (built with `LAB_BUILD=true`) |
 | preview slot *i*: backend, editor (Vite), modeling agent | `9100+10i`, `8180+10i`, `8865+10i` on `BESSER_LAB_PREVIEW_BIND` | the trees of the change the slot shows, each service in its own bubblewrap with a private network (pasta); children of the lab backend |
 
 A slot shows one change at a time and follows it after each build. Its modeling agent runs only once that

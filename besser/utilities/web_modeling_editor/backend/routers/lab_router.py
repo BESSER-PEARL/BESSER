@@ -57,13 +57,13 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
 from besser.utilities.web_modeling_editor.backend.routers.auth import LabUserDep
 from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
     PullRequestError,
+    PullRequestInputError,
     PullRequestSignInError,
 )
 from besser.utilities.web_modeling_editor.backend.services.lab.runner import LabRunner
 from besser.utilities.web_modeling_editor.backend.services.lab.service import (
     REFUSAL_STATUS,
     LabRefusal,
-    LabService,
 )
 
 router = APIRouter(prefix="/besser_api", tags=["lab"])
@@ -77,7 +77,8 @@ MAX_DIFF_PATH_CHARS = 1024
 ChangeIdQuery = Annotated[str, Query(pattern=CHANGE_ID_PATTERN, description="The change's id.")]
 NoteIdPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="The note's id.")]
 
-_BAD_ISSUES = {400: {"description": "A ``closesIssues`` entry is not one of the change's issues."}}
+_BAD_ISSUES = {400: {"description": "A ``closesIssues`` entry is not one of the change's issues: "
+                                      "``{\"detail\": {\"code\": \"bad_request\", \"message\"}}``."}}
 
 
 def _refusals(*codes: str, extra: Optional[dict[int, dict[str, Any]]] = None) -> dict[int | str, dict[str, Any]]:
@@ -105,6 +106,8 @@ def _answers() -> Iterator[None]:
         raise _refused(refusal) from None
     except PullRequestSignInError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from None
+    except PullRequestInputError as exc:
+        raise HTTPException(status_code=400, detail={"code": "bad_request", "message": str(exc)}) from None
     except (LabWorkspaceError, PullRequestError) as exc:
         raise HTTPException(status_code=409, detail={"code": "state", "message": str(exc)}) from None
     except ValidationError:
@@ -199,27 +202,10 @@ async def lab_pull_request(body: LabPullRequestRequest, user: LabUserDep, lab: L
     401 when GitHub refuses the user's sign-in, so the editor asks them to sign in again. The full test suites
     are not run first; ``checksNote`` tells the user which checks the change passed.
     """
-    await _check_closes_issues(lab, body)
     with _answers():
         opened, checks_note = await lab.open_pull_requests(user, body.changeId, title=body.title, body=body.body,
                                                            closes_issues=body.closesIssues)
     return LabPullRequestsResponse(pullRequests=opened, checksNote=checks_note)
-
-
-async def _check_closes_issues(lab: LabService, body: LabPullRequestRequest) -> None:
-    """400 when ``closesIssues`` names an issue the change did not start from: the request is wrong, not the
-    change's state. An unknown change is left to the service (``not_found``)."""
-    if not body.closesIssues:
-        return
-    try:
-        change = await asyncio.to_thread(lab.workspace.get_change, body.changeId)
-    except LabWorkspaceError:
-        return
-    known = {(issue.get("repo"), issue.get("number")) for issue in change.issues}
-    unknown = [f"{ref.repo}#{ref.number}" for ref in body.closesIssues if (ref.repo, ref.number) not in known]
-    if unknown:
-        raise HTTPException(status_code=400, detail=f"{', '.join(unknown)} is not an issue of this change: its "
-                                                    "pull requests close only the issues it started from.")
 
 
 @router.post("/lab/change/drop", response_model=LabChangesResponse,

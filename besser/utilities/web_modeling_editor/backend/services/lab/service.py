@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence
 from pydantic import BaseModel, ValidationError
 
 import besser
+from besser.spec_driven_agent.execution.sandbox import SANDBOX_POLICY_ENV, sandbox_supported_platform
 from besser.spec_driven_agent.lab.contracts import (
     LAB_CACHE_DIRNAME,
     REPO_BESSER,
@@ -51,6 +52,7 @@ from besser.spec_driven_agent.lab.memory import (
 from besser.spec_driven_agent.lab.memory import LabNote as MemoryNote
 from besser.spec_driven_agent.lab.sandbox_policy import LabSandboxPolicyError, SandboxPolicy, lab_sandbox_mounts
 from besser.spec_driven_agent.lab.workspace import LabWorkspace, LabWorkspaceError, repo_specs_from_settings
+from besser.spec_driven_agent.settings import AgentSettings
 from besser.utilities.web_modeling_editor.backend.models.lab import (
     LabAuditEntry,
     LabAuditResponse,
@@ -128,6 +130,10 @@ _PLAN_FILENAME = "plan.json"
 _PROPOSALS_FILENAME = "note_proposals.json"
 _FINISHED = ("done", "failed", "cancelled")
 _STEP_WORDS = {"plan": "plan", "build": "build", None: "run"}
+# How long a close waits for another viewer's close of the same change (each tab auto-closes a merged change):
+# one fresh GitHub read of its pull requests; past it the close is refused ``change_busy`` as before.
+_OTHER_CLOSE_WAIT_SECONDS = 30.0
+_OTHER_CLOSE_POLL_SECONDS = 0.2
 _REPO_LABELS = {REPO_FRONTEND: "editor", REPO_BESSER: "BESSER", REPO_MODELING_AGENT: "modeling agent"}
 
 
@@ -461,6 +467,7 @@ class LabService:
             PullRequestError: GitHub refused or could not be reached.
         """
         change = await asyncio.to_thread(self._change, change_id)
+        await self._other_close_ended(change_id)
         with self._holding(change_id, user.login, "close", change.title):
             change = await asyncio.to_thread(self._change, change_id)  # another close may have ended meanwhile
             if change.status == "closed":
@@ -472,6 +479,16 @@ class LabService:
             outcome = "merged" if status.lifecycle == "merged" else "closed"
             await asyncio.to_thread(self._close, user, change_id, outcome)
         return await asyncio.to_thread(self.change_detail, change_id)
+
+    async def _other_close_ended(self, change_id: str) -> None:
+        """Wait (bounded) while another viewer's close holds the change, so the second close answers the detail."""
+        deadline = time.monotonic() + _OTHER_CLOSE_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            with self._lock:
+                hold = self._holds.get(change_id)
+            if hold is None or hold.what != "close":
+                return
+            await asyncio.sleep(_OTHER_CLOSE_POLL_SECONDS)
 
     async def update_from_base(self, user: LabUser, change_id: str, repo: str) -> LabUpdateBranchResponse:
         """Bring the change's ``repo`` up to its base: GitHub's update-branch with an open pull request, else a
@@ -1080,6 +1097,8 @@ def create_lab_service(settings: BackendSettings) -> Optional[LabService]:
             policy(workspace.base_repos, writable=False)
         except LabSandboxPolicyError as exc:
             raise LabUnavailableError(f"The lab's folders overlap: {exc}") from None
+        if sandbox_supported_platform() and (AgentSettings().llm_shell_sandbox or "").strip().lower() == "off":
+            raise LabUnavailableError(f"{SANDBOX_POLICY_ENV}=off would run model-written code unconfined; unset it.")
     except LabUnavailableError as exc:
         logger.error("BESSER Lab is enabled but cannot start; its routes answer 503: %s", exc)
         raise

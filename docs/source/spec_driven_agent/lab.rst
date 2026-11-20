@@ -523,7 +523,8 @@ Confinement
 -----------
 
 Code the model writes runs only in bubblewrap, under one mount policy
-(``lab/sandbox_policy.py``, ``lab_sandbox_mounts``) applied per change:
+(``lab/sandbox_policy.py``, ``lab_sandbox_mounts``) applied per change (on
+Linux the lab refuses to start with ``BESSER_LLM_SHELL_SANDBOX=off``):
 
 - **read-write**: the change's own trees (BESSER with the editor inside it,
   the modeling agent);
@@ -653,7 +654,7 @@ with the clicking user's GitHub token:
    file under ``.github/workflows/`` (the sign-in scopes ``repo``, ``gist``,
    ``user`` do not include ``workflow``), an added or modified ``.env*`` file
    holding a credential, and a ``closesIssues`` entry that is not one of the
-   change's issues (400).
+   change's issues (400, code ``bad_request``).
 2. It commits the uncommitted work as the user, with the pull request's title
    as the message.
 3. It pushes each branch to the repository the change started from (its
@@ -728,7 +729,8 @@ goes into the thread.
 editor closes the change by itself (``POST /lab/change/close``); a change whose
 pull requests were closed unmerged is closed with :guilabel:`Close the change`.
 Closing a change that is already closed answers its detail unchanged; a close
-that overlaps another viewer's is refused with ``change_busy``.
+that overlaps another viewer's close waits for it (up to 30 seconds) and then
+answers the same detail.
 
 Knowledge
 ---------

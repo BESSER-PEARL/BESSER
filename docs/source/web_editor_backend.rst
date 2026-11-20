@@ -572,7 +572,7 @@ its owner or an admin.
      - ``LabPullRequestRequest`` (``changeId``, ``title``, ``body``,
        ``closesIssues``)
      - ``LabPullRequestsResponse``: the draft pull requests and
-       ``checksNote``. 400 for an issue that is not the change's, 401 when
+       ``checksNote``. 400 (``bad_request``) for an issue that is not the change's, 401 when
        GitHub refuses the user's sign-in
    * - ``POST /lab/change/drop``
      - ``LabChangeRequest``

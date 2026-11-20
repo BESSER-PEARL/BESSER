@@ -36,6 +36,7 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
 from besser.utilities.web_modeling_editor.backend.services.lab.access import LabUser
 from besser.utilities.web_modeling_editor.backend.services.lab.audit import AuditEntry, AuditLog
 from besser.utilities.web_modeling_editor.backend.services.lab.budget import LabBudget
+from besser.utilities.web_modeling_editor.backend.services.lab import service as service_module
 from besser.utilities.web_modeling_editor.backend.services.lab.service import (
     REFUSAL_STATUS,
     LabRefusal,
@@ -208,6 +209,17 @@ def test_a_store_inside_a_working_tree_refuses_to_start_the_lab(lab_env, monkeyp
     monkeypatch.setenv("OAUTH_SESSIONS_PATH", os.path.join(inside, "states.enc"))
 
     with pytest.raises(LabUnavailableError, match="overlap"):
+        create_lab_service(BackendSettings())
+    assert "cannot start" in caplog.text
+
+
+def test_the_sandbox_switched_off_on_linux_refuses_to_start_the_lab(lab_env, monkeypatch, caplog):
+    """Model-written code never runs unconfined where a sandbox exists: the shell sandbox's ``off`` override
+    (meant for a single-tenant development host) does not apply to a lab."""
+    monkeypatch.setattr(service_module, "sandbox_supported_platform", lambda: True)
+    monkeypatch.setenv("BESSER_LLM_SHELL_SANDBOX", "off")
+
+    with pytest.raises(LabUnavailableError, match="BESSER_LLM_SHELL_SANDBOX=off"):
         create_lab_service(BackendSettings())
     assert "cannot start" in caplog.text
 

@@ -167,6 +167,13 @@ def test_query_parameters_carry_their_bounds(openapi):
     assert not audit["month"]["required"]
 
 
+@pytest.mark.parametrize("model", ["LabIssue", "LabRepoBaseStatus", "LabPullRequestStatus", "LabRepoDiff"])
+def test_repo_fields_the_editor_switches_on_are_the_repo_key(openapi, model):
+    """The editor reads these repos as a ``LabRepoKey``; a plain string forced a checked cast on each one."""
+    repo = openapi["components"]["schemas"][model]["properties"]["repo"]
+    assert set(repo["enum"]) == {"besser", "frontend", "modeling_agent"}
+
+
 @pytest.mark.parametrize("method, path", REMOVED)
 def test_phase_1_routes_are_gone(openapi, client, lab_on, method, path):
     assert path not in openapi["paths"]

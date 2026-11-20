@@ -35,6 +35,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import unicodedata
@@ -55,6 +56,7 @@ from besser.spec_driven_agent.lab.contracts import (
     REPO_ORDER,
     ChangeKind,
     FileChange,
+    FileDiff,
     LabChange,
     RepoBase,
     RepoChange,
@@ -109,6 +111,27 @@ _PHASE_1_STATUSES = {"active": "open", "parked": "open"}
 
 # First letter of a ``git diff --name-status`` code -> FileChange.status
 _STATUS_BY_CODE = {"A": "added", "C": "added", "D": "deleted", "M": "modified", "R": "renamed", "T": "modified"}
+
+# Shared by the numstat and the patch of file_diffs, so both list the same files in the same order.
+_DIFF_ARGS = ("-M", "--no-color", "--no-ext-diff", "--ignore-submodules=all")
+
+# The most diff output file_diffs reads in one call: a model-written file of gigabytes would otherwise fill
+# the memory of the lab's one worker. Far more than anyone reviews line by line.
+_MAX_DIFF_BYTES = 64 * 1024 * 1024
+
+# Where each file's patch starts; content lines always start with " ", "+" or "-".
+_PATCH_START_RE = re.compile(r"^diff --git ", re.MULTILINE)
+
+# Header line of a file's patch -> FileDiff.status (no line: "modified")
+_STATUS_BY_HEADER = (("new file mode", "added"), ("deleted file mode", "deleted"), ("rename from", "renamed"))
+
+# What ``git diff --check`` prints for a conflict marker left in an added line (it also prints whitespace errors).
+_CONFLICT_MARKER_RE = re.compile(r"^(.*):\d+: leftover conflict marker$")
+
+_CLOSE_OUTCOMES = ("merged", "closed")
+
+# The refusal of a closed change's diff, shown to the user as it is.
+_CLOSED_DIFF = "its branches were deleted when it closed; the diff is on the pull request"
 
 
 class LabWorkspaceError(Exception):
@@ -260,7 +283,8 @@ class LabWorkspace:
         return self._git(spec, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
 
     def _merge_base(self, spec: RepoSpec) -> str:
-        return self._git(spec, "merge-base", "HEAD", _base_ref(spec)).strip()
+        """Where the change's branch left the upstream base (moved by a base merge)."""
+        return self._git(spec, "merge-base", "HEAD", _UPSTREAM_REFS + spec.base_branch).strip()
 
     def _is_ancestor(self, spec: RepoSpec, ancestor: str, descendant: str) -> bool:
         return self._run(spec, ["merge-base", "--is-ancestor", ancestor, descendant]).returncode == 0
@@ -297,6 +321,46 @@ class LabWorkspace:
                 changes.append(FileChange(path, _STATUS_BY_CODE.get(fields[0][:1], "modified")))
         changes += [FileChange(path, "added") for path in self._untracked(spec)]
         return changes
+
+    def _unmerged(self, spec: RepoSpec) -> list[str]:
+        """The paths a merge in progress left conflicted, run artefacts left out."""
+        paths = (_unquote(line) for line in self._git(spec, "diff", "--name-only", "--diff-filter=U").splitlines())
+        return [path for path in paths if not _is_harness_path(path)]
+
+    def _conflict_markers(self, spec: RepoSpec) -> list[str]:
+        """The files whose lines added against HEAD hold a conflict marker (``git diff --check``)."""
+        out = self._run(spec, ["diff", "--check", "--ignore-submodules=all", "HEAD", "--"]).stdout
+        found = (_CONFLICT_MARKER_RE.match(line) for line in out.splitlines())
+        return sorted({_unquote(match.group(1)) for match in found if match})
+
+    @contextlib.contextmanager
+    def _diff_env(self, spec: RepoSpec) -> Iterator[tuple[dict[str, str], str]]:
+        """Environment and a scratch folder for diffing the tree with its untracked files as new files.
+
+        The untracked files enter through intent-to-add entries in a copy of the index, so the
+        real index is left as it was.
+        """
+        with tempfile.TemporaryDirectory(prefix="besser_lab_diff_") as scratch:
+            env = {"GIT_LITERAL_PATHSPECS": "1"}
+            untracked = self._untracked(spec)
+            if untracked:
+                env["GIT_INDEX_FILE"] = os.path.join(scratch, "index")
+                shutil.copyfile(os.path.join(spec.git_dir, "index"), env["GIT_INDEX_FILE"])
+                self._git(spec, "add", "-N", "--pathspec-from-file=-", input=_pathspec_input(untracked),
+                          env_extra=env)
+            yield env, scratch
+
+    def _diff_output(self, spec: RepoSpec, scratch: str, args: Sequence[str], env: Mapping[str, str]) -> str:
+        """``git diff <args>`` read as UTF-8 bytes from a file: paths and patches whatever the locale."""
+        out = os.path.join(scratch, "diff.out")
+        self._git(spec, "diff", f"--output={out}", *args, env_extra=env)
+        size = os.path.getsize(out)
+        if size > _MAX_DIFF_BYTES:
+            raise LabWorkspaceError(f"{spec.key}: the diff is {size // (1024 * 1024)} MB, more than the "
+                                    f"{_MAX_DIFF_BYTES // (1024 * 1024)} MB the lab reads; a generated or vendored "
+                                    "file this large does not belong in the change")
+        with open(out, "rb") as handle:
+            return handle.read().decode("utf-8", errors="replace")
 
     # -- locks -------------------------------------------------------------------------------------
 
@@ -531,6 +595,11 @@ class LabWorkspace:
 
         Returns repository -> new commit for the repositories that had work. Only the changed
         paths are staged and committed: never run artefacts, never a submodule pointer.
+
+        In a repository where :meth:`begin_base_merge` left a merge in progress, the changed and
+        conflicted paths are staged and the merge is concluded with its own message (git allows
+        no partial commit during a merge); ``bases[repo].sha`` then moves to the merged upstream
+        commit and the change is saved. Refused while a file still holds a conflict marker.
         """
         literal = {"GIT_LITERAL_PATHSPECS": "1"}
         work = {}
@@ -538,22 +607,156 @@ class LabWorkspace:
             if key not in change.branches:
                 continue
             spec = self._spec(key, change)
-            work[key] = (spec, self._changed_files(spec, "HEAD", renames=False))
+            files = self._changed_files(spec, "HEAD", renames=False)
             # git lists an untracked repository (git init, a scaffolder) as "dir/" and cannot add its files.
-            nested = [f.path for f in work[key][1] if f.path.endswith("/")]
+            nested = [f.path for f in files if f.path.endswith("/")]
             if nested:
                 raise LabWorkspaceError(f"{key}: {', '.join(nested)} is a git repository of its own (made by git init "
                                         "or a scaffolder); delete its .git folder to keep its files in the change")
+            merging = self._has_ref(spec, "MERGE_HEAD")
+            markers = self._conflict_markers(spec) if merging else []
+            if markers:
+                raise LabWorkspaceError(f"{key}: the merge from {spec.base_branch} still has conflict markers in "
+                                        f"{', '.join(markers)}; resolve them before committing")
+            work[key] = (spec, files, merging)
         shas = {}
-        for key, (spec, files) in work.items():
-            if not files:
+        for key, (spec, files, merging) in work.items():
+            if merging:
+                merged_upstream = self._rev(spec, "MERGE_HEAD")
+                paths = sorted({f.path for f in files} | set(self._unmerged(spec)))
+                if paths:
+                    self._git(spec, "add", "-A", "--pathspec-from-file=-", input=_pathspec_input(paths),
+                              env_extra=literal)
+                self._git(spec, "commit", "-q", "--no-edit", config=_identity(login))
+                change.bases[key] = replace(change.bases[key], sha=merged_upstream)
+                self.save_change(change)
+            elif files:
+                pathspecs = _pathspec_input(sorted({f.path for f in files}))
+                self._git(spec, "add", "-A", "--pathspec-from-file=-", input=pathspecs, env_extra=literal)
+                self._git(spec, "commit", "-q", "-m", message, "--pathspec-from-file=-",
+                          input=pathspecs, config=_identity(login), env_extra=literal)
+            else:
                 continue
-            pathspecs = _pathspec_input(sorted({f.path for f in files}))
-            self._git(spec, "add", "-A", "--pathspec-from-file=-", input=pathspecs, env_extra=literal)
-            self._git(spec, "commit", "-q", "-m", message, "--pathspec-from-file=-",
-                      input=pathspecs, config=_identity(login), env_extra=literal)
             shas[key] = self._rev(spec, "HEAD")
         return shas
+
+    def begin_base_merge(self, change: LabChange, repo: str) -> list[str]:
+        """Merge the upstream base, as the caller's last :meth:`refresh_bases` fetched it, into the change's branch.
+
+        ``git merge --no-ff --no-edit`` in the change's tree, as the change's owner. Returns ``[]``
+        when it merged cleanly; ``bases[repo].sha`` then moves to the merged upstream commit and
+        the change is saved. Otherwise returns the conflicted paths, with the merge left in
+        progress: :meth:`commit_all` concludes it once the markers are gone. Refused for a change
+        that is not open, with uncommitted work, or with a merge already in progress.
+        """
+        _require_open(change)
+        spec = self._spec(repo, change)
+        if self._has_ref(spec, "MERGE_HEAD"):
+            raise LabWorkspaceError(f"{repo}: a merge from {spec.base_branch} is already in progress; resolve its "
+                                    "conflicts and commit it first")
+        if self._changed_files(spec, "HEAD", renames=False):
+            raise LabWorkspaceError(f"{repo}: the change has uncommitted work; commit it before merging "
+                                    f"{spec.base_branch} in")
+        upstream = self._rev(spec, _UPSTREAM_REFS + spec.base_branch)
+        merged = self._run(spec, ["merge", "-q", "--no-ff", "--no-edit", "-m",
+                                  f"Merge {spec.base_branch} into {change.branches[repo]}", upstream],
+                           config=_identity(change.owner))
+        if merged.returncode == 0:
+            change.bases[repo] = replace(change.bases[repo], sha=upstream)
+            self.save_change(change)
+            return []
+        in_progress = self._has_ref(spec, "MERGE_HEAD")
+        conflicts = self._unmerged(spec) if in_progress else []
+        if conflicts:
+            return conflicts
+        if in_progress:
+            self._run(spec, ["merge", "--abort"])
+        detail = redact_text((merged.stderr or merged.stdout).strip() or "no output")[0]
+        raise LabWorkspaceError(f"{repo}: merging {spec.base_branch} into {change.branches[repo]} failed: {detail}")
+
+    def merge_in_progress(self, change: LabChange, repo: str) -> bool:
+        """Whether a merge from the base waits in the change's ``repo`` tree for its conflicts to be resolved."""
+        if change.status != "open":
+            return False
+        return self._has_ref(self._spec(repo, change), "MERGE_HEAD")
+
+    def file_diffs(self, change: LabChange, repo: str, *, path: Optional[str] = None) -> list[FileDiff]:
+        """One entry per file ``repo`` changes, the working tree and untracked files against the merge-base.
+
+        The merge-base is the one of the change's branch with the upstream base. Entries come in
+        git's order; a binary file has no counts and an empty patch; run artefacts are left out.
+        ``path`` keeps the one file at that path (with its rename). Patches are not redacted
+        here. A draft has no diff; a closed change's is refused (its trees are gone).
+        """
+        if change.status == "closed":
+            raise LabWorkspaceError(_CLOSED_DIFF)
+        if change.status == "draft":
+            return []
+        spec = self._spec(repo, change)
+        since = self._merge_base(spec)
+        with self._diff_env(spec) as (env, scratch):
+            entries = _parse_numstat(self._diff_output(spec, scratch, ["--numstat", "-z", *_DIFF_ARGS, since, "--"],
+                                                       env))
+            pathspecs: list[str] = []
+            if path is not None:
+                entries = [entry for entry in entries if entry[2] == path]
+                if not entries:
+                    return []
+                pathspecs = [p for p in (entries[0][3], entries[0][2]) if p is not None]
+            text = self._diff_output(spec, scratch, [*_DIFF_ARGS, since, "--", *pathspecs], env)
+        starts = [match.start() for match in _PATCH_START_RE.finditer(text)]
+        patches = [text[start:end] for start, end in zip(starts, [*starts[1:], len(text)])]
+        if len(patches) != len(entries):
+            raise LabWorkspaceError(f"{repo}: git listed {len(entries)} changed files but printed {len(patches)} "
+                                    "patches")
+        diffs = []
+        for (additions, deletions, new_path, old_path), patch in zip(entries, patches):
+            if _is_harness_path(new_path) or (old_path is not None and _is_harness_path(old_path)):
+                continue
+            binary = additions is None
+            diffs.append(FileDiff(path=new_path, old_path=old_path, status=_patch_status(patch), additions=additions,
+                                  deletions=deletions, binary=binary, patch="" if binary else patch))
+        return diffs
+
+    def unpushed_repos(self, change: LabChange) -> list[str]:
+        """The repositories of an open change holding work GitHub does not have.
+
+        That is uncommitted work (a merge in progress included), or commits on the branch that
+        neither the upstream base nor the last push (``record_pushed``) holds.
+        """
+        if change.status != "open":
+            return []
+        found = []
+        for key in self._keys():
+            if key not in change.branches:
+                continue
+            spec = self._spec(key, change)
+            pushed = _PUSHED_REFS + change.branches[key]
+            known = [_UPSTREAM_REFS + spec.base_branch, *([pushed] if self._has_ref(spec, pushed) else [])]
+            ahead = int(self._git(spec, "rev-list", "--count", "HEAD", "--not", *known).strip())
+            if ahead or self._has_ref(spec, "MERGE_HEAD") or self._changed_files(spec, "HEAD", renames=False):
+                found.append(key)
+        return found
+
+    def close(self, change: LabChange, *, outcome: str) -> None:
+        """Close an open change whose work is all on GitHub: its trees and branches go, its state stays.
+
+        ``outcome`` is ``"merged"`` or ``"closed"`` (closed unmerged). Refused while
+        :meth:`unpushed_repos` lists a repository. The state folder (notes, plan, runs, thread)
+        is kept; ``status``, ``closed_at`` and ``outcome`` are set and saved.
+        """
+        if outcome not in _CLOSE_OUTCOMES:
+            raise LabWorkspaceError(f"unknown outcome {outcome!r}: a change closes as merged or closed")
+        _require_open(change)
+        unpushed = self.unpushed_repos(change)
+        if unpushed:
+            raise LabWorkspaceError(f"change {change.id} has work that is not on GitHub in {', '.join(unpushed)}; "
+                                    "push it to the pull requests or drop the change")
+        self.remove_trees(change)
+        change.status = "closed"
+        change.closed_at = time.time()
+        change.outcome = outcome
+        self.save_change(change)
 
     def merge_github_work(self, change: LabChange, repo: str, source: str, ref: str) -> None:
         """Merge into the change's branch the commits added to it on GitHub (a suggestion, "Update branch").
@@ -561,6 +764,7 @@ class LabWorkspace:
         ``source`` is a git directory holding GitHub's branch at ``ref``. Nothing happens when the
         change's branch already contains it. Refused when that branch shares no commit with the
         change (an earlier change of the same name left it) and when the merge conflicts.
+        Once taken, GitHub's head is recorded as pushed (``record_pushed``).
         """
         spec = self._spec(repo, change)
         branch = change.branches[repo]
@@ -568,6 +772,7 @@ class LabWorkspace:
         theirs = self._rev(spec, "FETCH_HEAD")
         common = self._git(spec, "merge-base", "HEAD", theirs).strip()
         if common == theirs:
+            self.record_pushed(repo, branch, theirs)
             return
         if self._is_ancestor(spec, common, _base_ref(spec)):
             raise LabWorkspaceError(f"{repo}: the branch {branch} on GitHub holds commits that are not part of this "
@@ -579,6 +784,7 @@ class LabWorkspace:
             raise LabWorkspaceError(f"{repo}: the branch {branch} was changed on GitHub and merging those commits "
                                     f"failed ({conflicts or (merged.stderr or merged.stdout).strip()}); "
                                     "undo them on GitHub or resolve the conflict by hand")
+        self.record_pushed(repo, branch, theirs)
 
     def record_pushed(self, repo: str, branch: str, sha: str) -> None:
         """Remember that ``branch`` exists on GitHub, so no later change reuses its name."""
@@ -662,6 +868,45 @@ def _base_ref(spec: RepoSpec) -> str:
 def _check_id(change_id: str) -> None:
     if not _CHANGE_ID_RE.match(change_id):
         raise LabWorkspaceError(f"invalid change id {change_id!r}")
+
+
+def _require_open(change: LabChange) -> None:
+    if change.status == "draft":
+        raise LabWorkspaceError(f"change {change.id} is a draft: it has no branches yet")
+    if change.status != "open":
+        raise LabWorkspaceError(f"change {change.id} is already closed: its trees and branches were removed")
+
+
+def _parse_numstat(out: str) -> list[tuple[Optional[int], Optional[int], str, Optional[str]]]:
+    """``git diff --numstat -z`` -> (additions, deletions, path, old path) per file; counts None when binary.
+
+    A record is ``added<TAB>deleted<TAB>path<NUL>``, or for a rename ``added<TAB>deleted<TAB><NUL>old<NUL>new<NUL>``.
+    """
+    tokens = out.split("\0")
+    entries = []
+    index = 0
+    while index < len(tokens) and tokens[index]:
+        added, deleted, path = tokens[index].split("\t", 2)
+        old_path = None
+        if path:
+            index += 1
+        else:
+            old_path, path = tokens[index + 1], tokens[index + 2]
+            index += 3
+        binary = added == "-"
+        entries.append((None if binary else int(added), None if binary else int(deleted), path, old_path))
+    return entries
+
+
+def _patch_status(patch: str) -> str:
+    """A file's patch -> :attr:`FileDiff.status`, from the extended header lines before its first hunk."""
+    for line in patch.splitlines():
+        if line.startswith("@@"):
+            break
+        for prefix, status in _STATUS_BY_HEADER:
+            if line.startswith(prefix):
+                return status
+    return "modified"
 
 
 def _change_from_state(data: dict) -> LabChange:

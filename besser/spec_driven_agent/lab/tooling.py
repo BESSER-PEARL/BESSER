@@ -13,7 +13,8 @@ from typing import Callable, Sequence
 
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY, get_tools_for
-from besser.spec_driven_agent.lab.contracts import LAB_STATE_DIRNAME, ExtraTool
+from besser.spec_driven_agent.execution.sandbox import SandboxMounts
+from besser.spec_driven_agent.lab.contracts import ExtraTool
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +42,17 @@ class LabToolExecutor:
     ``read_only`` offers the read and state tools and the extra tools that do
     not write; a write or shell call is then answered with an error result.
     ``time_left`` (seconds left in the run) caps every shell command.
+    ``sandbox_mounts`` (the lab's policy for the change) confines the shell
+    and the write-time import probe; None confines them to ``workspace``.
     """
 
     def __init__(self, workspace: str, *, read_only: bool = False, allow_shell: bool = True,
-                 extra_tools: Sequence[ExtraTool] = (), time_left: Callable[[], float] | None = None):
+                 extra_tools: Sequence[ExtraTool] = (), time_left: Callable[[], float] | None = None,
+                 sandbox_mounts: SandboxMounts | None = None):
         # Per-write diagnostics scan the whole workspace for generated-app contract
         # mismatches: ~11 s a write on BESSER's checkout, and none apply to its source.
         self._executor = ToolExecutor(workspace=workspace, allow_shell=allow_shell and not read_only,
-                                      per_write_diagnostics=False)
+                                      per_write_diagnostics=False, sandbox_mounts=sandbox_mounts)
         self._executor.time_left = time_left
         self.read_only = read_only
         builtin = READ_TOOLS | STATE_TOOLS
@@ -91,9 +95,6 @@ class LabToolExecutor:
             return f"Unknown tool: {name}. The tools of this step are: {', '.join(sorted(self._offered))}.", True
         extra = self._extra.get(name)
         if extra is None:
-            if name in WRITE_TOOLS and self._is_lab_state(arguments):
-                return (f"{name} refused: {LAB_STATE_DIRNAME}/ holds BESSER Lab's record of the change "
-                        "(its state and notes); the lab writes it itself. Change the repositories' files."), True
             if name in _GIT_GUARDED_TOOLS and self._is_in_git_dir(arguments):
                 return (f"{name} refused: .git holds a repository's own data and configuration, which the lab's "
                         "git commands read; the lab manages branches and commits itself. Change the "
@@ -110,15 +111,6 @@ class LabToolExecutor:
         except Exception as exc:
             logger.warning("Lab tool %s failed", name, exc_info=True)
             return f"{name} failed: {exc}", True
-
-    def _is_lab_state(self, arguments: dict) -> bool:
-        """Whether a file tool's ``path`` is in the lab's state folder at the workspace root."""
-        path = arguments.get("path") if isinstance(arguments, dict) else None
-        if not isinstance(path, str):
-            return False
-        full = os.path.normpath(os.path.join(self.workspace, path))
-        top = os.path.relpath(full, self.workspace).replace("\\", "/").split("/", 1)[0]
-        return os.path.normcase(top) == os.path.normcase(LAB_STATE_DIRNAME)
 
     def _is_in_git_dir(self, arguments: dict) -> bool:
         """Whether a file tool's ``path``, normalised, has a ``.git`` component (a git dir or a submodule's link)."""

@@ -8,11 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from besser.spec_driven_agent.execution.sandbox import SandboxMounts
 from besser.spec_driven_agent.lab.checks import (
     MISSING_TOOL,
     TIMED_OUT,
     checks_for,
-    default_runner,
+    confined_runner,
     format_results,
     run_checks,
     run_checks_tool,
@@ -404,7 +405,7 @@ def test_the_api_types_check_compares_the_generated_types_with_the_committed_fil
     specs = _by_id(checks_for([_change("frontend", "packages/webapp/openapi/besser-openapi.json")],
                               _repos(frontend=tmp_path)))
 
-    [result] = run_checks([specs["frontend:api-types"]], _repos(frontend=tmp_path))
+    [result] = run_checks([specs["frontend:api-types"]], _repos(frontend=tmp_path), runner=_runner(tmp_path))
 
     assert result.passed is passed and not result.skipped
     assert ("matches" if passed else "is stale") in result.output_tail
@@ -450,6 +451,11 @@ def test_no_changes_no_checks(tmp_path):
 def _spec(spec_id: str = "besser:tests", argv=("tool",), cwd: str = ".", timeout: float = 30) -> CheckSpec:
     return CheckSpec(id=spec_id, repo="besser", title="Tests of the touched areas", argv=argv, cwd=cwd,
                      timeout_seconds=timeout)
+
+
+def _runner(tree: Path, should_continue=None):
+    """The lab's runner with ``tree`` as the change's one read-write tree."""
+    return confined_runner(SandboxMounts(writable=(str(tree),)), should_continue=should_continue)
 
 
 def test_run_checks_reads_results_from_the_runner(tmp_path):
@@ -506,23 +512,24 @@ def test_run_checks_stops_when_the_run_is_cancelled(tmp_path):
     assert [r.spec_id for r in results] == ["a"]
 
 
-def test_default_runner_runs_the_command_with_combined_output(tmp_path):
+def test_the_runner_runs_the_command_with_combined_output(tmp_path):
     code = "import sys; print('3 passed in 0.1s'); print('warn', file=sys.stderr)"
-    [result] = run_checks([_spec(argv=(sys.executable, "-c", code))], _repos(besser=tmp_path))
+    [result] = run_checks([_spec(argv=(sys.executable, "-c", code))], _repos(besser=tmp_path),
+                          runner=_runner(tmp_path))
 
     assert result.passed
     assert result.summary == "3 passed in 0.1s"
     assert "warn" in result.output_tail
 
 
-def test_default_runner_hides_the_server_secrets(tmp_path, monkeypatch):
+def test_the_runner_hides_the_server_secrets(tmp_path, monkeypatch):
     monkeypatch.setenv("BESSER_LAB_LLM_API_KEY", "sk-should-not-leak")
     code = "import os; print(os.environ.get('BESSER_LAB_LLM_API_KEY', 'absent'))"
 
-    exit_code, output = default_runner(_spec(argv=(sys.executable, "-c", code)), str(tmp_path))
+    exit_code, output = _runner(tmp_path)(_spec(argv=(sys.executable, "-c", code)), str(tmp_path))
 
     assert exit_code == 0
-    assert output.strip() == "absent"
+    assert output.strip().splitlines()[-1] == "absent"
 
 
 # The lab backend's secrets, as its environment holds them (names from settings.py and the deploy's lab.env).
@@ -543,25 +550,26 @@ def test_a_check_cannot_print_the_lab_secrets_from_its_environment(tmp_path, mon
         monkeypatch.setenv(name, value)
     dump = "import os; print('\\n'.join(f'{k}={v}' for k, v in os.environ.items())); print('1 passed')"
 
-    [result] = run_checks([_spec(argv=(sys.executable, "-c", dump))], _repos(besser=tmp_path))
+    [result] = run_checks([_spec(argv=(sys.executable, "-c", dump))], _repos(besser=tmp_path),
+                          runner=_runner(tmp_path))
 
     assert result.passed
     assert "PATH=" in result.output_tail.upper()
     assert [value for value in _PLANTED_SECRETS.values() if value in result.output_tail] == []
 
 
-def test_default_runner_reports_a_missing_executable(tmp_path):
-    exit_code, output = default_runner(_spec(argv=("besser-lab-no-such-tool",)), str(tmp_path))
+def test_the_runner_reports_a_missing_executable(tmp_path):
+    exit_code, output = _runner(tmp_path)(_spec(argv=("besser-lab-no-such-tool",)), str(tmp_path))
 
     assert exit_code == MISSING_TOOL
     assert "besser-lab-no-such-tool is not installed" in output
 
 
-def test_default_runner_stops_a_check_at_its_timeout(tmp_path):
+def test_the_runner_stops_a_check_at_its_timeout(tmp_path):
     spec = _spec(argv=(sys.executable, "-c", "import time; time.sleep(30)"), timeout=1)
 
-    exit_code, output = default_runner(spec, str(tmp_path))
-    [result] = run_checks([spec], _repos(besser=tmp_path))
+    exit_code, output = _runner(tmp_path)(spec, str(tmp_path))
+    [result] = run_checks([spec], _repos(besser=tmp_path), runner=_runner(tmp_path))
 
     assert exit_code == TIMED_OUT
     assert not result.passed and result.summary == "Timed out after 1 s"
@@ -576,8 +584,12 @@ def test_a_stop_ends_a_running_check_and_the_processes_it_started(tmp_path):
     started = time.monotonic()
     stop_at = started + 3
 
+    def should_continue():
+        return time.monotonic() < stop_at
+
     [result] = run_checks([_spec(argv=(sys.executable, "-c", parent), timeout=30)], _repos(besser=tmp_path),
-                          callbacks=LabCallbacks(should_continue=lambda: time.monotonic() < stop_at))
+                          runner=_runner(tmp_path, should_continue),
+                          callbacks=LabCallbacks(should_continue=should_continue))
 
     assert time.monotonic() - started < 15
     assert result.skipped and not result.passed
@@ -613,11 +625,11 @@ def test_format_results_without_checks():
 
 
 def test_the_tool_runs_the_checks_of_the_current_changes(tmp_path):
-    """End to end with the default runner: a modeling-agent-shaped repository with one passing test."""
+    """End to end with the lab's runner: a modeling-agent-shaped repository with one passing test."""
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
     changes = [[], [_change("modeling_agent", "tests/test_ok.py")]]
-    tool = run_checks_tool(lambda: changes.pop(0), _repos(modeling_agent=tmp_path))
+    tool = run_checks_tool(lambda: changes.pop(0), _repos(modeling_agent=tmp_path), runner=_runner(tmp_path))
 
     assert tool.schema["name"] == "run_checks"
     assert tool.writes
@@ -633,7 +645,8 @@ def test_the_tool_streams_its_checks_and_stops_when_the_run_is_cancelled(tmp_pat
     phases, running = [], [True]
     callbacks = LabCallbacks(on_phase=lambda phase, message: phases.append(phase),
                              should_continue=lambda: running[0])
-    tool = run_checks_tool(lambda: changes, _repos(modeling_agent=tmp_path), callbacks=callbacks)
+    tool = run_checks_tool(lambda: changes, _repos(modeling_agent=tmp_path),
+                           runner=_runner(tmp_path, callbacks.should_continue), callbacks=callbacks)
 
     assert "1 passed" in tool.handler({})
     streamed = len(phases)

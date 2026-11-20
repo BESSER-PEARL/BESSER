@@ -9,6 +9,8 @@ import time
 import pytest
 
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
+from besser.spec_driven_agent.execution import sandbox, shell_session
+from besser.spec_driven_agent.execution.sandbox import SandboxedCommand, SandboxMounts
 from besser.spec_driven_agent.lab.contracts import ExtraTool
 from besser.spec_driven_agent.lab.tooling import (
     MAX_RESULT_CHARS,
@@ -21,6 +23,7 @@ from besser.spec_driven_agent.lab.tooling import (
     bound_result,
     exclude_run_records,
 )
+from tests.spec_driven_agent.lab.test_checks_confined import assert_confined, lab_private_folders, make_change
 
 
 def _extra(name, handler, writes=True):
@@ -100,24 +103,46 @@ def test_builtin_tools_run_in_the_workspace(tmp_path, executors):
     assert is_error
 
 
-def test_the_file_tools_cannot_change_the_labs_record_of_the_change(tmp_path, executors):
-    # The workspace root holds .lab/changes/<id>/{state.json,notes.md}; notes reach every later prompt.
-    notes = tmp_path / ".lab" / "changes" / "abcdef012345" / "notes.md"
+def test_the_file_tools_cannot_reach_the_labs_record_of_the_change(tmp_path, executors):
+    # The state folder is <workspace root>-state, outside the change's folder; notes reach every later prompt.
+    change = tmp_path / "work" / "changes" / "abcdef012345"
+    (change / "besser").mkdir(parents=True)
+    notes = tmp_path / "work-state" / "changes" / "abcdef012345" / "notes.md"
     notes.parent.mkdir(parents=True)
     notes.write_text("## Plan\n", encoding="utf-8")
-    executor = executors(tmp_path)
+    executor = executors(change)
+    outside = "../../../work-state/changes/abcdef012345/notes.md"
 
-    for name, arguments in (("write_file", {"path": ".lab/changes/abcdef012345/notes.md", "content": "x"}),
-                            ("write_file", {"path": "besser/../.lab/changes/new.json", "content": "{}"}),
-                            ("delete_file", {"path": "./.lab/changes/abcdef012345/notes.md"})):
+    for name, arguments in (("write_file", {"path": outside, "content": "x"}),
+                            ("delete_file", {"path": "besser/../" + outside}),
+                            ("read_file", {"path": outside})):
         text, is_error = executor.execute(name, arguments)
-        assert is_error and text.startswith(f"{name} refused: .lab/"), text
+        assert is_error, (name, text)
+        assert "## Plan" not in text
     assert notes.read_text(encoding="utf-8") == "## Plan\n"
-    assert not (tmp_path / ".lab" / "changes" / "new.json").exists()
-    text, is_error = executor.execute("read_file", {"path": ".lab/changes/abcdef012345/notes.md"})
-    assert not is_error and "## Plan" in text
-    # A repository folder that merely starts with ".lab" is not the state folder.
-    assert executor.execute("write_file", {"path": ".labels/x.txt", "content": "ok"})[1] is False
+    # A repository folder named like phase 1's state folder is an ordinary folder.
+    assert executor.execute("write_file", {"path": "besser/.lab/x.txt", "content": "ok"})[1] is False
+
+
+def test_the_shell_runs_with_the_mounts_it_is_given(tmp_path, executors, monkeypatch):
+    """The lab's policy reaches the agent's shell: its sandbox gets exactly these mount rules."""
+    planned = []
+
+    def plan(command, **kwargs):
+        planned.append(kwargs)
+        return SandboxedCommand(command, isinstance(command, str), "unconfined-platform")
+
+    monkeypatch.setattr(shell_session, "sandboxed_command", plan)
+    mounts = SandboxMounts(writable=(str(tmp_path / "besser"),), read_only=(str(tmp_path / "git"),),
+                           masked=(str(tmp_path / "state"),))
+    (tmp_path / "besser").mkdir()
+    executor = executors(tmp_path, sandbox_mounts=mounts)
+
+    text, is_error = executor.execute("run_command", {"command": "echo confined"})
+
+    assert not is_error, text
+    assert [(p["writable"], p["read_only"], p["masked"]) for p in planned] == [
+        (mounts.writable, mounts.read_only, mounts.masked)]
 
 
 @pytest.mark.parametrize("read_only", [False, True])
@@ -250,6 +275,36 @@ def test_exclude_follows_a_gitdir_file_and_a_worktrees_common_dir(tmp_path):
 def test_a_workspace_that_is_not_a_checkout_is_left_alone(tmp_path):
     exclude_run_records(str(tmp_path))
     assert os.listdir(tmp_path) == []
+
+
+@pytest.fixture
+def confined_layout(tmp_path):
+    """The layout of D1 test 7, as the checks' side builds it."""
+    with lab_private_folders(make_change(tmp_path)) as layout:
+        yield layout
+
+
+def _probe_from_the_shell(layout, executors) -> str:
+    executor = executors(layout["trees"], sandbox_mounts=layout["mounts"])
+    text, is_error = executor.execute("run_command", {"command": f'cd besser && "{sys.executable}" probe.py'})
+    assert not is_error, text
+    return json.loads(text)["stdout"]
+
+
+@pytest.mark.skipif(sandbox.sandbox_selftest_error() is not None, reason="needs a working bubblewrap (Linux)")
+def test_the_shell_cannot_reach_git_dirs_lab_state_or_sessions(confined_layout, executors):
+    """D1 test 7, shell side: the agent's shell under the lab's policy."""
+    assert_confined(_probe_from_the_shell(confined_layout, executors), confined_layout["config"], host_ports=False)
+
+
+@pytest.mark.skipif(sandbox.sandbox_selftest_error() is not None, reason="needs a working bubblewrap (Linux)")
+def test_the_shell_cannot_reach_host_ports(confined_layout, executors, monkeypatch):
+    """D1 test 7, shell side, with deploy's BESSER_LLM_SHELL_NETWORK=private."""
+    monkeypatch.setenv(sandbox.SHELL_NETWORK_ENV, "private")
+    if not sandbox.shell_network_is_private():
+        pytest.skip("needs pasta and /dev/net/tun")
+
+    assert_confined(_probe_from_the_shell(confined_layout, executors), confined_layout["config"])
 
 
 def test_time_left_caps_a_shell_command(tmp_path, executors):

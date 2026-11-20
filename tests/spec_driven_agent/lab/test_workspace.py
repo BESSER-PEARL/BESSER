@@ -360,6 +360,8 @@ def test_merge_github_work_merges_commits_added_on_github(lab_workspace, lab_lay
 
     assert read(os.path.join(besser, "README.md")) == "BESSER Lab, reviewed\n"
     assert lab_workspace.run_git(REPO_BESSER, "log", "-1", "--format=%s", change=change).strip() == "Apply suggestion"
+    # GitHub's head is recorded as pushed: taking it does not make the change look unpushed.
+    assert lab_workspace.unpushed_repos(change) == []
 
 
 def test_git_errors_are_raised_with_secrets_redacted(lab_workspace):

@@ -31,10 +31,6 @@ LAB_CACHE_DIRNAME = ".cache"
 #: Version written into every change's ``state.json``.
 LAB_STATE_VERSION = 2
 
-#: Phase 1's state folder under the workspace root. Only ``tooling.py`` still names it; it goes when that
-#: module stops refusing writes there (the state folder is outside the workspace root since phase 2).
-LAB_STATE_DIRNAME = ".lab"
-
 #: ``owner/name@branch`` of each repository: the settings' defaults and the canonical repositories issues are read from.
 DEFAULT_UPSTREAMS = {
     REPO_BESSER: "BESSER-PEARL/BESSER@development",

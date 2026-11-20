@@ -19,6 +19,11 @@ package's mirror and to the tests of its area that import it. A file that maps
 to nothing is reported in a skipped "No tests found" result. The editor package
 (``packages/editor``) has no test runner, so its files get a skipped result
 saying that its tests go in ``packages/webapp``.
+
+Checks run in the lab's sandbox (:func:`confined_runner`): the change's trees
+read-write, the git root read-only, the lab's own folders hidden and no network
+unless a spec asks for it. A change's dependency installs run in the same
+sandbox with a private network (:func:`confined_command_runner`).
 """
 
 from __future__ import annotations
@@ -32,7 +37,6 @@ import sys
 import sysconfig
 import tempfile
 import time
-from functools import partial
 from typing import Callable, Iterable, Mapping, Optional, Sequence
 
 from besser.spec_driven_agent.execution.process import (
@@ -41,6 +45,18 @@ from besser.spec_driven_agent.execution.process import (
     _captured_size,
     _decode,
     _kill_tree,
+)
+from besser.spec_driven_agent.execution.sandbox import (
+    NETWORK_WAIT_SECONDS,
+    NETWORK_WAIT_SOURCE,
+    SANDBOX_POLICY_ENV,
+    SandboxedCommand,
+    SandboxMounts,
+    SandboxUnavailable,
+    read_child_pid,
+    sandboxed_command,
+    start_pasta,
+    stop_process,
 )
 from besser.spec_driven_agent.lab.contracts import (
     REPO_BESSER,
@@ -60,9 +76,24 @@ from besser.utilities.subprocess_env import safe_subprocess_env
 logger = logging.getLogger(__name__)
 
 Runner = Callable[[CheckSpec, str], tuple[int, str]]
+#: ``(argv, cwd) -> (exit code, output)``: a dependency install in a change's tree.
+CommandRunner = Callable[[Sequence[str], str], tuple[int, str]]
 
 #: Exit code of a runner whose executable is not installed ("command not found").
 MISSING_TOOL = 127
+#: Exit code of a runner whose sandbox could not start: the command did not run (never unconfined).
+SANDBOX_UNAVAILABLE = 125
+_SANDBOX_UNAVAILABLE = "the check sandbox is unavailable: "
+_INSTALL_SANDBOX_UNAVAILABLE = "the install sandbox is unavailable: "
+#: A cold ``npm ci`` of the editor or the modeling agent's venv takes several minutes.
+_INSTALL_TIMEOUT = 1_800.0
+#: How long bwrap may take to report its sandbox's pid (the shell session's start timeout).
+_SANDBOX_START_SECONDS = 30.0
+# Runs in the install sandbox before the install: wait for pasta's interface, then become the command.
+_NETWORK_WAIT_EXEC = ("import os, sys, time\n" + NETWORK_WAIT_SOURCE +
+                      "if not wait_for_network(float(sys.argv[1])):\n"
+                      "    sys.exit('the sandbox network did not come up')\n"
+                      "os.execvp(sys.argv[2], sys.argv[2:])\n")
 #: Exit code of a runner whose command ran past the spec's timeout.
 TIMED_OUT = 124
 #: Exit code of a runner whose command was killed because the run was stopped (the shell's code for Ctrl-C).
@@ -158,16 +189,15 @@ def checks_for(changes: Sequence[RepoChange], repos: Mapping[str, RepoSpec], *,
 
 
 def run_checks(specs: Sequence[CheckSpec], repos: Mapping[str, RepoSpec], *,
-               runner: Runner | None = None, callbacks: LabCallbacks | None = None) -> list[CheckResult]:
+               runner: Runner, callbacks: LabCallbacks | None = None) -> list[CheckResult]:
     """Run ``specs`` in order and return one result per spec run.
 
-    ``runner(spec, cwd)`` returns ``(exit code, output)``; the default runs the
-    command and ends it once ``callbacks.should_continue()`` is False. Exit code
-    :data:`MISSING_TOOL`, or a missing check tool module, gives a skipped result, and
-    :data:`STOPPED` a skipped "Stopped" one. No check starts once the run is stopped.
+    ``runner(spec, cwd)`` returns ``(exit code, output)``: :func:`confined_runner`, given the run's stop. Exit
+    code :data:`MISSING_TOOL`, or a missing check tool module, gives a skipped result, the runner's
+    :data:`SANDBOX_UNAVAILABLE` a skipped one with the reason, and :data:`STOPPED` a skipped "Stopped" one. No
+    check starts once the run is stopped.
     """
     callbacks = callbacks or LabCallbacks()
-    run = runner or partial(default_runner, should_continue=callbacks.should_continue)
     results: list[CheckResult] = []
     for spec in specs:
         if not callbacks.should_continue():
@@ -178,7 +208,7 @@ def run_checks(specs: Sequence[CheckSpec], repos: Mapping[str, RepoSpec], *,
             continue
         callbacks.on_phase("check", f"{spec.title} ({spec.repo})")
         started = time.monotonic()
-        code, output = run(spec, os.path.normpath(os.path.join(repos[spec.repo].path, spec.cwd)))
+        code, output = runner(spec, os.path.normpath(os.path.join(repos[spec.repo].path, spec.cwd)))
         result = _result(spec, code, _ANSI.sub("", output), time.monotonic() - started)
         if result.skipped:
             logger.warning("Lab check %s skipped: %s", spec.id, result.summary)
@@ -186,25 +216,162 @@ def run_checks(specs: Sequence[CheckSpec], repos: Mapping[str, RepoSpec], *,
     return results
 
 
-def default_runner(spec: CheckSpec, cwd: str, *,
-                   should_continue: Optional[Callable[[], bool]] = None) -> tuple[int, str]:
-    """Run ``spec.argv`` in ``cwd`` with a scrubbed environment; stdout and stderr combined.
+def confined_runner(mounts: SandboxMounts, *,
+                    should_continue: Optional[Callable[[], bool]] = None) -> Runner:
+    """A :data:`Runner` that runs each check in the sandbox ``mounts`` describe (the lab's policy).
 
-    The command and every process it started are killed at the spec's timeout (:data:`TIMED_OUT`)
-    and as soon as ``should_continue()`` is False (:data:`STOPPED`).
+    The check gets the network only when its spec says so, a scrubbed environment, and stdout and stderr
+    combined. It and every process it started are killed at the spec's timeout (:data:`TIMED_OUT`) and as soon
+    as ``should_continue()`` is False (:data:`STOPPED`). Where the sandbox is mandatory and cannot start, the
+    check does not run (:data:`SANDBOX_UNAVAILABLE`); on a platform without one it runs unconfined and its
+    output says so.
     """
-    env = safe_subprocess_env()
-    executable = shutil.which(spec.argv[0], path=env.get("PATH"))
-    if executable is None:
-        return MISSING_TOOL, f"{spec.argv[0]} is not installed (not found on PATH)"
-    try:
-        return _run_stoppable([executable, *spec.argv[1:]], cwd=cwd, env=env, timeout=spec.timeout_seconds,
-                              should_continue=should_continue or (lambda: True))
-    except OSError as exc:
-        return 1, f"Could not start {spec.argv[0]} in {cwd}: {exc}"
+    keep_going = should_continue or _always
+
+    def run(spec: CheckSpec, cwd: str) -> tuple[int, str]:
+        env = safe_subprocess_env()
+        command = _resolve(spec.argv, env)
+        if command is None:
+            return MISSING_TOOL, f"{spec.argv[0]} is not installed (not found on PATH)"
+        try:
+            plan = sandboxed_command(command, workspace=_sandbox_workspace(mounts, cwd), cwd=cwd,
+                                     network=spec.network, writable=mounts.writable,
+                                     read_only=mounts.read_only, masked=mounts.masked)
+        except SandboxUnavailable as exc:
+            return SANDBOX_UNAVAILABLE, _SANDBOX_UNAVAILABLE + exc.detail
+        try:
+            code, output = _run_stoppable(plan.argv, cwd=cwd, env=env, timeout=spec.timeout_seconds,
+                                          should_continue=keep_going)
+        except OSError as exc:
+            return 1, f"Could not start {spec.argv[0]} in {cwd}: {exc}"
+        # bwrap's own setup failure is the first line of its stderr, and its stdout is empty.
+        startup_error = plan.startup_error(code, output)
+        if startup_error:
+            return SANDBOX_UNAVAILABLE, _SANDBOX_UNAVAILABLE + startup_error
+        return code, _unconfined_note(plan, "check") + output
+
+    return run
 
 
-def _run_stoppable(argv: list[str], *, cwd: str, env: dict[str, str], timeout: float,
+def confined_command_runner(mounts: SandboxMounts, *,
+                            should_continue: Optional[Callable[[], bool]] = None) -> CommandRunner:
+    """A :data:`CommandRunner` for a change's dependency installs, in the sandbox ``mounts`` describe.
+
+    Installs run model-written build and lifecycle scripts, so they get the checks' sandbox plus a private
+    network: outbound NAT through pasta, no port forwarded either way (the host's loopback stays out of reach).
+    Output, timeout (:data:`_INSTALL_TIMEOUT`), stop and the unavailable sandbox are handled as for a check.
+    """
+    keep_going = should_continue or _always
+
+    def run(argv: Sequence[str], cwd: str) -> tuple[int, str]:
+        env = safe_subprocess_env()
+        command = _resolve(argv, env)
+        if command is None:
+            return MISSING_TOOL, f"{argv[0]} is not installed (not found on PATH)"
+        try:
+            plan = sandboxed_command(command, workspace=_sandbox_workspace(mounts, cwd), cwd=cwd,
+                                     writable=mounts.writable, read_only=mounts.read_only, masked=mounts.masked,
+                                     private_network=True)
+        except SandboxUnavailable as exc:
+            logger.warning("Lab install %s not run: %s%s", argv[0], _INSTALL_SANDBOX_UNAVAILABLE, exc.detail)
+            return SANDBOX_UNAVAILABLE, _INSTALL_SANDBOX_UNAVAILABLE + exc.detail
+        try:
+            if plan.private_network:
+                code, output = _run_with_private_network(plan.argv, command, cwd=cwd, env=env,
+                                                         should_continue=keep_going)
+            else:
+                code, output = _run_stoppable(plan.argv, cwd=cwd, env=env, timeout=_INSTALL_TIMEOUT,
+                                              should_continue=keep_going)
+        except OSError as exc:
+            return 1, f"Could not start {argv[0]} in {cwd}: {exc}"
+        except SandboxUnavailable as exc:
+            logger.warning("Lab install %s not run: %s%s", argv[0], _INSTALL_SANDBOX_UNAVAILABLE, exc.detail)
+            return SANDBOX_UNAVAILABLE, _INSTALL_SANDBOX_UNAVAILABLE + exc.detail
+        startup_error = plan.startup_error(code, output)
+        if startup_error:
+            logger.warning("Lab install %s not run: %s%s", argv[0], _INSTALL_SANDBOX_UNAVAILABLE, startup_error)
+            return SANDBOX_UNAVAILABLE, _INSTALL_SANDBOX_UNAVAILABLE + startup_error
+        return code, _unconfined_note(plan, "install") + output
+
+    return run
+
+
+def _always() -> bool:
+    return True
+
+
+def _resolve(argv: Sequence[str], env: Mapping[str, str]) -> Optional[list[str]]:
+    """``argv`` with its executable resolved on the scrubbed ``PATH``, or None when it is not installed."""
+    executable = shutil.which(argv[0], path=env.get("PATH"))
+    return None if executable is None else [executable, *argv[1:]]
+
+
+def _sandbox_workspace(mounts: SandboxMounts, cwd: str) -> str:
+    """The folder holding the tree ``cwd`` is in (the change's root): the sandbox's workspace.
+
+    The agent's shell has the change's root as its workspace, so its commands, the checks and the installs
+    share one ``$HOME`` beside the trees.
+    """
+    real = os.path.normcase(os.path.realpath(cwd))
+    for tree in (*(mounts.writable or ()), *mounts.read_only):
+        parent = os.path.normcase(tree)
+        try:
+            if os.path.commonpath([real, parent]) == parent:
+                return os.path.dirname(tree)
+        except ValueError:  # different drives (Windows)
+            continue
+    raise ValueError(f"{cwd} is in none of the sandbox's trees")
+
+
+def _unconfined_note(plan: SandboxedCommand, what: str) -> str:
+    """The first line of an unconfined command's output, saying why it ran without the sandbox."""
+    if plan.sandboxed:
+        return ""
+    reason = (f"{SANDBOX_POLICY_ENV}=off was set" if plan.mode == "unconfined-override"
+              else f"no namespace sandbox on {sys.platform}")
+    return f"Note: this {what} ran without the sandbox ({reason}).\n"
+
+
+def _network_wait_argv(plan_argv: Sequence[str], command: Sequence[str], info_fd: int) -> list[str]:
+    """The bwrap ``plan_argv`` (ending with ``command``) reporting its pid on ``info_fd``, the command run once
+    pasta has configured the sandbox's interface."""
+    head = list(plan_argv[:len(plan_argv) - len(command)])
+    return [head[0], "--info-fd", str(info_fd), *head[1:],
+            sys.executable, "-I", "-S", "-c", _NETWORK_WAIT_EXEC, str(NETWORK_WAIT_SECONDS), *command]
+
+
+def _run_with_private_network(plan_argv: Sequence[str], command: Sequence[str], *, cwd: str,
+                              env: dict[str, str], should_continue: Callable[[], bool]) -> tuple[int, str]:
+    """:func:`_run_stoppable` for a plan with an unshared network: pasta attaches to the sandbox once bwrap
+    reports its pid, with nothing forwarded. Raises :class:`SandboxUnavailable` when pasta cannot attach."""
+    info_r, info_w = os.pipe()
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        try:
+            proc = subprocess.Popen(_network_wait_argv(plan_argv, command, info_w), cwd=cwd, env=env,
+                                    stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True,
+                                    pass_fds=(info_w,))
+        except OSError:
+            os.close(info_r)
+            raise
+        finally:
+            os.close(info_w)
+        pasta = None
+        try:
+            try:
+                pasta = start_pasta(read_child_pid(info_r, _SANDBOX_START_SECONDS), err)
+            finally:
+                os.close(info_r)
+            code, note = _wait_stoppable(proc, out, err, timeout=_INSTALL_TIMEOUT, should_continue=should_continue)
+        except SandboxUnavailable:
+            _kill_tree(proc)
+            proc.wait()
+            raise
+        finally:
+            stop_process(pasta)
+        return code, _decode(out) + _decode(err) + note
+
+
+def _run_stoppable(argv: Sequence[str], *, cwd: str, env: dict[str, str], timeout: float,
                    should_continue: Callable[[], bool]) -> tuple[int, str]:
     """``run_bounded``'s handling (own process group, output in temp files, the whole tree killed on a
     timeout or a flood of output), plus a stop: the tree is also killed once ``should_continue()`` is False.
@@ -215,32 +382,40 @@ def _run_stoppable(argv: list[str], *, cwd: str, env: dict[str, str], timeout: f
              else {"start_new_session": True})
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err, **group)
-        deadline = time.monotonic() + timeout
-        code: Optional[int] = None
-        note = ""
-        while True:
-            try:
-                code = proc.wait(timeout=min(_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            if not should_continue():
-                code, note = STOPPED, "\nStopped: the run was stopped"
-            elif max(_captured_size(out), _captured_size(err)) > MAX_CAPTURE_BYTES:
-                note = FLOOD_NOTE
-            elif time.monotonic() >= deadline:
-                code, note = TIMED_OUT, f"\nTimed out after {timeout:g} s"
-            else:
-                continue
-            _kill_tree(proc)
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
-            if code is None:  # a flood: the killed command's own exit code
-                code = proc.returncode if proc.returncode is not None else 1
-            break
+        code, note = _wait_stoppable(proc, out, err, timeout=timeout, should_continue=should_continue)
         return code, _decode(out) + _decode(err) + note
+
+
+def _wait_stoppable(proc: subprocess.Popen, out, err, *, timeout: float,
+                    should_continue: Callable[[], bool]) -> tuple[int, str]:
+    """Wait for ``proc`` (writing to the temp files ``out`` and ``err``); ``(exit code, note on why it was
+    killed)``."""
+    deadline = time.monotonic() + timeout
+    code: Optional[int] = None
+    note = ""
+    while True:
+        try:
+            code = proc.wait(timeout=min(_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        if not should_continue():
+            code, note = STOPPED, "\nStopped: the run was stopped"
+        elif max(_captured_size(out), _captured_size(err)) > MAX_CAPTURE_BYTES:
+            note = FLOOD_NOTE
+        elif time.monotonic() >= deadline:
+            code, note = TIMED_OUT, f"\nTimed out after {timeout:g} s"
+        else:
+            continue
+        _kill_tree(proc)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        if code is None:  # a flood: the killed command's own exit code
+            code = proc.returncode if proc.returncode is not None else 1
+        break
+    return code, note
 
 
 def format_results(results: Sequence[CheckResult]) -> str:
@@ -267,7 +442,7 @@ def format_results(results: Sequence[CheckResult]) -> str:
 
 
 def run_checks_tool(get_changes: Callable[[], list[RepoChange]], repos: Mapping[str, RepoSpec], *,
-                    runner: Runner | None = None, callbacks: LabCallbacks | None = None,
+                    runner: Runner, callbacks: LabCallbacks | None = None,
                     on_results: Callable[[list[CheckResult]], None] | None = None) -> ExtraTool:
     """The ``run_checks`` tool: the checks of what the change touched so far, formatted for the model.
 
@@ -634,6 +809,9 @@ def _result(spec: CheckSpec, code: int, output: str, duration: float) -> CheckRe
 
 
 def _missing_tool(code: int, output: str) -> Optional[str]:
+    """Why the check could not run, or None: its tool is missing, or its sandbox could not start."""
+    if code == SANDBOX_UNAVAILABLE and output.startswith(_SANDBOX_UNAVAILABLE):
+        return output.splitlines()[0][:200]
     if code == MISSING_TOOL:
         return _last_line(output) or "the check's tool is not installed"
     if code != 0:

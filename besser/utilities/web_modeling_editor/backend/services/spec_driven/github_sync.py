@@ -573,13 +573,13 @@ MAX_GENERATED_CODE_BYTES = MAX_REQUEST_SIZE
 GENERATED_CODE_FILENAME = ".besser_generated_code"
 
 
-def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str) -> None:
+def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str, keep: frozenset[str] = frozenset()) -> None:
     """Extract ``archive`` into ``dest_dir``; refuses unsafe paths and an archive past the caps.
 
     Links and other non-regular members are skipped, and so are BESSER's own
-    run records (``.besser_*``): the run's are written by BESSER alone.
-    Everything is checked before anything is written, so a refused archive
-    writes nothing.
+    run records (``.besser_*``) other than the member names in ``keep``: the
+    run's are written by BESSER alone. Everything is checked before anything
+    is written, so a refused archive writes nothing.
     """
     dest_abs = os.path.abspath(dest_dir)
     members = []
@@ -587,7 +587,8 @@ def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str) -> None:
     for info in archive.infolist():
         if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG):
             continue
-        if any(fnmatch.fnmatch(part, _RUN_INTERNAL_FILES) for part in info.filename.replace("\\", "/").split("/")):
+        if info.filename not in keep and any(
+                fnmatch.fnmatch(part, _RUN_INTERNAL_FILES) for part in info.filename.replace("\\", "/").split("/")):
             continue
         target = os.path.abspath(os.path.join(dest_abs, info.filename))
         if not target.startswith(dest_abs + os.sep):

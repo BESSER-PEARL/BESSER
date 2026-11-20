@@ -29,6 +29,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+import zlib
 from dataclasses import dataclass, replace as dataclass_replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
@@ -116,7 +117,10 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     telemetry,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
+    MAX_RUN_RECORD_BYTES,
+    read_run_json,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
@@ -1056,9 +1060,55 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     while deliberately KEEPING ``.besser_recipe.json`` so the orchestrator
     can replay the previous run's generator-file tags.
     """
-    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
-
     copytree_plain(base_dir, dest_dir, _EXCLUDED_OUTPUT_DIRS, dirs_exist_ok=True)
+    _strip_seed(dest_dir)
+
+
+def _seed_workspace_from_archive(archive_path: str, dest_dir: str) -> None:
+    """Unpack a previous run's download into a fresh workspace for editing, when its
+    workspace has expired. The download holds the same tree less what the workspace
+    seed strips; the run files a later run reads (``CARRIED_RUN_FILES``) are kept.
+    Raises ``ValueError`` for an unsafe or oversized archive, which writes nothing."""
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
+        _extract_generated_zip,
+    )
+
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            _extract_generated_zip(archive, dest_dir, keep=frozenset(CARRIED_RUN_FILES))
+    except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+        raise ValueError("The previous run's download could not be read.") from exc
+    _strip_seed(dest_dir)
+
+
+def modify_base(entry: Optional[SmartRunEntry]) -> tuple[Optional[str], Optional[str]]:
+    """What a modify run of ``entry`` seeds from: ``(workspace, None)`` while the
+    workspace is kept, then ``(None, ZIP download)`` until the download expires;
+    ``(None, None)`` when neither is left (or the download is not a ZIP)."""
+    if entry is None or not entry.temp_dir:
+        return None, None
+    if os.path.isdir(entry.temp_dir):
+        return entry.temp_dir, None
+    if entry.is_zip and is_plain_file(entry.file_path, root=run_download_dir(entry.temp_dir)):
+        return None, entry.file_path
+    return None, None
+
+
+def archived_recipe_text(archive_path: str) -> Optional[str]:
+    """The run recipe in a run's ZIP download, or None when it has none or it is too large."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            info = archive.getinfo(RECIPE_FILENAME)
+            if info.file_size > MAX_RUN_RECORD_BYTES:
+                return None
+            return archive.read(info).decode("utf-8-sig", errors="replace")
+    except (KeyError, OSError, zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError):
+        return None
+
+
+def _strip_seed(dest_dir: str) -> None:
+    """Remove from a modify run's seed what belonged to the previous run alone."""
+    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 
     # Drop the copied checkpoint (old run's mid-flight state).
     checkpoint = os.path.join(dest_dir, CHECKPOINT_FILENAME)
@@ -1399,14 +1449,10 @@ class SmartGenerationRunner:
 
             # ---- Incremental modify: seed from the base run --------
             if self._mode == "modify" and self._base_run_id:
-                base_entry = await self._runtime.registry.get(self._base_run_id)
-                if (
-                    base_entry is None
-                    or not base_entry.temp_dir
-                    or not os.path.isdir(base_entry.temp_dir)
-                ):
-                    # Base-expired fallback: the previous run was swept past
-                    # its TTL (or never existed). Warn — non-terminally —
+                base_dir, base_archive = modify_base(await self._runtime.registry.get(self._base_run_id))
+                if base_dir is None and base_archive is None:
+                    # Base-expired fallback: the previous run's workspace and
+                    # download were swept (or never existed). Warn — non-terminally —
                     # and fall through to a normal from-scratch run() so the
                     # user still gets output instead of a hard failure.
                     yield self._sse(ErrorEvent(
@@ -1426,11 +1472,10 @@ class SmartGenerationRunner:
                     # ``_seeded`` stays False → run_orchestrator uses run().
                 else:
                     try:
-                        await self._runtime.run_blocking(
-                            _seed_workspace_from_base,
-                            base_entry.temp_dir,
-                            self.temp_dir,
-                        )
+                        if base_dir is not None:
+                            await self._runtime.run_blocking(_seed_workspace_from_base, base_dir, self.temp_dir)
+                        else:
+                            await self._runtime.run_blocking(_seed_workspace_from_archive, base_archive, self.temp_dir)
                         self._seeded = True
                         self._facts.mode_reason = run_record.EDIT
                         # Lines that changed since the base run (a person

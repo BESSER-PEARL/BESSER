@@ -124,10 +124,25 @@ A run can also be **incremental**. With ``mode: "modify"`` and a
 ``base_run_id`` naming a previous, still-downloadable run, the new run's
 workspace is seeded from that run's generated files and edited in place instead
 of being rebuilt from scratch. Phase 2 is never skipped for a modify run — you
-asked for a change, so a change is made. When the base has expired the runner
+asked for a change, so a change is made.
+
+The base's workspace is kept for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (3 hours by
+default) and its ZIP download for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours).
+Once the workspace is gone, the run is seeded from the download instead: it holds
+the same source tree and the run files a later run reads (``.besser_recipe.json``,
+``.besser_attribution.json``, ``.besser_generator_output.json``), and it is
+unpacked with the checks of an uploaded archive (no path outside the workspace, no
+links, size and file-count limits). It is still a modify run. A download that
+cannot be unpacked is treated like a failed copy: the run warns and rebuilds.
+
+When neither is left (or the base's output was a single file, not a ZIP) the runner
 warns and falls back to normal from-scratch generation rather than failing the
-request. The editor avoids that for a project linked to GitHub: it starts the run
-from the repository instead (see :ref:`web-editor-github-coming-back`).
+request; the recipe's ``run.mode_reason`` says ``previous result expired, rebuilt
+from scratch`` and the ``done`` event's ``mode`` is ``create``. A client can learn
+this before starting: ``/preview`` with ``mode: "modify"`` and the ``base_run_id``
+returns ``base_available`` (``false`` when the run would rebuild). The editor avoids
+the rebuild for a project linked to GitHub: it starts the run from the repository
+instead (see :ref:`web-editor-github-coming-back`).
 
 Every run records the class diagram it was given in the run's
 ``.besser_recipe.json`` as ``model.user_model``: classes (abstract, parents,

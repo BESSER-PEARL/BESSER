@@ -6,6 +6,7 @@ no LLM call: the comparison reads the base run's recipe.
 """
 import asyncio
 import json
+import os
 import time
 
 import pytest
@@ -87,6 +88,41 @@ def test_unknown_base_or_generate_mode_reports_none(base_run):
     del body["base_run_id"]
     resp = _preview(body)
     assert resp.status_code == 200 and resp.json()["model_change"] is None
+
+
+def test_preview_says_whether_the_base_can_be_edited(base_run, tmp_path):
+    assert _preview(_body()).json()["base_available"] is False  # never registered
+    base_run(_classes({"Author": ["name"], "Book": []}))
+    assert _preview(_body()).json()["base_available"] is True  # its workspace is there
+    body = _body(mode="generate")
+    del body["base_run_id"]
+    assert _preview(body).json()["base_available"] is None
+
+
+def test_an_expired_workspace_with_its_download_is_still_a_base(tmp_path):
+    import zipfile
+
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import run_download_dir
+
+    workspace = str(tmp_path / f"besser_llm_{BASE_ID}_x")  # swept
+    download = run_download_dir(workspace)
+    os.makedirs(download)
+    artifact = os.path.join(download, "artifact")
+    with zipfile.ZipFile(artifact, "w") as zf:
+        zf.writestr(".besser_recipe.json",
+                    json.dumps({"model": {"user_model": _classes({"Author": ["name"], "Book": []})}}))
+        zf.writestr("app/main.py", "")
+    asyncio.run(current_runtime().registry.put(BASE_ID, SmartRunEntry(
+        file_path=artifact, file_name="out.zip", is_zip=True, temp_dir=workspace, created_at=time.time())))
+    try:
+        payload = _preview(_body()).json()
+        assert payload["base_available"] is True
+        assert payload["model_change"]["added"] == ["Book.title"]
+        os.remove(artifact)  # the download is gone too
+        payload = _preview(_body()).json()
+        assert payload["base_available"] is False and payload["model_change"] is None
+    finally:
+        asyncio.run(current_runtime().registry.pop(BASE_ID))
 
 
 def test_preview_work_runs_off_the_event_loop(base_run, monkeypatch):

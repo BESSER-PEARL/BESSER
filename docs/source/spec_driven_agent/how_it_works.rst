@@ -171,7 +171,11 @@ The three phases
 
 **Phase 3 — validation and bounded auto-fix.**
    The workspace is snapshotted, then swept by a set of static validators.
-   Findings are classified by severity, and **blocker**-level issues drive a
+   Findings are classified by the kind of evidence: a **blocker** is an observed
+   failure or a requirement the judge found missing or partial; a check that
+   reached no conclusion (a citation not located, a guessed request the app
+   refused, a check that did not run) is *not confirmed*, listed for the user and
+   never a blocker. Blockers drive a
    bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
    and as many as the turns Phase 2 left over, each round up to ten LLM turns.
    With auto-fix on, Phase 2 leaves this loop part of ``max_turns`` (see
@@ -330,8 +334,8 @@ reading a trace and wondering why a run did what it did.
      - A checkpoint is written to ``.besser_checkpoint.json`` in the workspace
        after every tool-use turn and again when Phase 3 starts and as its
        repair progresses. It is deleted only when Phase 2 ended cleanly,
-       Phase 3 was not interrupted and no blocker or ``validation
-       unverified:`` finding remains. A run cut short by an error, a cap, or
+       Phase 3 was not interrupted and no blocker or not-confirmed finding
+       remains. A run cut short by an error, a cap, or
        a cancellation, or one that ends with open findings, therefore leaves
        one behind for :ref:`resume <spec-driven-durable-runs>`, which refuses to
        resume against a project whose fingerprint has changed and seeds the
@@ -430,12 +434,15 @@ Between Phase 2 and Phase 3, the Python files the LLM wrote whole in a create
 run are passed through ``ruff format --isolated``, which changes layout only,
 so Phase 3 validates the layout that ships; a file it only edited, generator
 files and the files of a modify run keep their own layout. A formatter that
-could not run is reported under *Not checked*. The download's
+could not run is reported under *Not confirmed*. The download's
 ``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
 generator and the verification counts (confirmed by running the app's API, found
-in the code but not run, not checked, missing in the code), with up to eight lines each for what was
-found missing in the code or not checked (a check that could not run, a
-requirement whose evidence did not verify), and how many more there are. A list
+in the code but not run, not confirmed, checked and not met, and test workflows that ran and
+failed), a *Not verified* line when a whole
+class of checks left no evidence, with up to eight lines each for what was
+checked and not met (a rule missing in the code, cited code that does not do it), what ran and
+failed (a test workflow the agent wrote) or not confirmed (a check that could not run, a
+requirement whose citation was not located), and how many more there are. A list
 of more than five lines puts findings of one kind on one line ("5 create
 operations could not be tested automatically, because each needs an existing
 record first: ..."). These items, the run card's verification report and the
@@ -445,7 +452,7 @@ agent, with the request it sent, the file and line to edit and what to call
 next, so it stays in the agent's prompt, the trace and the recipe's
 ``validation_issues``. A finding with no sentence of its own reads as a generic
 one, never as the agent's text. A request that states no business rule adds a *Not
-checked* line saying so, and an implemented requirement that was only found in
+confirmed* line saying so, and an implemented requirement that was only found in
 the source is counted as found in the code, never as confirmed; a confirmed one
 names the call that exercised it. No check opens
 the screens, so only a call to the running app's API confirms anything. It leaves out the request itself, because the file

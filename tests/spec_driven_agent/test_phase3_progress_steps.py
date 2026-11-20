@@ -136,7 +136,7 @@ def test_a_fix_attempt_keeps_its_own_step_through_its_validate_app_calls(orch, m
 
 
 def test_a_fix_attempt_counts_agree_with_the_round_it_faces(orch):  # noqa: F811
-    """The round counts checks that could not run as blockers; edits cannot settle them."""
+    """A check that could not run is not confirmed: neither the round nor the attempt counts it."""
     steps = _steps(orch)
     not_run = "validation unverified: frontend build [frontend] did not run completely"
     _cycle(orch, [
@@ -144,8 +144,7 @@ def test_a_fix_attempt_counts_agree_with_the_round_it_faces(orch):  # noqa: F811
          ValidationIssue("warning", not_run)],
         [],
     ])
-    assert steps[1] == ("Fix attempt 1: fixing 2 of 3 blockers "
-                        "(1 about requirements; 1 is a check that could not run)")
+    assert steps[1] == "Fix attempt 1: fixing 2 blockers (1 about requirements)"
 
 
 def test_a_resumed_repair_does_not_call_its_first_sweep_the_first_check(orch):  # noqa: F811

@@ -161,7 +161,8 @@ def test_extraction_keeps_the_billing_tail_and_saturation_cannot_look_complete(t
         assert gate["text"] not in client.calls[0][1], "code judgment cannot repair incomplete extraction"
         checked = ledger.verify_evidence([dict(gate, status="implemented", evidence="app.py: return True")], str(tmp_path))
         assert checked[0]["status"] == "unverified"
-        assert _classify_issue(ledger.ledger_issues(checked)[0]).severity == "blocker"
+        # Incomplete extraction is not confirmed: listed, never a blocker.
+        assert _classify_issue(ledger.ledger_issues(checked)[0]).severity == "warning"
         assert ledger.judge_coverage([gate], "", _ToolClient([]))[0]["status"] == "unverified"
     assert ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": {"text": "bad shape"}}])) is None
 
@@ -710,7 +711,7 @@ def test_a_requirement_the_judge_skipped_is_unverified_not_missing():
 # --------------------------------------------------------- issues + severity
 
 
-def test_unresolved_requirements_block_completion_without_inventing_missing_code():
+def test_missing_and_partial_requirements_block_and_unverified_ones_are_not_confirmed():
     issues = ledger.ledger_issues([
         {"id": 1, "text": "Room numbers are unique", "status": "missing", "note": "no unique constraint"},
         {"id": 2, "text": "Bills can be paid", "status": "partial", "note": "no refusal when paid"},
@@ -721,7 +722,7 @@ def test_unresolved_requirements_block_completion_without_inventing_missing_code
     assert issues[0].startswith("requirement: R1 — Room numbers are unique is not implemented")
     assert _classify_issue(issues[0]).severity == "blocker"
     assert _classify_issue(issues[1]).severity == "blocker"
-    assert _classify_issue(issues[2]).severity == "blocker"
+    assert _classify_issue(issues[2]).severity == "warning"
     assert issues[1].startswith("requirement partial:")
     assert issues[2].startswith("requirement unverified:")
     assert "implement the behaviour only if it is really absent" in issues[2]
@@ -795,7 +796,7 @@ def test_ui_requirements_on_a_backend_only_output_are_out_of_scope(
 
     assert len(issues) == 1
     if frontend:
-        assert issues[0].severity == "blocker"
+        assert issues[0].severity == "warning"
         assert issues[0].message.startswith("requirement unverified: R1")
     else:
         assert issues[0].severity == "warning"
@@ -804,7 +805,7 @@ def test_ui_requirements_on_a_backend_only_output_are_out_of_scope(
 
 
 def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):
-    from besser.spec_driven_agent.validation.issues import is_completion_issue
+    from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
 
     monkeypatch.setattr(ledger, "extract_requirements",
                         lambda *_: (_ for _ in ()).throw(AssertionError("must not run")))
@@ -816,7 +817,8 @@ def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):
     issues = orch._collect_validation_issues()
     assert not [i for i in issues if i.message.startswith("requirement")]
     findings = [i for i in issues if i.message.startswith("validation unverified: original-specification coverage")]
-    assert len(findings) == 1 and findings[0].severity == "warning" and is_completion_issue(findings[0])
+    assert len(findings) == 1 and findings[0].severity == "warning"
+    assert is_not_confirmed(findings[0]) and not is_completion_issue(findings[0])
     orch.auto_fix_issues = True
     monkeypatch.setattr(orch, "_collect_validation_issues", lambda: findings)
     monkeypatch.setattr(orch.client, "chat", lambda *a, **kw: pytest.fail("disabled checking must not request code repairs"))

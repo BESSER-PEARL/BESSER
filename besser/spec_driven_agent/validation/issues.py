@@ -11,11 +11,12 @@ class ValidationIssue:
 
     severity:
       - ``blocker``: an execution, implementation or acceptance defect
-        requiring repair (including missing behavior or invalid evidence),
+        requiring repair (including behaviour the judge found missing),
         or explicitly authorized dependency setup needed for verification.
-      - ``warning``: advisory findings or checks whose outcome is unknown.
-        Explicit ``validation unverified:`` warnings prevent verified
-        completion but do not justify spending source-repair turns.
+      - ``warning``: advisory findings, and findings that are not confirmed
+        (``NOT_CONFIRMED_PREFIXES``): a check that reached no conclusion. These
+        prevent "verified" but never block, never count in ``blockerCount`` and
+        are never repaired.
       - ``style``: a count, not a defect: the ``(+N more ... truncated)`` notes of
         ruff and the compilers. Never blocks a release. The lint selects no cosmetic rule.
 
@@ -36,38 +37,61 @@ def _hard_blockers(issues: list) -> list:
     Excluded: the requirements ledger's ``requirement:`` verdicts, which an
     LLM judge produces, and the ``unverified`` family, whose own text says a
     guessed request being refused "does not prove this endpoint is broken".
-    They stay blockers - an unverified app is not a verified one - but they
-    may not rank one tree above another or force a rollback, because we do
-    not know that they describe a defect (e.g. an app correctly refusing to
-    create an ABSTRACT entity).
+    Those that are blockers may not rank one tree above another or force a
+    rollback, because we do not know that they describe a defect (e.g. an app
+    correctly refusing to create an ABSTRACT entity).
     """
     return [i for i in issues if not i.message.startswith((
-        "requirement:", "requirement unverified:",
+        "requirement:", "requirement unverified:", REQUIREMENT_UNSUPPORTED,
         "requirement partial:", "task unverified:", "task incomplete:",
         "runtime unverified:", "create unverified:",
     ))]
 
 
-# Findings that mean "we could not check", never "the app is broken". Each is
-# an UNKNOWN: the run did not establish the behaviour either way. They belong in
-# the ledger's could-not-verify bucket, which the UI already renders separately.
-_UNKNOWN_PREFIXES = (
-    "requirement unverified:", "requirement partial:", "task unverified:",
-    "runtime unverified:", "create unverified:", "action unverified:",
-    "validation unverified:", "verification setup:", "api scenario:",
-    "requirement:",
+# Not confirmed: a check that reached no conclusion, never an observed failure.
+# Listed for the user; never a blocker, never repaired, except on a fix run when
+# it matches the failure the user reported. One prefix per line.
+NOT_CONFIRMED_PREFIXES = (
+    # The judge said implemented and its citation was not located, or the judge or
+    # the extraction did not run.
+    "requirement unverified:",
+    # The probe's own guessed request was refused (``runtime unverified:`` once no
+    # scenario settled it).
+    "runtime unverified:",
+    "create unverified:",
+    "action unverified:",
+    # A required check did not run.
+    "validation unverified:",
+    # A checklist item no check and no ``task_list`` close settled.
+    "task unverified:",
+)
+
+# The judge said implemented, but the code it cited is not an implementation (a
+# stub, a no-op validator, a comment or import, a declaration where behaviour is
+# needed) or the cited file does not exist: a blocker, repaired like a missing one.
+REQUIREMENT_UNSUPPORTED = "requirement unsupported:"
+
+
+def is_not_confirmed(issue) -> bool:
+    """A finding (or its message) that says a check reached no conclusion."""
+    return str(getattr(issue, "message", issue)).strip().lower().startswith(NOT_CONFIRMED_PREFIXES)
+
+
+# Findings that do not show the app fails to work. The not-confirmed ones are no
+# completion issue at all; the others here still count in ``blockerCount``.
+_UNKNOWN_PREFIXES = NOT_CONFIRMED_PREFIXES + (
+    "requirement partial:", "verification setup:", "api scenario:", "requirement:",
+    REQUIREMENT_UNSUPPORTED,
 )
 
 
 def unresolved_defects(issues: list) -> list:
     """Completion issues that describe a DEFECT, not an unknown.
 
-    The whole unverified family classifies as ``blocker`` severity, but an
-    app whose only open items are could-not-verify checks is not broken.
     "Incomplete" is reserved for output that does not work: a tree that will
-    not parse, an app that cannot boot or create a record, a requirement the
-    code demonstrably does not implement. An unknown keeps its place in the
-    ledger and in ``blockerCount``; it does not set the headline.
+    not parse, an app that cannot boot or create a record. A requirement
+    blocker or a failed agent-written workflow keeps its place in the ledger
+    and in ``blockerCount``; it does not set the headline.
     """
     return [
         i for i in issues
@@ -277,10 +301,41 @@ def required_dependency_setup(check: str, project: str) -> str:
     )
 
 
+# What a not-confirmed finding says when the server has the check switched off (the
+# toolchain, shell tools, the requirements ledger, the startup check): the same on every
+# run there, so the done event's ``notConfirmedCount`` leaves it out (``checksOff`` says it).
+CONFIGURED_OFF_REASONS = (
+    "toolchain validation is disabled",
+    "require explicitly enabled shell tools",
+    "requirements ledger is disabled",
+    "these checks are disabled for this run",
+)
+
+
+def is_configured_off(issue) -> bool:
+    """A not-confirmed finding about a check the server has switched off."""
+    message = str(getattr(issue, "message", issue)).lower()
+    return is_not_confirmed(message) and any(reason in message for reason in CONFIGURED_OFF_REASONS)
+
+
+# The reason a check carries once the dependency install it needed was left undone.
+DEPENDENCIES_NOT_INSTALLED = "its project dependencies were not installed"
+_SETUP_CHECK_RE = _re.compile(r"^verification setup: (?P<check>.+?) requires installed project dependencies")
+
+
+def dependencies_not_installed(setup: str) -> str:
+    """A ``verification setup:`` still open when the run ends: the checks behind it did not run."""
+    match = _SETUP_CHECK_RE.match(setup)
+    return required_check_unverified(match["check"] if match else "a check", DEPENDENCIES_NOT_INSTALLED)
+
+
 def is_completion_issue(issue: ValidationIssue) -> bool:
-    """Missing required verification blocks completion, but not source repair."""
-    return (getattr(issue, "severity", None) == "blocker"
-            or str(getattr(issue, "message", "")).startswith("validation unverified:"))
+    """A blocker the run ends with: counted in ``blockerCount``.
+
+    The prefix wins over the stored severity: a not-confirmed finding built as a
+    blocker, or read back from an older recipe or checkpoint, is not one.
+    """
+    return getattr(issue, "severity", None) == "blocker" and not is_not_confirmed(issue)
 
 # F811 joins the undefined-name codes: a redefinition means the later name
 # silently wins — the ORM `User` shadowed by the Pydantic `User` and then
@@ -301,8 +356,10 @@ def _classify_issue(message: str) -> ValidationIssue:
     text = message.strip()
     lower = text.lower()
 
-    if lower.startswith("validation unverified:"):
+    if lower.startswith(NOT_CONFIRMED_PREFIXES):
         return ValidationIssue("warning", text)
+    # Could not check either, but an authorized dependency install settles it and
+    # unblocks the compile and build checks behind it: kept for the repair loop.
     if lower.startswith("verification setup:"):
         return ValidationIssue("blocker", text)
 
@@ -360,22 +417,21 @@ def _classify_issue(message: str) -> ValidationIssue:
         return ValidationIssue("blocker", text)
 
     # The ORM module failed to import or to configure its mappers in the import
-    # smoke check: every request that touches the database is a 500.
+    # smoke check: every request that touches the database is a 500. A workflow
+    # that ran against the app and failed is an observed failure too, and so is
+    # the runtime gate's refusal (its "no runtime evidence" finding is
+    # ``validation unverified:``, not confirmed, above).
     if lower.startswith((
         "mapper config:", "application startup:", "python contract:",
-        "runtime unverified:", "api scenario:",
+        "api scenario:", "runtime gate:",
     )):
         return ValidationIssue("blocker", text)
 
-    # A checklist item nothing settled is reported, not repaired; one whose
-    # deterministic check fails is missing work.
-    if lower.startswith("task unverified:"):
-        return ValidationIssue("warning", text)
-
-    # Missing behavior and incomplete requirement verification both prevent
-    # verified completion; unknown evidence is not proof of absent behavior.
+    # The judge's own verdict that behaviour is missing or partial, a cited
+    # implementation the verifier found does not do it, a checklist item whose
+    # deterministic check fails, and a modeled operation left as an HTTP 501 placeholder.
     if lower.startswith((
-        "requirement:", "requirement partial:", "requirement unverified:",
+        "requirement:", "requirement partial:", REQUIREMENT_UNSUPPORTED,
         "action contract:", "task incomplete:",
     )):
         return ValidationIssue("blocker", text)

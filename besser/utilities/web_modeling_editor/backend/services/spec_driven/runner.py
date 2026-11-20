@@ -67,6 +67,7 @@ from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by
 from besser.spec_driven_agent.planning.requirements_ledger import (
     ABSENCE_KIND,
     CHANGED_LATER,
+    EVIDENCE_REFUTED,
     INHERITED,
     NOT_PROVABLE,
     render_evidence,
@@ -99,6 +100,8 @@ from besser.spec_driven_agent.validation.user_wording import (
 )
 from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
+    is_configured_off,
+    is_not_confirmed,
     required_check_unverified,
     unresolved_defects,
 )
@@ -346,11 +349,16 @@ _UNENFORCED_PREFIXES = ("action contract:", "model contract:", "task incomplete:
 # is a test the agent wrote for its own code, not a rule the user stated: when it fails, the test or the
 # app may be wrong, so it is a result to look at, not a rule shipped unenforced.
 _UNCONFIRMED = "the check could not confirm it in the delivered code"
+# The ``why`` of a requirement whose cited code the check found is not an implementation of it.
+_UNSUPPORTED = "the code the check was pointed at does not do this"
 # A modify run's requirement the previous run had also left unmet.
 _OPEN_BEFORE = "open since the previous run; this request did not concern it"
 _CHANGED_LATER = "a newer message changes or removes it"
 _WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it is not a rule from your "
                     "request, and the test or the app may be wrong")
+# The heading of the checked-and-not-met state in BESSER_GENERATION.md: a rule missing in the
+# code, a cited implementation that does not do it.
+_NOT_MET = "Checked and not met"
 # Verification levels (``requirements_ledger.with_verification_levels``) at which a call to the
 # running app exercised the requirement; ``unverified`` means only its source citation was checked.
 _RAN_LEVELS = ("verified", "api_verified")
@@ -499,12 +507,19 @@ def run_summary_markdown(
         lines.append(f"- Run: {run.get('mode')}, {run.get('mode_reason')}; ended: {run.get('stopped_by')}")
         if run.get("models"):
             lines.append(f"- Model: {', '.join(map(one_line, run['models']))} ({run.get('key_tier')})")
+        if run.get("outcome") == "completed_unverified" and run.get("stop_message"):
+            lines.append(f"- Not verified: {one_line(run['stop_message'])}")
+        off = [gap for gap in run.get("not_verified") or [] if isinstance(gap, dict) and gap.get("configured_off")]
+        if off:
+            lines.append("- Checks off on this server: " + "; ".join(
+                f"{one_line(gap.get('check'))} ({one_line(gap.get('reason'))})" for gap in off))
     if readme:
         lines.append("- How to run it: see `README.md`")
     lines.append(
         f"- Verification: {counts.verified} confirmed by running the app's API, "
-        f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not checked, "
-        f"{counts.shippedUnenforced} checked and missing in the code")
+        f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not confirmed, "
+        f"{counts.shippedUnenforced} checked and not met"
+        + (f", {counts.failed} test workflow(s) ran and failed" if counts.failed else ""))
     removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
                      for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
     note = recipe.get("runtime_files_note")
@@ -522,8 +537,9 @@ def run_summary_markdown(
         lines.append("- Names a temporary path: the run's folder, which does not exist after the run; "
                      "replace it with a relative path: " + ", ".join(one_line(path) for path in bound[:10]))
     findings = {finding.sentence: finding for finding in map(user_finding, _issue_messages(recipe))}
-    for title, items, total in (("Missing in the code", verification.shippedUnenforced, counts.shippedUnenforced),
-                                ("Not checked", verification.notVerified, counts.notVerified)):
+    for title, items, total in ((_NOT_MET, verification.shippedUnenforced, counts.shippedUnenforced),
+                                ("Ran and failed", verification.failed, counts.failed),
+                                ("Not confirmed", verification.notVerified, counts.notVerified)):
         if items:
             entries = [(_summary_finding(item, findings),
                         one_line(item.what) + (f": {one_line(item.why)}" if item.why else "")) for item in items]
@@ -533,6 +549,22 @@ def run_summary_markdown(
             if max(total, len(items)) > covered:
                 lines.append(f"- and {max(total, len(items)) - covered} more")
     return lines
+
+
+def _verification_gaps(orchestrator: Any) -> list[tuple[str, str, bool]]:
+    """The orchestrator's ``verification_gaps``: each class of checks with no evidence at all.
+
+    Fails closed: a summary that could not be computed is itself a gap.
+    """
+    gaps = getattr(orchestrator, "verification_gaps", None)
+    if not callable(gaps):
+        return []
+    try:
+        found = gaps()
+    except Exception:
+        logger.warning("Could not tell which checks left no evidence", exc_info=True)
+        return [("checks", "the check summary could not be computed", False)]
+    return [run_record.as_gap(gap) for gap in found] if isinstance(found, list) else []
 
 
 def _issue_messages(recipe: dict) -> list[str]:
@@ -567,6 +599,7 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
     found_in_code: list[VerificationItem] = []
     not_verified: list[VerificationItem] = []
     unenforced: list[VerificationItem] = []
+    failed: list[VerificationItem] = []
 
     if recipe.get("warning") and not any(
         recipe.get(key) for key in
@@ -655,6 +688,9 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         elif status == NOT_PROVABLE:
             item = _item("requirement", ident, what, why=note)
             not_verified.append(item)
+        elif status == "unverified" and verdict.get(EVIDENCE_REFUTED):
+            item = _item("requirement", ident, what, why=_UNSUPPORTED)
+            unenforced.append(item)
         elif status in ("missing", "partial"):
             reason = (("the delivered app has what it excludes" if verdict.get("kind") == ABSENCE_KIND
                        else "the delivered code does not implement it") if status == "missing"
@@ -696,7 +732,9 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
                 how=f"a test the agent wrote passed: {len(requests)} request(s) run against the app: {ran}",
             ))
         elif status == "failed":
-            not_verified.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
+            # An ``api scenario:`` blocker: it ran and failed, which is not "could not check",
+            # and a test the agent wrote, which is not a rule the user asked for.
+            failed.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
         else:
             not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
     # Workflows the agent retired as replaced by another: not run at the end, so not evidence either way.
@@ -734,6 +772,10 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             not_verified.append(_item("check", "", user_sentence(message)))
         elif message.startswith(_UNENFORCED_PREFIXES):
             unenforced.append(_item("requirement", "", user_sentence(message)))
+        elif is_not_confirmed(message) and not message.startswith("requirement unverified:"):
+            # Every other finding the counts call not confirmed (the runtime gate's "no runtime
+            # evidence"); requirements are listed from their verdicts above and below.
+            not_verified.append(_item("check", "", user_sentence(message)))
 
     # 5. The requirements ledger can fail before producing a single verdict
     #    (extraction failed, verification budget exhausted). Its finding then
@@ -742,7 +784,7 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
     if not verdicts:
         for issue in recipe.get("validation_issues") or []:
             message = str((issue or {}).get("message") or "")
-            if message.startswith(("requirement unverified:", "requirement:")):
+            if message.startswith("requirement unverified:"):
                 not_verified.append(_item(
                     "check", "", "original-specification coverage", why=user_sentence(message),
                 ))
@@ -753,11 +795,13 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         foundInCode=_capped(found_in_code),
         notVerified=_capped(not_verified),
         shippedUnenforced=_capped(unenforced),
+        failed=_capped(failed),
         counts=VerificationCounts(
             verified=len(verified),
             foundInCode=len(found_in_code),
             notVerified=len(not_verified),
             shippedUnenforced=len(unenforced),
+            failed=len(failed),
         ),
     )
 
@@ -2391,25 +2435,30 @@ class SmartGenerationRunner:
                 or stop_reason == "validation_required"
             )
 
-            # Blockers include unresolved requirement and verification issues,
-            # not only compile/startup failures.
+            # Blockers include requirements found missing, not only compile/startup
+            # failures; a check that reached no conclusion is not confirmed, not a blocker.
+            _final_issues = getattr(orchestrator, "_validation_issues", None) or []
             _unfixed_blockers = [
-                getattr(i, "message", str(i))
-                for i in (getattr(orchestrator, "_validation_issues", None) or [])
-                if is_completion_issue(i)
+                getattr(i, "message", str(i)) for i in _final_issues if is_completion_issue(i)
             ]
+            # (A dependency install left undone was rewritten at Phase 3 exit as checks that did not run.)
+            # A check the server has switched off is counted apart: the same on every run there.
+            _off_notes = sum(1 for i in _final_issues if is_configured_off(i))
+            _not_confirmed = sum(1 for i in _final_issues
+                                 if is_not_confirmed(i) and not is_configured_off(i)
+                                 and getattr(i, "message", i) not in assembly_warnings)
             # Assembly warnings count even if the orchestrator dropped them.
             _unfixed_blockers = list(dict.fromkeys(_unfixed_blockers + assembly_warnings))
+            _gaps = _verification_gaps(orchestrator)
 
             _late_err = getattr(self, "_late_internal_error", None)
             # Set only on a fix/modify run whose reported failure could not be
             # confirmed fixed (already a promoted blocker above); replaces the
             # generic incomplete wording.
             _fix_msg = getattr(orchestrator, "_fix_target_message", None)
-            # "Incomplete" means a known defect, not an unverified check:
-            # unverified findings stay in blockerCount but do not set the
-            # verdict. Assembly warnings carry the unverified prefix yet are a
-            # known loss (a diagram never reached the generator), so add them.
+            # "Incomplete" means a known defect that stops the app working.
+            # Assembly warnings carry the unverified prefix yet are a known
+            # loss (a diagram never reached the generator), so add them.
             _real_defects = unresolved_defects(_unfixed_blockers) + assembly_warnings
             incomplete = (
                 (not exited_cleanly)
@@ -2511,7 +2560,8 @@ class SmartGenerationRunner:
             self._facts.stop(
                 stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
-                blocker_count=len(_unfixed_blockers), cost=final_cost,
+                blocker_count=len(_unfixed_blockers), not_confirmed=_not_confirmed, cost=final_cost,
+                gaps=_gaps,
             )
             # A cancel can land after Phase 2 ended cleanly. It cut the run short only when Phase 3
             # saw it and stopped; then the reason says so before anything Phase 3 left.
@@ -2530,13 +2580,34 @@ class SmartGenerationRunner:
                 done_event.incomplete = incomplete
                 done_event.incompleteReason = incomplete_reason_msg
                 done_event.cancelled = cancelled
+                # A whole class of checks that left no evidence: reported as its own
+                # state, never as incomplete (which is for a known defect).
+                # A class the server has switched off is reported apart (``checksOff``): it is
+                # the same on every run there, so it never makes a run read "not verified".
+                _run_gaps = run_record.run_gaps(_gaps)
+                unverified = bool(_run_gaps) and not incomplete
+                done_event.unverified = unverified
+                done_event.unverifiedReason = (run_record.not_verified_message(
+                    _run_gaps, updated=self._facts.mode == "modify") if unverified else None)
+                done_event.checksOff = [kind for kind, _, off in _gaps if off]
+                done_event.notConfirmedCount = _not_confirmed
+                done_event.unresolvedBlockerCount = len(_unfixed_blockers)
                 # Completed-with-blockers vs cut-short need different
                 # client framing: a run whose loop finished but left
                 # completion-blocking issues did NOT "stop early". Only set
                 # when the loop exited cleanly — a genuinely cut-short
-                # run keeps 0 so clients use their cut-short copy.
+                # run keeps 0 so clients use their cut-short copy. On a run
+                # that is not incomplete it keeps its legacy meaning for the
+                # released editors, "could not be verified": the blockers plus
+                # the findings not confirmed, and at least one per class of
+                # checks that never ran.
                 done_event.blockerCount = (
-                    len(_unfixed_blockers) if exited_cleanly and not cut_by_cancel else 0
+                    0 if not exited_cleanly or cut_by_cancel
+                    else len(_unfixed_blockers) if incomplete
+                    # A switched-off check's note counts here as it always has (no change for
+                    # released editors); ``checksOff`` lets new editors say it quietly.
+                    else len(_unfixed_blockers) + max(_not_confirmed + _off_notes,
+                                                      len(_run_gaps) if unverified else 0)
                 )
                 # Best-effort authorship split (generator vs. LLM) over the
                 # final tree — the headline telemetry metric. Never blocks the
@@ -3167,16 +3238,14 @@ class SmartGenerationRunner:
 
             turns = 0
             blockers_remaining: Optional[int] = None
+            not_confirmed: Optional[int] = None
             if orchestrator is not None:
                 turns = int(getattr(orchestrator, "total_turns", 0) or 0)
                 try:
-                    blockers_remaining = sum(
-                        1
-                        for issue in (
-                            getattr(orchestrator, "_validation_issues", None) or []
-                        )
-                        if getattr(issue, "severity", None) == "blocker"
-                    )
+                    issues = getattr(orchestrator, "_validation_issues", None) or []
+                    blockers_remaining = sum(1 for issue in issues if is_completion_issue(issue))
+                    not_confirmed = sum(1 for issue in issues
+                                        if is_not_confirmed(issue) and not is_configured_off(issue))
                 except Exception:
                     blockers_remaining = None
 
@@ -3213,6 +3282,9 @@ class SmartGenerationRunner:
                 "files_produced": int((done or {}).get("fileCount") or 0),
                 "blockers_found": self._t_blockers_found,
                 "blockers_remaining": blockers_remaining,
+                "not_confirmed": not_confirmed,
+                "not_verified": bool((done or {}).get("unverified")),
+                "checks_off": list((done or {}).get("checksOff") or []),
                 "outcome": outcome,
                 "file_split": file_split,
             }

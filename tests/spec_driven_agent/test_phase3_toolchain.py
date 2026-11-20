@@ -187,11 +187,11 @@ def test_collect_tsc_issues_soft_skips_when_binary_missing(tmp_path) -> None:
     # Force a "binary not found" outcome by patching the resolver
     # rather than mutating PATH (cleaner across platforms).
     with patch("besser.spec_driven_agent.pipeline.orchestrator.shutil.which", return_value=None):
-        from besser.spec_driven_agent.validation.issues import is_completion_issue
+        from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
         findings = orch._collect_tsc_issues()
         assert len(findings) == 1 and "unavailable" in findings[0]
         assert _classify_issue(findings[0]).severity == "warning"
-        assert is_completion_issue(_classify_issue(findings[0]))
+        assert is_not_confirmed(findings[0]) and not is_completion_issue(_classify_issue(findings[0]))
         orch.enable_toolchain_validation = False
         assert "disabled" in orch._collect_tsc_issues()[0]
 

@@ -123,7 +123,9 @@ def test_tests_the_agent_wrote_are_not_reported_as_rules_the_user_asked_for():
     })
 
     assert report.shippedUnenforced == [] and report.counts.shippedUnenforced == 0
-    failed = next(i for i in report.notVerified if i.id == "test_decrease_stock")
+    # It ran and failed: listed as such, never as "could not check" (it is an ``api scenario:`` blocker).
+    failed = next(i for i in report.failed if i.id == "test_decrease_stock")
+    assert all(i.id != "test_decrease_stock" for i in report.notVerified)
     assert "a test the agent wrote" in failed.why and "not a rule from your request" in failed.why
     retired = next(i for i in report.notVerified if i.id == "test_decrease_stock_proper")
     assert retired.what == "Test workflow 'test_decrease_stock_proper'"
@@ -180,7 +182,7 @@ def test_checked_and_missing_is_separated_from_could_not_check():
     assert len({i.id for i in identified}) == len(identified), \
         "an identified item may appear in exactly one list"
     assert report.counts.model_dump() == {
-        "verified": 2, "foundInCode": 0, "notVerified": 2, "shippedUnenforced": 3,
+        "verified": 2, "foundInCode": 0, "notVerified": 2, "shippedUnenforced": 3, "failed": 0,
     }
 
 

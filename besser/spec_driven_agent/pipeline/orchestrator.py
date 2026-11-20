@@ -192,7 +192,11 @@ from besser.spec_driven_agent.validation.issues import (
     _hard_blockers,
     dependency_check_issue,
     is_completion_issue,
+    is_not_confirmed,
+    RUNTIME_CHECK_UNVERIFIED,
     required_check_unverified,
+    DEPENDENCIES_NOT_INSTALLED,
+    dependencies_not_installed,
     required_dependency_setup as required_dependency_setup,
     runtime_check_unverified,
     runtime_note_unverified,
@@ -234,6 +238,29 @@ from besser.spec_driven_agent.state.tracing import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The findings that say no requirement verdict exists for the delivered tree
+# (``verification_gaps``). The first is phase3_repair's: Phase 3 did not run at all.
+_PHASE3_SKIPPED = "requirement unverified: Phase 3 validation did not run"
+_REQUIREMENTS_NOT_CHECKED = "requirement unverified: not checked,"
+_REQUIREMENTS_NOT_EXTRACTED = "requirement unverified: requirement extraction failed"
+_REQUIREMENTS_JUDGE_FAILED = "validation unverified: the requirements judge did not run"
+_REQUIREMENTS_NO_VERDICT = (_PHASE3_SKIPPED, _REQUIREMENTS_NOT_CHECKED, _REQUIREMENTS_NOT_EXTRACTED,
+                            _REQUIREMENTS_JUDGE_FAILED)
+
+
+def _stopped_by(text: str) -> str:
+    """Which limit stopped a check, as a fixed phrase: the run record never holds a finding's text."""
+    lower = text.lower()
+    if "cancel" in lower:
+        return "the run was cancelled"
+    if "quota" in lower:
+        return "the model provider's quota ran out"
+    if "cost" in lower:
+        return "the cost limit was reached"
+    if "time" in lower:
+        return "too little time was left"
+    return "it was stopped before it finished"
 
 
 from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
@@ -929,12 +956,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._settle_open_setup()
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="phase3",
-            unresolved_blockers=sum(
-                1 for i in self._validation_issues if i.severity == "blocker"
-            ),
+            unresolved_blockers=sum(1 for i in self._validation_issues if is_completion_issue(i)),
+            not_confirmed=sum(1 for i in self._validation_issues if is_not_confirmed(i)),
             exit_reason=self._phase3_exit_reason,
         )
 
@@ -1134,6 +1161,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._settle_open_setup()
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase3",
             exit_reason=self._phase3_exit_reason,
@@ -2942,7 +2970,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _finish_checkpoint(self) -> None:
         """Keep recovery state until both customization and validation finished."""
         if (self._phase2_exited_cleanly and not self._phase3_interrupted
-                and not any(is_completion_issue(issue) for issue in self._validation_issues)):
+                and not any(is_completion_issue(issue) or is_not_confirmed(issue)
+                            for issue in self._validation_issues)):
             delete_checkpoint(self.output_dir)
         elif self._checkpoint_phase == "phase3":
             self._save_phase3_checkpoint()
@@ -3145,8 +3174,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         construct, is not evidence of a defect - but it is not evidence of a
         working app either. Only a spec-derived scenario that created a record
         and read it back retires one. Where nothing retires it, the finding is
-        re-prefixed ``runtime unverified:`` so it reaches the fix loop as a
-        blocker instead of a warning nothing consumes.
+        re-prefixed ``runtime unverified:``: not confirmed, listed for the user,
+        never a blocker.
         """
         from besser.spec_driven_agent.planning.mutation_inventory import route_serves
         from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths, declares_failure
@@ -3182,8 +3211,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     continue
                 item = "runtime unverified: " + item
             elif item.startswith("action unverified: "):
-                # Same shape as the create side. Without this promotion the
-                # finding stays a warning the blocker-only fix loop ignores.
+                # Same shape as the create side.
                 if settled(_re.match(r"action unverified: (.+?): POST (\S+) -", item), exercised):
                     continue
                 item = "runtime unverified: " + item
@@ -3247,7 +3275,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Phase 3's last requirement judgment (no new call): a blocker the run holds is
         # never answered with "verified". Empty until the judge has run.
         ledger = [issue for issue in _requirements_ledger.ledger_issues(self._requirement_verdicts)
-                  if _classify_issue(issue).severity == "blocker"]
+                  if _classify_issue(issue).severity == "blocker" or is_not_confirmed(issue)]
         revision = self._workspace_revision()
         key = (revision, tuple(ledger))
         if self._app_validation_cache and self._app_validation_cache[0] == key:
@@ -3264,8 +3292,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         raw += ledger
         issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
         blockers = [issue for issue in issues if issue.severity == "blocker"]
-        # A required check that did not run is a warning, not a pass.
-        unverified = not blockers and any(is_completion_issue(issue) for issue in issues)
+        # A check that reached no conclusion is a warning, not a pass.
+        unverified = any(is_not_confirmed(issue) for issue in issues)
+        not_confirmed_step = (
+            "Findings marked unverified are not confirmed, not defects: do not edit working code for them. "
+            "A check that did not run cannot be settled by a source edit. For create unverified (guessed fixtures), "
+            "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
+            "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
+            "20 requests, so split the endpoints across several scenarios; do not remove "
+            "business validation to satisfy guessed samples. ")
         result = {
             "verified": not blockers and not unverified,
             "blocker_count": len(blockers),
@@ -3274,14 +3309,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "issues": [clip_finding(issue.message) for issue in issues[:self._VALIDATE_APP_MAX_ISSUES]],
             "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
             "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
-            "next_step": ("Repair concrete failures and call validate_app again. For create unverified (guessed fixtures), "
-                          "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
-                          "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
-                          "20 requests, so split the endpoints across several scenarios; do not remove "
-                          "business validation to satisfy guessed samples.") if blockers else
-                         ("Some required checks did not run on this server (the validation unverified findings); "
-                          "no source edit can settle them, so do not edit code for them. Verify the remaining "
-                          "user requirements and business workflows before completion.") if unverified else
+            "next_step": ("Repair concrete failures and call validate_app again. "
+                          + (not_confirmed_step if unverified else "")).rstrip() if blockers else
+                         (not_confirmed_step + "Verify the remaining user requirements and business workflows "
+                          "before completion.") if unverified else
                          "These checks pass. Verify the remaining user requirements and business workflows before completion.",
         }
         self._app_validation_cache = (key, result)
@@ -4312,7 +4343,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if (_requirements_ledger._is_real_provider(self.client)
                     or getattr(self.domain_model, "conversion_issues", None)):
                 return [
-                    "requirement unverified: requirement extraction failed; "
+                    f"{_REQUIREMENTS_NOT_EXTRACTED}; "
                     "the original specification has not been checked. Do not "
                     "treat this as an empty requirement list or verified completion."
                 ]
@@ -4340,7 +4371,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         def judge_stopped() -> str:
             reason = (self._budget_stop_reason()
                       or (self.deadline.last_cut if self.deadline.cuts != cuts else "verification stopped"))
-            return (f"requirement unverified: not checked, {reason}; "
+            return (f"{_REQUIREMENTS_NOT_CHECKED} {reason}; "
                     "original-specification coverage is not verified.")
         if verdicts is None:
             if not self._verification_call_allowed():
@@ -4428,7 +4459,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """``validate_app`` citations: the agent's ``{requirement, path, line}`` source lines for a
         requirement the judge found implemented whose citation quoted only part of one line
         (``CITED_FRAGMENT_LINES``). Each must be that whole line, and is checked like the
-        judge's; verified, they replace its citation in the current judgment."""
+        judge's; verified, they replace its citation in the current judgment. A refuted
+        citation (``EVIDENCE_REFUTED``) cannot be replaced: any working line would verify, so
+        a missing implementation could be cleared by citing unrelated code."""
         key = self._requirement_verdicts_key
         judged = self._requirement_judgments.get(key) or []
         stale = judged and self._requirement_cache_key(self._requirements_to_judge()) != key
@@ -4512,7 +4545,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     continue
                 base = {key: value for key, value in first[rid].items()
                         if key not in (*_requirements_ledger.VERDICT_FINGERPRINT_KEYS, _requirements_ledger.EVIDENCE_UNLOCATED,
-                                       _requirements_ledger.CITED_FRAGMENT_LINES)}
+                                       _requirements_ledger.CITED_FRAGMENT_LINES, _requirements_ledger.EVIDENCE_REFUTED)}
                 cited = bool(_requirements_ledger.render_evidence(item.get("evidence")).strip(": "))
                 # Its own "implemented" is kept and re-checked, so the reason is about its citation.
                 status = "implemented" if item.get("status") == "implemented" and cited else base["status"]
@@ -5666,6 +5699,128 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "workflows_passed": len(passed),
         }
 
+    # The note of a verdict an earlier version was judged with, the delivered one was not.
+    _NOT_JUDGED_ON_DELIVERED = "not judged on the delivered version of the app"
+
+    def _recorded_verdicts(self) -> list[dict]:
+        """The verdicts the recipe and the report show. When the judge did not run on the
+        delivered tree (``verification_gaps``' requirements class) the last verdicts answer an
+        earlier version: none of them shows anything about this one, so each is unverified."""
+        verdicts = self._requirement_verdicts
+        messages = [issue.message for issue in self._validation_issues]
+        if not verdicts or not any(m.startswith(_REQUIREMENTS_NO_VERDICT) for m in messages):
+            return verdicts
+        try:
+            if self._requirement_cache_key(self._requirements_to_judge()) == self._requirement_verdicts_key:
+                return verdicts
+        except Exception:
+            logger.warning("Could not tell which version the requirement verdicts answer", exc_info=True)
+        return [{key: value for key, value in verdict.items() if key not in (
+                    _requirements_ledger.EVIDENCE_REFUTED, _requirements_ledger.CITED_FRAGMENT_LINES)}
+                | ({"status": "unverified", "note": self._NOT_JUDGED_ON_DELIVERED}
+                   if verdict.get("status") in ("implemented", "missing", "partial", "unverified") else {})
+                for verdict in verdicts]
+
+    def _settle_open_setup(self) -> None:
+        """At Phase 3 exit, a ``verification setup:`` the agent left undone becomes what it now is:
+        checks that did not run (``validation unverified:``). Rewritten once here, so the trace,
+        the recipe, the counts, telemetry and the report all read it the same way."""
+        self._validation_issues = [
+            _classify_issue(dependencies_not_installed(issue.message))
+            if issue.message.startswith("verification setup:") else issue
+            for issue in self._validation_issues]
+
+    def _runtime_evidence(self) -> tuple[list[dict], list[dict]]:
+        """The backends the probe started on the delivered tree, and the reports of the
+        ``test_api`` workflows run on it."""
+        revision = self._workspace_revision()
+        facts = getattr(self, "_runtime_probe_facts", None)
+        booted = [backend for backend in (facts[1] if facts and facts[0] == revision else [])
+                  if backend.get("boot") == "ok"]
+        reports = [record["report"] for record in self._api_scenarios.values()
+                   if record.get("revision") == revision and isinstance(record.get("report"), dict)]
+        return booted, reports
+
+    def _never_started(self) -> bool:
+        """A backend to start, and nothing started it on the delivered tree: no probe
+        boot and no ``test_api`` workflow that booted it or passed."""
+        try:
+            if not self._probeable_backends():
+                return False
+        except Exception:
+            logger.warning("Backend discovery failed; the app counts as never started", exc_info=True)
+        booted, reports = self._runtime_evidence()
+        return not booted and not any(report.get("boot") == "ok" or report.get("status") == "passed"
+                                      for report in reports)
+
+    def verification_gaps(self) -> list[tuple[str, str, bool]]:
+        """Each class of checks that left no evidence at all on the delivered tree, with why.
+
+        ``(class, reason, configured_off)``: ``requirements`` (no verdict on this tree: the
+        extraction or the judge failed, or it was stopped), ``runtime`` (the backend was never
+        started), ``records`` (it started, but no entity was created and no workflow created a
+        record) or ``build`` (a frontend with a ``package.json`` was never built). The reasons
+        are fixed phrases, never an error's text: the run record carries them.
+        ``configured_off`` marks a class the server has switched off (the ledger, the startup
+        check, the build check or shell tools): a property of the server, not of this run.
+        Individual findings that are not confirmed are not gaps. Only the FastAPI backends the
+        probe drives count for ``runtime``: another kind of backend is never started by it.
+        """
+        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
+
+        messages = [str(getattr(issue, "message", issue)) for issue in self._validation_issues]
+        skipped = next((m for m in messages if m.startswith(_PHASE3_SKIPPED)), None)
+        gaps: list[tuple[str, str, bool]] = []
+        if (not self.enable_requirements_ledger
+                and _requirements_ledger.original_request(self._instructions).strip()):
+            gaps.append(("requirements", "the requirements check is off on this server", True))
+        for message in messages:
+            if message.startswith((_PHASE3_SKIPPED, _REQUIREMENTS_NOT_CHECKED)):
+                gaps.append(("requirements", _stopped_by(message), False))
+            elif message.startswith(_REQUIREMENTS_NOT_EXTRACTED):
+                gaps.append(("requirements", "your request could not be turned into requirements", False))
+            elif message.startswith(_REQUIREMENTS_JUDGE_FAILED):
+                gaps.append(("requirements", "the requirements check returned no verdict", False))
+            else:
+                continue
+            break
+        if self._never_started():
+            gaps.append(("runtime", "the startup check is off on this server", True)
+                        if not self.enable_import_smoke_check and not skipped else
+                        ("runtime", _stopped_by(skipped) if skipped else self._never_started_reason(messages), False))
+        else:
+            booted, reports = self._runtime_evidence()
+            entities = [entry for backend in booted for entry in (backend.get("entities") or {}).values()]
+            if (entities and not any(entry.get("verdict") == "created" for entry in entities)
+                    and not any(confirmed_create_paths(report) for report in reports)):
+                gaps.append(("records", "every create the check tried was refused", False))
+        if (self._checks_that_ran()["frontend_build"] == "not_run"
+                and any(rel.rpartition("/")[2] == "package.json" for rel in self._workspace_file_list())):
+            if not (self.enable_toolchain_validation and self.allow_shell_tools):
+                gaps.append(("build", "the build check is off on this server", True))
+            else:
+                gaps.append(("build", "its dependencies were not installed"
+                             if any(m.startswith("verification setup:") or DEPENDENCIES_NOT_INSTALLED in m
+                                    for m in messages)
+                             else _stopped_by(skipped) if skipped else "the build did not run", False))
+        return gaps
+
+    def _never_started_reason(self, messages: list[str]) -> str:
+        """Why the backend was never started, as a fixed phrase."""
+        facts = getattr(self, "_runtime_probe_facts", None)
+        boots = [f"{backend.get('boot')} {backend.get('error') or ''}" for backend in (facts[1] if facts else [])]
+        notes = [m for m in messages if m.startswith(RUNTIME_CHECK_UNVERIFIED) and "(api scenario " not in m]
+        text = " ".join(boots + notes).lower()
+        if "missing_dependency" in text or "no module named" in text or "missing dependency" in text:
+            return "a dependency it needs is missing"
+        if "timed out" in text or "timeout" in text:
+            return "its startup timed out"
+        if "sandbox" in text:
+            return "no sandbox was available to start it"
+        if "crash" in text or "import_error" in text or "probe_error" in text:
+            return "the startup check failed before the app answered"
+        return "the delivered version was not started"
+
     def _business_rules_stated(self) -> bool | None:
         """False only when the ledger ran and found nothing to check: no requirement in the
         request and no rule in the model. None when the ledger did not run. Kind labels
@@ -5869,7 +6024,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # what was NOT built is read here, not inferred from the code.
             # The file hashes stay out: only this run's kept-verdict check reads them.
             "requirements": _requirements_ledger.with_verification_levels(
-                _requirements_ledger.without_fingerprints(self._requirement_verdicts), self.output_dir,
+                _requirements_ledger.without_fingerprints(self._recorded_verdicts()), self.output_dir,
                 **self._checks_that_ran()),
             # False: the request and the model state no business rule, so none was checked.
             "business_rules_stated": self._business_rules_stated(),

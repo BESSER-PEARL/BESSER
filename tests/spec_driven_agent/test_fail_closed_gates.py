@@ -17,7 +17,7 @@ from besser.BUML.metamodel.structural import Class, DomainModel
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
-from besser.spec_driven_agent.validation.issues import is_completion_issue
+from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
 
 
 class _Client:
@@ -53,7 +53,7 @@ def test_runtime_gate_exception_is_not_a_pass(orch, caplog):
 
     assert len(orch._validation_issues) == 1
     issue = orch._validation_issues[0]
-    assert is_completion_issue(issue)
+    assert is_not_confirmed(issue) and not is_completion_issue(issue)
     assert issue.message.startswith("validation unverified: the runtime gate")
     assert "OSError: walk failed" in issue.message
     assert any("Runtime gate evaluation failed" in r.message for r in caplog.records)

@@ -42,6 +42,7 @@ from besser.spec_driven_agent.validation.constructibility import (
 )
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue, _classify_issue
+from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
@@ -96,7 +97,8 @@ class _ScriptedClient:
 
 
 def test_the_phase3_sweep_carries_the_blocker(workspace):
-    """What shipped as "0 blockers" must come out of the sweep as one."""
+    """What shipped as "0 blockers" with nothing said must come out of the sweep: not confirmed,
+    since the probe's guessed input was refused, not seen to fail."""
     from besser.BUML.metamodel.structural import Class, DomainModel
 
     orch = LLMOrchestrator(
@@ -107,8 +109,8 @@ def test_the_phase3_sweep_carries_the_blocker(workspace):
         enable_toolchain_validation=False,
     )
     issues = orch._collect_validation_issues()
-    blockers = [i.message for i in issues if i.severity == "blocker"]
-    assert [b for b in blockers if UNVERIFIED_PREFIX in b], blockers
+    carried = [i for i in issues if UNVERIFIED_PREFIX in i.message]
+    assert carried and all(is_not_confirmed(i) and not is_completion_issue(i) for i in carried), issues
 
 
 # ----------------------------------------------------- a fresh generated app

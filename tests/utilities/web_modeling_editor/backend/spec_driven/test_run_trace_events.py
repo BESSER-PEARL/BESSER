@@ -121,7 +121,7 @@ def test_findings_list_is_capped_but_counts_are_true(monkeypatch):
 
 def test_findings_count_blockers_as_the_done_event_does(monkeypatch):
     # Live run f84c0f93 (2026-11-18): the last round said 4 blockers, the done event 5; the fifth was
-    # "validation unverified: frontend build ... did not run", which also counts towards completion.
+    # "validation unverified: frontend build ... did not run". Not confirmed: neither counts it now.
     unverified = "validation unverified: frontend build [frontend] did not run completely"
 
     class _Unverified(_StubOrchestrator):
@@ -140,8 +140,8 @@ def test_findings_count_blockers_as_the_done_event_does(monkeypatch):
     runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     events = [_parse(frame) for frame in asyncio.run(_collect_frames(runner))]
     [event] = [e for e in events if e.get("event") == "findings"]
-    assert event["blockerCount"] == 2 and event["issueCount"] == 3
-    assert unverified in event["blockers"]
+    assert event["blockerCount"] == 1 and event["issueCount"] == 3
+    assert unverified not in event["blockers"]
 
 
 def test_repairs_stay_under_the_validate_row(monkeypatch):

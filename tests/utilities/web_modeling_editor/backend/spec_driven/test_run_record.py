@@ -107,7 +107,8 @@ def test_a_generate_run_records_a_fresh_project(orchestrator):
     assert (run["target"], run["target_decided_by"], run["generator"]) == ("backend", "not decided",
                                                                            "generate_fastapi_backend")
     assert run["stopped_by"] == "finished" and run["outcome"] == "completed"
-    assert run["counts"] == {"turns": 4, "tool_calls": 3, "files_written": 1, "files_edited": 1, "blockers": 0}
+    assert run["counts"] == {"turns": 4, "tool_calls": 3, "files_written": 1, "files_edited": 1, "blockers": 0,
+                             "not_confirmed": 0}
     assert run["limits"]["time_seconds"] == 60 and run["request_chars"] == len(REQUEST)
     assert run["estimated_cost_usd"] == 0.01 and run["besser_version"]
 
@@ -214,8 +215,12 @@ def test_a_cancel_after_a_clean_phase_2_is_incomplete_only_when_it_cut_validatio
         assert (done["incomplete"], done["blockerCount"]) == (True, 0)
         assert done["incompleteReason"] == "The run was cancelled before it finished."
     else:
-        # The cancel came after the work had finished: nothing was cut.
+        # The cancel came after the work had finished: nothing was cut. Checks that could not
+        # run are not confirmed, not blockers; the legacy blockerCount of a finished run shows them.
         assert (done["incomplete"], done["blockerCount"], done["incompleteReason"]) == (False, 2, None)
+        assert done["notConfirmedCount"] == 2
+        assert done["recipe"]["run"]["counts"] == {**done["recipe"]["run"]["counts"], "blockers": 0,
+                                                   "not_confirmed": 2}
 
 
 def test_a_cancel_after_a_clean_phase_2_with_defects_says_it_was_cancelled(monkeypatch):

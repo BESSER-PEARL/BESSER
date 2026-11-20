@@ -1586,22 +1586,42 @@ def _comment_only_lines(source: str, suffix: str) -> set[int]:
             if original.strip() and not visible.strip()}
 
 
+# Why a located, whole cited line is not an implementation at all, as opposed to a
+# citation of the wrong shape (punctuation, a decorator, a fragment) or a line that
+# does not show enforcement on its own. A verdict whose every cited line fails with
+# one of these is refuted (``EVIDENCE_REFUTED``): a blocker, not "not confirmed".
+_NO_PARSE = "the cited Python source does not parse"
+_NOT_CODE = "the cited line is a comment, docstring or placeholder"
+# An import names code without showing it: the rule may well be in what it imports.
+_IMPORT = "the cited line is an import; cite the code it imports"
+_COMMENT = "the cited line is a comment, not an implementation"
+_NOOP_VALIDATOR = "the cited validator is a no-op: it does not check or enforce a rule"
+_SCAFFOLD = "the cited implementation is an unimplemented scaffold"
+_ACTION_SCAFFOLD = "the cited action body is an unimplemented scaffold"
+_DECLARATION_ONLY = "the cited declaration does not perform the required behaviour"
+# Not _DECLARATION_ONLY nor _IMPORT: a column default, a ``column_property`` or an imported
+# helper can be the implementation, so neither proves the requirement is not met.
+_ROLE_FAILURES = frozenset({_NO_PARSE, _NOT_CODE, _COMMENT, _NOOP_VALIDATOR, _SCAFFOLD, _ACTION_SCAFFOLD})
+
+
 def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) -> tuple[ast.stmt | None, str]:
     """Check the cited statement's role; this is not a semantic proof."""
     if tree is None:
-        return None, "the cited Python source does not parse"
+        return None, _NO_PARSE
     enclosing = [n for n in ast.walk(tree) if isinstance(n, ast.stmt)
                  and _statement_start(n) <= lineno <= n.end_lineno]
     if not enclosing:
         return None, "the cited line is not an executable statement"
     statement = min(enclosing, key=lambda n: n.end_lineno - _statement_start(n))
-    if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)) or (
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return statement, _IMPORT
+    if isinstance(statement, ast.Pass) or (
         isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
     ):
-        return statement, "the cited line is a comment, docstring, import or placeholder"
+        return statement, _NOT_CODE
     functions = [n for n in enclosing if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
     if kind in {"validation", "rule", "uniqueness", "implementation"} and any(_noop_validator(fn) for fn in functions):
-        return statement, "the cited validator is a no-op: it does not check or enforce a rule"
+        return statement, _NOOP_VALIDATOR
     if kind == "implementation":
         # Checklist evidence records existing source, not behavioral acceptance.
         # Real framework declarations are valid implementation evidence; known
@@ -1609,7 +1629,7 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
         body = min(functions, key=lambda n: n.end_lineno - n.lineno).body if functions else (
             statement.body if isinstance(statement, ast.ClassDef) else None)
         if _unimplemented_raise(statement) or body is not None and _stub_body(body):
-            return statement, "the cited implementation is an unimplemented scaffold"
+            return statement, _SCAFFOLD
     if kind in _BEHAVIOURAL_KINDS:
         if not functions:
             # Real declarative defaults / database expressions can implement
@@ -1628,10 +1648,10 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
                     ) for n in ast.walk(value)
                 ):
                     return statement, ""
-            return statement, "the cited declaration does not perform the required behaviour"
+            return statement, _DECLARATION_ONLY
         function = min(functions, key=lambda n: n.end_lineno - n.lineno)
         if _stub_body(function.body) or _unimplemented_raise(statement):
-            return statement, "the cited action body is an unimplemented scaffold"
+            return statement, _ACTION_SCAFFOLD
     return statement, ""
 
 
@@ -1705,7 +1725,7 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     def-and-body quote, the same statement for a formatted call.
     """
     if first_line in source.comments or lineno in source.comments:
-        return "the cited line is a comment, not an implementation"
+        return _COMMENT
     if not re.search(r"\w", "".join(source.bare[first_line - 1:lineno])):
         return "the cited line is punctuation alone (`{`, `/>`); it identifies no code"
     statement = None
@@ -2125,6 +2145,29 @@ def _annotates(source: _Source, end: int, starts: set[int]) -> bool:
                                    for line in source.lines[end:start - 1]) for start in starts)
 
 
+_PATH_UNRESOLVED = "the cited source path is missing, excluded or ambiguous"
+
+
+def _cited_file_missing(path: str, raw_quote: str, output_dir: str, files: dict[str, str], parsed: dict,
+                        quote_cache: dict, sqlite: bool) -> bool:
+    """The citation names no file of the app, none is on disk at that path, and its code
+    is in no judged file: invented evidence, not a misquote or a file the digest left out."""
+    rel = path.strip().replace("\\", "/")
+    quote = _evidence_quote(raw_quote)
+    if (not rel or not quote or rel.startswith("/") or ".." in rel.split("/") or os.path.isabs(rel)
+            or _resolve_cited_path(rel, quote, files, quote_cache)
+            or os.path.exists(os.path.join(output_dir, rel))):
+        return False
+    if any(quote in _collapsed_text(full, quote_cache) for full in files.values()):
+        return False
+    # Nor a near match anywhere: a paraphrase of real code under a wrong path is a misquote.
+    for rel, full in files.items():
+        source = _load_source(full, parsed, sqlite)
+        if _where_the_quote_leaves(quote, source, rel, raw_quote, quote_cache)[1]:
+            return False
+    return True
+
+
 def _locate_decorator(path: str, raw_quote: str, files: dict[str, str], parsed: dict,
                       quote_cache: dict, sqlite: bool) -> tuple[list, str, bool]:
     """A quote that starts with decorators (annotations): located in the file it names
@@ -2142,7 +2185,7 @@ def _locate_decorator(path: str, raw_quote: str, files: dict[str, str], parsed: 
                 break
     candidates = _resolve_cited_path(path, "", files, quote_cache)
     if len(candidates) != 1:
-        return [], "the cited source path is missing, excluded or ambiguous", False
+        return [], _PATH_UNRESOLVED, False
     source = _load_source(candidates[0], parsed, sqlite)
     quoted = _normalise_quote(head)
     decorators = _decorator_dumps(head) if source.tree is not None else None
@@ -2182,7 +2225,7 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
     candidates = _resolve_cited_path(path, quoted, files, quote_cache)
     if len(candidates) != 1:
         elsewhere = "" if candidates else _found_elsewhere(quoted, None, files, parsed, quote_cache, sqlite)
-        return [], "the cited source path is missing, excluded or ambiguous" + (
+        return [], _PATH_UNRESOLVED + (
             f": {elsewhere}" if elsewhere else ""), bool(elsewhere)
     source = _load_source(candidates[0], parsed, sqlite)
     spans = list(_quote_spans(quoted, source))
@@ -2257,7 +2300,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
-        for key in (*VERDICT_FINGERPRINT_KEYS, EVIDENCE_UNLOCATED, CITED_FRAGMENT_LINES):
+        for key in (*VERDICT_FINGERPRINT_KEYS, EVIDENCE_UNLOCATED, CITED_FRAGMENT_LINES, EVIDENCE_REFUTED):
             item.pop(key, None)
         if item.get("kind") == "verification":
             item.update(status="unverified", evidence="",
@@ -2275,6 +2318,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
         # An empty citation is no citation, not one of absent code (r13-p81 R8).
         citations = [(path, quote) for path, quote in citations if quote.replace("\\n", "").strip()]
         located, reason = [], "" if citations else "no source line is cited"
+        missing_file, role_failures = False, []
         for index, (path, raw_quote) in enumerate(citations, 1):
             found, failure, malformed = _locate_citation(path, raw_quote, files, parsed, quote_cache, sqlite)
             if failure:
@@ -2282,6 +2326,8 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                 reason = reason or (f"citation {index} ({path.strip()}): {failure}" if structured else failure)
                 item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED if malformed and item.get(
                     EVIDENCE_UNLOCATED, CITATION_MALFORMED) == CITATION_MALFORMED else CITATION_ABSENT
+                missing_file = missing_file or (failure == _PATH_UNRESOLVED and _cited_file_missing(
+                    path, raw_quote, output_dir, files, parsed, quote_cache, sqlite))
                 if item[EVIDENCE_UNLOCATED] == CITATION_ABSENT:
                     break
                 continue
@@ -2297,6 +2343,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                     reason = _span_failure(item, part_source, first_line, lineno, part)
                     if not reason:
                         break
+                    role_failures.append(reason)
                 if not reason:
                     break
                 if structured and spans:
@@ -2311,6 +2358,12 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                 item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
+            if missing_file:
+                item[EVIDENCE_REFUTED] = REFUTED_MISSING_FILE
+            elif (role_failures and set(role_failures) <= _ROLE_FAILURES and not item.get(EVIDENCE_UNLOCATED)
+                    and all(spans for *_, spans in located)):
+                # Every cited line was found whole, and none is an implementation.
+                item[EVIDENCE_REFUTED] = REFUTED_ROLE
             pointed = sorted(f"{rel}:{lines[0]}" for rel, lines in homes if len(lines) == 1)
             if pointed:
                 item[CITED_FRAGMENT_LINES] = pointed
@@ -2333,6 +2386,14 @@ VERDICT_FINGERPRINT_KEYS = ("cited_file_hashes", "dependency_file_hashes")
 EVIDENCE_UNLOCATED = "evidence_unlocated"
 CITATION_MALFORMED = "near_match"
 CITATION_ABSENT = "absent"
+# Set on an unverified verdict whose citation was checked and shows the requirement is
+# not implemented there: REFUTED_ROLE, every cited line was found whole and none is an
+# implementation (``_ROLE_FAILURES``); REFUTED_MISSING_FILE, a cited file does not exist
+# and its quoted code is in no file of the app. ``ledger_issues`` reports such a verdict
+# as ``requirement unsupported:``, a blocker; every other unverified one is not confirmed.
+EVIDENCE_REFUTED = "evidence_refuted"
+REFUTED_ROLE = "role"
+REFUTED_MISSING_FILE = "missing_file"
 # Set on an unverified verdict that cites a fragment of code (``_fragment_homes``) found in exactly one line:
 # ["path:line", ...], the lines the fix agent may cite whole in its place.
 CITED_FRAGMENT_LINES = "fragment_lines"
@@ -2896,6 +2957,12 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
             issues.append(f"requirement: {label} is not implemented{note}")
         elif status == "partial":
             issues.append(f"requirement partial: {label}{note}; inspect and complete the missing behaviour")
+        elif status == "unverified" and v.get(EVIDENCE_REFUTED):
+            what = ("names a file the app does not have" if v[EVIDENCE_REFUTED] == REFUTED_MISSING_FILE
+                    else "is not an implementation of it")
+            issues.append(
+                f"requirement unsupported: {label} — the cited evidence '{render_evidence(v.get('evidence'))}' "
+                f"{what}{note}; implement the behaviour: the requirement is judged again on the changed code")
         elif status == "unverified":
             pointed = ", ".join(v.get(CITED_FRAGMENT_LINES) or ())
             issues.append(

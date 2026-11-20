@@ -113,6 +113,7 @@ _SIMPLE = (
     ("open account writes:", "A route lets a request change records it should not be allowed to change."),
     ("verification setup:", "The app's dependencies were not installed, so some checks could not run."),
     ("runtime gate:", "The app could not be shown to start and save a record."),
+    ("validation unverified: runtime gate:", "Nothing started the app, so nothing shows that it runs."),
     ("entity coverage:", "Not every class can be created, viewed, edited and deleted in the app."),
     ("requirement out of scope:", "A requirement was judged to be outside what this app covers."),
     ("requirement not provable:", "A requirement cannot be shown by reading the code (something the app must not "
@@ -248,6 +249,8 @@ def _requirement(message: str, prefix: str) -> Finding:
         return Finding(f"Requirement {ident} is not implemented: {text}")
     if prefix == "requirement partial:":
         return Finding(f"Requirement {ident} is only partly implemented: {text}")
+    if prefix == "requirement unsupported:":
+        return Finding(f"Requirement {ident}: the code the check was pointed at does not do this: {text}")
     return Finding(f"Requirement {ident} could not be confirmed in the code: {text}",
                    "requirement_unconfirmed", ident)
 
@@ -262,7 +265,7 @@ def user_finding(message: str) -> Finding:
         return _create(text)
     if lower.startswith(("action unverified:", "action call:")):
         return _action(text)
-    for prefix in ("requirement unverified:", "requirement partial:", "requirement:"):
+    for prefix in ("requirement unverified:", "requirement unsupported:", "requirement partial:", "requirement:"):
         if lower.startswith(prefix):
             return _requirement(text, prefix)
     if lower.startswith(("task unverified:", "task incomplete:")):

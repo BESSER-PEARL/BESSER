@@ -27,7 +27,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import (
     LLMOrchestrator,
     ValidationIssue,
 )
-from besser.spec_driven_agent.validation.issues import _classify_issue
+from besser.spec_driven_agent.validation.issues import _classify_issue, is_not_confirmed
 
 
 class _Client:
@@ -298,19 +298,17 @@ _UNSETTLED_CANCEL = (
 
 
 def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch, monkeypatch):
-    """``action unverified:`` had no promotion at all, so it stayed a warning.
-
-    It gets the create side's scenario-rescued treatment rather than an
-    unconditional blocker: the probe legitimately cannot construct every
-    state, so a passing ``test_api`` workflow must be able to retire it.
+    """``action unverified:`` gets the create side's scenario-rescued treatment:
+    the probe legitimately cannot construct every state, so a passing ``test_api``
+    workflow must be able to retire it. Unsettled, it is not confirmed, not a blocker.
     """
     _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
 
     issues = orch._collect_execution_issues()
     promoted = [i for i in issues if i.startswith("runtime unverified: action unverified:")]
 
-    assert promoted, "an unsettled action must reach the blocker-only fix loop"
-    assert _classify_issue(promoted[0]).severity == "blocker"
+    assert promoted, "an unsettled action must stay listed"
+    assert _classify_issue(promoted[0]).severity == "warning" and is_not_confirmed(promoted[0])
 
 
 def _cancel_scenario(orch, monkeypatch, response):
@@ -483,9 +481,11 @@ def test_no_runtime_evidence_at_all_is_not_a_pass(orch, monkeypatch):
 
     orch._apply_runtime_gate()
 
-    gate = [i for i in orch._validation_issues if i.message.startswith("runtime gate:")]
+    # Not a pass, and not a defect either: the run reports it as not verified.
+    gate = [i for i in orch._validation_issues if "no runtime evidence" in i.message]
     assert len(gate) == 1
-    assert "no runtime evidence" in gate[0].message
+    assert is_not_confirmed(gate[0])
+    assert orch.verification_gaps()[0][0] == "runtime"
 
 
 def test_a_business_rule_refusing_a_guessed_fixture_does_not_refuse_the_run(orch, monkeypatch):
@@ -500,6 +500,8 @@ def test_a_business_rule_refusing_a_guessed_fixture_does_not_refuse_the_run(orch
     """
     monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
     orch._runtime_probe_verdict = 1  # _RUNTIME_UNVERIFIED
+    # The probe booted the app; only its guessed create was refused.
+    orch._runtime_probe_facts = (orch._workspace_revision(), [{"boot": "ok", "entities": {}}])
     unsettled = ValidationIssue(
         "blocker",
         "runtime unverified: create unverified: web_app/backend: POST /reservedroom/ - "
@@ -521,6 +523,7 @@ def test_a_failing_retained_scenario_does_not_refuse_the_run(orch, monkeypatch):
     """
     monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
     orch._runtime_probe_verdict = 1  # api scenario: ranks as unsettled, not failed
+    orch._runtime_probe_facts = (orch._workspace_revision(), [{"boot": "ok", "entities": {}}])
     failing = ValidationIssue(
         "blocker", "api scenario: booking_overlap_violation failed: expected 200, got 400")
     orch._validation_issues = [failing]

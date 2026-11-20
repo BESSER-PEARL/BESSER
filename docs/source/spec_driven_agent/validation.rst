@@ -1025,12 +1025,12 @@ verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
 most 128) and extracts only the user messages the previous run's request did not
 hold: the later messages after those the conversation shares, from its start,
 with the previous run's (a message sent to a run that was cancelled counts as
-new, and so does one repeated after the previous run; a retry the conversation
-did not keep does not make the messages before it new), with the earlier
-conversation and the numbered requirements as context, so "retry", "yes" or "the
-same for the other screen" resolve. When every new message is empty or one the
-previous run's request already held (the same request sent again), the run
-continues earlier work without that call. Their requirements follow the previous ones.
+new; a retry the conversation did not keep does not make the messages before it
+new), with the earlier conversation and the numbered requirements as context, so
+"retry", "yes" or "the same for the other screen" resolve. When every new message
+is empty or one the previous run's request already held (the same request sent
+again), the run continues earlier work without that call; a repeat among other
+new messages is extracted with them. Their requirements follow the previous ones.
 The extraction also names the previous requirements a new message changes, asks
 for again or removes. Those stay in the ledger and are judged as usual (an
 extraction that names every requirement cannot empty it): met, they are met;
@@ -1077,6 +1077,11 @@ Each verdict keeps the requirement's trace id as ``ref``, and the recipe's
 ``requirements_source`` says where the ledger came from (``editor`` or
 ``extracted``). The assistant extracts from the user's first request only, so a
 request carrying later messages is extracted as before, with a warning in the log.
+That includes a later message that only asks to retry, continue or fix earlier
+work ("try again", "fix it"; a bare "continue" sends the earlier request
+unchanged): the assistant sends it as the newest message, so on a run
+without a previous ledger (a first build tried again, or an expired result) it
+costs one extraction call and the verdicts carry no trace id.
 
 The judge reads a digest of the app of at most 200,000 characters: the schema
 files first, then the backend code ranked by the share of its lines the agent

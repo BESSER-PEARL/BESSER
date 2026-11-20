@@ -696,6 +696,20 @@ class Phase3RepairMixin:
                 if _finding_key(issue.message) in errors
                 and _finding_text(issue.message) not in errors[_finding_key(issue.message)]]
 
+    @staticmethod
+    def _removed_entities(before_facts: list | None, after_facts: list | None) -> list[str]:
+        """The entities the probe measured on a backend that booted before an attempt and
+        does not find on that backend, booted, after it: compared by entity name."""
+        if not before_facts or not after_facts:
+            return []
+        after = {backend.get("backend"): set(backend.get("entities") or {})
+                 for backend in after_facts if backend.get("boot") == "ok"}
+        return [f"{name} (POST {entry.get('path')})"
+                for backend in before_facts
+                if backend.get("boot") == "ok" and backend.get("backend") in after
+                for name, entry in (backend.get("entities") or {}).items()
+                if name not in after[backend.get("backend")]]
+
     def _retired(self, before: list[ValidationIssue], after: list[ValidationIssue],
                  judged_after: bool = True) -> list[str]:
         """The blockers of ``before`` an attempt retired: gone from ``after``, or a requirement
@@ -766,7 +780,9 @@ class Phase3RepairMixin:
                           after_facts: list | None = None) -> str | None:
         """Why an attempt is not kept (or, with no edit, does not continue the loop), or None.
 
-        Kept only if (1) it retired a blocker it faced (``_retired``), or a runtime
+        Never kept when the probe no longer finds an entity it measured before
+        (``_removed_entities``): a removed create is failing, not fixed. Else kept
+        only if (1) it retired a blocker it faced (``_retired``), or a runtime
         blocker now fails with another error (``_still_failing``); (2) every
         observed failure it added (``unresolved_defects``, compared by what it
         tests) belongs to a check
@@ -783,6 +799,9 @@ class Phase3RepairMixin:
         def excused(message: str) -> bool:
             return could_not_run(message, hidden) or reachable_finding(message)
 
+        removed = self._removed_entities(before_facts, after_facts)
+        if removed:
+            return f"the probe no longer finds what it tested before: {', '.join(removed)[:300]}"
         if not self._retired(before, after, judged_after) and not self._still_failing(before, after):
             return f"it retired none of the {counted(len(before), 'blocker')} it faced"
         # A requirement verdict is a judgment, never an observed failure.

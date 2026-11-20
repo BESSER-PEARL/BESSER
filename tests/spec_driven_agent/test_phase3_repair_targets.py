@@ -763,6 +763,7 @@ def test_needed_for_where_it_is_not_offered_is_ignored(tmp_path):
 
 # ---------------------------------------------------------------- judged by what was tested
 
+CUSTOMER = ("/customer/", "created")
 CRASH_TOTAL = B("blocker", "create contract: backend: POST /order/ - observed a server failure creating Order "
                            "(500: IntegrityError NOT NULL constraint failed: order.total)")
 
@@ -790,3 +791,17 @@ def test_a_create_whose_only_change_is_the_probe_input_is_not_retired(tmp_path):
     assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 1 blocker it faced"
     assert len(client.requests) == 2, "no progress, so no second attempt"
 
+
+@pytest.mark.parametrize("entry, before", [
+    pytest.param((CREATE,), {"Order": ORDER, "Customer": CUSTOMER}, id="the crashing create"),
+    pytest.param((IN_ORDER,), {"Order": ("/order/", "created"), "Customer": CUSTOMER}, id="a working create"),
+])
+def test_an_attempt_after_which_the_probe_no_longer_finds_an_entity_is_reverted(tmp_path, entry, before):
+    """Deleting a create route, or moving its body off the schema the probe reads, is not a fix."""
+    orch, _ = _cycle(tmp_path, [[], list(entry)], _tools(FIX_ORDER), entry=entry, on_check=_probe(
+        _backend(before), _backend({"Customer": CUSTOMER})))
+
+    assert orch._phase3_rolled_back and orch._phase3_exit_reason != "all blockers fixed"
+    assert _read(tmp_path, "backend/routers/order.py") == FILES["backend/routers/order.py"]
+    assert _trace(tmp_path, "rollback")[0]["reason"] == (
+        "the probe no longer finds what it tested before: Order (POST /order/)")

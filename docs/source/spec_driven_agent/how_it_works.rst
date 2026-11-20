@@ -186,7 +186,8 @@ The three phases
    blocker it faced (a runtime failure counts by the route it tests, not by its
    message), adds no observed failure except ones a failure it fixed had
    hidden, leaves no more blockers by the same measure, does not stop an app
-   that started from starting, and leaves no more entities or actions failing
+   that started from starting, removes no entity the probe measured before,
+   and leaves no more entities or actions failing
    at runtime; otherwise the tree from before it is restored and the loop ends.
    A round that edits nothing continues the loop only if the evidence or
    dependencies it changed pass the same check, or once after every write it

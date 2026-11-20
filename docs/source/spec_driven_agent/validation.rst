@@ -887,7 +887,13 @@ edits, say, other routers is kept unless those edits change a finding. The
 scope reduces drift; it does not prevent it. Keeping or reverting each attempt
 is what protects the tree.
 
-An attempt that edited the tree is kept only if all of these hold:
+An attempt is never kept when the runtime probe, which measured the tree before
+it, no longer finds one of the entities it measured there on a backend that
+still starts (compared by entity name, so a create the probe already maps onto
+its table counts as the same entity). Removing a crashing create route, or
+moving its body off the schema the probe reads, makes that create absent, not
+fixed. Otherwise an attempt that edited the tree is kept only if all of these
+hold:
 
 1. It retired at least one blocker it faced, or a runtime blocker it faced now
    fails with another error. Attempts compare requirements by

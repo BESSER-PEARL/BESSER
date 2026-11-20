@@ -133,6 +133,77 @@ def test_a_requested_removal_refused_as_a_rewrite_names_the_range_edit_that_land
         assert "def f5" not in handle.read()
 
 
+def test_a_whole_range_edit_that_drops_functions_is_refused_like_a_rewrite(tmp_path):
+    """The refusal's read_id covers the whole file; the range edit must not apply the same loss."""
+    rel = "backend/routers/book.py"
+    source = _functions("r", 80)
+    executor = _generated(tmp_path, rel, source)
+    read = call(executor, "read_file", path=rel)
+    assert call(executor, "write_file", path=rel, content=_functions("r", 10))["rejection_kind"] == "rewrite_loss"
+
+    refused = call(executor, "replace_file_lines", path=rel, read_id=read["read_id"],
+                   start_line=1, end_line=read["end_line"], new_text=_functions("r", 10))
+
+    assert refused.get("rejection_kind") == "rewrite_loss", refused
+    with open(tmp_path / rel, encoding="utf-8") as handle:
+        assert handle.read() == source
+
+
+def test_a_most_of_the_file_range_edit_that_drops_functions_is_refused(tmp_path):
+    rel = "backend/routers/book.py"
+    source = _functions("r", 80)
+    executor = _generated(tmp_path, rel, source)
+    read = call(executor, "read_file", path=rel)
+
+    refused = call(executor, "replace_file_lines", path=rel, read_id=read["read_id"],
+                   start_line=4, end_line=read["end_line"], new_text=_functions("r", 10))
+
+    assert refused.get("rejection_kind") == "rewrite_loss", refused
+
+
+def test_a_whole_file_modify_that_drops_functions_is_refused_like_a_rewrite(tmp_path):
+    rel = "backend/routers/book.py"
+    source = _functions("r", 80)
+    executor = _generated(tmp_path, rel, source)
+    call(executor, "read_file", path=rel)
+
+    refused = call(executor, "modify_file", path=rel, old_text=source, new_text=_functions("r", 10))
+
+    assert refused.get("rejection_kind") == "rewrite_loss", refused
+    with open(tmp_path / rel, encoding="utf-8") as handle:
+        assert handle.read() == source
+
+
+def test_a_whole_range_edit_that_keeps_the_code_lands(tmp_path):
+    rel = "backend/routers/book.py"
+    source = _functions("r", 80)
+    executor = _generated(tmp_path, rel, source)
+    read = call(executor, "read_file", path=rel)
+
+    edited = call(executor, "replace_file_lines", path=rel, read_id=read["read_id"],
+                  start_line=1, end_line=read["end_line"], new_text=source + "def extra():\n    return 1\n")
+
+    assert edited.get("status") == "modified", edited
+
+
+def test_removing_a_large_part_of_a_small_file_on_purpose_still_lands(tmp_path):
+    """An empty replacement is a removal, however much of the file it spans."""
+    rel = "backend/util.py"
+    body = "".join(f"    total += {i}\n" for i in range(12))
+    source = f"def keep():\n    return 0\n\n\ndef big():\n    total = 0\n{body}    return total\n"
+    executor = _modify_run(tmp_path, rel, source)
+    read_id = call(executor, "read_file", path=rel)["read_id"]
+
+    by_range = call(executor, "replace_file_lines", path=rel, read_id=read_id, start_line=5,
+                    end_line=source.count("\n"), new_text="")
+    assert by_range.get("status") == "modified", by_range
+
+    _seed(str(tmp_path), rel, source)
+    call(executor, "read_file", path=rel)
+    by_quote = call(executor, "modify_file", path=rel, old_text=source[source.index("def big"):], new_text="")
+    assert by_quote.get("status") == "modified", by_quote
+
+
 def test_a_file_created_this_run_is_rewritten_freely_in_a_modify_run(tmp_path):
     executor = _modify_run(tmp_path, "backend/seed.py", _functions("s", 3))
     created = call(executor, "write_file", path="backend/new_service.py", content=_functions("n", 20))

@@ -567,6 +567,9 @@ _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
 _REEXPORT_RE = re.compile(r"^export\s+(?:type\s+)?(?:\*|\{)[^;\n]*\bfrom\b", re.MULTILINE)
 # A rewrite of a large file shorter than this share of its non-blank lines has left code out.
 _MIN_REWRITE_SHARE = 0.6
+# A range edit over this share of a file's non-blank lines can leave it under that share,
+# so one that writes new code there is held to the rewrite rule.
+_REWRITE_SPAN_SHARE = 1 - _MIN_REWRITE_SHARE
 # Above these sizes a rewrite of a file this run did not create must keep its code.
 _GENERATED_REWRITE_LINES = 200
 _MODIFY_RUN_REWRITE_LINES = 15
@@ -653,9 +656,20 @@ def _outline(rel_path: str, code: str) -> _Outline | None:
     return None
 
 
+def _non_blank_lines(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+def _rewrites_most_of(before: str, replaced: str, replacement: str) -> bool:
+    """True when an edit writes new code over at least ``_REWRITE_SPAN_SHARE`` of the
+    file; a pure removal (blank replacement) is a targeted edit."""
+    return bool(replacement.strip()) and (
+        _non_blank_lines(replaced) >= _REWRITE_SPAN_SHARE * _non_blank_lines(before))
+
+
 def _rewrite_loss(rel_path: str, before: str, after: str) -> str:
     """Why a whole rewrite of an existing file loses its code; ``""`` when it keeps it."""
-    old_lines, new_lines = (sum(1 for line in text.splitlines() if line.strip()) for text in (before, after))
+    old_lines, new_lines = (_non_blank_lines(text) for text in (before, after))
     if new_lines < _MIN_REWRITE_SHARE * old_lines:
         return (f"this rewrite has {new_lines} non-blank lines, under {_MIN_REWRITE_SHARE:.0%} "
                 f"of the file's {old_lines}")
@@ -2900,6 +2914,10 @@ class ToolExecutor:
                              "read_file on the region to see what is actually there, then send "
                              "the change you meant - or mark the task blocked with a reason.",
                     "status": "no_change", "replacements": 0}
+        if _rewrites_most_of(before, old, replacement):
+            refusal = self._rewrite_refusal(args["path"].replace("\\", "/"), path, before, after)
+            if refusal:
+                return refusal
         broke = _new_syntax_error(args["path"], before, after)
         if broke:
             message, line = broke
@@ -3005,32 +3023,14 @@ class ToolExecutor:
                 "rest with read_file, or edit the part you read with modify_file."
             )}
 
-        # A rewrite must keep the code of a file this run did not create: a
-        # generated file over 200 lines, or in a modify run any file over 15
-        # lines. Small files and the model's own files are rewritten freely.
-        limit = (_MODIFY_RUN_REWRITE_LINES if self._modify_guard
-                 else _GENERATED_REWRITE_LINES if rel_path in self._generator_files else None)
-        if limit and os.path.isfile(path) and rel_path not in self._created_files:
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
-                existing = f.read()
-            existing_lines = existing.count("\n") + 1
-            loss = _rewrite_loss(rel_path, existing, args["content"]) if existing_lines > limit else ""
-            if loss:
-                origin = ("was created by a BESSER generator" if rel_path in self._generator_files
-                          else "existed before this run")
-                read_id = self._whole_view_id(path, existing)
-                removal = (f"modify_file, or replace_file_lines with read_id {read_id} (your whole-file read)"
-                           if read_id else "modify_file or replace_file_lines")
-                return {"error": (
-                    f"'{rel_path}' {origin} ({existing_lines} lines) and {loss}. Rewrite it "
-                    f"in full keeping that code; to remove or rename code on purpose, edit that part with {removal}."
-                ), "rejection_kind": "rewrite_loss"}
-
         before = None
         if os.path.isfile(path):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 before = f.read()
-            broke = _new_syntax_error(rel_path, before, args["content"])
+            refusal = self._rewrite_refusal(rel_path, path, before, args["content"])
+            if refusal:
+                return refusal
+            broke =_new_syntax_error(rel_path, before, args["content"])
             if broke:
                 msg, line_no = broke
                 return {
@@ -3076,6 +3076,29 @@ class ToolExecutor:
         self._fully_seen.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
         return result
+
+    def _rewrite_refusal(self, rel_path: str, path: str, before: str, after: str) -> dict | None:
+        """The rewrite rule: ``after`` must keep the code of a file this run did not
+        create, when it is a generated file over 200 lines or, in a modify run, any
+        file over 15 lines. Small files and the model's own files change freely."""
+        limit = (_MODIFY_RUN_REWRITE_LINES if self._modify_guard
+                 else _GENERATED_REWRITE_LINES if rel_path in self._generator_files else None)
+        existing_lines = before.count("\n") + 1
+        if not limit or rel_path in self._created_files or existing_lines <= limit:
+            return None
+        loss = _rewrite_loss(rel_path, before, after)
+        if not loss:
+            return None
+        origin = ("was created by a BESSER generator" if rel_path in self._generator_files
+                  else "existed before this run")
+        read_id = self._whole_view_id(path, before)
+        tools = (f"modify_file, or replace_file_lines with read_id {read_id}"
+                 if read_id else "modify_file or replace_file_lines")
+        return {"error": (
+            f"'{rel_path}' {origin} ({existing_lines} lines) and {loss}. Keep that code. To remove "
+            f"code on purpose, replace only its own lines with an empty new_text ({tools}); to "
+            "rename it, edit only the line that names it."
+        ), "rejection_kind": "rewrite_loss"}
 
     def mark_known(self, paths) -> None:
         """Record files whose contents the model was shown (scaffold snapshot)."""
@@ -3470,6 +3493,13 @@ class ToolExecutor:
                 "error": "This edit makes no change after normalization. Do not resend it; "
                          "this is not evidence of completion. Read the current region for a different change.",
             }
+
+        if _rewrites_most_of(content, old_text, new_text):
+            refusal = self._rewrite_refusal(rel_path, path, content, new_content)
+            if refusal:
+                self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+                self._note_rejection(rel_path, old_text, new_text)
+                return refusal
 
         # A valid file must never leave this tool unparseable.
         broke = _new_syntax_error(rel_path, content, new_content)

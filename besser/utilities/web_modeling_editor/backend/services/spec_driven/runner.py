@@ -337,12 +337,12 @@ _SKIPPED_CHECK_RE = re.compile(
 )
 
 # Validator prefixes from _classify_issue, split by which of the three states
-# they report. A modeled operation left as an HTTP 501 placeholder is the spec
-# stating something the delivered code does not implement; a task whose
-# verification never concluded is the opposite — unknown, not absent. Other
+# they report. A modeled operation left as an HTTP 501 placeholder, or a planned
+# change whose deterministic check fails, is something the delivered code does
+# not implement; a task nothing confirmed is the opposite — unknown, not absent. Other
 # prefixes (ruff, frontend/data contract, create contract) describe code that
 # was built and is defective, which is a different question.
-_UNENFORCED_PREFIXES = ("action contract:", "model contract:")
+_UNENFORCED_PREFIXES = ("action contract:", "model contract:", "task incomplete:")
 # The ``why`` of a requirement the check could not confirm, and of a workflow that failed. A workflow
 # is a test the agent wrote for its own code, not a rule the user stated: when it fails, the test or the
 # app may be wrong, so it is a result to look at, not a rule shipped unenforced.

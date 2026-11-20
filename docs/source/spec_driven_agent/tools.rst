@@ -28,8 +28,8 @@ The model-query tools give the LLM random access into your domain model
 (attributes, flattened inherited methods, association ends, OCL constraints)
 without holding the whole serialized model in context.
 
-File edits and checklist evidence
----------------------------------
+File edits and the checklist
+----------------------------
 
 ``modify_file`` refuses ambiguous anchors, identical no-ops and duplicate-looking
 insertions. ``already_applied`` requires a receipt for that exact successful edit
@@ -90,7 +90,7 @@ shown clipped and never authorized by a ``read_id``. Unread/truncated ranges, st
 no-ops, new elisions, and changes that break previously valid Python syntax are
 refused without writing. After a successful edit, read again before another
 same-file range edit. IDs are session-local and expire on resume. The tool shares
-path containment, per-file locking, diagnostics, and successful-write evidence
+path containment, per-file locking, diagnostics, and checklist write tracking
 with the other editors. An accepted edit is not proof of business correctness.
 
 A ``read_file`` repeating an earlier call (same path, ``offset`` and
@@ -113,18 +113,29 @@ a ``pyvenv.cfg`` (a virtualenv, whatever its name; it is named under
 ``file_glob`` matches file names only; one containing a path separator is
 refused with an error rather than returning no matches.
 
-``task_list(action='done')`` runs an attached verifier. A verifier exception is a
-failed check, not success. Without a verifier, supply
-``evidence=[{"id": N, "path": "...", "quote": "..."}]`` from a successful current
-write; this records implementation, with acceptance still unverified.
-The ids may also come as ``done_ids``, the key the reply lists them under;
-with no ids at all, ``done`` closes the items its evidence names.
-Already-correct scaffold code can instead use ``existing=true`` after reading
-the file and citing executable evidence. This records an existing implementation,
-not a fabricated write or a passing business test.
-``action='blocked'`` requires a reason and retains required unresolved work.
-A later successful check/evidence submission can clear the block. ``drop`` is
-only for work outside the user's request. Task outcomes are retained in the recipe.
+``task_list(action='done')`` runs an attached verifier and refuses the item
+while it fails; a verifier exception is a failed check, not success. An item
+without a verifier closes on the model's word, with no code to quote. The ids
+may also come as ``done_ids``, the key the reply lists them under.
+
+After every successful edit the harness re-runs the verifiers and closes the
+items whose check now passes. Nothing else closes an item: an edit to a file
+an item names is recorded with the item (as ``written``) and quoted in its
+"not confirmed" finding, but it does not show the item is done. An item names
+a file only by a path written in its text (``backend/routers/order.py``),
+matched exactly against the edited path; the planner's paths are first
+repaired against the workspace (a suffix matching exactly one file becomes
+that file's path). Only an edit that changed the file after the item was
+created is recorded: a refused or failed call, an identical rewrite and an
+edit a Phase 3 rollback discarded are not. A named path that is not a
+workspace file is reported as absent; the item for a modeled rule the
+generators could not enforce names ``routers/<class>.py``, relative to the
+backend folder, so its finding says no workspace file is there.
+
+``action='blocked'`` requires a reason and records required work the model
+could not finish; the item stops holding the end-turn gate. A later passing
+check can clear the block. ``drop`` is only for work outside the user's
+request. Task outcomes are retained in the recipe.
 
 Application checks during editing
 ---------------------------------

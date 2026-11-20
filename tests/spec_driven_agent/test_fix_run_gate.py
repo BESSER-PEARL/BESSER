@@ -251,8 +251,8 @@ def test_this_runs_own_requirement_or_fix_task_keeps_the_failure_unconfirmed(tmp
     orch._is_fix_run = True
     orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
     earlier, requirement = _earlier_and_own_requirements(orch)
-    task = ValidationIssue("blocker", "task unverified: task 2 remains unresolved: refuse an Order "
-                                      "without a quantity")
+    task = ValidationIssue("blocker", "task incomplete: task 2 is not done: refuse an Order "
+                                      "without a quantity. Its deterministic check fails")
     orch._validation_issues = [earlier, requirement if own == "requirement" else task]
 
     orch._evaluate_fix_target_gate()
@@ -271,6 +271,21 @@ def test_requirement_findings_of_earlier_runs_are_never_promoted(tmp_path):
     issue = ValidationIssue("warning", message)
 
     assert orch._promote_fix_target_findings([issue]) == [issue]
+
+
+def test_a_checklist_item_nothing_confirmed_is_never_promoted(tmp_path):
+    """An open item naming the entity says nothing was confirmed, not that the failure persists."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    orch.executor.set_tasks(["Refuse an Order without a quantity"])
+    issues = [ValidationIssue("warning", message) for message in orch._collect_task_issues()]
+    assert issues and issues[0].message.startswith("task unverified:")
+
+    assert orch._promote_fix_target_findings(issues) == issues
+    orch._validation_issues = issues
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True
 
 
 def test_a_runtime_finding_on_the_entity_still_keeps_the_failure_unconfirmed(tmp_path):

@@ -42,22 +42,34 @@ def _hard_blockers(issues: list) -> list:
     correctly refusing to create an ABSTRACT entity).
     """
     return [i for i in issues if not i.message.startswith((
-        "requirement:", "requirement unverified:",
-        "requirement partial:", "task unverified:",
+        "requirement:", "requirement unverified:", REQUIREMENT_UNSUPPORTED,
+        "requirement partial:", "task unverified:", "task incomplete:",
         "runtime unverified:", "create unverified:",
     ))]
 
 
 # Not confirmed: a check that reached no conclusion, never an observed failure.
-# ``requirement unverified:`` the judge said implemented and its citation was not
-# located, or the judge or the extraction did not run; ``create``/``action
-# unverified:`` (``runtime unverified:`` once no scenario settled them) the probe's
-# own guessed request was refused; ``validation unverified:`` a required check did
-# not run. Listed for the user; never a blocker, never repaired.
+# Listed for the user; never a blocker, never repaired, except on a fix run when
+# it matches the failure the user reported. One prefix per line.
 NOT_CONFIRMED_PREFIXES = (
-    "requirement unverified:", "runtime unverified:", "create unverified:",
-    "action unverified:", "validation unverified:",
+    # The judge said implemented and its citation was not located, or the judge or
+    # the extraction did not run.
+    "requirement unverified:",
+    # The probe's own guessed request was refused (``runtime unverified:`` once no
+    # scenario settled it).
+    "runtime unverified:",
+    "create unverified:",
+    "action unverified:",
+    # A required check did not run.
+    "validation unverified:",
+    # A checklist item no check and no ``task_list`` close settled.
+    "task unverified:",
 )
+
+# The judge said implemented, but the code it cited is not an implementation (a
+# stub, a no-op validator, a comment or import, a declaration where behaviour is
+# needed) or the cited file does not exist: a blocker, repaired like a missing one.
+REQUIREMENT_UNSUPPORTED = "requirement unsupported:"
 
 
 def is_not_confirmed(issue) -> bool:
@@ -68,8 +80,8 @@ def is_not_confirmed(issue) -> bool:
 # Findings that do not show the app fails to work. The not-confirmed ones are no
 # completion issue at all; the others here still count in ``blockerCount``.
 _UNKNOWN_PREFIXES = NOT_CONFIRMED_PREFIXES + (
-    "requirement partial:", "task unverified:", "verification setup:", "api scenario:",
-    "requirement:",
+    "requirement partial:", "verification setup:", "api scenario:", "requirement:",
+    REQUIREMENT_UNSUPPORTED,
 )
 
 
@@ -269,11 +281,12 @@ def _classify_issue(message: str) -> ValidationIssue:
     )):
         return ValidationIssue("blocker", text)
 
-    # The judge's own verdict that behaviour is missing or partial, and a
-    # modeled operation left as an HTTP 501 placeholder.
+    # The judge's own verdict that behaviour is missing or partial, a cited
+    # implementation the verifier found does not do it, a checklist item whose
+    # deterministic check fails, and a modeled operation left as an HTTP 501 placeholder.
     if lower.startswith((
-        "requirement:", "requirement partial:",
-        "action contract:", "task unverified:",
+        "requirement:", "requirement partial:", REQUIREMENT_UNSUPPORTED,
+        "action contract:", "task incomplete:",
     )):
         return ValidationIssue("blocker", text)
 

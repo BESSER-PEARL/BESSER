@@ -155,6 +155,19 @@ class WebAppGenerator(GeneratorInterface):
         self._generate_docker_files(self.env)
         self._generate_readme(self.env)
 
+    # The folders ``generate_model_output`` writes, relative to the output directory.
+    MODEL_OUTPUT_PATHS = ("backend/", "frontend/src/api/generated/")
+
+    def generate_model_output(self):
+        """Write only the output derived from the domain model alone, as ``generate`` writes it:
+        the backend and the frontend's typed API client (``MODEL_OUTPUT_PATHS``). Needs no GUI model."""
+        self._generate_backend(self.env)
+        self._generate_backend_dockerfile(self.env)
+        frontend_dir = os.path.join(self.output_dir, "frontend") if self.output_dir else "frontend"
+        client = ReactGenerator(self.model, None, output_dir=frontend_dir, app_name=self.app_name)
+        client.generate_api_client()
+        self._merge_traced_files(client, "frontend")
+
     def _generate_frontend(self, env):
         # Generate frontend code in 'frontend' subfolder
         frontend_dir = os.path.join(self.output_dir, "frontend") if self.output_dir else "frontend"
@@ -226,6 +239,13 @@ class WebAppGenerator(GeneratorInterface):
                 agent_models=self.agent_models,
             ))
 
+    def _generate_backend_dockerfile(self, env):
+        backend_dockerfile_template = env.get_template('backend.Dockerfile.j2')
+        backend_dockerfile_path = os.path.join(self.output_dir, 'backend', 'Dockerfile')
+        os.makedirs(os.path.dirname(backend_dockerfile_path), exist_ok=True)
+        with open(backend_dockerfile_path, 'w') as f:
+            f.write(backend_dockerfile_template.render())
+
     def _generate_docker_files(self, env):
         """
         Generates Docker-related files for deployment.
@@ -254,12 +274,7 @@ class WebAppGenerator(GeneratorInterface):
         with open(frontend_dockerfile_path, 'w') as f:
             f.write(frontend_dockerfile_template.render())
 
-        # Generate backend Dockerfile
-        backend_dockerfile_template = env.get_template('backend.Dockerfile.j2')
-        backend_dockerfile_path = os.path.join(self.output_dir, 'backend', 'Dockerfile')
-        os.makedirs(os.path.dirname(backend_dockerfile_path), exist_ok=True)
-        with open(backend_dockerfile_path, 'w') as f:
-            f.write(backend_dockerfile_template.render())
+        self._generate_backend_dockerfile(env)
 
         # Generate one Dockerfile per agent under agents/<slug>/Dockerfile
         if self.agent_models:

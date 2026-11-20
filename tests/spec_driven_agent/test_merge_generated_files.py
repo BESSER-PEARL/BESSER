@@ -390,9 +390,9 @@ def test_a_store_check_that_cannot_run_is_reported(app, monkeypatch):
     real = regeneration_module._generate
     calls = []
 
-    def first_fails(generator, model, out_dir):
+    def first_fails(generator, model, out_dir, app_name=None):
         calls.append(model)
-        return (None, "the generator failed: boom") if len(calls) == 1 else real(generator, model, out_dir)
+        return (None, "the generator failed: boom") if len(calls) == 1 else real(generator, model, out_dir, app_name)
 
     monkeypatch.setattr(regeneration_module, "_generate", first_fails)
     regeneration = _regenerate(app, shelf_model(isbn=True), previous_model=shelf_model())

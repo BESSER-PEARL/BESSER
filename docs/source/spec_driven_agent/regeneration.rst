@@ -37,9 +37,13 @@ Before Phase 2 of a modify run, when all of these hold:
 - the class model changed since the previous run, or the
   :ref:`model sync <spec-driven-modify-mode>` added classes; with the same
   model there is nothing to bring in;
-- the app's backend came from ``generate_fastapi_backend``. The React output
-  and the other generators are not regenerated yet: the React output has no
-  determinism test, so an unchanged file could not be told from an edited one.
+- the app came from ``generate_fastapi_backend`` or ``generate_web_app``. Of a
+  web app only the part derived from the domain model alone is regenerated:
+  ``web_app/backend/`` (with ``api_contract.json`` and ``API.md``) and the typed
+  client ``web_app/frontend/src/api/generated/``, with the app's name the run
+  gave the generator. Its pages and components need the GUI model, which a model
+  change does not bring: they are left as they are, and the agent's note says
+  so. The other generators are not regenerated yet.
 
 A new app and a modify run whose model did not change behave exactly as
 before.
@@ -470,8 +474,9 @@ booted and created every record.
 Limits
 ------
 
-- Only the FastAPI backend generator. The React output and the other
-  generators are not regenerated yet.
+- Only the FastAPI backend generator and the model-derived part of the web app
+  generator. The web app's screens and the other generators are not
+  regenerated yet.
 - Measured on one domain with scripted changes.
 - A class rename still needs the agent where its edits sit on the renamed
   lines. When a class takes the old name of another renamed class (``Book`` to

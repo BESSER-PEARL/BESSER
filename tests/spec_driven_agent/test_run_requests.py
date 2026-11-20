@@ -29,6 +29,7 @@ import json
 import pytest
 
 import besser.spec_driven_agent.agent.compaction as compaction
+from besser.spec_driven_agent.pipeline.constants import _PHASE3_BUDGET_SHARE
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.state.checkpoint import load_checkpoint
 from tests.spec_driven_agent.run_transport import (
@@ -475,8 +476,9 @@ def test_the_cost_cap_stops_the_run_before_another_request(tmp_path):
         usage=expensive, max_cost_usd=cap)
 
     assert orchestrator._phase2_stop_reason == "cost_cap"
-    assert client.usage.estimated_cost > cap
-    assert all(cost <= cap for cost in fake.costs_at_send), fake.costs_at_send
+    # Phase 2 stops on its share of the cap; the rest is Phase 3's.
+    assert client.usage.estimated_cost > cap * (1 - _PHASE3_BUDGET_SHARE)
+    assert all(cost <= cap * (1 - _PHASE3_BUDGET_SHARE) for cost in fake.costs_at_send), fake.costs_at_send
     assert 1 < len(fake.of("phase2")) < len(shelf_script())
     _assert_usage_matches_script(client, model, fake)
 

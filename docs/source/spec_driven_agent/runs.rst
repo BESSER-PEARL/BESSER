@@ -27,25 +27,34 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - 120
      - 150
 
-``max_turns`` covers the customize loop (Phase 2) and the repair loop
-(Phase 3) together. With auto-fix on, Phase 2 stops 20 turns before the cap, or
-a quarter of the cap when that is less, and the repair loop gets the rest: with
-the default 120, Phase 2 may use 100. A cap under 40 is not split, since a
-quarter of it is less than one ten-turn fix attempt. A Phase 2 that uses its
-whole share with checklist items still open hands off to validation: those
-items become blockers there, so the run completes only when validation finds
-nothing left, and is reported incomplete otherwise. With no open item to bring
-back, it reports that the customization loop reached its step limit. Either
-way its trace's Phase 2 ``phase_exit`` names the reserve in ``stop_detail``. With auto-fix off, Phase 2 may use the whole cap.
+Work is budgeted in executed tool calls, not in LLM turns: ``max_turns``
+allows four tool calls per turn, for the customize loop (Phase 2) and the
+repair loop (Phase 3) together, so a model that makes one call per turn gets
+the same work as one that batches four (480 calls with the default 120). The
+same multiple of turns (480) is kept only as a guard against a runaway loop.
+
+Phase 2 leaves Phase 3 a quarter of each budget: it stops with a quarter of the
+runtime cap and of the cost cap left, and, with auto-fix on, a quarter of the
+tool calls (Phase 2 may make 360 of the default 480). Phase 3 uses that share
+for its checks, the requirements judge and the repair loop. A Phase 2 that
+makes its share of tool calls with checklist items still open hands off to
+validation; with no open item it reports that the customization loop reached
+its step limit. Either way its trace's Phase 2 ``phase_exit`` names the reserve
+in ``stop_detail``. A Phase 2 that uses its share of the time or the spend stops
+as ``timeout`` or ``cost_cap``. The quarter is ``_PHASE3_BUDGET_SHARE``,
+sized from recorded runs: where Phase 3 repaired, it made a median quarter of
+the run's tool calls, and a quarter of the 2400 s cap covers most recorded
+validation phases.
 
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.
 
-The caps are checked at turn boundaries: cancellation first, then elapsed time,
-then spend — and the cost check runs *before* the next request is sent, so a
-run cannot overshoot its cap by one more billable call. A single warning is
-logged at 80% of the cost cap.
+The caps are checked at turn boundaries: tool calls first, then cancellation,
+then elapsed time, then spend — and the cost check runs *before* the next
+request is sent, so a run cannot overshoot its cap by one more billable call. A
+single warning is logged at 80% of the cost cap. While Phase 2 runs, its LLM
+calls and commands treat the start of Phase 3's time share as the cap.
 
 The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
 agent's own commands stop 30 seconds before the cap. Every LLM call of a run (the customize and repair turns, generator

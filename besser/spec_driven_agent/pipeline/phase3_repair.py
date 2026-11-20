@@ -45,7 +45,7 @@ from besser.spec_driven_agent.model_serializer import serialize_domain_model, to
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_CREATE_EVIDENCE_REMINDER,
-    _PHASE3_FIX_TURNS,
+    _PHASE3_FIX_CALLS,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -303,7 +303,9 @@ class Phase3RepairMixin:
             return "cost budget exhausted"
         if self._phase2_quota_exhausted:
             return "provider quota exhausted in Phase 2"
-        if self.total_turns >= self.max_turns:
+        if self._tool_calls_executed() >= self._call_budget():
+            return "tool-call budget exhausted"
+        if self.total_turns >= self._turn_guard():
             return "turn budget exhausted"
         if self.deadline.out_of_time():
             return "runtime budget exhausted"
@@ -339,6 +341,7 @@ class Phase3RepairMixin:
         """
         if self.phase3_started_at is None:
             self.phase3_started_at = time.monotonic()
+        self.deadline.hold(0)  # Phase 3's share of the clock, held since Phase 2 began
         # Announced before the first check, which can take minutes (npm, tsc), so
         # that time is counted as validation, not as the phase before it.
         self._emit_progress(self.total_turns, "__validating__", "")
@@ -502,7 +505,7 @@ class Phase3RepairMixin:
             if self._may_save_phase3_checkpoint():
                 self._save_phase3_checkpoint()
 
-        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self.max_turns - self.total_turns)
+        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self._turn_guard() - self.total_turns)
         # Which rule ends this loop, for the trace: report-only.
         exit_reason = "attempt cap"
         for _ in range(max_attempts):
@@ -1367,14 +1370,16 @@ class Phase3RepairMixin:
         tools = with_scope_widening(self.tools) if scope is not None else self.tools
         unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
-        turn_cap = _PHASE3_FIX_TURNS
+        # Executed tool calls this attempt may make; its turns are guarded at the same number.
+        cap = _PHASE3_FIX_CALLS
+        calls_before = self._tool_calls_executed()
         turn = 0
         while True:
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
                 logger.warning("Phase 3: %s", stop_reason)
                 return edits
-            if turn >= turn_cap:
+            if max(turn, self._tool_calls_executed() - calls_before) >= cap:
                 return edits
             turn += 1
             self.total_turns += 1
@@ -1427,7 +1432,7 @@ class Phase3RepairMixin:
                 if unconfirmed and (unconfirmed_at_reminder is None
                                     or unconfirmed < unconfirmed_at_reminder):
                     unconfirmed_at_reminder = unconfirmed
-                    turn_cap = max(turn_cap, turn + 1)
+                    cap = max(cap, turn + 1, self._tool_calls_executed() - calls_before + 1)
                     if response["content"]:
                         messages.append({"role": "assistant", "content": response["content"]})
                     paths = ", ".join(f"POST {path}" for _, path in sorted(unconfirmed))

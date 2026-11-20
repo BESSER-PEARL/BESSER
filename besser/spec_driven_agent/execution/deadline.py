@@ -50,6 +50,12 @@ class Deadline:
         # LLM calls this deadline stopped, and why the last one was.
         self.cuts = 0
         self.last_cut = ""
+        self._held = 0.0
+
+    def hold(self, seconds: float) -> None:
+        """Keep ``seconds`` before the cap for a later phase: until ``hold(0)``,
+        calls, commands and checks see the cap that much earlier."""
+        self._held = max(0.0, seconds)
 
     def cancel(self) -> None:
         """Cancel the run and stop what it is running now. Thread-safe."""
@@ -68,13 +74,15 @@ class Deadline:
             self._should_continue is not None and not self._should_continue())
 
     def remaining(self) -> "float | None":
-        """Seconds to the cap: the most a command may run."""
-        return self._time_left()
+        """Seconds to the cap, less the held seconds: the most a command may run."""
+        left = self._time_left()
+        return None if left is None else left - self._held
 
     def work_remaining(self) -> "float | None":
-        """Seconds left for LLM calls and the agent's commands."""
+        """Seconds left for LLM calls and the agent's commands; held seconds already
+        include the packaging reserve at the end of the run."""
         left = self._time_left()
-        return None if left is None else left - PACKAGING_RESERVE_SECONDS
+        return None if left is None else left - max(self._held, PACKAGING_RESERVE_SECONDS)
 
     def out_of_time(self) -> bool:
         """No LLM call may start any more."""

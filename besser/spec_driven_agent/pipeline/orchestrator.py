@@ -279,10 +279,9 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _EDIT_TOOLS,
     _MAX_PARALLEL_WORKERS,
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
-    _PHASE3_FIX_TURNS,
-    _PHASE3_NO_PROGRESS_ROUNDS,
-    _PHASE3_RESERVE_MAX_FRACTION,
-    _PHASE3_TURN_RESERVE,
+    _CALLS_PER_TURN,
+    _PHASE3_BUDGET_SHARE,
+    _PHASE3_FIX_CALLS,
     _READONLY_TOOLS,
     _RECIPE_EXCLUDED_DIRS,
     _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
@@ -2000,6 +1999,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         they're presented as bugs to fix (separate from the user's
         feature request).
         """
+        # Phase 3 starts with its share of the clock; it releases the hold.
+        self.deadline.hold(self.max_runtime_seconds * _PHASE3_BUDGET_SHARE)
         # Drop sub-generator tools already covered by the chosen primary, so
         # the agent can't scatter redundant pydantic/ sqlalchemy/ rest_api/
         # dirs next to the assembled backend/.
@@ -2164,8 +2165,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         observed_plans = {self._repair_obligations_revision()}
         inspection_nudged = False
         self._phase2_inspection_handoff = ""
-        phase2_turns = self._phase2_turn_limit()
-        for turn in range(start_turn, phase2_turns):
+        call_limit = self._phase2_call_limit()
+        for turn in range(start_turn, self._turn_guard()):
+            if self._tool_calls_executed() >= call_limit:  # Phase 2's share of the work
+                self._end_phase2_work_share(call_limit)
+                break
             self.total_turns = turn + 1
             self._trace.write(EVENT_TURN_START, turn=turn + 1)
 
@@ -2178,29 +2182,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "cancelled"
                 break
 
-            # -- Runtime timeout check ------------------------------------
-            if self._start_time is not None:
-                elapsed = time.monotonic() - self._start_time
-                if elapsed > self.max_runtime_seconds:
-                    logger.warning(
-                        "Runtime timeout: %.1fs > %ds", elapsed, self.max_runtime_seconds,
-                    )
-                    self._phase2_stop_reason = "timeout"
-                    break
-
-            # -- Pre-call cost check ---------------------------------------
-            # The post-call check below catches the overrun; this one
-            # prevents firing ANOTHER billable request when the budget
-            # is already spent (e.g. after an expensive streaming turn).
-            if self.client.usage.estimated_cost >= self.max_cost_usd:  # reached is spent
+            # -- Phase 2's share of the time and spend ----------------------
+            if self.deadline.out_of_time():
+                logger.warning("Phase 2 used its share of the %ds runtime cap", self.max_runtime_seconds)
+                self._phase2_stop_reason = "timeout"
+                break
+            # Checked before the call too, so no request starts on a spent share.
+            cost_limit = self.max_cost_usd * (1 - _PHASE3_BUDGET_SHARE)
+            if self.client.usage.estimated_cost >= cost_limit:  # reached is spent
                 logger.warning(
-                    "Cost cap already reached before turn %d: $%.4f >= $%.4f",
-                    turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
+                    "Phase 2 cost share spent before turn %d: $%.4f >= $%.4f",
+                    turn + 1, self.client.usage.estimated_cost, cost_limit,
                 )
                 self._phase2_stop_reason = "cost_cap"
                 break
 
-            logger.info("LLM generation turn %d/%d", turn + 1, phase2_turns)
+            logger.info("LLM generation turn %d (%d of %d tool calls made)",
+                        turn + 1, self._tool_calls_executed(), call_limit)
 
             messages = self._maybe_compact(messages)
 
@@ -2238,10 +2236,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     current_cost, self.max_cost_usd,
                 )
                 _cost_warning_fired = True
-            if current_cost > self.max_cost_usd:
+            if current_cost > cost_limit:
                 logger.warning(
-                    "Cost cap reached: $%.4f > $%.4f",
-                    current_cost, self.max_cost_usd,
+                    "Phase 2 cost share spent: $%.4f > $%.4f",
+                    current_cost, cost_limit,
                 )
                 self._phase2_stop_reason = "cost_cap"
                 break
@@ -2453,26 +2451,39 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
         else:
-            # No break: Phase 2 used every turn it may use. Out of its share with
-            # checklist items open, it hands off like the inspection limit: Phase 3
-            # re-raises them as blockers, so only a clean validation completes the
-            # run. With nothing to re-raise, the cut stays a turn limit.
-            reserved = phase2_turns < self.max_turns
-            if reserved:
-                self._phase2_stop_detail = (
-                    f"turn share used ({self.max_turns - phase2_turns} of {self.max_turns} "
-                    "turns reserved for validation and repair)"
-                )
-                logger.warning("Phase 2 used its %d turns; %s", phase2_turns, self._phase2_stop_detail)
-            unfinished = self.executor.open_tasks() or self.executor.blocked_tasks()
-            self._phase2_stop_reason = "validation_required" if reserved and unfinished else "max_turns"
+            # No break: the runaway guard on turns ended Phase 2.
+            self._phase2_stop_reason = "max_turns"
+            self._phase2_stop_detail = f"turn guard reached ({self._turn_guard()} turns)"
 
-    def _phase2_turn_limit(self) -> int:
-        """Turns of ``max_turns`` Phase 2 may use; the rest is kept for Phase 3's repair loop."""
-        if not self.auto_fix_issues:
-            return self.max_turns
-        reserve = min(_PHASE3_TURN_RESERVE, self.max_turns // _PHASE3_RESERVE_MAX_FRACTION)
-        return self.max_turns - (reserve if reserve >= _PHASE3_FIX_TURNS else 0)
+    def _end_phase2_work_share(self, call_limit: int) -> None:
+        """Phase 2 made its share of the tool calls. With checklist items open it
+        hands off like the inspection limit; with nothing to bring back, or no
+        share kept for repair, it stays a step limit."""
+        reserved = call_limit < self._call_budget()
+        if reserved:
+            self._phase2_stop_detail = (
+                f"tool-call share used ({self._call_budget() - call_limit} of {self._call_budget()} "
+                "calls reserved for validation and repair)")
+            logger.warning("Phase 2 made its %d tool calls; %s", call_limit, self._phase2_stop_detail)
+        unfinished = self.executor.open_tasks() or self.executor.blocked_tasks()
+        self._phase2_stop_reason = "validation_required" if reserved and unfinished else "max_turns"
+
+    def _tool_calls_executed(self) -> int:
+        """Tool calls the model's turns executed in this run; Phase 1's generator run is not one."""
+        return sum(1 for call in self.tool_calls_log if call.get("turn", 0) > 0)
+
+    def _call_budget(self) -> int:
+        """The run's work budget in executed tool calls."""
+        return self.max_turns * _CALLS_PER_TURN
+
+    def _turn_guard(self) -> int:
+        """Turns after which the run stops whatever budget is left: a runaway guard."""
+        return self.max_turns * _CALLS_PER_TURN
+
+    def _phase2_call_limit(self) -> int:
+        """Tool calls Phase 2 may make; with auto-fix on the rest is kept for Phase 3's repair loop."""
+        budget = self._call_budget()
+        return budget - int(budget * _PHASE3_BUDGET_SHARE) if self.auto_fix_issues else budget
 
     # Above this the request is not repeated as the first user message. The
     # system prompt already carries it whole ("## User request"), and a second

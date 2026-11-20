@@ -230,8 +230,13 @@ _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 # from delaying the whole run before the model has done anything.
 _SCAFFOLD_INSTALL_TIMEOUT_SECONDS = 180
 
-# Turns per fix attempt. No tool is forced: an attempt ends when the model ends its turn.
-_PHASE3_FIX_TURNS = 10
+# Work is counted in executed tool calls: each turn of ``max_turns`` allows this
+# many, so a model that makes one call per turn gets the work one that batches
+# four got. Turns stay a runaway guard at the same multiple.
+_CALLS_PER_TURN = 4
+# Executed tool calls per fix attempt (ten turns of four). No tool is forced: an
+# attempt ends when the model ends its turn.
+_PHASE3_FIX_CALLS = 10 * _CALLS_PER_TURN
 # Sent when a fix attempt stops with listed creates not yet read back.
 _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "<system-reminder>These listed creates still have no read-back: {paths}. "
@@ -243,15 +248,12 @@ _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "</system-reminder>"
 )
 
-# Fix attempts the turn reserve below is sized for.
-_PHASE3_NO_PROGRESS_ROUNDS = 2
-
-# Turns of ``max_turns`` Phase 2 leaves to the repair loop: that many full fix
-# attempts, but never more than 1/_PHASE3_RESERVE_MAX_FRACTION of the cap, so a
-# small cap stays mostly Phase 2's.
-# A share smaller than one fix attempt is not reserved at all.
-_PHASE3_TURN_RESERVE = _PHASE3_NO_PROGRESS_ROUNDS * _PHASE3_FIX_TURNS
-_PHASE3_RESERVE_MAX_FRACTION = 4
+# Share of each budget (seconds, cost and, with auto-fix on, tool calls) Phase 2
+# leaves to Phase 3's checks, judge and repair. Basis, the runs recorded on
+# 2026-11-17/18: where Phase 3 repaired, it made a median 25% of the run's tool
+# calls (10 runs); without an install hang it took 15-992 s (median 128 s, one
+# judge call 56-154 s), and a quarter of the 2400 s cap covers 4 of those 5.
+_PHASE3_BUDGET_SHARE = 0.25
 
 # Runtime-gate verdicts, ordered worst-last so a tuple compares as a score.
 _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2

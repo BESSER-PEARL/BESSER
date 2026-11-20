@@ -148,10 +148,6 @@ def test_the_rig_runs_every_scripted_call_when_the_budget_allows(by_batch_size):
     assert {"backend/routers/shelf_stats.py", "backend/routers/shelf_totals.py"} <= set(by_batch_size[4][1]["tree"])
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Q4: the budget counts turns, not executed calls. At one call per turn the 16-call "
-    "script stops after 12 calls (the 12-turn cap); task 2 stays open and reaches Phase 3 "
-    "as a blocker, and Phase 3 gets no repair turn (turn budget exhausted)."))
 def test_one_two_or_four_calls_per_turn_do_the_same_work(by_batch_size):
     reference = by_batch_size[4][1]
     for n in (1, 2):
@@ -166,9 +162,10 @@ def test_one_two_or_four_calls_per_turn_do_the_same_work(by_batch_size):
 # ----------------------------------------------------------------------
 
 @pytest.mark.xfail(strict=True, reason=(
-    "Q4: Phase 2 runs until the wall-clock cap is spent (60 s a turn, 600 s cap: 11 of 16 "
-    "calls, stopped 660 s in), then Phase 3 is skipped outright ('skipped: runtime budget "
-    "exhausted'): no validation round, no repair turn."))
+    "Decision needed: Phase 2 now stops at its share of the clock and Phase 3 validates with "
+    "time left (test_run_budget.py), but no repair turn follows: the open checklist items are "
+    "'task unverified' warnings, not blockers, and the audit rules out promoting them. Whether "
+    "a budget-cut Phase 2's open items start a repair attempt is the owner's call."))
 def test_phase3_gets_time_when_phase2_spends_the_runtime_cap(tmp_path, monkeypatch):
     _no_app_boot(monkeypatch)
     clock = FakeClock()

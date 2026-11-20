@@ -176,11 +176,10 @@ The three phases
    reached no conclusion (a citation not located, a guessed request the app
    refused, a check that did not run) is *not confirmed*, listed for the user and
    never a blocker. Blockers drive a
-   bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
-   and as many as the turns Phase 2 left over, each round up to ten LLM turns.
-   With auto-fix on, Phase 2 leaves this loop part of ``max_turns`` (see
-   :doc:`runs`), so a model that never ends its turn still has its output
-   checked and repaired. Each round is steered to the files its blockers name
+   bounded repair loop of (LLM fix turns → re-validate) rounds, each round up
+   to 40 executed tool calls. Phase 2 leaves Phase 3 a quarter of the run's
+   time, spend and (with auto-fix on) tool calls (see :doc:`runs`), so a model
+   that never ends its turn still has its output checked and repaired. Each round is steered to the files its blockers name
    and their neighbours (a blocker that names no file leaves the round open),
    and no tool is forced. A round that edits is kept only if it retires a
    blocker it faced (a runtime failure counts by the route it tests, not by its

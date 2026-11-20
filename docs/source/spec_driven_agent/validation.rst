@@ -786,9 +786,11 @@ An attempt that edited the tree is kept only if all of these hold:
    judgment or an unknown) belongs to a check family that could not run on the
    tree before it. Fixing the front failure of a layer shows what it hid: a
    missing module or a startup failure hides the runtime checks (where the
-   probe measured that tree, its boot verdict decides instead), fewer entities
-   failing to be created reveals the creates and action calls that needed them,
-   a judge that was deferred, failed or stopped hides its verdicts, missing
+   probe measured that tree, its boot verdict decides instead), an entity the
+   probe could not create hides its own action calls and the creates that need
+   its record (the probe's records of both trees name the entity of each route;
+   without them nothing is excused), a judge that was deferred, failed or
+   stopped hides its verdicts, missing
    dependencies or a check that did not run hide ``tsc`` and the frontend build
    of that project, ``tsc`` errors hide its build, and a syntax error hides the
    lint of its file. The families are one table in ``validation/issues.py``; a
@@ -797,9 +799,13 @@ An attempt that edited the tree is kept only if all of these hold:
    is no higher than before; a requirement whose status fell counts as one more.
 4. An app that started still starts.
 5. Where runtime checks ran on the tree before, no more entities fail to be
-   created, and no more actions fail unless more entities are now created
-   (counted from the probe's records, or from all findings, warnings included,
-   where the probe did not measure the tree).
+   created, and no more actions fail, leaving out those of entities the probe
+   could not create before (counted from the probe's records, or from all
+   findings, warnings included, where the probe did not measure the tree).
+
+A known limit: the count in condition 3 does not weigh findings, so an attempt
+that fixes some observed failures while as many requirements go from
+implemented to missing is kept at an equal count.
 
 An attempt that is not kept is rolled back to the tree from before it, which is
 checked again; the findings only the discarded tree showed are listed in a

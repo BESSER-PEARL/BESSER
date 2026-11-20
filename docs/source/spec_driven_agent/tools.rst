@@ -492,6 +492,9 @@ type and name), for an upload endpoint; a field value keeps its own quotes. ``do
 identifies it as the probe's own server, since a recorded PID from a previous
 session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
+In a turn that also writes files, a command starts only after every write the
+model emitted before it has finished, and a write emitted after it starts only
+once it has returned; reads still run in parallel.
 A command without ``working_dir`` starts where an earlier ``cd`` left the
 shell; when that is not the workspace root, the result's first field,
 ``ran_in``, names that directory. When the line's first ``cd``, relative,

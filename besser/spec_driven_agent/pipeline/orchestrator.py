@@ -146,7 +146,7 @@ from besser.spec_driven_agent.agent.runbook import (
     remove_run_folder_bound_files,
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
-from besser.spec_driven_agent.agent.tools import dumps_for_model
+from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS, dumps_for_model
 from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
@@ -2611,7 +2611,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         args = getattr(block, "input", None)
         # Shell calls share the workspace, its venv and the probe's state file;
         # run in parallel they killed each other's processes and crossed ports.
-        if name in ("run_command", "install_dependencies"):
+        if name in _SHELL_TOOLS:
             return "shell"
         if name in self._WRITE_TOOLS and isinstance(args, dict):
             path = args.get("path")
@@ -2663,6 +2663,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             results.extend(self._execute_single_tool(b, turn) for b in validations)
             order = {b.id: index for index, b in enumerate(tool_blocks)}
             return sorted(results, key=lambda result: order[result["tool_use_id"]])
+
+        # A shell call sees every write the model emitted before it, and no
+        # write runs during it: the batch is cut into stages at each shell call
+        # that has a write before or after it. Reads stay parallel within a stage.
+        names = [getattr(b, "name", None) for b in tool_blocks]
+        first_shell = next((i for i, name in enumerate(names) if name in _SHELL_TOOLS), None)
+        if first_shell is not None and any(name in self._WRITE_TOOLS for name in names):
+            if first_shell:
+                return (self._run_tool_blocks(tool_blocks[:first_shell], turn)
+                        + self._run_tool_blocks(tool_blocks[first_shell:], turn))
+            next_write = next((i for i, name in enumerate(names) if name in self._WRITE_TOOLS), len(names))
+            return (self._run_tool_blocks(tool_blocks[:next_write], turn)
+                    + self._run_tool_blocks(tool_blocks[next_write:], turn))
 
         groups: dict[str, list] = {}
         for block in tool_blocks:

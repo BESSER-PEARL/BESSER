@@ -12,6 +12,8 @@ public model label only.
 
 from __future__ import annotations
 
+import contextvars
+import functools
 import logging
 import time
 from dataclasses import dataclass, field
@@ -25,14 +27,48 @@ from besser.utilities.provenance import get_besser_version, get_build_sha
 run_log = logging.getLogger("besser.spec_driven.runs")
 
 
+# The run whose worker thread is logging; None outside a run.
+_current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("besser_run_id", default=None)
+
+
+def with_run_id(run_id: str, func):
+    """``func``, made to log as part of run ``run_id`` on whatever thread calls it."""
+    @functools.wraps(func)
+    def call(*args, **kwargs):
+        token = _current_run_id.set(run_id)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _current_run_id.reset(token)
+    return call
+
+
+def _stamp_run_id(record: logging.LogRecord) -> bool:
+    run_id = _current_run_id.get()
+    record.run_prefix = f"run_id={run_id} " if run_id else ""
+    return True
+
+
 def enable_run_log() -> None:
-    """Write the run log to stderr, in the server's line format. Called at backend startup."""
+    """Write the run log to stderr, in the server's line format. Called at backend startup.
+
+    The package's warnings, which otherwise reach stderr bare through
+    ``logging.lastResort``, get a handler too, and name the run they belong to.
+    """
     if not any(getattr(handler, "is_run_log", False) for handler in run_log.handlers):
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
         handler.is_run_log = True
         run_log.addHandler(handler)
     run_log.setLevel(logging.INFO)
+    package_log = logging.getLogger("besser")
+    if not any(getattr(handler, "is_run_id_log", False) for handler in package_log.handlers):
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.WARNING)
+        handler.addFilter(_stamp_run_id)
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(run_prefix)s%(message)s"))
+        handler.is_run_id_log = True
+        package_log.addHandler(handler)
 
 # ``mode_reason`` values.
 FRESH = "fresh project"

@@ -47,6 +47,37 @@ then spend — and the cost check runs *before* the next request is sent, so a
 run cannot overshoot its cap by one more billable call. A single warning is
 logged at 80% of the cost cap.
 
+The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
+agent's own commands stop 30 seconds before the cap. Every LLM call of a run (the customize and repair turns, generator
+selection, planning, model sync, requirement extraction and judging) gets as its
+timeout that time left, never more than its usual timeout, and is not started
+with less than 20 seconds left: requirements a judgment would have checked are
+reported as not checked for lack of time, an unknown rather than a failure. The
+provider SDKs apply a timeout to each wait for data, not to a whole response, so
+a streaming call is also closed when the time left runs out; its partial reply,
+a half-written tool call included, is dropped. A call stopped by the cap or a
+cancellation is reported as such, not as a provider error, and never moves the
+run to a fallback model; a provider error (an exhausted quota, an unknown model)
+stays one. Every command a run starts (``run_command``,
+``install_dependencies``, the scaffold's install, the validators, the build and
+type checks) ends by the cap at the latest, and a check or a tool cut by the cap
+says so rather than reporting its own timeout. Those last 30 seconds are left to
+formatting the output and to Phase 3's checks, which start while at least 10
+seconds remain before the cap, so a repair whose turns ran out of time is still
+checked, not thrown away. Writing the recipe, report and checkpoint and packing
+the download start no command and take seconds; they may end a few seconds past
+the cap, which the watchdog's grace (``BESSER_LLM_WATCHDOG_GRACE_SECONDS``)
+covers.
+
+A cancellation — from ``POST /besser_api/spec-driven/cancel/{run_id}``, a closed
+connection, the abandonment timer or the runtime watchdog — takes effect at
+once: the command running at that moment is killed with every process it
+started (its whole sandbox on Linux, its process tree on Windows and macOS) and
+the tool reports ``Command stopped: the run was cancelled``; a streaming LLM
+response is closed and its socket shut down. A non-streaming LLM call that is
+already in flight still runs to its end, which its timeout bounds. The run then
+writes its checkpoint, recipe and report as it does at any other stop.
+
 Only the paid LLM calls count against the budget: generator selection, the
 planning pass, a modify run's model sync, the customize loop, requirement
 extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
@@ -91,8 +122,8 @@ producer is cooperatively stopped — which bounds unattended BYOK spend. A
 client polling ``events.json`` counts as present: the run is stopped only when
 no stream is open *and* no poll arrived within the grace period. When
 the event store itself fails mid-run (a full disk, a lock held past its
-timeout), or the backend stops, the run's worker is cancelled at its next turn
-boundary, and its concurrency slot is freed only once the worker has stopped;
+timeout), or the backend stops, the run's worker is cancelled (as above, the
+command it is running is stopped at once), and its concurrency slot is freed only once the worker has stopped;
 the run is recorded ``failed`` (``interrupted`` on shutdown). A
 server restart marks still-running records ``interrupted`` and ends their event
 log with a terminal ``error`` frame (code ``INTERNAL``) whose ``resumeAvailable``,
@@ -115,6 +146,66 @@ removes it. Likewise a run that fails or is cancelled after writing a
 checkpoint keeps its workspace, so an abandoned run that reports
 ``resumeAvailable: true`` can be resumed.
 
+.. _spec-driven-run-evidence:
+
+What the server keeps of a run
+------------------------------
+
+The recipe (``.besser_recipe.json``) ships in the download, so it is bounded:
+over 128 KiB it is shortened, and its ``recipe_shortened`` section counts what
+was cut and says so in ``note``, for example *kept 5 of 109 tool calls*. The run
+log (``.besser_trace.jsonl``) stays in the workspace and is deleted with it,
+after ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``.
+
+The server keeps a run's full record only when the operator asks for it, by
+setting ``BESSER_INCIDENT_LOG_DIR`` (a blank value counts as unset). Each run
+started through the backend then appends to
+``<BESSER_INCIDENT_LOG_DIR>/runs/<run id>.jsonl`` as it goes, so a run that is
+cancelled or crashes keeps what it did up to then, and a shortened recipe adds
+*full record kept server-side under run <run id>* to its note. Files are kept
+``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS`` days (30); ``0`` turns the record
+off (a negative value counts as ``0``) and then the cleanup removes nothing, so
+older files stay until the operator deletes them. A run driven from Python with
+``LLMOrchestrator`` writes none unless it passes ``run_evidence``, a callable
+that receives each record. The record is written only with the run log
+(``BESSER_LLM_ENABLE_TRACING``, on by default).
+
+**What it contains.** One JSON line for every record of the run log, with
+``phase`` added. That is personal data of the user and of what the agent read:
+
+- the first 500 characters of the user's request (in ``run_start``) and the
+  requirements read from it (in ``requirements``);
+- every file the agent wrote or edited, whole up to 64 KiB (``write_file``
+  content, ``modify_file`` old and new text);
+- up to 16 KiB of every tool result, the text the model read: the contents of
+  files it read, including files of an imported repository and files the user
+  uploaded, command and test output, API responses;
+- each tool call's turn, ``success``, ``status`` and ``seconds`` (how long the
+  tool took), the validation findings, the phases and their token counters.
+
+It does not contain the conversation with the LLM (the prompts and the model's
+messages).
+
+- **Caps.** Any one string is kept up to 64 KiB (its first and last 32 KiB
+  beyond that). A tool result is kept up to 16 KiB, its first and last 8 KiB.
+- **Redaction.** Every string is redacted before it is cut: first the user's
+  own key and every token or password the server holds (the LLM tiers' tokens,
+  the demo token, ...), then the rules of the run's events and of a generation
+  trace: provider tokens, private keys, ``.env``-style assignments, credentials
+  written as quoted literals in code (``apiKey = "..."``), URL passwords
+  (``https://user:password@host``), ``Authorization``, ``Cookie``,
+  ``Set-Cookie`` and ``X-...-Key`` / ``X-...-Token`` headers, token fields and
+  JWTs, and ``test_api`` header values. A tool result in JSON is redacted with
+  its text unescaped, so the line rules see real lines.
+- **Access.** A run's shell never sees the folder: the sandbox masks
+  ``BESSER_INCIDENT_LOG_DIR``. Whoever can read the folder on the host can read
+  the records.
+- **Size.** Measured on production runs, a record is about 0.2 to 1.6 MB
+  (0.7 MB on average).
+
+While a run is working, each warning its worker logs carries
+``run_id=<run id>``, as the ``spec-driven run start`` and ``run end`` lines do.
+
 .. _spec-driven-modify-mode:
 
 Modifying a previous run
@@ -124,10 +215,32 @@ A run can also be **incremental**. With ``mode: "modify"`` and a
 ``base_run_id`` naming a previous, still-downloadable run, the new run's
 workspace is seeded from that run's generated files and edited in place instead
 of being rebuilt from scratch. Phase 2 is never skipped for a modify run — you
-asked for a change, so a change is made. When the base has expired the runner
+asked for a change, so a change is made.
+
+The base's workspace is kept for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (3 hours by
+default) and its ZIP download for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours).
+Once the workspace is gone, the run is seeded from the download instead: it holds
+the same source tree and the run files a later run reads (``.besser_recipe.json``,
+``.besser_attribution.json``, ``.besser_generator_output.json``), and it is
+unpacked with the checks of an uploaded archive (no path outside the workspace, no
+links, size and file-count limits; of a file's mode only its execute bits are
+kept, so ``mvnw`` or a ``*.sh`` script stays executable). The GitHub source record
+of a run started from or pushed to a repository (``.besser_github_source.json``,
+the commit and the files it held) is not in the download; it is kept beside it and
+restored, so a later push still knows which commit the files came from. It is still
+a modify run. A download that cannot be unpacked is treated like a failed copy: the
+run warns and rebuilds; one removed while being opened counts as expired. Of a ZIP
+uploaded through ``/spec-driven/import-generated-code`` only the user's files are
+used, never BESSER run records inside it.
+
+When neither is left (or the base's output was a single file, not a ZIP) the runner
 warns and falls back to normal from-scratch generation rather than failing the
-request. The editor avoids that for a project linked to GitHub: it starts the run
-from the repository instead (see :ref:`web-editor-github-coming-back`).
+request; the recipe's ``run.mode_reason`` says ``previous result expired, rebuilt
+from scratch`` and the ``done`` event's ``mode`` is ``create``. A client can learn
+this before starting: ``/preview`` with ``mode: "modify"`` and the ``base_run_id``
+returns ``base_available`` (``false`` when the run would rebuild). The editor avoids
+the rebuild for a project linked to GitHub: it starts the run from the repository
+instead (see :ref:`web-editor-github-coming-back`).
 
 Validation of a modify run is proportional to its request: it keeps the previous
 run's requirement verdicts, judges only the requirements of the messages since

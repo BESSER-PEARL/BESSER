@@ -15,14 +15,21 @@ a run re-sent it without any chance of a different answer:
 
 import hashlib
 import logging
+import time
 
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
+from besser.spec_driven_agent.execution.deadline import PACKAGING_RESERVE_SECONDS
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
-from besser.spec_driven_agent.validation.issues import _classify_issue, is_completion_issue, is_not_confirmed
+from besser.spec_driven_agent.validation.issues import (
+    _classify_issue,
+    is_completion_issue,
+    is_not_confirmed,
+    unresolved_defects,
+)
 
 SPEC = "Room numbers are unique."
 REQUIREMENT = {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"}
@@ -246,9 +253,24 @@ def test_the_spend_cap_is_checked_before_every_paid_judge_call(tmp_path, monkeyp
     issues = orch._collect_requirement_issues()
 
     assert client.calls == ["cheap-model"]
-    assert issues == ["requirement unverified: verification stopped or budget exhausted; "
+    assert issues == ["requirement unverified: not checked, the $1.00 cost cap is spent ($1.25 used); "
                       "original-specification coverage is not verified."]
     assert not orch._requirement_judge_failures, "a budget stop is not a judge failure"
+
+
+def test_a_judge_with_too_little_time_left_is_not_started(orch, judge_calls):
+    """A judge call started near the cap ran the run 49 s past it: with less
+    time left than a call needs, the requirements are reported as not checked
+    for lack of time, an unknown, not as failed."""
+    orch._start_time = time.monotonic() - orch.max_runtime_seconds + PACKAGING_RESERVE_SECONDS + 5
+
+    issues = orch._collect_requirement_issues()
+
+    assert judge_calls == []
+    assert issues == [f"requirement unverified: not checked, too little of the {orch.max_runtime_seconds}s runtime cap "
+                      "is left; original-specification coverage is not verified."]
+    assert not orch._requirement_judge_failures
+    assert unresolved_defects([_classify_issue(issue) for issue in issues]) == []
 
 
 # ------------------------------------- an edit elsewhere, and the citation repair

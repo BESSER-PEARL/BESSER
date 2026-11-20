@@ -185,8 +185,9 @@ def _normalise_line(line: str) -> str:
     return _collapse(_ascii_quotes(line))
 
 
-def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:
-    """(path, quote, cut) for each part of an abridged or listed citation.
+def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None,
+                    min_part: int = _MIN_PART_QUOTE) -> list[tuple[str, str, bool]]:
+    """(path, quote, cut) for each part of an abridged or listed citation of at least ``min_part`` characters.
 
     ``cut`` when an ellipsis right after the part marks the rest of its line
     as left out; "and other.py: b", or "other.py: b" naming one of ``files``,
@@ -202,11 +203,11 @@ def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) ->
         for switch in _FILE_SWITCH_RE.finditer(segment) if files else ():
             if len(_resolve_cited_path(switch.group(1), "", files, {})) == 1:
                 quote = _evidence_quote(segment[offset:switch.start()])
-                if len(quote) >= _MIN_PART_QUOTE:
+                if len(quote) >= min_part:
                     parts.append((path, quote, False))
                 path, offset = switch.group(1), switch.end()
         quote = _evidence_quote(segment[offset:])
-        if len(quote) >= _MIN_PART_QUOTE:
+        if len(quote) >= min_part:
             parts.append((path, quote, cut))
         path = next_path or path
         position = end
@@ -484,8 +485,9 @@ _EXTRACT_SYSTEM_PROMPT = (
     "rules; 'computed' for values worked out rather than typed in; "
     "'transition' for state changes and when they are refused; 'action' for "
     "named operations; 'ui' for screens and interactions; 'absence' for "
-    "something the app must not have at all (no sign-in, no admin area), never "
-    "a refusal or limit the app enforces (that is a 'rule'); 'preservation' "
+    "something the app must not have at all (no sign-in, no admin area, no "
+    "data invented beyond a given source), never a refusal or limit the app "
+    "enforces (that is a 'rule'); 'preservation' "
     "for existing behaviour a change must keep working as it is.\n"
     "- Skip the technology stack and instructions to the assistant.\n"
     "- Broad goals such as 'functional for any user' or 'no errors' do not add "
@@ -2556,11 +2558,83 @@ _SCREEN_REASONS = {"passed": "the frontend builds", "failed": "the frontend buil
                    "not_run": "the frontend build check did not run", "none": "no frontend"}
 
 
-def _cited_lines(full: str, quotes: list[str]) -> set[int]:
-    """The 1-based lines of a cited file the quotes locate on."""
-    source = _load_source(full, {}, False)
-    return {line for quote in quotes for first, last in _quote_spans(_evidence_quote(quote), source)
-            for line in range(first, last + 1)}
+def _route_ranges(full: str) -> dict[tuple, list[tuple[int, int]]] | None:
+    """Each route of a Python file with the line ranges its request runs: its declaration
+    (decorators and handler, or the ``add_api_route`` call), the handler an
+    ``add_api_route`` names, and the module functions the handler calls or depends on
+    (``Depends(f)``) by name. None when the file cannot be parsed."""
+    try:
+        tree = ast.parse(Path(full).read_text(encoding="utf-8-sig", errors="ignore"))
+    except (OSError, SyntaxError, ValueError, RecursionError):
+        return None
+    defs = {(_statement_start(node), node.end_lineno): node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    module_functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    registrations = {(node.lineno, node.end_lineno): node for node in ast.walk(tree)
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                     and node.func.attr == "add_api_route"}
+
+    def span(node: ast.AST) -> tuple[int, int]:
+        return _statement_start(node), node.end_lineno
+
+    ranges = {}
+    for route in _declared_routes(full):
+        handler, call = defs.get(route[2:]), registrations.get(route[2:])
+        if call is not None:
+            endpoint = call.args[1] if len(call.args) > 1 else next(
+                (kw.value for kw in call.keywords if kw.arg == "endpoint"), None)
+            handler = module_functions.get(getattr(endpoint, "id", None))
+        own = [route[2:]] + ([span(handler)] if handler is not None and call is not None else [])
+        callees = set()
+        for node in ast.walk(handler) if handler is not None else ():
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                callees.add(node.func.id)
+            if (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", None)) == "Depends"
+                    and node.args and isinstance(node.args[0], ast.Name)):
+                callees.add(node.args[0].id)
+        callees -= _local_names(handler) if handler is not None else set()
+        ranges[route] = own + [span(module_functions[name]) for name in sorted(callees)
+                               if name in module_functions and module_functions[name] is not handler]
+    return ranges
+
+
+def _local_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """The names ``function`` binds itself (parameters, assignments, loop and ``with``
+    targets, nested definitions, imports, ``except`` names): a call of one is not a call
+    of the module function of that name."""
+    names = {arg.arg for arg in ast.walk(function.args) if isinstance(arg, ast.arg)}
+    for node in ast.walk(function):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node is not function:
+            names.add(node.name)
+        elif isinstance(node, ast.alias):
+            names.add((node.asname or node.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+    return names
+
+
+def _cited_part_lines(full: str, path: str, quote: str, files: dict[str, str], parsed: dict,
+                      cache: dict) -> list[set[int]] | None:
+    """The 1-based lines of ``full`` each located part of a citation is on, as
+    :func:`verify_evidence` locates it; a decorator quoted alone is located on its own line.
+    None for an abridged citation located by its parts with a part too short to check:
+    the parts left may be code several routes share."""
+    located = _locate_citation(path, quote, files, parsed, cache, False)[0]
+    checked = _citation_parts(quote, path, files)
+    if ({part for _, part, _ in located} <= {part for _, part, _ in checked}
+            and len(_citation_parts(quote, path, files, min_part=1)) > len(checked)):
+        return None
+    parts = []
+    for source, part, spans in located:
+        if source.path != full:
+            continue
+        if not spans and part.startswith("@"):
+            spans = _quote_spans(part, source)
+        if spans:
+            parts.append({line for first, last in spans for line in range(first, last + 1)})
+    return parts
 
 
 def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_build: str,
@@ -2569,15 +2643,19 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
     the screens half reported apart.
 
     The API half is exercised when a passing ``test_api`` call (``exercised``: method, path)
-    hit the route a cited line is on (its decorator or handler), or, when no cited line is
-    on a route, any route of a cited backend file; that call is named. No harness check
+    hit a route whose request runs every located part of a citation (:func:`_route_ranges`:
+    its decorator or handler, or a function of the file the handler calls or depends on);
+    that call is named. A citation no route runs (a model, an import) is found in code,
+    whatever ran, and so is cited code whose routes cannot be read (not Python). No harness check
     renders a screen, so a cited frontend file is never exercised (``frontend_build``:
     passed, failed, not_run or none says why). ``verification``: ``verified`` when every
     cited half was exercised, ``api_verified`` when the API half was and screens are cited,
     ``unverified`` otherwise. Never a blocker.
     """
     files = _source_files(output_dir)
-    routes_cache: dict[str, set] = {}
+    routes_cache: dict[str, dict | None] = {}
+    parsed: dict[str, _Source] = {}
+    quote_cache: dict = {}
     leveled = []
     for item in verdicts:
         if item.get("status") != "implemented":
@@ -2592,19 +2670,31 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
         backend = [(path, quote) for path, quote in cited if not path.lower().endswith(_FRONTEND_SUFFIXES)]
         halves, api_exercised = [], False
         if backend:
-            on_cited, in_files = set(), set()
+            on_cited, unreadable, ambiguous = set(), False, False
             for path, quote in backend:
-                full = files.get(path) or next((v for k, v in files.items() if k.endswith("/" + path)), None)
-                if full and full.endswith(".py"):
-                    routes = routes_cache.setdefault(full, _declared_routes(full))
-                    lines = _cited_lines(full, [quote])
-                    in_files |= routes
-                    on_cited |= {route for route in routes if any(route[2] <= line <= route[3] for line in lines)}
-            routes, which = (on_cited, "the cited route") if on_cited else (in_files, "a route of the cited file")
-            call = next((f"{method} {path}" for method, path in sorted(exercised) if _route_called(routes, method, path)),
-                        None)
+                homes = _resolve_cited_path(path, quote, files, quote_cache)
+                if len(homes) == 1 and homes[0].endswith(".py") and homes[0] not in routes_cache:
+                    routes_cache[homes[0]] = _route_ranges(homes[0])
+                ranges = routes_cache.get(homes[0]) if len(homes) == 1 else None
+                if ranges is None:
+                    unreadable = True
+                    continue
+                # A route counts when its request runs every located part of the citation.
+                parts = _cited_part_lines(homes[0], path, quote, files, parsed, quote_cache)
+                if parts is None:
+                    ambiguous = True
+                    continue
+                on_cited |= {route for route, spans in ranges.items() if parts and all(
+                    any(first <= line <= last for first, last in spans for line in lines) for lines in parts)}
+            call = next((f"{method} {path}" for method, path in sorted(exercised)
+                         if _route_called(on_cited, method, path)), None)
             api_exercised = call is not None
-            halves.append(f"API: a passing workflow called {call}, {which}" if call
+            halves.append(f"API: a passing workflow called {call}, the cited route" if call
+                          else "API: not run (the check cannot read the routes of the cited code)"
+                          if not on_cited and unreadable
+                          else "API: not run (a part of the abridged citation is too short to tell its route)"
+                          if not on_cited and ambiguous
+                          else "API: not run (no cited line is in a route handler)" if not on_cited
                           else "API: a workflow passed but called no cited route" if workflows_passed
                           else "API: no workflow passed")
         if screens:

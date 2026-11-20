@@ -143,7 +143,7 @@ def _declares_registration(folder: str) -> bool:
 def _run_child(folder: str, *, workspace: str, abstract: list[str] | None = None) -> dict:
     """Execute the child, sandboxed with no network, on a scratch copy of ``folder``."""
     # Mirrors constructibility._run_probe, which can only launch its own file as the child.
-    from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+    from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
     from besser.utilities.workspace_fs import copytree_plain
 
@@ -160,8 +160,8 @@ def _run_child(folder: str, *, workspace: str, abstract: list[str] | None = None
                                   writable=[work], cwd=app_dir, env=env, timeout=_CHILD_TIMEOUT_SECONDS)
         except SandboxUnavailable as exc:
             return {"boot": "error", "error": str(exc)}
-        except subprocess.TimeoutExpired:
-            return {"boot": "error", "error": f"timed out after {_CHILD_TIMEOUT_SECONDS}s"}
+        except subprocess.TimeoutExpired as exc:
+            return {"boot": "error", "error": timeout_cause(exc, f"timed out after {_CHILD_TIMEOUT_SECONDS}s")}
         except OSError as exc:
             return {"boot": "error", "error": f"could not be launched: {exc}"}
         for line in reversed((result.stdout or "").splitlines()):

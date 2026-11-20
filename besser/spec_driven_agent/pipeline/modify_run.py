@@ -21,6 +21,7 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
+from besser.spec_driven_agent.execution.deadline import under_deadline
 from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate
 from besser.spec_driven_agent.planning.model_change import (
     FULL_MODEL,
@@ -85,6 +86,7 @@ class ModifyRunMixin:
     """modify and friends; see the module docstring."""
 
     @ends_shell_session
+    @under_deadline
     def modify(self, instructions: str) -> str:
         """Edit a seeded workspace in place instead of rebuilding it.
 

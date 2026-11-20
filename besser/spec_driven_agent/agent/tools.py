@@ -5,7 +5,7 @@ Four categories:
 1. **Generator tools** — BESSER's built-in code generators
 2. **File tools** — read, write, modify, search files in the workspace
 3. **Execution tools** — run commands, install deps, test code
-4. **Validation tools** — check model validity and code syntax
+4. **Validation tools** — check the application, test its API, keep the checklist
 """
 
 import json
@@ -373,26 +373,6 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                            "line": {"type": "string"}}}}}},
     },
     {
-        "name": "validate_model",
-        "description": "Run structural validation on the domain model. Returns errors and warnings.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "check_syntax",
-        "description": (
-            "Parse a Python file and report the first syntax error with its line. "
-            "Python only; it does not import or execute the file, so missing imports and "
-            "undefined names are not detected (validate_app checks those)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path to Python file to check"},
-            },
-            "required": ["path"],
-        },
-    },
-    {
         "name": "task_list",
         "description": (
             "Your work checklist for this run. action='list' shows every item "
@@ -458,81 +438,12 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
 ]
 
 
-# ======================================================================
-# Model query tools — lightweight random-access into the domain model
-# so the LLM doesn't have to keep the full JSON in context.
-# ======================================================================
-
-MODEL_QUERY_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "query_class",
-        "description": (
-            "Return the full definition of a single class from the domain "
-            "model: attributes, methods (with inheritance flattened), "
-            "parents, and association ends. Use this when you need deeper "
-            "detail on one class than the system-prompt summary provides."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Class name (case-sensitive).",
-                },
-            },
-            "required": ["name"],
-        },
-    },
-    {
-        "name": "list_classes_with",
-        "description": (
-            "List every class in the domain model matching a simple "
-            "predicate. Keeps context small when the model has dozens of "
-            "classes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "predicate": {
-                    "type": "string",
-                    "description": (
-                        "One of: is_abstract | is_root (no parents) | has_constraint | "
-                        "has_attribute:<name> | has_method:<name> | "
-                        "extends:<parent_name>"
-                    ),
-                },
-            },
-            "required": ["predicate"],
-        },
-    },
-    {
-        "name": "get_constraints_for",
-        "description": (
-            "Return all constraints (OCL expressions) whose context is the "
-            "given class. Use this to translate OCL constraints into "
-            "runtime validators (Pydantic / Zod / serializers)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "class_name": {
-                    "type": "string",
-                    "description": "Class name to look up constraints for.",
-                },
-            },
-            "required": ["class_name"],
-        },
-    },
-]
-
-
 def get_all_tools_including_generators() -> list[dict[str, Any]]:
     """Return ALL tools (including generators) — for no-generator mode."""
     return (
         GENERATOR_TOOLS
         + FILE_TOOLS
         + EXECUTION_TOOLS
-        + MODEL_QUERY_TOOLS
         + VALIDATION_TOOLS
     )
 
@@ -544,11 +455,6 @@ def get_all_tools_including_generators() -> list[dict[str, Any]]:
 _TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
     # Generators: from their registry entry
     **{tool.name: tool.requires for tool in agent_tools()},
-    # Model-query tools need the domain model
-    "query_class":              frozenset({"domain"}),
-    "list_classes_with":        frozenset({"domain"}),
-    "get_constraints_for":      frozenset({"domain"}),
-    "validate_model":           frozenset({"domain"}),
 }
 
 

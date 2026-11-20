@@ -3919,16 +3919,6 @@ class ToolExecutor:
     # Validation tools
     # ------------------------------------------------------------------
 
-    def _validate_model(self, args: dict) -> dict:
-        err = self._require_domain_model("validate_model")
-        if err:
-            return err
-        try:
-            result = self.domain_model.validate()
-            return {"validation": result}
-        except Exception as e:
-            return {"error": f"Validation failed: {e}"}
-
     def _validate_app(self, args: dict) -> dict:
         if self.app_validator is None:
             return {"error": "Application verification is unavailable in this executor; do not claim the app was verified."}
@@ -3949,145 +3939,6 @@ class ToolExecutor:
         if self.api_tester is None:
             return {"error": "API workflow verification is unavailable; do not claim workflows were tested."}
         return self.api_tester(args)
-
-    def _check_syntax(self, args: dict) -> dict:
-        path = self._safe_path(args["path"])
-        if not os.path.isfile(path):
-            return {"error": f"File not found: {args['path']}"}
-        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
-            source = f.read()
-        try:
-            ast.parse(source, filename=args["path"])
-            return {"status": "ok", "message": "Syntax is valid"}
-        except SyntaxError as e:
-            return {"error": f"Syntax error at line {e.lineno}: {e.msg}"}
-
-    # ------------------------------------------------------------------
-    # Model query tools
-    # ------------------------------------------------------------------
-
-    def _find_class_by_name(self, name: str):
-        """Case-sensitive class lookup in the domain model.
-
-        Returns the ``Class`` or ``None`` if not found. Used by every
-        model-query tool handler below.
-        """
-        if not self.domain_model or not name:
-            return None
-        for cls in self.domain_model.get_classes():
-            if cls.name == name:
-                return cls
-        return None
-
-    def _query_class(self, args: dict) -> dict:
-        """Return a richer view of one class than the prompt summary."""
-        name = args.get("name", "")
-        cls = self._find_class_by_name(name)
-        if cls is None:
-            return {"error": f"Class {name!r} not found in the domain model"}
-
-        from besser.spec_driven_agent.model_serializer import (
-            _attribute_entry,
-            _method_entry,
-            _type_name,
-        )
-
-        attrs = [_attribute_entry(a) for a in sorted(cls.attributes, key=lambda a: a.name)]
-        methods = [_method_entry(m) for m in sorted(cls.methods, key=lambda m: m.name)]
-
-        try:
-            parents = sorted([p.name for p in cls.parents()])
-        except Exception:
-            parents = []
-
-        try:
-            assoc_ends = []
-            for end in cls.all_association_ends():
-                assoc_ends.append({
-                    "role": end.name,
-                    "type": _type_name(end.type),
-                    "navigable": getattr(end, "is_navigable", True),
-                })
-        except Exception:
-            assoc_ends = []
-
-        return {
-            "name": cls.name,
-            "is_abstract": bool(getattr(cls, "is_abstract", False)),
-            "attributes": attrs,
-            "methods": methods,
-            "parents": parents,
-            "association_ends": assoc_ends,
-        }
-
-    def _list_classes_with(self, args: dict) -> dict:
-        """Filter the domain model's classes by a simple predicate."""
-        predicate = (args.get("predicate") or "").strip()
-        if not predicate:
-            return {"error": "predicate is required"}
-        if not self.domain_model:
-            return {"error": "No domain model loaded"}
-
-        classes = list(self.domain_model.get_classes())
-
-        # Predicate parsing — ``prefix:value`` or single keyword.
-        if ":" in predicate:
-            key, _, value = predicate.partition(":")
-            key = key.strip()
-            value = value.strip()
-        else:
-            key, value = predicate, None
-
-        def _has_constraint(cls) -> bool:
-            try:
-                return any(
-                    c for c in self.domain_model.constraints
-                    if getattr(c, "context", None) is cls
-                )
-            except Exception:
-                return False
-
-        matchers = {
-            "is_abstract": lambda c: bool(getattr(c, "is_abstract", False)),
-            "is_root": lambda c: not list(c.parents()),
-            "has_constraint": _has_constraint,
-            "has_attribute": lambda c: any(a.name == value for a in c.attributes),
-            "has_method": lambda c: any(m.name == value for m in c.methods),
-            "extends": lambda c: any(p.name == value for p in c.all_parents()),
-        }
-        if key not in matchers:
-            return {
-                "error": (
-                    f"Unknown predicate {predicate!r}. Supported: "
-                    f"{', '.join(sorted(matchers))}"
-                )
-            }
-        if key in {"has_attribute", "has_method", "extends"} and not value:
-            return {"error": f"predicate '{key}' requires a value (e.g. '{key}:name')"}
-
-        matched = sorted([c.name for c in classes if matchers[key](c)])
-        return {"predicate": predicate, "matches": matched, "count": len(matched)}
-
-    def _get_constraints_for(self, args: dict) -> dict:
-        """Return OCL / constraint expressions scoped to a given class."""
-        name = args.get("class_name", "")
-        cls = self._find_class_by_name(name)
-        if cls is None:
-            return {"error": f"Class {name!r} not found in the domain model"}
-        if not self.domain_model:
-            return {"error": "No domain model loaded"}
-
-        out = []
-        for c in self.domain_model.constraints:
-            context = getattr(c, "context", None)
-            if context is not cls:
-                continue
-            out.append({
-                "name": getattr(c, "name", ""),
-                "expression": getattr(c, "expression", ""),
-                "language": getattr(c, "language", None),
-            })
-        return {"class": name, "constraints": out, "count": len(out)}
 
     # ------------------------------------------------------------------
     # Handler dispatch table
@@ -4125,15 +3976,9 @@ class ToolExecutor:
         # Execution
         "run_command": _run_command,
         "install_dependencies": _install_dependencies,
-        # Model queries
-        "query_class": _query_class,
-        "list_classes_with": _list_classes_with,
-        "get_constraints_for": _get_constraints_for,
         # Validation
-        "validate_model": _validate_model,
         "validate_app": _validate_app,
         "test_api": _test_api,
-        "check_syntax": _check_syntax,
         # Work checklist
         "task_list": _task_list,
     }

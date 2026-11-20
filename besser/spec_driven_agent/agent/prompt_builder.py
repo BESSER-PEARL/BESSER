@@ -90,19 +90,6 @@ DROPPED_RULES_NOTE = (
     "what they used."
 )
 
-# The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
-# Names and purpose only: each tool's own description, sent with every
-# request, already lists its predicates and return value.
-_MODEL_TOOLS_SECTION = """\
-## Tools for deeper model inspection
-
-When the JSON below is not enough, ask the model rather than re-reading or
-guessing: `query_class(name)` for one class in full, `list_classes_with(predicate)`
-to filter classes, `get_constraints_for(class_name)` for a class's OCL
-constraints (Rule 6: each one becomes a runtime validator - the generator
-does not enforce them for you).
-"""
-
 def build_system_prompt(
     domain_model,
     gui_model,
@@ -461,8 +448,6 @@ def build_system_prompt(
     # The idiom blocks assume a web / server project.
     builds_other = target is not None and target.kind == OTHER
     idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
-    # Named only when offered: tools.py withholds these without a domain model.
-    model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
 
     # The HARD-CONSTRAINTS header below is deliberately forceful: weaker
     # models (e.g. the free qwen tier) ignore softer wording and delete the
@@ -723,7 +708,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     security path, find the cause (dependency, configuration, test input)
     and fix that.
 {crud_rule}
-{model_tools_section}"""
+"""
 
     # What the scaffold holds is listed above; naming parts here claimed some a generator never makes.
     request_intro = (

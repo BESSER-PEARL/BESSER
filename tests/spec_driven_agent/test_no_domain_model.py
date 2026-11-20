@@ -111,9 +111,6 @@ def test_tool_filter_hides_domain_generators_when_no_model():
     # GUI-needing generators rely on domain too — also gone
     assert "generate_react" not in tool_names
     assert "generate_web_app" not in tool_names
-    # Model-query tools are domain-only → gone
-    assert "query_class" not in tool_names
-    assert "validate_model" not in tool_names
     # Workspace / execution tools stay — they're model-agnostic
     assert "read_file" in tool_names
     assert "write_file" in tool_names
@@ -156,21 +153,6 @@ def test_tool_executor_surfaces_clear_error_without_domain_model(tmp_path):
     result = json.loads(executor.execute("generate_pydantic", {}))
     assert "error" in result
     assert "domain model" in result["error"].lower()
-
-
-def test_tool_executor_model_query_without_domain_is_graceful(tmp_path):
-    """query_class / list_classes_with / validate_model must also degrade
-    gracefully rather than throwing through the handler."""
-    executor = ToolExecutor(workspace=str(tmp_path), domain_model=None)
-
-    import json
-    for tool_name in ("query_class", "list_classes_with", "get_constraints_for", "validate_model"):
-        result = json.loads(executor.execute(
-            tool_name,
-            # bogus args — the guard should kick in before parsing them
-            {"name": "X", "predicate": "is_abstract", "class_name": "X"},
-        ))
-        assert "error" in result, f"{tool_name} should return an error"
 
 
 def test_generator_tools_cover_every_model_requirement():

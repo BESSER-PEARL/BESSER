@@ -54,7 +54,7 @@ def test_only_shell_tools_are_dropped():
     off = {t["name"] for t in get_tools_for(allow_shell=False)}
     # Exactly the shell tools differ; every static/generator tool is retained.
     assert on - off == set(_SHELL_TOOLS)
-    for essential in ("write_file", "read_file", "modify_file", "check_syntax", "list_files"):
+    for essential in ("write_file", "read_file", "modify_file", "validate_app", "list_files"):
         assert essential in off
 
 

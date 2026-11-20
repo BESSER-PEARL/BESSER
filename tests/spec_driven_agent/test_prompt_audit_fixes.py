@@ -38,13 +38,6 @@ def test_the_gap_prompt_no_longer_asks_for_delete_tasks():
     assert "read_file/write_file" not in gap_analyzer._SYSTEM_PROMPT
 
 
-def test_model_query_tools_are_named_only_when_they_are_offered():
-    offered_without_model = {t["name"] for t in get_tools_for(has_domain_model=False, has_gui_model=True)}
-    assert "query_class" not in offered_without_model
-    assert "query_class(name)" not in _prompt(None)
-    assert "query_class(name)" in _prompt(_model())
-
-
 def test_the_search_glob_contract_matches_the_executor():
     """The executor matches the glob against the bare file name, so the old
     '**/*.ts' example could never match anything."""
@@ -62,8 +55,7 @@ def test_run_command_documents_truncation_and_the_skipped_result():
         assert fact in doc
 
 
-def test_check_syntax_says_what_it_does_not_check():
-    assert "validate_app" in TOOLS["check_syntax"]["description"]
+def test_install_dependencies_says_what_happens_without_a_manifest():
     assert "neither file" in TOOLS["install_dependencies"]["description"]
 
 

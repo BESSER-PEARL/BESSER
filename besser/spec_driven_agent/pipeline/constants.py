@@ -197,7 +197,7 @@ def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -
 
 # Tools that are read-only and shouldn't count for loop detection
 _READONLY_TOOLS = frozenset({
-    "read_file", "list_files", "search_in_files", "check_syntax", "validate_app", "test_api",
+    "read_file", "list_files", "search_in_files", "validate_app", "test_api",
     # Checklist bookkeeping — marking several items done back-to-back is
     # exactly what the end_turn gate asks for, never a stuck loop.
     "task_list",

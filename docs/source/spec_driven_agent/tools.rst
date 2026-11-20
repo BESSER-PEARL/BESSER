@@ -15,18 +15,18 @@ would immediately fail.
    * - Files
      - ``list_files``, ``read_file``, ``write_file``, ``modify_file``, ``replace_file_lines``,
        ``search_in_files``, ``delete_file``
-   * - Model queries
-     - ``query_class``, ``list_classes_with``, ``get_constraints_for``
    * - Validation / bookkeeping
-     - ``validate_app``, ``test_api``, ``validate_model``, ``check_syntax``, ``task_list``
+     - ``validate_app``, ``test_api``, ``task_list``
    * - Generators
      - The 19 generator tools listed below.
    * - Shell
      - ``run_command``, ``install_dependencies``
 
-The model-query tools give the LLM random access into your domain model
-(attributes, flattened inherited methods, association ends, OCL constraints)
-without holding the whole serialized model in context.
+A tool is offered only when it can return something the context lacks. The
+system prompt holds the whole serialized domain model (inherited members, OCL
+constraints and rejected expressions included), so there is no tool to query
+it; the write tools check the syntax of what they write, and ``validate_app``
+runs the application checks.
 
 File edits and the checklist
 ----------------------------
@@ -329,7 +329,7 @@ The policy
 that does not set it: the local ``docker-compose.yml``, the backend service in
 ``docker-compose.prod.yml``, and a backend started by hand. With the tools off,
 every static tool (``read_file``, ``write_file``, ``modify_file``,
-``check_syntax``, the generators, the runtime probes) stays available, so the
+``validate_app``, the generators, the runtime probes) stays available, so the
 agent still produces and validates a full application; it just cannot shell
 out. The ``pip install --dry-run`` dependency check in
 :doc:`Phase 3 <validation>` is behind the same flag, since resolving an sdist

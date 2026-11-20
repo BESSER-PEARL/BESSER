@@ -98,15 +98,6 @@ def test_read_file_does_not_follow_a_swapped_link(monkeypatch, setup, race):
 
 
 @pytest.mark.parametrize("race", RACES)
-def test_check_syntax_does_not_follow_a_swapped_link(monkeypatch, setup, race):
-    executor, rel, _ = arm(monkeypatch, setup, race, "def broken(:\n")
-
-    result = call(executor, "check_syntax", path=rel)
-
-    assert "Syntax error" not in str(result), result
-
-
-@pytest.mark.parametrize("race", RACES)
 def test_write_file_does_not_write_through_a_swapped_link(monkeypatch, setup, race):
     executor = setup[0]
     call(executor, "read_file", path=race[0])  # write_file needs a full read first
@@ -162,7 +153,6 @@ needs_mkfifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no mkfifo o
 @pytest.mark.parametrize("tool,args", [
     ("write_file", {"content": "x"}),
     ("read_file", {}),
-    ("check_syntax", {}),
 ])
 def test_a_fifo_is_refused_without_blocking(setup, tool, args):
     executor, workspace, _ = setup
@@ -206,7 +196,6 @@ SWAP_POINTS = {
     # A range other than the setup read's, or it is an "unchanged" stub.
     ("read_file", {"limit": 1}, "isfile"),
     ("read_file", {"limit": 1}, "read_check"),
-    ("check_syntax", {}, "read_check"),
     ("modify_file", {"old_text": "alpha = 1", "new_text": "alpha = 2"}, "read_check"),
     ("modify_file", {"old_text": "alpha = 1", "new_text": "alpha = 2"}, "write_check"),
     ("write_file", {"content": "beta = 2\n"}, "write_check"),

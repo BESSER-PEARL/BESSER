@@ -28,6 +28,16 @@ _EXAMPLES_PER_INTENT = 2
 _MAX_EXAMPLE_CHARS = 60
 
 
+AGENT_LEFT_OUT = "agent left out:"
+
+
+def agent_left_out_note(agent_name: str) -> str:
+    """The warning for a project agent the generated web app does not include."""
+    return (f"{AGENT_LEFT_OUT} The agent '{agent_name}' is not part of the web app: it includes an agent "
+            "only when a screen of the GUI model holds an agent component, and it was generated without "
+            "one. Add one to a screen and generate the web app again to include the agent.")
+
+
 def gui_uses_agent(gui_model) -> bool:
     """Whether a screen holds an agent component: the editor's rule for shipping a
     project's agent with its web app (has_agent_components on /generate-output)."""

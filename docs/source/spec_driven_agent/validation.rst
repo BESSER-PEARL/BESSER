@@ -48,12 +48,20 @@ that was already broken is never refused, so it can be repaired.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup. Imports the app starts
-  without are not checked: inside a ``try`` that handles ``ImportError``, and
-  under ``if TYPE_CHECKING:``. Under a catch-all handler (``except Exception``)
-  an unresolved import is a warning, ``possibly missing module:``, unless it
-  is inside a function and the handler goes on to the code after the
-  ``try`` (no ``return`` or ``raise`` in it): an optional fast path the
-  function falls back from. A package
+  without are not checked: inside a ``try`` that handles ``ImportError`` or a
+  ``with suppress(ImportError):``, and under ``if TYPE_CHECKING:``. Under a
+  catch-all (``except Exception``, ``with suppress(Exception):``) an
+  unresolved import is a warning, ``possibly missing module:``, unless it is
+  inside a function, the handler goes on to the code after the ``try`` (no
+  ``return`` or ``raise`` in it), and the import has a fallback: every
+  catch-all handler binds the imported name (another import, ``= None``), or
+  each read of it outside the ``try`` body (or its ``else``) or the ``with``
+  block comes after another binding of it in the function (a parameter, an
+  assignment before the guard or a later one). That is an optional fast path
+  the function falls back from. Otherwise the read, after the guard, in the
+  handler, in ``finally`` or in a closure, is a ``NameError`` when the import
+  failed, so it is reported. A flag set in the handler (``found = False``,
+  then ``if found:``) is not followed, so that read is reported too. A package
   declared in the app's manifest satisfies its import name, matched
   case-insensitively and, for names that differ (``python-socketio`` /
   ``socketio``), by name prefix, unless the app ships a module of that name.
@@ -514,7 +522,16 @@ Findings are classified into three severities:
        (``{``, ``/>``, even followed by a comment) identifies no code and proves nothing.
        A quote that starts or ends inside a string or comment
        is not code. An explanation after a closed statement or element
-       ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
+       ("<Plot /> which renders ...") is not matched. Spacing is not compared, and
+       quotation marks are compared by kind, not glyph: ``'``, ``“ ”``, ``‘ ’``, ``« »``
+       and the fullwidth ``＂ ＇`` read as ``"`` on both sides, since some models return
+       them typographic. Some providers return a citation with its double quotation
+       marks left out (``<button type=submit>``): a citation with no quotation mark
+       at all that no line matches is compared once more with the file's quotation
+       marks removed (a quote that kept some marks is compared with them), and
+       locates a line only when exactly one line of the cited file then reads as the
+       whole quote; with two or more it is refused, never picked.
+       Prose, a paraphrase or
        another file's code leaves the requirement unverified. A Python
        quote that matches no line is also located by syntax tree, so a
        formatter's wrapping parentheses, adjacent string literals merged or
@@ -570,7 +587,13 @@ Findings are classified into three severities:
        cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, the model-derived acceptance matrix (with
+       now), ``form field type:``, ``agent left out:`` (the project has an
+       agent diagram, and the web app generator's output has no ``agents``
+       folder because it was generated when no screen held an agent
+       component; read from the files, so a modify run that changes the GUI
+       without regenerating keeps it; the run report lists it as not
+       checked), the
+       model-derived acceptance matrix (with
        a GUI model whose screens bind at least one class, a class no screen
        offers to create, through a table with action buttons, a form or a
        create button, is not asked for a create path), ``entity coverage:`` (for an ``other`` target used through screens, the
@@ -738,6 +761,54 @@ only unverified entries without a code change. Evidence must name a real applica
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
 
+.. _spec-driven-modify-requirements:
+
+A modify run is answerable for its own request and for what it breaks, not for
+the whole application again. When the seeded recipe records requirement
+verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
+most 128) and extracts only the user messages the previous run's request did not
+hold: the messages after the previous run's when those start the conversation,
+otherwise all later messages (a message sent to a run that was cancelled counts
+as new, and so does one repeated after the previous run), with the earlier
+conversation and the numbered requirements as context, so "retry", "yes" or "the
+same for the other screen" resolve. Their requirements follow the previous ones.
+The extraction also names the previous requirements a new message changes, asks
+for again or removes. Those stay in the ledger and are judged as usual (an
+extraction that names every requirement cannot empty it): met, they are met;
+unmet, they are a warning, ``requirement changed by your newest message:``, never
+a regression and never work for the fix loop; when it was implemented as the
+previous run ended, the warning says so, which tells a deliberate change from a
+break. A changed or restated requirement comes back as a new requirement of its own.
+It also says whether the messages only ask to retry, continue or finish earlier
+work. When that extraction fails, the whole request is extracted instead and
+judged as in a run without a previous ledger. When the editor sends its own
+requirements, a previous verdict is kept for
+the requirement with the same trace id, else the same text.
+
+The previous verdicts are taken as of the tree the run starts from: an
+"implemented" citation is checked again against it (one that no longer matches
+stays "implemented" but is judged again), and every verdict records the hashes of
+the files it cites or names and of the files they rest on; a verdict that names no
+file records none and is judged again. A verdict whose files this run leaves
+byte-identical is not judged again, whether it was met or not. A recipe whose
+verdicts cannot be read is ignored, and the whole request is judged. Then:
+
+- a requirement that was implemented and is no longer is a blocker, and its
+  note says it was implemented when the previous run ended;
+- a requirement of the new messages that is not implemented is a blocker;
+- a requirement the previous run had left partial, missing or unverified that
+  is still so is a warning, ``requirement still open from the previous run:``.
+  It does not drive the fix loop and does not make the run incomplete; the
+  report lists it with "open since the previous run". When the new messages only
+  ask to retry or finish earlier work, these requirements are this run's own
+  instead: judged, and blockers while unmet. The incomplete-extraction gate and
+  the requirements derived from the model or the agent are never carried this way.
+
+Known limit: the files a verdict rests on are the files it cites, their local
+imports and the entry files that mount them. A frontend screen that reaches the
+backend only over HTTP does not rest on the backend's files, so an edit to the
+backend route it calls keeps the screen's verdict.
+
 When the editor sends the modeling assistant's requirements (the request's
 ``requirements`` field, see :doc:`api`), the ledger is built from them instead of
 extracted. Only the kinds that can be judged from code are judged (``uniqueness``,
@@ -782,24 +853,15 @@ is not among the files the verdict rests on, so a style edit does not re-judge i
 
 Two kinds of requirement cannot be shown by citing a line of code, and the
 extraction labels them: ``absence``, something the app must not have at all ("no
-sign-in", never a refusal the app enforces), and ``preservation``, existing
+data export", never a refusal the app enforces), and ``preservation``, existing
 behaviour a change must keep working as it is. When the judge leaves one
 unverified, it is settled without a citation, never as met, and an unverified
 absence is not sent to the focused round:
 
-- An absence that names sign-in or agents is checked in the app's files: a sign-in
-  library declared in a ``requirements*.txt`` or ``package.json`` dependency
-  (``passlib``, ``python-jose``, ``bcrypt``, ``next-auth``, ``jsonwebtoken``,
-  ``passport-*``, ``@clerk/*`` ...), a Python route with a ``login``, ``sign-in``,
-  ``sign-up`` or ``auth`` segment, an ``agents/<name>/`` folder at the top of the
-  app or of one of its folders (where the generator puts agents), Python code
-  importing the BESSER Agentic Framework, or the framework as a dependency. The
-  requirement is ``not_provable`` either way, and its note names what was found or
-  what was checked. A find is never a blocker: it cannot tell the excluded feature
-  from a requested one ("No sign-in for visitors" beside an admin login), and the
-  repair loop must not remove a feature the request asked for. Nothing found is no
-  proof (a hand-written login page is not seen). Only the judge's own missing or
-  partial verdict blocks an absence.
+- An absence is ``not_provable``, with a note that it cannot be shown by citing
+  code. The app's files are not scanned for it: a find could not tell the excluded
+  feature from a requested one, and finding nothing proves nothing. Only the
+  judge's own missing or partial verdict blocks an absence.
 - A preservation is ``not_provable``. Its note names the files the judge named for
   it (inspection paths and citations), and the files they import or are mounted by,
   that changed since the previous version (in a modify run the files as the run found

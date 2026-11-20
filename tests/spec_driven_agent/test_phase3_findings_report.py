@@ -98,7 +98,8 @@ def test_a_failing_listener_does_not_stop_the_repair(orch):
 def test_validation_is_announced_before_the_first_check(orch):
     """So the first check's time (npm, tsc: minutes) counts as validation, not customization."""
     order: list[str] = []
-    orch.on_progress = lambda turn, tool, status, *rest: order.append(tool)
+    orch.on_progress = lambda turn, tool, status, *rest: (
+        order.append(tool) if tool != "__validation_step__" else None)
 
     def collect():
         order.append("check")

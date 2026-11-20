@@ -8,6 +8,7 @@ import pytest
 from besser.utilities.secret_redaction import (
     REDACTED_SECRET,
     looks_like_secret_env,
+    redact_record_text,
     redact_text,
     scrub_secret_files,
 )
@@ -135,9 +136,9 @@ def test_env_style_defaults_to_true():
     ("global.index-url='https://deploy:Pa55w0rdHere99@pypi.corp.example.com/simple'", "Pa55w0rdHere99"),
     ("origin\thttps://builder:Pa55w0rdHere99@git.example.com/team/app.git (fetch)", "Pa55w0rdHere99"),
 ])
-def test_header_and_url_credentials_are_redacted(text, secret):
-    safe, findings = redact_text(text)
-    assert secret not in safe and REDACTED_SECRET in safe and findings >= 1
+def test_a_record_redacts_header_and_url_credentials(text, secret):
+    safe = redact_record_text(text)
+    assert secret not in safe and REDACTED_SECRET in safe
 
 
 @pytest.mark.parametrize("text", [
@@ -146,8 +147,61 @@ def test_header_and_url_credentials_are_redacted(text, secret):
     "BASE_URL = 'http://admin:admin@localhost:8000'",
     "a request with an X-API-Key header",
 ])
-def test_header_and_url_rules_leave_code_and_templates_alone(text):
-    assert redact_text(text) == (text, 0)
+def test_the_records_header_and_url_rules_leave_code_and_templates_alone(text):
+    assert redact_record_text(text) == text
+
+
+# Text users receive: delivered files and the event stream keep these lines as they were.
+DELIVERED = {
+    "README.md": 'Try it:\n\ncurl -H "X-API-Key: dev-key-123456" http://localhost:8000/books\n'
+                 'curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/me\n'
+                 'curl -H "X-API-Key: <your key>" http://localhost:8000/books\n'
+                 'Clone: git clone https://user:password@example.com/repo.git\n',
+    "scripts/smoke_test.sh": "#!/bin/sh\ncurl -s -H 'X-Api-Key: local-dev-key-42' http://localhost:8000/health\n"
+                             "curl -s --header \"Cookie: session=test-session-0001\" http://localhost:8000/me\n",
+    "api.http": "GET http://localhost:8000/items\nX-API-Key: devkey-abcdef12\n\n###\n"
+                "GET http://localhost:8000/me\nCookie: sid=abc123def456\n",
+    "app/main.py": 'headers = {\n    "X-API-Key": api_key,\n}\nresponse.headers["Set-Cookie"] = f"sid={sid}"\n',
+    "docker-compose.yml": "services:\n  web:\n    environment:\n"
+                          "      UPSTREAM: https://svc:svcpass123@api.partner.example.org/v1\n",
+    "openapi.yaml": "      example: Set-Cookie: sessionid=38afes7a8; HttpOnly\n",
+    "message.txt": "Test it with `curl -H 'X-API-Key: dev-key-123456' http://localhost:8000/books`.",
+}
+
+
+@pytest.mark.parametrize("name", DELIVERED)
+def test_delivered_files_and_streamed_text_keep_headers_and_web_urls(tmp_path, name):
+    text = DELIVERED[name]
+    assert redact_text(text, env_style=False) == (text, 0)
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text.encode("utf-8"))
+
+    result = scrub_secret_files(str(tmp_path))
+
+    assert path.read_bytes() == text.encode("utf-8") and result.findings == 0
+
+
+@pytest.mark.parametrize("text", [
+    "Cookie: a" + " " * 40_000 + "b",
+    " " * 40_000 + "x",
+    "> " + " " * 40_000 + "Cookie: a",
+    "X-" + "a" * 40_000,
+    "-H 'Cookie: " + "a" * 40_000,
+    "-H '" * 10_000,
+    '"' * 40_000,
+    "https://" + "a" * 20_000 + ":" + "b" * 20_000,
+    "https://" + ":" * 40_000,
+    'apiKey="' + "a" * 40_000,
+    'apiKey="aaaaaaaa' * 4_000,
+], ids=["spaced-value", "spaces", "spaced-prefix", "header-name", "unterminated-arg", "repeated-arg",
+        "quotes", "url-no-at", "url-colons", "unterminated-literal", "repeated-literal"])
+def test_the_record_rules_run_in_linear_time(text):
+    import time
+
+    started = time.perf_counter()
+    redact_record_text(text)
+    assert time.perf_counter() - started < 2
 
 
 def test_a_long_run_of_letters_is_redacted_in_linear_time():

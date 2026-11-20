@@ -65,12 +65,12 @@ _SECRET_VALUE_TOKEN_RE = re.compile(
 # redaction rewrites source code, and a false hit breaks the app.
 _GITLEAKS_RULES_PATH = Path(__file__).with_name("data") / "gitleaks_rules.toml"
 
-# A database or web URL's password: ``scheme://user:password@host`` (the user may
-# be empty: ``redis://:pw@host``). A password for a local host is left alone: it
+# A database URL's password: ``scheme://user:password@host`` (the user may be
+# empty: ``redis://:pw@host``). A password for a local host is left alone: it
 # only opens the user's own container, and the generated docker-compose sets
 # the same value on the database, so redacting it breaks the app.
 _DB_URL_PASSWORD_RE = re.compile(
-    r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mssql|oracle|mongodb(?:\+srv)?|rediss?|amqps?|https?)"
+    r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mssql|oracle|mongodb(?:\+srv)?|rediss?|amqps?)"
     r"(?:\+[a-z0-9]+)?://[^:/?#@\s'\"]*:(?P<password>[^@/?#\s'\"]+)@(?P<host>[^:/?#,\s'\"]*)"
 )
 # Code that builds a URL rather than holding one: ``{settings.db_password}``,
@@ -84,13 +84,20 @@ _PEM_PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----(?:\s|\\[nr]|[A-Za-z0-9+/=]){64,}"
     r"(?:-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----)?"
 )
-# A credential HTTP header as a request or response dump prints it, at the start of a
-# line (``> Cookie: ...``, ``< Set-Cookie: ...``, ``X-API-Key: ...``), or as a
-# ``-H`` / ``--header`` argument. Code that sets a header (``'X-API-Key': apiKey``)
-# matches neither, so the rule is safe on source files.
+# Records only (redact_record_text): a web URL's password, as pip config and git
+# remotes print it. Delivered files and the event stream keep it.
+_WEB_URL_PASSWORD_RE = re.compile(
+    r"(?i)\bhttps?://[^:/?#@\s'\"]*:(?P<password>[^@/?#\s'\"]+)@(?P<host>[^:/?#,\s'\"]*)"
+)
+
+# Records only: a credential HTTP header as a request or response dump prints it, at
+# the start of a line (``> Cookie: ...``, ``< Set-Cookie: ...``, ``X-API-Key: ...``),
+# or as a ``-H`` / ``--header`` argument. Delivered files and the event stream keep
+# them: a README or a test script uses them to call the app.
 _CREDENTIAL_HEADER_NAMES = r"(?:cookie|set-cookie|x-[a-z0-9-]*-(?:key|token))"
+# Unambiguous on runs of spaces (each run belongs to one token), so linear in time.
 _HEADER_LINE_RE = re.compile(
-    rf"(?im)^([ \t]*[<>]?[ \t]*{_CREDENTIAL_HEADER_NAMES}[ \t]*:[ \t]*)(\S[^\r\n]*?)(?=[ \t]*\r?$)"
+    rf"(?im)^([ \t]*(?:[<>][ \t]*)?{_CREDENTIAL_HEADER_NAMES}[ \t]*:[ \t]*)(\S(?:[^\r\n]*\S)?)(?=[ \t]*\r?$)"
 )
 _HEADER_ARGUMENT_RE = re.compile(
     rf"(?i)((?:-H|--header)[ \t=]*(['\"])[ \t]*(?:{_CREDENTIAL_HEADER_NAMES}|authorization)[ \t]*:[ \t]*"
@@ -271,7 +278,8 @@ def _redact_vendored_tokens(text: str) -> tuple[str, int]:
     return text, findings
 
 
-def _redact_db_url_passwords(text: str, *, keep_local: bool = True) -> tuple[str, int]:
+def _redact_db_url_passwords(text: str, *, keep_local: bool = True,
+                              pattern: re.Pattern[str] = _DB_URL_PASSWORD_RE) -> tuple[str, int]:
     findings = 0
 
     def _replacement(match: re.Match[str]) -> str:
@@ -283,7 +291,7 @@ def _redact_db_url_passwords(text: str, *, keep_local: bool = True) -> tuple[str
         findings += 1
         return match.group(0).replace(f":{password}@", f":{REDACTED_SECRET}@")
 
-    return _DB_URL_PASSWORD_RE.sub(_replacement, text), findings
+    return pattern.sub(_replacement, text), findings
 
 
 def _is_local_host(host: str) -> bool:
@@ -358,8 +366,7 @@ def redact_text(
     redacted, pem_count = _PEM_PRIVATE_KEY_RE.subn(REDACTED_SECRET, redacted)
     redacted, vendored_count = _redact_vendored_tokens(redacted)
     redacted, url_count = _redact_db_url_passwords(redacted)
-    redacted, header_count = _redact_credential_headers(redacted)
-    return redacted, findings + token_count + pem_count + vendored_count + url_count + header_count
+    return redacted, findings + token_count + pem_count + vendored_count + url_count
 
 
 def _redact_credential_headers(text: str) -> tuple[str, int]:
@@ -607,13 +614,15 @@ def redact_record_text(text: str, *, path: str = "", secrets: Iterable[str] = ()
 
     The literal ``secrets`` first (a key partly shaped like a token goes whole),
     then the rules of :func:`redact_shared_file` with ``.env``-style assignments
-    on for every text (``path`` picks the YAML rule), then the trace rules
-    (bearer tokens, token fields, JWTs).
+    on for every text (``path`` picks the YAML rule), web URL passwords and
+    credential headers, then the trace rules (bearer tokens, token fields, JWTs).
     """
     text = redact_text(text, secrets=secrets)[0]
     if path.replace("\\", "/").rsplit("/", 1)[-1].lower().endswith((".yaml", ".yml")):
         text = _redact_yaml_lines(text)[0]
-    return _redact_trace_patterns(_redact_credential_literals(text)[0])
+    text = _redact_credential_literals(text)[0]
+    text = _redact_db_url_passwords(text, pattern=_WEB_URL_PASSWORD_RE)[0]
+    return _redact_trace_patterns(_redact_credential_headers(text)[0])
 
 
 def looks_like_secret_env(content: str) -> bool:

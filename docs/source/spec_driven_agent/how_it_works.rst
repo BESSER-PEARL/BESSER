@@ -176,16 +176,17 @@ The three phases
    and as many as the turns Phase 2 left over, each round up to ten LLM turns.
    With auto-fix on, Phase 2 leaves this loop part of ``max_turns`` (see
    :doc:`runs`), so a model that never ends its turn still has its output
-   checked and repaired. Each round may edit only the files its blockers name,
-   the files those import or that import them, and new files (a blocker that
-   names no file leaves the round open), and no tool is forced. A round that
-   edits nothing ends the loop. A round that edits is kept only if it retires
-   a blocker it faced, adds no observed failure, leaves no more blockers and
-   no worse runtime result (a tree that now starts is always kept); otherwise
-   the tree from before it is restored and the loop ends, so the loop never
-   ends with more blockers than it started with. Every kept tree is
-   re-snapshotted as the next round's rollback target; the pre-Phase-3 tree is
-   the first snapshot, so a failed repair can never cost you the Phase 2 work.
+   checked and repaired. Each round is steered to the files its blockers name
+   and their neighbours (a blocker that names no file leaves the round open),
+   and no tool is forced. A round that edits is kept only if it retires a
+   blocker it faced, adds no observed failure except ones a failure it fixed had
+   hidden, leaves no more blockers by the same measure, and does not stop an app
+   that started from starting; otherwise the tree from before it is restored and
+   the loop ends. A round that edits nothing continues the loop only if the
+   evidence it added retired a blocker, or once after every write it tried was
+   refused. Every kept tree is re-snapshotted as the next round's rollback
+   target; the pre-Phase-3 tree is the first snapshot, so a failed repair can
+   never cost you the Phase 2 work.
    Non-blocker findings are recorded but never burn fix turns.
    See :doc:`validation` for the full list of checks, the severity model, and
    how to turn the repair half on or off.

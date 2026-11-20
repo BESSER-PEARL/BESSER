@@ -71,8 +71,11 @@ from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
+    could_not_run,
+    hidden_families,
     is_completion_issue,
     required_check_unverified,
+    requirement_status,
     unresolved_defects,
 )
 from besser.spec_driven_agent.validation.toolchain import (
@@ -442,19 +445,20 @@ class Phase3RepairMixin:
 
         # An attempt that edits the tree is kept only if it moves it forward
         # (``_attempt_not_kept``); otherwise the tree before it is restored and
-        # the loop ends. A kept tree is the next attempt's rollback target, so
-        # the loop never ends with more blockers than it started with. An
-        # attempt that edits nothing ends the loop too.
+        # the loop ends. A kept tree is the next attempt's rollback target. An
+        # attempt that edits nothing continues the loop only if its evidence
+        # retired a blocker, or once after every write it tried was refused.
         current_issues = list(issues)
         current_blockers = blockers_before
         current_score = self._phase3_tree_score(blockers_before)
-        seen = {frozenset(Counter(self._blocker_keys(blockers_before)).items())}
+        seen = {self._blocker_state_key(blockers_before)}
         # Set when the tree an attempt left was replaced: an interrupted
         # attempt's unvalidated edits, or an attempt that was not kept.
         restored = False
         last_issues = list(issues)
         attempts_run = self._repair_progress.get("attempts_run", 0)
         self._repair_last_outcome = None
+        retried_refusals = False
 
         def checkpoint_progress() -> None:
             self._repair_progress = {"attempts_run": attempts_run}
@@ -477,8 +481,6 @@ class Phase3RepairMixin:
                 break
             is_first_attempt = attempts_run == 0
             attempts_run += 1
-            # Keyed while the requirement verdicts still describe this tree.
-            keys_before = self._blocker_keys(current_blockers)
             self._validation_round = f"Fix attempt {attempts_run}"
             self._report_round_step(_fixing_blockers(current_blockers, last_issues))
             self._trace.write(
@@ -490,6 +492,7 @@ class Phase3RepairMixin:
             revision_before = self._workspace_revision()
             obligations_before = self._repair_obligations_revision()
             probe_before = (getattr(self, "_runtime_probe_cache", None), getattr(self, "_runtime_probe_facts", None))
+            booted_before = self._booted(current_blockers, revision_before)
             checkpoint_progress()
             log_before = len(self.tool_calls_log)
             try:
@@ -523,14 +526,25 @@ class Phase3RepairMixin:
                 break
             if not source_changed and not obligations_changed:
                 # Nothing moved on disk or in the evidence: a re-check would find the same.
-                logger.warning("Phase 3: attempt %d changed nothing; ending the fix loop", attempts_run)
-                exit_reason = _no_edit_exit_reason(attempts_run, round_calls)
                 self._trace.write(
                     EVENT_PHASE_EXIT, phase="phase3_fix_attempt", attempt=attempts_run,
                     blockers_remaining=len(current_blockers), source_changed=False,
                     successful_writes=edits or 0,
                 )
+                refused = self._refused_writes(round_calls)
+                if refused and not retried_refusals:
+                    # Every write was refused: the next attempt is told why (measured: after
+                    # such a round the next one wrote 57% of the time and cut blockers 20%).
+                    retried_refusals = True
+                    self._repair_last_outcome = (
+                        f"Fix attempt {attempts_run} changed nothing: every write it tried was refused. "
+                        + " ".join(refused))
+                    logger.warning("Phase 3: attempt %d had every write refused; one more attempt", attempts_run)
+                    continue
+                logger.warning("Phase 3: attempt %d changed nothing; ending the fix loop", attempts_run)
+                exit_reason = _no_edit_exit_reason(attempts_run, round_calls)
                 break
+            retried_refusals = False
             # Re-validate: re-running the checks is the only evidence that
             # the repair actually compiles.
             self._begin_validation_round(f"Re-check after fix attempt {attempts_run}")
@@ -555,11 +569,15 @@ class Phase3RepairMixin:
                 successful_writes=edits or 0,
             )
 
+            hidden = self._hidden_before(current_issues, probe_before[1], revision_before,
+                                         current_score, score_after)
             not_kept = source_changed and self._attempt_not_kept(
-                current_blockers, keys_before, blockers_after, current_score, score_after)
+                current_blockers, blockers_after, hidden,
+                booted_before, self._booted(blockers_after, self._workspace_revision()))
             if not_kept:
-                exit_reason = f"attempt {attempts_run} reverted: {not_kept}"
                 restored = self._revert_attempt(attempts_run, not_kept, issues_after, probe_before)
+                exit_reason = (f"attempt {attempts_run} reverted: {not_kept}" if restored
+                               else f"attempt {attempts_run} not kept, and its tree could not be restored: {not_kept}")
                 if not restored:
                     last_issues = issues_after
                     self._report_findings(attempts_run, issues_after)
@@ -577,23 +595,26 @@ class Phase3RepairMixin:
                 checkpoint_progress()
                 self._phase3_exit_reason = "all blockers fixed"
                 return
-            if not source_changed:
-                # Evidence alone moved: recorded above, but no edit was made.
+            retired = self._retired(current_blockers, blockers_after)
+            if not source_changed and not retired:
+                # Evidence alone moved, and it settled nothing.
                 exit_reason = _no_edit_exit_reason(attempts_run, round_calls)
                 break
-            # Kept: the next attempt starts from, and can only be rolled back to, this tree.
-            if not self._create_snapshot():
+            # Kept (or evidence that retired a blocker): the next attempt starts
+            # from, and can only be rolled back to, this tree.
+            if source_changed and not self._create_snapshot():
                 exit_reason = f"attempt {attempts_run} kept, but its tree could not be snapshotted"
                 break
-            self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_kept", attempt=attempts_run,
-                              score=list(score_after))
-            state = frozenset(Counter(self._blocker_keys(blockers_after)).items())
+            if source_changed:
+                self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_kept", attempt=attempts_run,
+                                  score=list(score_after))
+            state = self._blocker_state_key(blockers_after)
             if state in seen:
                 exit_reason = "repeated blocker set"
                 break
             seen.add(state)
             self._repair_last_outcome = self._attempt_outcome(
-                attempts_run, current_blockers, keys_before, blockers_after, round_calls)
+                attempts_run, retired, len(blockers_after), round_calls, source_changed)
             current_issues, current_blockers, current_score = list(issues_after), blockers_after, score_after
             checkpoint_progress()
 
@@ -616,57 +637,116 @@ class Phase3RepairMixin:
             for issue in last_issues:
                 logger.warning("  [%s] %s", issue.severity, issue.message)
 
-    def _blocker_keys(self, blockers: list[ValidationIssue]) -> list:
-        """What blocks, as attempts compare, one key per blocker: a requirement by id, status
-        and unlocated label (its message holds the judge's note, re-worded by every re-judge),
-        anything else by its message with numbers masked (an edit moves the lines of the
-        errors it leaves)."""
-        by_message = {message: ("requirement", verdict.get("id"), verdict.get("status"),
-                                verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED))
-                      for verdict in self._requirement_verdicts
-                      for message in _requirements_ledger.ledger_issues([verdict])}
-        return [by_message.get(issue.message) or _NUMBERS_RE.sub("#", issue.message) for issue in blockers]
+    @staticmethod
+    def _blocker_key(issue: ValidationIssue):
+        """What blocks, as attempts compare: a requirement by id (its status is compared
+        apart, see ``_retired``), anything else by its message with numbers masked (an
+        edit moves the lines of the errors it leaves)."""
+        requirement = requirement_status(issue.message)
+        return ("requirement", requirement[0]) if requirement else _NUMBERS_RE.sub("#", issue.message)
 
-    def _attempt_not_kept(self, before: list[ValidationIssue], keys_before: list,
-                          after: list[ValidationIssue], score_before: tuple, score_after: tuple) -> str | None:
+    def _blocker_state_key(self, blockers: list[ValidationIssue]) -> frozenset:
+        """A blocker set as the repeated-state check compares it, statuses included."""
+        return frozenset(Counter((self._blocker_key(issue), requirement_status(issue.message))
+                                 for issue in blockers).items())
+
+    def _retired(self, before: list[ValidationIssue], after: list[ValidationIssue]) -> list[str]:
+        """The blockers of ``before`` an attempt retired: gone from ``after``, or a requirement
+        whose status rose (missing -> partial is progress, though it still blocks)."""
+        remaining = Counter(self._blocker_key(issue) for issue in after)
+        statuses = {r[0]: r[1] for r in map(requirement_status, (i.message for i in after)) if r}
+        retired = []
+        for issue in before:
+            key, requirement = self._blocker_key(issue), requirement_status(issue.message)
+            if remaining[key] > 0 and not (requirement and statuses.get(requirement[0], -1) > requirement[1]):
+                remaining[key] -= 1
+                continue
+            retired.append(issue.message)
+        return retired
+
+    def _booted(self, blockers: list[ValidationIssue], revision: str) -> bool:
+        """Whether the tree starts: the probe's facts for ``revision`` when it measured
+        one, else no startup-class blocker."""
+        facts = getattr(self, "_runtime_probe_facts", None)
+        if facts and facts[0] == revision and facts[1]:
+            return all(backend.get("boot") == "ok" for backend in facts[1])
+        return not self._startup_blockers(blockers)
+
+    def _hidden_before(self, issues: list[ValidationIssue], facts, revision: str,
+                       score_before: tuple, score_after: tuple) -> set:
+        """The check families that could not run on the tree before an attempt: from its
+        findings (``hidden_families``) and the probe's facts for it. Where the probe
+        measured that tree, its boot verdict alone says whether runtime checks ran."""
+        hidden = hidden_families(issues)
+        if facts and facts[0] == revision and facts[1]:
+            hidden.discard(("runtime", ""))
+            if any(backend.get("boot") != "ok" for backend in facts[1]):
+                hidden.add(("runtime", ""))
+        if score_after[2] < score_before[2]:
+            # More entities created: the creates and actions that needed them run now.
+            hidden.add(("dependent", ""))
+        return hidden
+
+    def _attempt_not_kept(self, before: list[ValidationIssue], after: list[ValidationIssue],
+                          hidden: set, booted_before: bool, booted_after: bool) -> str | None:
         """Why an attempt that edited the tree is not kept, or None to keep it.
 
-        Kept: it retired a blocker it faced, added no observed failure (a check
-        that watched something fail, ``unresolved_defects``), left no more
-        blockers and no worse runtime result. A tree that starts where the one
-        before did not is kept whatever the probe can now see behind it: boot
-        dominates ``_phase3_tree_score``.
+        Kept only if (1) it retired a blocker it faced (``_retired``); (2) every
+        observed failure it added (``unresolved_defects``) belongs to a check
+        family that could not run before (``hidden``): fixing the front failure
+        of a layer shows what it hid; (3) the blocker count, leaving out the
+        added findings of those families, is no higher, a requirement whose
+        status fell counting as one more; (4) a tree that started still starts.
         """
-        if score_after[0] < score_before[0]:
-            return None
-        if not Counter(keys_before) - Counter(self._blocker_keys(after)):
+        if not self._retired(before, after):
             return f"it retired none of the {counted(len(before), 'blocker')} it faced"
         observed_before = Counter(_NUMBERS_RE.sub("#", i.message) for i in unresolved_defects(before))
-        new = Counter(_NUMBERS_RE.sub("#", i.message) for i in unresolved_defects(after)) - observed_before
-        if new:
-            added = next(i.message for i in unresolved_defects(after) if _NUMBERS_RE.sub("#", i.message) in new)
-            return f"it added an observed failure: {added[:300]}"
-        if len(after) > len(before):
-            return f"it left more blockers ({len(before)} -> {len(after)})"
-        if score_after > score_before:
-            return f"its runtime result is worse (score {list(score_before)} -> {list(score_after)})"
+        added = [i.message for i in unresolved_defects(after)
+                 if not could_not_run(i.message, hidden)
+                 and _NUMBERS_RE.sub("#", i.message) not in observed_before]
+        if added:
+            return f"it added an observed failure: {added[0][:300]}"
+        new_keys = Counter(self._blocker_key(i) for i in after) - Counter(self._blocker_key(i) for i in before)
+        newly_visible = 0
+        for issue in after:
+            key = self._blocker_key(issue)
+            if new_keys[key] > 0 and could_not_run(issue.message, hidden):
+                new_keys[key] -= 1
+                newly_visible += 1
+        statuses = {r[0]: r[1] for r in map(requirement_status, (i.message for i in before)) if r}
+        fell = sum(1 for r in map(requirement_status, (i.message for i in after))
+                   if r and r[0] in statuses and r[1] < statuses[r[0]])
+        count = len(after) - newly_visible + fell
+        if count > len(before):
+            return f"it left more blockers ({len(before)} -> {count})"
+        if booted_before and not booted_after:
+            return "the application no longer starts"
         return None
 
-    def _attempt_outcome(self, attempt: int, before: list[ValidationIssue], keys_before: list,
-                         after: list[ValidationIssue], calls: list[dict]) -> str:
+    def _refused_writes(self, calls: list[dict]) -> list[str]:
+        """What refused each write of an attempt whose every write was refused; empty
+        when it wrote nothing or one write landed."""
+        writes = [call for call in calls if call["tool"] in _WRITE_TOOLS_ON_RECORD]
+        if not writes or any(call.get("success") for call in writes):
+            return []
+        # The newest write refusals on record (the record keeps the last few).
+        failures = [item for item in self._recent_tool_failures
+                    if item.get("tool") in _WRITE_TOOLS_ON_RECORD][-len(writes):] or [
+                       {"tool": call["tool"], "path": (call.get("input") or {}).get("path"), "error": "refused"}
+                       for call in writes]
+        return [f"{item.get('tool')} on {item.get('path')}: {str(item.get('error', ''))[:200]}"
+                for item in failures[-5:]]
+
+    def _attempt_outcome(self, attempt: int, retired: list[str], remaining: int,
+                         calls: list[dict], source_changed: bool) -> str:
         """What a kept attempt did, for the next attempt's prompt."""
-        retired_keys = Counter(keys_before) - Counter(self._blocker_keys(after))
-        retired = []
-        for issue, key in zip(before, keys_before):
-            if retired_keys[key] > 0:
-                retired_keys[key] -= 1
-                retired.append(issue.message)
         edited = _edited_paths(calls)
-        return (f"Fix attempt {attempt} was kept. It edited {', '.join(edited) or 'no file'} and retired "
+        what = f"edited {', '.join(edited)}" if source_changed and edited else "settled evidence without an edit"
+        return (f"Fix attempt {attempt} was kept. It {what} and retired "
                 f"{counted(len(retired), 'blocker')}: "
                 + "; ".join(message[:160] for message in retired[:5])
                 + (f" (+{len(retired) - 5} more)" if len(retired) > 5 else "")
-                + f". {counted(len(after), 'blocker')} remain, listed below.")
+                + f". {counted(remaining, 'blocker')} remain, listed below.")
 
     def _only_unlocated_citations_remain(self, blockers: list[ValidationIssue]) -> bool:
         """Every blocker is a requirement whose cited code exists but whose citation the
@@ -826,29 +906,29 @@ class Phase3RepairMixin:
         )
 
     def _discard_unverified_attempt(
-        self, reason: str, best_all_issues: list[ValidationIssue], attempt: int,
+        self, reason: str, kept_issues: list[ValidationIssue], attempt: int,
     ) -> bool:
-        """Restore the best validated tree over an attempt that was never validated.
+        """Restore the last kept tree over an attempt that was never validated.
 
         An interrupted repair (provider error, cost or runtime cap) leaves its
         last edits on disk with no validation behind them. The snapshot holds
-        the best tree the loop DID validate, and ``best_all_issues`` are that
-        tree's findings, so nothing needs re-validating - which a stop must
-        not pay for anyway.
+        the last tree the loop kept, and ``kept_issues`` are that tree's
+        findings, so nothing needs re-validating - which a stop must not pay
+        for anyway.
         """
         logger.warning(
             "Phase 3: attempt %d was interrupted (%s) before its edits were "
-            "validated; restoring the best validated tree.", attempt, reason,
+            "validated; restoring the last kept tree.", attempt, reason,
         )
         if not self._restore_snapshot():
-            logger.error("Phase 3: the best snapshot could not be restored; the "
+            logger.error("Phase 3: the last kept tree could not be restored; the "
                          "interrupted attempt's unvalidated edits remain.")
             return False
         self._phase3_rolled_back = True
         reopened = self.executor.reopen_unverifiable_tasks()
-        self._validation_issues = self._with_model_contract(best_all_issues) + [_classify_issue(
+        self._validation_issues = self._with_model_contract(kept_issues) + [_classify_issue(
             f"validation: Phase 3 repair attempt {attempt} was interrupted ({reason}) "
-            "before its edits were validated; they were discarded and the best "
+            "before its edits were validated; they were discarded and the last "
             "validated tree ships."
             + (f" {len(reopened)} checklist item(s) verified during that attempt are "
                "open again." if reopened else "")
@@ -919,7 +999,11 @@ class Phase3RepairMixin:
             return 0
         files = self._workspace_file_list()
         named = {issue.message: named_locations(issue.message, files) for issue in blockers}
-        scope = (edit_scope({rel for found in named.values() for rel, _ in found}, self.output_dir, files)
+        # A module missing from the dependencies may be fixed in their manifest.
+        manifests_for = frozenset(rel for issue in blockers if issue.message.startswith("missing module:")
+                                  for rel, _ in named[issue.message])
+        scope = (edit_scope({rel for found in named.values() for rel, _ in found}, self.output_dir, files,
+                            manifests_for)
                  if all(named.values()) else None)
         self.executor.set_edit_scope(scope)
         self._trace.write(EVENT_EDIT_SCOPE, allowed=sorted(scope) if scope is not None else None)
@@ -1364,9 +1448,8 @@ class Phase3RepairMixin:
         """Snapshot the output directory as the rollback target; True on success.
 
         Taken before Phase 3, again once entry validation has applied its own
-        rewrites, and after any repair attempt that reaches a strictly better
-        tree, so the snapshot always holds the BEST validated state the run
-        has reached rather than its first one.
+        rewrites, and after every kept repair attempt, so the snapshot always
+        holds the tree the next attempt starts from.
 
         Built in a staging directory and swapped in by rename: deleting the
         existing snapshot first and copying after leaves the run with no

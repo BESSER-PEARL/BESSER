@@ -4,10 +4,11 @@ The guards these tests first pinned (a no-progress streak of two, a plateau of
 three, a second round for an attempt whose edits were all refused) were
 calibrated on 355 recorded runs. On production they still let 22 repair loops
 make 52 attempts, 24 without a successful edit, and cut blockers only 21%;
-one loop went from 21 to 40 blockers. The rule now: an attempt that edits
-nothing ends the loop (after recording what any evidence it added settled),
-and an attempt that edits is kept only if it retires a blocker without adding
-an observed failure or blockers - otherwise it is rolled back and the loop ends.
+one loop went from 21 to 40 blockers. The rule now: an attempt that edits is
+kept only if it retires a blocker without adding an observed failure or blockers
+(``_attempt_not_kept``) - otherwise it is rolled back and the loop ends. An
+attempt that edits nothing continues the loop only if the evidence it added
+retired a blocker, or once after every write it tried was refused.
 """
 
 from __future__ import annotations
@@ -112,18 +113,20 @@ def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
 # 1. An attempt without an edit ends the loop, and what its evidence settled is kept
 # ---------------------------------------------------------------------------
 
-def test_a_verification_round_that_writes_no_source_is_recorded_and_ends_the_loop(orch):
-    """Run 053ydac9, replayed: a fix, then a verification round that discharges
-    six blockers with no write. Its findings are recorded; it made no edit, so
-    the loop ends there."""
+def test_a_verification_round_that_writes_no_source_is_progress(orch):
+    """Run 053ydac9, replayed: fix, then a verification round that discharges
+    six blockers with no write, then the round that finishes the job.
+
+    Stopping on "it wrote nothing" ended that run on round 2 with four blockers
+    standing and 86 of 120 turns unspent."""
     attempts = _drive(orch, [
         (5, True, False, _blockers(10)),    # wrote; 18 -> 10
         (0, False, True, _blockers(4)),     # verified only; 10 -> 4
-        (2, True, False, []),
+        (2, True, False, []),               # finishes
     ], entry_blockers=18)
 
-    assert attempts == 2
-    assert len([i for i in orch._validation_issues if i.severity == "blocker"]) == 4
+    assert attempts == 3
+    assert orch._phase3_exit_reason == "all blockers fixed"
 
 
 def test_an_attempt_that_moved_nothing_is_not_rechecked(orch):
@@ -194,14 +197,16 @@ def test_the_label_reports_a_failed_call_in_the_read_only_round(orch):
         "install_dependencies x1)")
 
 
-def test_an_attempt_whose_edits_were_all_refused_ends_the_loop_under_its_own_label(orch):
-    """Refused edits are not an edit: the loop ends, and the label says the edits were refused."""
+def test_an_attempt_whose_edits_were_all_refused_gets_one_more_round(orch):
+    """The refusals reach the next prompt, so the next round is a different request:
+    across the pre-guard corpus the round after one wrote source 57% of the time and
+    cut the blocker count 20% (n=30). Two such rounds in a row end the loop."""
     attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8,
                       rejected_edits=2)
 
-    assert attempts == 1
+    assert attempts == 2
     assert orch._phase3_exit_reason == (
-        "no successful edit (attempt 1 made 2 tool calls, 2 failed: modify_file x2)")
+        "no successful edit (attempt 2 made 2 tool calls, 2 failed: modify_file x2)")
 
 
 def test_a_spent_cost_budget_still_ends_the_first_barren_round(orch):
@@ -245,18 +250,46 @@ def _pin_probe_facts(orchestrator):
         "entities": {p: {"verdict": "unverified"} for p in _CREATE_PATHS}}])
 
 
-def test_an_evidence_round_that_retires_creates_is_recorded_and_ends_the_loop(orch):
-    """Live, Sonnet 5.5, base-p62 (login-protected 13-class app): a test_api-only
-    round took 13 -> 12 unverified creates. It is recorded; it made no edit."""
+def test_rounds_that_retire_creates_through_evidence_alone_keep_the_loop_going(orch):
+    """Live, Sonnet 5.5, base-p62 (login-protected 13-class app): three
+    test_api-only rounds took 13 -> 12 -> 10 -> 4 unverified creates."""
     _pin_probe_facts(orch)
     attempts = _drive(orch, [
         (0, False, True, _unverified_creates(12)),
+        (0, False, True, _unverified_creates(10)),
+        (0, False, True, _unverified_creates(4)),
         (0, False, True, []),
     ], entry=_unverified_creates(13), calls=[[("test_api", True)]])
 
-    assert attempts == 1
-    assert orch._phase3_exit_reason == "no edit attempted (attempt 1 made 1 tool call, none an edit: test_api x1)"
-    assert len([i for i in orch._validation_issues if i.severity == "blocker"]) == 12
+    assert attempts == 4
+    assert orch._phase3_exit_reason == "all blockers fixed"
+
+
+def test_an_evidence_round_that_retires_nothing_ends_the_loop(orch):
+    _pin_probe_facts(orch)
+    attempts = _drive(orch, [
+        (0, False, True, _unverified_creates(12)),
+        (0, False, True, _unverified_creates(10)),
+        (0, False, True, _unverified_creates(10)),
+        (0, False, True, []),
+    ], entry=_unverified_creates(13), calls=[[("test_api", True)]])
+
+    assert attempts == 3
+    assert orch._phase3_exit_reason.startswith("no edit attempted (attempt 3")
+
+
+def test_evidence_rounds_that_swap_blockers_end_on_the_repeated_set(orch):
+    """Settling one finding while another appears retires a blocker, so the loop goes
+    on - until a blocker set it has already seen comes back."""
+    _pin_probe_facts(orch)
+    first = [ValidationIssue("blocker", "api scenario: orders - expected 201, got 400"),
+             ValidationIssue("blocker", "api scenario: customers - expected 201, got 400")]
+    swapped = [first[0], ValidationIssue("blocker", "api scenario: invoices - expected 201, got 400")]
+    attempts = _drive(orch, [(0, False, True, [swapped, first][i % 2]) for i in range(8)],
+                      entry=first, calls=[[("test_api", True)]])
+
+    assert attempts == 2
+    assert orch._phase3_exit_reason == "repeated blocker set"
 
 
 def test_a_repair_that_retires_nothing_while_exposing_more_is_rolled_back(orch):
@@ -429,7 +462,8 @@ def test_the_rollback_ranks_the_tree_before_an_attempt_on_its_own_measurements(o
     def collect():
         if state["attempt"] == 0:
             return _blockers(3)       # entry: three hard blockers, all created
-        return _blockers(2)
+        return _blockers(2) + [ValidationIssue("blocker", f"create contract: backend: POST /{name}/ - observed "
+                                                          "a server failure (500)") for name in "abc"]
 
     restored = {}
     with patch.object(orch, "_collect_validation_issues", side_effect=collect), \
@@ -445,7 +479,7 @@ def test_the_rollback_ranks_the_tree_before_an_attempt_on_its_own_measurements(o
         "a repair that broke three entity creates was scored as an improvement"
     )
     assert orch._phase3_rolled_back is True
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: its runtime result is worse")
+    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: create contract:")
 
 
 # ---------------------------------------------------------------------------

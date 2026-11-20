@@ -221,10 +221,8 @@ _MAX_PARALLEL_WORKERS = 4
 # 5-turn LLM fix loop, and the actual spend is bounded by ``max_cost_usd``
 # (the inner loop stops when the cost cap is hit), so this cap just keeps
 # a truly stuck run from looping forever. It is deliberately NOT tiny: as
-# long as each round keeps reducing blockers (or we still have cost
-# budget), the loop should keep going rather than abandon a run that is
-# steadily converging — the no-progress-streak guard below handles the
-# stuck case.
+# long as each kept attempt retires blockers, the loop keeps going; the
+# keep-or-revert rule in phase3_repair ends a stuck one.
 _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 
 # Ceiling on the one-off Phase 1 dependency install. A cold npm install of a

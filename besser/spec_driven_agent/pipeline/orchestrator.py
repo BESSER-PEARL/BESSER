@@ -185,6 +185,7 @@ from besser.utilities.secret_redaction import redact_trace_text
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
     ValidationIssue,
     _check_did_not_run,
     _classify_issue,
@@ -682,8 +683,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # or a stop_reason the loop cannot answer. Traced so an interrupted
         # repair records what interrupted it, not only that it stopped.
         self._phase3_interrupt_detail: str = ""
-        # Which guard ended the Phase 3 repair loop ("no-progress streak",
-        # "plateau", "attempt cap", a budget/cancellation reason, or "all
+        # Which rule ended the Phase 3 repair loop (an attempt not kept, no
+        # edit, "attempt cap", a budget/cancellation reason, or "all
         # blockers fixed"). Traced so a run's exit can be attributed without
         # replaying the loop by hand. Report-only.
         self._phase3_exit_reason: str = "not reached"
@@ -3638,7 +3639,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
             raw_issues.extend(self._collect_requirement_issues())
         else:
-            raw_issues.append("validation: business-requirement judgment deferred until startup/data-entry blockers are fixed")
+            raw_issues.append(f"{JUDGMENT_DEFERRED} until startup/data-entry blockers are fixed")
         raw_issues.extend(self._collect_task_issues())
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(execution_issues)

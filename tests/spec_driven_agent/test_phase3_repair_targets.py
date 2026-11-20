@@ -25,9 +25,9 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, Vali
 from besser.spec_driven_agent.pipeline.repair_scope import edit_scope, named_locations
 
 FILES = {
-    "backend/main_api.py": "from routers import order\nfrom routers import customer\n",
+    "backend/main_api.py": "from routers import order\nfrom services import customer\n",
     "backend/routers/order.py": "from sql_alchemy import Order\n\n\ndef create_order():\n    return Order()\n",
-    "backend/routers/customer.py": "def list_customers():\n    return []\n",
+    "backend/services/customer.py": "def list_customers():\n    return []\n",
     "backend/sql_alchemy.py": "class Order:\n    pass\n",
     "backend/pydantic_classes.py": "class OrderCreate:\n    pass\n",
 }
@@ -110,12 +110,12 @@ def _edit(rel, old, new, **extra):
 
 
 def test_an_edit_outside_the_files_the_blockers_name_is_refused_and_the_refusal_names_them(tmp_path):
-    client = _Client(_tools(_edit("backend/routers/customer.py", "return []", "return [1]")))
+    client = _Client(_tools(_edit("backend/services/customer.py", "return []", "return [1]")))
     orch = _build(tmp_path, client)
 
     orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True)
 
-    assert _read(tmp_path, "backend/routers/customer.py") == FILES["backend/routers/customer.py"]
+    assert _read(tmp_path, "backend/services/customer.py") == FILES["backend/services/customer.py"]
     [refusal] = _results(client.requests[1])
     assert "outside this fix attempt" in refusal and "needed_for" in refusal
     for allowed in ("backend/routers/order.py", "backend/sql_alchemy.py", "backend/main_api.py"):
@@ -129,15 +129,15 @@ def test_an_edit_outside_the_files_the_blockers_name_is_refused_and_the_refusal_
 
 
 def test_naming_the_blocker_a_file_is_needed_for_widens_the_scope_and_is_traced(tmp_path):
-    client = _Client(_tools(_edit("backend/routers/customer.py", "return []", "return [1]",
+    client = _Client(_tools(_edit("backend/services/customer.py", "return []", "return [1]",
                                   needed_for=IN_ORDER.message)))
     orch = _build(tmp_path, client)
 
     assert orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True) == 1
 
-    assert _read(tmp_path, "backend/routers/customer.py") == "def list_customers():\n    return [1]\n"
+    assert _read(tmp_path, "backend/services/customer.py") == "def list_customers():\n    return [1]\n"
     [widened] = [event for event in _trace(tmp_path, "edit_scope") if "widened" in event]
-    assert widened["widened"] == "backend/routers/customer.py"
+    assert widened["widened"] == "backend/services/customer.py"
     assert widened["needed_for"] == IN_ORDER.message
 
 
@@ -153,12 +153,12 @@ def test_a_new_file_and_the_named_files_neighbours_need_no_widening(tmp_path):
 
 
 def test_a_blocker_that_names_no_file_leaves_the_scope_open(tmp_path):
-    client = _Client(_tools(_edit("backend/routers/customer.py", "return []", "return [1]")))
+    client = _Client(_tools(_edit("backend/services/customer.py", "return []", "return [1]")))
     orch = _build(tmp_path, client)
 
     assert orch._invoke_phase3_fix_loop([IN_ORDER, ROUTE_500], is_first_attempt=True) == 1
 
-    assert _read(tmp_path, "backend/routers/customer.py").endswith("return [1]\n")
+    assert _read(tmp_path, "backend/services/customer.py").endswith("return [1]\n")
     assert _trace(tmp_path, "edit_scope")[0]["allowed"] is None
     assert "This attempt may edit" not in client.requests[0]["messages"][0]["content"]
 
@@ -168,7 +168,7 @@ def test_the_scope_ends_with_the_attempt(tmp_path):
     orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True)
 
     result = orch.executor.execute_typed("modify_file", {
-        "path": "backend/routers/customer.py", "old_text": "return []", "new_text": "return [2]"})
+        "path": "backend/services/customer.py", "old_text": "return []", "new_text": "return [2]"})
     assert result.succeeded
 
 
@@ -263,13 +263,21 @@ def test_an_attempt_that_edits_six_files_and_retires_nothing_is_reverted_and_end
     assert rollback["attempt"] == 1
 
 
-def _cycle(tmp_path, after_each_attempt, *replies, entry=(IN_ORDER, ROUTE_500)):
-    """The real cycle; validation returns ``entry``, then each attempt's findings in turn."""
+def _cycle(tmp_path, after_each_attempt, *replies, entry=(IN_ORDER, ROUTE_500), before=None, on_check=None):
+    """The real cycle; validation returns ``entry``, then each attempt's findings in turn.
+    ``before(orch)`` runs first; ``on_check(orch)`` with every validation."""
     client = _Client(*replies)
     orch = _build(tmp_path, client)
+    if before:
+        before(orch)
     findings = [list(entry), *after_each_attempt]
-    with patch.object(orch, "_collect_validation_issues",
-                      side_effect=lambda: findings.pop(0) if len(findings) > 1 else findings[0]):
+
+    def collect():
+        if on_check:
+            on_check(orch)
+        return findings.pop(0) if len(findings) > 1 else findings[0]
+
+    with patch.object(orch, "_collect_validation_issues", side_effect=collect):
         orch._run_phase3_validation()
     return orch, client
 
@@ -300,7 +308,7 @@ def test_an_attempt_that_retires_a_blocker_and_adds_no_failure_is_kept_and_the_n
     assert "retired 1 blocker: ruff:" in second
 
 
-def test_a_loop_never_ends_with_more_blockers_than_it_started_with(tmp_path):
+def test_a_kept_attempt_never_leaves_more_blockers_than_it_faced(tmp_path):
     more = [ROUTE_500, ValidationIssue("blocker", "requirement: R2 — Orders list their customer is not implemented"),
             ValidationIssue("blocker", "requirement: R3 — Customers can be searched is not implemented")]
     orch, _ = _cycle(tmp_path, [more, [IN_ORDER, ROUTE_500]], _tools(FIX_ORDER))
@@ -344,3 +352,181 @@ def test_findings_that_are_only_could_not_check_start_no_attempt(tmp_path):
 
     assert client.requests == []
     assert orch._phase3_exit_reason == "no blocker-class issues"
+
+
+# ---------------------------------------------------------------- layered failures
+# Fixing the front failure of a layer shows the failure behind it: newly visible, not newly broken.
+
+B = ValidationIssue
+MISSING = B("blocker", "missing module: backend/routers/order.py imports 'dateutil', which the app does not ship")
+STARTUP = B("blocker", "application startup: backend/main_api.py line 4: RuntimeError: DATABASE_URL is not set")
+CREATE = B("blocker", "create contract: backend: POST /order/ - observed a server failure creating Order (500)")
+ACTION = B("blocker", "action call: backend: POST /order/{id}/methods/submit/ - observed a server failure (500)")
+DEP_CREATE = B("blocker", "create contract: backend: POST /orderline/ - observed a server failure creating "
+                          "OrderLine (500)")
+DEFERRED = B("warning", "validation: business-requirement judgment deferred until startup/data-entry "
+                        "blockers are fixed")
+REQ1 = B("blocker", "requirement: R1 — Orders can be submitted is not implemented")
+REQ2 = B("blocker", "requirement: R2 — Orders show a total is not implemented")
+SETUP = B("blocker", "verification setup: tsc [frontend] requires installed project dependencies.")
+TSC = B("blocker", "tsc [frontend]: src/pages/OrderList.tsx(5,3): error TS2304: Cannot find name 'x'.")
+BUILD = B("blocker", "frontend build [frontend]: Could not resolve './missing' from src/pages/OrderList.tsx")
+SYNTAX = B("blocker", "Syntax error in backend/routers/order.py line 2: invalid syntax")
+
+
+@pytest.mark.parametrize("entry, after", [
+    pytest.param((MISSING,), [STARTUP], id="missing module hides boot"),
+    pytest.param((CREATE,), [ACTION], id="failing create hides its action calls"),
+    pytest.param((CREATE,), [DEP_CREATE], id="failing create hides the dependent create"),
+    pytest.param((CREATE, DEFERRED), [REQ1], id="a hard blocker defers the judge"),
+    pytest.param((SETUP,), [TSC], id="missing dependencies hide tsc"),
+    pytest.param((TSC,), [BUILD], id="tsc errors hide the build"),
+    pytest.param((SYNTAX,), [IN_ORDER], id="a syntax error hides lint of its file"),
+])
+def test_a_fix_that_shows_the_failure_it_hid_is_kept(tmp_path, entry, after):
+    orch, _ = _cycle(tmp_path, [after], _tools(FIX_ORDER), entry=entry)
+
+    assert not orch._phase3_rolled_back, orch._phase3_exit_reason
+    assert _read(tmp_path, "backend/routers/order.py").endswith("# fixed\n")
+
+
+def test_a_deferred_judge_brings_its_verdicts_without_counting_against_the_fix(tmp_path):
+    orch, _ = _cycle(tmp_path, [[REQ1, REQ2]], _tools(FIX_ORDER), entry=(CREATE, DEFERRED))
+
+    assert not orch._phase3_rolled_back, orch._phase3_exit_reason
+
+
+def test_more_blockers_from_a_judge_that_ran_on_both_trees_is_still_reverted(tmp_path):
+    """21 -> 40 with the judge run before and after: no family was hidden."""
+    before = [CREATE] + [B("blocker", f"requirement: R{n} — rule {n} is not implemented") for n in range(1, 21)]
+    after = [B("blocker", f"requirement: R{n} — rule {n} is not implemented") for n in range(1, 41)]
+    orch, _ = _cycle(tmp_path, [after, before], _tools(FIX_ORDER), entry=before)
+
+    assert orch._phase3_exit_reason == "attempt 1 reverted: it left more blockers (21 -> 40)"
+
+
+def test_a_new_mapper_failure_nothing_hid_is_still_reverted(tmp_path):
+    orch, _ = _cycle(tmp_path, [[MAPPER], [CREATE, IN_ORDER]], _tools(FIX_ORDER), entry=(CREATE, IN_ORDER))
+
+    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: mapper config:")
+
+
+def _booted_before(orch):
+    """The probe measured the tree Phase 3 starts from: it boots."""
+    orch._runtime_probe_facts = (orch._workspace_revision(), [{"boot": "ok", "entities": {}, "action_calls": []}])
+
+
+def test_a_python_contract_on_an_app_that_boots_does_not_excuse_runtime_failures(tmp_path):
+    contract = B("blocker", "python contract: backend/routers/order.py line 5: undefined name 'Total'")
+    creates = [B("blocker", f"create contract: backend: POST /{n}/ - observed a server failure (500)") for n in "ab"]
+    orch, _ = _cycle(tmp_path, [creates, [contract]], _tools(FIX_ORDER), entry=(contract,), before=_booted_before)
+
+    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: create contract:")
+
+
+def test_an_app_that_no_longer_starts_is_reverted(tmp_path):
+    def probe(orch):
+        if _read(tmp_path, "backend/routers/order.py").endswith("# fixed\n"):
+            orch._runtime_probe_facts = (orch._workspace_revision(), [{"boot": "probe_error"}])
+
+    # A backend the probe no longer measures is measured once more before the attempt is ranked.
+    orch, _ = _cycle(tmp_path, [[ROUTE_500], [ROUTE_500], [IN_ORDER, ROUTE_500]], _tools(FIX_ORDER),
+                     before=_booted_before, on_check=probe)
+
+    assert orch._phase3_exit_reason == "attempt 1 reverted: the application no longer starts"
+
+
+# ---------------------------------------------------------------- requirement status
+
+
+PARTIAL5 = B("blocker", "requirement partial: R5 — Orders show a total; inspect and complete the missing behaviour")
+MISSING5 = B("blocker", "requirement: R5 — Orders show a total is not implemented")
+
+
+def test_a_requirement_whose_status_falls_is_not_retired(tmp_path):
+    orch, _ = _cycle(tmp_path, [[MISSING5], [PARTIAL5]], _tools(FIX_ORDER), entry=(PARTIAL5,))
+
+    assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 1 blocker it faced"
+
+
+def test_a_requirement_whose_status_rises_is_progress(tmp_path):
+    orch, _ = _cycle(tmp_path, [[PARTIAL5]], _tools(FIX_ORDER), entry=(MISSING5,))
+
+    assert not orch._phase3_rolled_back, orch._phase3_exit_reason
+
+
+def test_a_requirement_whose_status_falls_counts_as_one_more_blocker(tmp_path):
+    r6 = B("blocker", "requirement: R6 — Orders can be cancelled is not implemented")
+    orch, _ = _cycle(tmp_path, [[MISSING5, r6], [IN_ORDER, PARTIAL5]], _tools(FIX_ORDER), entry=(IN_ORDER, PARTIAL5))
+
+    assert orch._phase3_exit_reason == "attempt 1 reverted: it left more blockers (2 -> 3)"
+
+
+# ---------------------------------------------------------------- attempts without an edit
+
+
+def test_after_every_write_was_refused_one_more_attempt_is_told_why(tmp_path):
+    outside = _edit("backend/services/customer.py", "return []", "return [1]")
+    client = _Client(_tools(outside), _done(), _tools(outside), _done(), _tools(outside))
+    orch = _build(tmp_path, client)
+
+    with patch.object(orch, "_collect_validation_issues", return_value=[IN_ORDER]):
+        orch._run_phase3_validation()
+
+    assert len(client.requests) == 4, "two attempts, each a refused write and an end of turn"
+    second = client.requests[2]["messages"][0]["content"]
+    assert "every write it tried was refused" in second and "outside this fix attempt" in second
+    assert orch._phase3_exit_reason == (
+        "no successful edit (attempt 2 made 1 tool call, 1 failed: modify_file x1)")
+
+
+def test_a_read_only_attempt_still_ends_the_loop(tmp_path):
+    client = _Client(_tools(("read_file", {"path": "backend/routers/order.py"})))
+    orch = _build(tmp_path, client)
+
+    with patch.object(orch, "_collect_validation_issues", return_value=[IN_ORDER]):
+        orch._run_phase3_validation()
+
+    assert len(client.requests) == 2
+    assert orch._phase3_exit_reason.startswith("no edit attempted (attempt 1")
+
+
+# ---------------------------------------------------------------- scope extras
+
+
+def _write(root, files):
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    return sorted(files)
+
+
+def test_a_missing_module_brings_the_dependency_manifest(tmp_path):
+    files = _write(tmp_path, {**FILES, "backend/requirements.txt": "fastapi\n"})
+
+    assert "backend/requirements.txt" in edit_scope(
+        {"backend/routers/order.py"}, str(tmp_path), files, frozenset({"backend/routers/order.py"}))
+    assert "backend/requirements.txt" not in edit_scope({"backend/routers/order.py"}, str(tmp_path), files)
+
+
+def test_a_model_file_brings_its_sibling_modules(tmp_path):
+    files = _write(tmp_path, FILES)
+
+    allowed = edit_scope({"backend/sql_alchemy.py"}, str(tmp_path), files)
+
+    assert {"backend/main_api.py", "backend/pydantic_classes.py"} <= allowed
+
+
+def test_a_frontend_file_brings_what_it_imports_through_a_path_alias(tmp_path):
+    files = _write(tmp_path, {
+        "frontend/package.json": "{}",
+        "frontend/tsconfig.json": '{"compilerOptions": {"baseUrl": ".", // aliases\n "paths": {"@/*": ["src/*"]}}}',
+        "frontend/src/pages/OrderList.tsx": "import { api } from '@/lib/api'\nexport default function OrderList() {}\n",
+        "frontend/src/lib/api.ts": "export const api = 1\n",
+        "frontend/src/lib/unrelated.ts": "export const x = 1\n",
+    })
+
+    allowed = edit_scope({"frontend/src/pages/OrderList.tsx"}, str(tmp_path), files)
+    assert "frontend/src/lib/api.ts" in allowed
+    assert "frontend/src/lib/unrelated.ts" not in allowed
+    assert "frontend/src/pages/OrderList.tsx" in edit_scope({"frontend/src/lib/api.ts"}, str(tmp_path), files)

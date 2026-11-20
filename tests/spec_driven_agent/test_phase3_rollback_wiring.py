@@ -42,9 +42,10 @@ def _blockers(n, prefix="python contract", start=0):
 
 
 def _not_kept(orchestrator, before, after):
-    return orchestrator._attempt_not_kept(
-        before, orchestrator._blocker_keys(before), after,
-        orchestrator._phase3_tree_score(before), orchestrator._phase3_tree_score(after))
+    hidden = orchestrator._hidden_before(before, None, "", orchestrator._phase3_tree_score(before),
+                                         orchestrator._phase3_tree_score(after))
+    return orchestrator._attempt_not_kept(before, after, hidden, orchestrator._booted(before, ""),
+                                          orchestrator._booted(after, ""))
 
 
 def _revert(orchestrator, after):

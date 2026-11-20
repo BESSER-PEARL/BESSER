@@ -686,28 +686,49 @@ an attempt ("Fix attempt 1: fixing 2 of 3 blockers ...") counts those apart.
 Each attempt has targets. Its prompt lists the blockers, each with the
 workspace files and lines it names, and while it runs the write tools
 (``write_file``, ``modify_file``, ``replace_file_lines``, ``delete_file``)
-accept only the files the blockers name, the files those import or that import
-them, and new files. A frontend file also brings the other files of its folder
-and the app's entry and routing files. A write elsewhere is refused with the
-list of allowed files; the model can widen the set by repeating the call with
-``needed_for`` naming the blocker the file is needed for, and the trace records
-each widening as an ``edit_scope`` event. A blocker that names no file (a
-failing route, a missing requirement) leaves that attempt free to edit any file.
+accept the files the blockers name, the files those import or that import them
+(relative imports, and ``paths`` aliases from the frontend's tsconfig), the
+other source files of their folder, and new files. A frontend file also brings
+the app's entry and routing files, and a ``missing module:`` blocker brings the
+dependency manifest (``requirements.txt`` / ``package.json``). A write elsewhere
+is refused with the list of allowed files; repeating the call with
+``needed_for`` naming the blocker it is needed for writes the file, and the
+trace records each widening as an ``edit_scope`` event. A blocker that names no
+file (a failing route, a missing requirement) leaves that attempt free to edit
+any file. The scope is a guide, not a guarantee: any stated reason widens it,
+and shell commands are not scoped. Keeping or reverting each attempt is what
+protects the tree.
 
-The loop stops when blockers reach zero, or when an attempt ends its turn
-without an edit (after recording what any evidence it added settled), or when an
-attempt that edited is not kept. An attempt is kept only if it retired at least
-one of the blockers it faced, added no observed failure (a check that watched
-something fail, not a judgment or an unknown), left no more blockers than it
-faced, and did not make the runtime result worse. Line numbers are ignored when
-findings are compared, since an edit moves the errors it leaves. An attempt
-whose tree starts where the one before did not is always kept: the failures the
-probe can now see behind it were hidden, not added. An attempt that is not kept
-is rolled back to the tree from before it, which is checked again; the findings
-only the discarded tree showed are listed in a ``validation:`` note, the tool
-calls it made are marked ``rolled_back`` in the run record, and checklist items
-it had verified are reopened. So the loop never ends with more blockers than it
-started with. Unresolved output remains explicitly incomplete. Startup and
+An attempt that edited the tree is kept only if all of these hold:
+
+1. It retired at least one blocker it faced. A requirement is retired when it
+   leaves the blockers or its status rises (missing to partial is progress,
+   though it still blocks); attempts compare requirements by id and status,
+   since a re-judge rewords its note. Other findings are compared with line
+   numbers ignored, since an edit moves the errors it leaves.
+2. Every observed failure it added (a check that watched something fail, not a
+   judgment or an unknown) belongs to a check family that could not run on the
+   tree before it. Fixing the front failure of a layer shows what it hid: a
+   missing module or a startup failure hides the runtime checks (where the
+   probe measured that tree, its boot verdict decides instead), a failing create
+   hides the creates and action calls that need its record, a hard blocker
+   defers the requirement judge, missing dependencies or a check that did not
+   run hide ``tsc`` and the frontend build of that project, ``tsc`` errors hide
+   its build, and a syntax error hides the lint of its file. The families are one
+   table in ``validation/issues.py``; a finding of no family always counts.
+3. The blocker count, leaving out the added findings of those hidden families,
+   is no higher than before; a requirement whose status fell counts as one more.
+4. An app that started still starts.
+
+An attempt that is not kept is rolled back to the tree from before it, which is
+checked again; the findings only the discarded tree showed are listed in a
+``validation:`` note, the tool calls it made are marked ``rolled_back`` in the
+run record, checklist items it had verified are reopened, and the loop ends.
+An attempt that edits nothing continues the loop only if the evidence it added
+(a checklist item, a corrected scenario, an accepted citation) retired a
+blocker, or once after every write it tried was refused, with the refusals in
+the next prompt; otherwise it ends the loop. A blocker set seen before ends the
+loop too. Unresolved output remains explicitly incomplete. Startup and
 data-entry failures are repaired before spending tokens on business requirement
 judgment.
 
@@ -754,8 +775,7 @@ A fix attempt is skipped when every remaining blocker is a requirement whose
 cited code exists but whose citation is malformed and already had its
 citation-repair round, and that has no fragment the fix agent may complete (below):
 no edit can change it. A citation of code that exists nowhere keeps its attempt.
-Attempts compare requirements by id, status and citation label, since a re-judge
-rewords its note. The blockers keep their severity and are reported. ``validate_app`` lists the requirement blockers of the last
+The blockers keep their severity and are reported. ``validate_app`` lists the requirement blockers of the last
 judgment too (no new judge call), so the fix agent is never told the app is
 verified while the run holds one; their message tells it to implement behaviour
 only if it is really absent, since citations are re-judged automatically. When the

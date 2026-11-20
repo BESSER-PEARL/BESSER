@@ -470,8 +470,9 @@ def test_toolchain_fix_loop_exits_when_blockers_clear(tmp_path, reveals_crud_err
     source = tmp_path / "app.py"
     source.write_text("status = MissingStatus.ready\n", encoding="utf-8")
     first = [ValidationIssue("blocker", "application startup: app.py line 1: invalid enum default")]
-    downstream = [ValidationIssue("blocker", f"data contract: app.py line 2: missing field {field}")
-                  for field in ("total", "booking", "id")]
+    # The creates an app that did not start could not run.
+    downstream = [ValidationIssue("blocker", f"create contract: app: POST /{name}/ - observed a server failure (500)")
+                  for name in ("total", "booking", "item")]
     final_source = "status = 'READY'\ncontracts_fixed = True\n"
     intermediate_source = "status = 'READY'\ncontracts_fixed = False\n"
     changes = [intermediate_source, final_source] if reveals_crud_errors else [final_source]

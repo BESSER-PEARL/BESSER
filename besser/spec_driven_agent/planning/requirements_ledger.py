@@ -151,12 +151,18 @@ _MAX_QUOTE_LINES = 25
 _MAX_UNQUOTED_TAIL = 24
 _BLOCK_PUNCTUATION = frozenset("{(:;,[")
 
+# A judge may return quotation marks typographic (“button”, »button»): the glyph is not code.
+_TYPOGRAPHIC_QUOTES = str.maketrans({
+    "“": '"', "”": '"', "„": '"', "‟": '"', "«": '"', "»": '"',
+    "‘": "'", "’": "'", "‚": "'", "‛": "'", "‹": "'", "›": "'",
+})
+
 
 def _normalise_quote(text: str, escapes: bool = True) -> str:
     """The judge's quote, made comparable to file text: literal escape
     sequences become spaces (unless ``escapes`` is off, for a quote of code
-    such as ``"\\n".join(...)``), single quotes become double quotes (a judge may
-    rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
+    such as ``"\\n".join(...)``), single and typographic quotes become double quotes
+    (a judge may rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
     only the first quoted line counts - later lines are often abridged."""
     if escapes:
         text = text.replace("\\n", "\n").replace("\\t", " ")
@@ -164,13 +170,13 @@ def _normalise_quote(text: str, escapes: bool = True) -> str:
     # read_file numbers what the model sees; no real source line starts with
     # "175| ", so such a prefix is always a copied artifact.
     first = _READ_NUMBER_PREFIX_RE.sub("", first, count=1)
-    return _collapse(first.replace("'", '"'))
+    return _collapse(first.translate(_TYPOGRAPHIC_QUOTES).replace("'", '"'))
 
 
 def _normalise_line(line: str) -> str:
     """A source line in a quote's form. Its escapes stay as written: turning
     ``"\\n".join(...)`` into a line break cut the line at that string."""
-    return _collapse(line.replace("'", '"'))
+    return _collapse(line.translate(_TYPOGRAPHIC_QUOTES).replace("'", '"'))
 
 
 def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:

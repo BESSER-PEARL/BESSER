@@ -514,7 +514,10 @@ Findings are classified into three severities:
        (``{``, ``/>``, even followed by a comment) identifies no code and proves nothing.
        A quote that starts or ends inside a string or comment
        is not code. An explanation after a closed statement or element
-       ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
+       ("<Plot /> which renders ...") is not matched. Spacing is not compared, and
+       quotation marks are compared by kind, not glyph: ``'``, ``“ ”``, ``‘ ’`` and
+       ``« »`` read as ``"`` on both sides, since some models return them typographic.
+       Prose, a paraphrase or
        another file's code leaves the requirement unverified. A Python
        quote that matches no line is also located by syntax tree, so a
        formatter's wrapping parentheses, adjacent string literals merged or

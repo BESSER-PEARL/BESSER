@@ -139,6 +139,9 @@ daily quota doesn't end the run. It is ordered cloud-first:
 #. any extra model on the *primary* endpoint, listed in
    ``BESSER_FREE_LLM_ALT_MODELS`` (these share the primary's base URL and
    token, and are metered separately by the upstream aggregator);
+#. the models of the second cloud endpoint, listed in
+   ``BESSER_FREE_LLM_SECONDARY_MODELS`` (its own base URL and token, in
+   ``BESSER_FREE_LLM_SECONDARY_BASE_URL`` / ``_TOKEN``);
 #. the self-hosted fallback endpoint (``BESSER_FREE_LLM_FALLBACK_BASE_URL`` /
    ``_MODEL`` / ``_TOKEN``) — a single shared box that serves one request at a
    time, so it is a genuine last resort rather than a peer.
@@ -201,8 +204,8 @@ stock deployment uses:
 four BYOK providers as ``default_models``.
 
 For the free tier, ``llm_model`` may only name a model the server has
-configured — the primary, one of ``BESSER_FREE_LLM_ALT_MODELS``, or the
-fallback. Any other value pins the run to the primary.
+configured — the primary, one of ``BESSER_FREE_LLM_ALT_MODELS``, one of
+``BESSER_FREE_LLM_SECONDARY_MODELS``, or the fallback. Any other value pins the run to the primary.
 
 ``nebius`` is `Nebius Token Factory <https://tokenfactory.nebius.com/>`_
 (formerly Nebius AI Studio), reached over its OpenAI-compatible Chat

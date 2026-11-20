@@ -53,6 +53,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     create_llm_client,
     default_model,
     free_alt_choice,
+    free_secondary_choice,
     free_tier_model,
     is_free_fallback_choice,
 )
@@ -1460,7 +1461,8 @@ class SmartGenerationRunner:
                 llm_model = (requested or "").strip()
             else:
                 llm_model = (
-                    free_alt_choice(requested)
+                    free_secondary_choice(requested)
+                    or free_alt_choice(requested)
                     or free_tier_model()
                     or "free"
                 )

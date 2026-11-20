@@ -18,6 +18,7 @@ from besser.generators import GeneratorInterface
 from besser.generators.agents.agent_personalization import (
     DEFAULT_OPENAI_MODEL, configure_agent, flatten_agent_config_structure, personalization_uses_llm,
 )
+from besser.generators.agents.baf_version import BAF_VERSION
 from besser.generators.agents.deployment_components import materialize_deployment_components
 
 # BESSER utilities
@@ -689,7 +690,7 @@ class BAFGenerator(GeneratorInterface):
             readme_template = env.get_template('readme.txt.j2')
             readme_path = self.build_generation_path(file_name="readme.txt")
             self._write_traced("readme.txt", readme_template.render(
-                agent=self.model, classical_ic_fallback=classical_ic_fallback),
+                agent=self.model, classical_ic_fallback=classical_ic_fallback, baf_version=BAF_VERSION),
                 trace_source(self.model, "readme.txt.j2#readme"))
             logger.info("Agent readme file generated at %s", readme_path)
 

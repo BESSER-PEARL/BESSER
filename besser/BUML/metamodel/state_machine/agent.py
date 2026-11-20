@@ -426,14 +426,21 @@ class WebSocketReplySpeech(Action):
 
 
 class WebSocketReplyOptions(Action):
-    """Send a list of selectable options via WebSocketPlatform.reply_options()."""
+    """Send a list of selectable options via WebSocketPlatform.reply_options().
 
-    def __init__(self, options: Optional[list] = None):
+    Args:
+        options: the button texts.
+        label: optional text shown with the buttons (e.g. a prompt in the agent's language).
+            None leaves the UI's own default.
+    """
+
+    def __init__(self, options: Optional[list] = None, label: Optional[str] = None):
         super().__init__()
         self.options: list = options if options is not None else []
+        self.label: Optional[str] = label
 
     def __repr__(self):
-        return f"WebSocketReplyOptions(options={self.options!r})"
+        return f"WebSocketReplyOptions(options={self.options!r}, label={self.label!r})"
 
 
 class WebSocketReplyLocation(Action):
@@ -1749,12 +1756,13 @@ class WebSocketPlatform(Platform):
         """
         pass
 
-    def reply_options(self, session: AgentSession, options: list[str]):
+    def reply_options(self, session: AgentSession, options: list[str], label: str = None):
         """Send a list of options as a reply. They can be used to let the user choose one of them
 
         Args:
             session (AgentSession): the user session
             options (list[str]): the list of options to send to the user
+            label (str, optional): a text shown with the options (the UI's default if None)
         """
         pass
 
@@ -2546,6 +2554,7 @@ class Agent(StateMachine):
 
         self._validate_state_intent_name_collisions(errors)
         self._validate_transition_intent_references(errors)
+        self._validate_auto_transitions(errors)
         self._validate_reasoning_primitives(errors, warnings)
         self._validate_llm_references(errors, warnings)
         self._validate_gui_references(errors)
@@ -2582,6 +2591,35 @@ class Agent(StateMachine):
             errors.append(
                 f"State and intent names must be different. '{display_name}' is used by both a state and an intent."
             )
+
+    def _validate_auto_transitions(self, errors: list[str]):
+        """An `auto` transition must be the only transition of its state (BAF raises
+        ``ConflictingAutoTransitionError`` otherwise): it fires unconditionally, so a second
+        one could not be told apart from the first and any other transition could never run.
+        A state shared by several flows should use conditional transitions (e.g. a custom
+        condition) instead."""
+        for state in self.states:
+            auto_destinations = []
+            for transition in state.transitions:
+                conditions = transition.conditions
+                condition_items = conditions if isinstance(conditions, list) else [conditions]
+                if any(isinstance(condition, Auto) for condition in condition_items):
+                    auto_destinations.append(transition.dest.name)
+            other_transitions = len(state.transitions) - len(auto_destinations)
+            if len(auto_destinations) > 1:
+                errors.append(
+                    f"State '{state.name}' has {len(auto_destinations)} 'auto' transitions "
+                    f"(to {', '.join(repr(name) for name in auto_destinations)}); a state can have only one. "
+                    "Use transitions with a condition instead, e.g. a custom condition that checks a "
+                    "session variable set by the state you came from."
+                )
+            elif auto_destinations and other_transitions:
+                errors.append(
+                    f"State '{state.name}' has an 'auto' transition (to {auto_destinations[0]!r}) next to "
+                    f"{other_transitions} other transition(s); an 'auto' transition fires at once, so it must be "
+                    "the only transition of its state. Use 'when_no_intent_matched' for \"anything else\", "
+                    "or remove the 'auto' transition."
+                )
 
     def _validate_transition_intent_references(self, errors: list[str]):
         """Ensure intent-matching transitions only reference intents defined in the agent."""

@@ -5,6 +5,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.backend import BackendGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators import GeneratorInterface
+from besser.generators.agents.baf_version import BAF_VERSION
 from besser.utilities.buml_code_builder.common import safe_var_name
 
 
@@ -270,4 +271,4 @@ class WebAppGenerator(GeneratorInterface):
                 cfg = self.agent_configs.get(getattr(agent, "name", None))
                 needs_torch = resolve_intent_recognition_technology(cfg) == "classical"
                 with open(agent_dockerfile_path, 'w') as f:
-                    f.write(agent_dockerfile_template.render(agent_model=agent, needs_torch=needs_torch))
+                    f.write(agent_dockerfile_template.render(agent_model=agent, needs_torch=needs_torch, baf_version=BAF_VERSION))

@@ -97,6 +97,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     free_alt_models,
     free_fallback_model,
     free_pilot_model,
+    free_secondary_models,
     free_tier_available,
     free_tier_model,
 )
@@ -534,6 +535,7 @@ def _free_tier_model_choices() -> list[dict]:
     primary = free_tier_model()
     choices = [{"id": primary, "default": True}]
     choices.extend({"id": alt, "default": False} for alt in free_alt_models())
+    choices.extend({"id": m, "default": False} for m in free_secondary_models())
     fallback = free_fallback_model()
     if fallback and fallback != primary:
         choices.append({"id": fallback, "default": False})

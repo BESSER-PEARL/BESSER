@@ -15,11 +15,12 @@ Features:
 - **Factory function** — ``create_llm_client()`` to instantiate the right provider
 """
 
-import contextlib
 import json
 import logging
 import os
 import re
+import socket
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -39,9 +40,9 @@ from besser.llm.retry import (
     status_code as _status_code,
 )
 from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError, UpstreamLLMError
+from besser.spec_driven_agent.execution import deadline as _deadline
 from besser.spec_driven_agent.execution.deadline import (
     CANCELLED,
-    MIN_CALL_SECONDS,
     OUT_OF_TIME,
     current_deadline,
 )
@@ -437,12 +438,19 @@ def _request_options(default_timeout: float) -> dict[str, Any]:
 
 
 def _raise_if_deadline(error: Exception) -> None:
-    """Report a failure as the run's stop when the run is cancelled or out of
-    time: it is then neither retried nor sent to a fallback model."""
+    """Report a failure as the run's stop when the run was cancelled, or when a
+    timeout or broken connection came with its time up: it is then neither
+    retried nor sent to a fallback model. Any other error (a quota, an unknown
+    model, a reply that does not parse) stays the provider's."""
+    if isinstance(error, DeadlineReached):
+        raise error
     deadline = current_deadline()
-    reason = deadline.stop_reason() if deadline is not None else ""
-    if reason and not _is_auth_error(error):
-        raise DeadlineReached(reason, cancelled=deadline.cancelled) from None
+    if deadline is None or _is_auth_error(error):
+        return
+    if deadline.cancelled:
+        raise deadline.reached(CANCELLED) from None
+    if deadline.out_of_time() and _is_transport_error(error):
+        raise deadline.reached(OUT_OF_TIME) from None
 
 
 def _sleep_before_retry(seconds: float) -> None:
@@ -451,28 +459,92 @@ def _sleep_before_retry(seconds: float) -> None:
         time.sleep(seconds)
         return
     left = deadline.work_remaining()
-    if left is not None and left - seconds < MIN_CALL_SECONDS:
-        raise DeadlineReached(OUT_OF_TIME)
+    if left is not None and left - seconds < _deadline.MIN_CALL_SECONDS:
+        raise deadline.reached(f"{OUT_OF_TIME}: the provider asked for a {seconds:.0f}s wait before a retry")
     if deadline.wait(seconds):
-        raise DeadlineReached(CANCELLED, cancelled=True)
+        raise deadline.reached(CANCELLED)
 
 
-@contextlib.contextmanager
-def _closed_on_cancel(stream):
-    """A cancel closes ``stream``, which ends the read blocked on it."""
+def _stream_socket(stream):
+    """The socket under a streaming SDK response, when the HTTP stack exposes it."""
+    try:
+        return stream.response.extensions["network_stream"].get_extra_info("socket")
+    except Exception:
+        return None
+
+
+class _StreamGuard:
+    """Stops a streaming response when the run is cancelled or its work time
+    runs out. A float timeout bounds each read, not the stream, so a stream
+    that keeps sending would otherwise run past the cap. Closing a response
+    from another thread does not wake a read blocked on its socket on every
+    platform (Linux), so the socket is shut down first."""
+
+    def __init__(self, stream, deadline):
+        self._stream = stream
+        self._deadline = deadline
+        self._socket = _stream_socket(stream)
+        self._lock = threading.Lock()
+        self.reason = ""
+
+    def stop(self, reason: str) -> None:
+        with self._lock:
+            if self.reason:
+                return
+            self.reason = reason
+        if self._socket is not None:
+            try:
+                self._socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        close = getattr(self._stream, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.debug("closing a stopped stream failed", exc_info=True)
+
+    def check(self) -> None:
+        """Raise when the stream was or must be stopped; its partial reply is dropped."""
+        deadline = self._deadline
+        left = deadline.work_remaining()
+        if not self.reason and deadline.cancelled:
+            self.stop(CANCELLED)
+        elif not self.reason and left is not None and left <= 0:
+            self.stop(OUT_OF_TIME)
+        if self.reason:
+            raise deadline.reached(self.reason)
+
+
+def _guarded(items, stream):
+    """Iterate ``items`` (read from ``stream``) under the run's deadline: a
+    cancel or the end of the work time stops the stream and raises
+    :class:`DeadlineReached`, even if it then ends without an error."""
     deadline = current_deadline()
-    close = getattr(stream, "close", None)
-    if deadline is None or not callable(close):
-        yield
+    if deadline is None:
+        yield from items
         return
-    with deadline.on_cancel(close):
-        yield
-
-
-def _cancellable(stream):
-    """Iterate ``stream`` under :func:`_closed_on_cancel`."""
-    with _closed_on_cancel(stream):
-        yield from stream
+    guard = _StreamGuard(stream, deadline)
+    left = deadline.work_remaining()
+    timer = threading.Timer(max(0.0, left), guard.stop, args=(OUT_OF_TIME,)) if left is not None else None
+    if timer is not None:
+        timer.daemon = True
+        timer.start()
+    try:
+        with deadline.on_cancel(lambda: guard.stop(CANCELLED)):
+            for item in items:
+                guard.check()
+                yield item
+            guard.check()
+    except DeadlineReached:
+        raise
+    except Exception:
+        if guard.reason:
+            raise deadline.reached(guard.reason) from None
+        raise
+    finally:
+        if timer is not None:
+            timer.cancel()
 
 
 @lru_cache(maxsize=1)
@@ -863,8 +935,8 @@ class ClaudeLLMClient(LLMProvider):
                     messages=_with_message_cache(messages),
                     tools=_with_tool_cache(tools),
                     **options,
-                ) as stream, _closed_on_cancel(stream):
-                    for text in stream.text_stream:
+                ) as stream:
+                    for text in _guarded(stream.text_stream, stream):
                         yield {"type": "text_delta", "text": text}
 
                     response = stream.get_final_message()
@@ -1535,6 +1607,9 @@ class OpenAIProvider(LLMProvider):
         call), False when no fallback is configured or it is already
         active (caller should raise).
         """
+        deadline = current_deadline()
+        if deadline is not None and deadline.stop_reason():
+            return False  # the run ends: no call would reach the fallback
         if past_endpoint is not None:
             while (self._fallback_step < len(self._fallback_chain)
                    and self._fallback_chain[self._fallback_step][0] == past_endpoint):
@@ -1763,7 +1838,7 @@ class OpenAIProvider(LLMProvider):
 
                 stream = self._client.chat.completions.create(**kwargs)
                 try:
-                    for chunk in _cancellable(stream):
+                    for chunk in _guarded(stream, stream):
                         # The served model name appears on every chunk
                         # in a stream; capture once.
                         self._usage.set_served_model(getattr(chunk, "model", None))

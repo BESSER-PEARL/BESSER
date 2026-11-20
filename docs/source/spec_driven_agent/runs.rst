@@ -47,27 +47,34 @@ then spend — and the cost check runs *before* the next request is sent, so a
 run cannot overshoot its cap by one more billable call. A single warning is
 logged at 80% of the cost cap.
 
-The runtime cap and cancellation also hold *inside* a turn. Every LLM call of a
-run (the customize and repair turns, generator selection, planning, model sync,
-requirement extraction and judging) gets as its timeout the time left, never
-more than its usual timeout, and a call is not started with less than 20 seconds
-left: the requirements it would have judged are reported as not checked, an
-unknown rather than a failure. LLM calls and the agent's own commands stop 30
-seconds before the cap, which keeps that time free for packaging the result
-(formatting, the recipe and report, the checkpoint, the download); a call cut
-short by the cap is reported as a time stop, not as a provider error, so it
-never moves the run to a fallback model. Every command a run starts
-(``run_command``, ``install_dependencies``, the scaffold's install, the
-validators, the build and type checks) ends by the cap at the latest.
+The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
+agent's own commands stop 30 seconds before the cap, which keeps that time free
+for packaging the result (formatting, the recipe and report, the checkpoint, the
+download). Every LLM call of a run (the customize and repair turns, generator
+selection, planning, model sync, requirement extraction and judging) gets as its
+timeout that time left, never more than its usual timeout, and is not started
+with less than 20 seconds left: requirements a judgment would have checked are
+reported as not checked for lack of time, an unknown rather than a failure. The
+provider SDKs apply a timeout to each wait for data, not to a whole response, so
+a streaming call is also closed when the time left runs out; its partial reply,
+a half-written tool call included, is dropped. A call stopped by the cap or a
+cancellation is reported as such, not as a provider error, and never moves the
+run to a fallback model; a provider error (an exhausted quota, an unknown model)
+stays one. Every command a run starts (``run_command``,
+``install_dependencies``, the scaffold's install, the validators, the build and
+type checks) ends by the cap at the latest, and a check or a tool cut by the cap
+says so rather than reporting its own timeout. Phase 3 keeps validating while
+there are at least 10 seconds before the cap, so a repair whose turns ran out of
+time is still checked, not thrown away.
 
 A cancellation — from ``POST /besser_api/spec-driven/cancel/{run_id}``, a closed
 connection, the abandonment timer or the runtime watchdog — takes effect at
 once: the command running at that moment is killed with every process it
 started (its whole sandbox on Linux, its process tree on Windows and macOS) and
 the tool reports ``Command stopped: the run was cancelled``; a streaming LLM
-response is closed. A non-streaming LLM call that is already in flight still
-runs to its end, which the timeout above bounds. The run then writes its
-checkpoint, recipe and report as it does at any other stop.
+response is closed and its socket shut down. A non-streaming LLM call that is
+already in flight still runs to its end, which its timeout bounds. The run then
+writes its checkpoint, recipe and report as it does at any other stop.
 
 Only the paid LLM calls count against the budget: generator selection, the
 planning pass, a modify run's model sync, the customize loop, requirement

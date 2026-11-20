@@ -25,6 +25,9 @@ PACKAGING_RESERVE_SECONDS = 30.0
 # An LLM call is not started with less time than this: it would rarely finish,
 # and a call cut short is paid for and gives nothing.
 MIN_CALL_SECONDS = 20.0
+# A validation round is not started closer to the cap than this; its commands
+# are cut at the cap.
+MIN_CHECK_SECONDS = 10.0
 
 CANCELLED = "the run was cancelled"
 OUT_OF_TIME = "the run's time limit is reached"
@@ -44,6 +47,9 @@ class Deadline:
         self._cancelled = threading.Event()
         self._lock = threading.Lock()
         self._on_cancel: list[Callable[[], None]] = []
+        # LLM calls this deadline stopped, and why the last one was.
+        self.cuts = 0
+        self.last_cut = ""
 
     def cancel(self) -> None:
         """Cancel the run and stop what it is running now. Thread-safe."""
@@ -75,6 +81,17 @@ class Deadline:
         left = self.work_remaining()
         return left is not None and left < MIN_CALL_SECONDS
 
+    def checks_out_of_time(self) -> bool:
+        """No validation round may start any more."""
+        left = self.remaining()
+        return left is not None and left < MIN_CHECK_SECONDS
+
+    def reached(self, reason: str) -> DeadlineReached:
+        """The error for an LLM call this deadline stops, counted in ``cuts``."""
+        self.cuts += 1
+        self.last_cut = reason
+        return DeadlineReached(reason, cancelled=reason == CANCELLED)
+
     def stop_reason(self) -> str:
         """Why no LLM call may start, or ""."""
         if self.cancelled:
@@ -86,7 +103,7 @@ class Deadline:
         instead when it may not start."""
         reason = self.stop_reason()
         if reason:
-            raise DeadlineReached(reason, cancelled=reason == CANCELLED)
+            raise self.reached(reason)
         left = self.work_remaining()
         return default if left is None else min(default, left)
 

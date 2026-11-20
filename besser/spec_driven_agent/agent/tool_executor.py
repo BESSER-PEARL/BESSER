@@ -45,6 +45,7 @@ from besser.spec_driven_agent.agent.tools import (
     INVALID_ARGUMENTS_KEY,
     get_all_tools_including_generators,
 )
+from besser.spec_driven_agent.execution.deadline import OUT_OF_TIME
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
     _safe_subprocess_env,
@@ -3799,6 +3800,9 @@ class ToolExecutor:
         working_dir = args.get("working_dir")
         start_dir = self._safe_cwd(working_dir) if working_dir else None
         timeout = self._command_timeout(args.get("timeout"))
+        left = self.time_left() if self.time_left else None
+        # The run's time left, not the command's own limit, sets its timeout.
+        cut_by_run = left is not None and left <= timeout
 
         # Refuse obviously-destructive or exfil commands before we hand
         # them to the shell. Returned as a normal tool error so the LLM
@@ -3812,6 +3816,9 @@ class ToolExecutor:
                 "exit_code": None,
                 "success": False,
             }
+        if left is not None and left < 1:
+            return {"error": f"Command stopped: {OUT_OF_TIME}. It was not run.",
+                    "stopped": OUT_OF_TIME, "command": command}
 
         logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
         # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
@@ -3863,11 +3870,12 @@ class ToolExecutor:
         if result.notes:
             extra["notes"] = result.notes
 
-        if result.stopped:
+        stopped = result.stopped or (OUT_OF_TIME if result.timed_out and cut_by_run else "")
+        if stopped:
             return {
-                "error": f"Command stopped: {result.stopped}. It was not run, or was killed "
+                "error": f"Command stopped: {stopped}. It was not run, or was killed "
                          "with everything it started.",
-                "stopped": result.stopped,
+                "stopped": stopped,
                 "command": command,
                 "stdout": self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2),
                 "stderr": self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True),

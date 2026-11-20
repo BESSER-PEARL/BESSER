@@ -56,7 +56,7 @@ import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 
-from besser.spec_driven_agent.execution.deadline import current_deadline
+from besser.spec_driven_agent.execution.deadline import OUT_OF_TIME, current_deadline
 from besser.spec_driven_agent.execution.process import (
     FLOOD_NOTE,
     MAX_CAPTURE_BYTES,
@@ -648,11 +648,13 @@ class ShellSession:
         Inside a run its timeout ends at the run's cap, and a cancel stops it.
         """
         deadline = current_deadline()
+        cut_by_run = False
         if deadline is not None:
             reason = deadline.command_stop_reason()
             if reason:
                 return ShellResult(None, "", "", stopped=reason)
-            timeout = deadline.command_timeout(timeout)
+            own_timeout, timeout = timeout, deadline.command_timeout(timeout)
+            cut_by_run = timeout < own_timeout
         with self._run_lock:
             notes: list[str] = []
             start = working_dir or self.cwd
@@ -665,6 +667,8 @@ class ShellSession:
                 result, cwd, env = self._run_sandboxed(plan, command, start, timeout, notes)
             else:
                 result, cwd, env = self._run_unconfined(command, start, timeout)
+            if result.timed_out and not result.stopped and cut_by_run:
+                result.stopped = OUT_OF_TIME
             if adopt_state:
                 self._adopt(cwd, env, follow_cwd=working_dir is None, notes=result.notes)
             self._last_used = time.monotonic()

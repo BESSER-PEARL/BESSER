@@ -218,9 +218,13 @@ class Phase3RepairMixin:
             self._phase2_stop_reason = "completed"
 
     def _phase3_stop_requested(self, *, check_turn_budget: bool = True) -> str | None:
-        """One stop gate for repair turns and the validation calls between them."""
+        """One stop gate for repair turns and the validation calls between them.
+
+        ``check_turn_budget=False`` asks for validation only, which needs time
+        before the cap for its checks; a repair turn needs time for an LLM call.
+        """
         reason = None
-        if self.deadline.out_of_time():
+        if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
         elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             reason = "cost budget exhausted"
@@ -236,6 +240,10 @@ class Phase3RepairMixin:
             reason = "repair interrupted before verification completed"
             if self._phase3_interrupt_detail:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
+        elif check_turn_budget and self.deadline.out_of_time():
+            # Like the turn budget: no further repair turn, but the attempt
+            # so far is still checked.
+            return "runtime budget exhausted"
         if reason:
             self._phase3_interrupted = True
         return reason
@@ -1308,6 +1316,8 @@ class Phase3RepairMixin:
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
                     turn, exc,
                 )
+                if isinstance(exc, DeadlineReached) and not exc.cancelled:
+                    return edits  # no time for another turn; the attempt so far is still checked
                 self._phase3_interrupted = True
                 self._phase3_interrupt_detail = (str(exc) if isinstance(exc, DeadlineReached)
                                                  else f"provider call failed: {type(exc).__name__}")

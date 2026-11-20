@@ -17,7 +17,7 @@ from besser.utilities.subprocess_env import (  # noqa: F401
     SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
     safe_subprocess_env as _safe_subprocess_env,
 )
-from besser.spec_driven_agent.execution.deadline import current_deadline
+from besser.spec_driven_agent.execution.deadline import OUT_OF_TIME, current_deadline
 
 
 class CommandStopped(subprocess.TimeoutExpired):
@@ -30,6 +30,11 @@ class CommandStopped(subprocess.TimeoutExpired):
 
     def __str__(self) -> str:
         return f"Command '{self.cmd}' stopped: {self.reason}"
+
+
+def timeout_cause(error: subprocess.TimeoutExpired, own: str) -> str:
+    """What ended a command killed for time: the run's stop, else ``own`` (its own limit)."""
+    return error.reason if isinstance(error, CommandStopped) else own
 
 
 # Workspace subdirectory holding the untruncated output of shell commands.
@@ -120,11 +125,13 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
     :class:`CommandStopped`, as does a run already stopped (nothing is started).
     """
     deadline = current_deadline()
+    cut_by_run = False
     if deadline is not None:
         reason = deadline.command_stop_reason()
         if reason:
             raise CommandStopped(args, 0, reason)
-        timeout = deadline.command_timeout(timeout)
+        own_timeout, timeout = timeout, deadline.command_timeout(timeout)
+        cut_by_run = timeout < own_timeout
     group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, \
@@ -153,6 +160,8 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
                     pass
                 if not flooded:
                     reason = deadline.command_stop_reason() if deadline is not None else ""
+                    if not reason and cut_by_run:
+                        reason = OUT_OF_TIME
                     if reason:
                         raise CommandStopped(args, timeout, reason, output=_decode(out),
                                              stderr=_decode(err)) from None

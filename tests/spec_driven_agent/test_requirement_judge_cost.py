@@ -267,8 +267,8 @@ def test_a_judge_with_too_little_time_left_is_not_started(orch, judge_calls):
     issues = orch._collect_requirement_issues()
 
     assert judge_calls == []
-    assert issues == [f"requirement unverified: not checked, the {orch.max_runtime_seconds}s runtime cap "
-                      "was reached; original-specification coverage is not verified."]
+    assert issues == [f"requirement unverified: not checked, too little of the {orch.max_runtime_seconds}s runtime cap "
+                      "is left; original-specification coverage is not verified."]
     assert not orch._requirement_judge_failures
     assert unresolved_defects([_classify_issue(issue) for issue in issues]) == []
 

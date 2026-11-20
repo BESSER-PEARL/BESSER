@@ -148,7 +148,7 @@ from besser.spec_driven_agent.agent.runbook import (
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.docker_context import (
     compose_build_contexts,
@@ -3672,7 +3672,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
             allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
-            build_verdicts=build_verdicts, can_run=self._verification_call_allowed,
+            build_verdicts=build_verdicts, can_run=self._checks_allowed,
             timeout=remaining,
         ))
 
@@ -4299,8 +4299,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "the requirements judge",
             "it returned no verdicts; coverage of the original specification has not been verified",
         )
+        cuts = self.deadline.cuts  # a judge call the deadline stopped is not a judge failure
+
         def judge_stopped() -> str:
-            return (f"requirement unverified: not checked, {self._budget_stop_reason() or 'verification stopped'}; "
+            reason = (self._budget_stop_reason()
+                      or (self.deadline.last_cut if self.deadline.cuts != cuts else "verification stopped"))
+            return (f"requirement unverified: not checked, {reason}; "
                     "original-specification coverage is not verified.")
         if verdicts is None:
             if not self._verification_call_allowed():
@@ -4334,7 +4338,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 verdicts = sorted([*kept.values(), *verdicts], key=lambda item: item["id"])
                 checked = None
         if verdicts is None:
-            if not self._verification_call_allowed():
+            if not self._verification_call_allowed() or self.deadline.cuts != cuts:
                 return [judge_stopped()]  # a stop mid-judgment is not a judge failure
             self._requirement_judge_failures.add(cache_key)
             return [judge_failed]
@@ -4705,6 +4709,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """What a set of verdicts answered: the requirements and the request."""
         return json.dumps([requirements, self._instructions], sort_keys=True)
 
+    def _checks_allowed(self) -> bool:
+        """A deterministic check may start: not cancelled, spend left, and time
+        before the cap for it (LLM calls need more, see ``_budget_stop_reason``)."""
+        return not (
+            self.deadline.cancelled or self.deadline.checks_out_of_time()
+            or (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
+        )
+
     def _verification_call_allowed(self) -> bool:
         """Do not start a paid extraction/judgment after a stop or spend cap,
         or with too little time left for it to finish."""
@@ -4840,7 +4852,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return [_check_did_not_run(f"the dependency check for {rel}", str(exc))]
         except Exception as exc:
             # A timeout is "not checked", never "no conflict".
-            reason = ("timed out after 30s"
+            reason = (timeout_cause(exc, "timed out after 30s")
                       if isinstance(exc, subprocess.TimeoutExpired)
                       else type(exc).__name__)
             return [_check_did_not_run(f"the dependency check for {rel}", reason)]
@@ -5065,7 +5077,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
                     f"(${self.client.usage.estimated_cost:.2f} used)")
         if self.deadline.out_of_time():
-            return f"the {self.max_runtime_seconds}s runtime cap was reached"
+            return f"too little of the {self.max_runtime_seconds}s runtime cap is left"
         return ""
 
     # ==================================================================

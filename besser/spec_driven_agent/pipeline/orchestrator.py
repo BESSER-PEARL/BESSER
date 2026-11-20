@@ -2805,7 +2805,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._record_full_tool_input(turn + 1, tool_name, block.input, success, execution.status)
         self._trace.write(
             EVENT_TOOL_CALL,
-            uncut=({"input": _redacted_tool_input(tool_name, block.input), "result": result}
+            # Unredacted but for test_api header values: the record redacts it, the run's own key first.
+            uncut=({"input": _without_header_values(tool_name, block.input), "result": result}
                    if self._keeps_run_evidence else None),
             turn=turn + 1,
             tool=tool_name,
@@ -5849,8 +5850,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
             self.saved_recipe, text = bounded_recipe(recipe, full_record=(
-                f"full record kept server-side under run {self.run_id}" if self._keeps_run_evidence
-                else f"every call is in {TRACE_FILENAME}" if self._trace.path else ""))
+                f"full record kept server-side under run {self.run_id}" if self._keeps_run_evidence else ""))
             with open_plain_write(recipe_path, "w", root=self.output_dir, encoding="utf-8") as f:
                 f.write(text)
         except Exception as e:
@@ -6016,18 +6016,18 @@ def _redact_for_trace(value: Any) -> Any:
     return value
 
 
-def _redacted_tool_input(tool_name: str, data: Any) -> Any:
-    """A tool input with credentials replaced, test_api header values included."""
+def _without_header_values(tool_name: str, data: Any) -> Any:
+    """A tool input with test_api's header values hidden."""
     if tool_name == "test_api" and isinstance(data, dict) and "requests" in data:
         from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
 
         data = {**data, "requests": redact_scenario_headers(data["requests"])}
-    return _redact_for_trace(data)
+    return data
 
 
 def _trace_safe_input(tool_name: str, data: Any) -> Any:
     """A tool input as the trace and checkpoint record it: redacted, bounded."""
-    return _sanitize_for_log(_redacted_tool_input(tool_name, data))
+    return _sanitize_for_log(_redact_for_trace(_without_header_values(tool_name, data)))
 
 
 def _trace_result_excerpt(result: Any) -> dict:

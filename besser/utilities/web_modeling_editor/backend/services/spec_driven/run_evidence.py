@@ -1,13 +1,14 @@
-"""A run's full record, kept server-side apart from the recipe the user downloads.
+"""A run's full record, kept server-side apart from the recipe the user downloads, when the operator asks.
 
 The recipe ships in the app archive, so it is cut to a size budget, and the
 run's trace lives in its workspace, which is deleted a few hours after the run.
-:class:`RunEvidence` receives every trace record of a run (``TraceWriter``'s
-mirror) and appends it, redacted, to ``<incident log dir>/runs/<run id>.jsonl``
-as it happens, so a cancelled or crashed run keeps what it did. The run's
-shell never sees that folder (``execution/sandbox.py`` masks the incident log
-directory). Files older than ``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS`` are
-removed by the hourly cleanup.
+When ``BESSER_INCIDENT_LOG_DIR`` is set (and ``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS``
+is not 0), :class:`RunEvidence` receives every trace record of a run
+(``TraceWriter``'s mirror) and appends it, redacted, to
+``<incident log dir>/runs/<run id>.jsonl`` as it happens, so a cancelled or
+crashed run keeps what it did. The run's shell never sees that folder
+(``execution/sandbox.py`` masks the incident log directory). The hourly cleanup
+removes files older than the retention.
 """
 
 from __future__ import annotations
@@ -18,11 +19,10 @@ import os
 import re
 import threading
 import time
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from besser.spec_driven_agent.state.tracing import EVENT_PHASE_ENTER, EVENT_PHASE_EXIT, EVENT_TOOL_CALL
-from besser.utilities.secret_redaction import redact_text, redact_trace_text
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.incidents import incident_log_dir
+from besser.utilities.secret_redaction import redact_record_text
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 logger = logging.getLogger(__name__)
@@ -32,12 +32,29 @@ EVIDENCE_DIRNAME = "runs"
 VALUE_CHARS = 64 * 1024
 # A tool result, as the model read it: its first and last 8 KiB.
 RESULT_CHARS = 16 * 1024
+# Text past each cut that is redacted with the kept part, so a secret straddling the cut is
+# matched whole. Longer than any credential the rules match, a private key excepted.
+_CUT_WINDOW = 1024
 
 _LOCK = threading.Lock()
 
 
-def evidence_dir() -> str:
-    return os.path.join(incident_log_dir(), EVIDENCE_DIRNAME)
+def evidence_dir() -> str | None:
+    """``<BESSER_INCIDENT_LOG_DIR>/runs`` when the operator keeps run records, else None."""
+    settings = BackendSettings()
+    base = (settings.incident_log_dir or "").strip()
+    if not base or settings.llm_run_evidence_retention_days <= 0:
+        return None
+    return os.path.join(base, EVIDENCE_DIRNAME)
+
+
+def for_run(run_id: str, secrets: Iterable[str] = ()) -> RunEvidence | None:
+    """The record of run ``run_id``, or None when the operator keeps none."""
+    directory = evidence_dir()
+    if directory is None:
+        return None
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id))[:64] or "unknown"
+    return RunEvidence(os.path.join(directory, f"{safe_id}.jsonl"), secrets)
 
 
 def _cut(text: str, limit: int) -> str:
@@ -47,26 +64,48 @@ def _cut(text: str, limit: int) -> str:
     return f"{text[:half]}\n<<cut {len(text) - 2 * half} of {len(text)} chars>>\n{text[-half:]}"
 
 
-def _safe(value: Any, secrets: tuple[str, ...]) -> Any:
-    """``value`` with every string redacted as the run's events and trace are, then capped."""
-    if isinstance(value, str):
-        return _cut(redact_trace_text(redact_text(value, secrets=secrets)[0]), VALUE_CHARS)
-    if isinstance(value, (list, tuple)):
-        return [_safe(item, secrets) for item in value]
-    if isinstance(value, dict):
-        return {key: _safe(item, secrets) for key, item in value.items()}
-    return value
+def _redacted_cut(text: str, limit: int, redact: Callable[[str], str]) -> str:
+    """``text`` redacted and cut to ``limit``, redacting only what is kept and a window past each cut."""
+    half = limit // 2
+    if len(text) <= limit + 2 * _CUT_WINDOW:
+        return _cut(redact(text), limit)
+    head, tail = redact(text[:half + _CUT_WINDOW]), redact(text[-(half + _CUT_WINDOW):])
+    if min(len(head), len(tail)) < half + _CUT_WINDOW // 2:
+        # Redactions shortened a window by more than half: its unredacted end could reach the kept part.
+        return _cut(redact(text), limit)
+    return f"{head[:half]}\n<<cut {len(text) - 2 * half} of {len(text)} chars>>\n{tail[-half:]}"
 
 
 class RunEvidence:
     """Appends a run's trace records to its server-side file; never raises."""
 
-    def __init__(self, run_id: str, secrets: Iterable[str] = ()) -> None:
-        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id))[:64] or "unknown"
-        self.path = os.path.join(evidence_dir(), f"{safe_id}.jsonl")
+    def __init__(self, path: str, secrets: Iterable[str] = ()) -> None:
+        self.path = path
         self._secrets = tuple(s for s in secrets if s)
         # The phases entered and not yet left, innermost last.
         self._phases: list[str] = []
+        self._warned = False
+
+    def _redact(self, text: str, path: str = "") -> str:
+        return redact_record_text(text, path=path, secrets=self._secrets)
+
+    def _safe(self, value: Any, limit: int, path: str = "") -> Any:
+        if isinstance(value, str):
+            return _redacted_cut(value, limit, lambda text: self._redact(text, path))
+        if isinstance(value, (list, tuple)):
+            return [self._safe(item, limit, path) for item in value]
+        if isinstance(value, dict):
+            return {key: self._safe(item, limit, path) for key, item in value.items()}
+        return value
+
+    def _result(self, result: str, path: str) -> str:
+        """A tool result. As JSON, its strings are redacted unescaped, so line rules see real lines."""
+        try:
+            parsed = json.loads(result)
+        except ValueError:
+            return _redacted_cut(result, RESULT_CHARS, lambda text: self._redact(text, path))
+        # Redacted already: cutting the text only drops characters.
+        return _cut(json.dumps(self._safe(parsed, RESULT_CHARS, path), ensure_ascii=False), RESULT_CHARS)
 
     def __call__(self, record: dict[str, Any]) -> None:
         try:
@@ -77,22 +116,32 @@ class RunEvidence:
             phase = self._phases[-1] if self._phases else None
             if event == EVENT_PHASE_EXIT and phase == payload.get("phase"):
                 self._phases.pop()
-            if event == EVENT_TOOL_CALL and isinstance(payload.get("result"), str):
-                payload["result"] = _cut(redact_trace_text(
-                    redact_text(payload["result"], secrets=self._secrets)[0]), RESULT_CHARS)
-            line = json.dumps(_safe({**record, "phase": phase, "payload": payload}, self._secrets),
-                              default=str, ensure_ascii=False)
+            given = payload.get("input")
+            path = given.get("path", "") if isinstance(given, dict) and isinstance(given.get("path"), str) else ""
+            result = payload.pop("result", None) if event == EVENT_TOOL_CALL else None
+            safe = self._safe({**record, "phase": phase, "payload": payload}, VALUE_CHARS, path)
+            if isinstance(result, str):
+                safe["payload"]["result"] = self._result(result, path)
+            elif result is not None:
+                safe["payload"]["result"] = self._safe(result, RESULT_CHARS, path)
+            line = json.dumps(safe, default=str, ensure_ascii=False)
             with _LOCK:
                 os.makedirs(os.path.dirname(self.path), exist_ok=True)
                 with open(self.path, "a", encoding="utf-8") as fh:
                     fh.write(line + "\n")
         except Exception:
-            logger.debug("Could not keep the run record in %s", self.path, exc_info=True)
+            if not self._warned:
+                self._warned = True
+                logger.warning("Could not keep the run record in %s", self.path, exc_info=True)
+            else:
+                logger.debug("Could not keep the run record in %s", self.path, exc_info=True)
 
 
 def prune_run_evidence() -> None:
-    """Remove run records older than ``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS``."""
+    """Remove run records older than ``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS``; nothing when records are off."""
     directory = evidence_dir()
+    if directory is None:
+        return
     cutoff = time.time() - BackendSettings().llm_run_evidence_retention_days * 86400
     try:
         names = os.listdir(directory)

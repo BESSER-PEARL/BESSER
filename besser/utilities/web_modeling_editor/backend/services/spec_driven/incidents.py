@@ -29,9 +29,8 @@ _DEFAULT_INCIDENT_LOG_DIR = "/app/incidents"
 
 
 def incident_log_dir() -> str:
-    """``BESSER_INCIDENT_LOG_DIR``, or ``/app/incidents`` when it is unset."""
-    configured = BackendSettings().incident_log_dir
-    return _DEFAULT_INCIDENT_LOG_DIR if configured is None else configured
+    """``BESSER_INCIDENT_LOG_DIR``, or ``/app/incidents`` when it is unset or blank."""
+    return (BackendSettings().incident_log_dir or "").strip() or _DEFAULT_INCIDENT_LOG_DIR
 
 
 def _incident_path() -> str:
@@ -106,7 +105,7 @@ def persist_run_trace(
         if not run_id or not trace_path or not os.path.isfile(trace_path):
             return
         settings = BackendSettings()
-        base = settings.incident_log_dir
+        base = (settings.incident_log_dir or "").strip()
         if not base and study_run:
             base = settings.telemetry_dir
         if not base:

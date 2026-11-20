@@ -1510,6 +1510,9 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
     if generator_name == "generate_web_app":
         lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas")
         lines.append("Frontend: React + TypeScript + Vite + Tailwind CSS")
+        lines.append("Generated components (src/components/): configure them through the props and options "
+                     "listed above (a TableBlock's `options` are TableComponent's TableOptions); edit their "
+                     "source only to fix a defect in it.")
         lines.append("Docker: docker-compose.yml + Dockerfiles")
         # List frontend pages
         pages = []

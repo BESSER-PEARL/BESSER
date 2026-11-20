@@ -81,6 +81,13 @@ Dynamic data tables with:
 - Display-only form fields: a ``formColumns`` entry with ``"readOnly": true``
   is shown in the Add/Edit dialog but cannot be edited, is not validated as
   required, and is left out of the POST/PUT body (the server owns the value)
+- The binding's filter (``DataBinding.filter_expression``) applied to the rows,
+  as charts and metric cards apply it, also after a write reloads them
+- Opt-in options a page can pass in ``options``: ``rowLink`` (a route a row
+  click opens, each ``{field}`` replaced by the row's value), ``initialFilters``
+  (column filter values to start with), ``emptyText`` (the empty state's text)
+  and ``rowActions`` (``[{label, onClick(row)}]``, extra buttons per row). A
+  table that sets none renders as before.
 
 MethodButton
 ^^^^^^^^^^^^

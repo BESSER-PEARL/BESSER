@@ -1,0 +1,94 @@
+Version 8.10.0
+==============
+
+Minor release: **a semantic check of class diagrams and their OCL constraints
+with the Alloy Analyzer, autosave of linked projects to GitHub, web apps from
+designed screens that work as designed, a sturdier generated FastAPI backend,
+and a Spec-Driven Agent that keeps running on current Claude models**. Two new
+streaming endpoints; no metamodel change. Deploy the modeling agent v8.1.3
+alongside.
+
+Highlights
+----------
+
+* **Semantic check of class diagrams and OCL constraints.** The new Alloy
+  generator translates a class diagram, its multiplicities and its OCL
+  invariants into Alloy, and the Alloy Analyzer searches for an instance that
+  satisfies them all. The editor's *Quality Check* menu gains *Semantic check*,
+  which reports a contradiction between constraints, or the scope it searched
+  when it found nothing, and the object diagram gains *Semantic generation*,
+  which fills it with objects that satisfy the model. The backend streams both
+  as Server-Sent Events from ``POST /besser_api/semantic-consistency-check`` and
+  ``POST /besser_api/generate-object-diagram``. Objects of a class named like
+  a B-UML metaclass (``Class``, the editor's default name, or ``Property``,
+  ``Method``, ``Constraint``...) were dropped when an object diagram was read
+  from B-UML code; they are kept now, so generation and import show them. At most
+  ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks run at once (others get 503),
+  each with a heap of ``BESSER_ALLOY_MAX_HEAP_MB``. The Docker images now carry
+  a Java runtime and the Alloy 6.2 jar, verified by checksum. See
+  :doc:`../../examples/semantic_check_example`
+  (`#686 <https://github.com/BESSER-PEARL/BESSER/pull/686>`_,
+  `WME #229 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/229>`_).
+* **Autosave to GitHub.** A project linked to a GitHub repository can commit
+  itself a few seconds after the last edit, at most once a minute, through the
+  same save as *Save to GitHub*. It is off by default and stored in the
+  browser, not in the project, so it does not turn on for teammates. It never
+  commits an unchanged model, pauses when someone else pushed, and keeps edits
+  made while a save runs
+  (`WME #285 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/285>`_,
+  `WME #287 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/287>`_).
+* **Web apps generated from designed screens are usable.** Links between
+  designed pages navigate without reloading the page; a designed form sends its
+  mandatory parent and keeps ``required`` on its inputs; metric cards and charts
+  reload after a create, edit or delete; class-bound tables follow the designed
+  columns and show a readable label for a lookup; deleting a row asks first
+  (`#792 <https://github.com/BESSER-PEARL/BESSER/pull/792>`_).
+* **A sturdier generated FastAPI backend.** Associations of a class to itself
+  are stored and returned at both ends instead of failing with 500. A delete
+  that conflicts with dependent records answers 409 with a readable message,
+  and no SQL statement or row value appears in an error body. An attribute
+  whose name marks a stored secret is not offered as a search filter. An
+  abstract class has no create route. The remaining limits are listed in
+  :doc:`../../generators/backend`
+  (`#793 <https://github.com/BESSER-PEARL/BESSER/pull/793>`_).
+* **Spec-Driven Agent runs that last.** Runs no longer end with an API error on
+  current Claude models (thinking blocks are dropped whenever the history before
+  them is rewritten, and models that reject a forced tool choice get the
+  fallback). Each turn costs fewer tokens: a compact model in the prompt,
+  shorter tool schemas, and capped file listings. False blockers in the
+  validation are removed, a check that did not run is a warning instead of a
+  pass, and ``/download`` no longer follows a link the agent created. A finished
+  result stays downloadable for 24 hours and can be updated for 3 hours, and the
+  editor shows until when
+  (`#788 <https://github.com/BESSER-PEARL/BESSER/pull/788>`_,
+  `WME #288 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/288>`_).
+
+Editor
+------
+
+* **Clearer key and run feedback in the assistant.** Saving an API key shows
+  which provider and model the next generation will use. The tab title says
+  when a run is done, incomplete or failed, and a browser notification can be
+  switched on. An expired result says so and offers to generate again
+  (`WME #288 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/288>`_).
+* **"Your model" opens the element.** Clicking a class, attribute, literal,
+  relationship or constraint in the assistant's *Your model* panel opens the
+  class diagram and marks the element on the canvas. *Your model* and *Use your
+  own API key* are now plain buttons
+  (`WME #286 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/286>`_).
+* **The assistant reconnects on its own.** The editor kept retrying for only
+  about two minutes, less than the assistant needs to start after a deploy, so
+  open tabs stayed disconnected until reloaded. It now retries every 30 seconds
+  (`WME #282 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/282>`_).
+* **The Project Hub's GitHub import is a plain import.** It imports the model
+  and links the project, without preparing a Spec-Driven Agent run
+  (`WME #284 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/284>`_).
+
+Deploy alongside
+----------------
+
+The modeling agent v8.1.3 names the API key a generation will use in its
+confirmation, never runs a bare "try again" as the whole request of a new
+application, says when the previous result has expired, and applies stricter
+class-model guards. It reads the ``context.generationKey`` and
+``context.lastGeneration`` fields this editor sends.

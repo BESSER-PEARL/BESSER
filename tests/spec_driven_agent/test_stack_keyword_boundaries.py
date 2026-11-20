@@ -19,6 +19,7 @@ import pytest
 from besser.spec_driven_agent.planning.stack_metadata import (
     _contains_word,
     detect_idiom_stack,
+    detect_stack,
 )
 
 
@@ -62,3 +63,44 @@ def test_idiom_guidance_is_selected_end_to_end(instructions):
 def test_prose_naming_no_stack_still_selects_nothing():
     """The detector must stay quiet rather than guess a stack from a near-miss."""
     assert detect_idiom_stack("Build a trustworthy inventory system") is None
+
+
+# -- the keyword fallback (no routing answer) ---------------------------------
+# Without a routing answer the request's words pick the Phase 0.5 template and
+# the idiom block. "cargo" and "rocket" are more often the domain than the
+# build tool or the framework, so they no longer count on their own.
+
+@pytest.mark.parametrize("instructions", [
+    "Build a REST API in Go for a cargo tracking company.",
+    "Build a NestJS backend for a model rocket club: members, launches, rockets.",
+    "A web app for a rocket launch schedule.",
+    "Cargo ship manifest web app.",
+    "A web app to plan the spring semester courses.",
+    "Let's go: a web app for a bakery.",
+    "A web app for Swift Logistics to track parcels.",
+    "A web app to score dart tournaments.",
+    "A web app for a courier company: standard or express delivery.",
+    "Go-kart track booking web app.",
+])
+def test_a_domain_word_names_no_template(instructions):
+    assert detect_stack(instructions) is None
+
+
+@pytest.mark.parametrize("instructions", [
+    "Build a REST API in Go for a cargo tracking company.",
+    "A web app for a rocket launch schedule.",
+])
+def test_a_domain_word_selects_no_rust_idioms(instructions):
+    assert detect_idiom_stack(instructions) != "rust_axum"
+
+
+@pytest.mark.parametrize("instructions", [
+    "Build a Rust web server using Axum",
+    "Use actix for the API",
+    "rocket + serde",
+    "Rocket.rs with tokio",
+    "Standard Cargo.toml layout please",
+])
+def test_rust_and_its_crates_still_name_rust(instructions):
+    assert detect_stack(instructions) == "rust"
+    assert detect_idiom_stack(instructions) == "rust_axum"

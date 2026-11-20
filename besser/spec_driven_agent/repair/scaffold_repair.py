@@ -14,13 +14,17 @@ rather than under ``validation/``.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re as _re
 
+import yaml
+
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 from besser.spec_driven_agent.repair.dependency_pins import pin_known_incompatible
+from besser.spec_driven_agent.validation.frontend_resolution import import_specifiers
 
 
 # The deterministic Phase-1 backend generator always writes a correct
@@ -166,6 +170,9 @@ _AUTOMATIC_JSX_PACKAGES = frozenset({
     "@rsbuild/plugin-react",
 })
 
+# Where ``vite`` serves when neither its config nor the dev script names a port.
+_VITE_DEFAULT_DEV_PORT = 5173
+
 _PLUGIN_REACT_VERSION = "^4.3.4"
 _VITE_VERSION = "^5.4.8"
 
@@ -204,10 +211,6 @@ _API_BASE_DECL_RE = _re.compile(
 )
 _API_BASE_OPTION_RE = _re.compile(
     r"(?P<lead>\bbaseURL[ \t]*:[ \t]*)" + _LOCALHOST_BASE
-)
-
-_IMPORT_SPEC_RE = _re.compile(
-    r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)['"]([^'"\n]+)['"]"""
 )
 
 _COMPOSE_NAMES = ("docker-compose.yml", "docker-compose.yaml",
@@ -269,6 +272,42 @@ EXPOSE 8000
 CMD {cmd}
 """
 
+# Written beside a Dockerfile that copies its whole folder: ``COPY . .``
+# otherwise takes what a local run left there (a virtualenv, the database,
+# local env overrides) into the image. Patterns are relative to the build context.
+_DOCKERIGNORE_ALWAYS = (
+    "**/__pycache__", "**/*.py[cod]", "**/.venv", "**/venv",
+    "**/*.db", "**/*.db-journal", "**/*.db-wal", "**/*.db-shm", "**/*.sqlite", "**/*.sqlite3",
+    "**/*.log", "**/.env.local", "**/.env.*.local", ".git",
+)
+# Left out only when the Dockerfile makes its own: one that installs packages
+# does not need the host's, one that builds does not need the host's output.
+_DOCKERIGNORE_WHEN = (
+    (_re.compile(r"\b(?:npm\s+(?:ci|install)|yarn\s+install|pnpm\s+install)\b"), ("**/node_modules",)),
+    (_re.compile(r"(?m)^\s*RUN\b.*\b(?:run\s+build|yarn\s+build|vite\s+build)\b"), ("dist", "build")),
+)
+# A Python service's env files hold its secrets; the example file documents them.
+_PYTHON_SERVICE_RE = _re.compile(r"\bpip3?\s+install\b|\bpoetry\s+install\b|\buv\s+(?:sync|pip)\b|\bpyproject\.toml\b")
+_PYTHON_ENV_FILES = ("**/.env", "**/.env.*", "!**/.env.example")
+_COPIES_WHOLE_FOLDER_RE = _re.compile(r"(?im)^\s*(?:COPY|ADD)\s+(?:--(?!from)\S+\s+)*\./?\s+\S")
+
+
+def _dockerignore_for(dockerfile: str, vite_folders: tuple = ()) -> str:
+    """The ``.dockerignore`` for a Dockerfile, or "" when it copies named paths only.
+
+    ``vite_folders`` are the Vite projects in the build context, by relative
+    path: their ``.env`` and ``.env.<mode>`` are build input, never left out.
+    """
+    if not _COPIES_WHOLE_FOLDER_RE.search(dockerfile):
+        return ""
+    extra = [pattern for when, patterns in _DOCKERIGNORE_WHEN if when.search(dockerfile) for pattern in patterns]
+    if _PYTHON_SERVICE_RE.search(dockerfile):
+        extra.extend(_PYTHON_ENV_FILES)
+        for folder in vite_folders:
+            prefix = "" if folder == "." else folder + "/"
+            extra.extend((f"!{prefix}.env", f"!{prefix}.env.*"))
+    return "\n".join((*extra, *_DOCKERIGNORE_ALWAYS)) + "\n"
+
 _COMPOSE_TEMPLATE = """\
 services:
   backend:
@@ -314,24 +353,97 @@ docker compose up --build
 
 ## Run it without Docker
 
-```bash
-cd {backend} && pip install -r requirements.txt && python {entry}
-cd {frontend} && npm install && npm run dev
-```
+Use two terminals, each starting in this folder.
 
-## Pointing the frontend somewhere else
-
-The frontend reads its API base from `VITE_API_URL` and falls back to
-`http://localhost:8000`. If port 8000 is taken, start the backend on another
-port and set the variable rather than editing the source:
+The API, on http://localhost:8000:
 
 ```bash
-cd {frontend} && VITE_API_URL=http://localhost:8080 npm run dev
+cd {backend}
+pip install -r requirements.txt
+{start}
 ```
 
-Vite inlines `VITE_*` at build time, so a production image needs it as a
-build argument - `docker-compose.yml` already passes it that way.
+The web app, on {dev_address}:
+
+```bash
+cd {frontend}
+npm install
+npm run dev
+```
+
+## Using another API port
+
+The web app reads the API address from `VITE_API_URL` and falls back to
+`http://localhost:8000`. If port 8000 is taken, start the API with
+`python -m uvicorn {module}:app --port 8080` instead, and create
+`{frontend}/.env.local` holding:
+
+```
+VITE_API_URL=http://localhost:8080
+```
+
+Then restart `npm run dev`. Vite inlines `VITE_*` at build time, so a
+production image needs it as a build argument - `docker-compose.yml` already
+passes it that way.
 """
+
+
+# The last line of a README BESSER wrote: with it, a later generation rewrites the
+# README to match the output; without it, the README is the user's.
+README_MARKER = ("<!-- Run instructions written by BESSER and rewritten on each generation. "
+                 "Delete this line to keep your own edits. -->")
+# A compose variable's default ("${WEB_PORT:-3000}"), the port it publishes when unset.
+_COMPOSE_DEFAULT_RE = _re.compile(r"\$\{\w+:?-([^}]*)\}")
+
+_BACKEND_README_TEMPLATE = """\
+# {title}
+
+A FastAPI backend{where}: a REST API over the model's classes, with interactive
+API documentation.
+
+## Run it
+
+From this folder:
+
+```bash
+{cd}python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\\Scripts\\activate
+pip install -r requirements.txt
+{start}
+```
+
+The API is then on http://localhost:{port}, and its documentation on
+http://localhost:{port}/docs.
+
+## Using another port
+
+If port {port} is taken, start it with `python -m uvicorn {module}:app --port 8080`
+instead; the documentation is then on http://localhost:8080/docs.
+"""
+
+_COMPOSE_README_TEMPLATE = """\
+# {title}
+
+The services of this app and how they are built are described in
+`{compose}`; Docker Compose builds and starts them together.
+
+## Run it
+
+From this folder, with Docker running:
+
+```bash
+{cd}docker compose up --build
+```
+{addresses}
+## Using other ports
+
+Each service's `ports` entry in `{compose}` reads `"<port on this machine>:<port in
+the container>"`. Change the first number to publish a service on another port.{vite_note}
+"""
+
+_COMPOSE_VITE_NOTE = """ The web
+app's API address is fixed when its image is built (`VITE_API_URL` in the same
+file), so change it too when you move the API."""
 
 
 def _read_text(path: str) -> str:
@@ -345,16 +457,41 @@ def _read_text(path: str) -> str:
 # Run workspaces are temp folders named after the run, never the app.
 _RUN_DIR_PREFIX = "besser_llm_"
 
+# ``FastAPI(title=<string literal>``: the backend generator writes the title
+# with ``repr()``, so the quote character depends on the text.
+_API_TITLE_RE = _re.compile(
+    r"""FastAPI\(\s*title\s*=\s*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")""")
 
-def _app_title(output_dir: str, backend_entry: str) -> str:
-    """The app's name for the README: the model name the backend generator put
-    in ``FastAPI(title="<Name> API")``, else a user-chosen folder name."""
-    found = _re.search(r'FastAPI\(\s*title\s*=\s*"([^"]+?)(?: API)?"', _read_text(backend_entry))
-    if found and found.group(1).strip():
-        return found.group(1).strip()
+# The editor's names for a class diagram tab ("Class Diagram", "Class Diagram
+# 2", which is also the model's name then) and for a project ("New_Project")
+# that nobody renamed: they name no app.
+_DEFAULT_NAME_RE = _re.compile(r"class diagram(?: \d+)?|new project", _re.IGNORECASE)
+# A longer name is cut: it is a heading.
+_MAX_TITLE_CHARS = 80
+
+
+def _api_title(backend_entry: str) -> str:
+    """The model name the backend generator put in ``FastAPI(title='<Name> API')``."""
+    found = _API_TITLE_RE.search(_read_text(backend_entry))
+    if not found:
+        return ""
+    try:
+        title = ast.literal_eval(found.group(1))
+    except (ValueError, SyntaxError):
+        return ""
+    return title.removesuffix(" API") if isinstance(title, str) else ""
+
+
+def _app_title(output_dir: str, backend_entry: str, app_name: str = "") -> str:
+    """The app's name for the README: the project's name, else the model's,
+    else a user-chosen folder name; never one of the editor's default names."""
     folder = os.path.basename(os.path.abspath(output_dir))
-    if folder and not folder.startswith(_RUN_DIR_PREFIX):
-        return folder.replace("_", " ").strip() or "Generated app"
+    candidates = (app_name, _api_title(backend_entry),
+                  "" if folder.startswith(_RUN_DIR_PREFIX) else folder)
+    for candidate in candidates:
+        title = " ".join((candidate or "").replace("_", " ").split())
+        if title and not _DEFAULT_NAME_RE.fullmatch(title):
+            return title[:_MAX_TITLE_CHARS].rstrip()
     return "Generated app"
 
 
@@ -404,6 +541,19 @@ def _find_vite_react_frontends(output_dir: str) -> list:
         if "react" in declared and uses_vite:
             found.append((folder, manifest))
     return found
+
+
+def _uses_vite(folder: str, files: list) -> bool:
+    """A Vite project: a Vite config, or Vite declared in its package.json."""
+    if any(name.startswith(_VITE_CONFIG_PREFIX) for name in files):
+        return True
+    if "package.json" not in files:
+        return False
+    try:
+        manifest = json.loads(_read_text(os.path.join(folder, "package.json")) or "{}")
+    except ValueError:
+        return False
+    return isinstance(manifest, dict) and "vite" in _declared(manifest)
 
 
 def _existing_vite_config(frontend_dir: str):
@@ -464,7 +614,7 @@ def _bare_imports(frontend_dir: str) -> set:
         for fname in files:
             if not fname.endswith(_FRONTEND_SOURCE_EXT):
                 continue
-            for spec in _IMPORT_SPEC_RE.findall(_read_text(os.path.join(folder, fname))):
+            for spec in import_specifiers(os.path.join(folder, fname)):
                 if spec.startswith((".", "/")):
                     continue
                 parts = spec.split("/")
@@ -510,8 +660,9 @@ def _repair_frontend_manifest(frontend_dir: str, manifest: dict) -> list:
     return repairs
 
 
-def _backend_entry_command(backend_dir: str):
-    """Docker CMD (JSON-array text) for a generated FastAPI backend."""
+def _backend_entry(backend_dir: str):
+    """A generated FastAPI backend's entry file and whether running the file
+    starts the server, or None when the folder holds no FastAPI app."""
     candidates = []
     try:
         names = sorted(os.listdir(backend_dir))
@@ -529,9 +680,76 @@ def _backend_entry_command(backend_dir: str):
     # run has left several FastAPI modules around.
     candidates.sort(key=lambda item: (item[0] != "main_api.py", item[0]))
     fname, source = candidates[0]
-    if "__main__" in source and "uvicorn.run" in source:
+    return fname, "__main__" in source and "uvicorn.run" in source
+
+
+def _backend_entry_command(backend_dir: str):
+    """Docker CMD (JSON-array text) for a generated FastAPI backend."""
+    entry = _backend_entry(backend_dir)
+    if entry is None:
+        return None
+    fname, starts_server = entry
+    if starts_server:
         return f'["python", "{fname}"]'
     return f'["uvicorn", "{fname[:-3]}:app", "--host", "0.0.0.0", "--port", "8000"]'
+
+
+def _own_text(text: str, start: int) -> str:
+    """The text of the ``{...}`` block opening at ``start``, without its
+    nested blocks, string literals and comments."""
+    depth, quote, own = 0, "", []
+    index = start
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif text.startswith(("//", "/*"), index):
+            closing = "\n" if text[index + 1] == "/" else "*/"
+            end = text.find(closing, index + 2)
+            if end < 0:
+                break
+            index = end + len(closing) - 1
+        elif char in "'\"`":
+            quote = char
+        elif char in "{[(":
+            depth += 1
+        elif char in "}])":
+            depth -= 1
+            if depth == 0:
+                break
+        elif depth == 1:
+            own.append(char)
+        index += 1
+    return "".join(own)
+
+
+def _dev_server_port(frontend_dir: str, manifest: dict):
+    """The port ``npm run dev`` serves on, or None when it cannot be read
+    without doubt: the script's ``--port``, else the Vite config's own
+    ``server.port`` (not ``hmr.port`` or a proxy's), else Vite's default."""
+    script = str((manifest.get("scripts") or {}).get("dev", ""))
+    if "--port" in script:
+        found = _re.search(r"--port[= ](\d+)(?!\S)", script)
+        return int(found.group(1)) if found else None
+    config = _existing_vite_config(frontend_dir)
+    text = _read_text(config) if config else ""
+    if not _re.search(r"\bport\b", text):
+        return _VITE_DEFAULT_DEV_PORT
+    blocks = list(_re.finditer(r"\bserver\s*:\s*\{", text))
+    if len(blocks) != 1:
+        return None
+    ports = _re.findall(r"(?<![\w.])port\s*:\s*([^\s,]*)", _own_text(text, blocks[0].end() - 1))
+    if not ports:
+        return _VITE_DEFAULT_DEV_PORT
+    return int(ports[0]) if len(ports) == 1 and ports[0].isdigit() else None
+
+
+def _dev_server_address(frontend_dir: str, manifest: dict) -> str:
+    port = _dev_server_port(frontend_dir, manifest)
+    return f"http://localhost:{port}" if port else "the address `npm run dev` prints"
 
 
 def _find_backend_dir(output_dir: str):
@@ -551,7 +769,7 @@ def _find_backend_dir(output_dir: str):
     return matches[0] if len(matches) == 1 else None
 
 
-def _ensure_deployment_files(output_dir: str, frontend_dir: str) -> list:
+def _ensure_deployment_files(output_dir: str, frontend_dir: str, manifest: dict, app_name: str = "") -> list:
     """Dockerfiles + compose + README, only for the plain two-service shape.
 
     Skipped entirely when the app already ships any Docker file: a
@@ -585,29 +803,180 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str) -> list:
     if _write_text(os.path.join(output_dir, "docker-compose.yml"),
                    _COMPOSE_TEMPLATE.format(backend=backend_name, frontend=frontend_name)):
         repairs.append("docker-compose.yml")
-
-    readme = os.path.join(output_dir, "README.md")
-    if not os.path.isfile(readme):
-        entry = _re.search(r'"(\w+\.py)"', cmd)
-        entry_file = entry.group(1) if entry else "main_api.py"
-        if _write_text(readme, _README_TEMPLATE.format(
-                title=_app_title(output_dir, os.path.join(backend_dir, entry_file)),
-                backend=backend_name, frontend=frontend_name,
-                entry=entry_file)):
-            repairs.append("README.md")
     return repairs
 
 
-def ensure_frontend_scaffold(output_dir: str) -> list:
+def _two_service_readme(output_dir: str, app_name: str):
+    """README text for the backend + Vite frontend this module deploys with its own compose file, or None."""
+    backend_dir = _find_backend_dir(output_dir)
+    entry = _backend_entry(backend_dir) if backend_dir else None
+    if entry is None:
+        return None
+    backend_name = os.path.basename(backend_dir)
+    for frontend_dir, manifest in _find_vite_react_frontends(output_dir):
+        frontend_name = os.path.basename(frontend_dir)
+        if (os.path.dirname(os.path.abspath(frontend_dir)) == os.path.abspath(output_dir)
+                and _read_text(os.path.join(output_dir, "docker-compose.yml"))
+                == _COMPOSE_TEMPLATE.format(backend=backend_name, frontend=frontend_name)):
+            entry_file, starts_server = entry
+            module = entry_file[:-3]
+            return _README_TEMPLATE.format(
+                title=_app_title(output_dir, os.path.join(backend_dir, entry_file), app_name),
+                backend=backend_name, frontend=frontend_name, module=module,
+                start=(f"python {entry_file}" if starts_server
+                       else f"python -m uvicorn {module}:app --port 8000"),
+                dev_address=_dev_server_address(frontend_dir, manifest))
+    return None
+
+
+def _root_readme(output_dir: str):
+    """The output's README at its root, whatever its case and extension, or None."""
+    try:
+        names = sorted(os.listdir(output_dir))
+    except OSError:
+        return None
+    return next((os.path.join(output_dir, name) for name in names if name.lower().startswith("readme")), None)
+
+
+def _served_port(source: str):
+    """The port an entry file that runs itself passes to ``uvicorn.run``, or None."""
+    found = _re.search(r"uvicorn\.run\([^)]*\bport\s*=\s*(\d+)", source)
+    return int(found.group(1)) if found else None
+
+
+def _backend_readme(output_dir: str, app_name: str):
+    """README text for an output that is one FastAPI backend, or None."""
+    if os.path.isfile(os.path.join(output_dir, "requirements.txt")) and _backend_entry(output_dir):
+        backend_dir = output_dir
+    else:
+        backend_dir = _find_backend_dir(output_dir)
+    if backend_dir is None:
+        return None
+    for folder, files in _iter_project_dirs(output_dir):
+        # Another app (a Next.js or Angular frontend) would make a backend-only README half true.
+        inside = os.path.commonpath([os.path.abspath(folder), os.path.abspath(backend_dir)])
+        if "package.json" in files and inside != os.path.abspath(backend_dir):
+            return None
+    entry_file, starts_server = _backend_entry(backend_dir)
+    module = entry_file[:-3]
+    if not module.isidentifier():
+        return None
+    port =_served_port(_read_text(os.path.join(backend_dir, entry_file))) if starts_server else None
+    start = f"python {entry_file}" if port else f"python -m uvicorn {module}:app --port 8000"
+    folder = "" if backend_dir == output_dir else os.path.basename(backend_dir)
+    return _BACKEND_README_TEMPLATE.format(
+        title=_app_title(output_dir, os.path.join(backend_dir, entry_file), app_name),
+        where=f" (`{folder}/`)" if folder else "",
+        cd=f"cd {folder}\n" if folder else "", start=start, port=port or 8000, module=module)
+
+
+def _published_ports(compose_path: str):
+    """(service, port on this machine) for each port the app's own services (those with a ``build``)
+    publish, a database or cache image being no address to open; None for a file Compose cannot run."""
+    try:
+        services = (yaml.safe_load(_read_text(compose_path)) or {}).get("services")
+    except (yaml.YAMLError, AttributeError):
+        return None
+    if not isinstance(services, dict):
+        return None
+    found = []
+    for name, service in services.items():
+        if not isinstance(service, dict) or not service.get("build"):
+            continue
+        for entry in service.get("ports") or []:
+            if isinstance(entry, dict):
+                published = entry.get("published")
+            else:  # "8000:8000", "127.0.0.1:8000:8000", "${PORT:-3000}:80"; a bare container port publishes none
+                parts = _COMPOSE_DEFAULT_RE.sub(r"\1", str(entry)).split(":")
+                published = parts[-2] if len(parts) > 1 else None
+            if str(published or "").isdigit():
+                found.append((str(name), int(published)))
+    return found
+
+
+def _compose_readme(output_dir: str, app_name: str):
+    """README text for an output that one Compose file starts, or None."""
+    candidates = [os.path.join(output_dir, name) for name in _COMPOSE_NAMES]
+    for folder, files in _iter_project_dirs(output_dir):
+        if os.path.dirname(os.path.abspath(folder)) == os.path.abspath(output_dir):
+            candidates += [os.path.join(folder, name) for name in files if name in _COMPOSE_NAMES]
+    found = [path for path in candidates if os.path.isfile(path)]
+    if len(found) != 1:
+        return None
+    compose_dir = os.path.dirname(found[0])
+    folder = "" if os.path.abspath(compose_dir) == os.path.abspath(output_dir) else os.path.basename(compose_dir)
+    backend_dir = _find_backend_dir(compose_dir)
+    entry = _backend_entry(backend_dir) if backend_dir else None
+    ports = _published_ports(found[0])
+    if ports is None:
+        return None
+    rows = "".join(f"| {name} | http://localhost:{port} |\n" for name, port in ports)
+    compose = (f"{folder}/" if folder else "") + os.path.basename(found[0])
+    return _COMPOSE_README_TEMPLATE.format(
+        title=_app_title(output_dir, os.path.join(backend_dir, entry[0]) if entry else "", app_name),
+        compose=compose, cd=f"cd {folder}\n" if folder else "",
+        addresses=f"\n| Service | Address |\n| --- | --- |\n{rows}" if rows else "",
+        vite_note=_COMPOSE_VITE_NOTE if "VITE_API_URL" in _read_text(found[0]) else "")
+
+
+def ensure_run_instructions(output_dir: str, app_name: str = "") -> list:
+    """A README at the output root saying how to run what was generated.
+
+    Shapes, from the files delivered: the backend + Vite frontend deployed by
+    ``_ensure_deployment_files``, an app started by one compose file, and a
+    FastAPI backend on its own; other outputs get none. A README that carries
+    ``README_MARKER`` is BESSER's and is rewritten when the output changes (a
+    later run adds a frontend), or removed when no shape fits any more; any
+    other README is the user's and is never touched. Returns what it changed.
+    """
+    path = _root_readme(output_dir)
+    if path is not None and README_MARKER not in _read_text(path):
+        return []
+    text = (_two_service_readme(output_dir, app_name) or _compose_readme(output_dir, app_name)
+            or _backend_readme(output_dir, app_name))
+    if text is None:
+        if path is not None:
+            try:
+                os.remove(path)
+            except OSError:
+                return []
+            return [f"{os.path.basename(path)} (removed: no run instructions fit the output)"]
+        return []
+    text += f"\n{README_MARKER}\n"
+    path = path or os.path.join(output_dir, "README.md")
+    if _read_text(path) != text and _write_text(path, text):
+        return [os.path.basename(path)]
+    return []
+
+
+def _ensure_dockerignores(output_dir: str) -> list:
+    """A ``.dockerignore`` beside every ``Dockerfile`` that copies its whole
+    folder and has none: the ones written here and a generator's alike."""
+    written: list = []
+    for folder, files in _iter_project_dirs(output_dir):
+        if "Dockerfile" not in files or ".dockerignore" in files:
+            continue
+        vite_folders = tuple(os.path.relpath(project, folder).replace("\\", "/")
+                             for project, names in _iter_project_dirs(folder) if _uses_vite(project, names))
+        content = _dockerignore_for(_read_text(os.path.join(folder, "Dockerfile")), vite_folders)
+        if content and _write_text(os.path.join(folder, ".dockerignore"), content):
+            written.append(os.path.relpath(os.path.join(folder, ".dockerignore"), output_dir).replace("\\", "/"))
+    return written
+
+
+def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
     """Make an LLM-authored React frontend actually render, deterministically.
 
     Writes the build configuration the frontend checklist never asks for: a
     Vite config with ``@vitejs/plugin-react`` (which is also what makes a
     missing ``import React`` harmless), an env-driven API base, a working
     ``build`` script, the two Dockerfiles and a compose file, and a README.
+    Any Dockerfile in the output that copies its whole folder gets a
+    ``.dockerignore``, whoever wrote it.
 
     Idempotent, and never overwrites an existing Vite config, Dockerfile,
-    compose file or README - a project that already has one keeps it.
+    ``.dockerignore``, compose file or README - a project that already has one keeps it.
+    ``app_name`` is the project's name, for the README title.
     Returns one description per repair, for the run log.
     """
     repairs: list = []
@@ -631,5 +1000,7 @@ def ensure_frontend_scaffold(output_dir: str) -> list:
         for rel in _rewrite_api_base(frontend_dir):
             repairs.append(f"{label}{rel}: API base reads VITE_API_URL")
 
-        repairs.extend(_ensure_deployment_files(output_dir, frontend_dir))
+        repairs.extend(_ensure_deployment_files(output_dir, frontend_dir, manifest, app_name))
+    repairs.extend(_ensure_dockerignores(output_dir))
+    repairs.extend(ensure_run_instructions(output_dir, app_name))
     return repairs

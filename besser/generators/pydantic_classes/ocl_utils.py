@@ -213,6 +213,7 @@ def get_constraints_for_class(
         if 'model_expression' in result and not include_model_level:
             continue
         result['constraint_name'] = constraint.name
+        result['constraint'] = constraint  # what the generated validator traces back to
         if result.get('skipped'):
             result['comment_lines'] = _format_unenforced_comment(
                 constraint.name, constraint.expression, _NOT_TRANSPILABLE_REASON

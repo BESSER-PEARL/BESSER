@@ -151,6 +151,10 @@ In ``FULL`` mode the generator produces, in addition to the usual
 personalization artefacts. ``CODE_ONLY`` skips personalization entirely. See
 :doc:`baf` for the full mode reference.
 
+When the personalization asks the LLM (``agentLanguage``, ``agentStyle``, ``languageComplexity``, ``sentenceLength`` or
+``userProfileModel``; ``personalization_uses_llm(config)`` tells), the generator's ``ai_files`` lists the files that
+now hold LLM-written text, so a generation trace records them as AI output rather than deterministic template output.
+
 What Gets Personalized
 ~~~~~~~~~~~~~~~~~~~~~~
 

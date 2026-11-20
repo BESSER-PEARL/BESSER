@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, Set
+
+from jinja2 import DictLoader
+
+from besser.utilities.generation_trace import trace_source, traced_environment
+
+from .routes import page_route
+
+logger = logging.getLogger(__name__)
 
 # Inline SVG elements, by lowercase name, with the casing React needs.
 _SVG_TAGS = {name.lower(): name for name in (
@@ -13,6 +22,13 @@ _SVG_TAGS = {name.lower(): name for name in (
     "filter", "feGaussianBlur", "feOffset", "feDropShadow", "feFlood", "feComposite",
     "feColorMatrix", "feBlend", "feMerge", "feMergeNode",
 )}
+
+
+# Wraps text built in Python in the trace markers of the element it renders: the pages are built from strings
+# rather than templates, but their regions are recorded by the same tag.
+_TRACED_TEXT = traced_environment(
+    DictLoader({"page_builder.py": "{% trace element, label %}{{ text }}{% endtrace %}"})
+).get_template("page_builder.py")
 
 
 class _PageRenderContext:
@@ -88,12 +104,12 @@ class PageBuilderMixin:
                 + f"export default {component_name};\n"
             )
 
-            file_path = os.path.join(pages_dir, f"{component_name}.tsx")
-            with open(file_path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(file_contents)
+            self._write_traced(f"src/pages/{component_name}.tsx", file_contents,
+                               trace_source(self._element_of(page), "page_builder.py#screen"))
 
             page_infos.append(
                 {
+                    "element": self._element_of(page),
                     "component_name": component_name,
                     "file_name": f"./pages/{component_name}",
                     "route_path": page.get("route_path") or "/",
@@ -142,6 +158,8 @@ class PageBuilderMixin:
             imports.append("import { FormBlock } from \"../components/runtime/FormBlock\";")
         if "CrudButton" in context.imports:
             imports.append("import { CrudButton } from \"../components/runtime/CrudButton\";")
+        if "LookupSelect" in context.imports:
+            imports.append("import { LookupSelect } from \"../components/runtime/LookupSelect\";")
 
         # Specialized input / alert components
         all_input_components: List[str] = sorted(context.input_components)
@@ -202,9 +220,18 @@ class PageBuilderMixin:
         rendered = []
         for component in components:
             rendered.append(
-                self._render_component(component, selector_style_map, context, indent)
+                self._traced_component(
+                    component, self._render_component(component, selector_style_map, context, indent)
+                )
             )
         return "\n".join([line for line in rendered if line])
+
+    def _traced_component(self, node: Dict[str, Any], jsx: str) -> str:
+        """``jsx`` inside the trace markers of the GUI element ``node`` was serialized from, if it has an id."""
+        element = self._element_of(node)
+        if element is None or not jsx:
+            return jsx
+        return _TRACED_TEXT.render(element=element, label="component", text=jsx)
 
     def _render_component(
         self,
@@ -261,12 +288,12 @@ class PageBuilderMixin:
         if comp_type in {"link", "link-button"}:
             url = node.get("url") or ""
             target_path = self._resolve_target_path(node)
+            if not target_path and node.get("target") != "_blank":
+                target_path = self._page_route(url)
             on_click_expr = None
             if target_path and (not url or url == "#" or not str(url).startswith("http")):
                 context.needs_navigate = True
-                on_click_expr = (
-                    f"(e) => {{ e.preventDefault(); navigate({json.dumps(target_path)}); }}"
-                )
+                on_click_expr = self._router_click(target_path)
                 url = target_path
             if not url or url == "#":
                 url = target_path or "/"
@@ -329,7 +356,7 @@ class PageBuilderMixin:
             bound = bool(binding.get("endpoint") and fields)
             input_lines = []
             for field in inputs:
-                input_lines.append(self._render_form_field(field, indent_str + "  ", named=bound))
+                input_lines.append(self._render_form_field(field, indent_str + "  ", named=bound, context=context))
             inner = "\n".join(input_lines) if input_lines else ""
             if bound:
                 context.imports.add("FormBlock")
@@ -342,6 +369,7 @@ class PageBuilderMixin:
                         "entity": binding.get("entity"),
                         "fields": fields,
                         "submitLabel": submit_label,
+                        "submitClassName": node.get("submit_class"),
                     },
                 )
                 return (
@@ -353,10 +381,12 @@ class PageBuilderMixin:
             props = self._build_element_props(component_id, class_list, style, attributes, None)
             props += " onSubmit={" + on_submit_expr + "}"
             submit_expr = f"{{{json.dumps(submit_label, ensure_ascii=False)}}}"
+            submit_class = node.get("submit_class")
+            submit_props = f" className={json.dumps(submit_class)}" if submit_class else ""
             return (
                 f"{indent_str}<form{props}>\n"
                 + inner
-                + f"\n{indent_str}  <button type=\"submit\">{submit_expr}</button>\n"
+                + f"\n{indent_str}  <button type=\"submit\"{submit_props}>{submit_expr}</button>\n"
                 + f"{indent_str}</form>"
             )
 
@@ -380,10 +410,15 @@ class PageBuilderMixin:
                     url = self._page_path_map.get(label) or "/"
                 target = item.get("target")
                 rel = item.get("rel")
+                on_click = ""
+                if target != "_blank" and self._page_route(url):
+                    context.needs_navigate = True
+                    on_click = f" onClick={{{self._router_click(url)}}}"
                 label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
                 item_lines.append(
                     f"{indent_str}    <li {list_item_style}>"
                     f"<a href={json.dumps(url)}"
+                    + on_click
                     + (f" target={json.dumps(target)}" if target else "")
                     + (f" rel={json.dumps(rel)}" if rel else "")
                     + f">{label_expr}</a></li>"
@@ -553,6 +588,13 @@ class PageBuilderMixin:
         )
         return f"{indent_str}<AlertBlock{props} />"
 
+    # Look of a generated text input or select
+    _FORM_CONTROL_STYLE = {
+        "padding": "6px 10px", "border": "1px solid #cbd5e1",
+        "borderRadius": "4px", "fontFamily": "inherit",
+        "width": "100%", "boxSizing": "border-box",
+    }
+
     def _render_input(
         self,
         node: Dict[str, Any],
@@ -581,12 +623,7 @@ class PageBuilderMixin:
         def ep(**kw: Any) -> Dict[str, Any]:
             return {k: v for k, v in kw.items() if v is not None and v is not False and v != ""}
 
-        input_style: Dict[str, Any] = {
-            "padding": "6px 10px", "border": "1px solid #cbd5e1",
-            "borderRadius": "4px", "fontFamily": "inherit",
-            "width": "100%", "boxSizing": "border-box",
-            **style,
-        }
+        input_style: Dict[str, Any] = {**self._FORM_CONTROL_STYLE, **style}
 
         def with_label(inner_jsx: str) -> str:
             """Wrap input in label+div when a label is present."""
@@ -876,7 +913,8 @@ class PageBuilderMixin:
         inner = f'{indent_str}<input type={json.dumps(html_type)}{props} />'
         return with_label(inner) if label else inner
 
-    def _render_form_field(self, field: Dict[str, Any], indent_str: str, named: bool = False) -> str:
+    def _render_form_field(self, field: Dict[str, Any], indent_str: str, named: bool = False,
+                           context: Optional[_PageRenderContext] = None) -> str:
         field_id = field.get("id") or ""
         label = field.get("label") or field_id
         field_type = field.get("type") or "Text"
@@ -910,9 +948,21 @@ class PageBuilderMixin:
             "multiple": multiple,
             "default_value": default_value,
         }
-        # A submitting form reads each control by its name (the field id)
-        field_attrs = {"name": field_id} if named and field_id else {}
-        input_jsx = self._render_input(field_node, field_id, [], {}, field_attrs, indent_str)
+        lookup = field.get("lookup")
+        if lookup and named and context is not None:
+            # A related record is chosen from the records of its class
+            context.imports.add("LookupSelect")
+            props = self._build_component_props(
+                component_id=field_id,
+                class_list=[],
+                style=self._FORM_CONTROL_STYLE,
+                extra_props={"name": field_id, **lookup, "required": required or None},
+            )
+            input_jsx = f"{indent_str}<LookupSelect{props} />"
+        else:
+            # A submitting form reads each control by its name (the field id)
+            field_attrs = {"name": field_id} if named and field_id else {}
+            input_jsx = self._render_input(field_node, field_id, [], {}, field_attrs, indent_str)
 
         return (
             f"{indent_str}<div {wrapper_style}>\n"
@@ -1026,6 +1076,11 @@ class PageBuilderMixin:
 
         props = self._build_element_props(component_id, class_list, style, attributes, on_click_expr)
         label = node.get("label") or node.get("name") or "Button"
+        if not target_path:
+            logger.warning(
+                "Button %r (%s) has no action, method or target page: it is generated as a button "
+                "that does nothing.", label, component_id,
+            )
         content_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
         return f"{indent_str}<button{props}>{content_expr}</button>"
 
@@ -1187,10 +1242,23 @@ class PageBuilderMixin:
         return None
 
     @staticmethod
+    def _router_click(path: str) -> str:
+        """The click handler of an anchor that opens ``path`` through the router; a
+        modified or middle click is left to the browser (new tab or window)."""
+        return (
+            "(e) => { if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; "
+            f"e.preventDefault(); navigate({json.dumps(path)}); }}"
+        )
+
+    def _page_route(self, url: Optional[str]) -> Optional[str]:
+        """``url`` when it is the route of one of the app's own pages."""
+        return url if url and url in getattr(self, "_page_path_map", {}).values() else None
+
+    @staticmethod
     def _path_from_name(name: Optional[str]) -> Optional[str]:
         if not name:
             return None
-        return "/" + str(name).strip().lower().replace(" ", "-")
+        return page_route(name)
 
     # ------------------------------------------------------------------ #
     # Tag helpers
@@ -1216,11 +1284,24 @@ class PageBuilderMixin:
             return tag_value
         return _SVG_TAGS.get(tag_value, "div")
 
-    @staticmethod
-    def _select_text_tag(tag: Optional[str]) -> str:
-        valid_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li", "text", "tspan"}
+    # Tags a text element keeps (``label`` stays a ``p``: its ``for`` is not a React prop)
+    _TEXT_ELEMENT_TAGS = {
+        "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "li", "text", "tspan",
+        "strong", "em", "b", "i", "u", "s", "strike", "small", "mark", "del", "ins", "sub", "sup",
+        "code", "kbd", "samp", "var", "abbr", "cite", "q", "dfn", "time",
+        "blockquote", "pre", "figcaption", "summary", "dt", "dd", "address",
+    }
+
+    @classmethod
+    def _select_text_tag(cls, tag: Optional[str]) -> str:
+        """The tag of a text element: its own, else the one a container of that tag
+        gets (``nav`` stays, ``td`` becomes ``div``); ``p`` when it has none."""
         tag_value = (tag or "").lower()
-        return tag_value if tag_value in valid_tags else "p"
+        if not tag_value or tag_value == "label":
+            return "p"
+        if tag_value in cls._TEXT_ELEMENT_TAGS:
+            return tag_value
+        return cls._select_container_tag(tag_value)
 
     @staticmethod
     def _react_svg_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:
@@ -1271,13 +1352,19 @@ class PageBuilderMixin:
         import_lines = []
         for page in page_infos:
             import_lines.append(
-                f"import {page['component_name']} from \"{page['file_name']}\";"
+                _TRACED_TEXT.render(
+                    element=page.get("element"), label="import",
+                    text=f"import {page['component_name']} from \"{page['file_name']}\";",
+                )
             )
         imports = "\n".join(import_lines)
 
         routes = "\n".join(
             [
-                f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />"
+                _TRACED_TEXT.render(
+                    element=p.get("element"), label="route",
+                    text=f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />",
+                )
                 for p in page_infos
             ]
         )
@@ -1307,9 +1394,7 @@ class PageBuilderMixin:
             "export default App;\n"
         )
 
-        app_path = self.build_generation_path("src/App.tsx")
-        with open(app_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(app_contents)
+        self._write_traced("src/App.tsx", app_contents)
     # --------------------------------------------------------------------- #
     # Context builders
     # --------------------------------------------------------------------- #

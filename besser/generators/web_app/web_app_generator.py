@@ -90,6 +90,9 @@ class WebAppGenerator(GeneratorInterface):
             A user-authored ``db1`` that holds no ``YOUR-...`` placeholder is kept.
             Pass ``False`` when the services do not share a volume (e.g. separate
             hosting services); the agent config then keeps its placeholders.
+        app_name (str, optional): The application's name as its users see it: the
+            browser tab title and the README headings. Without it the README is
+            titled after the domain model and the browser tab reads ``BESSER App``.
     """
 
     regenerable = True
@@ -97,9 +100,10 @@ class WebAppGenerator(GeneratorInterface):
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,
-                 agent_config_yamls=None, link_agent_database: bool = True):
+                 agent_config_yamls=None, link_agent_database: bool = True, app_name: str = None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
+        self.app_name = app_name
         self.link_agent_database = link_agent_database
         if agent_model is not None and not agent_models:
             agent_models = [agent_model]
@@ -148,18 +152,21 @@ class WebAppGenerator(GeneratorInterface):
         if self.agent_models:
             self._generate_agent(self.env)
         self._generate_docker_files(self.env)
+        self._generate_readme(self.env)
 
     def _generate_frontend(self, env):
         # Generate frontend code in 'frontend' subfolder
         frontend_dir = os.path.join(self.output_dir, "frontend") if self.output_dir else "frontend"
-        frontend_gen = ReactGenerator(self.model, self.gui_model, output_dir=frontend_dir)
+        frontend_gen = ReactGenerator(self.model, self.gui_model, output_dir=frontend_dir, app_name=self.app_name)
         frontend_gen.generate()
+        self._merge_traced_files(frontend_gen, "frontend")
 
     def _generate_backend(self, env):
         # Generate backend code in 'backend' subfolder
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
         backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
         backend_gen.generate()
+        self._merge_traced_files(backend_gen, "backend")
 
     def _generate_agent(self, env):
         """Generate agent code for every configured agent model.
@@ -188,8 +195,10 @@ class WebAppGenerator(GeneratorInterface):
             os.makedirs(agent_dir, exist_ok=True)
             cfg = self.agent_configs.get(getattr(agent, "name", None))
             cfg_yaml = self.agent_config_yamls.get(getattr(agent, "name", None))
-            BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml,
-                         default_db=default_db).generate()
+            agent_gen = BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml,
+                                     default_db=default_db)
+            agent_gen.generate()
+            self._merge_traced_files(agent_gen, f"agents/{slug}")
 
     def agent_default_db(self):
         """The ``db1`` entry pointing the agents at the web app's SQLite database.
@@ -200,6 +209,15 @@ class WebAppGenerator(GeneratorInterface):
         if not self.link_agent_database:
             return None
         return {"dialect": "sqlite", "file": webapp_database_file(self.model.name)}
+
+    def _generate_readme(self, env):
+        """Write the README that tells how to run the generated application."""
+        readme_path = os.path.join(self.output_dir, "README.md")
+        with open(readme_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(env.get_template("README.md.j2").render(
+                title=(self.app_name or self.model.name).replace("_", " "),
+                agent_models=self.agent_models,
+            ))
 
     def _generate_docker_files(self, env):
         """

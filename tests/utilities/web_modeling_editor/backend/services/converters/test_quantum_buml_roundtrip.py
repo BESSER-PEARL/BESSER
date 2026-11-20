@@ -9,6 +9,7 @@ import tempfile
 import pytest
 
 from besser.BUML.metamodel.quantum.quantum import (
+    CNOT,
     ControlState,
     FunctionGate,
     GateDefinition,
@@ -29,6 +30,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
     quantum_buml_to_json,
     quantum_circuit_to_editor_json,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters import process_quantum_diagram
 
 
 def _export(circuit):
@@ -125,3 +127,14 @@ def test_a_function_gate_whose_name_is_not_an_identifier_reimports(gate_name):
     out = quantum_buml_to_json(_export(qc))
 
     assert [meta["label"] for meta in out["gateMetadata"].values()] == [gate_name, gate_name]
+
+
+def test_a_cnot_is_written_as_the_editor_draws_it_and_reads_back_as_a_controlled_x():
+    circuit = QuantumCircuit("Bell", 2)
+    circuit.add_operation(HadamardGate(0))
+    circuit.add_operation(CNOT(0, 1))
+    data = quantum_circuit_to_editor_json(circuit)
+    assert data["cols"] == [["H", 1], ["•", "X"]]
+    operations = process_quantum_diagram({"title": "Bell", "model": data}).operations
+    assert [type(op).__name__ for op in operations][1] != "CustomGate"
+    assert (operations[1].control_qubits, operations[1].target_qubits) == ([0], [1])

@@ -3,9 +3,12 @@ package {{ package_name }};
 {% endif %}
 {% import "java_fields.py.j2" as java_fields %}
 {% set attribs = [] %}
+{% set attr_objs = [] %}
+{% set assoc_ends = [] %}
 {% for attr in sort_by_timestamp(class_obj.attributes) %}
     {% do attribs.append(java_fields.get_field(attr.type.name)) %}
     {% do attribs.append(attr.name) %}
+    {% do attr_objs.append(attr) %}
 {% endfor %}
 {% set generals = namespace(names=[]) %}
 {% set parent_attribs = [] %}
@@ -40,9 +43,12 @@ import java.util.ArrayList;
 {% else %}
     {% set extends = "" %}
 {% endif %}
+{% trace class_obj, "class" %}
 public class {{ class_obj.name }} {{ extends }}{
 {% for i in range(0, attribs|length, 2) %}
+    {% trace attr_objs[i // 2], "attribute" %}
     private {{ attribs[i] }} {{ attribs[i+1] }};
+    {% endtrace %}
 {% endfor %}
 {% for association in class_obj.associations|sort(attribute='name') %}
     {% if association.ends|length == 2 and association.name not in processed_associations %}
@@ -52,16 +58,22 @@ public class {{ class_obj.name }} {{ extends }}{
             {% for end in ends_list %}
                 {% if end.is_navigable %}
                     {% if end.multiplicity.max > 1 %}
+    {% trace end.owner, "association" %}{% trace end, "association_end" %}
     private List<{{ end.type.name }}> {{ end.name }};
+    {% endtrace %}{% endtrace %}
                         {% do assocs.append('List<'+end.type.name+'>') %}
                         {% do assocs.append(end.name) %}
+                        {% do assoc_ends.append(end) %}
                         {% do assocs_card_over_1.append(end.type.name) %}
                         {% do assocs_card_over_1.append(end.name) %}
                         {% do self_assoc_names.append(end.name) %}
                     {% else %}
+    {% trace end.owner, "association" %}{% trace end, "association_end" %}
     private {{ end.type.name }} {{ end.name }};
+    {% endtrace %}{% endtrace %}
                         {% do assocs.append(end.type.name) %}
                         {% do assocs.append(end.name) %}
+                        {% do assoc_ends.append(end) %}
                     {% endif %}
                 {% endif %}
             {% endfor %}
@@ -76,26 +88,38 @@ public class {{ class_obj.name }} {{ extends }}{
             {% set class2_name = ns.end2.type.name %}
             {# Generate field for end2 (the other class) if navigable - supports bidirectional associations #}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
+    {% trace ns.end2.owner, "association" %}{% trace ns.end2, "association_end" %}
     private List<{{ class2_name }}> {{ ns.end2.name }};
+    {% endtrace %}{% endtrace %}
                 {% do assocs.append('List<'+class2_name+'>') %}
                 {% do assocs.append(ns.end2.name) %}
+                {% do assoc_ends.append(ns.end2) %}
                 {% do assocs_card_over_1.append(class2_name) %}
                 {% do assocs_card_over_1.append(ns.end2.name) %}
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 and ns.end2.is_navigable %}
+    {% trace ns.end2.owner, "association" %}{% trace ns.end2, "association_end" %}
     private List<{{ class2_name }}> {{ ns.end2.name }};
+    {% endtrace %}{% endtrace %}
                 {% do assocs.append('List<'+class2_name+'>') %}
                 {% do assocs.append(ns.end2.name) %}
+                {% do assoc_ends.append(ns.end2) %}
                 {% do assocs_card_over_1.append(class2_name) %}
                 {% do assocs_card_over_1.append(ns.end2.name) %}
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 and ns.end2.is_navigable %}
+    {% trace ns.end2.owner, "association" %}{% trace ns.end2, "association_end" %}
     private {{ class2_name }} {{ ns.end2.name }};
+    {% endtrace %}{% endtrace %}
                 {% do assocs.append(class2_name) %}
                 {% do assocs.append(ns.end2.name) %}
+                {% do assoc_ends.append(ns.end2) %}
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 and ns.end2.is_navigable %}
                 {# Bidirectional: many-to-one association, generate back-reference to the one side #}
+    {% trace ns.end2.owner, "association" %}{% trace ns.end2, "association_end" %}
     private {{ class2_name }} {{ ns.end2.name }};
+    {% endtrace %}{% endtrace %}
                 {% do assocs.append(class2_name) %}
                 {% do assocs.append(ns.end2.name) %}
+                {% do assoc_ends.append(ns.end2) %}
             {% endif %}
             {# Don't mark as processed to support bidirectional associations - each class handles its own end #}
         {% endif %}
@@ -176,6 +200,7 @@ public class {{ class_obj.name }} {{ extends }}{
 {% for i in range(0, attribs|length, 2) %}
 {% set fname = attribs[i+1][0]|upper ~ attribs[i+1][1:] %}
 
+{% trace attr_objs[i // 2], "accessors" %}
     public {{ attribs[i] }} get{{ fname }}() {
         return this.{{ attribs[i+1] }};
     }
@@ -183,6 +208,7 @@ public class {{ class_obj.name }} {{ extends }}{
     public void set{{ fname }}({{ attribs[i] }} {{ attribs[i+1] }}) {
         this.{{ attribs[i+1] }} = {{ attribs[i+1] }};
     }
+{% endtrace %}
 {% endfor %}
 {# Element types held by more than one collection (e.g. Country holding the Observations
    of both Observation.reporter and Observation.partner): their add helpers are named after
@@ -194,6 +220,7 @@ public class {{ class_obj.name }} {{ extends }}{
 {% for i in range(0, assocs|length, 2) %}
 {% set aname = assocs[i+1][0]|upper ~ assocs[i+1][1:] %}
 
+{% trace assoc_ends[i // 2].owner, "association" %}{% trace assoc_ends[i // 2], "association_accessors" %}
     {% if assocs[i][:4] == "List" %}
     {% set element_type = assocs[i][5:-1] %}
     public {{ assocs[i] }} get{{ aname }}() {
@@ -218,6 +245,7 @@ public class {{ class_obj.name }} {{ extends }}{
         this.{{ assocs[i+1] }} = {{ assocs[i+1] }};
     }
     {% endif %}
+{% endtrace %}{% endtrace %}
 {% endfor %}
 {% set generated_assoc_methods = [] %}
 {% for i in range(0, assocs|length, 2) %}
@@ -241,6 +269,7 @@ public class {{ class_obj.name }} {{ extends }}{
             {% set ns.return_type = java_fields.get_field(method.type.name) | trim %}
         {% endif %}
 
+{% trace method, "method" %}
     {{ method.visibility }} {{ ns.return_type }} {{ method.name }}(
         {%- for param in sort_by_timestamp(method.parameters) -%}
             {{ java_fields.get_field(param.type.name) | trim }} {{ param.name }}{% if not loop.last %}, {% endif %}
@@ -249,6 +278,7 @@ public class {{ class_obj.name }} {{ extends }}{
         // TODO: implement {{ method.name }}
         throw new UnsupportedOperationException("{{ method.name }} is not implemented");
     }
+{% endtrace %}
     {% endif %}
 {% endfor %}
-}
+}{% endtrace %}

@@ -8,6 +8,7 @@ secrets) to the child.
 """
 
 import os
+from urllib.parse import urlsplit
 
 # Environment variables that are safe to expose to LLM-invoked subprocesses.
 # These are needed for basic tooling to work (PATH for binaries, HOME for
@@ -26,6 +27,9 @@ SAFE_ENV_ALLOWLIST: frozenset[str] = frozenset({
     "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
     # Node (harmless, often needed by tools)
     "NODE_PATH",
+    # The JVM flags that mitigate CVE-2026-114938, set in the Dockerfile:
+    # generated Java/Kotlin apps must run with them too.
+    "JAVA_TOOL_OPTIONS",
 })
 
 # Variable-name substrings that identify secret-like env vars. Even if
@@ -45,6 +49,17 @@ CA_BUNDLE_ENV: frozenset[str] = frozenset({
     "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
     "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "PIP_CERT", "NPM_CONFIG_CAFILE",
 })
+
+# Where the internet is reachable only through a proxy (the LIST VM), npm / pip
+# hang until their timeout without these. A proxy URL carrying credentials is
+# withheld: the agent can print its environment.
+PROXY_ENV: frozenset[str] = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"})
+
+
+def _proxy_value_is_safe(name: str, value: str) -> bool:
+    if name == "NO_PROXY":
+        return True
+    return "@" not in urlsplit(value if "://" in value else f"//{value}").netloc
 
 
 def safe_subprocess_env() -> dict[str, str]:
@@ -67,6 +82,10 @@ def safe_subprocess_env() -> dict[str, str]:
         upper = name.upper()
         if upper in CA_BUNDLE_ENV:
             if os.path.exists(value):
+                safe[name] = value
+            continue
+        if upper in PROXY_ENV:
+            if _proxy_value_is_safe(upper, value):
                 safe[name] = value
             continue
         if upper not in allowed:

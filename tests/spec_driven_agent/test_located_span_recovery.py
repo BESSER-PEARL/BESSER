@@ -90,14 +90,12 @@ def test_the_first_miss_returns_a_pre_filled_range(executor):
     assert (located["start_line"], located["end_line"]) == (5, 10), located
     assert located["read_id"]
     # 1-based numbers, in read_file's own format, straight from the file.
-    assert located["lines"].startswith('   5| @router.post(')
+    assert located["lines"].startswith('5| @router.post(')
     assert located["lines"].endswith('registerPayment method on a Bill instance."""')
     # One miss, not two: this is what removes the wasted turns.
     assert executor.consecutive_modify_misses("bill_methods.py") == 1
-    recovery = result["edit_recovery"]
-    assert recovery["next_tool"] == "replace_file_lines"
-    assert (recovery["start_line"], recovery["end_line"]) == (5, 10)
-    assert recovery["read_id"] == located["read_id"]
+    # edit_recovery names the step; located_range alone carries its arguments.
+    assert result["edit_recovery"] == {"next_tool": "replace_file_lines"}
     # Two competing windows would just reintroduce the guess.
     assert "did_you_mean" not in result
 
@@ -218,7 +216,7 @@ def test_no_range_once_range_edits_are_exhausted_for_the_path(executor):
     the range editor has been given up on, so nothing steers back into it.
     """
     read = call(executor, "read_file", path="bill_methods.py")
-    for _ in range(executor._RANGE_EDIT_GIVE_UP):
+    for _ in range(3):  # past the two refusals that escalate to a rewrite
         refused = call(executor, "replace_file_lines", path="bill_methods.py",
                        read_id=read["read_id"], start_line=6, end_line=6,
                        new_text="async def execute_bill_registerPayment(\n")

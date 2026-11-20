@@ -14,6 +14,8 @@ from besser.BUML.metamodel.quantum.quantum import (
 )
 import math
 
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
+
 from .utils import sanitize_name
 
 
@@ -41,6 +43,17 @@ def process_quantum_diagram(json_data):
             num_qubits = len(col)
 
     qc = QuantumCircuit(name=title, qubits=num_qubits)
+
+    # A circuit's cells have no ids: the editor's trace knows a gate by its cell, its column and
+    # wire under the diagram id (``<diagram id>:gate:<column>:<wire>``), and so does the gate here
+    # (a gate over several wires by its first one), so a trace can refer to it.
+    diagram_id = json_data.get('id') if isinstance(json_data.get('id'), str) else None
+    editor_ids = EditorIds()
+
+    def add_gate(gate, column, wire):
+        if diagram_id:
+            editor_ids.assign(gate, f"{diagram_id}:gate:{column}:{wire}")
+        qc.add_operation(gate)
 
     # Add classical register if there are classical bits
     if classical_bit_count > 0:
@@ -100,7 +113,7 @@ def process_quantum_diagram(json_data):
             gate = SwapGate(swap_qubits[0], swap_qubits[1],
                           control_qubits=[c[0] for c in controls],
                           control_states=[c[1] for c in controls])
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, swap_qubits[0])
 
         if len(rxx_qubits) >= 2:
             # RXX typically needs a parameter. Defaulting to 0 if not found.
@@ -109,40 +122,40 @@ def process_quantum_diagram(json_data):
             if controls:
                 gate.control_qubits = [c[0] for c in controls]
                 gate.control_states = [c[1] for c in controls]
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, rxx_qubits[0])
 
         if len(rzz_qubits) >= 2:
             gate = RZZGate(rzz_qubits[0], rzz_qubits[1], theta=0.0)
             if controls:
                 gate.control_qubits = [c[0] for c in controls]
                 gate.control_states = [c[1] for c in controls]
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, rzz_qubits[0])
 
         if len(rzx_qubits) >= 2:
             gate = RZXGate(rzx_qubits[0], rzx_qubits[1], theta=0.0)
             if controls:
                 gate.control_qubits = [c[0] for c in controls]
                 gate.control_states = [c[1] for c in controls]
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, rzx_qubits[0])
 
         if len(ryy_qubits) >= 2:
             gate = RYYGate(ryy_qubits[0], ryy_qubits[1], theta=0.0)
             if controls:
                 gate.control_qubits = [c[0] for c in controls]
                 gate.control_states = [c[1] for c in controls]
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, ryy_qubits[0])
 
         if len(bell_qubits) >= 2:
             gate = BellGate(bell_qubits[0], bell_qubits[1])
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, bell_qubits[0])
 
         if len(iswap_qubits) >= 2:
             gate = iSwapGate(iswap_qubits[0], iswap_qubits[1])
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, iswap_qubits[0])
 
         if len(sqrtswap_qubits) >= 2:
             gate = SqrtSwapGate(sqrtswap_qubits[0], sqrtswap_qubits[1])
-            qc.add_operation(gate)
+            add_gate(gate, col_idx, sqrtswap_qubits[0])
 
         # Track qubits already processed (for multi-qubit custom gates)
         processed_qubits = set()
@@ -283,7 +296,7 @@ def process_quantum_diagram(json_data):
                 gate = _create_gate(symbol, q_idx, controls)
 
             if gate:
-                qc.add_operation(gate)
+                add_gate(gate, col_idx, q_idx)
 
     return qc
 

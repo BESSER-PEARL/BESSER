@@ -144,6 +144,10 @@ On the Python API side:
 The legacy scalar parameters ``agent_model=`` and ``agent_config=`` are still accepted as
 deprecated back-compat shims but map to a one-element list under the hood.
 
+``app_name=`` is the application's name as its users see it: the browser tab title and the
+README headings. The web editor passes the project's name; without it the README is titled
+after the domain model and the browser tab reads ``BESSER App``.
+
 
 How It Works
 ------------
@@ -159,6 +163,7 @@ How It Works
    - ``/backend`` (FastAPI + SQLAlchemy)
    - ``/frontend`` (React)
    - ``docker-compose.yml``, ``backend/Dockerfile``, ``frontend/Dockerfile``
+   - ``README.md``: how to run the app with Docker Compose or without it
 
 4. **Deploy**: Use Docker Compose to build and run your app locally or in the cloud.
 
@@ -198,6 +203,7 @@ Generated Output Structure
    │       ├── readme.txt
    │       └── Dockerfile
    ├── docker-compose.yml       # Container orchestration
+   └── README.md                # How to run the app
 
 
 Features
@@ -381,3 +387,13 @@ Customization
 .. note::
    The Full Web App Generator saves time by automating repetitive tasks. 
    You can always customize and extend the generated code.
+
+Trace Links
+-----------
+
+The generator runs the React, backend and agent generators into its own output directory and merges their traces
+under the folder each one wrote to: after ``generate()``, ``generator.traced_files`` holds the React generator's
+traces under ``frontend/`` (``frontend/src/pages/<Page>.tsx``, ``frontend/src/App.tsx``), the backend's under
+``backend/`` and each agent's under ``agents/<name>/``, so every path is the one of the delivered project. See
+:doc:`react`, :doc:`backend` and :doc:`traceable_generator`. The ``docker-compose.yml`` and the Dockerfiles are
+file-level only.

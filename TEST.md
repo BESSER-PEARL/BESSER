@@ -74,10 +74,11 @@ warning; `test_shell_sandbox.py` sets its own policy either way.
 
 | Job     | What it runs | Gate |
 | ------- | ------------ | ---- |
-| `tests` | installs `bubblewrap` and CPU `torch`, then `python -m pytest tests/ -n auto -q --tb=short` on Python 3.11 and 3.12 | the suite must pass |
+| `test` ×4, `tests` ×2 | installs `bubblewrap` and CPU `torch`, then `python -m pytest <paths> -n auto -q --tb=short` on Python 3.11 and 3.12, each as two halves on two runners: `tests/spec_driven_agent` and everything else. `tests (3.11)` and `tests (3.12)` report the combined result | the suite must pass |
 | `lint`  | `ruff check besser/` and `lint-imports` (rules and contracts in `pyproject.toml`) | focused lint set, line length not enforced; package layers |
+| `openapi` | `python .github/scripts/check_openapi.py`, with the frontend submodule checked out | the editor's committed OpenAPI schema must match `app.openapi()` |
 | `docs`  | `python docs/check_docs.py` | Sphinx build fails on any warning |
-| `package` | builds the wheel, installs it outside the checkout, checks the package data ships | the wheel must install and carry its data files |
+| `package` | builds the wheel, installs it outside the checkout, runs `.github/scripts/check_wheel.py` | the wheel must install and carry its data files |
 
 ---
 

@@ -12,7 +12,9 @@
 
 {# ---------- Attribute Renderer ---------- #}
 {%- macro render_attributes(class, enumerations, types, ids, sort) %}
-    {%- for attribute in sort(class.attributes) %}
+    {#- An attribute named like an association end of the class is left out: the
+        relationship takes the name. #}
+    {%- for attribute in sort(class.attributes) if not is_shadowed_by_association_end(attribute) %}
     {%- set is_pk = attribute.is_id or (attribute.name == ids.get(class.name)) %}
     {%- set _audit_norm = attribute.name | lower | replace('_', '') %}
     {#- A derived attribute is computed by the server, so the client never sends
@@ -32,7 +34,7 @@
     {%- set derived_zero = {'int': '0', 'float': '0', 'str': '""', 'string': '""',
                             'bool': 'False'}.get(attribute.type.name) %}
     {%- set nullable = (attribute.is_optional and not is_pk) or (derived_unset and not derived_zero) %}
-    {%- set unique_needed = attribute.is_external_id and not is_pk %}
+    {%- set unique_needed = attribute.is_external_id and not is_pk %}{% trace attribute, "attribute" %}
     {{ attribute.name }}: Mapped_[{% if nullable %}Optional_[{{ mapped_type(attribute.type.name) }}]{% else %}{{ mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if is_pk %}, primary_key=True{% endif %}
     {%- if is_pk and attribute.name == 'id' and attribute.type.name in ('str', 'string') and attribute.default_value is none %}, default=_new_str_id{% endif %}
@@ -61,7 +63,7 @@
             {{ enum_default(attribute.default_value, attribute.type.name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}
         {%- else -%}
             {{ attribute.default_value | python_default(attribute.type.name, owner=class.name ~ '.' ~ attribute.name) }}
-        {%- endif %}{% endif %})
+        {%- endif %}{% endif %}){% endtrace %}
     {%- endfor %}
 {%- endmacro %}
 
@@ -89,9 +91,15 @@
     {%- set is_whole = other_end.is_composite and not is_secondary %}
     {%- set whole_holds_fk = fk_needed and fkeys[end.owner.name][1] == end.name %}
     {%- set cascade = (', cascade="all, delete-orphan"' ~ (', single_parent=True' if whole_holds_fk else '')) if is_whole else '' %}
+    {#- N:M from a class to itself: both columns of the secondary table point at
+        this class, so each end names the column on its side. The column called
+        after an end holds the members of that end's collection. #}
+    {%- set self_joins %}{% if secondary and end.type.name == other_end.type.name %}, primaryjoin={{ class.name }}.{{ ids.get(class.name, 'id') }} == {{ secondary }}.c["{{ other_end.name }}"], secondaryjoin={{ class.name }}.{{ ids.get(class.name, 'id') }} == {{ secondary }}.c["{{ end.name }}"]{% endif %}{% endset %}
+    {#- The other class has no relationship to pair with when an attribute keeps its name #}
+    {%- set back %}{% if not end_hidden_by_attribute(other_end, end.type) %}, back_populates="{{other_end.name}}"{% endif %}{% endset %}
     {%- if is_many -%}
 {{class.name}}.{{end.name}}: Mapped_[List_["{{end.type.name}}"]] = relationship("{{end.type.name}}"
-        {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
+        {%- if secondary %}, secondary={{ secondary }}{{ self_joins }}{% endif %}{{ back }}
         {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
     {%- else -%}
 {#- uselist is spelled out because these relationships are assigned after the class
@@ -103,6 +111,6 @@
     it: it is the reverse, one-to-one side of the same FK. #}
     {%- set owns_fk = fk_needed and fkeys[end.owner.name][1] == end.name %}
     {%- set is_self = end.type.name == other_end.type.name and owns_fk %}
-{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}", uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% if is_self %}, remote_side=[{{ end.type.name }}.{{ ids.get(end.type.name, 'id') }}]{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
+{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}"{{ back }}, uselist=False{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% if is_self %}, remote_side=[{{ end.type.name }}.{{ ids.get(end.type.name, 'id') }}]{% endif %}{% if is_deferred %}, post_update=True{% endif %}{{ cascade }})
     {%- endif -%}
 {%- endmacro %}

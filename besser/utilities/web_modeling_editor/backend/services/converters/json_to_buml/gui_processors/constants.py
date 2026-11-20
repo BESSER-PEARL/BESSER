@@ -36,6 +36,16 @@ INPUT_COMPONENT_TYPES = {
     "input", "textarea", "select", "checkbox", "radio"
 }
 
+# The GrapesJS component types whose element takes the component's editor id (``attributes.id``) as its
+# ``Element.id``, so a trace can refer to it: the components the editor's trace records, and gives a
+# persistent id (``isTracedComponent`` in the editor's ``shared/traceability/guiModelDiff.ts``). Any
+# ``gui-input-*`` type is traced too, and a component without a type when its tag is an input.
+TRACED_COMPONENT_TYPES = {
+    "table", "line-chart", "bar-chart", "pie-chart", "radar-chart", "radial-bar-chart", "metric-card",
+    "map", "agent-component", "form", "gui-form", "button", "action-button", "menu",
+} | INPUT_COMPONENT_TYPES
+TRACED_INPUT_TYPE_PREFIX = "gui-input-"
+
 # Mapping HTML input types to ButtonActionType
 BUTTON_ACTION_BY_HTML_TYPE = {
     "submit": ButtonActionType.SubmitForm,

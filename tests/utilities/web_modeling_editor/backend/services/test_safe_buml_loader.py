@@ -560,3 +560,23 @@ def test_only_one_id_keyword_per_call_is_exempt(allowed_names):
 def test_the_node_cap_still_applies(allowed_names):
     with pytest.raises(SafeBumlLoaderError, match="too complex"):
         safe_load_buml(_classes_source(2_600, with_ids=False), allowed_names)
+
+
+class _Shared:
+    """Stands for a metaclass the loader hands to the content."""
+
+
+def test_a_shadowable_name_is_available_until_the_content_takes_it(allowed_names):
+    loaded = safe_load_buml("x = Person", allowed_names, shadowable_names={"Person": _Shared})
+    assert loaded["x"] is _Shared
+    loaded = safe_load_buml('Person = Class(name="Person")\nPerson.name = "Human"', allowed_names,
+                            shadowable_names={"Person": _Shared})
+    assert isinstance(loaded["Person"], Class) and loaded["Person"].name == "Human"
+
+
+def test_a_taken_shadowable_name_never_reaches_the_shared_object(allowed_names):
+    """Before the content's own assignment the name is unbound, not the object it shadows."""
+    with pytest.raises(NameError):
+        safe_load_buml('Person.name = "x"\nPerson = Class(name="P")', allowed_names,
+                       shadowable_names={"Person": _Shared})
+    assert not hasattr(_Shared, "name")

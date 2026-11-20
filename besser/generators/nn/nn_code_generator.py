@@ -14,6 +14,9 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.nn import NN
 from besser.BUML.metamodel.nn.neural_network import GRULayer, LSTMLayer, SimpleRNNLayer
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import (
+    FileTrace, TraceRegion, extract_trace_regions, trace_source, traced_environment,
+)
 from besser.generators.nn.pytorch.utils_pytorch import (
     SetupLayerSyntax as SetupLayerTorch,
 )
@@ -27,6 +30,45 @@ from besser.generators.nn.utils_nn import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ModulesDetails(dict):
+    """The ``modules_details`` dict (module key -> syntax and variables), which also remembers the
+    model element each key was generated for (``elements``), so the templates can trace its lines."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.elements: dict = {}
+
+
+def element_of(modules_details, key):
+    """The model element ``key`` of ``modules_details`` was generated for (``None`` when unknown)."""
+    return getattr(modules_details, "elements", {}).get(key)
+
+
+def remap_regions(regions, before: str, after: str) -> list:
+    """``regions`` of the text ``before``, moved to ``after``, a clean-up of it that only added, removed or
+    trimmed blank lines (and may drop duplicated lines).
+
+    Lines are matched by their stripped content in order, so a region ends on the same code line in
+    both texts. A region whose first or last line cannot be matched is dropped, and none is kept when
+    ``after`` is not made of the lines of ``before``.
+    """
+    old_lines = [line.strip() for line in before.split("\n")]
+    mapping, position = {}, 0
+    for new_number, line in enumerate(after.split("\n"), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        while position < len(old_lines) and old_lines[position] != line:
+            position += 1
+        if position == len(old_lines):
+            return []
+        mapping[position + 1] = new_number
+        position += 1
+    return [TraceRegion(r.element_id, r.element_type, r.element_name, r.rule, mapping[r.start_line],
+                        mapping[r.end_line], r.owner)
+            for r in regions if r.start_line in mapping and r.end_line in mapping]
 
 
 class NNCodeGenerator(GeneratorInterface):
@@ -416,14 +458,18 @@ class NNCodeGenerator(GeneratorInterface):
         module_type = module.__class__.__name__
 
         if module_type == "NN":
-            subnn_details = {}
+            subnn_details = ModulesDetails()
             for sub_nn_layer in module.layers:
+                known = set(subnn_details)
                 handle_layer(
                     sub_nn_layer, self.setup_layer, subnn_details,
                     self.channel_last, actv_func, is_seq, is_subnn=True,
                     model=self.model,
                     strip_counter_suffix=self.strip_layer_counter_suffix
                 )
+                for key in subnn_details:
+                    if key not in known:
+                        subnn_details.elements[key] = sub_nn_layer
             # Use original module name + _nn (no counter
             # needed with original names)
             name_sub_nn = f"{module.name}_nn"
@@ -472,7 +518,7 @@ class NNCodeGenerator(GeneratorInterface):
         For the case of layers, an additional element is added to
         the list, representing the layer object.
         """
-        modules_details: dict = {}
+        modules_details = ModulesDetails()
         actv_func = "torch" in self.template_name
         is_seq = self.generation_type == "sequential"
 
@@ -482,10 +528,15 @@ class NNCodeGenerator(GeneratorInterface):
 
         counter_subnn = 0
         for module in self.model.modules:
+            known = set(modules_details)
             counter_subnn = self._process_module(
                 module, modules_details, actv_func, is_seq, counter_subnn,
                 referenced_tensorops
             )
+            # Every key the module added (its layer, activation, permutes, ...) is generated for it.
+            for key in modules_details:
+                if key not in known:
+                    modules_details.elements[key] = module
 
         if actv_func:
             adjust_actv_func_name(modules_details)
@@ -542,7 +593,8 @@ class NNCodeGenerator(GeneratorInterface):
     def _make_env(templates_paths: list[str]) -> Environment:
         """The Jinja environment of the NN templates: ``templates_paths``
         searched in order, with the ``strip_counter_suffix`` filter."""
-        env = Environment(loader=FileSystemLoader(templates_paths))
+        env = traced_environment(FileSystemLoader(templates_paths))
+        env.globals['element_of'] = element_of
 
         def strip_counter_suffix_filter(name):
             """Strip trailing _cN where N is one or more digits
@@ -592,7 +644,7 @@ class NNCodeGenerator(GeneratorInterface):
 
         template = env.get_template(self.template_name)
 
-        generated_code = template.render(
+        rendered = template.render(
             model=self.model, modules_details=self.modules_details,
             generation_type=self.generation_type,
             strip_layer_counter_suffix=self.strip_layer_counter_suffix,
@@ -600,8 +652,19 @@ class NNCodeGenerator(GeneratorInterface):
             forward_input_var=self.forward_input_var())
 
         # Post-process: clean excessive blank lines
-        generated_code = self._clean_generated_code(generated_code)
+        self._write_cleaned(file_name, rendered, self._clean_generated_code)
+        logger.info("Code generated in the location: %s", file_path)
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            f.write(generated_code)
-            logger.info("Code generated in the location: %s", file_path)
+    def _write_cleaned(self, file_name: str, rendered: str, clean, template: str | None = None) -> str:
+        """Write ``rendered`` (with trace markers) as ``clean`` tidies it, tracing the lines that survive.
+
+        The markers are removed first, so the tidy-up sees (and gives) exactly the text an untraced
+        render would; the regions are then moved to the lines the tidy-up left. The network is the source
+        of the whole file, by the rule ``<template>#network`` (the generator's own template by default).
+        """
+        code, regions = extract_trace_regions(rendered)
+        cleaned = clean(code)
+        self._write_file(file_name, cleaned, trace_source(self.model, f"{template or self.template_name}#network"))
+        trace = self.traced_files[file_name]
+        self.traced_files[file_name] = FileTrace(tuple(remap_regions(regions, code, cleaned)), trace.sources)
+        return cleaned

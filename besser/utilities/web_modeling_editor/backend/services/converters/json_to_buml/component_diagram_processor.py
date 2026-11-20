@@ -32,6 +32,7 @@ from besser.BUML.metamodel.uml_component import (
     Subsystem,
     Tool,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.utilities.web_modeling_editor.backend.services.converters.stereotype_tokens import (
     agentic_edge_extra_tokens,
     apply_component_stereotype_tokens,
@@ -83,10 +84,12 @@ def process_component_diagram(json_data: dict) -> ComponentModel:
     name = json_data.get("title") or "Generated_Component_Model"
 
     permissions_by_scope: dict = {}
-    nodes_by_id: dict = _build_nodes(elements)
+    # Elements and relationships take their editor id: the id a trace refers to them by.
+    editor_ids = EditorIds()
+    nodes_by_id: dict = _build_nodes(elements, editor_ids)
     _reconstruct_containment(elements, nodes_by_id)
     relationship_objects = _build_relationships(
-        relationships, nodes_by_id, permissions_by_scope,
+        relationships, nodes_by_id, permissions_by_scope, editor_ids,
     )
 
     components = {obj for obj in nodes_by_id.values() if isinstance(obj, Component)}
@@ -118,7 +121,7 @@ def process_component_diagram(json_data: dict) -> ComponentModel:
     )
 
 
-def _build_nodes(elements: dict) -> dict:
+def _build_nodes(elements: dict, editor_ids: EditorIds) -> dict:
     """Pass 1 — create every element object, indexed by WME id."""
     nodes_by_id: dict = {}
     for elem_id, elem in elements.items():
@@ -143,6 +146,7 @@ def _build_nodes(elements: dict) -> dict:
             "displayStereotype": elem.get("displayStereotype", True),
             "wme_type": elem.get("type"),
         }
+        editor_ids.assign(obj, elem_id)
         nodes_by_id[elem_id] = obj
     return nodes_by_id
 
@@ -240,7 +244,7 @@ def _reconstruct_containment(elements: dict, nodes_by_id: dict) -> None:
 
 
 def _build_relationships(relationships: dict, nodes_by_id: dict,
-                         permissions_by_scope: dict) -> list:
+                         permissions_by_scope: dict, editor_ids: EditorIds) -> list:
     """Pass 3 — build relationship objects from the ``relationships`` map.
 
     AgenticEdge dispatch and permission-suffix parsing happen here. Returns
@@ -285,6 +289,7 @@ def _build_relationships(relationships: dict, nodes_by_id: dict,
             "isManuallyLayouted": rel.get("isManuallyLayouted", False),
             "wme_type": rel.get("type"),
         }
+        editor_ids.assign(obj, rel_id)
         out.append(obj)
     return out
 

@@ -29,7 +29,7 @@ import os
 import re
 import time
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional
 
 import httpx
 from fastapi import APIRouter, File, Header, HTTPException, Path, Query, UploadFile
@@ -58,6 +58,7 @@ from besser.utilities.web_modeling_editor.backend.dependencies import (
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DurableRunManager,
+    RunRecord,
     SmartGenerationRunner,
     SpecDrivenRuntime,
 )
@@ -70,7 +71,9 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview i
 # Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _locate_run_temp_dir,
+    run_download_dir,
 )
+from besser.utilities.workspace_fs import open_plain
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
     MAX_GENERATED_CODE_BYTES,
     import_generated_code,
@@ -92,6 +95,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     free_alt_models,
     free_fallback_model,
     free_pilot_model,
+    free_secondary_models,
     free_tier_available,
     free_tier_model,
 )
@@ -130,9 +134,10 @@ def _safe_attachment_filename(filename: str, fallback: str) -> str:
 
 
 async def _stream_with_slot_release(
-    inner: AsyncIterator[bytes],
+    inner: AsyncGenerator[bytes, None],
     runtime: SpecDrivenRuntime,
     run_reservation: Optional[tuple[str, asyncio.Event]] = None,
+    after_release: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> AsyncIterator[bytes]:
     """Yield from an SSE generator and return its concurrency slot
     when the stream ends, regardless of outcome.
@@ -206,9 +211,15 @@ async def _stream_with_slot_release(
         except Exception:
             logger.exception("Could not deliver the terminal error frame")
     finally:
+        # Closing the runner waits for its worker to stop, so the slot and the
+        # run id are free only once nothing spends on them any more.
+        await inner.aclose()
         if run_reservation is not None:
             await runtime.active_runs.release(*run_reservation)
         runtime.slots.release()
+        if after_release is not None:
+            # On its own: slow clean-up holds neither the slot nor the run's status.
+            runtime.spawn(after_release())
 
 
 # ---------------------------------------------------------------------
@@ -361,11 +372,13 @@ async def smart_generate(
         runner.generate_and_stream(),
         runtime,
         run_reservation=(run_id, cancel_event),
+        after_release=runner.release_disk,
     )
     try:
         await runtime.durable_runs.start(
             run_id,
             source,
+            cancel=cancel_event.set,
             on_abandoned=(
                 cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
@@ -399,6 +412,16 @@ async def get_smart_run_status(
     return record.to_api_dict()
 
 
+def _run_with_events(runtime: SpecDrivenRuntime, run_id: str) -> RunRecord:
+    """The run's record; 404 when unknown, 410 when the sweep already deleted its events."""
+    record = runtime.durable_runs.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    if runtime.durable_runs.store.events_swept(run_id):
+        raise HTTPException(status_code=410, detail="The events of this run have expired")
+    return record
+
+
 @router.get("/spec-driven/runs/{run_id}/events.json")
 async def poll_smart_run_events(
     runtime: SpecDrivenRuntimeDep,
@@ -423,9 +446,9 @@ async def poll_smart_run_events(
     the same reducer it feeds streamed events. ``hasMore`` says to come straight
     back, ``status``/``terminalEvent`` say when to stop.
     """
-    record = runtime.durable_runs.get_run(run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    record = _run_with_events(runtime, run_id)
+    # A poller is present: it holds off the abandonment cancel like a stream does.
+    runtime.durable_runs.touch(run_id)
 
     stored = runtime.durable_runs.store.events_after(run_id, after, limit=limit)
     events = [
@@ -460,9 +483,7 @@ async def stream_smart_run_events(
     endpoint compatible with native EventSource clients. The larger valid
     cursor wins, preventing a stale query value from replaying duplicates.
     """
-    record = runtime.durable_runs.get_run(run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    _run_with_events(runtime, run_id)
 
     cursor = after
     if last_event_id:
@@ -512,6 +533,7 @@ def _free_tier_model_choices() -> list[dict]:
     primary = free_tier_model()
     choices = [{"id": primary, "default": True}]
     choices.extend({"id": alt, "default": False} for alt in free_alt_models())
+    choices.extend({"id": m, "default": False} for m in free_secondary_models())
     fallback = free_fallback_model()
     if fallback and fallback != primary:
         choices.append({"id": fallback, "default": False})
@@ -540,6 +562,7 @@ async def smart_gen_config(settings: SettingsDep) -> dict:
             "default_max_turns": settings.llm_default_max_turns,
         },
         "download_ttl_seconds": settings.llm_download_ttl_seconds,
+        "archive_ttl_seconds": settings.llm_archive_ttl_seconds,
         "cost_emitter_interval_seconds": settings.llm_cost_emitter_interval_seconds,
         "concurrency": {
             "max_concurrent_runs": settings.llm_max_concurrent_runs,
@@ -619,10 +642,15 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
 
     Errors are mapped by ``handle_endpoint_errors`` (``ValueError`` -> 400).
     """
-    assembled = assemble_models_from_project(
+    # Off the event loop: a large project takes seconds, which would stall
+    # every SSE stream, heartbeat and /cancel on this process. The default
+    # pool, not the runtime's: this keyless call must not take run threads.
+    assembled = await asyncio.to_thread(
+        assemble_models_from_project,
         request.project, primary_kind_override=request.primary_kind_override,
     )
-    plan = build_preview(
+    plan = await asyncio.to_thread(
+        build_preview,
         assembled,
         instructions=request.instructions,
         max_cost_usd=request.max_cost_usd,
@@ -637,7 +665,9 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
     if request.mode == "modify" and request.base_run_id:
         base = await runtime.registry.get(request.base_run_id)
         if base is not None and base.temp_dir:
-            change = compare_with_base(base.temp_dir, assembled.domain_model)
+            change = await asyncio.to_thread(
+                compare_with_base, base.temp_dir, assembled.domain_model,
+            )
             model_change = change.to_dict() if change else None
     payload["model_change"] = model_change
     return payload
@@ -676,6 +706,9 @@ async def resume_smart_gen(
 
     if not re.fullmatch(r"[a-f0-9]{32}", run_id):
         raise HTTPException(status_code=422, detail="Invalid run_id format")
+    # Rebuilt from its parsed value: the id reaches file names, and static
+    # analysis does not read the pattern above as path validation.
+    run_id = uuid.UUID(hex=run_id).hex
 
     temp_dir = _locate_run_temp_dir(run_id)
     if temp_dir is None:
@@ -722,12 +755,14 @@ async def resume_smart_gen(
         runner.generate_and_stream(),
         runtime,
         run_reservation=(run_id, cancel_event),
+        after_release=runner.release_disk,
     )
     try:
         await runtime.durable_runs.start(
             run_id,
             source,
             resume=True,
+            cancel=cancel_event.set,
             on_abandoned=(
                 cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
@@ -800,7 +835,7 @@ async def download_smart(
     """Download the output produced by a completed run.
 
     Re-downloadable until the TTL sweep expires the entry
-    (``BESSER_LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
+    (``BESSER_LLM_ARCHIVE_TTL_SECONDS``, default 24 hours) — a transient network
     failure during the blob fetch must not permanently lose an artifact
     the user paid minutes and dollars to produce. Cleanup is owned
     entirely by ``SmartRunRegistry.periodic_sweep``; this endpoint no
@@ -813,10 +848,12 @@ async def download_smart(
             detail="Unknown or expired run ID",
         )
 
-    if not os.path.isfile(entry.file_path):
-        # Should not happen, but guard against disk-level races.
+    try:
+        # Only a regular file in the run's download dir, never through a link.
+        handle = open_plain(entry.file_path, "rb", root=run_download_dir(entry.temp_dir))
+    except OSError:
         logger.error(
-            "SmartRunRegistry had an entry for %s but file %s is missing",
+            "SmartRunRegistry had an entry for %s but file %s is missing or not a plain file",
             run_id,
             entry.file_path,
         )
@@ -832,7 +869,7 @@ async def download_smart(
     )
 
     async def _iter_file() -> AsyncIterator[bytes]:
-        with open(entry.file_path, "rb") as fh:
+        with handle as fh:
             while True:
                 chunk = fh.read(_DOWNLOAD_CHUNK_SIZE)
                 if not chunk:

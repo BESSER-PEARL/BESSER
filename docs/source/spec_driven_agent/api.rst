@@ -20,7 +20,10 @@ Endpoints
      - Purpose
    * - ``/spec-driven/generate``
      - POST
-     - Start a run; streams SSE, returns a download URL on completion.
+     - Start a run; streams SSE, returns a download URL on completion. A
+       request carrying an ``Idempotency-Key`` header that matches a recent
+       start attaches to that run's stream (replayed from the beginning)
+       instead of starting a second run.
    * - ``/spec-driven/preview``
      - POST
      - Pre-flight plan (primary model + target generator). No API key, no
@@ -28,15 +31,19 @@ Endpoints
        (see :ref:`spec-driven-preview-model-change`).
    * - ``/spec-driven/config``
      - GET
-     - Caps, feature flags, provider default models, and free-tier
-       availability.
+     - Caps, the workspace and download lifetimes (``download_ttl_seconds``,
+       ``archive_ttl_seconds``), cost-tick interval, concurrency, feature flags,
+       the model catalog's providers and models (``providers``), provider
+       default models, and free-tier availability.
    * - ``/spec-driven/runs/{run_id}``
      - GET
      - Durable lifecycle metadata for a run (never the request or the key).
    * - ``/spec-driven/runs/{run_id}/events``
      - GET
      - Replay this run's events after ``?after=N``, then follow the live
-       stream. Also honours the ``Last-Event-ID`` header.
+       stream. Also honours the ``Last-Event-ID`` header. Answers ``410``
+       for a finished run whose events have expired (see
+       :ref:`spec-driven-durable-runs`).
    * - ``/spec-driven/runs/{run_id}/events.json``
      - GET
      - Polling alternative to the stream: the run's lifecycle metadata plus
@@ -45,7 +52,10 @@ Endpoints
        and decoded ``data``; ``cursor`` is the last sequence returned and
        ``hasMore`` says to poll again immediately. Polling and streaming
        share one sequence, so a client can switch between them. Use it where
-       a proxy buffers responses and holds back an SSE stream.
+       a proxy buffers responses and holds back an SSE stream. Each poll
+       counts as presence, like an open stream, so a polled run is not
+       stopped as abandoned. Answers ``410`` like the stream once a finished
+       run's events have expired.
    * - ``/spec-driven/resume/{run_id}``
      - POST
      - Resume an interrupted run from its checkpoint (streams SSE).
@@ -54,7 +64,8 @@ Endpoints
      - Cancel an in-flight run at its next turn boundary.
    * - ``/spec-driven/download/{run_id}``
      - GET
-     - Download the generated ZIP/file (re-fetchable within a TTL).
+     - Download the generated ZIP/file (re-fetchable for
+       ``BESSER_LLM_ARCHIVE_TTL_SECONDS``).
    * - ``/spec-driven/push-to-github``
      - POST
      - Push a finished run's code — plus the re-importable model under
@@ -139,17 +150,57 @@ Request body
        request. Longer input is rejected before generation, not truncated.
        Accepted instructions reach planning and requirement extraction in full;
        inventories and model summaries have separate context budgets.
+   * - ``requirements``
+     - list (optional)
+     - Requirements the modeling assistant extracted from the user's request,
+       each ``{"id", "text", "kind"}``: ``id`` is its ``RequirementArtifact`` id
+       in the project trace, ``kind`` a ``RequirementKind`` value (see
+       :doc:`../buml_language/model_types/traceability`). At most 128, ids
+       unique, text up to 1,000 characters. When given, the requirements ledger
+       judges these instead of extracting its own (see :doc:`validation`).
+       Left out, the run extracts them.
+   * - ``actorName``
+     - string (optional)
+     - The person starting the run (the project owner), at most 200
+       characters. The run's trace (``done.trace``) records them as a
+       ``Person`` beside the Spec-Driven Agent; left out, it names only the agent.
+   * - ``traceabilityEnabled``
+     - boolean (optional)
+     - Whether the project records traces (opt-in, default ``false``). Only
+       when true does the run build its trace, send it as ``done.trace`` and
+       ship it in the ZIP (see :ref:`spec-driven-run-trace`).
    * - ``api_key``
      - string (secret)
-     - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``;
-       omitted for the keyless tiers. Sent only in the body, never logged or
-       persisted.
+     - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``
+       and the catalog gateways (``pia`` / ``gateway``); omitted for the
+       keyless tiers, which discard one if sent. Sent only in the body, never
+       logged or persisted.
    * - ``provider``
      - ``anthropic`` | ``openai`` | ``mistral`` | ``nebius`` | ``free`` |
-       ``sponsored``
+       ``sponsored`` | ``pia`` | ``gateway``
      - Which provider serves the run. Default ``anthropic``; the editor
-       selects ``free`` when the deployment configures a free tier. See
+       selects ``free`` when the deployment configures a free tier. ``pia``
+       and ``gateway`` are gateways the server's model catalog must define. See
        :doc:`models`.
+   * - ``base_url``
+     - string (optional)
+     - An ``http(s)://`` OpenAI-compatible endpoint: the editor's Local
+       (self-hosted) provider sends ``provider: "openai"`` with it. Dropped
+       for ``pia`` / ``gateway``. For every other provider, the keyless tiers
+       included, a request carrying it is rejected with a ``BAD_REQUEST``
+       error event unless the server sets ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``;
+       where it is set, the keyless tiers still ignore it and use the server's
+       endpoint.
+   * - ``demo_token``
+     - string (secret, optional)
+     - The demo-link secret; required for ``sponsored`` and checked against
+       ``BESSER_DEMO_TOKEN`` (``403`` when it does not match or the server sets
+       none).
+   * - ``telemetry_session`` / ``telemetry_participant``
+     - string (optional)
+     - Study telemetry labels. A value that does not match the collection
+       pattern is dropped rather than rejected; a run summary is recorded only
+       when both survive and the server enables telemetry.
    * - ``llm_model``
      - string (optional)
      - Model override; falls back to the provider default. For ``free`` only
@@ -164,8 +215,8 @@ Request body
      - Soft runtime cap, clamped to the server hard cap (default 2400, max 2400).
    * - ``max_turns``
      - int
-     - Soft cap on LLM turns, clamped to the server hard cap (default 80,
-       max 120).
+     - Soft cap on LLM turns, clamped to the server hard cap (default 120,
+       max 150).
    * - ``mode``
      - ``generate`` | ``modify``
      - ``modify`` seeds the workspace from ``base_run_id`` and edits it in
@@ -270,37 +321,75 @@ SSE event types
      - Run accepted; carries ``runId``, provider, model, and caps.
    * - ``phase``
      - Pipeline advanced to a phase: ``select``, ``generate``, ``gap``,
-       ``customize``, ``validate``.
+       ``customize``, ``validate``. Carries the run's ``usd``, ``turns`` and
+       ``elapsedSeconds`` when the phase started, measured like ``cost``: a
+       phase's own figures are the difference to the next phase, or to the
+       final ``cost`` event for the last one. ``validate`` is sent when Phase 3
+       starts, before the first check.
    * - ``phase_update``
-     - Extra detail for the current phase (e.g. the gap task list).
+     - Extra detail for the current phase (e.g. the gap task list); for
+       ``validate``, the first check's result as ``message``
+       (``"2 blockers / 5 total"``).
+   * - ``findings``
+     - One Phase 3 validation round: ``attempt`` (0 for the first check, n for
+       the re-check after fix attempt n), ``blockers`` (at most 20 messages,
+       each clipped to 300 characters), and the true ``blockerCount`` and
+       ``issueCount``. Blockers are counted as in ``done``, so the last round
+       matches the run's count. The ``tool_call`` events between two ``findings``
+       events are that fix attempt's repairs. ``restored: true`` marks a last
+       round after the run went back to a better earlier tree; it describes
+       the delivered app.
    * - ``text``
      - A streaming text delta from the LLM.
    * - ``tool_call``
      - The LLM invoked a :doc:`tool <tools>` (read/write/modify a file, query
        the model, update its checklist, run a generator). Carries the turn
-       number, the tool name, a status, and a short non-content ``detail``.
+       number, the tool name, a ``status`` (``executing``, ``done`` or
+       ``error``), an optional ``summary`` and a short non-content
+       ``detail``.
    * - ``model_update``
      - The model serving this run changed mid-run — the fallback chain took
-       over after the primary failed or hit its quota. Only the
+       over after the primary failed or hit its quota. Carries ``model``,
+       ``previousModel`` and ``reason`` (``primary_unavailable``). Only the
        server-configured tiers (``free``, ``sponsored``) have one; a BYOK run
        never switches models behind your back. The switch is sticky for the
        rest of the run.
    * - ``cost``
-     - Periodic cost / runtime / turn-count tick.
+     - Periodic cost / runtime / turn-count tick (``usd``, ``turns``,
+       ``elapsedSeconds``, and ``servedModel`` when the provider reports
+       which model answered).
    * - ``done``
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
        count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
-       blocker-severity findings), ``incomplete`` / ``incompleteReason``,
+       blocker-severity findings plus required checks that could not run,
+       ``validation unverified:``), ``verification`` (what the run verified,
+       could not verify, and shipped unenforced, with true totals in
+       ``counts``), ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
+       when a cancel request was honoured after the run had written files, so
+       the output is what it had made by then; a run the server stopped because
+       nobody followed it reads the same; it is stored with the event, so a
+       replay carries it),
        a three-way authorship split of the output tree, and ``aiShare``, the
        AI-written share of the lines from the run's Agent Trace record (see
        :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
        ``changedFiles`` (capped) and ``changedFileCount`` are the files the
        agent wrote, edited or deleted, and ``modelChanges`` how the model
        differs from the one the base app was built from (modify runs).
+       ``trace`` is the run's trace, a trace-file fragment (``projectId``
+       null) the editor merges into the project trace (see
+       :ref:`spec-driven-run-trace`); ``null`` when the request did not set
+       ``traceabilityEnabled`` or the trace could not be built.
+       ``verification`` lists what the run verified, could not verify and
+       shipped unenforced; a requirement item's ``id`` is its ``R<n>`` label
+       and its ``traceRef`` the id of its ``RequirementArtifact`` in ``trace``.
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``
-       are non-terminal warnings emitted just before ``done``.
+       are non-terminal warnings emitted just before ``done``. Carries
+       ``code`` and ``message``. A run a server restart interrupted ends with
+       ``INTERNAL`` and ``resumeAvailable``; the ``CANCELLED`` event of a run
+       stopped because no subscriber came back adds ``reason: "abandoned"``
+       and ``resumeAvailable``.
 
 Example
 -------
@@ -341,7 +430,8 @@ The response is a Server-Sent Events stream::
    data: {"event":"done","runId":"4f3c9a1d8e2b47c6905af1e3d7b28c40","downloadUrl":"/besser_api/spec-driven/download/4f3c9a1d8e2b47c6905af1e3d7b28c40","fileName":"besser_smart_4f3c9a1d8e2b47c6905af1e3d7b28c40.zip","isZip":true,"blockerCount":0}
 
 Then issue a ``GET`` to the ``downloadUrl`` to retrieve the ZIP — it is
-re-fetchable within the run's TTL.
+re-fetchable for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours by default),
+longer than the run's workspace, which a modify run or a push needs.
 
 .. note::
    The frames above are shown without their sequence number for readability.

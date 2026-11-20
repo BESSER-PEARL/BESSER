@@ -197,8 +197,8 @@ def test_the_spill_is_not_advertised_as_a_project_file(tmp_path):
     ex = _executor(tmp_path)
     _run(ex, "npm run build", stderr=_failing_build_log())
 
-    listed = [f["path"] for f in ex._list_files({})["files"]]
-    assert listed == [], "list_files describes the generated project, not run logs"
+    listed = ex._list_files({})["files"]
+    assert listed == "", "list_files describes the generated project, not run logs"
 
 
 # ----------------------------------------------------------------------

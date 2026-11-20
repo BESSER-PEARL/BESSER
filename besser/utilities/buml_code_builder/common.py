@@ -110,7 +110,16 @@ PRIMITIVE_TYPE_MAPPING = {
     'any': 'AnyType'
 }
 
-# Names a generated structural script imports (plus ``datetime``, which rebuilds
+#: The name a trace section imports each traceability metaclass under (``Person as TracePerson``),
+#: so a model class called ``Person`` cannot shadow it. Reserved, like the other imports.
+TRACE_IMPORT_NAMES = {name: name if name.startswith("Trace") else f"Trace{name}" for name in (
+    "TraceModel", "Person", "Agent", "Editor", "CodeGenerator", "ModelGenerator", "LLM", "ModelArtifact",
+    "CodeArtifact", "PromptArtifact", "RequirementArtifact", "RequirementKind", "ModelingSession",
+    "CodeGeneration", "RequirementExtraction", "Conversation", "ExecutionStatus", "ChangeEvent", "ChangeKind",
+    "ToolCall", "LogRecord", "LogType", "RuleEvidence", "AIEvidence", "Confidence", "TraceLink",
+)}
+
+# Names a generated structural script (or its trace section) imports (plus ``datetime``, which rebuilds
 # element timestamps and object slot values). A class or enumeration variable
 # with one of these names would shadow the import, so it gets a suffix.
 RESERVED_NAMES = [
@@ -121,6 +130,7 @@ RESERVED_NAMES = [
     'TimeType', 'DateType', 'DateTimeType', 'TimeDeltaType',
     'AnyType', 'Constraint', 'AssociationClass', 'Metadata', 'MethodImplementationType',
     'ObjectModel', 'datetime',
+    *TRACE_IMPORT_NAMES.values(),
 ]
 
 
@@ -352,8 +362,10 @@ def build_data_binding(domain_model: Optional["DomainModel"], class_name: str, l
 
     Emitted GUI code calls this for the same reason as ``bind_domain_field``: the
     inline form needed ``globals()``, an ``if`` and generator expressions, which
-    the safe BUML loader refuses. *label_field* / *data_field* are attribute
-    names; the other keyword arguments go to the ``DataBinding`` constructor.
+    the safe BUML loader refuses. *label_field* is an attribute name,
+    *data_field* an attribute or association end name (a form input choosing
+    the related record); the other keyword arguments go to the ``DataBinding``
+    constructor.
     """
     from besser.BUML.metamodel.gui.binding import DataBinding
 
@@ -364,8 +376,23 @@ def build_data_binding(domain_model: Optional["DomainModel"], class_name: str, l
     if label_field:
         binding.label_field = bind_domain_field(domain_model, class_name, label_field)
     if data_field:
-        binding.data_field = bind_domain_field(domain_model, class_name, data_field)
+        binding.data_field = (
+            bind_domain_field(domain_model, class_name, data_field) or _association_end_of(owner, data_field)
+        )
     return binding
+
+
+def _association_end_of(owner: "Class", end_name: str) -> Optional["Property"]:
+    """The end named *end_name* that a record of *owner* references: one of its
+    association ends or, for an association class, an end of its association."""
+    from besser.BUML.metamodel.structural import AssociationClass
+
+    ends = set(owner.all_association_ends())
+    if isinstance(owner, AssociationClass):
+        ends.update(owner.association.ends)
+    return next(
+        (end for end in sorted(ends, key=lambda end: end.type.name) if end.name == end_name), None
+    )
 
 
 def bind_association_end(domain_model: Optional["DomainModel"], end_name: str) -> Optional["Property"]:

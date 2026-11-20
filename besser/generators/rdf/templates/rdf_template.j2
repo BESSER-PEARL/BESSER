@@ -10,24 +10,30 @@
 
 # Class definition
 {% for class_obj in model.classes_sorted_by_inheritance() %}
+    {% trace class_obj, "class" %}
     {# Handling generalizations (inheritance) #}
     {% if class_obj.parents() %}
         {% for parent in class_obj.parents()|sort(attribute='name') %}
+            {% set generalization = class_obj.generalizations|selectattr('general', 'equalto', parent)|first %}
+            {% trace generalization, "generalization" %}
 {{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class ;
           rdfs:subClassOf {{ vocab.uri_or_prefixed(parent) }}{% if class_obj.metadata and class_obj.metadata.description %} ;
           rdfs:comment "{{ class_obj.metadata.description | ttl_str }}"{% endif %} ;
           rdfs:label "{{ class_obj.name }}" .
+            {% endtrace %}
         {% endfor %}
     {% else %}
 {{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class{% if class_obj.metadata and class_obj.metadata.description %} ;
           rdfs:comment "{{ class_obj.metadata.description | ttl_str }}"{% endif %} ;
           rdfs:label "{{ class_obj.name }}" .
     {% endif %}
+    {% endtrace %}
 {% endfor %}
 
 # Property definition
 {% for class_obj in model.classes_sorted_by_inheritance() %}
     {% for property in sort_by_timestamp(class_obj.attributes) %}
+        {% trace property, "attribute" %}
 {{ vocab.uri_or_prefixed(property) }} rdf:type rdf:Property ;
         rdfs:domain {{ vocab.uri_or_prefixed(class_obj) }} ;
         {% if types[property.type.name ] %}
@@ -38,11 +44,13 @@
         rdfs:comment "{{ property.metadata.description | ttl_str }}"{% endif %} ;
         {% endif %}
         rdfs:label "{{ property.name }}" .
+        {% endtrace %}
     {% endfor %}
 {% endfor %}
 
 # Relationship Definition
 {% for association in sort_by_timestamp(model.associations) %}
+    {% trace association, "association" %}
     {% if association.ends|length == 2 -%}
         {% set ns = namespace(end1=None, end2=None) %}
         {% for end in sort_by_timestamp(association.ends) %}
@@ -81,15 +89,20 @@
     rdfs:label "{{ ns.end2.name }}" .
         {% endif %}
     {% endif %}
+    {% endtrace %}
 {%- endfor %}
 
 # Enumeration definition
 {% for enum in model.get_enumerations()|sort(attribute='name') %}
+{% trace enum, "enumeration" %}
 {{ vocab.uri_or_prefixed(enum) }} rdf:type rdfs:Class{% if enum.metadata and enum.metadata.description %} ;
           rdfs:comment "{{ enum.metadata.description | ttl_str }}"{% endif %} ;
           rdfs:label "{{ enum.name }}" .
     {% for literal in sort_by_timestamp(enum.literals) %}
+        {% trace literal, "literal" %}
 {{ vocab.uri_or_prefixed(literal) }} rdf:type {{ vocab.uri_or_prefixed(enum) }} ;
     rdfs:label "{{ literal.name }}" .
+        {% endtrace %}
     {% endfor %}
+{% endtrace %}
 {% endfor %}

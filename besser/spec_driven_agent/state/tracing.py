@@ -32,7 +32,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 from besser.utilities.workspace_fs import open_plain, open_plain_write
 
 logger = logging.getLogger(__name__)
@@ -50,8 +50,15 @@ EVENT_RUN_START = "run_start"
 EVENT_PHASE_ENTER = "phase_enter"
 EVENT_PHASE_EXIT = "phase_exit"
 EVENT_TURN_START = "turn_start"
+# The turn's LLM response arrived: what the client spends after it (validation, the requirements
+# judge, a runtime gate's checks) is not the turn's.
+EVENT_TURN_END = "turn_end"
 EVENT_TOOL_CALL = "tool_call"
 EVENT_COST_UPDATE = "cost_update"
+# One LLM call outside the Phase 2 tool loop (planner, requirements judge,
+# repair, ...). Payload: ``purpose``, ``outcome``, the call's ``*_tokens``
+# counters and ``cost_usd``, so a run's whole cost is visible in the trace.
+EVENT_LLM_CALL = "llm_call"
 EVENT_COMPACTION = "compaction"
 EVENT_SNAPSHOT = "snapshot"
 EVENT_ROLLBACK = "rollback"
@@ -61,6 +68,20 @@ EVENT_VALIDATION_ISSUE = "validation_issue"
 EVENT_CHECKPOINT = "checkpoint"
 EVENT_ERROR = "error"
 EVENT_RUN_END = "run_end"
+# A BESSER generator wrote files: its tool, generator key, the model kinds it
+# read and, per file written, the SHA-256 and the regions/sources it recorded
+# (``GeneratorInterface.traced_files``). Read back by ``state/trace_model.py``.
+EVENT_GENERATOR_OUTPUT = "generator_output"
+# The requirements ledger was built: its source ("editor" or "extracted"), its
+# items and, for an extraction, the tokens that call used.
+EVENT_REQUIREMENTS = "requirements"
+
+# Events stamped with the LLM client's cumulative token counters (``usage``),
+# when the writer has a ``usage`` source. They bound the run's LLM turns, so the
+# tokens of one turn are the difference between two of them.
+USAGE_EVENTS = frozenset({
+    EVENT_RUN_START, EVENT_PHASE_ENTER, EVENT_PHASE_EXIT, EVENT_TURN_START, EVENT_TURN_END, EVENT_RUN_END,
+})
 
 
 class TraceWriter:
@@ -81,6 +102,10 @@ class TraceWriter:
         stamped onto every record so downstream tools don't have to
         cross-reference another file to know what kind of run produced
         the trace.
+    usage
+        Optional callable returning the LLM client's cumulative token
+        counters; its result is stamped as ``usage`` on the
+        :data:`USAGE_EVENTS`.
     """
 
     def __init__(
@@ -88,10 +113,12 @@ class TraceWriter:
         output_dir: str,
         run_id: str = "",
         primary_kind: str | None = None,
+        usage: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.run_id = run_id
         self.primary_kind = primary_kind
+        self._usage = usage
         self._path = os.path.join(output_dir, TRACE_FILENAME)
 
     @property
@@ -105,6 +132,11 @@ class TraceWriter:
         framing fields (``ts``, ``run_id``, ``primary_kind``, ``event``)
         are written unconditionally so every record is self-describing.
         """
+        if self._usage is not None and event in USAGE_EVENTS:
+            try:
+                payload = {**payload, "usage": self._usage()}
+            except Exception as exc:
+                logger.debug("Token counters unavailable for %s: %s", event, exc)
         record = {
             "ts": time.time(),
             "run_id": self.run_id,

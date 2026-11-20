@@ -1,6 +1,7 @@
 """Writes the ``.http`` request samples of a generated Spring Boot project."""
 
 from besser.BUML.metamodel.structural import Class, DomainModel
+from besser.utilities.generation_trace import trace_source
 from besser.generators.spring._sub_generator import SpringSubGenerator, build_environment
 from besser.generators.spring.java_types import to_java_class_name
 
@@ -21,4 +22,4 @@ class SpringHttpGenerator(SpringSubGenerator):
         env = build_environment(trim_blocks=True, lstrip_blocks=True)
         http_template = env.get_template("http.http.j2")
 
-        self.write(f"{route}.http", http_template.render(route=route))
+        self.write(f"{route}.http", http_template.render(route=route), trace_source(cls, "http.http.j2#class"))

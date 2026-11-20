@@ -1,5 +1,8 @@
 import os
 import logging
+import re
+from fastapi import HTTPException
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sql_alchemy import Base, _configure_sqlite_engine
@@ -40,9 +43,41 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        logger.error("Database session rollback due to exception")
+        # A 4xx answer is the client's mistake, not a failure of the server.
+        client_error = isinstance(exc, RequestValidationError) or (
+            isinstance(exc, HTTPException) and exc.status_code < 500)
+        if not client_error:
+            logger.error("Database session rollback due to exception")
         raise
     finally:
         db.close()
+
+
+def integrity_error_detail(exc) -> str:
+    """What a constraint violation tells the client.
+
+    A duplicate value or a broken reference gets a sentence, naming the class
+    and field when the driver names them. Any other violation keeps the first
+    line of the driver's text, which classifies it ("NOT NULL constraint
+    failed: book.title"). PostgreSQL's DETAIL line and those after it can
+    carry the values of the rejected row, in any language.
+    """
+    driver_text = str(getattr(exc, "orig", exc))
+    lowered = driver_text.lower()
+    if any(phrase in lowered for phrase in ("unique constraint", "duplicate key", "duplicate entry")):
+        class_names = {mapper.local_table.name: mapper.class_.__name__ for mapper in Base.registry.mappers}
+        fields = [
+            (class_names.get(table.name, table.name), column.name)
+            for table in Base.metadata.tables.values()
+            for column in table.columns
+            if re.search(rf"(?<![\w.]){re.escape(table.name)}\.{re.escape(column.name)}(?!\w)", driver_text)
+            or f'"{table.name}_{column.name}_key"' in driver_text
+        ]
+        if len(fields) == 1:
+            return f"{fields[0][0]} with this {fields[0][1]} already exists"
+        return "A record with the same values already exists"
+    if "foreign key constraint" in lowered:
+        return "The record refers to a record that does not exist, or another record still refers to it"
+    return re.split(r"\n|\s*DETAIL:", driver_text, maxsplit=1)[0]

@@ -1,16 +1,17 @@
 import logging
 import os
-from jinja2 import Environment, FileSystemLoader
-
 from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
+from besser.utilities.generation_trace import traced_environment
 from besser.utilities.utils import sort_by_timestamp
 from besser.generators.structural_utils import (
+    end_hidden_by_attribute,
     get_deferred_fk_associations,
     get_foreign_keys,
+    is_shadowed_by_association_end,
     normalize_method_code,
     get_pk_py_types,
 )
@@ -30,6 +31,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
             Defaults to "sqlite".
         ocl_check_constraints (bool, optional): The default for ``generate``'s ``ocl_check_constraints``,
             and what ``regenerate`` uses. Defaults to False.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, ``sql_alchemy.py`` with the lines rendered
+            from each class, enumeration and association that has an ``id``.
     """
 
     TYPES = {
@@ -274,33 +279,33 @@ class SQLAlchemyGenerator(GeneratorInterface):
             table_classes = [cls for cls in classes if cls.name not in concrete_parents] + asso_classes
             check_constraints = get_check_constraints(self.model, self.TYPES, table_classes)
 
-        file_path = self.build_generation_path(file_name="sql_alchemy.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        env.globals.update(normalize_code=normalize_method_code)
+        env = traced_environment(templates_path)
+        env.globals.update(normalize_code=normalize_method_code,
+                           is_shadowed_by_association_end=is_shadowed_by_association_end,
+                           end_hidden_by_attribute=end_hidden_by_attribute)
         # default_value reaches the metamodel unvalidated from request JSON and
         # used to be interpolated raw into the generated module — which
         # SQLGenerator then EXECUTES. These emit literals, never expressions.
         register_default_literals(env)
         template = env.get_template('sql_alchemy_template.py.j2')
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
-                classes=classes,
-                asso_classes=asso_classes,
-                referenced_asso=self.get_referenced_association_classes(asso_classes),
-                types=self.TYPES,
-                associations=self.model.associations,
-                enumerations=self.model.get_enumerations(),
-                model_name=self.model.name,
-                dbms=dbms,
-                ids=self.get_ids(),
-                pk_types=self.get_pk_py_types(),
-                fkeys=get_foreign_keys(self.model),
-                deferred_fks=get_deferred_fk_associations(self.model),
-                sort=sort_by_timestamp,
-                concrete_parents=concrete_parents,
-                check_constraints=check_constraints,
-            )
-            f.write(generated_code)
-            logger.info("Code generated in the location: %s", file_path)
+        rendered = template.render(
+            classes=classes,
+            asso_classes=asso_classes,
+            referenced_asso=self.get_referenced_association_classes(asso_classes),
+            types=self.TYPES,
+            associations=self.model.associations,
+            enumerations=self.model.get_enumerations(),
+            model_name=self.model.name,
+            dbms=dbms,
+            ids=self.get_ids(),
+            pk_types=self.get_pk_py_types(),
+            fkeys=get_foreign_keys(self.model),
+            deferred_fks=get_deferred_fk_associations(self.model),
+            sort=sort_by_timestamp,
+            concrete_parents=concrete_parents,
+            check_constraints=check_constraints,
+        )
+        self._write_traced("sql_alchemy.py", rendered)
+        logger.info("Code generated in the location: %s", self.build_generation_path(file_name="sql_alchemy.py"))

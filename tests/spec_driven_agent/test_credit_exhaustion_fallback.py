@@ -175,6 +175,17 @@ def test_an_ended_free_window_is_not_a_rejected_key():
     assert not _is_auth_error(_status_error(openai.PermissionDeniedError, 403, WINDOW_ENDED_403))
 
 
+# Measured on prod 2026-11-18: Command Code's newer wordings for the same thing.
+@pytest.mark.parametrize("body", [
+    "Error code: 403 - The free Beam 1.0 tier has ended. Run /model and pick another model to keep going.",
+    "Error code: 403 - The free Laguna S 2.1 tier ended on November 4, 2026. Run /model and pick another model.",
+    "Error code: 403 - Crouton Alpha is no longer available. Run /model and pick another model to keep going.",
+    "Error code: 403 - This model isn't available in your region. Other models on your plan are unaffected.",
+])
+def test_a_model_refused_in_newer_wording_is_not_a_rejected_key(body):
+    assert not _is_auth_error(_status_error(openai.PermissionDeniedError, 403, body))
+
+
 @pytest.mark.parametrize("stream", [False, True])
 def test_an_ended_free_window_moves_to_the_next_model_on_the_same_endpoint(monkeypatch, stream):
     primary = "https://api.commandcode.ai/provider/v1"

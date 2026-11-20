@@ -3,8 +3,8 @@ import os
 from besser.BUML.metamodel.gui import *
 from besser.BUML.metamodel.gui.dashboard import Map
 from besser.BUML.metamodel.structural import *
-from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import traced_environment
 from besser.utilities.template_escaping import register_escaping_filters
 
 logger = logging.getLogger(__name__)
@@ -66,12 +66,11 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="sql_helper.dart")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = register_escaping_filters(Environment(loader=FileSystemLoader(templates_path)))
+        env = register_escaping_filters(traced_environment(templates_path))
         template = env.get_template('flutterCodeGeneratorSqlHelperFile.py.j2')
-        with open(file_path, mode="w") as f:
-            generated_code = template.render(BUMLClasses= copy_model.get_classes(), model=copy_model, types=self.TYPES)
-            f.write(generated_code)
-            logger.debug("Code generated in the location: " + file_path)
+        generated_code = template.render(BUMLClasses= copy_model.get_classes(), model=copy_model, types=self.TYPES)
+        self._write_traced("sql_helper.dart", generated_code)
+        logger.debug("Code generated in the location: " + file_path)
 
 
 
@@ -164,7 +163,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
 
         file_path = self.build_generation_path(file_name="main.dart")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = register_escaping_filters(Environment(loader=FileSystemLoader(templates_path)))
+        env = register_escaping_filters(traced_environment(templates_path))
         template = env.get_template('flutterCodeGeneratorMainFile.py.j2')
         env.tests['is_Button'] = self.is_Button
         env.tests['is_List'] = self.is_List
@@ -179,17 +178,16 @@ class FlutterMainDartGenerator(GeneratorInterface):
         for scr in screens:
               logger.debug(scr.name + " ::  ")
 
-        with open(file_path, mode="w") as f:
-            generated_code = template.render(
-                app=self.gui_model,
-                screens=screens,
-                screen=self.main_page,
-                BUMLClasses=self.model.get_classes(),
-                model=self.model,
-                associations=self.model.associations
-            )
-            f.write(generated_code)
-            logger.debug("Code generated in the location: " + file_path)
+        generated_code = template.render(
+            app=self.gui_model,
+            screens=screens,
+            screen=self.main_page,
+            BUMLClasses=self.model.get_classes(),
+            model=self.model,
+            associations=self.model.associations
+        )
+        self._write_traced("main.dart", generated_code)
+        logger.debug("Code generated in the location: " + file_path)
 
 
 ##############################
@@ -237,14 +235,13 @@ class FlutterPubspecGenerator(GeneratorInterface):
 
         file_path = self.build_generation_path(file_name="pubspec.yaml")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = register_escaping_filters(Environment(loader=FileSystemLoader(templates_path)))
+        env = register_escaping_filters(traced_environment(templates_path))
         template = env.get_template('flutterCodeGeneratorPubspecFile.py.j2')
-        with open(file_path, mode="w") as f:
-            generated_code = template.render(
-                app=self.gui_model
-            )
-            f.write(generated_code)
-            logger.debug("Code generated in the location: " + file_path)
+        generated_code = template.render(
+            app=self.gui_model
+        )
+        self._write_traced("pubspec.yaml", generated_code)
+        logger.debug("Code generated in the location: " + file_path)
 
 
 
@@ -291,9 +288,12 @@ class FlutterGenerator(GeneratorInterface):
 
         sql_helper_generator = FlutterSQLHelperGenerator(model=self.model, output_dir=self.output_dir)
         sql_helper_generator.generate()
+        self._merge_traced_files(sql_helper_generator)
 
         main_dart_generator = FlutterMainDartGenerator(model=self.model, gui_model=self.gui_model, main_page=self.main_page, module=self.module, output_dir=self.output_dir)
         main_dart_generator.generate()
+        self._merge_traced_files(main_dart_generator)
 
         pubspec_generator = FlutterPubspecGenerator(gui_model=self.gui_model, output_dir=self.output_dir)
         pubspec_generator.generate()
+        self._merge_traced_files(pubspec_generator)

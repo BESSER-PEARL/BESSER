@@ -59,7 +59,9 @@ The generated files land in the ``<<current_directory>>/output`` folder:
 - ``config.yaml``: the agent's configuration file.
 - ``readme.txt``: how to run the generated agent.
 - ``tools.py``: the agent's tool function definitions — only when the model declares tools.
-- ``skills/``: one Markdown file per skill — only when the model declares skills.
+- ``skills/``: one Markdown file per skill, named after it — only when the model declares skills.
+  A skill name that is not a valid identifier (``/``, ``..``) has those characters replaced by
+  ``_`` and a short hash appended, so the file stays in ``skills/``.
 - ``personalized_agent_model.py`` / ``personalized_agent_model.json``: the
   personalized agent model, written alongside the others only when a
   personalization config is supplied and the mode is not ``CODE_ONLY``.
@@ -313,6 +315,29 @@ sent by that GUI.
     #     __init__.py
     #     order_form.py   <- gui_model (BUML code) + gui = AgentGUI(...)
 
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` records which lines of the generated files come from which agent
+element: in ``<agent>.py`` the lines of each intent (``intent``), custom entity (``entity``), state (``state``, its
+creation) and the behaviour of each state (``state_behavior``) with its body (``body``), fallback body
+(``fallback_body``) and transitions (``transition``); in ``tools.py`` those of each tool (``tool``). ``config.yaml``,
+``readme.txt`` and the agent script name the agent as their source, a ``skills/`` file its skill and a ``guis/``
+module its GUI model. Only elements with an ``id`` are recorded, and recording them does not change the generated
+files. The web editor's agent processor gives each state, intent, transition, tool, skill, workspace and RAG the id
+of the editor element it is built from, so an agent drawn in the editor is traced by element. A state's body and
+fallback body get none: the editor draws a body as a list of actions, none of which is the body, so their lines are
+traced as part of the state's behaviour.
+
+``generator.ai_files`` lists the files an LLM produced or modified in the run (see :doc:`agent_personalization`):
+``personalized_agent_model.py``, ``personalized_agent_model.json`` and the agent script when ``configure_agent`` asked
+the LLM to translate or restyle the replies, and ``generator.ai_llm`` the LLM it asked (OpenAI's
+``DEFAULT_OPENAI_MODEL``). ``build_generation_trace(..., ai_files=generator.ai_files, llm=generator.ai_llm)`` records
+them with AI evidence and a call to that LLM instead of a template rule. The web editor's traced endpoint does so: it
+delivers the agent ZIP with the element traces of its generator, a file in ``ai_files`` linked by the LLM's AI
+evidence and without regions, and the bundles of several agents (languages, variations, configurations) at file
+level. See :doc:`traceable_generator`.
 
 Missing BAF Features
 --------------------

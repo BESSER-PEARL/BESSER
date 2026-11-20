@@ -130,6 +130,19 @@ generated with ``app_name="LibraryApplication"`` and
                 ├── author.http
                 └── book.http
 
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` maps each Java file the generator rendered (path relative to the
+project root, e.g. ``src/main/java/com/example/entity/Book.java``) to what it was rendered from, for every
+element that has an ``id`` (as every element drawn in the web editor does). Each entity, repository, service
+interface, service implementation, controller and ``.http`` file is generated as a whole from its class, and each
+enumeration file from its enumeration. Inside an entity, the field of an attribute and of an association, their
+getter/setter pair and each method are line ranges (regions) of their own; the derived ``findAllBy...`` methods of
+the repository and the services are regions of the attribute they search. The Maven files, ``application.properties``
+and the copied Maven wrapper are file-level only. Recording traces does not change the generated project; see
+:doc:`traceable_generator`.
+
 How to Run the Application
 --------------------------
 

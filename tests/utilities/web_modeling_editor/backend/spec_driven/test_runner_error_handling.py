@@ -11,7 +11,10 @@ import asyncio
 import os
 import zipfile
 
-from besser.spec_driven_agent.errors import UpstreamLLMError
+import pytest
+
+from besser.spec_driven_agent.errors import CheckpointMismatchError, InvalidApiKeyError, UpstreamLLMError
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
@@ -133,6 +136,66 @@ class _EchoesTheKey(_FakeOrchestrator):
             with open(os.path.join(self.output_dir, name), "w", encoding="utf-8") as fh:
                 fh.write(f'KEY = "{PLAIN_KEY}"\n')
         return self.output_dir
+
+
+def _interrupted_workspace(root, run_id: str) -> str:
+    """What an interrupted run leaves behind: its files and a checkpoint."""
+    workspace = root / f"besser_llm_{run_id}_interrupted"
+    (workspace / "app").mkdir(parents=True)
+    (workspace / "app" / "main.py").write_text("# 40 paid turns of work\n", encoding="utf-8")
+    (workspace / ".besser_checkpoint.json").write_text("{}", encoding="utf-8")
+    return str(workspace)
+
+
+def _fails_on_resume(exc: Exception):
+    class _Orchestrator(_FakeOrchestrator):
+        def resume(self, instructions: str) -> str:
+            raise exc
+
+    return _Orchestrator
+
+
+def _rejects_the_key(**_):
+    raise ValueError("Invalid API key format")
+
+
+def _rejects_the_project(*_):
+    raise ValueError("The class diagram does not convert")
+
+
+@pytest.mark.parametrize(
+    ("orchestrator", "client_factory", "assemble", "code"),
+    [
+        (_fails_on_resume(CheckpointMismatchError("Checkpoint fingerprint does not match")),
+         None, None, "BAD_REQUEST"),
+        (_fails_on_resume(InvalidApiKeyError("The API rejected the key")), None, None, "INVALID_KEY"),
+        (_fails_on_resume(FileNotFoundError("No checkpoint")), None, None, "BAD_REQUEST"),
+        (_fails_on_resume(UpstreamLLMError("Request timed out")), None, None, "INCOMPLETE"),
+        (_FakeOrchestrator, _rejects_the_key, None, "INVALID_KEY"),
+        (_FakeOrchestrator, None, _rejects_the_project, "BAD_REQUEST"),
+    ],
+    ids=["fingerprint mismatch", "key rejected by the API", "no checkpoint", "provider failure",
+         "malformed key", "malformed project"],
+)
+def test_a_failed_resume_keeps_the_interrupted_workspace(
+    monkeypatch, tmp_path, orchestrator, client_factory, assemble, code,
+):
+    """Review E4: a resume that failed on bad input deleted the earlier
+    attempt's workspace, so the retry with the right input got a 404."""
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
+    run_id = "c" * 32
+    workspace = _interrupted_workspace(tmp_path, run_id)
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", orchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", client_factory or (lambda **_: _FakeClient()))
+    if assemble is not None:
+        monkeypatch.setattr(runner_module, "assemble_models_from_project", assemble)
+
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime(), resume_run_id=run_id)
+    parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(runner))]
+
+    assert code in [p["code"] for p in parsed if p["event"] == "error"]
+    assert os.path.isfile(os.path.join(workspace, "app", "main.py"))
+    assert runner_module._locate_run_temp_dir(run_id) == workspace
 
 
 def test_run_key_never_leaves_in_frames_or_the_zip(monkeypatch):

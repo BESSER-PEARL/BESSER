@@ -19,6 +19,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.validation.issues import (
     _check_did_not_run,
     required_check_unverified,
+    runtime_check_unverified,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
@@ -101,6 +102,33 @@ def _ids(items) -> list[str]:
     return [item.id for item in items]
 
 
+def test_tests_the_agent_wrote_are_not_reported_as_rules_the_user_asked_for():
+    """A production run built from a request with no business rule ended "Delivered, but 2 rules
+    you asked for are not enforced": both were debug workflows the agent wrote for itself."""
+    def workflow(ident: str, status: str) -> dict:
+        return {"scenario_id": ident, "report": {"status": status, "boot": "ok"},
+                "scenario": {"backend": "backend", "requests": [
+                    {"method": "POST", "path": "/booktergre/"},
+                    {"method": "POST", "path": "/booktergre/1/methods/decrease_stock/"}]}}
+
+    report = build_verification_report({
+        "requirements": [],
+        "business_rules_stated": False,
+        "api_scenarios": [workflow("test_decrease_stock", "failed"),
+                          workflow("test_decrease_stock_simple", "passed")],
+        "api_scenarios_retired": [{"scenario_id": "test_decrease_stock_proper", "last_status": "failed",
+                                   "reason": "Wrong payload; test_decrease_stock_simple replaces it."}],
+    })
+
+    assert report.shippedUnenforced == [] and report.counts.shippedUnenforced == 0
+    failed = next(i for i in report.notVerified if i.id == "test_decrease_stock")
+    assert "a test the agent wrote" in failed.why and "not a rule from your request" in failed.why
+    retired = next(i for i in report.notVerified if i.id == "test_decrease_stock_proper")
+    assert retired.what == "Test workflow 'test_decrease_stock_proper'"
+    assert retired.why == "the agent retired it: Wrong payload; test_decrease_stock_simple replaces it."
+    assert _ids(report.verified) == ["test_decrease_stock_simple"]
+
+
 def test_failed_ocl_conversion_is_reported_as_shipped_unenforced():
     report = build_verification_report(_hotel_recipe())
 
@@ -168,6 +196,24 @@ def test_a_recovered_ocl_constraint_moves_out_of_shipped_unenforced():
     assert "guestsWithinCapacity" in _ids(report.shippedUnenforced)
 
 
+def test_structured_citations_read_as_path_and_line_like_the_older_string():
+    recipe = _hotel_recipe()
+    recipe["requirements"][0]["evidence"] = [
+        {"path": "backend/routers/booking.py", "line": "booking = Booking(**payload)"},
+        {"path": "frontend/src/Book.jsx", "line": "<BookingForm onSubmit={save} />"}]
+    recipe["requirements"][3] = _recovery_requirement(
+        _NO_DOUBLE_BOOKING, 4, status="implemented",
+        evidence=[{"path": "backend/routers/booking.py", "line": "raise HTTPException(409, 'room already booked')"}],
+    )
+    report = build_verification_report(recipe)
+
+    implemented = next(i for i in report.verified if i.id == "R1")
+    assert implemented.how.endswith("source: backend/routers/booking.py: booking = Booking(**payload) and "
+                                    "frontend/src/Book.jsx: <BookingForm onSubmit={save} />")
+    recovered = next(i for i in report.verified if i.id == "noOverlappingBookings")
+    assert recovered.how.endswith("backend/routers/booking.py: raise HTTPException(409, 'room already booked')")
+
+
 def test_a_rejected_rule_nothing_judged_still_ships_unenforced():
     recipe = _hotel_recipe(requirements=[])
     report = build_verification_report(recipe)
@@ -187,7 +233,7 @@ def test_a_ledger_that_produced_no_verdict_at_all_is_not_silence():
     report = build_verification_report(recipe)
 
     coverage = next(i for i in report.notVerified if i.what == "original-specification coverage")
-    assert "extraction failed" in coverage.why
+    assert coverage.why.startswith("Your request could not be turned into checkable requirements")
     assert report.verified == [i for i in report.verified if i.kind == "api_workflow"]
 
 
@@ -206,13 +252,13 @@ def test_an_unimplemented_modeled_operation_is_missing_not_merely_unchecked():
     ])
     report = build_verification_report(recipe)
 
-    missing = [i for i in report.shippedUnenforced if "execute_booking_cancel" in i.what]
+    missing = [i for i in report.shippedUnenforced if "POST /booking/{booking_id}/methods/cancel/" in i.what]
     assert len(missing) == 1
-    assert "does not implement it" in missing[0].why
+    assert "is not implemented" in missing[0].what and "line 72" not in missing[0].what
 
-    unknown = [i for i in report.notVerified if "task 1 remains unresolved" in i.what]
+    unknown = [i for i in report.notVerified if "Implement POST /bill/{bill_id}" in i.what]
     assert len(unknown) == 1
-    assert "unknown, not absent" in unknown[0].why
+    assert unknown[0].what.startswith("A planned change could not be confirmed as done")
 
     # Style noise stays out of all three lists.
     everything = report.verified + report.notVerified + report.shippedUnenforced
@@ -318,6 +364,20 @@ def test_required_check_unverified_lands_in_could_not_check():
     check = next(i for i in report.notVerified if i.kind == "check")
     assert check.what == "frontend build [.]"
     assert "node is unavailable" in check.why
+
+
+def test_a_runtime_check_that_did_not_run_lands_in_could_not_check():
+    """Pins the coupling with ``runtime_check_unverified``: these replaced the
+    ``runtime unverified:`` findings ``_UNCHECKED_PREFIXES`` used to catch."""
+    recipe = _hotel_recipe(validation_issues=[{
+        "severity": "warning",
+        "message": runtime_check_unverified("the constructibility probe", "backend: no sandbox"),
+    }])
+    report = build_verification_report(recipe)
+
+    check = next(i for i in report.notVerified if i.kind == "check")
+    assert check.what == "the automatic create test"
+    assert "no sandbox" in check.why
 
 
 def test_the_synthetic_recovery_requirement_the_orchestrator_writes_is_matchable():

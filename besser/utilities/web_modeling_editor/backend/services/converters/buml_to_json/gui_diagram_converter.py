@@ -323,6 +323,8 @@ def _serialize_screen(screen: Screen) -> Dict[str, Any]:
         "name": screen.description or screen.name or screen_id,
         "frames": [frame],
     }
+    if screen.route_path:
+        page["route_path"] = screen.route_path
     if page_attrs:
         page["attributes"] = page_attrs
     return page
@@ -404,9 +406,13 @@ def _serialize_form_children(form: Form) -> List[Dict[str, Any]]:
                 label_node["attributes"] = {"for": field_id}
             children.append(label_node)
         children.append(serialized)
+    submit_attributes = {"type": "submit"}
+    submit_classes = (form.custom_attributes or {}).get("data-submit-class")
+    if submit_classes:
+        submit_attributes["class"] = submit_classes
     children.append({
         "tagName": "button",
-        "attributes": {"type": "submit"},
+        "attributes": submit_attributes,
         "components": [{"type": "textnode", "content": getattr(form, "submit_label", None) or "Submit"}],
     })
     return children

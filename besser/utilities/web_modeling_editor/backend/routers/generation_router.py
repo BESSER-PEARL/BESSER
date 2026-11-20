@@ -276,7 +276,7 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     Generate code output from a complete project.
     This endpoint handles generators that require multiple diagrams (e.g., Web App).
     """
-    return _download_response(await generate_from_project(input_data))
+    return _download_response((await generate_from_project(input_data)).output)
 
 
 @router.post("/generate-output")
@@ -294,7 +294,7 @@ async def generate_code_output(input_data: DiagramInput):
     Raises:
         HTTPException: If generator is not supported or generation fails
     """
-    return _download_response(await generate_from_diagram(input_data))
+    return _download_response((await generate_from_diagram(input_data)).output)
 
 
 def _download_response(output: GeneratedOutput) -> Response:

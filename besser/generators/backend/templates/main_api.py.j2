@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from pydantic_classes import *
 from sql_alchemy import *
-from database import get_db
+from database import get_db, integrity_error_detail
 {% for class in classes %}
 from routers import {{ class.name | lower }} as {{ class.name | lower }}_router
 {% if class.methods %}from routers import {{ class.name | lower }}_methods as {{ class.name | lower }}_methods_router
@@ -99,15 +99,12 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
     """Handle database integrity errors."""
     logger.error(f"Database integrity error: {exc}")
 
-    # Extract more detailed error information
-    error_detail = str(exc.orig) if hasattr(exc, 'orig') else str(exc)
-
     return JSONResponse(
         status_code=status.HTTP_409_CONFLICT,
         content={
             "error": "Conflict",
             "message": "Data conflict occurred",
-            "detail": error_detail
+            "detail": integrity_error_detail(exc)
         }
     )
 
@@ -148,11 +145,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 #
 ############################################
 
-{% for class in classes %}
+{% for class in classes %}{% trace class, "router_include" %}
 app.include_router({{ class.name | lower }}_router.router)
 {% if class.methods %}app.include_router({{ class.name | lower }}_methods_router.router)
 {% endif %}
-{% endfor %}
+{% endtrace %}{% endfor %}
 
 ############################################
 #

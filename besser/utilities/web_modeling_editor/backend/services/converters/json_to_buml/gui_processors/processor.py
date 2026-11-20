@@ -2,7 +2,9 @@
 Main GUI diagram processor - orchestrates the conversion of GrapesJS JSON to BUML GUI model.
 """
 
+import html
 import logging
+import re
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -11,11 +13,15 @@ from besser.BUML.metamodel.gui import (
     Button,
     ButtonActionType,
     GUIModel,
+    Link,
+    Menu,
     Module,
     Screen,
     ViewComponent,
     ViewContainer,
+    ViewElement,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
@@ -51,9 +57,118 @@ from .component_parsers import (
     parse_menu,
     parse_text,
 )
-from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
+from .constants import (
+    CONTAINER_TAGS,
+    CONTAINER_TYPES,
+    INPUT_COMPONENT_TYPES,
+    TEXT_TAGS,
+    TRACED_COMPONENT_TYPES,
+    TRACED_INPUT_TYPE_PREFIX,
+)
 from .styling import build_style_map, build_stylesheet, resolve_component_styling
-from .utils import css_class_names, html_attributes, sanitize_name, get_element_by_id, clean_method_name
+from .utils import (
+    clean_method_name,
+    css_class_names,
+    extract_text_content,
+    get_element_by_id,
+    html_attributes,
+    sanitize_name,
+)
+from besser.generators.react.routes import page_route
+
+def _is_not_a_page_href(href: str) -> bool:
+    """Whether an href cannot name a page of the app: a URL with a scheme
+    (``https:``, ``mailto:``), a protocol-relative URL, or a fragment of the
+    current page. Plain string checks: the href comes from the user's design."""
+    target = href.lstrip()
+    if target.startswith(("//", "#")):
+        return True
+    scheme, colon, _rest = target.partition(":")
+    return bool(colon) and scheme[:1].isalpha() and scheme.isascii() and all(
+        char.isalnum() or char in "+.-" for char in scheme)
+
+
+def _has_template_placeholder(text: str) -> bool:
+    """Whether a line of ``text`` holds a ``{{ name }}`` placeholder."""
+    for line in text.splitlines():
+        start = line.find("{{")
+        if start != -1 and line.find("}}", start + 2) != -1:
+            return True
+    return False
+
+
+def _page_key(reference: Any) -> str:
+    """A page reference (id, name, route or slug) in one comparable form: its
+    letters and digits (any script, as in ``page_route``), runs of others as ``-``."""
+    return re.sub(r"[\W_]+", "-", str(reference or "").lower()).strip("-")
+
+
+def _is_stored_route(route: str) -> bool:
+    """Whether a route stored on a page can be used as is: ``/`` then one or more
+    segments of the characters of a derived route (letters of any script,
+    digits, ``_``, ``-``)."""
+    return route.startswith("/") and all(
+        segment and all(char.isalnum() or char in "_-" for char in segment)
+        for segment in route[1:].split("/"))
+
+
+def _screen_fallback(page: Dict[str, Any], page_index: int, frame_index: int) -> str:
+    """The name of a page's frame when the page has none of its own (or several frames)."""
+    fallback = page.get("name", f"Page_{page_index + 1}") or f"Screen_{page_index + 1}"
+    if len(page.get("frames", [])) > 1:
+        fallback = f"{fallback}_{frame_index + 1}"
+    return fallback
+
+
+def _page_routes(pages: List[Dict[str, Any]]) -> Dict[tuple, str]:
+    """The route of each frame of each page, by ``(page index, frame index)``.
+
+    A page keeps the ``route_path`` stored on it when it is URL-safe, else its
+    route comes from its name (``page_route``). A route another page already has
+    gets ``-2``, ``-3``...; pages are taken in id order, so reordering or
+    exporting the pages does not swap the routes of two pages with one name.
+    """
+    routes: Dict[tuple, str] = {}
+    used: Set[str] = set()
+    for page_index in sorted(range(len(pages)), key=lambda i: (str(pages[i].get("id") or ""), i)):
+        page = pages[page_index]
+        stored = str(page.get("route_path") or "")
+        for frame_index, _frame in enumerate(page.get("frames", [])):
+            route = stored if _is_stored_route(stored) else ""
+            if route in used:
+                route = ""
+            if stored and not route:
+                logger.warning("Page %r: its route %r is not a URL-safe route of its own; deriving one from "
+                               "its name.", page.get("name"), stored)
+            route = route or page_route(page.get("name") or _screen_fallback(page, page_index, frame_index))
+            if route == "/":
+                route = f"/page-{page_index + 1}"
+            base_route, suffix = route, 1
+            while route in used:
+                suffix += 1
+                route = f"{base_route}-{suffix}"
+            used.add(route)
+            routes[(page_index, frame_index)] = route
+    return routes
+
+
+def _holds_only_text(component: Dict[str, Any]) -> bool:
+    """Whether the element has text and no child element (``<div>128</div>``).
+    Whitespace (``&nbsp;`` included) and template placeholders (``{{ name }}``) are not text."""
+    children = component.get("components") or []
+    if any(not isinstance(child, dict) or child.get("type") != "textnode" for child in children):
+        return False
+    text = html.unescape(extract_text_content(component)).strip()
+    return bool(text) and not _has_template_placeholder(text)
+
+
+def is_traced_component(component: Dict[str, Any]) -> bool:
+    """Whether the editor's trace records this GrapesJS component (and gives it a persistent
+    ``attributes.id``), the same test as the editor's ``isTracedComponent``."""
+    comp_type = component.get("type") if isinstance(component.get("type"), str) else ""
+    if comp_type in TRACED_COMPONENT_TYPES or comp_type.startswith(TRACED_INPUT_TYPE_PREFIX):
+        return True
+    return not comp_type and component.get("tagName") in INPUT_COMPONENT_TYPES
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -82,6 +197,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
     # Track used names to ensure uniqueness
     used_names: Set[str] = set()
+    # The editor ids of the screens and traced components, the ids a trace refers to them by.
+    editor_ids = EditorIds()
 
     def register_name(raw_value: Optional[str], fallback: str) -> str:
         """Register and return a unique name."""
@@ -201,6 +318,10 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                     setattr(result, 'display_order', index)
                 else:
                     result.display_order = index
+                # A component the editor's trace records is the element a trace refers to by its editor id.
+                if isinstance(result, ViewElement) and is_traced_component(child):
+                    attributes = child.get("attributes") if isinstance(child.get("attributes"), dict) else {}
+                    editor_ids.assign(result, attributes.get("id"))
                 parsed_children.append(result)
         return parsed_children
 
@@ -450,6 +571,14 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             attach_meta(data_list, meta)
             return data_list
 
+        # === TEXT-ONLY ELEMENT (a div holding just text, not a container) ===
+        if _holds_only_text(component):
+            meta["tagName"] = meta["tagName"] or "div"  # GrapesJS's default tag
+            name = get_unique_name(component, "Text")
+            text_element = parse_text(component, styling, name, meta)
+            attach_meta(text_element, meta)
+            return text_element
+
         # === CONTAINER PARSER ===
         if comp_type in CONTAINER_TYPES or tag in CONTAINER_TAGS or comp_name in CONTAINER_TYPES:
             name = get_unique_name(component, "Container")
@@ -501,16 +630,14 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     pages = gui_model_json.get("pages", [])
     screen_list: List[Screen] = []
     page_id_to_screen: Dict[str, Screen] = {}  # Map page IDs to Screen objects
+    routes = _page_routes(pages)
 
     for page_index, page in enumerate(pages):
         page_id = page.get("id")  # Get the page ID for target-screen resolution
-        page_name = page.get("name", f"Page_{page_index + 1}")
         frames = page.get("frames", [])
         for frame_index, frame in enumerate(frames):
             wrapper = frame.get("component", {}) or {}
-            screen_fallback = page_name or f"Screen_{page_index + 1}"
-            if len(frames) > 1:
-                screen_fallback = f"{screen_fallback}_{frame_index + 1}"
+            screen_fallback = _screen_fallback(page, page_index, frame_index)
             screen_name = get_unique_name(wrapper, screen_fallback)
 
             # Extract screen properties
@@ -524,9 +651,6 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 x_dpi = str(page_attrs.get("x-dpi") or page_attrs.get("dpi") or "")
                 y_dpi = str(page_attrs.get("y-dpi") or page_attrs.get("dpi") or "")
 
-            # Derive route path from page name or ID
-            route_path = f"/{(page.get('name') or screen_fallback).lower().replace(' ', '-')}"
-
             screen = Screen(
                 name=screen_name,
                 description=str(page.get("name") or screen_fallback),
@@ -535,7 +659,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 x_dpi=x_dpi,
                 y_dpi=y_dpi,
                 screen_size=screen_size,
-                route_path=route_path,
+                route_path=routes[(page_index, frame_index)],
             )
             styling = resolve_component_styling(wrapper, style_map)
             if styling:  # Only assign if styling exists
@@ -546,6 +670,9 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 screen.component_id = page_id
             else:
                 setattr(screen, 'page_id', page_id)
+            # The page is the screen a trace refers to (by the page id, as the editor's trace does).
+            if frame_index == 0:
+                editor_ids.assign(screen, page_id)
 
             # Set layout if present in styling
             if hasattr(screen, 'styling') and screen.styling and hasattr(screen.styling, 'layout') and screen.styling.layout:
@@ -681,10 +808,42 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             if isinstance(element, ViewContainer) and hasattr(element, 'view_elements'):
                 resolve_action_references(element.view_elements)
 
+    # Every way a link may name a page: its id, route, name or screen name.
+    screens_by_key: Dict[str, Screen] = {}
+    for page_id, screen in page_id_to_screen.items():
+        screens_by_key.setdefault(_page_key(page_id), screen)
+    for screen in screen_list:
+        for reference in (screen.route_path, screen.description, screen.name):
+            screens_by_key.setdefault(_page_key(reference), screen)
+
+    def linked_screen(href, navigate_to=None):
+        """The page a link opens: the one ``data-navigate-to`` names, else the
+        one a site-relative ``href`` names by route, name or id."""
+        key = _page_key(navigate_to)
+        if not key and href and not _is_not_a_page_href(str(href)):
+            key = _page_key(href)
+        return screens_by_key.get(key) if key else None
+
+    def resolve_page_links(elements):
+        """Point links and menu items that open a page of this GUI at its route."""
+        for element in elements:
+            if isinstance(element, Link):
+                target = linked_screen(element.url, (element.custom_attributes or {}).get("data-navigate-to"))
+                if target is not None:
+                    element.url = target.route_path
+            elif isinstance(element, Menu):
+                for item in element.menuItems:
+                    target = linked_screen(item.url)
+                    if target is not None:
+                        item.url = target.route_path
+            if isinstance(element, ViewContainer):
+                resolve_page_links(element.view_elements)
+
     # Apply resolution to all screens
     for screen in screen_list:
         if hasattr(screen, 'view_elements'):
             resolve_action_references(screen.view_elements)
+            resolve_page_links(screen.view_elements)
 
     # Create module and finalize
     module_name = register_name(f"{gui_name}_Module", "Module")

@@ -1,0 +1,1827 @@
+"""Traceability metamodel.
+
+Records what happened to the artifacts of a BESSER project (model elements,
+generated code) and the links derived between them. It follows W3C PROV:
+an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
+:class:`Actor` is an agent.
+
+* An :class:`Operation` is performed by Actors and reads and writes Artifacts.
+  Its kind is its class: :class:`ModelingSession` edits models and holds the granular
+  :class:`ChangeEvent` records of what it did, :class:`CodeGeneration` (a
+  :class:`Transformation`) derives code from models, :class:`RequirementExtraction`
+  (a :class:`Transformation` too) derives requirements from a prompt, :class:`Conversation`
+  is a dialogue between a user and an agent. Whether a person or an agent did the
+  work is told by its actors, not by its kind; whether edits were made by hand or
+  derived by a model generator is told by its tools.
+* An operation reaches its Tools only through its :class:`ToolCall` records: each
+  call invokes one tool and holds the :class:`LogRecord` messages exchanged with it
+  (a prompt and its answer). The tools an operation used are derived from its calls.
+* A :class:`TraceLink` connects a source and a target Artifact (a class and the
+  code generated from it, a requirement and the model element that realizes it).
+  :class:`Evidence` says why the link holds and
+  :class:`Confidence` how sure it is; an operation may have a Confidence too.
+* An artifact is written by one operation. A file changed by a later operation (an LLM
+  editing generated code) is a new :class:`CodeArtifact` version, ``revision_of`` the one it
+  changed (``prov:wasRevisionOf``).
+* A check is not a concept of its own: a validation gate's outcome is in the
+  :class:`LogRecord` messages of the tool call that ran it, and a judge's verdict that code
+  realizes a requirement is a trace link with :class:`AIEvidence` (the judge's prompt and
+  answer as its logs) and a :class:`Confidence` whose explanation is the verdict's reason.
+
+A trace is stored apart from the model it describes. It points at model
+elements by their persistent ``Element.id`` (the editor element id), never by
+object reference, so it outlives deleted elements and loads without the model.
+Names are free text (a project owner is ``"BESSER User"``), so trace elements
+inherit :class:`Element`, not :class:`NamedElement`; every one has an ``id``
+(a UUID unless given) and a ``timestamp``.
+"""
+
+import uuid
+from abc import ABC
+from collections import deque
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Deque, Iterable, Iterator, List, Optional, Set, Tuple
+
+from besser.BUML.metamodel.structural import Element, Model
+
+__all__ = [
+    "ExecutionStatus",
+    "ChangeKind",
+    "RequirementKind",
+    "LogType",
+    "TraceElement",
+    "Artifact",
+    "ModelArtifact",
+    "CodeArtifact",
+    "PromptArtifact",
+    "RequirementArtifact",
+    "Actor",
+    "Person",
+    "Agent",
+    "Tool",
+    "Editor",
+    "CodeGenerator",
+    "ModelGenerator",
+    "LLM",
+    "LogRecord",
+    "ToolCall",
+    "ChangeEvent",
+    "Operation",
+    "ModelingSession",
+    "Transformation",
+    "CodeGeneration",
+    "RequirementExtraction",
+    "Conversation",
+    "Evidence",
+    "RuleEvidence",
+    "AIEvidence",
+    "Confidence",
+    "OutOfDateReason",
+    "TraceLink",
+    "TraceModel",
+]
+
+
+class ExecutionStatus(Enum):
+    """Lifecycle state of an execution: an :class:`Operation` or one of its :class:`ToolCall` records."""
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    TIMED_OUT = "TIMED_OUT"
+
+
+class ChangeKind(Enum):
+    """What a :class:`ChangeEvent` did to its artifact."""
+    CREATED = "CREATED"
+    UPDATED = "UPDATED"
+    DELETED = "DELETED"
+
+
+class OutOfDateReason(Enum):
+    """Why a :class:`TraceLink` may no longer hold: the values of ``TraceLink./outOfDate``, derived
+    by :meth:`TraceModel.out_of_date`."""
+    SOURCE_CHANGED = "SOURCE_CHANGED"
+    """The source changed after the link was made: the target may no longer match it."""
+    TARGET_CHANGED = "TARGET_CHANGED"
+    """The target was edited after the link was made: it may no longer be what was derived."""
+    UPSTREAM_CHANGED = "UPSTREAM_CHANGED"
+    """Neither end changed, but something the source was derived from did: the source may need
+    updating, and this link with it."""
+
+
+class RequirementKind(Enum):
+    """What a :class:`RequirementArtifact` asks for, which decides the models that can realize it.
+
+    The values are lowercase because the same words name a requirement's kind in the modeling
+    agent's protocol and the Spec-Driven Agent's requirements ledger.
+    """
+    DATA = "data"
+    """Entities, their attributes and their relationships."""
+    UNIQUENESS = "uniqueness"
+    """An identifier, or a value that must be unique."""
+    VALIDATION = "validation"
+    """The shape a value must have."""
+    RULE = "rule"
+    """A limit or a rule across entities."""
+    COMPUTED = "computed"
+    """A value worked out rather than typed in."""
+    TRANSITION = "transition"
+    """A state change, and when it is refused."""
+    ACTION = "action"
+    """A named operation and what it reports back."""
+    UI = "ui"
+    """A screen or an interaction."""
+    INTEGRATION = "integration"
+    """An external service the application uses (payments, email, ...)."""
+    QUALITY = "quality"
+    """A quality of the whole application: performance, security, accessibility, ..."""
+    TECHNICAL = "technical"
+    """A technology, platform or architecture the application must use."""
+
+
+class LogType(Enum):
+    """Kind of a :class:`LogRecord`."""
+    INPUT_REQUEST = "INPUT_REQUEST"
+    OUTPUT_RESPONSE = "OUTPUT_RESPONSE"
+    INTERMEDIATE_MESSAGE = "INTERMEDIATE_MESSAGE"
+    TOOL_CALL = "TOOL_CALL"
+    TOOL_RESULT = "TOOL_RESULT"
+    ERROR = "ERROR"
+    INFO = "INFO"
+
+
+def _text(value, owner: str, field: str) -> str:
+    """``value`` when it is a non-blank str, else ValueError."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{owner}.{field} must be a non-empty string.")
+    return value
+
+
+def _optional_text(value, owner: str, field: str) -> Optional[str]:
+    """``value`` when it is None or a str, else ValueError."""
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{owner}.{field} must be a string or None.")
+    return value
+
+
+def _sequence_number(value, owner: str) -> int:
+    """``value`` when it is a non-negative int, else ValueError."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{owner}.sequence_number must be a non-negative integer.")
+    return value
+
+
+def _instance(value, expected_type, owner: str, field: str, optional: bool = False):
+    """``value`` when it is an ``expected_type`` (or None when ``optional``), else TypeError."""
+    if value is None and optional:
+        return None
+    if not isinstance(value, expected_type):
+        raise TypeError(f"{owner}.{field} must be a {expected_type.__name__}, got {type(value).__name__}.")
+    return value
+
+
+def _end_time(ended_at: Optional[datetime], started_at: datetime, owner: str) -> Optional[datetime]:
+    """``ended_at`` as naive UTC (as ``Element.timestamp`` is, so the two compare), or None.
+
+    Raises:
+        ValueError: If it is before ``started_at``.
+    """
+    _instance(ended_at, datetime, owner, "ended_at", optional=True)
+    if ended_at is not None and ended_at.tzinfo is not None:
+        ended_at = ended_at.astimezone(timezone.utc).replace(tzinfo=None)
+    if ended_at is not None and ended_at < started_at:
+        raise ValueError(f"{owner}.ended_at cannot be before started_at.")
+    return ended_at
+
+
+def _instances(values: Optional[Iterable], expected_type, owner: str, field: str) -> list:
+    """``values`` as a list without duplicates (first occurrence kept), each an ``expected_type``."""
+    return _Members(values, expected_type, owner, field).items
+
+
+class _Members:
+    """An ordered collection of distinct objects (by identity), each checked against a type.
+
+    It keeps the identities it holds in a set, so building it is O(n) and adding to it O(1):
+    a trace grows by one element at a time, and re-checking the whole list on each addition
+    made building or loading a trace cubic in its size.
+    """
+
+    __slots__ = ("items", "_seen", "_type", "_owner", "_field")
+
+    def __init__(self, values: Optional[Iterable], expected_type, owner: str, field: str):
+        self.items: list = []
+        self._seen: Set[int] = set()  # id() of each item; stable, since the list keeps the item alive
+        self._type, self._owner, self._field = expected_type, owner, field
+        for value in values or ():
+            self.add(value)
+
+    def add(self, value) -> None:
+        """Append ``value`` unless it is already held.
+
+        Raises:
+            TypeError: If it is not of the collection's type.
+        """
+        _instance(value, self._type, self._owner, f"{self._field}[]")
+        if id(value) not in self._seen:
+            self._seen.add(id(value))
+            self.items.append(value)
+
+    def __iter__(self):
+        return iter(self.items)
+
+
+class TraceElement(Element, ABC):
+    """Superclass of every traceability element: an :class:`Element` that always has an id.
+
+    Timestamps are naive UTC (an aware value is converted). A trace mixes times
+    recorded by the browser and by the server, so unlike ``Element`` the
+    default is the current UTC time, not the local one.
+
+    Args:
+        id (str): Persistent identifier (a new UUID when None).
+        timestamp (datetime): When the element came to be (current UTC time when None).
+    """
+
+    def __init__(self, id: str = None, timestamp: datetime = None):
+        super().__init__(timestamp=timestamp if timestamp is not None else datetime.now(timezone.utc),
+                         id=id if id is not None else str(uuid.uuid4()))
+        _text(self.id, type(self).__name__, "id")
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(id={self.id!r})"
+
+
+_FRAGMENT_OF_ITSELF = "Artifact {id!r} cannot be a fragment of itself."
+_REVISION_OF_ITSELF = "CodeArtifact {id!r} cannot be a revision of itself."
+
+
+def link_artifacts(parents: Iterable[Tuple["Artifact", Optional["Artifact"]]] = (),
+                   revisions: Iterable[Tuple["CodeArtifact", Optional["CodeArtifact"]]] = ()) -> None:
+    """Set the parents and revised versions of many artifacts at once, as loading a trace does.
+
+    The ``parent`` and ``revision_of`` setters each walk the chain above the artifact, which over
+    a long chain set link by link is quadratic. This checks the types, walks every chain once
+    (linear), and only then sets the links: on an error nothing has changed.
+
+    Args:
+        parents: (artifact, its parent) pairs.
+        revisions: (code artifact, the version it revises) pairs.
+
+    Raises:
+        TypeError: If a link is not of the type its setter accepts.
+        ValueError: If a chain, with the new links, would contain an artifact twice.
+    """
+    parents, revisions = list(parents), list(revisions)
+    for artifact, parent in parents:
+        _instance(artifact, Artifact, "link_artifacts", "artifact")
+        _instance(parent, Artifact, type(artifact).__name__, "parent", optional=True)
+    for artifact, earlier in revisions:
+        _instance(artifact, CodeArtifact, "link_artifacts", "artifact")
+        _instance(earlier, CodeArtifact, "CodeArtifact", "revision_of", optional=True)
+    _refuse_cycles(parents, lambda artifact: artifact.parent, _FRAGMENT_OF_ITSELF)
+    _refuse_cycles(revisions, lambda artifact: artifact.revision_of, _REVISION_OF_ITSELF)
+    for artifact, parent in parents:
+        artifact._set_parent(parent)
+    for artifact, earlier in revisions:
+        artifact._set_revision_of(earlier)
+
+
+def _refuse_cycles(links: List[Tuple["Artifact", Optional["Artifact"]]], current, message: str) -> None:
+    """Raise ValueError when following ``links`` (else the ``current`` link) from any artifact comes back
+    to one on the way. Each artifact is walked once: an artifact already cleared ends a walk."""
+    following = {id(artifact): target for artifact, target in links}
+    cleared: set = set()
+    for start, _ in links:
+        on_path: set = set()
+        artifact = start
+        while artifact is not None and id(artifact) not in cleared:
+            if id(artifact) in on_path:
+                raise ValueError(message.format(id=artifact.id))
+            on_path.add(id(artifact))
+            artifact = following[id(artifact)] if id(artifact) in following else current(artifact)
+        cleared |= on_path
+
+
+class Artifact(TraceElement, ABC):
+    """Something an operation reads, writes or changes.
+
+    Args:
+        name (str): Display name, free text (an element name, a file path).
+        parent (Artifact): The artifact this one is a fragment of (None for a whole artifact).
+        id (str): Persistent identifier.
+        timestamp (datetime): When the artifact was first recorded.
+    """
+
+    def __init__(self, name: str, parent: "Artifact" = None, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.name: str = name
+        # A new artifact is nobody's parent yet, so its parent's chain cannot hold it: nothing to walk.
+        self._set_parent(parent)
+
+    @property
+    def name(self) -> str:
+        """str: Get the display name."""
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        """str: Set the display name.
+
+        Raises:
+            ValueError: If the name is not a non-empty string.
+        """
+        self.__name = _text(name, type(self).__name__, "name")
+
+    @property
+    def parent(self) -> Optional["Artifact"]:
+        """Artifact: Get the artifact this one is a fragment of."""
+        return self.__parent
+
+    @parent.setter
+    def parent(self, parent: Optional["Artifact"]):
+        """Artifact: Set the artifact this one is a fragment of.
+
+        Raises:
+            TypeError: If parent is neither an Artifact nor None.
+            ValueError: If the parent chain would contain this artifact.
+        """
+        _instance(parent, Artifact, type(self).__name__, "parent", optional=True)
+        ancestor = parent
+        while ancestor is not None:
+            if ancestor is self:
+                raise ValueError(_FRAGMENT_OF_ITSELF.format(id=self.id))
+            ancestor = ancestor.parent
+        self.__parent = parent
+
+    def _set_parent(self, parent: Optional["Artifact"]):
+        """Set the parent without walking its chain: the caller has ruled out a cycle."""
+        self.__parent = _instance(parent, Artifact, type(self).__name__, "parent", optional=True)
+
+
+class ModelArtifact(Artifact):
+    """A model, or an element of one.
+
+    When the element is at hand (a trace loaded together with its model, as in a project
+    exported to Python), the artifact references it (``element``) and takes its name, type
+    and id from it instead of repeating them. Otherwise it records them: for an element
+    that no longer exists (deleted, kept as history), or a trace stored apart from the
+    model (the editor's JSON), where the element is known by its persistent id.
+
+    Args:
+        name (str): Last known name of the element (None when ``element`` is given).
+        element_id (str): The ``Element.id`` of the element, the diagram id for a whole model
+            (None when ``element`` is given and has no id yet).
+        element_type (str): Its B-UML metaclass name: ``DomainModel``, ``Class``, ``Property``, ...
+            (None when ``element`` is given).
+        parent (Artifact): The model artifact holding this element.
+        id (str): Persistent identifier of the artifact.
+        timestamp (datetime): When the artifact was first recorded.
+        element (Element): The referenced B-UML element, when it is at hand.
+
+    Raises:
+        ValueError: If neither ``element`` nor the recorded name, id and type are given.
+    """
+
+    def __init__(self, name: str = None, element_id: str = None, element_type: str = None, parent: Artifact = None,
+                 id: str = None, timestamp: datetime = None, element: Element = None):
+        self.element: Optional[Element] = element  # first: name, id and type fall back to it
+        super().__init__(name, parent, id, timestamp)
+        self.element_id: Optional[str] = element_id
+        self.element_type: Optional[str] = element_type
+
+    @property
+    def element(self) -> Optional[Element]:
+        """Element: Get the referenced B-UML element (None when only recorded)."""
+        return self.__element
+
+    @element.setter
+    def element(self, element: Optional[Element]):
+        """Element: Set the referenced B-UML element."""
+        self.__element = _instance(element, Element, "ModelArtifact", "element", optional=True)
+
+    @property
+    def name(self) -> str:
+        """str: Get the element's name: the referenced element's, else the recorded one."""
+        return self.__element.name if self.__element is not None else self.__name
+
+    @name.setter
+    def name(self, name: Optional[str]):
+        """str: Set the recorded name (optional when an element is referenced)."""
+        self.__name = None if name is None and self.__element is not None else _text(name, "ModelArtifact", "name")
+
+    @property
+    def element_id(self) -> Optional[str]:
+        """str: Get the element's persistent id: the recorded one, else the referenced element's."""
+        if self.__element_id is not None:
+            return self.__element_id
+        return self.__element.id if self.__element is not None else None
+
+    @element_id.setter
+    def element_id(self, element_id: Optional[str]):
+        """str: Set the recorded id (optional when an element is referenced).
+
+        Raises:
+            ValueError: If it is not a non-empty string while no element is referenced.
+        """
+        if element_id is None and self.__element is not None:
+            self.__element_id = None
+        else:
+            self.__element_id = _text(element_id, "ModelArtifact", "element_id")
+
+    @property
+    def element_type(self) -> str:
+        """str: Get the B-UML metaclass name: the referenced element's class, else the recorded one."""
+        return type(self.__element).__name__ if self.__element is not None else self.__element_type
+
+    @element_type.setter
+    def element_type(self, element_type: Optional[str]):
+        """str: Set the recorded metaclass name (optional when an element is referenced)."""
+        if element_type is None and self.__element is not None:
+            self.__element_type = None
+        else:
+            self.__element_type = _text(element_type, "ModelArtifact", "element_type")
+
+    def resolve(self, model: Model) -> Optional[Element]:
+        """The element of ``model`` this artifact stands for, or None when it is not there: the
+        referenced element when it belongs to ``model``, else the one with this ``element_id``.
+
+        ``model`` is any B-UML model (domain, GUI, state machine or agent, object, neural
+        network, quantum, BPMN, deployment, ...): its elements are found by
+        :func:`model_elements`. A whole-model artifact resolves to ``model`` itself.
+        """
+        if self.__element is not None:
+            if self.__element is model or any(e is self.__element for e in model_elements(model)):
+                return self.__element
+            return None
+        if model.id == self.element_id:
+            return model
+        for element in model_elements(model):
+            if element.id == self.element_id:
+                return element
+        return None
+
+
+def model_elements(model: Model) -> Iterator[Element]:
+    """Every element of ``model`` that can carry an id, of any kind of B-UML model.
+
+    The metamodels differ in how they hold their elements (a domain model's types and their
+    members, a GUI's modules, screens and nested view elements, a state machine's states and
+    transitions, a network's layers, ...), so the walk is generic: it follows the attributes
+    of every B-UML object reachable from the model, into lists, sets, tuples and dict values,
+    and yields each :class:`Element` once. It does not enter another :class:`Model` (a GUI
+    references its domain model), so it yields the model's own elements and those it
+    references directly (the class a table shows), not a referenced model's whole content.
+    """
+    for element, _ in model_elements_by_depth(model):
+        yield element
+
+
+def model_elements_by_depth(model: Model) -> Iterator[Tuple[Element, int]]:
+    """Every element of ``model``, as :func:`model_elements` walks them, with its depth: how many
+    objects it is reached through from the model (1 for an element the model holds itself, as a
+    domain model holds its classes; more for an element held by one of them, or only referenced,
+    as a GUI's table references the class it shows). Elements come shallowest first, and each at
+    the smallest depth it is reached at."""
+    seen: Set[int] = {id(model)}
+    pending: Deque[Tuple[object, int]] = deque([(model, 0)])
+    while pending:
+        current, depth = pending.popleft()
+        for value in _held_values(current):
+            if id(value) in seen or isinstance(value, Model) or not _is_buml_object(value):
+                continue
+            seen.add(id(value))
+            if isinstance(value, Element):
+                yield value, depth + 1
+            pending.append((value, depth + 1))
+
+
+_BUML_PACKAGE = "besser.BUML."
+
+
+def _is_buml_object(value) -> bool:
+    """True for an instance of a B-UML metamodel class (the walk follows nothing else)."""
+    return type(value).__module__.startswith(_BUML_PACKAGE) and hasattr(value, "__dict__")
+
+
+def _held_values(owner) -> Iterator:
+    """The values ``owner``'s attributes hold, with the items of the collections among them."""
+    for value in vars(owner).values():
+        if isinstance(value, dict):
+            yield from value.values()
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            yield from value
+        else:
+            yield value
+
+
+class CodeArtifact(Artifact):
+    """A generated or edited file, or a line range of one (a fragment).
+
+    A file is written by one operation. When another operation changes it (an LLM editing a
+    generated file), the result is a new version: a new CodeArtifact, written by that
+    operation, that is a revision of the one it changed (``revision_of``, PROV's
+    ``wasRevisionOf``). Each version keeps the links made to it, so a link into the generated
+    version still tells what the generator made, and the edit is told by the new version.
+
+    Args:
+        name (str): Display name (the file name, or a label for the fragment).
+        path (str): Path of the file, relative to the output root.
+        content_hash (str): SHA-256 of the file content (of the fragment's lines for a fragment).
+        content (str): The content itself, kept only below a size cap (None otherwise).
+        start_line (int): First line of a fragment, 1-based (None for a whole file).
+        end_line (int): Last line of a fragment, inclusive (None for a whole file).
+        parent (Artifact): The file artifact holding this fragment.
+        id (str): Persistent identifier.
+        timestamp (datetime): When the artifact was first recorded.
+        revision_of (CodeArtifact): The version this one revises (None for a first version).
+    """
+
+    def __init__(self, name: str, path: str, content_hash: str, content: str = None,
+                 start_line: int = None, end_line: int = None, parent: Artifact = None,
+                 id: str = None, timestamp: datetime = None, revision_of: "CodeArtifact" = None):
+        super().__init__(name, parent, id, timestamp)
+        self.path: str = path
+        self.content_hash: str = content_hash
+        self.content: Optional[str] = content
+        self.set_line_range(start_line, end_line)
+        # A new version is nobody's revision yet, so the chain it revises cannot hold it.
+        self._set_revision_of(revision_of)
+
+    @property
+    def revision_of(self) -> Optional["CodeArtifact"]:
+        """CodeArtifact: Get the version this one revises (None for a first version)."""
+        return self.__revision_of
+
+    @revision_of.setter
+    def revision_of(self, revision_of: Optional["CodeArtifact"]):
+        """CodeArtifact: Set the version this one revises.
+
+        Raises:
+            TypeError: If it is neither a CodeArtifact nor None.
+            ValueError: If the chain of revisions would contain this artifact.
+        """
+        _instance(revision_of, CodeArtifact, "CodeArtifact", "revision_of", optional=True)
+        earlier = revision_of
+        while earlier is not None:
+            if earlier is self:
+                raise ValueError(_REVISION_OF_ITSELF.format(id=self.id))
+            earlier = earlier.revision_of
+        self.__revision_of = revision_of
+
+    def _set_revision_of(self, revision_of: Optional["CodeArtifact"]):
+        """Set the revised version without walking its chain: the caller has ruled out a cycle."""
+        self.__revision_of = _instance(revision_of, CodeArtifact, "CodeArtifact", "revision_of", optional=True)
+
+    @property
+    def path(self) -> str:
+        """str: Get the path of the file."""
+        return self.__path
+
+    @path.setter
+    def path(self, path: str):
+        """str: Set the path of the file.
+
+        Raises:
+            ValueError: If it is not a non-empty string.
+        """
+        self.__path = _text(path, "CodeArtifact", "path")
+
+    @property
+    def content_hash(self) -> str:
+        """str: Get the SHA-256 of the content."""
+        return self.__content_hash
+
+    @content_hash.setter
+    def content_hash(self, content_hash: str):
+        """str: Set the SHA-256 of the content.
+
+        Raises:
+            ValueError: If it is not a non-empty string.
+        """
+        self.__content_hash = _text(content_hash, "CodeArtifact", "content_hash")
+
+    @property
+    def content(self) -> Optional[str]:
+        """str: Get the stored content (None when it was over the size cap)."""
+        return self.__content
+
+    @content.setter
+    def content(self, content: Optional[str]):
+        """str: Set the stored content.
+
+        Raises:
+            ValueError: If it is neither a string nor None.
+        """
+        self.__content = _optional_text(content, "CodeArtifact", "content")
+
+    @property
+    def start_line(self) -> Optional[int]:
+        """int: Get the first line of the fragment (None for a whole file)."""
+        return self.__start_line
+
+    @property
+    def end_line(self) -> Optional[int]:
+        """int: Get the last line of the fragment (None for a whole file)."""
+        return self.__end_line
+
+    def set_line_range(self, start_line: Optional[int], end_line: Optional[int]):
+        """Set both ends of the line range together, so they are checked against each other.
+
+        Raises:
+            ValueError: If only one end is given, or the range is not 1 <= start_line <= end_line.
+        """
+        if (start_line is None) != (end_line is None):
+            raise ValueError("CodeArtifact needs both start_line and end_line, or neither.")
+        if start_line is not None:
+            if not all(isinstance(n, int) and not isinstance(n, bool) for n in (start_line, end_line)):
+                raise ValueError("CodeArtifact line numbers must be integers.")
+            if not 1 <= start_line <= end_line:
+                raise ValueError(f"Invalid line range {start_line}-{end_line}: need 1 <= start_line <= end_line.")
+        self.__start_line = start_line
+        self.__end_line = end_line
+
+
+class PromptArtifact(Artifact):
+    """A message given to an agent, kept as an artifact because something was derived from it
+    (a requirement, a model element): it is the source of a trace link. The other messages of a
+    :class:`Conversation` stay in the logs of its tool calls.
+
+    Args:
+        name (str): Display name (a short label for the prompt).
+        content (str): The prompt text.
+        content_hash (str): SHA-256 of the content.
+        parent (Artifact): An artifact holding this one, if any.
+        id (str): Persistent identifier.
+        timestamp (datetime): When the prompt was given.
+    """
+
+    def __init__(self, name: str, content: str, content_hash: str, parent: Artifact = None,
+                 id: str = None, timestamp: datetime = None):
+        super().__init__(name, parent, id, timestamp)
+        self.content: str = content
+        self.content_hash: str = content_hash
+
+    @property
+    def content(self) -> str:
+        """str: Get the prompt text."""
+        return self.__content
+
+    @content.setter
+    def content(self, content: str):
+        """str: Set the prompt text."""
+        self.__content = _text(content, "PromptArtifact", "content")
+
+    @property
+    def content_hash(self) -> str:
+        """str: Get the SHA-256 of the content."""
+        return self.__content_hash
+
+    @content_hash.setter
+    def content_hash(self, content_hash: str):
+        """str: Set the SHA-256 of the content."""
+        self.__content_hash = _text(content_hash, "PromptArtifact", "content_hash")
+
+
+class RequirementArtifact(Artifact):
+    """One atomic requirement stated in a prompt.
+
+    A :class:`RequirementExtraction` writes it. A trace link from the :class:`PromptArtifact` it
+    was extracted from records where it comes from; trace links from it to model elements record
+    what realizes it.
+
+    Args:
+        name (str): The requirement, as one atomic statement.
+        quote (str): The words of the prompt that state it, verbatim.
+        kind (RequirementKind): What it asks for.
+        parent (Artifact): An artifact holding this one, if any.
+        id (str): Persistent identifier.
+        timestamp (datetime): When the requirement was extracted.
+    """
+
+    def __init__(self, name: str, quote: str, kind: RequirementKind, parent: Artifact = None,
+                 id: str = None, timestamp: datetime = None):
+        super().__init__(name, parent, id, timestamp)
+        self.quote: str = quote
+        self.kind: RequirementKind = kind
+
+    @property
+    def quote(self) -> str:
+        """str: Get the words of the prompt that state the requirement."""
+        return self.__quote
+
+    @quote.setter
+    def quote(self, quote: str):
+        """str: Set the words of the prompt that state the requirement.
+
+        Raises:
+            ValueError: If the quote is not a non-empty string.
+        """
+        self.__quote = _text(quote, "RequirementArtifact", "quote")
+
+    @property
+    def kind(self) -> RequirementKind:
+        """RequirementKind: Get what the requirement asks for."""
+        return self.__kind
+
+    @kind.setter
+    def kind(self, kind: RequirementKind):
+        """RequirementKind: Set what the requirement asks for.
+
+        Raises:
+            TypeError: If kind is not a RequirementKind.
+        """
+        self.__kind = _instance(kind, RequirementKind, "RequirementArtifact", "kind")
+
+
+class Actor(TraceElement, ABC):
+    """Who performs an operation.
+
+    Args:
+        name (str): Display name, free text.
+        id (str): Persistent identifier.
+        timestamp (datetime): When the actor was first recorded.
+    """
+
+    def __init__(self, name: str, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.name: str = name
+
+    @property
+    def name(self) -> str:
+        """str: Get the display name."""
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        """str: Set the display name.
+
+        Raises:
+            ValueError: If the name is not a non-empty string.
+        """
+        self.__name = _text(name, type(self).__name__, "name")
+
+
+class Person(Actor):
+    """A human actor (the project owner, or ``anonymous``)."""
+
+
+class Agent(Actor):
+    """A software actor acting on its own (the Spec-Driven Agent).
+
+    Args:
+        name (str): Display name.
+        version (str): Version of the agent (None when unknown).
+        id (str): Persistent identifier.
+        timestamp (datetime): When the agent was first recorded.
+    """
+
+    def __init__(self, name: str, version: str = None, id: str = None, timestamp: datetime = None):
+        super().__init__(name, id, timestamp)
+        self.version: Optional[str] = version
+
+    @property
+    def version(self) -> Optional[str]:
+        """str: Get the version of the agent."""
+        return self.__version
+
+    @version.setter
+    def version(self, version: Optional[str]):
+        """str: Set the version of the agent."""
+        self.__version = _optional_text(version, "Agent", "version")
+
+
+class Tool(TraceElement, ABC):
+    """What an operation is carried out with.
+
+    Args:
+        name (str): Name of the tool (a generator key such as ``sqlalchemy``).
+        version (str): Version of the tool (None when unknown).
+        id (str): Persistent identifier.
+        timestamp (datetime): When the tool was first recorded.
+    """
+
+    def __init__(self, name: str, version: str = None, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.name: str = name
+        self.version: Optional[str] = version
+
+    @property
+    def name(self) -> str:
+        """str: Get the name of the tool."""
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        """str: Set the name of the tool.
+
+        Raises:
+            ValueError: If the name is not a non-empty string.
+        """
+        self.__name = _text(name, type(self).__name__, "name")
+
+    @property
+    def version(self) -> Optional[str]:
+        """str: Get the version of the tool."""
+        return self.__version
+
+    @version.setter
+    def version(self, version: Optional[str]):
+        """str: Set the version of the tool."""
+        self.__version = _optional_text(version, type(self).__name__, "version")
+
+
+class Editor(Tool):
+    """A modeling editor (the BESSER Web Modeling Editor)."""
+
+
+class CodeGenerator(Tool):
+    """A deterministic BESSER code generator."""
+
+
+class ModelGenerator(Tool):
+    """A deterministic BESSER model generator (the GUI generator deriving a GUI from a class diagram)."""
+
+
+class LLM(Tool):
+    """A large language model.
+
+    Args:
+        name (str): Model name.
+        provider (str): Provider serving the model.
+        version (str): Model version (None when unknown).
+        id (str): Persistent identifier.
+        timestamp (datetime): When the LLM was first recorded.
+    """
+
+    def __init__(self, name: str, provider: str, version: str = None, id: str = None, timestamp: datetime = None):
+        super().__init__(name, version, id, timestamp)
+        self.provider: str = provider
+
+    @property
+    def provider(self) -> str:
+        """str: Get the provider serving the model."""
+        return self.__provider
+
+    @provider.setter
+    def provider(self, provider: str):
+        """str: Set the provider serving the model.
+
+        Raises:
+            ValueError: If it is not a non-empty string.
+        """
+        self.__provider = _text(provider, "LLM", "provider")
+
+
+class LogRecord(TraceElement):
+    """One message exchanged in a :class:`ToolCall` (a prompt, an answer, an error).
+
+    Args:
+        content (str): The logged text.
+        sequence_number (int): Position of the record within its call.
+        log_type (LogType): Kind of record.
+        id (str): Persistent identifier.
+        timestamp (datetime): When it was logged.
+    """
+
+    def __init__(self, content: str, sequence_number: int, log_type: LogType, id: str = None,
+                 timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.content: str = content
+        self.sequence_number: int = sequence_number
+        self.log_type: LogType = log_type
+
+    @property
+    def content(self) -> str:
+        """str: Get the logged text."""
+        return self.__content
+
+    @content.setter
+    def content(self, content: str):
+        """str: Set the logged text.
+
+        Raises:
+            ValueError: If it is not a string.
+        """
+        if not isinstance(content, str):
+            raise ValueError("LogRecord.content must be a string.")
+        self.__content = content
+
+    @property
+    def sequence_number(self) -> int:
+        """int: Get the position of the record within its call."""
+        return self.__sequence_number
+
+    @sequence_number.setter
+    def sequence_number(self, sequence_number: int):
+        """int: Set the position of the record within its call.
+
+        Raises:
+            ValueError: If it is not a non-negative integer.
+        """
+        self.__sequence_number = _sequence_number(sequence_number, "LogRecord")
+
+    @property
+    def log_type(self) -> LogType:
+        """LogType: Get the kind of record."""
+        return self.__log_type
+
+    @log_type.setter
+    def log_type(self, log_type: LogType):
+        """LogType: Set the kind of record."""
+        self.__log_type = _instance(log_type, LogType, "LogRecord", "log_type")
+
+
+class ToolCall(TraceElement):
+    """One use of a tool within an operation: an LLM prompted, a generator run, an editor
+    session. It holds the messages exchanged with the tool, in order (none for an editor),
+    and for an LLM the tokens it read and wrote, when the caller reports them (what the call cost).
+
+    ``started_at`` is the element's timestamp.
+
+    Args:
+        tool (Tool): The tool called.
+        sequence_number (int): Position of the call within its operation.
+        status (ExecutionStatus): How the call went (SUCCEEDED as default).
+        started_at (datetime): When it started (current time when None).
+        ended_at (datetime): When it ended (None while it runs).
+        logs (list[LogRecord]): The messages exchanged, in order.
+        input_tokens (int): Tokens the LLM read (None when not reported; only for an LLM).
+        output_tokens (int): Tokens the LLM wrote (None when not reported; only for an LLM).
+        id (str): Persistent identifier.
+    """
+
+    def __init__(self, tool: Tool, sequence_number: int, status: ExecutionStatus = ExecutionStatus.SUCCEEDED,
+                 started_at: datetime = None, ended_at: datetime = None, logs: List[LogRecord] = None,
+                 input_tokens: int = None, output_tokens: int = None, id: str = None):
+        super().__init__(id, started_at)
+        self.tool: Tool = tool
+        self.sequence_number: int = sequence_number
+        self.status: ExecutionStatus = status
+        self.ended_at: Optional[datetime] = ended_at
+        self.logs: List[LogRecord] = logs
+        self.input_tokens: Optional[int] = input_tokens
+        self.output_tokens: Optional[int] = output_tokens
+
+    @property
+    def tool(self) -> Tool:
+        """Tool: Get the tool called."""
+        return self.__tool
+
+    @tool.setter
+    def tool(self, tool: Tool):
+        """Tool: Set the tool called.
+
+        Raises:
+            ValueError: If the call records tokens and the tool is not an LLM.
+        """
+        _instance(tool, Tool, "ToolCall", "tool")
+        if not isinstance(tool, LLM) and (getattr(self, "_ToolCall__input_tokens", None) is not None
+                                          or getattr(self, "_ToolCall__output_tokens", None) is not None):
+            raise ValueError("A ToolCall that records tokens calls an LLM.")
+        self.__tool = tool
+
+    def _tokens(self, value: Optional[int], field: str) -> Optional[int]:
+        """A token count: None, or a non-negative int on a call to an LLM."""
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"ToolCall.{field} must be a non-negative integer or None.")
+        if not isinstance(self.__tool, LLM):
+            raise ValueError(f"ToolCall.{field} is recorded only for a call to an LLM.")
+        return value
+
+    @property
+    def input_tokens(self) -> Optional[int]:
+        """int: Get how many tokens the LLM read (None when not reported)."""
+        return self.__input_tokens
+
+    @input_tokens.setter
+    def input_tokens(self, input_tokens: Optional[int]):
+        """int: Set how many tokens the LLM read.
+
+        Raises:
+            ValueError: If it is not a non-negative integer, or the tool is not an LLM.
+        """
+        self.__input_tokens = self._tokens(input_tokens, "input_tokens")
+
+    @property
+    def output_tokens(self) -> Optional[int]:
+        """int: Get how many tokens the LLM wrote (None when not reported)."""
+        return self.__output_tokens
+
+    @output_tokens.setter
+    def output_tokens(self, output_tokens: Optional[int]):
+        """int: Set how many tokens the LLM wrote.
+
+        Raises:
+            ValueError: If it is not a non-negative integer, or the tool is not an LLM.
+        """
+        self.__output_tokens = self._tokens(output_tokens, "output_tokens")
+
+    @property
+    def sequence_number(self) -> int:
+        """int: Get the position of the call within its operation."""
+        return self.__sequence_number
+
+    @sequence_number.setter
+    def sequence_number(self, sequence_number: int):
+        """int: Set the position of the call within its operation.
+
+        Raises:
+            ValueError: If it is not a non-negative integer.
+        """
+        self.__sequence_number = _sequence_number(sequence_number, "ToolCall")
+
+    @property
+    def status(self) -> ExecutionStatus:
+        """ExecutionStatus: Get how the call went."""
+        return self.__status
+
+    @status.setter
+    def status(self, status: ExecutionStatus):
+        """ExecutionStatus: Set how the call went."""
+        self.__status = _instance(status, ExecutionStatus, "ToolCall", "status")
+
+    @property
+    def started_at(self) -> datetime:
+        """datetime: Get when the call started (its timestamp)."""
+        return self.timestamp
+
+    @property
+    def ended_at(self) -> Optional[datetime]:
+        """datetime: Get when the call ended (None while it runs)."""
+        return self.__ended_at
+
+    @ended_at.setter
+    def ended_at(self, ended_at: Optional[datetime]):
+        """datetime: Set when the call ended.
+
+        Raises:
+            ValueError: If it is before ``started_at``.
+        """
+        self.__ended_at = _end_time(ended_at, self.started_at, "ToolCall")
+
+    @property
+    def logs(self) -> List[LogRecord]:
+        """list[LogRecord]: Get the messages exchanged, in order."""
+        return list(self.__logs)
+
+    @logs.setter
+    def logs(self, logs: List[LogRecord]):
+        """list[LogRecord]: Set the messages exchanged."""
+        self.__logs = _instances(logs, LogRecord, "ToolCall", "logs")
+
+
+class ChangeEvent(TraceElement):
+    """One granular effect of an operation on one artifact.
+
+    ``feature`` names the changed feature (``name``, ``type``, ``multiplicity``, ...)
+    and is required for an UPDATED change and absent otherwise. ``new_value`` of a
+    CREATED change and ``old_value`` of a DELETED one may hold the element's name.
+
+    Args:
+        kind (ChangeKind): Created, updated or deleted.
+        artifact (Artifact): The artifact that changed.
+        feature (str): The changed feature (UPDATED only).
+        old_value (str): Value before the change.
+        new_value (str): Value after the change.
+        id (str): Persistent identifier.
+        timestamp (datetime): When the change happened.
+    """
+
+    def __init__(self, kind: ChangeKind, artifact: Artifact, feature: str = None, old_value: str = None,
+                 new_value: str = None, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.artifact: Artifact = artifact
+        self.set_kind(kind, feature)
+        self.old_value: Optional[str] = old_value
+        self.new_value: Optional[str] = new_value
+
+    @property
+    def kind(self) -> ChangeKind:
+        """ChangeKind: Get what the change did."""
+        return self.__kind
+
+    @property
+    def feature(self) -> Optional[str]:
+        """str: Get the changed feature (None unless UPDATED)."""
+        return self.__feature
+
+    def set_kind(self, kind: ChangeKind, feature: Optional[str]):
+        """Set the kind and the changed feature together, so they are checked against each other.
+
+        Raises:
+            TypeError: If kind is not a ChangeKind.
+            ValueError: If an UPDATED change has no feature, or another kind has one.
+        """
+        _instance(kind, ChangeKind, "ChangeEvent", "kind")
+        if kind is ChangeKind.UPDATED:
+            _text(feature, "ChangeEvent", "feature")
+        elif feature is not None:
+            raise ValueError(f"A {kind.value} change has no feature; got {feature!r}.")
+        self.__kind = kind
+        self.__feature = feature
+
+    @property
+    def artifact(self) -> Artifact:
+        """Artifact: Get the artifact that changed."""
+        return self.__artifact
+
+    @artifact.setter
+    def artifact(self, artifact: Artifact):
+        """Artifact: Set the artifact that changed."""
+        self.__artifact = _instance(artifact, Artifact, "ChangeEvent", "artifact")
+
+    @property
+    def old_value(self) -> Optional[str]:
+        """str: Get the value before the change."""
+        return self.__old_value
+
+    @old_value.setter
+    def old_value(self, old_value: Optional[str]):
+        """str: Set the value before the change."""
+        self.__old_value = _optional_text(old_value, "ChangeEvent", "old_value")
+
+    @property
+    def new_value(self) -> Optional[str]:
+        """str: Get the value after the change."""
+        return self.__new_value
+
+    @new_value.setter
+    def new_value(self, new_value: Optional[str]):
+        """str: Set the value after the change."""
+        self.__new_value = _optional_text(new_value, "ChangeEvent", "new_value")
+
+
+class Operation(TraceElement, ABC):
+    """An activity on the project. Abstract: an operation is a :class:`ModelingSession`, a
+    :class:`CodeGeneration`, a :class:`RequirementExtraction` or a :class:`Conversation`.
+
+    ``started_at`` is the element's timestamp.
+
+    Args:
+        performed_by (list[Actor]): Who performed it (at least one): a Person, an Agent, or both.
+        status (ExecutionStatus): Lifecycle state (SUCCEEDED as default).
+        started_at (datetime): When it started (current time when None).
+        ended_at (datetime): When it ended (None while it runs).
+        tool_calls (list[ToolCall]): The tools it called, in order, with their messages.
+        reads (list[Artifact]): Artifacts it read.
+        writes (list[Artifact]): Artifacts it wrote.
+        confidence (Confidence): How sure its result is (None when not assessed).
+        id (str): Persistent identifier.
+
+    Raises:
+        TypeError: When instantiated directly, or as a bare Transformation.
+    """
+
+    def __init__(self, performed_by: List[Actor], status: ExecutionStatus = ExecutionStatus.SUCCEEDED,
+                 started_at: datetime = None, ended_at: datetime = None, tool_calls: List[ToolCall] = None,
+                 reads: List[Artifact] = None, writes: List[Artifact] = None, confidence: "Confidence" = None,
+                 id: str = None):
+        if type(self) in (Operation, Transformation):
+            raise TypeError(f"{type(self).__name__} is abstract: use ModelingSession, CodeGeneration, "
+                            "RequirementExtraction or Conversation.")
+        super().__init__(id, started_at)
+        self.performed_by: List[Actor] = performed_by
+        self.status: ExecutionStatus = status
+        self.ended_at: Optional[datetime] = ended_at
+        self.tool_calls: List[ToolCall] = tool_calls
+        self.reads: List[Artifact] = reads
+        self.writes: List[Artifact] = writes
+        self.confidence: Optional[Confidence] = confidence
+
+    @property
+    def performed_by(self) -> List[Actor]:
+        """list[Actor]: Get who performed the operation."""
+        return list(self.__performed_by)
+
+    @performed_by.setter
+    def performed_by(self, performed_by: List[Actor]):
+        """list[Actor]: Set who performed the operation.
+
+        Raises:
+            ValueError: If no actor is given.
+        """
+        actors = _instances(performed_by, Actor, "Operation", "performed_by")
+        if not actors:
+            raise ValueError("An Operation is performed by at least one Actor.")
+        self.__performed_by = actors
+
+    @property
+    def status(self) -> ExecutionStatus:
+        """ExecutionStatus: Get the lifecycle state."""
+        return self.__status
+
+    @status.setter
+    def status(self, status: ExecutionStatus):
+        """ExecutionStatus: Set the lifecycle state."""
+        self.__status = _instance(status, ExecutionStatus, "Operation", "status")
+
+    @property
+    def started_at(self) -> datetime:
+        """datetime: Get when the operation started (its timestamp)."""
+        return self.timestamp
+
+    @property
+    def ended_at(self) -> Optional[datetime]:
+        """datetime: Get when the operation ended (None while it runs)."""
+        return self.__ended_at
+
+    @ended_at.setter
+    def ended_at(self, ended_at: Optional[datetime]):
+        """datetime: Set when the operation ended.
+
+        Raises:
+            ValueError: If it is before ``started_at``.
+        """
+        self.__ended_at = _end_time(ended_at, self.started_at, "Operation")
+
+    @property
+    def tool_calls(self) -> List[ToolCall]:
+        """list[ToolCall]: Get the tools the operation called, in order, with their messages."""
+        return list(self.__tool_calls)
+
+    @tool_calls.setter
+    def tool_calls(self, tool_calls: List[ToolCall]):
+        """list[ToolCall]: Set the operation's tool calls."""
+        self.__tool_calls = _instances(tool_calls, ToolCall, "Operation", "tool_calls")
+
+    @property
+    def tools(self) -> List[Tool]:
+        """list[Tool]: ``Operation./tools``, derived: the distinct tools its calls invoked, in call order."""
+        return _instances([call.tool for call in self.__tool_calls], Tool, "Operation", "tools")
+
+    @property
+    def reads(self) -> List[Artifact]:
+        """list[Artifact]: Get the artifacts the operation read."""
+        return list(self.__reads)
+
+    @reads.setter
+    def reads(self, reads: List[Artifact]):
+        """list[Artifact]: Set the artifacts the operation read."""
+        self.__reads = _instances(reads, Artifact, "Operation", "reads")
+
+    @property
+    def writes(self) -> List[Artifact]:
+        """list[Artifact]: Get the artifacts the operation wrote."""
+        return list(self.__writes)
+
+    @writes.setter
+    def writes(self, writes: List[Artifact]):
+        """list[Artifact]: Set the artifacts the operation wrote."""
+        self.__writes = _instances(writes, Artifact, "Operation", "writes")
+
+    @property
+    def confidence(self) -> Optional["Confidence"]:
+        """Confidence: Get how sure the operation's result is."""
+        return self.__confidence
+
+    @confidence.setter
+    def confidence(self, confidence: Optional["Confidence"]):
+        """Confidence: Set how sure the operation's result is."""
+        self.__confidence = _instance(confidence, Confidence, "Operation", "confidence", optional=True)
+
+
+class ModelingSession(Operation):
+    """A modeling session: edits made to models, by a person, an agent (an
+    assistant), or both, recorded change by change.
+
+    Its tool calls tell how: an :class:`Editor` for edits made in the editor, a
+    :class:`ModelGenerator` for a model derived from another in one run (a GUI generated from a
+    class diagram), whose links to what it was derived from the session makes too.
+
+    Args:
+        performed_by (list[Actor]): Who made the edits (at least one).
+        changes (list[ChangeEvent]): The edits, in order (at least one in a valid trace).
+        **kwargs: The other :class:`Operation` arguments.
+    """
+
+    def __init__(self, performed_by: List[Actor], changes: List[ChangeEvent] = None, **kwargs):
+        super().__init__(performed_by, **kwargs)
+        self.changes: List[ChangeEvent] = changes
+
+    @property
+    def changes(self) -> List[ChangeEvent]:
+        """list[ChangeEvent]: Get the session's edits, in order."""
+        return list(self.__changes.items)
+
+    @changes.setter
+    def changes(self, changes: List[ChangeEvent]):
+        """list[ChangeEvent]: Set the session's edits."""
+        self.__changes = _Members(changes, ChangeEvent, "ModelingSession", "changes")
+
+    def add_change(self, change: ChangeEvent):
+        """Append an edit to the session."""
+        self.__changes.add(change)
+
+
+class Transformation(Operation, ABC):
+    """An operation that derives new artifacts from others (and the trace links
+    between them) without editing anything. Abstract: see :class:`CodeGeneration` and
+    :class:`RequirementExtraction`."""
+
+
+class CodeGeneration(Transformation):
+    """A generation run: code derived from models, by a generator or by an LLM.
+
+    It calls at least one :class:`CodeGenerator` or :class:`LLM` (checked by
+    ``TraceModel.validate``), reads the model artifacts and writes the code artifacts
+    it links them to. Which of the two made a link is told by its evidence: a
+    :class:`RuleEvidence` for a generator's template, an :class:`AIEvidence` for an LLM.
+    """
+
+
+class RequirementExtraction(Transformation):
+    """A text-to-model transformation: the atomic requirements a prompt states, derived by an LLM.
+
+    It reads the :class:`PromptArtifact`, writes one :class:`RequirementArtifact` per
+    requirement and links the prompt to each. It calls at least one :class:`LLM` and writes
+    nothing but requirements (both checked by ``TraceModel.validate``). The
+    :class:`Conversation` whose turn gave the prompt is a separate operation, and so is the
+    :class:`ModelingSession` that reads the requirements to build the model.
+    """
+
+
+class Conversation(Operation):
+    """A dialogue between a user and an agent (the BESSER assistant). Each turn is a
+    :class:`ToolCall` to the LLM the agent answers with, holding the turn's messages.
+
+    What it leads to varies, so it is not a :class:`Transformation`: a clarification question
+    writes nothing; what a turn leads to is a separate operation: a :class:`RequirementExtraction`
+    of the requirements its prompt states, a :class:`ModelingSession` for an edit, a
+    :class:`CodeGeneration` for a generation. At least one of its actors is an :class:`Agent`
+    (checked by ``TraceModel.validate``).
+    """
+
+
+class Evidence(TraceElement, ABC):
+    """Why a trace link holds. Its timestamp is when it was recorded.
+
+    Any evidence can rest on recorded messages: the prompt and answer behind an AI
+    decision, a generator's log of the run, the message in which a person stated the link.
+
+    Args:
+        logs (list[LogRecord]): The log records it is based on.
+        id (str): Persistent identifier.
+        timestamp (datetime): When it was recorded.
+    """
+
+    def __init__(self, logs: List[LogRecord] = None, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.logs: List[LogRecord] = logs
+
+    @property
+    def logs(self) -> List[LogRecord]:
+        """list[LogRecord]: Get the log records the evidence is based on."""
+        return list(self.__logs)
+
+    @logs.setter
+    def logs(self, logs: List[LogRecord]):
+        """list[LogRecord]: Set the log records the evidence is based on."""
+        self.__logs = _instances(logs, LogRecord, type(self).__name__, "logs")
+
+
+class RuleEvidence(Evidence):
+    """The link was made by a deterministic rule (a generator template block).
+
+    Args:
+        rule (str): The rule, e.g. ``sql_alchemy_template.py.j2#class``.
+        logs (list[LogRecord]): The log records it is based on.
+        id (str): Persistent identifier.
+        timestamp (datetime): When it was recorded.
+    """
+
+    def __init__(self, rule: str, logs: List[LogRecord] = None, id: str = None, timestamp: datetime = None):
+        super().__init__(logs, id, timestamp)
+        self.rule: str = rule
+
+    @property
+    def rule(self) -> str:
+        """str: Get the rule that made the link."""
+        return self.__rule
+
+    @rule.setter
+    def rule(self, rule: str):
+        """str: Set the rule that made the link."""
+        self.__rule = _text(rule, "RuleEvidence", "rule")
+
+
+class AIEvidence(Evidence):
+    """The link was decided by an AI technique (an LLM, an embedding similarity), usually on the
+    strength of log records (the prompt and the answer).
+
+    Args:
+        algorithm (str): The technique or model that decided the link.
+        logs (list[LogRecord]): The log records it is based on.
+        id (str): Persistent identifier.
+        timestamp (datetime): When it was recorded.
+    """
+
+    def __init__(self, algorithm: str, logs: List[LogRecord] = None, id: str = None, timestamp: datetime = None):
+        super().__init__(logs, id, timestamp)
+        self.algorithm: str = algorithm
+
+    @property
+    def algorithm(self) -> str:
+        """str: Get the technique that decided the link."""
+        return self.__algorithm
+
+    @algorithm.setter
+    def algorithm(self, algorithm: str):
+        """str: Set the technique that decided the link."""
+        self.__algorithm = _text(algorithm, "AIEvidence", "algorithm")
+
+
+class Confidence(TraceElement):
+    """How sure a trace link or an operation is, as a probability. Its timestamp is when it was
+    calculated.
+
+    Args:
+        value (float): Probability between 0 and 1.
+        explanation (str): How the value was obtained (None when self-evident).
+        id (str): Persistent identifier.
+        timestamp (datetime): When it was calculated.
+    """
+
+    def __init__(self, value: float, explanation: str = None, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.value: float = value
+        self.explanation: Optional[str] = explanation
+
+    @property
+    def value(self) -> float:
+        """float: Get the probability."""
+        return self.__value
+
+    @value.setter
+    def value(self, value: float):
+        """float: Set the probability.
+
+        Raises:
+            ValueError: If it is not a number between 0 and 1 inclusive.
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            raise ValueError("Confidence.value must be a probability between 0 and 1 inclusive.")
+        self.__value = float(value)
+
+    @property
+    def explanation(self) -> Optional[str]:
+        """str: Get how the value was obtained."""
+        return self.__explanation
+
+    @explanation.setter
+    def explanation(self, explanation: Optional[str]):
+        """str: Set how the value was obtained."""
+        self.__explanation = _optional_text(explanation, "Confidence", "explanation")
+
+
+class TraceLink(TraceElement):
+    """A directed link from a source artifact to a target artifact, made by an operation.
+
+    Its timestamp is when the link was created. Whether it still holds is the derived attribute
+    ``/outOfDate``, computed by :meth:`TraceModel.out_of_date` from the changes recorded since.
+
+    Args:
+        source (Artifact): Where the link starts (a class).
+        target (Artifact): Where it ends (the code generated from the class).
+        operation (Operation): The operation that made it.
+        evidence (list[Evidence]): Why it holds.
+        confidence (Confidence): How sure it is (None when not assessed).
+        id (str): Persistent identifier.
+        timestamp (datetime): When it was created.
+    """
+
+    def __init__(self, source: Artifact, target: Artifact, operation: Operation, evidence: List[Evidence] = None,
+                 confidence: Confidence = None, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.set_ends(source, target)
+        self.operation: Operation = operation
+        self.evidence: List[Evidence] = evidence
+        self.confidence: Optional[Confidence] = confidence
+
+    @property
+    def source(self) -> Artifact:
+        """Artifact: Get where the link starts."""
+        return self.__source
+
+    @property
+    def target(self) -> Artifact:
+        """Artifact: Get where the link ends."""
+        return self.__target
+
+    def set_ends(self, source: Artifact, target: Artifact):
+        """Set both ends together, so they are checked against each other.
+
+        Raises:
+            TypeError: If an end is not an Artifact.
+            ValueError: If source and target are the same artifact.
+        """
+        _instance(source, Artifact, "TraceLink", "source")
+        _instance(target, Artifact, "TraceLink", "target")
+        if source is target:
+            raise ValueError("A TraceLink cannot link an artifact to itself.")
+        self.__source = source
+        self.__target = target
+
+    @property
+    def operation(self) -> Operation:
+        """Operation: Get the operation that made the link."""
+        return self.__operation
+
+    @operation.setter
+    def operation(self, operation: Operation):
+        """Operation: Set the operation that made the link."""
+        self.__operation = _instance(operation, Operation, "TraceLink", "operation")
+
+    @property
+    def evidence(self) -> List[Evidence]:
+        """list[Evidence]: Get why the link holds."""
+        return list(self.__evidence)
+
+    @evidence.setter
+    def evidence(self, evidence: List[Evidence]):
+        """list[Evidence]: Set why the link holds."""
+        self.__evidence = _instances(evidence, Evidence, "TraceLink", "evidence")
+
+    @property
+    def confidence(self) -> Optional[Confidence]:
+        """Confidence: Get how sure the link is."""
+        return self.__confidence
+
+    @confidence.setter
+    def confidence(self, confidence: Optional[Confidence]):
+        """Confidence: Set how sure the link is."""
+        self.__confidence = _instance(confidence, Confidence, "TraceLink", "confidence", optional=True)
+
+
+class TraceModel(Model):
+    """The root of a trace: everything recorded for one project, stored apart from its models.
+
+    Args:
+        name (str): Python-identifier-safe name (``NamedElement.name`` rules apply).
+        project_id (str): Id of the project the trace belongs to (None for a fragment
+            not yet merged into a project trace, such as one returned by a generation).
+        artifacts (list[Artifact]): Every artifact recorded.
+        operations (list[Operation]): Every operation, in order.
+        trace_links (list[TraceLink]): Every trace link.
+        actors (list[Actor]): Every actor.
+        tools (list[Tool]): Every tool.
+    """
+
+    def __init__(self, name: str = "trace_model", project_id: str = None, artifacts: List[Artifact] = None,
+                 operations: List[Operation] = None, trace_links: List[TraceLink] = None,
+                 actors: List[Actor] = None, tools: List[Tool] = None):
+        super().__init__(name)
+        self.project_id: Optional[str] = project_id
+        self.artifacts: List[Artifact] = artifacts
+        self.operations: List[Operation] = operations
+        self.trace_links: List[TraceLink] = trace_links
+        self.actors: List[Actor] = actors
+        self.tools: List[Tool] = tools
+
+    @property
+    def project_id(self) -> Optional[str]:
+        """str: Get the id of the project the trace belongs to."""
+        return self.__project_id
+
+    @project_id.setter
+    def project_id(self, project_id: Optional[str]):
+        """str: Set the id of the project the trace belongs to."""
+        self.__project_id = _optional_text(project_id, "TraceModel", "project_id")
+
+    @property
+    def artifacts(self) -> List[Artifact]:
+        """list[Artifact]: Get every artifact recorded."""
+        return list(self.__artifacts.items)
+
+    @artifacts.setter
+    def artifacts(self, artifacts: List[Artifact]):
+        """list[Artifact]: Set every artifact recorded."""
+        self.__artifacts = _Members(artifacts, Artifact, "TraceModel", "artifacts")
+
+    def add_artifact(self, artifact: Artifact) -> Artifact:
+        """Add an artifact and return it."""
+        self.__artifacts.add(artifact)
+        return artifact
+
+    @property
+    def operations(self) -> List[Operation]:
+        """list[Operation]: Get every operation, in order."""
+        return list(self.__operations.items)
+
+    @operations.setter
+    def operations(self, operations: List[Operation]):
+        """list[Operation]: Set every operation."""
+        self.__operations = _Members(operations, Operation, "TraceModel", "operations")
+
+    def add_operation(self, operation: Operation) -> Operation:
+        """Add an operation and return it."""
+        self.__operations.add(operation)
+        return operation
+
+    @property
+    def trace_links(self) -> List[TraceLink]:
+        """list[TraceLink]: Get every trace link."""
+        return list(self.__trace_links.items)
+
+    @trace_links.setter
+    def trace_links(self, trace_links: List[TraceLink]):
+        """list[TraceLink]: Set every trace link."""
+        self.__trace_links = _Members(trace_links, TraceLink, "TraceModel", "trace_links")
+
+    def add_trace_link(self, trace_link: TraceLink) -> TraceLink:
+        """Add a trace link and return it."""
+        self.__trace_links.add(trace_link)
+        return trace_link
+
+    @property
+    def actors(self) -> List[Actor]:
+        """list[Actor]: Get every actor."""
+        return list(self.__actors.items)
+
+    @actors.setter
+    def actors(self, actors: List[Actor]):
+        """list[Actor]: Set every actor."""
+        self.__actors = _Members(actors, Actor, "TraceModel", "actors")
+
+    def add_actor(self, actor: Actor) -> Actor:
+        """Add an actor and return it."""
+        self.__actors.add(actor)
+        return actor
+
+    @property
+    def tools(self) -> List[Tool]:
+        """list[Tool]: Get every tool."""
+        return list(self.__tools.items)
+
+    @tools.setter
+    def tools(self, tools: List[Tool]):
+        """list[Tool]: Set every tool."""
+        self.__tools = _Members(tools, Tool, "TraceModel", "tools")
+
+    def add_tool(self, tool: Tool) -> Tool:
+        """Add a tool and return it."""
+        self.__tools.add(tool)
+        return tool
+
+    def fragments_of(self, artifact: Artifact) -> List[Artifact]:
+        """The artifacts whose parent is ``artifact``."""
+        return [a for a in self.__artifacts if a.parent is artifact]
+
+    def model_artifact_for(self, element_id: str) -> Optional[ModelArtifact]:
+        """The model artifact referencing ``element_id``, or None."""
+        return next((a for a in self.__artifacts
+                     if isinstance(a, ModelArtifact) and a.element_id == element_id), None)
+
+    def changes_of(self, artifact: Artifact) -> List[ChangeEvent]:
+        """Every change recorded on ``artifact``, in time order."""
+        changes = [c for op in self.__operations if isinstance(op, ModelingSession) for c in op.changes
+                   if c.artifact is artifact]
+        return sorted(changes, key=lambda c: c.timestamp)
+
+    def with_fragments(self, artifact: Artifact) -> List[Artifact]:
+        """``artifact`` and all its fragments, recursively."""
+        result, pending = [], [artifact]
+        while pending:
+            current = pending.pop()
+            result.append(current)
+            pending.extend(self.fragments_of(current))
+        return result
+
+    def changed_since(self, artifact: Artifact, trace_link: TraceLink) -> List[ChangeEvent]:
+        """The changes to ``artifact``, or a fragment of it, made after ``trace_link`` by another
+        operation than the link's (that operation's own changes are part of making the link), in
+        time order."""
+        parts = set(map(id, self.with_fragments(artifact)))
+        changes = [c for op in self.__operations if isinstance(op, ModelingSession) and op is not trace_link.operation
+                   for c in op.changes if id(c.artifact) in parts and c.timestamp > trace_link.timestamp]
+        return sorted(changes, key=lambda c: c.timestamp)
+
+    def out_of_date(self, trace_link: TraceLink) -> Set[OutOfDateReason]:
+        """``TraceLink./outOfDate``, derived: why the link may no longer hold, empty while it holds.
+
+        Only a changed source travels downstream: an edited target is the source of the next link,
+        which sees the edit itself.
+        """
+        reasons = set()
+        if self.changed_since(trace_link.source, trace_link):
+            reasons.add(OutOfDateReason.SOURCE_CHANGED)
+        if self.changed_since(trace_link.target, trace_link):
+            reasons.add(OutOfDateReason.TARGET_CHANGED)
+        if self._upstream_changed(trace_link.source, set()):
+            reasons.add(OutOfDateReason.UPSTREAM_CHANGED)
+        return reasons
+
+    def _upstream_changed(self, artifact: Artifact, visited: set) -> bool:
+        """True when a link into ``artifact`` (or a fragment of it) has a changed source, or is
+        itself upstream changed."""
+        if id(artifact) in visited:
+            return False  # a cycle back to this artifact adds nothing
+        visited.add(id(artifact))
+        parts = set(map(id, self.with_fragments(artifact)))
+        return any(
+            self.changed_since(link.source, link) or self._upstream_changed(link.source, visited)
+            for link in self.__trace_links if id(link.target) in parts
+        )
+
+    def validate(self, raise_exception: bool = True) -> dict:
+        """Check that every reference stays inside the trace and every id is unique.
+
+        Args:
+            raise_exception (bool): If True, raise ValueError when validation fails.
+
+        Returns:
+            dict: Validation result with success flag, errors, and warnings.
+        """
+        errors: list[str] = []
+        artifacts = set(map(id, self.__artifacts))
+        actors = set(map(id, self.__actors))
+        tools = set(map(id, self.__tools))
+        operations = set(map(id, self.__operations))
+
+        def check(element, collection: set, what: str, where: str):
+            if element is not None and id(element) not in collection:
+                errors.append(f"{where} references {what} {element.id!r}, which is not in the trace.")
+
+        for artifact in self.__artifacts:
+            check(artifact.parent, artifacts, "artifact", f"Artifact {artifact.id!r} (parent)")
+            if isinstance(artifact, CodeArtifact):
+                check(artifact.revision_of, artifacts, "artifact", f"Artifact {artifact.id!r} (revision_of)")
+        writer: dict[int, str] = {}
+        for operation in self.__operations:
+            where = f"Operation {operation.id!r}"
+            for actor in operation.performed_by:
+                check(actor, actors, "actor", where)
+            numbers = [call.sequence_number for call in operation.tool_calls]
+            if len(numbers) != len(set(numbers)):
+                errors.append(f"{where} has tool calls sharing a sequence number.")
+            for call in operation.tool_calls:
+                check(call.tool, tools, "tool", f"ToolCall {call.id!r}")
+            for artifact in operation.reads + operation.writes:
+                check(artifact, artifacts, "artifact", where)
+            for artifact in operation.writes:
+                if id(artifact) in writer:
+                    errors.append(f"Artifact {artifact.id!r} is written by both operation "
+                                  f"{writer[id(artifact)]!r} and {operation.id!r}.")
+                writer[id(artifact)] = operation.id
+            if isinstance(operation, ModelingSession):
+                if not operation.changes:
+                    errors.append(f"{where} is a ModelingSession with no changes.")
+                for change in operation.changes:
+                    check(change.artifact, artifacts, "artifact", f"ChangeEvent {change.id!r}")
+            elif isinstance(operation, CodeGeneration):
+                if not any(isinstance(tool, (CodeGenerator, LLM)) for tool in operation.tools):
+                    errors.append(f"{where} is a CodeGeneration that calls no CodeGenerator or LLM.")
+            elif isinstance(operation, RequirementExtraction):
+                if not any(isinstance(tool, LLM) for tool in operation.tools):
+                    errors.append(f"{where} is a RequirementExtraction that calls no LLM.")
+                for artifact in operation.writes:
+                    if not isinstance(artifact, RequirementArtifact):
+                        errors.append(f"{where} is a RequirementExtraction that writes {type(artifact).__name__} "
+                                      f"{artifact.id!r}: it writes only requirements.")
+            elif isinstance(operation, Conversation):
+                if not any(isinstance(actor, Agent) for actor in operation.performed_by):
+                    errors.append(f"{where} is a Conversation with no Agent among its actors.")
+        logs = {id(log) for operation in self.__operations for call in operation.tool_calls for log in call.logs}
+        for link in self.__trace_links:
+            where = f"TraceLink {link.id!r}"
+            check(link.source, artifacts, "artifact", where)
+            check(link.target, artifacts, "artifact", where)
+            check(link.operation, operations, "operation", where)
+            for evidence in link.evidence:
+                for log in evidence.logs:
+                    check(log, logs, "log record", f"{type(evidence).__name__} {evidence.id!r}")
+
+        seen: dict[str, str] = {}
+        for element in self._all_elements():
+            kind = type(element).__name__
+            if element.id in seen:
+                errors.append(f"Id {element.id!r} is used by both a {seen[element.id]} and a {kind}.")
+            seen[element.id] = kind
+
+        result = {"success": not errors, "errors": errors, "warnings": []}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
+
+    def _all_elements(self) -> List[TraceElement]:
+        """Every trace element owned by the model, each once."""
+        elements: list = self.artifacts + self.actors + self.tools + self.operations
+        for operation in self.__operations:
+            for call in operation.tool_calls:
+                elements.append(call)
+                elements += call.logs
+            if isinstance(operation, ModelingSession):
+                elements += operation.changes
+            if operation.confidence is not None:
+                elements.append(operation.confidence)
+        for link in self.__trace_links:
+            elements.append(link)
+            elements += link.evidence
+            if link.confidence is not None:
+                elements.append(link.confidence)
+        return elements

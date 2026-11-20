@@ -18,6 +18,7 @@ import os
 import urllib.request
 from typing import Any
 from besser.utilities.workspace_fs import walk_plain
+from besser.spec_driven_agent.pipeline.constants import _RECIPE_EXCLUDED_DIRS
 from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,9 @@ def _fetch_models(base_url: str, token: str) -> dict[str, int]:
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
-        model_id, window = entry.get("id"), entry.get("context_length")
+        # Mistral names the field max_context_length.
+        model_id = entry.get("id")
+        window = entry.get("context_length") or entry.get("max_context_length")
         if isinstance(model_id, str) and isinstance(window, int) and window > 0:
             windows[model_id] = window
     return windows
@@ -184,6 +187,7 @@ def _fetch_catalog() -> dict[str, int]:
     settings = AgentSettings()
     endpoints: list[tuple[str, str]] = []
     for base_url, token in ((settings.free_llm_base_url, settings.free_llm_token),
+                            (settings.free_llm_secondary_base_url, settings.free_llm_secondary_token),
                             (settings.sponsored_llm_base_url, settings.sponsored_llm_token)):
         base_url = base_url.strip()
         if base_url and base_url not in (b for b, _ in endpoints):
@@ -483,6 +487,17 @@ def maybe_compact(
             {"role": "assistant", "content": [{"type": "text", "text": "Continuing."}]}
         )
     compacted.extend(to_preserve)
+    if _estimate_tokens(compacted) >= est_tokens:
+        # Everything in front of the kept tail costs less than its summary
+        # (the newest turn alone fills the budget). Applying it would grow the
+        # history, rewrite message 0 (a full prompt-cache miss), drop every
+        # thinking block, and fire again next turn.
+        logger.warning(
+            "Compaction frees nothing (~%d tokens over a %d threshold, the kept "
+            "tail alone is ~%d): sending the history as it is",
+            est_tokens, threshold, _estimate_tokens(to_preserve),
+        )
+        return messages, False
     return compacted, True
 
 
@@ -549,7 +564,10 @@ def _summarize_messages(
         )
     try:
         files = []
-        for root, _, fnames in walk_plain(output_dir):
+        for root, dirs, fnames in walk_plain(output_dir):
+            # The delivered files only: after an install an unpruned walk is
+            # all node_modules, and the cap below then shows nothing else.
+            dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
             for f in fnames:
                 if not f.startswith(".besser_"):
                     files.append(

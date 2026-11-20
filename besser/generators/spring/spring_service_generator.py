@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List
 
 from besser.BUML.metamodel.structural import Class, DomainModel
+from besser.utilities.generation_trace import trace_source
 from besser.generators.spring._sub_generator import SpringSubGenerator, build_environment
 from besser.generators.spring.java_types import (
     get_id_attribute,
@@ -58,6 +59,7 @@ class SpringServiceGenerator(SpringSubGenerator):
         self.write(
             Path("interfaces") / f"I{class_name}Service.java",
             env.get_template("iservice.java.j2").render(**context),
+            trace_source(cls, "iservice.java.j2#class"),
         )
 
         imports.add("org.springframework.beans.factory.annotation.Autowired")
@@ -76,6 +78,7 @@ class SpringServiceGenerator(SpringSubGenerator):
         self.write(
             Path("impl") / f"{class_name}Service.java",
             env.get_template("service.java.j2").render(**context),
+            trace_source(cls, "service.java.j2#class"),
         )
 
     def _get_crud_methods(self, cls: Class, class_name: str) -> List[dict]:
@@ -86,22 +89,26 @@ class SpringServiceGenerator(SpringSubGenerator):
             {
                 "return_value": f"List<{class_name}>",
                 "name": "findAll",
+                "element": None,
                 "parameter": "",
             },
             {
                 "return_value": f"Optional<{class_name}>",
                 "name": "findById",
+                "element": None,
                 "parameter": (f"{java_type_for(id_attr.type, self.model_type_names)} "
                               f"{to_java_field_name(id_attr.name)}"),
             },
             {
                 "return_value": class_name,
                 "name": "save",
+                "element": None,
                 "parameter": f"{class_name} {instance_name}",
             },
             {
                 "return_value": "void",
                 "name": "delete",
+                "element": None,
                 "parameter": f"{class_name} {instance_name}",
             },
         ]

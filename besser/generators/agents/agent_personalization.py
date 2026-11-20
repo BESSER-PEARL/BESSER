@@ -284,6 +284,29 @@ def style_text_batch(texts, style, model=DEFAULT_OPENAI_MODEL, openai_api_key=No
     return results
 
 
+def personalization_uses_llm(config) -> bool:
+    """Whether :func:`configure_agent` asks an LLM for ``config``.
+
+    It does when the config translates the agent (``agentLanguage``), restyles its replies
+    (``agentStyle``, ``languageComplexity``, ``sentenceLength``) or adapts them to a user profile
+    model (``userProfileModel``): the conditions under which ``configure_agent`` calls OpenAI
+    (and raises without an API key). Any other personalization (an avatar, modalities) changes no text.
+
+    Args:
+        config: The personalization configuration, structured or flat.
+
+    Returns:
+        bool: True when the personalized agent holds text an LLM wrote.
+    """
+    config = flatten_agent_config_structure(config or {})
+    return (
+        config.get('agentLanguage', 'none') not in ('none', 'original') and 'agentLanguage' in config
+        or any(key in config and config[key] != 'original'
+               for key in ('agentStyle', 'languageComplexity', 'sentenceLength'))
+        or isinstance(config.get('userProfileModel'), dict)
+    )
+
+
 def configure_agent(agent, config, openai_api_key: str = None):
     """
     Personalize the agent using OpenAI API or other logic.

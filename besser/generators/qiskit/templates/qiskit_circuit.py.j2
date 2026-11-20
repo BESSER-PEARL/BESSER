@@ -113,16 +113,16 @@ class Decrement(QuantumCircuit):
 {% endif %}
 # Function Gate Definitions
 {% for func_code in function_gates_code %}
-{{ func_code }}
+{% trace function_gates[loop.index0], "function_gate" %}{{ func_code }}{% endtrace %}
 {% endfor %}
 
 
 # Initialize Registers
 {% for qreg in circuit.qregs %}
-{{ qreg.name }} = QuantumRegister({{ qreg.size }}, '{{ qreg.name }}')
+{% trace qreg, "quantum_register" %}{{ qreg.name }} = QuantumRegister({{ qreg.size }}, '{{ qreg.name }}'){% endtrace %}
 {% endfor %}
 {% for creg in circuit.cregs %}
-{{ creg.name }} = ClassicalRegister({{ creg.size }}, '{{ creg.name }}')
+{% trace creg, "classical_register" %}{{ creg.name }} = ClassicalRegister({{ creg.size }}, '{{ creg.name }}'){% endtrace %}
 {% endfor %}
 
 # Initialize Circuit
@@ -130,7 +130,7 @@ qc = QuantumCircuit({% for qreg in circuit.qregs %}{{ qreg.name }}{% if not loop
 
 # Operations
 {% for line in operations_code %}
-{{ line }}
+{% trace operations[loop.index0], "operation" %}{{ line }}{% endtrace %}
 {% endfor %}
 
 # Draw

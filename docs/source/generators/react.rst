@@ -28,6 +28,7 @@ Dynamic data tables with:
 - Sorting and filtering
 - Pagination
 - Add/Edit modals with form validation
+- A confirmation prompt before a row's delete icon removes the record
 - Backend validation error display (keeps modal open on error)
 - Support for all relationship types (1:1, 1:N, N:M)
 - Lookup fields for related entities; the Add/Edit dialog offers only the
@@ -45,9 +46,11 @@ Executes class and instance methods with:
 
 - Parameter input modal for methods with parameters
 - Automatic type handling (int, float, bool, string, date, time)
-- Detailed error display for 500 errors
+- Detailed error display for 500 errors; a method modeled without an
+  implementation (the backend answers 501) shows "This action is not
+  available yet."
 - Modal stays open on error for retry
-- Automatic table refresh after execution
+- A reload of the data shown on the page after execution (see `Data refresh`_)
 
 CrudButton
 ^^^^^^^^^^
@@ -76,9 +79,57 @@ A ``Form`` bound to a class (``Form.data_binding``) is rendered as a
 value of every input bound to an attribute (typed from the attribute: int,
 float, bool, text; an empty field is left out so the backend applies its
 default), shows a success or error message (the backend's validation detail),
-and clears the form on success. Fields keep their labels; the submit button
-shows the form's ``submit_label``. An unbound form is rendered as a plain
-``<form>`` that does not submit.
+and clears the form on success. Fields keep their labels and their ``required``
+flag; the submit button shows the form's ``submit_label`` and carries the classes
+of the design's own submit button (kept on the form as ``data-submit-class``). An
+unbound form is rendered as a plain ``<form>`` that does not submit.
+
+A class with a mandatory to-one association (an order line that must reference
+its order) cannot be created from its attributes alone. For each such
+association end that no input of the form supplies, the form gets a
+``LookupSelect``: a select of the related class's records that posts the chosen
+record's key. An input or select named after a to-one association end (its
+``name`` or ``data-field-name``) is bound to that end and rendered as the same
+select. It reads its options the way the table's Add/Edit dialog does
+(``runtime/lookup.ts``).
+
+Navigation
+^^^^^^^^^^
+
+A ``Link`` or ``MenuItem`` whose URL is the route of one of the GUI's own screens
+is opened through the router, so the app is not reloaded; any other URL, and a
+link with ``target="_blank"``, stays a plain anchor. When the GUI comes from the
+web editor, a link names its page by a ``data-navigate-to`` attribute or by a
+site-relative ``href`` matching the page's route, name or id.
+
+A page's route is the route set on the page in the web editor when it is URL-safe
+(letters of any script, digits, ``_``, ``-`` and ``/``). Otherwise it is ``/`` and the page name
+in lower case, with every run of characters other than letters (of any script),
+digits and ``_`` as one hyphen and no hyphen at either end (``Orders & Returns``
+gives ``/orders-returns``). A route another page already has is numbered (``-2``,
+``-3``) in the order of the pages' ids, so reordering pages does not swap them.
+
+Earlier versions used the name in lower case with each space as a hyphen and
+ignored the route set in the editor. A page's route changes when that old route
+held a character other than a letter, digit, ``_`` or ``-`` (``My.Page`` was
+``/my.page``, now ``/my-page``), two hyphens in a row or a hyphen at either end
+(a name with repeated, leading or trailing spaces), or when the page has a URL-safe
+route of its own in the editor. Links written with an old route still open their
+page; a bookmark of an old route opens the main page.
+
+Data refresh
+^^^^^^^^^^^^
+
+Every successful write made through a runtime component (a table's dialog or
+delete, a bound form, a method button) bumps one data version
+(``runtime/dataVersion.ts``); tables, metric cards, charts, data lists and maps
+reload when it changes. A record saved in one component therefore shows up in
+the others on the page without a reload. Custom code that writes to the backend
+calls ``notifyDataChanged()`` to get the same effect.
+
+The table context's ``refreshTable`` and ``registerTableRefresh`` are deprecated:
+generated tables no longer register a refresh function, ``refreshTable`` calls
+``notifyDataChanged()`` (and a function custom code registered for that table).
 
 Chart Components
 ^^^^^^^^^^^^^^^^
@@ -172,6 +223,10 @@ Or standalone:
     gen = ReactGenerator(domain_model, gui_model, output_dir="frontend")
     gen.generate()
 
+Both generators take an optional ``app_name``: the application's name as its
+users see it, shown in the browser tab and the README headings (the web editor
+passes the project's name).
+
 Generated Structure
 -------------------
 
@@ -190,6 +245,9 @@ Generated Structure
    │   │   │   ├── MetricCardBlock.tsx
    │   │   │   ├── CrudButton.tsx
    │   │   │   ├── FormBlock.tsx
+   │   │   │   ├── LookupSelect.tsx
+   │   │   │   ├── lookup.ts
+   │   │   │   ├── dataVersion.ts
    │   │   │   └── MapBlock.tsx
    │   │   ├── InputComponents.tsx
    │   │   └── MethodButton.tsx
@@ -200,7 +258,6 @@ Generated Structure
    │   ├── App.tsx
    │   ├── design.css
    │   └── index.tsx
-   ├── public/
    ├── index.html
    ├── vite.config.ts
    ├── package.json
@@ -208,7 +265,9 @@ Generated Structure
 
 One ``.tsx`` file is written per page in the GUI model, named after that page
 (PascalCase), and ``App.tsx`` wires them into the router. ``MapBlock.tsx`` is
-only emitted when the model contains a ``Map`` component.
+only emitted when the model contains a ``Map`` component, and
+``components/AgentComponent.tsx`` with its ``public/img`` background only when
+it contains an agent component.
 
 Design stylesheet
 -----------------
@@ -221,3 +280,29 @@ render their ``css_classes`` as ``className``; tables, charts and metric cards
 forward it through their runtime blocks to the rendered root element.
 Per-element ``Styling`` is still emitted as inline styles. Without a stylesheet
 neither the file nor the import is generated.
+
+A design is written against the browser's defaults, and the Tailwind reset the
+app imports (``index.css``) removes them. ``design.css`` therefore starts with a
+block in Tailwind's ``base`` layer that restores, inside the pages, the size and
+weight of headings and the look of a plain button. The design's own rules and
+utility classes take precedence over it.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` maps each file the generator wrote (path relative to the output
+directory) to what it was generated from, for every GUI element that has an ``id``. Each page file
+``src/pages/<Page>.tsx`` is generated as a whole from its screen; every component rendered in a page is a line
+range (region) of its own, nested in its container's, and ``src/App.tsx`` records the import and the route of
+each page as regions of the screen. The other files (the Jinja templates, copied runtime blocks and
+assets) are file-level only. The generator writes no per-class files: the classes of the domain model only
+appear in the pages through the data bindings of their components, which are not traced separately.
+
+.. note::
+
+   The web editor's GUI converter (``process_gui_diagram``) gives each screen its page id and each component the
+   editor's trace records (tables, charts, metric cards, maps, agent components, forms, inputs, buttons, menus) its
+   persistent ``attributes.id``, the ids the editor records them by. Text, images, links and layout containers get
+   none: they render untraced, inside the region of the traced component that holds them, if any.
+
+Recording traces does not change the generated files; see :doc:`traceable_generator`.

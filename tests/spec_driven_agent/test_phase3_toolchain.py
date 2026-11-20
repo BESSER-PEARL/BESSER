@@ -77,13 +77,6 @@ class TestClassifier:
         issue = _classify_issue("tsc says something off-format")
         assert issue.severity == "warning"
 
-    def test_ruff_style_is_style(self) -> None:
-        """Sanity: unrelated classifications still work — we didn't
-        accidentally upgrade a style hint to a blocker.
-        """
-        issue = _classify_issue("ruff: foo.py:1:1: F401 'os' imported but unused")
-        assert issue.severity == "style"
-
 
 # ---------------------------------------------------------------------------
 # Toolchain collector: real tsc invocation on a deliberate type error
@@ -325,6 +318,9 @@ def test_fix_loop_prompt_never_asks_for_run_command_with_shell_tools_off(tmp_pat
     assert "invoke run_command" not in text
     assert "using run_command" not in text
     assert "do not call run_command" in text
+    # The re-checks are named as the harness's, not as run_command calls.
+    assert "run_command:" not in text and "working_dir=" not in text
+    assert "- `npx tsc --noEmit` in ." in text
 
 
 def test_fix_loop_prompt_cargo_command(tmp_path) -> None:

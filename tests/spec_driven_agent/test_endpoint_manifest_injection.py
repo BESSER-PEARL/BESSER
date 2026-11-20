@@ -3,7 +3,7 @@
 ``_ENDPOINT_DECORATOR_RE`` matches with ``re.DOTALL``, so the path group can
 capture real newlines out of workspace source. The endpoint manifest renders
 those paths with ``"\\n".join(...)`` into a block introduced as "the only
-routes that exist - copy them verbatim", which makes any injected line read
+routes that exist", to be called verbatim, which makes any injected line read
 as top-level system-prompt content. Class names, descriptions and OCL are
 JSON-escaped on the way in; this path was not.
 """

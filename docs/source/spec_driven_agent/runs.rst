@@ -81,7 +81,11 @@ writes its checkpoint, recipe and report as it does at any other stop.
 Only the paid LLM calls count against the budget: generator selection, the
 planning pass, a modify run's model sync, the customize loop, requirement
 extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
-validators, and the download are free.
+validators, and the download are free. A spent cost cap or an exhausted provider
+quota therefore stops only those calls: Phase 3 still runs its checks and the
+boot-and-create probe while time is left, so a defect the run left behind is
+reported as a blocker, and the requirements judge and the repair turns are
+skipped.
 
 .. _spec-driven-durable-runs:
 

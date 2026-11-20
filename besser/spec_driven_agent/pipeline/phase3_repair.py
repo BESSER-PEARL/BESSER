@@ -281,32 +281,33 @@ class Phase3RepairMixin:
         """One stop gate for repair turns and the validation calls between them.
 
         ``check_turn_budget=False`` asks for validation only, which needs time
-        before the cap for its checks; a repair turn needs time for an LLM call.
+        before the cap for its checks and is free; a repair turn is an LLM call,
+        so it also needs spend, quota, turns and time for that call.
         """
         reason = None
         if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
-        elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
-            reason = "cost budget exhausted"
-        elif self._phase2_quota_exhausted:
-            reason = "provider quota exhausted in Phase 2"
-        elif check_turn_budget and self.total_turns >= self.max_turns:
-            # No further edit turn, but final verification of the last accepted
-            # tool batch may still run. Do not poison that check as cancelled.
-            return "turn budget exhausted"
         elif self.deadline.cancelled:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
             if self._phase3_interrupt_detail:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
-        elif check_turn_budget and self.deadline.out_of_time():
-            # Like the turn budget: no further repair turn, but the attempt
-            # so far is still checked.
-            return "runtime budget exhausted"
         if reason:
             self._phase3_interrupted = True
-        return reason
+            return reason
+        if not check_turn_budget:
+            return None
+        # No further repair turn, but the attempt so far is still checked.
+        if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
+            return "cost budget exhausted"
+        if self._phase2_quota_exhausted:
+            return "provider quota exhausted in Phase 2"
+        if self.total_turns >= self.max_turns:
+            return "turn budget exhausted"
+        if self.deadline.out_of_time():
+            return "runtime budget exhausted"
+        return None
 
     def _repair_obligations_revision(self) -> str:
         """Test corrections and checklist changes are progress without source edits,

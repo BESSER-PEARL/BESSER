@@ -4791,12 +4791,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return json.dumps([requirements, self._instructions], sort_keys=True)
 
     def _checks_allowed(self) -> bool:
-        """A deterministic check may start: not cancelled, spend left, and time
-        before the cap for it (LLM calls need more, see ``_budget_stop_reason``)."""
-        return not (
-            self.deadline.cancelled or self.deadline.checks_out_of_time()
-            or (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
-        )
+        """A deterministic check may start: not cancelled, and time before the cap
+        for it. Checks are free, so spend does not stop them (LLM calls need more,
+        see ``_budget_stop_reason``)."""
+        return not (self.deadline.cancelled or self.deadline.checks_out_of_time())
 
     def _verification_call_allowed(self) -> bool:
         """Do not start a paid extraction/judgment after a stop or spend cap,
@@ -5195,6 +5193,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
                     f"(${self.client.usage.estimated_cost:.2f} used)")
+        if self._phase2_quota_exhausted:
+            return "the provider quota is exhausted"
         if self.deadline.out_of_time():
             return f"too little of the {self.max_runtime_seconds}s runtime cap is left"
         return ""

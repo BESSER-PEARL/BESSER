@@ -3690,19 +3690,14 @@ class ToolExecutor:
         return rel
 
     def _command_timeout(self, requested: Any) -> int:
-        """The requested timeout within [1, MAX_COMMAND_TIMEOUT], or the default,
-        and never past the run's deadline."""
+        """The requested timeout within [1, MAX_COMMAND_TIMEOUT], or the default."""
         timeout = COMMAND_TIMEOUT
         if requested is not None and not isinstance(requested, bool):
             try:
                 timeout = int(float(requested))
             except (TypeError, ValueError):
                 pass
-        timeout = max(1, min(timeout, MAX_COMMAND_TIMEOUT))
-        left = self.time_left() if self.time_left else None
-        if left is not None:
-            timeout = max(1, min(timeout, int(left)))
-        return timeout
+        return max(1, min(timeout, MAX_COMMAND_TIMEOUT))
 
     def _run_command(self, args: dict, *, adopt_state: bool = True) -> dict:
         """
@@ -3724,10 +3719,12 @@ class ToolExecutor:
         command = args["command"]
         working_dir = args.get("working_dir")
         start_dir = self._safe_cwd(working_dir) if working_dir else None
-        timeout = self._command_timeout(args.get("timeout"))
+        own_timeout = self._command_timeout(args.get("timeout"))
         left = self.time_left() if self.time_left else None
-        # The run's time left, not the command's own limit, sets its timeout.
-        cut_by_run = left is not None and left <= timeout
+        # Never past the run's deadline; when that is what sets the timeout, a
+        # kill at the timeout is the run's stop, not the command's own limit.
+        timeout = own_timeout if left is None else max(1, min(own_timeout, int(left)))
+        cut_by_run = timeout < own_timeout
 
         # Refuse obviously-destructive or exfil commands before we hand
         # them to the shell. Returned as a normal tool error so the LLM

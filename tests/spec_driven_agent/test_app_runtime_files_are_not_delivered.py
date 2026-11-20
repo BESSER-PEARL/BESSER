@@ -417,8 +417,9 @@ class _Shell:
     def run(self, command, **kwargs):
         for rel, text in self.writes.get(command, {}).items():
             _write(self.workspace, rel, text)
-        return type("Result", (), {"notes": [], "persistent": True, "returncode": 0, "stdout": "",
-                                   "stderr": "", "timed_out": False})()
+        from besser.spec_driven_agent.execution.shell_session import ShellResult
+
+        return ShellResult(0, "", "", persistent=True)
 
 
 SEED = "cat > backend/data/seed_orders.json <<'END'\n[]\nEND"

@@ -347,7 +347,8 @@ def test_phase2_that_uses_every_turn_reports_the_turn_limit(tmp_path, monkeypatc
 
     orch._run_phase2("build a library api", extra_issues=[])
 
-    assert orch.total_turns == 1
+    # Its turns execute no tool call, so only the runaway guard on turns stops it.
+    assert orch.total_turns == orch._turn_guard() == 4
     assert (orch._phase2_stop_reason, orch._phase2_exited_cleanly) == ("max_turns", False)
 
 

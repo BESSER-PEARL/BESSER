@@ -743,10 +743,20 @@ agent's; the requirement is judged again on the changed code. A line that only
 declares data where a rule must be enforced stays not confirmed: on recorded runs
 those citations were real code doing the job across several lines.
 
+Known limit: the check reads only the lines cited. A no-op validator cited for a rule
+that the same class enforces another way (the field's declared type validates the
+value) is refuted all the same: telling such a type from one that does not enforce
+the rule would take knowledge of particular types. The refuted verdict is judged once
+more on that revision, with the cited file shown whole and the reason its citation was
+rejected. It stays a blocker when that answer again says implemented citing nothing
+but such lines, or when no answer comes back; citing the enforcing declaration leaves
+it not confirmed.
+
 Two findings of the same "could not check" kind stay blockers. ``verification
 setup:`` asks the agent to install the project's declared dependencies, which it
 is allowed to do, so that the compile and build checks behind it can run; one
-still open when Phase 3 ends is rewritten once as ``validation unverified: <check>
+still open when Phase 3 ends, or when an error stops the run after Phase 3 began, is
+rewritten once as ``validation unverified: <check>
 did not run completely (its project dependencies were not installed)``, so the
 trace, the recipe, the counts, telemetry and the report all read it as not
 confirmed, and the run reports its frontend as never built (below). A
@@ -884,7 +894,8 @@ An attempt that edited the tree is kept only if all of these hold:
    retired when its status rises (missing to partial is progress, though it
    still blocks), or when it no longer has a blocker and the judge ran on the
    tree after the attempt. A requirement that disappears because the judge was
-   deferred, failed or was stopped is not retired. Missing and unsupported rank
+   deferred, failed or was stopped, or the requirements could not be extracted,
+   is not retired. Missing and unsupported rank
    the same, so turning one into the other is neither progress nor a fall.
    Other findings are compared with line and column numbers ignored, since an
    edit moves the errors it leaves; any other number (``/e2/`` against
@@ -895,7 +906,8 @@ An attempt that edited the tree is kept only if all of these hold:
    missing module or a startup failure hides the runtime checks (where the
    probe measured that tree, its boot verdict decides instead), fewer entities
    failing to be created reveals the creates and action calls that needed them,
-   a judge that was deferred, failed or stopped hides its verdicts, missing
+   a judge that was deferred, failed or stopped hides its verdicts, and so does a
+   requirement extraction that failed (it is retried once, on a later round), missing
    dependencies or a check that did not run hide ``tsc`` and the frontend build
    of that project, ``tsc`` errors hide its build, and a syntax error hides the
    lint of its file. The families are one table in ``validation/issues.py``; a

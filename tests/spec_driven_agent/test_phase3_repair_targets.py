@@ -586,9 +586,18 @@ def test_a_requirement_the_judge_did_not_look_at_again_is_not_retired(tmp_path, 
     assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 2 blockers it faced"
 
 
-def test_verdicts_a_returning_judge_gives_are_not_new_blockers(tmp_path):
-    """The tree before was not judged (the judge failed), so its verdicts are newly visible."""
-    orch, _ = _cycle(tmp_path, [[REQ1, REQ2]], _tools(FIX_ORDER), entry=(IN_ORDER, JUDGE_FAILED))
+NOT_EXTRACTED = B("warning", "requirement unverified: requirement extraction failed; the original specification "
+                             "has not been checked. Do not treat this as an empty requirement list or verified "
+                             "completion.")
+PHASE3_SKIPPED = B("warning", "requirement unverified: Phase 3 validation did not run: the run was cancelled. "
+                              "The current application has not completed final verification.")
+
+
+@pytest.mark.parametrize("note", [JUDGE_FAILED, NOT_EXTRACTED, PHASE3_SKIPPED],
+                         ids=["judge failed", "extraction failed", "phase 3 skipped"])
+def test_verdicts_a_returning_judge_gives_are_not_new_blockers(tmp_path, note):
+    """The tree before was not judged, so its verdicts are newly visible (extraction is retried once)."""
+    orch, _ = _cycle(tmp_path, [[REQ1, REQ2]], _tools(FIX_ORDER), entry=(IN_ORDER, note))
 
     assert not orch._phase3_rolled_back, orch._phase3_exit_reason
 

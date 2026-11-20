@@ -186,6 +186,8 @@ from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_pla
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
     JUDGMENT_DEFERRED,
+    PHASE3_SKIPPED,
+    REQUIREMENTS_NOT_EXTRACTED,
     ValidationIssue,
     _check_did_not_run,
     _classify_issue,
@@ -241,9 +243,9 @@ logger = logging.getLogger(__name__)
 
 # The findings that say no requirement verdict exists for the delivered tree
 # (``verification_gaps``). The first is phase3_repair's: Phase 3 did not run at all.
-_PHASE3_SKIPPED = "requirement unverified: Phase 3 validation did not run"
+_PHASE3_SKIPPED = PHASE3_SKIPPED
 _REQUIREMENTS_NOT_CHECKED = "requirement unverified: not checked,"
-_REQUIREMENTS_NOT_EXTRACTED = "requirement unverified: requirement extraction failed"
+_REQUIREMENTS_NOT_EXTRACTED = REQUIREMENTS_NOT_EXTRACTED
 _REQUIREMENTS_JUDGE_FAILED = "validation unverified: the requirements judge did not run"
 _REQUIREMENTS_NO_VERDICT = (_PHASE3_SKIPPED, _REQUIREMENTS_NOT_CHECKED, _REQUIREMENTS_NOT_EXTRACTED,
                             _REQUIREMENTS_JUDGE_FAILED)

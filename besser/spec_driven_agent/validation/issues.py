@@ -121,12 +121,17 @@ def requirement_status(message: str) -> tuple[int, int] | None:
 
 # Phase 3's note when the requirement judge was not run on a tree.
 JUDGMENT_DEFERRED = "validation: business-requirement judgment deferred"
+# Phase 3 was skipped; the requirements could not be extracted (retried on the next round).
+PHASE3_SKIPPED = "requirement unverified: Phase 3 validation did not run"
+REQUIREMENTS_NOT_EXTRACTED = "requirement unverified: requirement extraction failed"
 # Findings that say the requirement judge did not run on a tree: deferred, failed
-# (it returned no verdicts) or stopped (deadline or budget).
+# (it returned no verdicts), stopped (deadline or budget), or given no requirements.
 JUDGE_DID_NOT_RUN = (
     JUDGMENT_DEFERRED,
     "validation unverified: the requirements judge",
     "requirement unverified: not checked",
+    REQUIREMENTS_NOT_EXTRACTED,
+    PHASE3_SKIPPED,
 )
 
 # The check family of a finding, and what stops that family running ("dependent"
@@ -152,7 +157,7 @@ HIDDEN_BY = (
     ("missing module:", "runtime"),
     ("application startup:", "runtime"),
     ("mapper config:", "runtime"),
-    *((note, "judge") for note in JUDGE_DID_NOT_RUN),
+    *((note.lower(), "judge") for note in JUDGE_DID_NOT_RUN),
     ("verification setup: tsc [", "toolchain"),
     ("verification setup: frontend build [", "toolchain"),
     ("validation unverified: tsc [", "toolchain"),

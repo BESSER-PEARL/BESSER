@@ -130,10 +130,15 @@ a ``pyvenv.cfg`` (a virtualenv, whatever its name; it is named under
 ``file_glob`` matches file names only; one containing a path separator is
 refused with an error rather than returning no matches.
 
-``task_list(action='done')`` runs an attached verifier and refuses the item
-while it fails; a verifier exception is a failed check, not success. An item
-without a verifier closes on the model's word, with no code to quote. The ids
-may also come as ``done_ids``, the key the reply lists them under.
+``task_list`` takes one shape with four optional fields, any combination in
+one call: ``done`` (item ids), ``add`` (item texts), ``drop`` and ``blocked``
+(lists of ``{id, reason}``). A call with none lists every item with its status,
+and every result ends with ``open_items``, the id and a short label of each open
+item. The earlier ``action=...`` shape (``list``, ``done``, ``add``, ``drop``,
+``blocked``, ``mixed``) is still accepted. ``done`` runs an attached verifier
+and refuses the item while it fails; a verifier exception is a failed check,
+not success. An item without a verifier closes on the model's word, with no
+code to quote.
 
 After every successful edit the harness re-runs the verifiers and closes the
 items whose check now passes. Nothing else closes an item: an edit to a file
@@ -149,7 +154,7 @@ workspace file is reported as absent; the item for a modeled rule the
 generators could not enforce names ``routers/<class>.py``, relative to the
 backend folder, so its finding says no workspace file is there.
 
-``action='blocked'`` requires a reason and records required work the model
+``blocked`` requires a reason and records required work the model
 could not finish; the item stops holding the end-turn gate. A later passing
 check can clear the block. ``drop`` is only for work outside the user's
 request. Task outcomes are retained in the recipe.

@@ -184,8 +184,8 @@ class TestChecklistDrop:
     def test_the_tool_schema_offers_drop(self):
         from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
         tool = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
-        assert "drop" in tool["input_schema"]["properties"]["action"]["enum"]
-        assert "reason" in tool["input_schema"]["properties"]
+        drop = tool["input_schema"]["properties"]["drop"]["items"]
+        assert drop["required"] == ["id", "reason"]
 
 
 class TestScaffoldCopyInThePrompt:

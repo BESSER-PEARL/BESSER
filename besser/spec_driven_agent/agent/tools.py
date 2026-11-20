@@ -297,6 +297,11 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
 # Validation tools
 # ======================================================================
 
+# One drop or blocked entry: drop says why the user did not ask for the item,
+# blocked what remains unresolved and why.
+_TASK_REASON = {"type": "object", "required": ["id", "reason"],
+                "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}}}
+
 VALIDATION_TOOLS: list[dict[str, Any]] = [
     {
         "name": "test_api",
@@ -375,64 +380,22 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
     {
         "name": "task_list",
         "description": (
-            "Your work checklist for this run. action='list' shows every item "
-            "with its status; action='done' marks items complete — pass "
-            "`ids=[1,2,3]` for SEVERAL AT ONCE, or `id` for one; "
-            "action='add' appends items you discovered — pass `texts=[...]` "
-            "for SEVERAL AT ONCE, or `text` for one. "
-            "action='drop' closes an item the user did NOT ask for (pass `id` and "
-            "`reason`: why it was not requested) — never mark such an item done. "
-            "action='blocked' records required but unresolved work (pass `id` or "
-            "`ids` and `reason`: what remains unresolved and why); use this when you "
-            "cannot implement or verify it. "
-            "action='mixed' does SEVERAL OF THE ABOVE IN ONE CALL — the turn "
-            "you finish two items AND discover a new one AND drop one you didn't "
-            "need should be ONE task_list call, not four. Pass any combination of "
-            "`done_ids` (same as action='done' `ids`), "
-            "`add_texts` (same as action='add' `texts`), `drop` (a list of "
-            "{id, reason} objects), and `blocked` (a list of {id, reason} objects). "
-            "The reply nests each verb's own result under `results` — check every "
-            "key you used; a mixed call can succeed on one verb and be refused on "
-            "another in the same response. "
-            "Mark items done as you complete them — the run does not finish "
-            "while items are open. Batch them: one task per call wastes a turn "
-            "each, and you have a limited number of turns. An item with a machine "
-            "check closes by itself once the check passes, and done is refused while "
-            "it fails. Any other item closes only when you mark it done. Closing an "
-            "item is bookkeeping: the harness still checks the app."
+            "Your checklist for this run. Every field is optional and one call may combine "
+            "them: done marks items complete, add appends items you found, drop closes an "
+            "item the user did not ask for, blocked records required work you cannot finish. "
+            "A call with no fields lists every item. Every result lists the open items. The "
+            "run does not finish while items are open. An item with a machine check closes "
+            "by itself once the check passes, and done on it is refused while it fails; any "
+            "other item closes when you mark it done."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["list", "done", "add", "drop", "blocked", "mixed"],
-                },
-                "id": {"type": "integer"},
-                "reason": {"type": "string"},
-                "ids": {"type": "array", "items": {"type": "integer"}},
-                "text": {"type": "string"},
-                "texts": {"type": "array", "items": {"type": "string"}},
-                "done_ids": {"type": "array", "items": {"type": "integer"}},
-                "add_texts": {"type": "array", "items": {"type": "string"}},
-                "drop": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}},
-                        "required": ["id", "reason"],
-                    },
-                },
-                "blocked": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}},
-                        "required": ["id", "reason"],
-                    },
-                },
+                "done": {"type": "array", "items": {"type": "integer"}},
+                "add": {"type": "array", "items": {"type": "string"}},
+                "drop": {"type": "array", "items": _TASK_REASON},
+                "blocked": {"type": "array", "items": _TASK_REASON},
             },
-            "required": ["action"],
         },
     },
 ]

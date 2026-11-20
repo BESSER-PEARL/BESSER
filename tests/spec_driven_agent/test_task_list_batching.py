@@ -55,10 +55,9 @@ def test_a_single_id_still_works(executor):
 def test_batching_is_what_the_tool_advertises(executor):
     from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
-    assert "ids" in spec["input_schema"]["properties"]
-    assert spec["input_schema"]["properties"]["ids"]["type"] == "array"
+    assert spec["input_schema"]["properties"]["done"]["type"] == "array"
     # The model only batches if the description tells it to.
-    assert "ids=[1,2,3]" in spec["description"]
+    assert "combine" in spec["description"]
 
 
 def test_unknown_and_duplicate_ids_do_not_derail_the_batch(executor):
@@ -260,5 +259,5 @@ def test_the_tool_advertises_batched_adds(executor):
     """A capability the description does not mention is a capability unused."""
     from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
-    assert "texts" in spec["input_schema"]["properties"], spec["input_schema"]["properties"].keys()
-    assert "texts" in spec["description"]
+    assert spec["input_schema"]["properties"]["add"]["type"] == "array"
+    assert "add appends items" in spec["description"]

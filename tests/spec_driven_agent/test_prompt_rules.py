@@ -99,5 +99,5 @@ class TestRulesDoNotPrescribeTheFailures:
             instructions="Build it", max_turns=10, gap_tasks=["Add authentication"],
         )
         assert "mark it done with a brief reason" not in prompt
-        assert "task_list(action='drop', id=N, reason=...)" in prompt
+        assert "task_list(drop=[{id, reason}])" in prompt
         assert "never mark undone work done" in prompt

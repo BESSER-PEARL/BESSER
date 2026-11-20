@@ -261,6 +261,8 @@ class ToolExecutionResult:
 
 # The file tools' arguments that carry code or text to match.
 _EDIT_BODY_KEYS = ("content", "old_text", "new_text")
+# task_list's earlier shape, still accepted: action=list|done|add|drop|blocked|mixed.
+_TASK_LIST_ACTION_ARGUMENTS = frozenset({"action", "id", "ids", "reason", "text", "texts", "done_ids", "add_texts"})
 
 # Default time a shell command can run (seconds); the model may ask for up to
 # MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.
@@ -1332,6 +1334,19 @@ class ToolExecutor:
         return row
 
     def _task_list(self, args: dict) -> dict:
+        """``{done, add, drop, blocked}``, any combination; none lists the checklist.
+
+        The earlier ``action=...`` shape (``_TASK_LIST_ACTION_ARGUMENTS``) is still accepted.
+        """
+        if "action" not in args:
+            verbs = {"done_ids": args.get("done"), "add_texts": args.get("add"),
+                     "drop": args.get("drop"), "blocked": args.get("blocked")}
+            result = (self._task_list({"action": "list"}) if all(v is None for v in verbs.values())
+                      else self._do_mixed(verbs))
+            # Once per result, as labels: the conversation re-sends every result.
+            result.get("results", {}).get("done", {}).pop("open_items", None)
+            result["open_items"] = [{"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]
+            return result
         action = args.get("action")
         if action == "list":
             return {
@@ -1364,8 +1379,7 @@ class ToolExecutor:
         ids, bad = self._requested_task_ids(args)
         if not ids:
             return {"error": (
-                "action='done' requires `id` (an integer) or `ids` (a list of integers; "
-                "`done_ids` works too). Use action='list' to see ids."
+                "done requires item ids (integers). Call task_list with no fields to see ids."
                 + (f" Not integers: {bad}." if bad else "")
             )}
 
@@ -1426,7 +1440,7 @@ class ToolExecutor:
             # and "don't re-attempt" memory all depend on seeing a call that
             # accepted nothing as one. `advice` already says what to do next.
             parts = [f"Task {item['id']} is NOT done - {item['reason']}." for item in refused]
-            parts += [f"No task with id {task_id}. Use action='list' to see ids." for task_id in unknown]
+            parts += [f"No task with id {task_id}. Call task_list with no fields to see ids." for task_id in unknown]
             if parts:
                 result["error"] = " ".join(parts)
         return result
@@ -1436,10 +1450,10 @@ class ToolExecutor:
         ids, bad = self._requested_task_ids(args)
         reason = str(args.get("reason") or "").strip()
         if not ids or bad or not reason:
-            return {"error": "action='blocked' requires id or ids and a non-empty reason explaining what remains unresolved."}
+            return {"error": "blocked requires an item id and a non-empty reason explaining what remains unresolved."}
         by_id = {t["id"]: t for t in self._tasks}
         if any(task_id not in by_id for task_id in ids):
-            return {"error": "Unknown task id. Use action='list' to see ids."}
+            return {"error": "Unknown task id. Call task_list with no fields to see ids."}
         for task_id in ids:
             task = by_id[task_id]
             task.pop("dropped", None)
@@ -1456,7 +1470,7 @@ class ToolExecutor:
         reason = str(args.get("reason") or "").strip()
         if task_id is None or not reason:
             return {"error": (
-                "action='drop' requires `id` (an integer) and a non-empty `reason` "
+                "drop requires an item `id` (an integer) and a non-empty `reason` "
                 "saying why the user did not ask for it."
             )}
         for t in self._tasks:
@@ -1470,7 +1484,7 @@ class ToolExecutor:
             t.pop("blocked_reason", None)
             logger.info("Checklist item %d dropped (%s): %r", task_id, reason, t["text"][:80])
             return {"status": "dropped", "id": task_id, "open": len(self.open_tasks())}
-        return {"error": f"Unknown task id {task_id}. Use action='list' to see ids."}
+        return {"error": f"Unknown task id {task_id}. Call task_list with no fields to see ids."}
 
     def _do_add(self, args: dict) -> dict:
         """action='add' — also the `add_texts` verb inside a mixed call.
@@ -1486,8 +1500,7 @@ class ToolExecutor:
         items = [t.strip() for t in raw if isinstance(t, str) and t.strip()]
         if not items:
             return {"error": (
-                "action='add' requires non-empty `text`, or `texts` with "
-                "at least one non-empty item."
+                "add requires at least one non-empty item text."
             )}
         ids: list[int] = []
         appended: set[int] = set()
@@ -1842,7 +1855,9 @@ class ToolExecutor:
                 "Nothing was done; resend the call with every required field."
             )})
         declared = schema.get("properties") or {}
-        ignored = [name for name in arguments if name not in declared and name != "needed_for"]
+        ignored = [name for name in arguments if name not in declared and name != "needed_for"
+                   and not (tool_name == "task_list" and "action" in arguments
+                            and name in _TASK_LIST_ACTION_ARGUMENTS)]
         arguments, problems = _normalize_arguments(schema, arguments)
         if problems:
             return ToolExecutionResult("error", {"error": (

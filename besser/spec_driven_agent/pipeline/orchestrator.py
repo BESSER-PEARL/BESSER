@@ -2292,12 +2292,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             "are still OPEN:\n"
                             f"{listing}\n"
                             "Finish each one now. If an item is already "
-                            "complete, mark it with task_list(action='done', "
-                            "ids=[...]). If required work cannot be finished, "
-                            "record task_list(action='blocked', id=N, reason=...). "
-                            "If the user did not ask for it, close it "
-                            "honestly with task_list(action='drop', id=N, "
-                            "reason=...) - never mark undone work done. End "
+                            "complete, mark it with task_list(done=[...]). If "
+                            "required work cannot be finished, record "
+                            "task_list(blocked=[{id, reason}]). If the user did "
+                            "not ask for it, close it honestly with "
+                            "task_list(drop=[{id, reason}]) - never mark undone work done. End "
                             "the turn only when every item is closed."
                         )
                     messages.append({

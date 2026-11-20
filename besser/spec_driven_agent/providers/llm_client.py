@@ -2162,7 +2162,9 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
         1. every ``BESSER_FREE_LLM_ALT_MODELS`` entry, on the PRIMARY endpoint
            and token — the primary's usual failure is its daily request
            quota, and another model on that endpoint has its own
-        2. ``BESSER_FREE_LLM_FALLBACK_*`` — typically a self-hosted Ollama
+        2. every ``BESSER_FREE_LLM_SECONDARY_MODELS`` entry, on the second
+           cloud endpoint and its own token
+        3. ``BESSER_FREE_LLM_FALLBACK_*`` — typically a self-hosted Ollama
            server with limited capacity (one request at a time, slow cold
            loads). A true last resort, not a peer.
 
@@ -2179,6 +2181,10 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
         for alt in free_alt_models(settings):
             if alt and alt != chosen:
                 chain.append((primary_base_url, primary_token, alt))
+    secondary = _resolve_free_secondary_config(settings)
+    if secondary:
+        base_url, token, models = secondary
+        chain.extend((base_url, token, m) for m in models if m != chosen)
     self_hosted = _resolve_free_fallback_config(settings)
     if self_hosted and self_hosted[2] != chosen:
         chain.append(self_hosted)
@@ -2201,7 +2207,8 @@ def free_pilot_model() -> str:
     model = settings.pilot_llm_model.strip()
     if not model:
         return ""
-    offered = {free_tier_model(settings), free_fallback_model(settings), *free_alt_models(settings)}
+    offered = {free_tier_model(settings), free_fallback_model(settings),
+               *free_alt_models(settings), *free_secondary_models(settings)}
     return model if model in offered else ""
 
 
@@ -2247,6 +2254,49 @@ def free_alt_choice(requested: str | None) -> str:
     if not req:
         return ""
     return req if req in free_alt_models() else ""
+
+
+def _resolve_free_secondary_config(
+    settings: AgentSettings | None = None,
+) -> tuple[str, str, list[str]] | None:
+    """Return ``(base_url, token, models)`` for the second keyless endpoint,
+    or ``None`` when it is not configured.
+
+    A cloud endpoint with its own credentials (e.g. a Mistral deployment),
+    tried after the primary's alt models and before the self-hosted
+    fallback. An id already served by the primary, an alt or the fallback is
+    dropped, so each id has exactly one endpoint+token pair.
+    """
+    settings = settings or AgentSettings()
+    base_url = settings.free_llm_secondary_base_url.strip()
+    if not base_url:
+        return None
+    taken = {m for m in (free_tier_model(settings), free_fallback_model(settings)) if m}
+    taken.update(free_alt_models(settings))
+    models: list[str] = []
+    for part in settings.free_llm_secondary_models.split(","):
+        model = part.strip()
+        if model and model not in taken:
+            taken.add(model)
+            models.append(model)
+    if not models:
+        return None
+    token = settings.free_llm_secondary_token.get_secret_value().strip()
+    return base_url, token, models
+
+
+def free_secondary_models(settings: AgentSettings | None = None) -> list[str]:
+    """Models served by the second keyless endpoint, in order (may be empty)."""
+    config = _resolve_free_secondary_config(settings)
+    return config[2] if config else []
+
+
+def free_secondary_choice(requested: str | None) -> str:
+    """The second-endpoint model ``requested`` names, or ``""`` (see ``free_alt_choice``)."""
+    req = (requested or "").strip()
+    if not req:
+        return ""
+    return req if req in free_secondary_models() else ""
 
 
 def is_free_fallback_choice(requested: str | None) -> bool:
@@ -2338,6 +2388,7 @@ def create_llm_client(
         # endpoint+token pair:
         #   * the FALLBACK model  -> fallback base URL + fallback token
         #   * a free_alt_models() -> primary base URL + primary token
+        #   * a free_secondary_models() -> secondary base URL + secondary token
         # Anything else pins to the primary, so the server's credentials can
         # never be pointed at an arbitrary model or host.
         if is_free_fallback_choice(model):
@@ -2358,6 +2409,19 @@ def create_llm_client(
                 **kwargs,
             )
         free_base_url, token, free_model = _resolve_free_tier_config()
+        secondary = free_secondary_choice(model)
+        if secondary:
+            sec_base_url, sec_token, _ = _resolve_free_secondary_config()
+            return OpenAIProvider(
+                api_key="free",
+                model=secondary,
+                base_url=sec_base_url,
+                default_headers={"Authorization": f"Bearer {sec_token}"} if sec_token else None,
+                # A cloud endpoint like the primary, so it keeps the full chain.
+                fallback=_resolve_free_fallback_chain(secondary),
+                free_route=True,
+                **kwargs,
+            )
         # An alt model rides the primary endpoint's credentials unchanged (same
         # base URL, same bearer), which is what makes serving it from the
         # server's token safe. Resolve the primary config FIRST so an

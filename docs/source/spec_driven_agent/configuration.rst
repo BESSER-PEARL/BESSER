@@ -57,6 +57,11 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
 - ``BESSER_FREE_LLM_ALT_MODELS`` -- Comma-separated extra model ids served by
   that *same* endpoint and token. They are offered as alternative free choices
   and used as the first step of the fallback chain.
+- ``BESSER_FREE_LLM_SECONDARY_BASE_URL`` / ``BESSER_FREE_LLM_SECONDARY_MODELS`` /
+  ``BESSER_FREE_LLM_SECONDARY_TOKEN`` -- A second cloud endpoint with its own
+  token (e.g. a Mistral deployment) and a comma-separated list of its models.
+  They are offered as free choices and tried after the alt models, before the
+  last-resort endpoint.
 - ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``BESSER_FREE_LLM_FALLBACK_MODEL`` /
   ``BESSER_FREE_LLM_FALLBACK_TOKEN`` -- A second,
   independently credentialed endpoint used as the last resort in the fallback

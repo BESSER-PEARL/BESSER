@@ -447,28 +447,18 @@ def _generated_file(tmp_path, lines: int, read: bool = True) -> tuple[ToolExecut
     return executor, rel
 
 
-def test_write_file_allowed_after_two_modifies(tmp_path):
-    """The size rule inverted: this is now the LARGE-file case.
+def test_landed_modifies_do_not_unlock_a_lossy_rewrite_of_a_large_generated_file(tmp_path):
+    """A large generated file's rewrite is judged by what it keeps, not by edit counts.
 
-    It used to be the small-file case (<=200 lines had to be modified twice
-    before a rewrite unlocked, while anything larger could be rewritten
-    cold). That is backwards: a small file is the one a model can reproduce
-    faithfully from one read, and a large one is where a rewrite drops code.
-    So the threshold swapped sides, and this test swapped with it - the
-    assertion "two modify attempts unlock the rewrite" is unchanged, it just
-    now guards the files where it matters.
-
-    The rejection text changed with it and the assertion follows the text:
-    "delete_file + write_file" is gone because wholesale replacement is the
-    very thing the guard exists to discourage, and the message now names the
-    unlock rule instead. Neither escape was removed from the executor.
+    Two modify_file calls used to unlock any rewrite, and refused calls counted
+    too, so two throwaway edits let a rewrite drop most of the file. The refusal
+    names what the rewrite loses; a rewrite that keeps the code lands at once.
     """
     executor, rel = _generated_file(tmp_path, 300)
 
     cold = json.loads(executor.execute("write_file", {"path": rel, "content": "x = 1\n"}))
-    assert "error" in cold
+    assert cold.get("rejection_kind") == "rewrite_loss", cold
     assert "modify_file" in cold["error"]
-    assert "after two modify_file attempts" in cold["error"]
 
     for n in (0, 1):
         result = json.loads(executor.execute(
@@ -476,11 +466,13 @@ def test_write_file_allowed_after_two_modifies(tmp_path):
             {"path": rel, "old_text": f"line_{n} = {n}", "new_text": f"line_{n} = {n + 10}"},
         ))
         assert result.get("status") == "modified"
+    executor._read_file({"path": rel})
 
-    # After two demonstrated modify attempts, the rewrite is allowed
-    rewrite = json.loads(executor.execute(
-        "write_file", {"path": rel, "content": "x = 1\n"},
-    ))
+    lossy = json.loads(executor.execute("write_file", {"path": rel, "content": "x = 1\n"}))
+    assert lossy.get("rejection_kind") == "rewrite_loss", lossy
+    with open(os.path.join(str(tmp_path), rel), encoding="utf-8") as fh:
+        kept = fh.read()
+    rewrite = json.loads(executor.execute("write_file", {"path": rel, "content": kept + "x = 1\n"}))
     assert rewrite.get("status") == "written"
 
 

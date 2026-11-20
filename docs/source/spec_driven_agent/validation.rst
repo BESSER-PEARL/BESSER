@@ -316,8 +316,11 @@ tried again, and a check stopped midway keeps the screens it opened. Its time
 shows in the trace as the ``phase3_screens`` phase.
 
 Generated create probes use distinct fixture values and native association-link
-payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
-that every valid request fails. An unresolved create probe can be discharged by
+payloads. Required date and date-time fields get later days in the order they
+are declared (a start before its end), and a retry reverses that order; a
+date-time is fixed per day and instance, not read from the clock. A
+legitimate 4xx rejection of guessed data is **unknown**, not proof that every
+valid request fails. An unresolved create probe can be discharged by
 a current-revision ``test_api`` scenario on the same backend in which the app
 booted and a successful ``POST`` to that endpoint (a path its route template
 serves: ``/order/7/line/`` for ``/order/{order_id}/line/``) is followed by a
@@ -911,10 +914,9 @@ that edited the tree is kept only if all of these hold:
    kind, backend and route. The same route failing with another message is
    neither retired nor added; the next attempt's prompt says it is still
    failing and quotes the new error, and the probe's generated input quoted in
-   the message is not part of the comparison (a date-time fixture is noon on
-   its day, not the current time). Other findings are compared by their
-   message with line and column numbers ignored, since an edit moves the
-   errors it leaves; any other number (``/e2/`` against ``/e3/``) tells them
+   the message is not part of the comparison. Other findings are compared by
+   their message with line and column numbers ignored, since an edit moves
+   the errors it leaves; any other number (``/e2/`` against ``/e3/``) tells them
    apart.
 2. Every observed failure it added (a check that watched something fail, not a
    judgment or an unknown) belongs to a check family that could not run on the

@@ -433,6 +433,25 @@ def test_a_date_time_fixture_is_the_same_on_every_probe():
     assert _sample("placed_at", {"type": "string", "format": "date-time"}, 1) == first
 
 
+def test_date_time_fields_follow_their_declared_order_and_the_dates_variant_reverses_it():
+    """A start declared before its end must get the earlier value, or a correct ``end > start`` rule refuses it."""
+    schema = {"properties": {"title": {"type": "string"},
+                             "starts_at": {"type": "string", "format": "date-time"},
+                             "ends_at": {"type": "string", "format": "date-time"}},
+              "required": ["title", "starts_at", "ends_at"]}
+    base, _ = _build_payload(schema, {}, {}, {}, {}, ("base",), entity="Task")
+    assert base["starts_at"] < base["ends_at"]
+    swapped, _ = _build_payload(schema, {}, {}, {}, {}, ("dates",), entity="Task")
+    assert swapped["starts_at"] > swapped["ends_at"]
+
+
+def test_a_unique_date_time_column_gets_a_distinct_value_per_instance():
+    schema = {"properties": {"due_at": {"type": "string", "format": "date-time"}}, "required": ["due_at"]}
+    values = {_build_payload(schema, {}, {}, {}, {}, ("base",), entity="Task", ordinal=n,
+                             unique_fields=frozenset({"due_at"}))[0]["due_at"] for n in (1, 2, 3)}
+    assert len(values) == 3
+
+
 # ------------------------------------------------------------- network guard
 #
 # Prevention, not an incident: the probe boots LLM-authored code and nothing

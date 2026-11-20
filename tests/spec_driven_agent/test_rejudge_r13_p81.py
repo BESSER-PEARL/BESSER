@@ -204,3 +204,60 @@ def test_a_rejudge_that_cites_the_no_op_validator_again_still_blocks(refuted, mo
     assert len(digests) == 2
     (message,) = [issue for issue in issues if "R9" in issue]
     assert message.startswith("requirement unsupported:")
+
+
+# The focused re-judge's own answer about a verdict the first check could not confirm.
+CODES = "backend/codes.py"
+CHECK_LINE = "raise ValueError('an order code starts with ORD-')"
+
+
+@pytest.fixture
+def with_codes(refuted, tmp_path):
+    _write(tmp_path, CODES, "def check_code(value):\n    if not value.startswith('ORD-'):\n"
+                            f"        {CHECK_LINE}\n    return value\n")
+    return refuted
+
+
+def _r9(issues):
+    (message,) = [issue for issue in issues if "R9" in issue]
+    return message
+
+
+@pytest.mark.parametrize("answer, prefix", [
+    pytest.param({**REFERENCE_RULE, "status": "missing", "evidence": [], "note": "nothing checks the code"},
+                 "requirement: ", id="missing"),
+    pytest.param({**REFERENCE_RULE, "status": "partial", "evidence": [], "note": "only the type is declared"},
+                 "requirement partial: ", id="partial"),
+])
+def test_a_refuted_verdict_takes_the_rejudges_missing_or_partial(refuted, monkeypatch, answer, prefix):
+    _judge(monkeypatch, refuted, [NO_OP], [answer])
+
+    message = _r9(refuted._collect_requirement_issues())
+
+    assert message.startswith(prefix), message
+    verdict = next(v for v in refuted._requirement_verdicts if v["id"] == 9)
+    assert verdict["status"] == answer["status"] and not verdict.get(ledger.EVIDENCE_REFUTED)
+
+
+def test_a_refuted_verdict_whose_rejudge_cites_working_code_is_implemented(with_codes, monkeypatch):
+    real = {**NO_OP, "evidence": [{"path": CODES, "line": CHECK_LINE}]}
+    _judge(monkeypatch, with_codes, [NO_OP], [real])
+
+    assert not [issue for issue in with_codes._collect_requirement_issues() if "R9" in issue]
+    assert next(v for v in with_codes._requirement_verdicts if v["id"] == 9)["status"] == "implemented"
+
+
+@pytest.mark.parametrize("answer", [None, []], ids=["call failed", "no verdict"])
+def test_a_refuted_verdict_with_no_rejudge_answer_stays_a_blocker(refuted, monkeypatch, answer):
+    rounds = iter([[NO_OP], answer])
+    monkeypatch.setattr(ledger, "judge_coverage", lambda *args, **kwargs: next(rounds))
+
+    assert _r9(refuted._collect_requirement_issues()).startswith("requirement unsupported:")
+
+
+def test_an_unlocated_citation_takes_the_rejudges_missing(refuted, monkeypatch):
+    misquoted = {**NO_OP, "evidence": [{"path": SCHEMA, "line": "return v.upper()"}]}
+    missing = {**REFERENCE_RULE, "status": "missing", "evidence": [], "note": "nothing checks the code"}
+    _judge(monkeypatch, refuted, [misquoted], [missing])
+
+    assert _r9(refuted._collect_requirement_issues()).startswith("requirement: ")

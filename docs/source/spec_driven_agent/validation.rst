@@ -749,8 +749,8 @@ value) is refuted all the same: telling such a type from one that does not enfor
 the rule would take knowledge of particular types. The refuted verdict is judged once
 more on that revision, with the cited file shown whole and the reason its citation was
 rejected. It stays a blocker when that answer again says implemented citing nothing
-but such lines, or when no answer comes back; citing the enforcing declaration leaves
-it not confirmed.
+but such lines, says missing or partial, or does not come back; citing the enforcing
+declaration leaves it not confirmed.
 
 Two findings of the same "could not check" kind stay blockers. ``verification
 setup:`` asks the agent to install the project's declared dependencies, which it
@@ -1081,8 +1081,12 @@ out or shown as edits are listed; a partial, missing or unverified verdict namin
 one is judged once more with that file shown whole. The focused round shows up to
 ten distinct files, taken from each requirement's files in turn, so one
 requirement's files cannot crowd out another's. That focused answer replaces the
-verdict only when it is a verified "implemented"; otherwise a missing or partial
-from it proves no absence, so the checked verdict keeps its status, and it takes
+verdict when it is a verified "implemented". A missing or partial answer about a
+verdict the check left unverified (its citation refuted or not located, or the judge
+not shown the code) becomes its status: the judge now says it is not done, so it is a
+``requirement:`` or ``requirement partial:`` blocker. A missing or partial verdict
+keeps its status whatever the focused round answers. Otherwise the checked verdict
+keeps its status, and it takes
 the focused judge's citation (when it gave one), note and inspection paths, which
 name the files that judge saw. An answer naming a file that round left out gets
 one more round with that file shown, together with every other file the answer

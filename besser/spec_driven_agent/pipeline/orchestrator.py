@@ -4508,8 +4508,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         taken in turn; one more round for an answer naming a file that round left out
         (``_REJUDGE_ROUNDS``). Returns the raw verdicts that replace the first judge's.
 
-        Only a verified "implemented" replaces a verdict as it is: the focused digest omits
-        most of the app, so a missing/partial from it proves no absence. Otherwise the
+        Only a verified "implemented" replaces a verdict as it is. A missing/partial answer
+        becomes the status of a first verdict the check left unverified (its citation refuted
+        or not located); a missing or partial first verdict keeps its status. Otherwise the
         CHECKED first verdict keeps its status and takes the re-judge's citation (when it
         gave one), note and inspection paths: the first judge's note ("risk_service.py was
         not provided") is stale (r12-p81), and a raw first "implemented" with the re-judge's
@@ -4550,7 +4551,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                        _requirements_ledger.CITED_FRAGMENT_LINES, _requirements_ledger.EVIDENCE_REFUTED)}
                 cited = bool(_requirements_ledger.render_evidence(item.get("evidence")).strip(": "))
                 # Its own "implemented" is kept and re-checked, so the reason is about its citation.
-                status = "implemented" if item.get("status") == "implemented" and cited else base["status"]
+                # Its missing or partial settles a verdict the first check could not confirm.
+                status = ("implemented" if item.get("status") == "implemented" and cited
+                          else item["status"] if base["status"] == "unverified" and item.get("status") in (
+                              "missing", "partial")
+                          else base["status"])
                 # Without a citation of its own the first one stays, and so does why it failed.
                 reason = "" if cited else _check_reason(str(first[rid].get("note") or ""))
                 replacements[rid] = {**base, "status": status,

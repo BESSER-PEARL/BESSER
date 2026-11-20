@@ -248,6 +248,43 @@ def test_a_message_repeated_after_the_previous_run_is_new(tmp_path):
     assert f"1. {EXPORT}" in new and f"2. {LATEST}" in new
 
 
+def test_the_same_request_again_continues_earlier_work_without_a_call(tmp_path):
+    """A content-free retry used to re-send the previous request unchanged, and the
+    extractor was shown that whole request as the new message."""
+    _seed(tmp_path, instructions=_instructions(LATEST))
+    client = _Client({"requirements": [NEW], "replaces": [], "continues_earlier_work": False})
+    orch = _orchestrator(tmp_path, client, instructions=_instructions(LATEST))
+
+    orch._extract_requirements(orch._instructions)
+
+    assert client.prompts == []
+    assert orch._follow_up_continues is True
+    assert [item["id"] for item in orch._requirements] == [1, 2, 3]
+
+
+def test_a_retry_the_conversation_did_not_keep_does_not_make_earlier_messages_new(tmp_path):
+    """The previous run was a retry: its newest message is not in the next request,
+    so the previous run's messages are no longer a prefix of the conversation."""
+    _seed(tmp_path, instructions=_instructions(EXPORT, RETRY))
+    client = _Client({"requirements": [NEW], "replaces": [], "continues_earlier_work": False})
+    orch = _orchestrator(tmp_path, client, instructions=_instructions(EXPORT, LATEST))
+
+    orch._extract_requirements(orch._instructions)
+
+    earlier, new = client.prompts[0].split("## The new user messages", 1)
+    assert LATEST in new and EXPORT not in new and EXPORT in earlier
+
+
+def test_a_new_request_without_later_messages_is_still_extracted(tmp_path):
+    _seed(tmp_path)
+    client = _Client({"requirements": [NEW], "replaces": [], "continues_earlier_work": False})
+    orch = _orchestrator(tmp_path, client, instructions="A shop that sells gift cards.")
+
+    orch._extract_requirements(orch._instructions)
+
+    assert "1. A shop that sells gift cards." in client.prompts[0]
+
+
 def test_a_failed_follow_up_extraction_falls_back_to_the_whole_request(tmp_path, monkeypatch):
     _seed(tmp_path)
     orch = _orchestrator(tmp_path, _Client({"unexpected": True}))

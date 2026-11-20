@@ -1023,11 +1023,14 @@ A modify run is answerable for its own request and for what it breaks, not for
 the whole application again. When the seeded recipe records requirement
 verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
 most 128) and extracts only the user messages the previous run's request did not
-hold: the messages after the previous run's when those start the conversation,
-otherwise all later messages (a message sent to a run that was cancelled counts
-as new, and so does one repeated after the previous run), with the earlier
+hold: the later messages after those the conversation shares, from its start,
+with the previous run's (a message sent to a run that was cancelled counts as
+new, and so does one repeated after the previous run; a retry the conversation
+did not keep does not make the messages before it new), with the earlier
 conversation and the numbered requirements as context, so "retry", "yes" or "the
-same for the other screen" resolve. Their requirements follow the previous ones.
+same for the other screen" resolve. When every new message is empty or one the
+previous run's request already held (the same request sent again), the run
+continues earlier work without that call. Their requirements follow the previous ones.
 The extraction also names the previous requirements a new message changes, asks
 for again or removes. Those stay in the ledger and are judged as usual (an
 extraction that names every requirement cannot empty it): met, they are met;

@@ -75,15 +75,20 @@ def unresolved_defects(issues: list) -> list:
     ]
 
 
-# Requirement blockers by status, worst first: a requirement whose status rises
-# is progress, one whose status falls is a new blocker (``requirement_status``).
-REQUIREMENT_STATUSES = ("requirement:", "requirement partial:", "requirement unverified:")
+# Requirement blockers by status rank: a requirement whose rank rises is progress,
+# one whose rank falls is a new blocker (``requirement_status``). Equal ranks are
+# neither: a stub that turns "missing" into "unsupported" settles nothing.
+REQUIREMENT_STATUSES = {
+    "requirement:": 0,
+    "requirement unsupported:": 0,
+    "requirement partial:": 1,
+}
 _REQUIREMENT_ID_RE = _re.compile(r"\s*R(\d+)\b")
 
 
 def requirement_status(message: str) -> tuple[int, int] | None:
     """``(requirement id, status rank)`` of a requirement blocker, else None."""
-    for rank, prefix in enumerate(REQUIREMENT_STATUSES):
+    for prefix, rank in REQUIREMENT_STATUSES.items():
         if message.startswith(prefix):
             match = _REQUIREMENT_ID_RE.match(message, len(prefix))
             return (int(match.group(1)), rank) if match else None
@@ -92,8 +97,16 @@ def requirement_status(message: str) -> tuple[int, int] | None:
 
 # Phase 3's note when the requirement judge was not run on a tree.
 JUDGMENT_DEFERRED = "validation: business-requirement judgment deferred"
+# Findings that say the requirement judge did not run on a tree: deferred, failed
+# (it returned no verdicts) or stopped (deadline or budget).
+JUDGE_DID_NOT_RUN = (
+    JUDGMENT_DEFERRED,
+    "validation unverified: the requirements judge",
+    "requirement unverified: not checked",
+)
 
-# The check family of a finding, and what stops that family running. A finding
+# The check family of a finding, and what stops that family running ("dependent"
+# is hidden only by the runtime facts: see Phase 3's ``_hidden_before``). A finding
 # whose family could not run on the tree before an edit is newly visible, not
 # newly broken (``could_not_run``). A family in ``toolchain`` / ``build`` is
 # per project (``[P]`` in the message), in ``file`` per file; a finding of no
@@ -115,8 +128,7 @@ HIDDEN_BY = (
     ("missing module:", "runtime"),
     ("application startup:", "runtime"),
     ("mapper config:", "runtime"),
-    ("create contract:", "dependent"),
-    (JUDGMENT_DEFERRED, "judge"),
+    *((note, "judge") for note in JUDGE_DID_NOT_RUN),
     ("verification setup: tsc [", "toolchain"),
     ("verification setup: frontend build [", "toolchain"),
     ("validation unverified: tsc [", "toolchain"),
@@ -158,6 +170,11 @@ def hidden_families(issues: list) -> set[tuple[str, str]]:
             if key:
                 hidden.add(key)
     return hidden
+
+
+def judge_ran(issues: list) -> bool:
+    """Whether the requirement judge ran on the tree ``issues`` (warnings included) describe."""
+    return not any(str(getattr(i, "message", i)).startswith(JUDGE_DID_NOT_RUN) for i in issues)
 
 
 def could_not_run(message: str, hidden: set[tuple[str, str]]) -> bool:

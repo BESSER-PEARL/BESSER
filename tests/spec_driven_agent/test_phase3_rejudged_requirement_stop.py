@@ -1,10 +1,12 @@
 """A requirement the re-judge only re-words is not a retired blocker.
 
-Live evidence, r12-p81: after attempt 2 the only blocker was R1, ``requirement
-unverified``, judged again with a re-worded note; attempt 3 spent four turns (a
-read, task_list, validate_app, two test_api) and wrote nothing. Attempts compare
-requirements by id, status and citation label, not by message, so an attempt
-that leaves R1 standing retired nothing: it is rolled back and the loop ends.
+Live evidence, r12-p81: after attempt 2 the only blocker was R1, judged again
+with a re-worded note; attempt 3 spent four turns (a read, task_list,
+validate_app, two test_api) and wrote nothing. Attempts compare requirements by
+id and status rank, not by message, so an attempt that leaves R1 standing
+retired nothing: it is rolled back and the loop ends. (``requirement
+unverified`` is not a requirement blocker the attempts rank: a judged-implemented
+requirement whose citation was not located.)
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, Vali
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
-R1 = {"id": 1, "kind": "rule", "text": "Flag aggressive communication", "status": "unverified",
+R1 = {"id": 1, "kind": "rule", "text": "Flag aggressive communication", "status": "missing",
       "evidence": "", "note": "no verdict returned"}
 CRASH = "backend startup: ImportError: cannot import name 'Booking' from 'models'"
 

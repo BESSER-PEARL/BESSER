@@ -180,11 +180,12 @@ The three phases
    and their neighbours (a blocker that names no file leaves the round open),
    and no tool is forced. A round that edits is kept only if it retires a
    blocker it faced, adds no observed failure except ones a failure it fixed had
-   hidden, leaves no more blockers by the same measure, and does not stop an app
-   that started from starting; otherwise the tree from before it is restored and
-   the loop ends. A round that edits nothing continues the loop only if the
-   evidence it added retired a blocker, or once after every write it tried was
-   refused. Every kept tree is re-snapshotted as the next round's rollback
+   hidden, leaves no more blockers by the same measure, does not stop an app
+   that started from starting, and leaves no more entities or actions failing
+   at runtime; otherwise the tree from before it is restored and the loop ends.
+   A round that edits nothing continues the loop only if the evidence or
+   dependencies it changed pass the same check, or once after every write it
+   tried was refused. Every kept tree is re-snapshotted as the next round's rollback
    target; the pre-Phase-3 tree is the first snapshot, so a failed repair can
    never cost you the Phase 2 work.
    Non-blocker findings are recorded but never burn fix turns.

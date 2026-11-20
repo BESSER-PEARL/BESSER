@@ -764,39 +764,54 @@ is refused with the list of allowed files; repeating the call with
 trace records each widening as an ``edit_scope`` event. A blocker that names no
 file (a failing route, a missing requirement) leaves that attempt free to edit
 any file. The scope is a guide, not a guarantee: any stated reason widens it,
-and shell commands are not scoped. Keeping or reverting each attempt is what
-protects the tree.
+and shell commands are not scoped. Because the other source files of a named
+file's folder are in scope, an attempt that fixes the named defect and also
+edits, say, other routers is kept unless those edits change a finding. The
+scope reduces drift; it does not prevent it. Keeping or reverting each attempt
+is what protects the tree.
 
 An attempt that edited the tree is kept only if all of these hold:
 
-1. It retired at least one blocker it faced. A requirement is retired when it
-   leaves the blockers or its status rises (missing to partial is progress,
-   though it still blocks); attempts compare requirements by id and status,
-   since a re-judge rewords its note. Other findings are compared with line
-   numbers ignored, since an edit moves the errors it leaves.
+1. It retired at least one blocker it faced. Attempts compare requirements by
+   id and status rank, since a re-judge rewords its note: a requirement is
+   retired when its status rises (missing to partial is progress, though it
+   still blocks), or when it no longer has a blocker and the judge ran on the
+   tree after the attempt. A requirement that disappears because the judge was
+   deferred, failed or was stopped is not retired. Missing and unsupported rank
+   the same, so turning one into the other is neither progress nor a fall.
+   Other findings are compared with line and column numbers ignored, since an
+   edit moves the errors it leaves; any other number (``/e2/`` against
+   ``/e3/``) tells them apart.
 2. Every observed failure it added (a check that watched something fail, not a
    judgment or an unknown) belongs to a check family that could not run on the
    tree before it. Fixing the front failure of a layer shows what it hid: a
    missing module or a startup failure hides the runtime checks (where the
-   probe measured that tree, its boot verdict decides instead), a failing create
-   hides the creates and action calls that need its record, a hard blocker
-   defers the requirement judge, missing dependencies or a check that did not
-   run hide ``tsc`` and the frontend build of that project, ``tsc`` errors hide
-   its build, and a syntax error hides the lint of its file. The families are one
-   table in ``validation/issues.py``; a finding of no family always counts.
+   probe measured that tree, its boot verdict decides instead), fewer entities
+   failing to be created reveals the creates and action calls that needed them,
+   a judge that was deferred, failed or stopped hides its verdicts, missing
+   dependencies or a check that did not run hide ``tsc`` and the frontend build
+   of that project, ``tsc`` errors hide its build, and a syntax error hides the
+   lint of its file. The families are one table in ``validation/issues.py``; a
+   finding of no family always counts.
 3. The blocker count, leaving out the added findings of those hidden families,
    is no higher than before; a requirement whose status fell counts as one more.
 4. An app that started still starts.
+5. Where runtime checks ran on the tree before, no more entities fail to be
+   created, and no more actions fail unless more entities are now created
+   (counted from the probe's records, or from all findings, warnings included,
+   where the probe did not measure the tree).
 
 An attempt that is not kept is rolled back to the tree from before it, which is
 checked again; the findings only the discarded tree showed are listed in a
 ``validation:`` note, the tool calls it made are marked ``rolled_back`` in the
 run record, checklist items it had verified are reopened, and the loop ends.
-An attempt that edits nothing continues the loop only if the evidence it added
-(a checklist item, a corrected scenario, an accepted citation) retired a
-blocker, or once after every write it tried was refused, with the refusals in
-the next prompt; otherwise it ends the loop. A blocker set seen before ends the
-loop too. Unresolved output remains explicitly incomplete. Startup and
+An attempt that edits nothing is checked again when it moved evidence (a
+checklist item, a corrected scenario, an accepted citation) or dependencies (a
+successful ``install_dependencies`` or ``run_command``, or a change in a
+project's installed ``node_modules``). It continues the loop only if that check
+meets the same five conditions; having no edit to undo, it otherwise ends the
+loop. An attempt whose every write was refused gets one more attempt, with the
+refusals in the next prompt. A blocker set seen before ends the loop too. Unresolved output remains explicitly incomplete. Startup and
 data-entry failures are repaired before spending tokens on business requirement
 judgment.
 

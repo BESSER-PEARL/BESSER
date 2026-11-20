@@ -74,6 +74,7 @@ from besser.spec_driven_agent.validation.issues import (
     could_not_run,
     hidden_families,
     is_completion_issue,
+    judge_ran,
     required_check_unverified,
     requirement_status,
     unresolved_defects,
@@ -100,8 +101,9 @@ _CREATE_UNVERIFIED = re.compile(r"create unverified: (.+?): POST (\S+) -")
 # Paths the fix prompt lists: the files the run has edited, and an attempt's edit scope.
 _FIX_PROMPT_MAX_EDITED = 40
 _FIX_PROMPT_MAX_SCOPE_FILES = 40
-# Masked when attempts compare findings: an edit moves the lines of the errors it leaves.
-_NUMBERS_RE = re.compile(r"\d+")
+# Masked when attempts compare findings: an edit moves the lines and columns of the
+# errors it leaves. Other numbers (``/e2/`` and ``/e3/``) tell findings apart.
+_LINE_NUMBERS_RE = re.compile(r"line \d+|:\d+(?::\d+)?|\(\d+,\d+\)")
 
 
 def clip_finding(text: str) -> str:
@@ -450,7 +452,7 @@ class Phase3RepairMixin:
         # retired a blocker, or once after every write it tried was refused.
         current_issues = list(issues)
         current_blockers = blockers_before
-        current_score = self._phase3_tree_score(blockers_before)
+        current_score = self._phase3_tree_score(blockers_before, issues)
         seen = {self._blocker_state_key(blockers_before)}
         # Set when the tree an attempt left was replaced: an interrupted
         # attempt's unvalidated edits, or an attempt that was not kept.
@@ -491,6 +493,7 @@ class Phase3RepairMixin:
             )
             revision_before = self._workspace_revision()
             obligations_before = self._repair_obligations_revision()
+            installs_before = self._install_state()
             probe_before = (getattr(self, "_runtime_probe_cache", None), getattr(self, "_runtime_probe_facts", None))
             booted_before = self._booted(current_blockers, revision_before)
             checkpoint_progress()
@@ -506,7 +509,11 @@ class Phase3RepairMixin:
                 raise
             round_calls = self.tool_calls_log[log_before:]
             source_changed = revision_before != self._workspace_revision()
-            obligations_changed = obligations_before != self._repair_obligations_revision()
+            # Installed dependencies are outside the revision, yet decide what tsc and a build resolve.
+            obligations_changed = (obligations_before != self._repair_obligations_revision()
+                                   or installs_before != self._install_state()
+                                   or any(call["tool"] in ("install_dependencies", "run_command")
+                                          and call.get("success") for call in round_calls))
             checkpoint_progress()
             if not edits:
                 logger.warning(
@@ -550,7 +557,7 @@ class Phase3RepairMixin:
             self._begin_validation_round(f"Re-check after fix attempt {attempts_run}")
             issues_after = self._collect_validation_issues()
             blockers_after = [i for i in issues_after if i.severity == "blocker"]
-            if (self._phase3_tree_score(blockers_after)[1] > current_score[1]
+            if (self._phase3_tree_score(blockers_after, issues_after)[1] > current_score[1]
                     and not self._phase3_stop_requested(check_turn_budget=False)):
                 # One probe that did not run can be a slow machine, not a hung
                 # startup: measure the same tree once more before ranking it.
@@ -559,7 +566,7 @@ class Phase3RepairMixin:
                 self._runtime_probe_cache = None
                 issues_after = self._collect_validation_issues()
                 blockers_after = [i for i in issues_after if i.severity == "blocker"]
-            score_after = self._phase3_tree_score(blockers_after)
+            score_after = self._phase3_tree_score(blockers_after, issues_after)
             self._trace.write(
                 EVENT_PHASE_EXIT,
                 phase="phase3_fix_attempt",
@@ -571,10 +578,11 @@ class Phase3RepairMixin:
 
             hidden = self._hidden_before(current_issues, probe_before[1], revision_before,
                                          current_score, score_after)
-            not_kept = source_changed and self._attempt_not_kept(
-                current_blockers, blockers_after, hidden,
-                booted_before, self._booted(blockers_after, self._workspace_revision()))
-            if not_kept:
+            not_kept = self._attempt_not_kept(
+                current_blockers, blockers_after, hidden, judge_ran(issues_after),
+                booted_before, self._booted(blockers_after, self._workspace_revision()),
+                current_score, score_after)
+            if not_kept and source_changed:
                 restored = self._revert_attempt(attempts_run, not_kept, issues_after, probe_before)
                 exit_reason = (f"attempt {attempts_run} reverted: {not_kept}" if restored
                                else f"attempt {attempts_run} not kept, and its tree could not be restored: {not_kept}")
@@ -595,11 +603,11 @@ class Phase3RepairMixin:
                 checkpoint_progress()
                 self._phase3_exit_reason = "all blockers fixed"
                 return
-            retired = self._retired(current_blockers, blockers_after)
-            if not source_changed and not retired:
-                # Evidence alone moved, and it settled nothing.
-                exit_reason = _no_edit_exit_reason(attempts_run, round_calls)
+            if not_kept:
+                # Evidence alone moved (nothing to revert), and it did not move the tree forward.
+                exit_reason = f"{_no_edit_exit_reason(attempts_run, round_calls)}: {not_kept}"
                 break
+            retired = self._retired(current_blockers, blockers_after, judge_ran(issues_after))
             # Kept (or evidence that retired a blocker): the next attempt starts
             # from, and can only be rolled back to, this tree.
             if source_changed and not self._create_snapshot():
@@ -640,19 +648,21 @@ class Phase3RepairMixin:
     @staticmethod
     def _blocker_key(issue: ValidationIssue):
         """What blocks, as attempts compare: a requirement by id (its status is compared
-        apart, see ``_retired``), anything else by its message with numbers masked (an
-        edit moves the lines of the errors it leaves)."""
+        apart, see ``_retired``), anything else by its message with line numbers masked
+        (an edit moves the lines of the errors it leaves)."""
         requirement = requirement_status(issue.message)
-        return ("requirement", requirement[0]) if requirement else _NUMBERS_RE.sub("#", issue.message)
+        return ("requirement", requirement[0]) if requirement else _LINE_NUMBERS_RE.sub("#", issue.message)
 
     def _blocker_state_key(self, blockers: list[ValidationIssue]) -> frozenset:
         """A blocker set as the repeated-state check compares it, statuses included."""
         return frozenset(Counter((self._blocker_key(issue), requirement_status(issue.message))
                                  for issue in blockers).items())
 
-    def _retired(self, before: list[ValidationIssue], after: list[ValidationIssue]) -> list[str]:
+    def _retired(self, before: list[ValidationIssue], after: list[ValidationIssue],
+                 judged_after: bool = True) -> list[str]:
         """The blockers of ``before`` an attempt retired: gone from ``after``, or a requirement
-        whose status rose (missing -> partial is progress, though it still blocks)."""
+        whose status rose (missing -> partial is progress, though it still blocks). A
+        requirement that left the blockers counts only if the judge ran on ``after``."""
         remaining = Counter(self._blocker_key(issue) for issue in after)
         statuses = {r[0]: r[1] for r in map(requirement_status, (i.message for i in after)) if r}
         retired = []
@@ -661,6 +671,8 @@ class Phase3RepairMixin:
             if remaining[key] > 0 and not (requirement and statuses.get(requirement[0], -1) > requirement[1]):
                 remaining[key] -= 1
                 continue
+            if requirement and not judged_after and requirement[0] not in statuses:
+                continue  # left only because no judge looked
             retired.append(issue.message)
         return retired
 
@@ -676,7 +688,9 @@ class Phase3RepairMixin:
                        score_before: tuple, score_after: tuple) -> set:
         """The check families that could not run on the tree before an attempt: from its
         findings (``hidden_families``) and the probe's facts for it. Where the probe
-        measured that tree, its boot verdict alone says whether runtime checks ran."""
+        measured that tree, its boot verdict alone says whether runtime checks ran.
+        Creates and actions that need another record count as hidden only when fewer
+        entities fail to be created after the attempt, not because one create failed."""
         hidden = hidden_families(issues)
         if facts and facts[0] == revision and facts[1]:
             hidden.discard(("runtime", ""))
@@ -688,22 +702,27 @@ class Phase3RepairMixin:
         return hidden
 
     def _attempt_not_kept(self, before: list[ValidationIssue], after: list[ValidationIssue],
-                          hidden: set, booted_before: bool, booted_after: bool) -> str | None:
-        """Why an attempt that edited the tree is not kept, or None to keep it.
+                          hidden: set, judged_after: bool, booted_before: bool, booted_after: bool,
+                          score_before: tuple, score_after: tuple) -> str | None:
+        """Why an attempt is not kept (or, with no edit, does not continue the loop), or None.
 
         Kept only if (1) it retired a blocker it faced (``_retired``); (2) every
         observed failure it added (``unresolved_defects``) belongs to a check
         family that could not run before (``hidden``): fixing the front failure
         of a layer shows what it hid; (3) the blocker count, leaving out the
         added findings of those families, is no higher, a requirement whose
-        status fell counting as one more; (4) a tree that started still starts.
+        status fell counting as one more; (4) a tree that started still starts;
+        (5) where runtime checks ran before, no more entities fail to be created,
+        and no more actions fail unless more entities were created.
         """
-        if not self._retired(before, after):
+        if not self._retired(before, after, judged_after):
             return f"it retired none of the {counted(len(before), 'blocker')} it faced"
-        observed_before = Counter(_NUMBERS_RE.sub("#", i.message) for i in unresolved_defects(before))
+        # A requirement verdict is a judgment, never an observed failure.
+        observed_before = Counter(_LINE_NUMBERS_RE.sub("#", i.message) for i in unresolved_defects(before)
+                                  if not requirement_status(i.message))
         added = [i.message for i in unresolved_defects(after)
-                 if not could_not_run(i.message, hidden)
-                 and _NUMBERS_RE.sub("#", i.message) not in observed_before]
+                 if not requirement_status(i.message) and not could_not_run(i.message, hidden)
+                 and _LINE_NUMBERS_RE.sub("#", i.message) not in observed_before]
         if added:
             return f"it added an observed failure: {added[0][:300]}"
         new_keys = Counter(self._blocker_key(i) for i in after) - Counter(self._blocker_key(i) for i in before)
@@ -721,7 +740,21 @@ class Phase3RepairMixin:
             return f"it left more blockers ({len(before)} -> {count})"
         if booted_before and not booted_after:
             return "the application no longer starts"
+        if ("runtime", "") not in hidden and (
+                score_after[2] > score_before[2]
+                or (score_after[3] > score_before[3] and ("dependent", "") not in hidden)):
+            return (f"more entities or actions fail at runtime (entities {score_before[2]} -> {score_after[2]}, "
+                    f"actions {score_before[3]} -> {score_after[3]})")
         return None
+
+    def _install_state(self) -> tuple:
+        """The dependency-install markers of every frontend project (``node_modules`` is outside
+        the workspace revision)."""
+        from besser.spec_driven_agent.validation.frontend_build import install_markers
+
+        projects = sorted(rel.rpartition("/")[0] for rel in self._workspace_file_list()
+                          if rel.rpartition("/")[2] == "package.json")
+        return tuple(install_markers(os.path.join(self.output_dir, project)) for project in projects)
 
     def _refused_writes(self, calls: list[dict]) -> list[str]:
         """What refused each write of an attempt whose every write was refused; empty
@@ -773,7 +806,8 @@ class Phase3RepairMixin:
         return {i.message for i in issues
                 if i.message.lower().startswith(cls._STARTUP_BLOCKER_PREFIXES)}
 
-    def _phase3_tree_score(self, issues: list[ValidationIssue]) -> tuple[int, int, int, int, int]:
+    def _phase3_tree_score(self, issues: list[ValidationIssue],
+                           all_issues: list[ValidationIssue] | None = None) -> tuple[int, int, int, int, int]:
         """Rank one tree. LOWER is better; compare lexicographically.
 
         ``(boot broken, backends not measured, entities not confirmed created,
@@ -793,7 +827,8 @@ class Phase3RepairMixin:
         would re-derive facts already held and count what was rendered: an
         action the probe silently confirmed effective and one it never reached
         would score the same. Strings remain the fallback for a tree
-        no probe measured (no backend, or the probe did not run).
+        no probe measured (no backend, or the probe did not run), counted over
+        ``all_issues`` when given: an unconfirmed create may be only a warning.
         """
         boot_broken = int(bool(self._startup_blockers(issues)))
         facts = getattr(self, "_runtime_probe_facts", None)
@@ -812,7 +847,7 @@ class Phase3RepairMixin:
                     actions += int(call.get("verdict") != "effective")
         if measured is None:
             entities = actions = 0
-            for issue in issues:
+            for issue in issues if all_issues is None else all_issues:
                 message = issue.message.lower()
                 if "create contract:" in message or "create unverified:" in message:
                     entities += 1

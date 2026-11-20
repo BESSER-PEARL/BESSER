@@ -16,6 +16,41 @@ The React Generator creates:
 - **Components**: Reusable UI components (tables, forms, charts)
 - **Contexts**: React contexts for state management
 - **Routing**: Application navigation setup
+- **API client**: a typed client of the generated backend (``src/api/generated/``)
+
+Typed API client
+----------------
+
+``src/api/generated/types.ts`` and ``src/api/generated/client.ts`` are rendered from the
+same route list the :doc:`backend` writes as ``api_contract.json``, so the client calls
+exactly the routes the backend serves. Per class, an object such as ``taskApi`` has one
+function per route: ``list``, ``listDetailed`` (``?detailed=true``), ``count``, ``page``
+(``skip``/``limit``), ``search``, ``get``, ``create``, ``bulkCreate``, ``update``,
+``delete``, ``bulkDelete``, ``relations.<end>.list``/``add``/``remove`` (and ``links``
+for an association class) and ``methods.<name>``. ``apiSystem`` covers ``/``,
+``/health`` and ``/statistics``. The names ``client.ts`` fixes (``API_BASE_URL``,
+``ApiError``, ``apiRequest``, ``apiUrl``, ``apiSystem``, ``ApiPage``, ...) start with
+``api`` and never end in ``Api``, so no class's object can take one; a type ``types.ts``
+derives that is already a class or enumeration of the model gets a number
+(``TaskCreate2`` when the model has a class ``TaskCreate``).
+
+The client hides the backend's response wrappers: ``get``, ``create`` and ``update``
+return the record, a relation reader returns an array, and a method takes its arguments
+flat and adds the ``{"params": ...}`` body itself. ``types.ts`` states the keys a body
+writes (``TaskCreate``: the association end, such as ``project``) apart from the keys a
+record reads (``Task``: the foreign key column, such as ``project_id``), with
+enumerations as literal unions, so ``tsc`` rejects a call that guesses a key or a shape.
+Every failure is thrown as one ``ApiError`` (``status``, ``message``, ``fields``, and the
+response ``body``) for every error body the backend sends; ``status`` is ``0`` when the
+backend was not reached. Requests go through axios, so the app's ``axios.defaults`` and
+interceptors (an ``Authorization`` header, for instance) apply to every call.
+
+``API_BASE_URL`` in ``client.ts`` is the one place the backend's address is read
+(``VITE_API_URL``, default ``http://localhost:8000``; a relative one such as ``/api``
+behind a same-origin proxy works too); the runtime blocks and ``MethodButton`` use it,
+and the runtime blocks' requests go through the client's ``apiRequest``, which joins it
+to the path it is given (pass a path, not a URL already joined to the base). The client assumes the backend generated with every HTTP method, as the
+:doc:`full_web_app` generator does.
 
 Generated Components
 --------------------
@@ -253,6 +288,10 @@ Generated Structure
 
    frontend/
    ├── src/
+   │   ├── api/
+   │   │   └── generated/
+   │   │       ├── client.ts
+   │   │       └── types.ts
    │   ├── components/
    │   │   ├── table/
    │   │   │   └── TableComponent.tsx

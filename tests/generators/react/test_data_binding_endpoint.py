@@ -105,7 +105,7 @@ def test_the_runtime_fetches_a_custom_endpoint_as_written(build_app):
         data = handle.read()
     with open(os.path.join(runtime, "ChartBlock.tsx"), encoding="utf-8") as handle:
         chart = handle.read()
-    assert "if (options.custom) return baseUrl;" in data
+    assert "if (options.custom) return { path: endpoint, query };" in data
     assert "custom: Boolean(s.customEndpoint)" in chart
     assert "custom: Boolean(dataBinding?.custom_endpoint)" in chart
 

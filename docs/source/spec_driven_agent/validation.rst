@@ -83,8 +83,11 @@ that was already broken is never refused, so it can be repaired.
 - Generated model-action contracts — actual handler paths and functions, with
   deterministic checks for missing handlers and known unimplemented bodies.
   Absence of a known stub is structural evidence, not proof of business behavior.
-- Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
-  match no generated backend route.
+- Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs, and
+  the generated client's ``apiRequest(<METHOD>, <path>)`` calls, that match no
+  generated backend route, and calls of a typed client function
+  (``bookApi.create``) the generated client does not have. The typed functions
+  are resolved to their routes through the app's ``api_contract.json``.
 - API call shapes (``api call:``, blocker) — a frontend call with a literal or
   template URL that resolves to exactly one route, checked against that
   route's handler, which is read without importing the app. The calls read are
@@ -92,7 +95,10 @@ that was already broken is never refused, so it can be repaired.
   the ``axios({method, url, data})`` config form, an ``axios.create()``
   instance defined in the file or imported from the file that defines it, and
   a ``fetch`` wrapper function such as ``api(path, options)``, defined or
-  imported by name. A wrapper is followed only when it calls
+  imported by name, the generated client's ``apiRequest`` (its body is the
+  ``body`` option) and its typed ``create``/``update`` functions (their body is
+  the last argument, cast or not; their responses are already unwrapped and are
+  not checked). A wrapper is followed only when it calls
   ``fetch(BASE + path, ...)`` once, passes the caller's options on without a
   method or body of its own, and returns the parsed JSON; an instance or base
   whose URL adds a path (``${API}/v2``, or a constant declared with one) is not
@@ -1079,6 +1085,11 @@ broken artifact as a green success is worse than spending a few more turns.
    declares no create form (``allowCreate: false``, ``readOnly: true``), or a
    page that renders the component with ``readOnly`` or
    ``allowCreate={false}``, is not credited with one.
+   Through the generated typed client, only ``<x>Api.create`` (or ``bulkCreate``)
+   credits a create, to the class whose create route it posts to; a page that only
+   reads another class (``projectApi.list()``) is not credited with its create. An
+   import line names a module, not an entity: importing ``../api/generated/client``
+   says nothing about a class named ``Client``.
 
 .. warning::
    Validation includes isolated backend execution, not a deployment or full

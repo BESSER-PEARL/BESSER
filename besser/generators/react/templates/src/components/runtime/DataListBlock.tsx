@@ -1,6 +1,5 @@
 import React, { CSSProperties, useEffect, useState } from "react";
-import axios from "axios";
-import { backendUrl } from "./bindingData";
+import { apiRequest } from "../../api/generated/client";
 import { useDataVersion } from "./dataVersion";
 
 export interface DataSourceConfig {
@@ -29,11 +28,9 @@ export const DataListBlock: React.FC<DataListBlockProps> = ({ id, dataSources, s
     const endpoint = source.endpoint || (source.domain ? `/${source.domain.toLowerCase()}/` : "");
     if (!endpoint) return;
 
-    const url = backendUrl(endpoint);
-    axios
-      .get(url)
-      .then((res) => {
-        const data = Array.isArray(res.data) ? res.data : res.data?.results || [];
+    apiRequest<any>("GET", endpoint)
+      .then((body) => {
+        const data = Array.isArray(body) ? body : body?.results || [];
         setListData(data);
       })
       .catch(() => setListData([]));

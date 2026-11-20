@@ -42,6 +42,7 @@ import os
 import re
 from besser.BUML.metamodel.gui import Button, ButtonActionType, Form
 from besser.spec_driven_agent.validation.constructibility import abstract_entities
+from besser.spec_driven_agent.validation.endpoint_coherence import _GENERATED_CLIENT_RE
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.utilities.workspace_fs import walk_plain
 
@@ -741,6 +742,12 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
         target = next((c for c in _resolve_import(rel, spec) if c in files), None)
         if target is None or not _POST_RE.search(files[target]):
             continue
+        if _GENERATED_CLIENT_RE.search(target):
+            typed = _typed_client_creates(binding, code, files[target])
+            if typed:
+                calls.extend(typed)
+                used_clients.add(target)
+            continue
         if target not in helper_cache:
             helper_cache[target] = {**_post_helper_paths(files[target]), **_hook_post_paths(files[target])}
         helpers = helper_cache[target]
@@ -786,6 +793,18 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
                             and not re.search(r"\[\s*" + re.escape(whole) + r"\s*\]", code)):
                         handed.append(whole)
     return calls
+
+
+def _typed_client_creates(binding: str, code: str, client: str) -> list:
+    """Creates issued through one object of the generated typed client: ``taskApi.create(...)``
+    creates what that object's create route posts to, and no other function of it creates."""
+    block = re.search(r"export\s+const\s+" + re.escape(binding) + r"\s*=\s*\{(?P<body>[\s\S]*?)\n\};", client)
+    path = block and re.search(r"/\*\*\s*POST\s+(\S+)\s*\*/\s*create\s*:", block.group("body"))
+    if path is None:
+        return []
+    calls = re.finditer(r"(?<![\w$.])(?:\(\s*)?" + re.escape(binding) + r"(?:\s+as\s+[\w$<>\[\]]+\s*\))?"
+                        r"\s*\.\s*(?:create|bulkCreate)\s*\(", code)
+    return [[path.group(1)] for _ in calls]
 
 
 def _table_block_create_wired(content: str, cls: str) -> bool:
@@ -999,7 +1018,7 @@ def build_acceptance_matrix(
         and not re.search(r"</|/>", code[target])  # a closing tag: renders JSX, a component
         and re.search(r"(?<![\w$.])" + re.escape(binding) + r"\s*[.(]", code[rel])
         and not re.search(r"<\s*" + re.escape(binding) + r"\b", code[rel])
-    }
+    } | {rel for rel in by_path if _GENERATED_CLIENT_RE.search(rel)}
     create_calls = {rel: client_calls[rel] + ([] if rel in clients else _direct_create_calls(content))
                     for rel, content in frontend_files}
     # Generic pages (``EntityList entity={key}``): the create names its resource
@@ -1062,7 +1081,8 @@ def build_acceptance_matrix(
         for rel, content in frontend_files:
             # A create whose path is read off this entity's metadata entry.
             traced_create = any(_creates([value], forms) for value in traced[rel])
-            about = (_mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(content, forms)
+            # An import line names a module, not the entity (`../api/generated/client` is no Client).
+            about = (_mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(_IMPORT_RE.sub("", content), forms)
                      or _mentions(config_text.get(rel, ""), forms, whole_word=True) or traced_create)
             if not about:
                 continue

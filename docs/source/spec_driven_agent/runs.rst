@@ -39,7 +39,10 @@ tool calls (Phase 2 may make 360 of the default 480). Phase 3 uses that share
 for its checks, the requirements judge and the repair loop. A Phase 2 that
 makes its share of tool calls with checklist items still open hands off to
 validation; with no open item it reports that the customization loop reached
-its step limit. Either way its trace's Phase 2 ``phase_exit`` names the reserve
+its step limit. A handed-off run completes only when validation finds nothing
+left and no checklist item is still open or blocked: an item no check closes
+is reported as not confirmed, not repaired, so the run is reported as handed
+off, never as plainly completed. Either way its trace's Phase 2 ``phase_exit`` names the reserve
 in ``stop_detail``. A Phase 2 that uses its share of the time or the spend stops
 as ``timeout`` or ``cost_cap``. The quarter is ``_PHASE3_BUDGET_SHARE``,
 sized from recorded runs: where Phase 3 repaired, it made a median quarter of
@@ -530,12 +533,17 @@ keys, always in this order:
   gateways).
 - ``limits`` (``time_seconds``, ``cost_usd``, ``turns``), ``stopped_by``
   (``finished``, ``time limit``, ``cost limit``, ``turn limit``, ``provider
-  error``, ``internal error``, ``cancelled``, ``repeated edits did not land`` or
-  ``handed off to validation``), ``stop_message`` (the run card's sentence for
-  that ending, without its variable parts) and ``outcome``. ``turn limit`` means
-  the customization loop used every turn it was allowed (see the turn split
-  above) with no open checklist item left to hand to validation; a run whose customization was skipped
-  because the scaffold already covered the request ended ``finished``.
+  error``, ``internal error``, ``cancelled``, ``repeated edits did not land``,
+  ``output limit`` or ``handed off to validation``), ``stop_message`` (the run
+  card's sentence for that ending, without its variable parts) and ``outcome``.
+  ``turn limit`` means the customization loop made its share of the tool calls
+  (see the split above) with no open checklist item left to hand to validation;
+  ``output limit`` means the model's replies were cut off at its output limit
+  more often than the four recoveries a run allows. A handoff stays ``handed off
+  to validation`` while a checklist item is still open or blocked after
+  validation, and its ``outcome`` is then never ``completed``. A run whose
+  customization was skipped because the scaffold already covered the request
+  ended ``finished``.
 - ``warnings``: the warnings shown to the user during the run (at most eight),
   each as a fixed sentence. A warning whose text can quote an error is left out.
 - ``duration_seconds``, ``phase_seconds`` (``select``, ``generate``, ``plan``,

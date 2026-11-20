@@ -81,9 +81,10 @@ RESUMED = "resumed"
 FINISHED, TIME_LIMIT, COST_LIMIT, TURN_LIMIT = "finished", "time limit", "cost limit", "turn limit"
 PROVIDER_ERROR, INTERNAL_ERROR, CANCELLED = "provider error", "internal error", "cancelled"
 STUCK, HANDED_OFF = "repeated edits did not land", "handed off to validation"
+OUTPUT_LIMIT = "output limit"
 _STOP_REASONS = {"max_turns": TURN_LIMIT, "api_error": PROVIDER_ERROR, "cancelled": CANCELLED,
                  "cost_cap": COST_LIMIT, "timeout": TIME_LIMIT, "stuck_edit_loop": STUCK,
-                 "validation_required": HANDED_OFF}
+                 "validation_required": HANDED_OFF, "output_limit": OUTPUT_LIMIT}
 
 # ``stop_message``: the run card's sentence for each way a run ends, without its variable parts.
 _STOP_MESSAGES = {
@@ -95,6 +96,8 @@ _STOP_MESSAGES = {
     CANCELLED: "The run was cancelled before it finished.",
     STUCK: "The customization loop stopped because repeated edits to the same file were not landing.",
     HANDED_OFF: "The customization loop handed off to validation before finishing every requested change.",
+    OUTPUT_LIMIT: ("The model's replies were cut off at its output limit too often, so the customization "
+                   "loop stopped before finishing every requested change."),
 }
 _UNRESOLVED = ("The app was generated, but unresolved implementation or verification issues remain; "
                "it is not verified complete.")
@@ -238,7 +241,9 @@ class RunFacts:
             self.outcome = "failed"
         else:
             self.outcome = ("completed_with_blockers" if incomplete or blocker_count
-                            else "completed_unverified" if run_gaps(gaps) else "completed")
+                            # Work handed off unfinished is never plain "completed".
+                            else "completed_unverified" if run_gaps(gaps) or self.stopped_by == HANDED_OFF
+                            else "completed")
 
 
 def _files(tool_calls: list) -> tuple[int, int]:

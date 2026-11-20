@@ -273,7 +273,9 @@ class Phase3RepairMixin:
     _repair_last_outcome: str | None = None
 
     def _complete_repair_if_verified(self) -> None:
-        if self._phase2_stop_reason == "validation_required":
+        # A handoff with checklist items still open or blocked stays one: nothing did that work.
+        if self._phase2_stop_reason == "validation_required" and not (
+                self.executor.open_tasks() or self.executor.blocked_tasks()):
             self._phase2_exited_cleanly = True
             self._phase2_stop_reason = "completed"
 

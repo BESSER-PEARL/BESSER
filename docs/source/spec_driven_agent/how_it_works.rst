@@ -291,7 +291,8 @@ reading a trace and wondering why a run did what it did.
        is discarded rather than executed — nothing lands half-written on disk —
        and the model is told to emit a smaller turn. At most four such
        recoveries per run; after that the run stops with a resumable
-       ``api_error`` rather than burning the cost cap. The budget is a
+       ``output_limit`` (its own stop reason, not a provider error) rather
+       than burning the cost cap. The budget is a
        per-run total that does NOT reset after a clean turn, so it is sized
        against the whole turn budget, not against a single bad patch.
    * - Per-file modify loop

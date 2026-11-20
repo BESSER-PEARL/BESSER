@@ -2513,6 +2513,12 @@ class SmartGenerationRunner:
                         "The customization loop reached its step limit before "
                         "finishing every requested change."
                     ),
+                    "output_limit": (
+                        "The customization loop stopped because the model's replies "
+                        "were cut off at its output limit too often"
+                        + (f" ({api_err})" if api_err else "")
+                        + " before all requested changes were applied."
+                    ),
                     "stuck_edit_loop": (
                         "The customization loop stopped because repeated edits "
                         "to the same file were not landing, so it could not "

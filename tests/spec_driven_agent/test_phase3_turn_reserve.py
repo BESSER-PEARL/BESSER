@@ -14,6 +14,7 @@ from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataTy
 from besser.spec_driven_agent.pipeline import orchestrator as orchestrator_module
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.validation.issues import _classify_issue
 from besser.spec_driven_agent.state.checkpoint import compute_fingerprint
 
 BLOCKER = ValidationIssue("blocker", "python contract: app/tasks.py line 1: boom")
@@ -109,17 +110,42 @@ def test_a_model_that_never_finishes_still_gets_phase3_repair_calls(task_model, 
     assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 1 blocker it faced"
 
 
+def _closes_every_item(orch):
+    """Validation that finds nothing and settles the checklist, as a passing check does."""
+    def collect():
+        for task in orch.executor.open_tasks():
+            task["done"] = True
+        return []
+    return collect
+
+
 @pytest.mark.parametrize(("max_turns", "finish_at"), [(30, 95), (10, 35)])
 def test_a_run_that_would_finish_inside_the_reserve_completes_when_validation_is_clean(
         task_model, tmp_path, monkeypatch, max_turns, finish_at):
     orch = _orchestrator(task_model, tmp_path, monkeypatch, _FinishesAtClient(finish_at),
                          max_turns=max_turns, auto_fix_issues=True)
-    monkeypatch.setattr(orch, "_collect_validation_issues", lambda: [])
+    monkeypatch.setattr(orch, "_collect_validation_issues", _closes_every_item(orch))
     monkeypatch.setattr(orch, "_validate_app", lambda *a, **k: {"blocker_count": 0, "issues": []})
 
     orch.run("Build a task tracker")
 
     assert orch._phase2_stop_reason == "completed" and orch._phase2_exited_cleanly
+
+
+def test_a_handoff_with_items_still_open_is_not_reported_completed(task_model, tmp_path, monkeypatch):
+    """Validation turns an open item with no check into a 'task unverified' warning, which
+    blocks nothing and is not repaired; the run read 'completed' with the work undone."""
+    orch = _orchestrator(task_model, tmp_path, monkeypatch, _NeverDoneClient(), max_turns=30, auto_fix_issues=True)
+    monkeypatch.setattr(orch, "_collect_validation_issues",
+                        lambda: [_classify_issue(message) for message in orch._collect_task_issues()])
+    at_phase3 = _record_phase3_entry(orch, monkeypatch)
+
+    orch.run("Build a task tracker")
+
+    assert at_phase3["stop_reason"] == "validation_required"
+    assert [i.severity for i in orch._validation_issues] == ["warning"]
+    assert orch._phase3_exit_reason == "no blocker-class issues"
+    assert orch._phase2_stop_reason == "validation_required" and not orch._phase2_exited_cleanly
 
 
 def test_a_cut_with_no_checklist_stays_a_turn_limit_even_when_validation_is_clean(

@@ -54,7 +54,7 @@ def test_a_clean_exit_is_still_clean():
 
 @pytest.mark.parametrize("stop_reason", [
     "api_error", "cost_cap", "timeout", "cancelled", "max_turns",
-    "stuck_edit_loop",
+    "stuck_edit_loop", "output_limit",
 ])
 def test_a_genuinely_cut_short_run_is_still_incomplete(stop_reason):
     """Loosening the handoff must not silence the real cases."""
@@ -69,7 +69,7 @@ def test_the_runner_uses_this_exact_rule():
     assert 'or stop_reason == "validation_required"' in src
 
 
-@pytest.mark.parametrize("stop_reason", ["stuck_edit_loop", "validation_required"])
+@pytest.mark.parametrize("stop_reason", ["stuck_edit_loop", "validation_required", "output_limit"])
 def test_every_stop_reason_has_its_own_explanation(stop_reason):
     """Both of these used to fall through to "did not finish cleanly", which
     tells the user nothing and reads as if something broke."""

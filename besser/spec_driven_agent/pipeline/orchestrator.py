@@ -2437,7 +2437,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     )
                     continue
 
-                self._phase2_stop_reason = "api_error"
+                # Its own stop reason: the provider answered, so it is not a provider error.
+                self._phase2_stop_reason = "output_limit"
                 self._phase2_api_error = (
                     "The model hit its output token limit"
                     + (f" ({current_max_tokens} tokens)" if current_max_tokens else "")

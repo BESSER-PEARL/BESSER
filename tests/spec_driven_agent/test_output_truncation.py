@@ -190,7 +190,7 @@ def test_repeated_truncation_eventually_stops_the_run(tmp_path):
     orch._run_phase2("build it", extra_issues=[])
 
     assert orch._truncation_retries == orch._MAX_TRUNCATION_RETRIES
-    assert orch._phase2_stop_reason == "api_error"
+    assert orch._phase2_stop_reason == "output_limit"
     assert "output token limit" in (orch._phase2_api_error or "")
     # One call per retry plus the final, give-up call.
     assert client.chat_calls == orch._MAX_TRUNCATION_RETRIES + 1
@@ -220,6 +220,6 @@ def test_the_give_up_message_counts_truncations_across_the_run(tmp_path):
     orch._run_phase2("build it", extra_issues=[])
 
     error = orch._phase2_api_error or ""
-    assert orch._phase2_stop_reason == "api_error"
+    assert orch._phase2_stop_reason == "output_limit"
     assert "consecutive" not in error
     assert f"on {orch._MAX_TRUNCATION_RETRIES + 1} turns of this run" in error

@@ -229,6 +229,7 @@ class _CompactionHost:
     """The orchestrator's own ``_maybe_compact`` and thinking strip, on a stub."""
 
     _maybe_compact = LLMOrchestrator._maybe_compact
+    _compaction_reserve = LLMOrchestrator._compaction_reserve
     _drop_stale_thinking = LLMOrchestrator._drop_stale_thinking
 
     def __init__(self, output_dir: str):

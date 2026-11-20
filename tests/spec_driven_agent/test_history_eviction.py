@@ -18,6 +18,7 @@ from besser.spec_driven_agent.agent.compaction import COMPACT_TOKEN_THRESHOLD
 from besser.spec_driven_agent.agent.history_eviction import (
     evict_stale_file_bodies,
     DEFAULT_PRESERVE_RECENT,
+    EVICTED_EDIT_BODY,
     without_rejected_edit_drafts,
     without_thinking_blocks,
 )
@@ -160,7 +161,7 @@ def test_write_file_body_is_stubbed_in_old_messages(tool, key):
     assert new_use["type"] == "tool_use"
     assert new_use["id"] == "t1"          # id preserved -> pairing intact
     assert new_use["input"]["path"] == "app/main.py"  # path preserved
-    assert "elided" in new_use["input"][key]
+    assert new_use["input"][key] == EVICTED_EDIT_BODY
     assert "does not mean it was applied" in new_use["input"][key]
     assert body not in json.dumps(out)    # the body is gone from the context
 
@@ -226,7 +227,7 @@ def test_object_shaped_tool_use_blocks_are_handled():
     new_use = out[0]["content"][0]
     assert isinstance(new_use, dict)          # object -> dict (both clients accept)
     assert new_use["id"] == "t1" and new_use["name"] == "write_file"
-    assert "elided" in new_use["input"]["content"]
+    assert new_use["input"]["content"] == EVICTED_EDIT_BODY
 
 
 def test_purity_input_is_not_mutated():

@@ -272,9 +272,19 @@ Context and token budgets
   (``python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"`` with
   the variable set); without it tokens are estimated as characters/4, which
   compacts earlier than needed, and a warning is logged.
-- ``BESSER_LLM_HISTORY_EVICTION`` (**off**; exactly ``1`` enables it) -- Opt into the lossless
-  alternative to compaction: large file bodies in older messages are replaced
-  by stubs pointing back to disk, instead of whole messages being summarised.
+- ``BESSER_LLM_HISTORY_EVICTION`` (**on**; ``0``, ``false`` or ``no`` disables it) --
+  Replace stale file bodies in older messages by stubs pointing back to disk,
+  so they are not sent again on every turn. Stale is a ``read_file`` result
+  whose lines a later read shows again or whose file a later ``write_file``
+  replaced; a read of a file edited since, and an applied edit's body, once
+  eight turns old. The newest read of lines of a file not edited since is
+  kept however old, so the model can still quote it and edit with its
+  ``read_id``. Each eviction rewrites the cached prompt prefix, so stubs are
+  applied in batches: nothing until the stale bodies are a third of the
+  history (and at least 20,000 characters), then all of them at once. At the
+  compaction threshold every file body outside the last turns is stubbed
+  before a summary is tried. Each eviction is an ``eviction`` record in the
+  run log.
 - ``BESSER_LLM_FROM_SCRATCH_MAX_TOKENS`` (``32768``) -- Output-token ceiling
   for from-scratch generation (no Phase-1 scaffold to build on). Raising it
   costs nothing unless the extra output is actually produced; the truncation

@@ -29,9 +29,9 @@ Content blocks come in two shapes depending on provider/turn: normalized dicts
 blocks). The helpers below read both; elided blocks are always emitted as plain
 dicts, which both provider clients accept as message-content input.
 
-SAFETY: this rewrites the message array the provider re-serializes each turn.
-It is gated OFF by default (see ``orchestrator``); enable it only after a live
-verification run on each provider you actually use.
+Every eviction rewrites the cached prompt prefix from the first stubbed block
+on, so ``evict_superseded_file_bodies`` stubs in batches: nothing until the
+stale bodies are a large share of the history, then all of them at once.
 """
 
 from __future__ import annotations
@@ -51,6 +51,19 @@ _BODY_INPUT_KEYS = frozenset({"content", "new_content", "file_text", "text", "ne
 # Shown in place of a refused edit's body; the write tools refuse it as content.
 REJECTED_DRAFT_PLACEHOLDER = (
     "[Rejected draft omitted; NOT applied. Read current source and write a corrected replacement.]")
+# Shown in place of an evicted edit body; the write tools refuse it as content too.
+EVICTED_EDIT_BODY = (
+    "[Earlier edit body omitted from the conversation; this does not mean it was applied. "
+    "Check its tool result and call read_file for current contents.]")
+
+_EDIT_RESULT_TOOLS = _FILE_WRITE_TOOLS | {"delete_file"}
+# A batch waits until the stale bodies are this share of the history: one prefix
+# rewrite then removes at least that much from every later request.
+DEFAULT_BATCH_SHARE = 1 / 3
+DEFAULT_MIN_BATCH_CHARS = 20_000
+# A body this many turns old is stale unless it is the newest read of a file
+# not edited since.
+DEFAULT_STALE_AFTER_TURNS = 8
 
 # Don't bother eliding anything smaller than this — the stub itself costs tokens,
 # and small results (a write ack, a short file) aren't the problem.
@@ -214,7 +227,6 @@ def _elide_tool_use(block: Any, min_body_chars: int) -> tuple[Any, bool]:
     inp = _block_get(block, "input")
     if not isinstance(inp, dict):
         return block, False
-    path = inp.get("path")
     new_input: dict[str, Any] = {}
     elided = False
     for key, val in inp.items():
@@ -223,11 +235,7 @@ def _elide_tool_use(block: Any, min_body_chars: int) -> tuple[Any, bool]:
             and isinstance(val, str)
             and len(val) >= min_body_chars
         ):
-            new_input[key] = (
-                f"<elided: {len(val)} chars from an earlier edit request for "
-                f"{path or 'this file'}; this does not mean it was applied — "
-                f"check its tool result and call read_file for current contents>"
-            )
+            new_input[key] = EVICTED_EDIT_BODY
             elided = True
         else:
             new_input[key] = val
@@ -298,38 +306,144 @@ def evict_stale_file_bodies(
     """
     if not isinstance(messages, list) or len(messages) <= preserve_recent:
         return messages, 0
-
-    calls = _answered_calls(messages)
     cutoff = len(messages) - preserve_recent
+    return _stub_bodies(messages, lambda index, block: index < cutoff, min_body_chars)
+
+
+def evict_superseded_file_bodies(
+    messages: list[dict],
+    *,
+    preserve_recent: int = DEFAULT_PRESERVE_RECENT,
+    min_body_chars: int = DEFAULT_MIN_BODY_CHARS,
+    stale_after_turns: int = DEFAULT_STALE_AFTER_TURNS,
+    batch_share: float = DEFAULT_BATCH_SHARE,
+    min_batch_chars: int = DEFAULT_MIN_BATCH_CHARS,
+) -> tuple[list[dict], int]:
+    """``(new_messages, stubbed)``: every stale file body stubbed in one batch, or none.
+
+    Stale, outside the last ``preserve_recent`` messages:
+
+    * a read whose lines a later read shows again, or of a file a later
+      ``write_file`` or ``delete_file`` replaced;
+    * a read of a file edited since, once ``stale_after_turns`` turns old;
+    * an applied edit's body that a later whole-file read or ``write_file``
+      supersedes, or that is ``stale_after_turns`` turns old.
+
+    The newest read of lines of a file not edited since is kept however old:
+    the model edits from it, with its read_id. Nothing is stubbed until the
+    stale bodies reach ``batch_share`` of the history and ``min_batch_chars``.
+    Refused edits are not counted: their bodies never reach a request (see
+    ``without_rejected_edit_drafts``).
+    """
+    if not isinstance(messages, list) or len(messages) <= preserve_recent:
+        return messages, 0
+    cutoff = len(messages) - preserve_recent
+    stale: set[int] = set()     # id() of the blocks to stub
+    stale_chars = 0
+    later_reads: dict[str, list[tuple[int, float]]] = {}
+    edited: set[str] = set()
+    replaced: set[str] = set()
+    turns_after = 0
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        answer = messages[index + 1].get("content") if index + 1 < len(messages) else None
+        results = {_block_get(block, "tool_use_id"): block for block in answer
+                   if _block_type(block) == "tool_result"} if isinstance(answer, list) else {}
+        events: list[tuple[str, str, Any]] = []
+        for block in content if isinstance(content, list) else []:
+            args = _block_get(block, "input")
+            if _block_type(block) != "tool_use" or not isinstance(args, dict):
+                continue
+            path = str(args.get("path") or "").replace("\\", "/").strip().removeprefix("./")
+            result_block = results.get(_block_get(block, "id"))
+            result = _parsed_result(result_block)
+            name = _block_get(block, "name")
+            if not path or result is None or result.get("error"):
+                continue
+            if name == "read_file":
+                if "content" not in result:     # an "unchanged" stub shows no lines
+                    continue
+                start = int(result.get("start_line") or 1)
+                whole = not args.get("offset") and args.get("limit") is None and not result.get("truncated")
+                span = (start, float("inf") if whole else int(result.get("end_line") or start))
+                body = len(_stringify(_block_get(result_block, "content")))
+                if index < cutoff and body >= min_body_chars and (
+                        any(s <= span[0] and e >= span[1] for s, e in later_reads.get(path, ()))
+                        or path in replaced
+                        or (path in edited and turns_after >= stale_after_turns)):
+                    stale.add(id(result_block))
+                    stale_chars += body
+                events.append(("read", path, span))
+            elif name in _EDIT_RESULT_TOOLS:
+                body = sum(len(value) for key, value in args.items()
+                           if key in _BODY_INPUT_KEYS and isinstance(value, str) and len(value) >= min_body_chars)
+                if index < cutoff and body and (
+                        any(s <= 1 and e == float("inf") for s, e in later_reads.get(path, ()))
+                        or path in replaced or turns_after >= stale_after_turns):
+                    stale.add(id(block))
+                    stale_chars += body
+                events.append(("replace" if name in ("write_file", "delete_file") else "edit", path, None))
+        for kind, path, span in events:
+            if kind == "read":
+                later_reads.setdefault(path, []).append(span)
+            else:
+                edited.add(path)
+                if kind == "replace":
+                    replaced.add(path)
+        turns_after += 1
+    history_chars = sum(_message_chars(message) for message in messages)
+    if not stale or stale_chars < max(min_batch_chars, batch_share * history_chars):
+        return messages, 0
+    return _stub_bodies(messages, lambda index, block: id(block) in stale, min_body_chars)
+
+
+def _parsed_result(block: Any) -> dict | None:
+    """A tool result's JSON object, or None (no result, or not a JSON object)."""
+    if block is None:
+        return None
+    try:
+        result = json.loads(_stringify(_block_get(block, "content")))
+    except (TypeError, ValueError):
+        return None
+    return result if isinstance(result, dict) else None
+
+
+def _message_chars(message: Any) -> int:
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return len(_stringify(content or ""))
+    return sum(len(_stringify(_block_get(block, "text") or _block_get(block, "input")
+                              or _block_get(block, "content") or "")) for block in content)
+
+
+def _stub_bodies(messages: list[dict], eligible, min_body_chars: int) -> tuple[list[dict], int]:
+    """Stub the large file bodies of the blocks ``eligible(index, block)`` accepts."""
+    calls = _answered_calls(messages)
     elided = 0
     out: list[dict] = []
-
     for i, msg in enumerate(messages):
         content = msg.get("content") if isinstance(msg, dict) else None
-        if i >= cutoff or not isinstance(content, list):
+        if not isinstance(content, list):
             out.append(msg)
             continue
-
         new_content: list[Any] = []
         changed = False
         for block in content:
             btype = _block_type(block)
-            if btype == "tool_use":
-                nb, did = _elide_tool_use(block, min_body_chars)
-            elif btype == "tool_result":
-                nb, did = _elide_tool_result(block, calls[i], min_body_chars)
-            else:
-                nb, did = block, False
+            nb, did = block, False
+            if eligible(i, block):
+                if btype == "tool_use":
+                    nb, did = _elide_tool_use(block, min_body_chars)
+                elif btype == "tool_result":
+                    nb, did = _elide_tool_result(block, calls[i], min_body_chars)
             if did:
                 elided += 1
                 changed = True
             new_content.append(nb)
-
-        if changed:
-            out.append({**msg, "content": new_content})
-        else:
-            out.append(msg)
-
+        out.append({**msg, "content": new_content} if changed else msg)
     if elided == 0:
         return messages, 0
     logger.info("History eviction: stubbed %d stale file body/bodies", elided)

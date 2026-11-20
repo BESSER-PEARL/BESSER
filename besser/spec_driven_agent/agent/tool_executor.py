@@ -38,7 +38,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
-from besser.spec_driven_agent.agent.history_eviction import REJECTED_DRAFT_PLACEHOLDER
+from besser.spec_driven_agent.agent.history_eviction import EVICTED_EDIT_BODY, REJECTED_DRAFT_PLACEHOLDER
 from besser.spec_driven_agent.agent.runbook import backend_files, files_the_app_wrote
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.agent.tools import dumps_for_model
@@ -1909,12 +1909,13 @@ class ToolExecutor:
                             "BESSER (trace, checkpoint, attribution, logs). It can be read but "
                             "not written, edited or deleted. Change the project's own files instead."
                         )})
-                    placeholder = next((key for key in _EDIT_BODY_KEYS if REJECTED_DRAFT_PLACEHOLDER
-                                        in str(arguments.get(key) or "")), None)
+                    placeholder = next((key for key in _EDIT_BODY_KEYS if any(
+                        marker in str(arguments.get(key) or "")
+                        for marker in (REJECTED_DRAFT_PLACEHOLDER, EVICTED_EDIT_BODY))), None)
                     if placeholder:
                         return ToolExecutionResult("error", {"error": (
-                            f"{tool_name} refused: {placeholder} holds the placeholder the "
-                            "conversation shows in place of a refused draft, not code. Nothing "
+                            f"{tool_name} refused: {placeholder} holds a placeholder the "
+                            "conversation shows in place of an omitted body, not code. Nothing "
                             "was written. Read the current source and send the real text."
                         ), "rejection_kind": "placeholder"})
                     if tool_name != "read_file":

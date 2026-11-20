@@ -286,8 +286,11 @@ reading a trace and wondering why a run did what it did.
        with a known small context window the threshold is lowered to that
        window minus a reserve for the reply (the run's output-token ceiling,
        at least 16,000 tokens), so a small model compacts instead of
-       overflowing; a model with a known large window gets 80% of that
-       difference, capped at ``BESSER_LLM_MAX_COMPACT_THRESHOLD``.
+       overflowing; a hosted model with a known large window gets 80% of
+       that difference, capped at ``BESSER_LLM_MAX_COMPACT_THRESHOLD``. Before any
+       of this, history eviction (``BESSER_LLM_HISTORY_EVICTION``, see
+       :doc:`configuration`) stubs stale file bodies in batches, which keeps
+       most runs below the threshold.
    * - Truncation recovery
      - When a response is cut off at the output-token limit, the partial turn
        is discarded rather than executed — nothing lands half-written on disk —
@@ -375,7 +378,9 @@ reading a trace and wondering why a run did what it did.
        id). Each also names ``model`` (and ``planning_model``, which gap analysis
        and the judge try first). A ``compaction`` record (the history's
        estimated ``tokens_before`` and ``tokens_after``) or an ``eviction``
-       record (how many stale file bodies were ``stubbed``) names the ``turn``
+       record (how many stale file bodies were ``stubbed``, the ``reason``:
+       ``superseded`` for a batch, ``threshold`` at the compaction
+       threshold, and the ``tokens_before`` and ``tokens_after``) names the ``turn``
        whose request carried the rewritten history, so the cache miss that
        turn pays is expected; compactions are also counted in the checkpoint
        and the recipe (``compactions``). A ``tool_call`` record holds its

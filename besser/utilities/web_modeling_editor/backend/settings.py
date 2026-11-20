@@ -216,7 +216,7 @@ class BackendSettings(BaseSettings):
     # Off: on a shared BYOK host they are user-steerable remote code execution.
     llm_enable_shell_tools: _Flag = Field(
         False, validation_alias="BESSER_LLM_ENABLE_SHELL_TOOLS",
-        description="Let the agent run shell commands (run_command, install_dependencies).")
+        description="Let the agent run shell commands (run_command).")
     # Runs LLM-authored Python on the host, with the stripped subprocess
     # environment, no network and a 30 s timeout.
     llm_enable_import_smoke_check: _Flag = Field(

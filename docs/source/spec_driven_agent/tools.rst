@@ -20,7 +20,7 @@ would immediately fail.
    * - Generators
      - The 19 generator tools listed below.
    * - Shell
-     - ``run_command``, ``install_dependencies``
+     - ``run_command``
 
 A tool is offered only when it can return something the context lacks. The
 system prompt holds the whole serialized domain model (inherited members, OCL
@@ -312,20 +312,21 @@ the generated files and merges the change into edited ones (see
 Shell tools
 -----------
 
-``run_command`` and ``install_dependencies`` run arbitrary commands. They are
+``run_command`` runs arbitrary commands, installs included. It is
 what lets the agent close its own loop — run ``pytest``, run ``npm run build``,
 read the failures and fix them — and they are the single largest capability
-difference between a run with them and a run without. They are also arbitrary
-code execution on the host that serves generation, so who is allowed to switch them on is a
+difference between a run with it and a run without. It is also arbitrary
+code execution on the host that serves generation, so who is allowed to switch it on is a
 deployment decision, never a per-request one.
 
 A command cannot change the run's own records: ``.besser_checkpoint.json`` and
 ``.besser_recipe.json`` are restored after each command if it rewrote, deleted
 or planted them, and the result says so under ``run_records_restored``.
 
-Before it installs, ``install_dependencies`` pins the known-incompatible
-dependency pairs described in :doc:`validation` into the working directory's
-``requirements.txt`` and lists each change under ``pinned`` in its result.
+When a write tool writes a ``requirements.txt``, the harness pins the
+known-incompatible dependency pairs described in :doc:`validation` into it and
+lists each change under ``pinned`` in the write's result, with a note that
+packages installed from the file before no longer match it.
 
 The policy
 ~~~~~~~~~~
@@ -391,15 +392,13 @@ What it does:
   (``export``, ``source .venv/bin/activate``) carry over to the next command,
   and on Linux a process started in the background (``python app.py >
   app.log 2>&1 &``) keeps running after its command returns, so a server
-  started in one command answers ``curl`` in the next.
-  ``install_dependencies`` runs in the same shell and leaves its environment
-  as it was. What a background process prints after its command returned is
+  started in one command answers ``curl`` in the next. What a background process prints after its command returned is
   discarded.
 - **Working directory inside the run workspace.** ``working_dir`` is resolved
   against the workspace and a path that escapes it is rejected.
 - **A per-command timeout**: 120 seconds by default. A command may set
-  ``timeout`` up to 600 seconds for a slow build, and ``install_dependencies``
-  gets 300; no command runs past the run's remaining runtime. A command still
+  ``timeout`` up to 600 seconds for a slow build or a first install; no
+  command runs past the run's remaining runtime. A command still
   running then is killed together with everything it started (its process
   group); the session and the processes earlier commands left running are
   untouched.
@@ -416,14 +415,14 @@ What it does:
   tail are kept with a marker for the dropped middle.
 
 - **A bubblewrap sandbox on Linux, one per run.** A run's shell is a single
-  sandbox, started at its first ``run_command`` or ``install_dependencies``,
+  sandbox, started at its first ``run_command``,
   with its own user, PID and mount namespaces; no other run's processes or
   files are visible in it. The container filesystem is visible read-only, other
   runs' workspaces, the telemetry folder and the incident log folder
   (``BESSER_INCIDENT_LOG_DIR``) are hidden, and only the run
   workspace and a per-run ``$HOME`` (``<run dir>.sandbox-home``) are writable.
-  ``/usr/local`` and ``/root`` stay read-only, so ``install_dependencies``
-  (``pip install``, ``npm install``) installs into that per-run ``$HOME``
+  ``/usr/local`` and ``/root`` stay read-only, so an install
+  (``pip install``, ``npm install``) goes into that per-run ``$HOME``
   rather than into the worker or into later runs. Where the worker has
   ``pasta`` (passt) and ``/dev/net/tun``, the session also gets a network
   namespace of its own (``BESSER_LLM_SHELL_NETWORK``): its ``localhost``
@@ -505,8 +504,8 @@ prints only their names. It sends form fields and files as
 ``-F "file=@path"`` (``;type=<mime>`` and ``;filename=<name>`` set a file's
 type and name), for an upload endpoint; a field value keeps its own quotes. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
-session can name an unrelated process. Several ``run_command`` (and
-``install_dependencies``) calls in one turn run one after another, in order.
+session can name an unrelated process. Several ``run_command`` calls in one
+turn run one after another, in order.
 In a turn that also writes files, a command starts only after every write the
 model emitted before it has finished, and a write emitted after it starts only
 once it has returned; reads still run in parallel.
@@ -524,7 +523,7 @@ write tool wrote them; the recipe lists them under ``runtime_files_removed``.
 They are therefore in neither the download nor a GitHub push.
 
 The worker also lists the backend's files before and after every
-``run_command`` and ``install_dependencies`` call, and records a file the call
+``run_command`` call, and records a file the call
 left as written by the running app (a request sent with ``curl``, a test
 client, a script importing the app) only when all of these hold: it is new
 under the backend folder, outside dot-folders; it is a data file (``.json``,

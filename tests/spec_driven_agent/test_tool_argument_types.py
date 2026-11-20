@@ -43,11 +43,6 @@ def test_an_explicit_null_for_an_optional_argument_means_absent(executor):
     assert "error" not in _run(executor, "read_file", {"path": "a.py", "offset": None, "limit": None})
 
 
-def test_install_dependencies_null_working_dir_is_the_default(executor):
-    result = _run(executor, "install_dependencies", {"working_dir": None})
-    assert "join() argument" not in json.dumps(result)
-
-
 def test_boolean_strings_are_coerced(executor):
     _run(executor, "read_file", {"path": "a.py"})
     result = _run(executor, "modify_file",

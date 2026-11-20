@@ -301,14 +301,6 @@ class TestExecutionTools:
         finally:
             mod.COMMAND_TIMEOUT = old_timeout
 
-    def test_install_dependencies_no_files(self, shell_executor):
-        result = _call(shell_executor, "install_dependencies", {})
-        assert "error" in result
-
-    def test_install_dependencies_custom_command(self, shell_executor):
-        result = _call(shell_executor, "install_dependencies", {"command": f"{PYTHON} --version"})
-        assert result["exit_code"] == 0
-
 
 # ======================================================================
 # Generator tools

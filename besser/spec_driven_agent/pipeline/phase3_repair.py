@@ -1206,7 +1206,7 @@ class Phase3RepairMixin:
 
         prompt_parts.append("")
         prompt_parts.append(
-            "Resolve authorized dependency setup through install_dependencies, then "
+            "Resolve authorized dependency setup by installing with run_command, then "
             "validate_app; resolve missing evidence using current exact citations "
             "or test_api. Do not manufacture source changes to "
             "satisfy bookkeeping; make an edit only if behavior is actually missing. "

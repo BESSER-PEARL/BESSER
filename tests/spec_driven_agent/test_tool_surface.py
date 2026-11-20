@@ -37,3 +37,12 @@ def test_the_prompt_does_not_advertise_them(simple_library_book_model):
     for name in DROPPED:
         assert name not in prompt
     assert "## Domain Model" in prompt and json.dumps("Library")[1:-1] in prompt
+
+
+def test_installs_go_through_run_command(tmp_path):
+    """install_dependencies duplicated run_command (same shell, same serial group);
+    the pins it applied now apply wherever a requirements.txt is written."""
+    assert "install_dependencies" not in {tool["name"] for tool in get_tools_for(allow_shell=True)}
+    payload = ToolExecutor(workspace=str(tmp_path), allow_shell=True).execute_typed(
+        "install_dependencies", {}).payload
+    assert payload == {"error": "Unknown tool: install_dependencies"}

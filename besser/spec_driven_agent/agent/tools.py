@@ -258,37 +258,12 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                     "description": (
                         "Seconds before this command is killed: max 600, and never past "
                         "the run's remaining time. Raise it only for a command known to be "
-                        "slow (a long build: cargo build, gradle; a first npm install)."
+                        "slow (a long build: cargo build, gradle; a first npm or pip install: "
+                        "300)."
                     ),
                 },
             },
             "required": ["command"],
-        },
-    },
-    {
-        "name": "install_dependencies",
-        "description": (
-            "Install dependencies for a project. Detects the package manager automatically: "
-            "if requirements.txt exists, runs pip install -r requirements.txt; "
-            "if package.json exists, runs npm install (both, when both exist). "
-            "Returns an error when neither file is found. A custom command runs through "
-            "run_command instead of auto-detection. Every install has a 300-second timeout, "
-            "shares run_command's shell session, and leaves the shell's directory and "
-            "environment as they were."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "working_dir": {
-                    "type": "string",
-                    "description": "Subdirectory containing the project (relative to workspace)",
-                    "default": ".",
-                },
-                "command": {
-                    "type": "string",
-                    "description": "Custom install command",
-                },
-            },
         },
     },
 ]
@@ -463,7 +438,7 @@ def get_available_generator_names(
     ]
 
 
-_SHELL_TOOLS = frozenset({"run_command", "install_dependencies"})
+_SHELL_TOOLS = frozenset({"run_command"})
 
 # A provider whose tool-call arguments fail to parse passes
 # ``{INVALID_ARGUMENTS_KEY: "<parse error>"}`` instead of ``{}``, so the

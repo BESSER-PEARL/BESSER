@@ -39,13 +39,11 @@ class _MockClient:
 def test_shell_tools_present_when_allowed():
     names = {t["name"] for t in get_tools_for(allow_shell=True)}
     assert "run_command" in names
-    assert "install_dependencies" in names
 
 
 def test_shell_tools_dropped_when_disallowed():
     names = {t["name"] for t in get_tools_for(allow_shell=False)}
     assert "run_command" not in names
-    assert "install_dependencies" not in names
     assert _SHELL_TOOLS.isdisjoint(names)
 
 
@@ -76,7 +74,6 @@ def test_orchestrator_disables_shell_tools(tmp_path):
     )
     names = {t["name"] for t in orch.tools}
     assert "run_command" not in names
-    assert "install_dependencies" not in names
     assert orch.allow_shell_tools is False
 
 
@@ -84,7 +81,7 @@ def test_orchestrator_default_drops_shell_tools(tmp_path):
     """The default is OFF.
 
     It used to be ON, and LLMGenerator never passed the argument, so every
-    library run silently got run_command / install_dependencies — the exact
+    library run silently got the shell tools — the exact
     capability the hosted gate exists to withhold. Opting in is now explicit.
     """
     orch = LLMOrchestrator(
@@ -94,7 +91,6 @@ def test_orchestrator_default_drops_shell_tools(tmp_path):
     )
     names = {t["name"] for t in orch.tools}
     assert "run_command" not in names
-    assert "install_dependencies" not in names
 
 
 def test_orchestrator_grants_shell_tools_when_asked(tmp_path):
@@ -177,7 +173,7 @@ def workspace():
     return tempfile.mkdtemp()
 
 
-@pytest.mark.parametrize("tool", ["run_command", "install_dependencies"])
+@pytest.mark.parametrize("tool", ["run_command"])
 def test_executing_a_shell_tool_is_refused_by_default(tool, workspace):
     ex = ToolExecutor(workspace=workspace)
     result = ex.execute_typed(tool, {"command": "echo MARKER", "packages": ["x"]})
@@ -186,7 +182,7 @@ def test_executing_a_shell_tool_is_refused_by_default(tool, workspace):
     assert "MARKER" not in str(result.payload), "the command must not have run"
 
 
-@pytest.mark.parametrize("tool", ["run_command", "install_dependencies"])
+@pytest.mark.parametrize("tool", ["run_command"])
 def test_the_refusal_does_not_depend_on_the_advertised_list(tool, workspace):
     """A model can name a tool it was never offered — that is the whole point."""
     ex = ToolExecutor(workspace=workspace)

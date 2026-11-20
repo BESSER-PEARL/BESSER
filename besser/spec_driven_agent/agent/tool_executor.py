@@ -265,10 +265,9 @@ _EDIT_BODY_KEYS = ("content", "old_text", "new_text")
 _TASK_LIST_ACTION_ARGUMENTS = frozenset({"action", "id", "ids", "reason", "text", "texts", "done_ids", "add_texts"})
 
 # Default time a shell command can run (seconds); the model may ask for up to
-# MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.
+# MAX_COMMAND_TIMEOUT for a long build or a first install.
 COMMAND_TIMEOUT = 120
 MAX_COMMAND_TIMEOUT = 600
-INSTALL_TIMEOUT = 300
 
 # What the model sees when run_command cannot be confined. The cause and the
 # operator override go to the server log only: named here, the model tried to
@@ -1898,6 +1897,7 @@ class ToolExecutor:
                 raw_result = handler(self, arguments)
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)
+                    self._pin_written_requirements(tool_name, arguments["path"], raw_result)
             payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
             if ignored:
                 payload["ignored_arguments"] = (
@@ -1909,6 +1909,23 @@ class ToolExecutor:
             return ToolExecutionResult(
                 "error", {"error": f"{tool_name} failed: {self._model_error_text(e)}"}
             )
+
+    def _pin_written_requirements(self, tool_name: str, rel_path: str, result: dict) -> None:
+        """Apply the known-incompatible pins to a requirements.txt a write tool just wrote."""
+        if (tool_name not in ("write_file", "modify_file", "replace_file_lines")
+                or os.path.basename(rel_path) != "requirements.txt" or self._result_status(result) != "ok"):
+            return
+        try:
+            pinned = pin_requirements_file(self._safe_path(rel_path), self.workspace)
+        except OSError:
+            logger.warning("dependency pin failed for %s", rel_path, exc_info=True)
+            return
+        if pinned:
+            result["pinned"] = pinned
+            result["pinned_note"] = (
+                "The file was pinned after your write, so it now differs from what you sent. "
+                "Packages installed from it earlier no longer match it: install them again "
+                "before running the app.")
 
     def _model_error_text(self, error: Exception) -> str:
         """``error`` as the model may see it: no absolute server path.
@@ -3659,7 +3676,7 @@ class ToolExecutor:
                 pass
         return max(1, min(timeout, MAX_COMMAND_TIMEOUT))
 
-    def _run_command(self, args: dict, *, adopt_state: bool = True) -> dict:
+    def _run_command(self, args: dict) -> dict:
         """
         Run a shell command in the run's shell session.
 
@@ -3672,9 +3689,6 @@ class ToolExecutor:
         - Timeout enforced per command
         - Output truncated to prevent context blow-up, full log spilled to
           the workspace when it is
-
-        ``adopt_state=False`` (install_dependencies) runs in the same session
-        without moving its directory or changing its environment.
         """
         command = args["command"]
         # The workspace root unless working_dir says otherwise: a cd never carries over.
@@ -3710,7 +3724,7 @@ class ToolExecutor:
             # Falling back to an unconfined shell would silently restore both
             # holes the sandbox exists to close.
             result = self._shell.run(command, working_dir=start_dir,
-                                     timeout=timeout, adopt_state=adopt_state)
+                                     timeout=timeout)
         except SandboxUnavailable as exc:
             logger.error("run_command refused, sandbox unavailable: %s", exc)
             return {
@@ -3865,71 +3879,6 @@ class ToolExecutor:
             restored.append(name)
         return restored, failed
 
-    def _install_dependencies(self, args: dict) -> dict:
-        """
-        Install project dependencies with auto-detection.
-
-        Checks for requirements.txt (pip) or package.json (npm) and runs
-        the appropriate install command.
-        """
-        working_dir = self._safe_cwd(args.get("working_dir", "."))
-        custom_command = args.get("command")
-        requirements_txt = os.path.join(working_dir, "requirements.txt")
-
-        # Pin known-incompatible pairs before pip resolves them: the rewritten
-        # file is also what ships.
-        pinned: list[str] = []
-        if os.path.isfile(requirements_txt) and self._resolves_inside(requirements_txt):
-            try:
-                pinned = pin_requirements_file(requirements_txt, self.workspace)
-            except OSError:
-                logger.warning("dependency pin failed for %s", requirements_txt, exc_info=True)
-
-        result = self._install_detected(args, working_dir, custom_command, requirements_txt)
-        if pinned:
-            result["pinned"] = pinned
-        return result
-
-    def _install_detected(self, args: dict, working_dir: str, custom_command, requirements_txt: str) -> dict:
-        if custom_command:
-            return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                     adopt_state=False)
-
-        # Auto-detect
-        package_json = os.path.join(working_dir, "package.json")
-
-        results = []
-
-        if os.path.isfile(requirements_txt):
-            pip_cmd = f"{sys.executable} -m pip install -r requirements.txt --quiet"
-            pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                           adopt_state=False)
-            results.append({"type": "pip", "result": pip_result})
-
-        if os.path.isfile(package_json):
-            npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                           adopt_state=False)
-            results.append({"type": "npm", "result": npm_result})
-
-        if not results:
-            return {"error": "No requirements.txt or package.json found. Specify a custom install command."}
-
-        # The status classifier reads only the top level, so a failed install
-        # must surface here or the whole call is recorded as a success.
-        failed = [
-            r for r in results
-            if r["result"].get("error") is not None or r["result"].get("success") is False
-        ]
-        if failed:
-            details = []
-            for r in failed:
-                res = r["result"]
-                tail = "\n".join(str(res.get("stderr") or res.get("error") or "").strip().splitlines()[-6:])
-                details.append(f"{r['type']} install failed (exit code {res.get('exit_code')}):\n{tail}")
-            return {"installs": results, "success": False, "error": "\n\n".join(details)}
-
-        return {"installs": results}
-
     # ------------------------------------------------------------------
     # Validation tools
     # ------------------------------------------------------------------
@@ -3990,7 +3939,6 @@ class ToolExecutor:
         "delete_file": _delete_file,
         # Execution
         "run_command": _run_command,
-        "install_dependencies": _install_dependencies,
         # Validation
         "validate_app": _validate_app,
         "test_api": _test_api,

@@ -55,8 +55,9 @@ def test_run_command_documents_truncation_and_the_skipped_result():
         assert fact in doc
 
 
-def test_install_dependencies_says_what_happens_without_a_manifest():
-    assert "neither file" in TOOLS["install_dependencies"]["description"]
+def test_install_dependencies_is_folded_into_run_command():
+    assert "install_dependencies" not in TOOLS
+    assert "install" in TOOLS["run_command"]["input_schema"]["properties"]["timeout"]["description"]
 
 
 def _claude(model="claude-sonnet-5"):

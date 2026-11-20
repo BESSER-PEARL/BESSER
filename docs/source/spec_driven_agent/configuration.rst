@@ -136,7 +136,7 @@ Feature flags
 -------------
 
 - ``BESSER_LLM_ENABLE_SHELL_TOOLS`` (**off**) -- Give the LLM
-  ``run_command`` / ``install_dependencies``. Arbitrary shell next to server
+  ``run_command``. Arbitrary shell next to server
   secrets is an RCE and secret-exfiltration surface, so this stays off on any
   service that holds them. In production only the isolated
   ``besser-wme-smartgen`` worker sets it, in its own ``environment:`` block,
@@ -314,7 +314,7 @@ Storage and lifecycle
   includes a run that kept its checkpoint: its checkpoint records the removal,
   and if it is resumed (``POST /spec-driven/resume``, which the editor does not
   call for a finished run) the worker logs a warning and the agent is told to
-  install them again with ``install_dependencies`` before validating. A run
+  install them again with ``run_command`` before validating. A run
   interrupted before packaging keeps them. The run's status record is kept for
   24 hours, as long as its workspace can be resumed.
 - ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (86400, 24 hours) -- How long the

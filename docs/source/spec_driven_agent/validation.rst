@@ -43,8 +43,9 @@ that was already broken is never refused, so it can be repaired.
   hashes, so every password hash fails). Each ``requirements.txt`` that
   declares the first package gets the second pinned, unless its declared range
   is already compatible. The same table is applied when scaffold repair writes
-  a ``requirements.txt`` and by ``install_dependencies`` before it installs,
-  so the delivered file is pinned even when Phase 3 is skipped.
+  a ``requirements.txt`` and after every agent write to a ``requirements.txt``
+  (the write's result lists the change under ``pinned`` and says that packages
+  installed from the file before no longer match it), so the delivered file is pinned even when Phase 3 is skipped.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup. Imports the app starts
@@ -932,7 +933,7 @@ checked again; the findings only the discarded tree showed are listed in a
 run record, checklist items it had verified are reopened, and the loop ends.
 An attempt that edits nothing is checked again when it moved evidence (a
 checklist item, a corrected scenario, an accepted citation) or dependencies (a
-successful ``install_dependencies`` or ``run_command``, or a change in a
+successful ``run_command``, or a change in a
 project's installed ``node_modules``). It continues the loop only if that check
 meets the same five conditions; having no edit to undo, it otherwise ends the
 loop. An attempt whose every write was refused gets one more attempt, with the

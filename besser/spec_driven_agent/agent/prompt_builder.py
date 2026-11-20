@@ -146,7 +146,7 @@ def build_system_prompt(
             "quantum". Used to
             frame the LLM's task (e.g. "this is a state-machine-driven
             run — emit the transition code").
-        allow_shell: Whether ``run_command`` / ``install_dependencies`` are
+        allow_shell: Whether ``run_command`` is
             in this run's tool list. Only then is the runtime-verification
             runbook rendered — a procedure built on commands the model
             cannot issue is worse than no procedure at all.

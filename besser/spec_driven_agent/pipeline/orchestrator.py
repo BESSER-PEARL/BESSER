@@ -327,7 +327,7 @@ _HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 # Told to a run resumed after packaging removed what it had installed.
 DEPENDENCIES_REMOVED_NOTE = (
     "The installed dependencies (node_modules, virtual environments, build output) were removed after "
-    "the previous run finished; install them again with the install_dependencies tool before validating."
+    "the previous run finished; install them again with run_command before validating."
 )
 
 
@@ -386,7 +386,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Given every trace record with its uncut tool inputs and results (the
         # backend keeps them server-side); None writes nothing besides the trace.
         run_evidence: Callable[[dict], None] | None = None,
-        # Both default OFF: they enable run_command / install_dependencies, the
+        # Both default OFF: they enable run_command, the
         # arbitrary-shell capability the hosted gate exists to withhold. Opt in
         # explicitly; generation does not need them.
         enable_toolchain_validation: bool = False,
@@ -487,7 +487,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
         # are hidden when there isn't one so the LLM doesn't waste turns
         # calling generators that will just error. See tools.get_tools_for.
-        # ``allow_shell_tools=False`` drops run_command/install_dependencies —
+        # ``allow_shell_tools=False`` drops run_command —
         # the arbitrary-shell tools. On a hosted, multi-tenant, BYOK box those
         # are user-steerable RCE (the cwd lock + denylist are UX, not a
         # sandbox), so the web runner disables them; trusted local/CLI/bench
@@ -3602,7 +3602,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         # Dependency resolution may execute untrusted build backends and
         # access the network. Keep it behind the same explicit shell-tools
-        # trust gate as run_command/install_dependencies, and in the same
+        # trust gate as run_command, and in the same
         # sandbox: network on (pip must reach the index), everything else
         # confined like run_command.
         if self.allow_shell_tools:
@@ -3784,8 +3784,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         the workspace, not change it -- see ``test_validation_honesty``), so
         this belongs here, at scaffold time, where writing files is the point.
 
-        Best-effort and silent on failure: the model keeps its own
-        ``install_dependencies`` tool, and ``collect_frontend_build_issues``
+        Best-effort and silent on failure: the model can still install
+        through ``run_command``, and ``collect_frontend_build_issues``
         still reports an uninstalled frontend.
         """
         import subprocess

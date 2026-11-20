@@ -120,6 +120,8 @@ class RunFacts:
     stop_message: Optional[str] = None
     outcome: Optional[str] = None
     blocker_count: int = 0
+    #: Findings that are not confirmed (a check that reached no conclusion); never blockers.
+    not_confirmed: int = 0
     estimated_cost_usd: float = 0.0
     archive_written: bool = False
     #: Lines of the delivered files per author, from the Agent Trace record; None without one.
@@ -141,7 +143,7 @@ class RunFacts:
         return {label: seconds[name] for name, label in _PHASES if name in seconds}
 
     def stop(self, *, stop_reason: str, cancelled: bool, cap_breach: bool, timed_out: bool,
-             incomplete: bool, blocker_count: int, cost: float) -> None:
+             incomplete: bool, blocker_count: int, cost: float, not_confirmed: int = 0) -> None:
         """Record why a run that produced output ended, in the run card's fixed words."""
         if self.late_error:
             self.stopped_by = self.late_error
@@ -151,8 +153,11 @@ class RunFacts:
             self.stopped_by = TIME_LIMIT if timed_out else COST_LIMIT
         else:
             self.stopped_by = _STOP_REASONS.get(stop_reason, FINISHED)
-        self.stop_message = _STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None)
+        self.stop_message = _STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None) or (
+            f"The app was generated; {not_confirmed} finding(s) could not be confirmed and are listed "
+            "for review." if not_confirmed else None)
         self.blocker_count = blocker_count
+        self.not_confirmed = not_confirmed
         self.estimated_cost_usd = round(cost, 4)
         if self.stopped_by == CANCELLED:
             self.outcome = "cancelled"
@@ -226,6 +231,7 @@ def run_section(facts: RunFacts, orchestrator: Any, *, provider: str, models: li
             "files_written": written,
             "files_edited": edited,
             "blockers": facts.blocker_count,
+            "not_confirmed": facts.not_confirmed,
         },
         "lines": facts.lines,
         "besser_version": get_besser_version(),
@@ -255,5 +261,6 @@ def end_line(run_id: str, facts: RunFacts, usage: Any = None) -> str:
     lines = " ".join(f"lines_{name}={(facts.lines or {}).get(name, '-')}" for name in _LINE_FIELDS)
     return (f"spec-driven run end run_id={run_id} outcome={facts.outcome or 'failed'} "
             f"duration_seconds={time.monotonic() - facts.started:.1f} blockers={facts.blocker_count} "
+            f"not_confirmed={facts.not_confirmed} "
             f"estimated_cost_usd={facts.estimated_cost_usd:.4f} {tokens} {lines} "
             f"archive_written={str(facts.archive_written).lower()}")

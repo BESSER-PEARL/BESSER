@@ -397,8 +397,12 @@ keys, always in this order:
   ``customise``, ``validate``; ``validate`` starts with Phase 3 and includes its
   fix loop) and ``estimated_cost_usd``.
 - ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
-  ``blockers`` (the unresolved findings the run left, also when a limit or a
-  cancel cut it short; the end log line carries the same count).
+  ``blockers`` (the unresolved blockers the run left, also when a limit or a
+  cancel cut it short; the end log line carries the same count) and
+  ``not_confirmed`` (findings that are not confirmed, see
+  :ref:`spec-driven-not-confirmed`; never blockers). A finished run whose only
+  findings are not confirmed ends ``completed``, and its ``stop_message`` says how
+  many could not be confirmed.
 - ``lines``: the lines of the delivered files by author, as in the run's Agent
   Trace record: ``total``, ``generator``, ``ai``, ``human``, ``unknown``, and
   ``ai_this_run`` (the part of ``ai`` this run wrote). ``null`` when the run has
@@ -417,7 +421,7 @@ The worker logs one line when a run starts and one when it ends, with the same
 names: ``spec-driven run start run_id=... mode=... base_run_id=... key_tier=...
 model=... generator=...`` (``generator=auto`` unless the request bound one; the
 target is decided later) and ``spec-driven run end run_id=... outcome=...
-duration_seconds=... blockers=... estimated_cost_usd=... input_tokens=...
+duration_seconds=... blockers=... not_confirmed=... estimated_cost_usd=... input_tokens=...
 output_tokens=... cache_creation_tokens=... cache_read_tokens=... lines_total=...
 lines_generator=... lines_ai=... lines_human=... lines_unknown=...
 lines_ai_this_run=... archive_written=...``: the token counts under the recipe's

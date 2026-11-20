@@ -29,7 +29,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import (
     LLMOrchestrator,
     ValidationIssue,
 )
-from besser.spec_driven_agent.validation.issues import _classify_issue
+from besser.spec_driven_agent.validation.issues import _classify_issue, is_not_confirmed
 
 
 class _Client:
@@ -313,19 +313,17 @@ _UNSETTLED_CANCEL = (
 
 
 def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch, monkeypatch):
-    """``action unverified:`` had no promotion at all, so it stayed a warning.
-
-    It gets the create side's scenario-rescued treatment rather than an
-    unconditional blocker: the probe legitimately cannot construct every
-    state, so a passing ``test_api`` workflow must be able to retire it.
+    """``action unverified:`` gets the create side's scenario-rescued treatment:
+    the probe legitimately cannot construct every state, so a passing ``test_api``
+    workflow must be able to retire it. Unsettled, it is not confirmed, not a blocker.
     """
     _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
 
     issues = orch._collect_execution_issues()
     promoted = [i for i in issues if i.startswith("runtime unverified: action unverified:")]
 
-    assert promoted, "an unsettled action must reach the blocker-only fix loop"
-    assert _classify_issue(promoted[0]).severity == "blocker"
+    assert promoted, "an unsettled action must stay listed"
+    assert _classify_issue(promoted[0]).severity == "warning" and is_not_confirmed(promoted[0])
 
 
 def _cancel_scenario(orch, monkeypatch, response):

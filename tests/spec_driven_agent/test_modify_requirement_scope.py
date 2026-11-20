@@ -358,7 +358,8 @@ def test_the_incomplete_extraction_marker_is_never_inherited(tmp_path, monkeypat
     issues = orch._collect_requirement_issues()
 
     [gate] = _about(issues, 4)
-    assert gate.startswith("requirement unverified: R4") and _classify_issue(gate).severity == "blocker"
+    # Not confirmed here, never re-labelled as a requirement still open from the previous run.
+    assert gate.startswith("requirement unverified: R4") and _classify_issue(gate).severity == "warning"
 
 
 # ------------------------------------------------------------------ the recipe it reads

@@ -11,11 +11,12 @@ class ValidationIssue:
 
     severity:
       - ``blocker``: an execution, implementation or acceptance defect
-        requiring repair (including missing behavior or invalid evidence),
+        requiring repair (including behaviour the judge found missing),
         or explicitly authorized dependency setup needed for verification.
-      - ``warning``: advisory findings or checks whose outcome is unknown.
-        Explicit ``validation unverified:`` warnings prevent verified
-        completion but do not justify spending source-repair turns.
+      - ``warning``: advisory findings, and findings that are not confirmed
+        (``NOT_CONFIRMED_PREFIXES``): a check that reached no conclusion. These
+        prevent "verified" but never block, never count in ``blockerCount`` and
+        are never repaired.
       - ``style``: a count, not a defect: the ``(+N more ... truncated)`` notes of
         ruff and the compilers. Never blocks a release. The lint selects no cosmetic rule.
 
@@ -36,10 +37,9 @@ def _hard_blockers(issues: list) -> list:
     Excluded: the requirements ledger's ``requirement:`` verdicts, which an
     LLM judge produces, and the ``unverified`` family, whose own text says a
     guessed request being refused "does not prove this endpoint is broken".
-    They stay blockers - an unverified app is not a verified one - but they
-    may not rank one tree above another or force a rollback, because we do
-    not know that they describe a defect (e.g. an app correctly refusing to
-    create an ABSTRACT entity).
+    Those that are blockers may not rank one tree above another or force a
+    rollback, because we do not know that they describe a defect (e.g. an app
+    correctly refusing to create an ABSTRACT entity).
     """
     return [i for i in issues if not i.message.startswith((
         "requirement:", "requirement unverified:",
@@ -48,13 +48,27 @@ def _hard_blockers(issues: list) -> list:
     ))]
 
 
-# Findings that mean "we could not check", never "the app is broken". Each is
-# an UNKNOWN: the run did not establish the behaviour either way. They belong in
-# the ledger's could-not-verify bucket, which the UI already renders separately.
-_UNKNOWN_PREFIXES = (
-    "requirement unverified:", "requirement partial:", "task unverified:",
-    "runtime unverified:", "create unverified:", "action unverified:",
-    "validation unverified:", "verification setup:", "api scenario:",
+# Not confirmed: a check that reached no conclusion, never an observed failure.
+# ``requirement unverified:`` the judge said implemented and its citation was not
+# located, or the judge or the extraction did not run; ``create``/``action
+# unverified:`` (``runtime unverified:`` once no scenario settled them) the probe's
+# own guessed request was refused; ``validation unverified:`` a required check did
+# not run. Listed for the user; never a blocker, never repaired.
+NOT_CONFIRMED_PREFIXES = (
+    "requirement unverified:", "runtime unverified:", "create unverified:",
+    "action unverified:", "validation unverified:",
+)
+
+
+def is_not_confirmed(issue) -> bool:
+    """A finding (or its message) that says a check reached no conclusion."""
+    return str(getattr(issue, "message", issue)).strip().lower().startswith(NOT_CONFIRMED_PREFIXES)
+
+
+# Findings that do not show the app fails to work. The not-confirmed ones are no
+# completion issue at all; the others here still count in ``blockerCount``.
+_UNKNOWN_PREFIXES = NOT_CONFIRMED_PREFIXES + (
+    "requirement partial:", "task unverified:", "verification setup:", "api scenario:",
     "requirement:",
 )
 
@@ -62,12 +76,10 @@ _UNKNOWN_PREFIXES = (
 def unresolved_defects(issues: list) -> list:
     """Completion issues that describe a DEFECT, not an unknown.
 
-    The whole unverified family classifies as ``blocker`` severity, but an
-    app whose only open items are could-not-verify checks is not broken.
     "Incomplete" is reserved for output that does not work: a tree that will
-    not parse, an app that cannot boot or create a record, a requirement the
-    code demonstrably does not implement. An unknown keeps its place in the
-    ledger and in ``blockerCount``; it does not set the headline.
+    not parse, an app that cannot boot or create a record. A requirement
+    blocker or a failed agent-written workflow keeps its place in the ledger
+    and in ``blockerCount``; it does not set the headline.
     """
     return [
         i for i in issues
@@ -165,9 +177,12 @@ def required_dependency_setup(check: str, project: str) -> str:
 
 
 def is_completion_issue(issue: ValidationIssue) -> bool:
-    """Missing required verification blocks completion, but not source repair."""
-    return (getattr(issue, "severity", None) == "blocker"
-            or str(getattr(issue, "message", "")).startswith("validation unverified:"))
+    """A blocker the run ends with: counted in ``blockerCount``.
+
+    The prefix wins over the stored severity: a not-confirmed finding built as a
+    blocker, or read back from an older recipe or checkpoint, is not one.
+    """
+    return getattr(issue, "severity", None) == "blocker" and not is_not_confirmed(issue)
 
 # F811 joins the undefined-name codes: a redefinition means the later name
 # silently wins — the ORM `User` shadowed by the Pydantic `User` and then
@@ -188,8 +203,10 @@ def _classify_issue(message: str) -> ValidationIssue:
     text = message.strip()
     lower = text.lower()
 
-    if lower.startswith("validation unverified:"):
+    if lower.startswith(NOT_CONFIRMED_PREFIXES):
         return ValidationIssue("warning", text)
+    # Could not check either, but an authorized dependency install settles it and
+    # unblocks the compile and build checks behind it: kept for the repair loop.
     if lower.startswith("verification setup:"):
         return ValidationIssue("blocker", text)
 
@@ -244,17 +261,18 @@ def _classify_issue(message: str) -> ValidationIssue:
         return ValidationIssue("blocker", text)
 
     # The ORM module failed to import or to configure its mappers in the import
-    # smoke check: every request that touches the database is a 500.
+    # smoke check: every request that touches the database is a 500. A workflow
+    # that ran against the app and failed is an observed failure too.
     if lower.startswith((
         "mapper config:", "application startup:", "python contract:",
-        "runtime unverified:", "api scenario:",
+        "api scenario:",
     )):
         return ValidationIssue("blocker", text)
 
-    # Missing behavior and incomplete requirement verification both prevent
-    # verified completion; unknown evidence is not proof of absent behavior.
+    # The judge's own verdict that behaviour is missing or partial, and a
+    # modeled operation left as an HTTP 501 placeholder.
     if lower.startswith((
-        "requirement:", "requirement partial:", "requirement unverified:",
+        "requirement:", "requirement partial:",
         "action contract:", "task unverified:",
     )):
         return ValidationIssue("blocker", text)

@@ -370,8 +370,8 @@ SSE event types
    * - ``done``
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
        count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
-       blocker-severity findings plus required checks that could not run,
-       ``validation unverified:``), ``verification`` (what the run confirmed
+       blockers; findings that are not confirmed, see
+       :ref:`spec-driven-not-confirmed`, are not counted), ``verification`` (what the run confirmed
        by running the app (``verified``), found cited in the code without
        running it (``foundInCode``), could not verify (``notVerified``) and
        shipped unenforced (``shippedUnenforced``), with true totals in

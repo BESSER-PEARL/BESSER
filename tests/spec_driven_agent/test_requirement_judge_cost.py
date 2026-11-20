@@ -22,7 +22,7 @@ from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataTy
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
-from besser.spec_driven_agent.validation.issues import _classify_issue, is_completion_issue
+from besser.spec_driven_agent.validation.issues import _classify_issue, is_completion_issue, is_not_confirmed
 
 SPEC = "Room numbers are unique."
 REQUIREMENT = {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"}
@@ -121,14 +121,13 @@ def test_a_changed_specification_is_judged_again(orch, judge_calls):
 
 
 # A judge outage is an unknown, not a defect: no code edit brings the judge
-# back, so it must not drive the blocker-only fix loop - but it still refuses
-# verified completion.
+# back, so it must not drive the blocker-only fix loop: it is not confirmed.
 _JUDGE_FAILED = "validation unverified: the requirements judge did not run completely (it returned no verdicts"
 
 
 def _is_unverified_warning(message):
     issue = _classify_issue(message)
-    return issue.severity == "warning" and is_completion_issue(issue)
+    return issue.severity == "warning" and is_not_confirmed(issue) and not is_completion_issue(issue)
 
 
 def test_a_failed_judgment_is_not_asked_again_for_the_same_source(orch, monkeypatch):

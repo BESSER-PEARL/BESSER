@@ -67,7 +67,13 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
-from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run, unresolved_defects
+from besser.spec_driven_agent.validation.issues import (
+    ValidationIssue,
+    _check_did_not_run,
+    is_completion_issue,
+    is_not_confirmed,
+    unresolved_defects,
+)
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
 from besser.spec_driven_agent.validation.user_wording import user_sentence
 from besser.utilities.workspace_fs import open_plain
@@ -738,8 +744,10 @@ class ModifyRunMixin:
         earlier = self._earlier_requirement_findings()
         promoted: list[ValidationIssue] = []
         for issue in issues:
+            # A check that reached no conclusion is not the reported failure persisting.
             if (
                 issue.severity != "blocker"
+                and not is_not_confirmed(issue)
                 and issue.message not in earlier
                 and not issue.message.startswith(self._FIX_TARGET_PREFIX)
                 and finding_matches_target(issue.message, self._fix_target)
@@ -785,7 +793,7 @@ class ModifyRunMixin:
         earlier = self._earlier_requirement_findings()
         unresolved = [
             i for i in self._validation_issues
-            if i.severity == "blocker" and i.message not in earlier
+            if is_completion_issue(i) and i.message not in earlier
             and (
                 i.message.startswith(self._FIX_TARGET_PREFIX)
                 or finding_matches_target(i.message, self._fix_target)

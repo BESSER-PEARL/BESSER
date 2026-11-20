@@ -148,8 +148,9 @@ Troubleshooting a run
      - Check ``blockerCount`` on the ``done`` event: a non-zero value means the
        run completed but Phase 3 could not repair everything it found. The
        editor follows the event's ``incomplete`` flag: a run with
-       ``incomplete: false`` is shown as complete even when some checks could
-       not be verified, so read the recipe's findings for those.
+       ``incomplete: false`` is shown as complete even when some findings are
+       not confirmed; the ``verification`` report lists those under
+       ``notVerified``.
    * - "What counts against my budget?"
      - Only the paid LLM calls (generator selection, the planning pass, a
        modify run's model sync, the customize loop, requirement extraction and

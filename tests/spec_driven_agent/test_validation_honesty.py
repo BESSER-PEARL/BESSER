@@ -22,7 +22,11 @@ from besser.spec_driven_agent.execution import sandbox as sandbox_mod
 from besser.spec_driven_agent.pipeline.orchestrator import (
     LLMOrchestrator, _check_did_not_run, _classify_issue,
 )
-from besser.spec_driven_agent.validation.issues import is_completion_issue, required_check_unverified
+from besser.spec_driven_agent.validation.issues import (
+    is_completion_issue,
+    is_not_confirmed,
+    required_check_unverified,
+)
 
 
 def _model():
@@ -60,7 +64,7 @@ def test_a_skipped_check_is_a_warning_not_a_blocker(orch, tmp_path, monkeypatch)
     assert "SKIPPED" in note
     assert not is_completion_issue(_classify_issue(note)), "optional linters do not block completion"
     required = _classify_issue(required_check_unverified("frontend build [.]", "shell tools are disabled"))
-    assert required.severity == "warning" and is_completion_issue(required)
+    assert required.severity == "warning" and is_not_confirmed(required) and not is_completion_issue(required)
     orch.auto_fix_issues = True
     orch._phase2_exited_cleanly = True
     orch._checkpoint_phase = "phase3"
@@ -78,7 +82,8 @@ def test_a_skipped_check_is_a_warning_not_a_blocker(orch, tmp_path, monkeypatch)
     assembled = LLMOrchestrator(llm_client=orch.client, domain_model=_model(), output_dir=str(tmp_path), assembly_issues=[loss])
     loss["diagnostic"] = "changed after construction"
     findings = [item for item in assembled._collect_validation_issues() if "model assembly" in item.message]
-    assert len(findings) == 1 and findings[0].severity == "warning" and is_completion_issue(findings[0])
+    # Withholds "verified" here; the runner counts it as a known loss (blocker, incomplete).
+    assert len(findings) == 1 and findings[0].severity == "warning" and is_not_confirmed(findings[0])
     assert "GUIModel [gui-1]" in findings[0].message and "processor_failed: ValueError" in findings[0].message
     assembled._validation_issues = findings
     assembled._save_checkpoint_for_turn(1, [], "Create the GUI")
@@ -168,7 +173,7 @@ def test_failed_requirement_extraction_stays_unknown_and_retries_once(orch, monk
     assert orch._requirements is None
     for _ in range(3):
         issues = orch._collect_requirement_issues()
-        assert issues and _classify_issue(issues[0]).severity == "blocker"
+        assert issues and is_not_confirmed(issues[0]) and _classify_issue(issues[0]).severity == "warning"
     assert len(calls) == 2
 
 
@@ -198,8 +203,7 @@ def test_conversion_losses_remain_obligations_until_current_code_evidence(orch, 
     orch.enable_requirements_ledger = False
     disabled = orch._collect_requirement_issues()
     assert disabled and expression in disabled[0]
-    assert all(_classify_issue(item).severity == "warning" and is_completion_issue(_classify_issue(item))
-               for item in disabled)
+    assert all(_classify_issue(item).severity == "warning" and is_not_confirmed(item) for item in disabled)
     orch.enable_requirements_ledger = True
 
     def judge(requirements, digest, client, **kwargs):
@@ -419,7 +423,9 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
     options = dict(source_revision=orch._workspace_revision, build_verdicts=cache, can_run=lambda: True)
     for enabled, allowed in ((False, True), (True, False), (True, True)):
         findings = collect_frontend_build_issues(str(tmp_path), enabled=enabled, allow_shell=allowed, **options)
-        assert len(findings) == 1 and is_completion_issue(_classify_issue(findings[0]))
+        # Never a pass: a blocker when the install is allowed, otherwise not confirmed.
+        assert len(findings) == 1 and (is_completion_issue(_classify_issue(findings[0]))
+                                       or is_not_confirmed(findings[0]))
         assert _classify_issue(findings[0]).severity == ("blocker" if enabled and allowed else "warning")
         if enabled and allowed:
             assert findings[0].startswith("verification setup:") and "install_dependencies" in findings[0]

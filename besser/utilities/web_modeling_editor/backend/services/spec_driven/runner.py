@@ -98,6 +98,7 @@ from besser.spec_driven_agent.validation.user_wording import (
 )
 from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
+    is_not_confirmed,
     required_check_unverified,
     unresolved_defects,
 )
@@ -498,7 +499,7 @@ def run_summary_markdown(
         lines.append("- How to run it: see `README.md`")
     lines.append(
         f"- Verification: {counts.verified} confirmed by running the app's API, "
-        f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not checked, "
+        f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not confirmed, "
         f"{counts.shippedUnenforced} checked and missing in the code")
     removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
                      for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
@@ -518,7 +519,7 @@ def run_summary_markdown(
                      "replace it with a relative path: " + ", ".join(one_line(path) for path in bound[:10]))
     findings = {finding.sentence: finding for finding in map(user_finding, _issue_messages(recipe))}
     for title, items, total in (("Missing in the code", verification.shippedUnenforced, counts.shippedUnenforced),
-                                ("Not checked", verification.notVerified, counts.notVerified)):
+                                ("Not confirmed", verification.notVerified, counts.notVerified)):
         if items:
             entries = [(_summary_finding(item, findings),
                         one_line(item.what) + (f": {one_line(item.why)}" if item.why else "")) for item in items]
@@ -2308,13 +2309,14 @@ class SmartGenerationRunner:
                 or stop_reason == "validation_required"
             )
 
-            # Blockers include unresolved requirement and verification issues,
-            # not only compile/startup failures.
+            # Blockers include requirements found missing, not only compile/startup
+            # failures; a check that reached no conclusion is not confirmed, not a blocker.
+            _final_issues = getattr(orchestrator, "_validation_issues", None) or []
             _unfixed_blockers = [
-                getattr(i, "message", str(i))
-                for i in (getattr(orchestrator, "_validation_issues", None) or [])
-                if is_completion_issue(i)
+                getattr(i, "message", str(i)) for i in _final_issues if is_completion_issue(i)
             ]
+            _not_confirmed = sum(1 for i in _final_issues
+                                 if is_not_confirmed(i) and getattr(i, "message", i) not in assembly_warnings)
             # Assembly warnings count even if the orchestrator dropped them.
             _unfixed_blockers = list(dict.fromkeys(_unfixed_blockers + assembly_warnings))
 
@@ -2323,10 +2325,9 @@ class SmartGenerationRunner:
             # confirmed fixed (already a promoted blocker above); replaces the
             # generic incomplete wording.
             _fix_msg = getattr(orchestrator, "_fix_target_message", None)
-            # "Incomplete" means a known defect, not an unverified check:
-            # unverified findings stay in blockerCount but do not set the
-            # verdict. Assembly warnings carry the unverified prefix yet are a
-            # known loss (a diagram never reached the generator), so add them.
+            # "Incomplete" means a known defect that stops the app working.
+            # Assembly warnings carry the unverified prefix yet are a known
+            # loss (a diagram never reached the generator), so add them.
             _real_defects = unresolved_defects(_unfixed_blockers) + assembly_warnings
             incomplete = (
                 (not exited_cleanly)
@@ -2428,7 +2429,7 @@ class SmartGenerationRunner:
             self._facts.stop(
                 stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
-                blocker_count=len(_unfixed_blockers), cost=final_cost,
+                blocker_count=len(_unfixed_blockers), not_confirmed=_not_confirmed, cost=final_cost,
             )
             # A cancel can land after Phase 2 ended cleanly. It cut the run short only when Phase 3
             # saw it and stopped; then the reason says so before anything Phase 3 left.
@@ -3085,7 +3086,7 @@ class SmartGenerationRunner:
                         for issue in (
                             getattr(orchestrator, "_validation_issues", None) or []
                         )
-                        if getattr(issue, "severity", None) == "blocker"
+                        if is_completion_issue(issue)
                     )
                 except Exception:
                     blockers_remaining = None

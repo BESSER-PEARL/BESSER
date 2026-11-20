@@ -188,6 +188,7 @@ from besser.spec_driven_agent.validation.issues import (
     _hard_blockers,
     dependency_check_issue,
     is_completion_issue,
+    is_not_confirmed,
     required_check_unverified,
     required_dependency_setup as required_dependency_setup,
     runtime_check_unverified,
@@ -2913,7 +2914,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _finish_checkpoint(self) -> None:
         """Keep recovery state until both customization and validation finished."""
         if (self._phase2_exited_cleanly and not self._phase3_interrupted
-                and not any(is_completion_issue(issue) for issue in self._validation_issues)):
+                and not any(is_completion_issue(issue) or is_not_confirmed(issue)
+                            for issue in self._validation_issues)):
             delete_checkpoint(self.output_dir)
         elif self._checkpoint_phase == "phase3":
             self._save_phase3_checkpoint()
@@ -3116,8 +3118,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         construct, is not evidence of a defect - but it is not evidence of a
         working app either. Only a spec-derived scenario that created a record
         and read it back retires one. Where nothing retires it, the finding is
-        re-prefixed ``runtime unverified:`` so it reaches the fix loop as a
-        blocker instead of a warning nothing consumes.
+        re-prefixed ``runtime unverified:``: not confirmed, listed for the user,
+        never a blocker.
         """
         from besser.spec_driven_agent.planning.mutation_inventory import route_serves
         from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths, declares_failure
@@ -3153,8 +3155,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     continue
                 item = "runtime unverified: " + item
             elif item.startswith("action unverified: "):
-                # Same shape as the create side. Without this promotion the
-                # finding stays a warning the blocker-only fix loop ignores.
+                # Same shape as the create side.
                 if settled(_re.match(r"action unverified: (.+?): POST (\S+) -", item), exercised):
                     continue
                 item = "runtime unverified: " + item
@@ -3218,7 +3219,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Phase 3's last requirement judgment (no new call): a blocker the run holds is
         # never answered with "verified". Empty until the judge has run.
         ledger = [issue for issue in _requirements_ledger.ledger_issues(self._requirement_verdicts)
-                  if _classify_issue(issue).severity == "blocker"]
+                  if _classify_issue(issue).severity == "blocker" or is_not_confirmed(issue)]
         revision = self._workspace_revision()
         key = (revision, tuple(ledger))
         if self._app_validation_cache and self._app_validation_cache[0] == key:
@@ -3235,8 +3236,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         raw += ledger
         issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
         blockers = [issue for issue in issues if issue.severity == "blocker"]
-        # A required check that did not run is a warning, not a pass.
-        unverified = not blockers and any(is_completion_issue(issue) for issue in issues)
+        # A check that reached no conclusion is a warning, not a pass.
+        unverified = any(is_not_confirmed(issue) for issue in issues)
+        not_confirmed_step = (
+            "Findings marked unverified are not confirmed, not defects: do not edit working code for them. "
+            "A check that did not run cannot be settled by a source edit. For create unverified (guessed fixtures), "
+            "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
+            "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
+            "20 requests, so split the endpoints across several scenarios; do not remove "
+            "business validation to satisfy guessed samples. ")
         result = {
             "verified": not blockers and not unverified,
             "blocker_count": len(blockers),
@@ -3245,14 +3253,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "issues": [clip_finding(issue.message) for issue in issues[:self._VALIDATE_APP_MAX_ISSUES]],
             "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
             "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
-            "next_step": ("Repair concrete failures and call validate_app again. For create unverified (guessed fixtures), "
-                          "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
-                          "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
-                          "20 requests, so split the endpoints across several scenarios; do not remove "
-                          "business validation to satisfy guessed samples.") if blockers else
-                         ("Some required checks did not run on this server (the validation unverified findings); "
-                          "no source edit can settle them, so do not edit code for them. Verify the remaining "
-                          "user requirements and business workflows before completion.") if unverified else
+            "next_step": ("Repair concrete failures and call validate_app again. "
+                          + (not_confirmed_step if unverified else "")).rstrip() if blockers else
+                         (not_confirmed_step + "Verify the remaining user requirements and business workflows "
+                          "before completion.") if unverified else
                          "These checks pass. Verify the remaining user requirements and business workflows before completion.",
         }
         self._app_validation_cache = (key, result)

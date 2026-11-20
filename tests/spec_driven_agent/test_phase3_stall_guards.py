@@ -625,14 +625,16 @@ def test_a_tree_the_probe_could_not_measure_is_not_kept_over_a_measured_one(orch
     check kept it, so an app that may not start shipped over one that does.
 
     That finding is now a ``validation unverified:`` warning, so the hung
-    tree has no blocker at all; it must not be taken as "all blockers fixed"."""
+    tree has no blocker at all; it must not be taken as "all blockers fixed".
+    The refused create is not confirmed, not a blocker: the entry tree's
+    repair is for an observed defect beside it."""
     state = {"attempt": 0, "rev": 0}
     reports = {0: _BOOTS_ONE_CREATE_REFUSED, 1: _PROBE_TIMED_OUT}
 
     def collect():
         rev = state["rev"]
         orch._runtime_probe_facts = (f"rev-{rev}", [{"backend": "backend", **reports[rev]}])
-        return _probe_blockers(orch, reports[rev])
+        return _probe_blockers(orch, reports[rev]) + (_blockers(1) if rev == 0 else [])
 
     def fix(blockers, is_first_attempt):
         state["attempt"] += 1

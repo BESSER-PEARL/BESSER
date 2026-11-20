@@ -185,11 +185,9 @@ finding names the file, the line and the change to make:
 
 For discovered TypeScript projects and frontend applications, required checks
 that are disabled, unavailable, timed out, or only partially run are recorded as
-``validation unverified:`` warnings. Their effect on completion depends on the
-check: some contribute to the completion gate, while others are advisory.
-The editor follows the ``done`` event's ``incomplete`` flag; it may present an
-application as ready with unverified checks. Read the findings to distinguish
-checks that passed from checks that did not run. Optional lint checks remain
+``validation unverified:`` warnings: *not confirmed* (see :ref:`spec-driven-not-confirmed`).
+They never make the run incomplete and are not counted in ``blockerCount``; the
+verification report lists them as not confirmed. Optional lint checks remain
 advisory.
 
 Checks that execute generated code (the import and runtime probes and the
@@ -532,7 +530,8 @@ Findings are classified into three severities:
        locates a line only when exactly one line of the cited file then reads as the
        whole quote; with two or more it is refused, never picked.
        Prose, a paraphrase or
-       another file's code leaves the requirement unverified. A Python
+       another file's code leaves the requirement unverified: not confirmed,
+       never a blocker (see :ref:`spec-driven-not-confirmed`). A Python
        quote that matches no line is also located by syntax tree, so a
        formatter's wrapping parentheses, adjacent string literals merged or
        split, an ``if``, ``for``, ``while`` or ``with`` header quoted on one line, and a
@@ -556,8 +555,7 @@ Findings are classified into three severities:
        app's code (its models, database, API or a helper), while a greeting
        or a fixed fact may keep a fixed reply; the citation is the line that
        reads or writes the records);
-       partial requirements and unverified evidence (distinct from proven missing
-       behavior); unresolved checklist work and unimplemented action contracts;
+       partial requirements; unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another
        entity; frontend-contract and
        data-contract violations; create forms that cannot save (``api url:``,
@@ -574,9 +572,9 @@ Findings are classified into three severities:
        ``model conformance:``, ``model contract:``, ``missing module:``,
        ``mapper config:``, ``application startup:``, ``python contract:``
        (which also reports undefined names, those behind ``from x import *``
-       included), ``runtime unverified:``, ``api scenario:``,
+       included), ``api scenario:``,
        ``create contract:``, ``action call:``, ``requirement:``,
-       ``requirement partial:``, ``requirement unverified:``,
+       ``requirement partial:``,
        ``action contract:``, ``task unverified:``, ``verification setup:``
        (dependencies a permitted install would provide), ``tsc [``,
        ``cargo [``, ``kotlinc [`` and ``frontend build [``. These drive the
@@ -606,12 +604,44 @@ Findings are classified into three severities:
        scope:`` — a UI requirement on a run that neither has nor asked for a
        frontend, which a backend-only output has no files to satisfy —
        ``authorization:`` and ``authorization coverage:`` (see
-       :ref:`spec-driven-authorization-check`) — and
-       ``validation unverified:`` — a required check that did not run, such
-       as a runtime check (``validation unverified: runtime check (...) did
-       not run``) or a requirements judge that returned no verdicts. No edit
-       to the generated code can settle these, so they spend no repair turns,
-       but they still prevent verified completion.
+       :ref:`spec-driven-authorization-check`) — and the findings that are not
+       confirmed, below.
+
+.. _spec-driven-not-confirmed:
+
+Not confirmed
+~~~~~~~~~~~~~
+
+Severity follows the kind of evidence. A **blocker** is an observed failure (the
+code does not parse, import or build, the app does not boot, a request returned a
+server error, a workflow or read-back failed, a modeled operation answers HTTP
+501) or the judge's own verdict that a requirement is ``missing`` or ``partial``.
+A finding that says a check reached no conclusion is **not confirmed**: a
+``warning`` that never makes the run incomplete, is not counted in
+``blockerCount``, is never sent to repair, and is listed for the user in the
+verification report and ``BESSER_GENERATION.md``. Its prefix decides, whatever
+severity a finding was built or stored with:
+
+- ``requirement unverified:`` — the judge said the requirement is implemented and
+  its citation could not be located in the code, or the judge, the requirement
+  extraction or Phase 3 itself did not run (stopped, or out of time or budget);
+- ``create unverified:`` and ``action unverified:`` — the probe's own guessed
+  request was refused (a 4xx, a login it could not pass, a record it could not set
+  up) and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
+  finding once no scenario did;
+- ``validation unverified:`` — a required check did not run (a runtime check
+  without a sandbox, a judge that returned no verdicts, a build that timed out).
+
+Two findings of the same "could not check" kind stay blockers. ``verification
+setup:`` asks the agent to install the project's declared dependencies, which it
+is allowed to do, so that the compile and build checks behind it can run. A
+diagram that failed to convert carries ``validation unverified:`` but is a known
+loss (part of the project never reached the generator), so it still marks the run
+incomplete.
+
+A run whose only findings are not confirmed starts no fix attempt. The agent's
+``validate_app`` lists them, answers ``verified: false`` with ``blocker_count:
+0``, and tells it not to edit working code for them.
 
 One Python defect is one finding: a file that does not parse is reported as
 ``Syntax error in``, without the python contract's and ``ruff``'s copies of the
@@ -630,9 +660,10 @@ needs an existing Customer first.``. A new prefix gets its sentence there;
 without one it reads as a generic sentence.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
-``blockerCount`` — completion-blocking defects and required verification gaps
-still standing when the run ended. A non-zero value means the downloaded output
-is not verified complete; it does not necessarily mean that the code is broken.
+``blockerCount`` — the blockers still standing when the run ended. A non-zero
+value means the downloaded output is not verified complete. Findings that are not
+confirmed are not in it: the ``verification`` report counts and lists them
+(``counts.notVerified``), and the recipe's ``run.counts.not_confirmed`` counts them.
 
 .. _spec-driven-design-fidelity:
 
@@ -715,22 +746,13 @@ whose blockers are all syntax, import, lint, compiler or dependency errors. The
 prompt lists at most 30 blockers in repair order, counts the rest by kind, cuts a
 message over 1,200 characters with a marker, and names a requirement already in
 the ledger by its id. Validation still records and reports every blocker.
-A fix attempt is skipped when every remaining blocker is a requirement whose
-cited code exists but whose citation is malformed and already had its
-citation-repair round, and that has no fragment the fix agent may complete (below):
-no edit can change it. A citation of code that exists nowhere keeps its attempt. The
-loop also ends when the last attempt faced the same
-blockers (requirements compared by id, status and citation label, since a re-judge
-rewords its note; other blockers by message), its edits were not all rejected,
-and each remaining blocker is a ``requirement unverified`` verdict the
-judge left without a citation (or with a malformed one) after its focused
-re-judge on the current source: another attempt would get the same request. A
-citation of code that exists nowhere, or one whose cited body fails its role (an
-HTTP 501 scaffold, a no-op), keeps its attempts. The blockers keep their severity
-and are reported. ``validate_app`` lists the requirement blockers of the last
-judgment too (no new judge call), so the fix agent is never told the app is
-verified while the run holds one; their message tells it to implement behaviour
-only if it is really absent, since citations are re-judged automatically. When the
+A ``requirement unverified`` verdict is not confirmed, not a blocker, so it is
+never sent to repair and no fix attempt is spent on a citation.
+``validate_app`` lists the requirement blockers and the requirements not confirmed
+of the last judgment too (no new judge call), so the fix agent is never told the
+app is verified while the run holds one; an unverified requirement's message tells
+it to implement behaviour only if it is really absent, since citations are
+re-judged automatically. When the
 judge found the requirement implemented and one of its citations is a fragment found
 in exactly one line, the message names that line instead and tells the agent to cite
 it: ``validate_app`` takes ``citations=[{requirement, path, line}]``, and accepts only

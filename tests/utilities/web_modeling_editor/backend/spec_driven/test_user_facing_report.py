@@ -54,7 +54,7 @@ def test_nothing_the_user_reads_is_written_for_the_agent():
 def test_the_summary_merges_repeated_kinds_and_counts_the_rest():
     report = build_verification_report(_recipe())
     summary = run_summary_markdown(_recipe(), report)
-    not_checked = summary[summary.index("### Not checked") + 2:]
+    not_checked = summary[summary.index("### Not confirmed") + 2:]
 
     assert any(line.startswith("- `5 create operations could not be tested automatically, because each needs "
                                "an existing record first: order, shelf, loan, member, fee.`") for line in not_checked)

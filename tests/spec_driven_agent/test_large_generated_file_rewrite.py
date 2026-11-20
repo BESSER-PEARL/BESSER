@@ -125,6 +125,26 @@ def test_a_new_comment_with_an_omission_word_in_a_rewrite_that_keeps_every_line_
     assert _write(tmp_path, PAGE_PATH, PAGE, commented).get("status") == "written"
 
 
-def test_a_placeholder_refusal_says_the_rewrite_is_shorter(tmp_path):
+def test_a_placeholder_refusal_says_how_many_lines_it_replaces(tmp_path):
     error = _write(tmp_path, PAGE_PATH, PAGE, PLACEHOLDER).get("error", "")
-    assert "non-blank lines where the file has" in error and "remaining rows unchanged" in error, error
+    assert "replaces 70 lines" in error and "remaining rows unchanged" in error, error
+
+
+NEW_SECTION = "".join(f'      <label className="filter-{n}">Filter {n}</label>\n' for n in range(60))
+PLACEHOLDER_TAIL = "      {/* remaining rows unchanged */}\n"
+
+
+@pytest.mark.parametrize("filler", [
+    pytest.param(NEW_SECTION, id="net-longer-with-a-new-section"),
+    pytest.param("".join(f"      {{/* note {n} */}}\n" for n in range(50)), id="padded-with-comments"),
+])
+def test_a_placeholder_that_replaces_rows_is_refused_however_long_the_rewrite(tmp_path, filler):
+    after = PAGE.replace("".join(ROW_LINES[170:]), PLACEHOLDER_TAIL + filler)
+    error = _write(tmp_path, PAGE_PATH, PAGE, after).get("error", "")
+    assert "replaces 50 lines" in error and "remaining rows unchanged" in error, error
+
+
+def test_a_redesign_with_a_new_comment_using_an_omission_word_is_accepted(tmp_path):
+    redesigned = PAGE.replace("  return (\n", "  // Count the remaining rows before showing the footer\n  return (\n")
+    redesigned = redesigned.replace("<p className", "<li className").replace("</p>", "</li>")
+    assert _write(tmp_path, PAGE_PATH, PAGE, redesigned).get("status") == "written"

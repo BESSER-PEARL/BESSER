@@ -288,7 +288,9 @@ traced endpoints, with no code. Instrumenting adds which lines come from which e
 ### Pitfalls
 1. **Keep converters symmetric**: if `json_to_buml` supports a feature, `buml_to_json` must too
    (e.g. `class_diagram_processor.py` ↔ `class_diagram_converter.py`); test round-trips (JSON→BUML→JSON is identity)
-2. **Determinism**: identical input → identical output (no timestamps in file names)
+2. **Determinism**: identical input → identical output (no timestamps in file names). One deliberate exception:
+   the Supabase generator names its migration `<YYYYMMDDHHMMSS>_<slug>.sql`, the order `supabase db reset`
+   applies migrations in; it is therefore in `NOT_REGENERABLE` (`tests/generators/test_regenerable_generators.py`)
 3. **Shared helpers** belong in `besser/utilities`, not in individual generators
 4. **Temp directories** use the `besser_*` prefixes from `constants.py` (`besser_`, `besser_agent_`,
    `besser_csv_`, `besser_llm_`, `besser_user_profile_`) so the hourly cleanup task (`services/cleanup.py`,
@@ -313,6 +315,8 @@ git submodule update --init --recursive                                       # 
 git submodule update --remote besser/utilities/web_modeling_editor/frontend   # fast-forward to tracked branch
 git add besser/utilities/web_modeling_editor/frontend                         # record the new pointer
 ```
+`main` is the editor's release branch; feature work branches from and targets its `develop` (its CI and the
+lab's base). Commit on that branch inside the submodule, then `git add` the path: `--remote` would move the pointer to `main`.
 Cross-repo changes: implement each side in its own repo, update the submodule pointer here, link both PRs
 and note the merge order.
 

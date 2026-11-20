@@ -37,7 +37,8 @@ def _write(root: Path, *paths: str) -> None:
 
 
 def _repos(**paths) -> dict[str, RepoSpec]:
-    return {key: RepoSpec(key=key, path=str(path), base_branch="development", github_owner="o", github_name=key)
+    return {key: RepoSpec(key=key, path=str(path), base_branch="development", github_owner="o", github_name=key,
+                          git_dir=str(path) + ".git")
             for key, path in paths.items()}
 
 

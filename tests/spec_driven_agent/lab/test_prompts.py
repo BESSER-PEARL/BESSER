@@ -34,13 +34,18 @@ _MAX_PROMPT_WORDS = 1200
 @pytest.fixture
 def repos(tmp_path):
     root = str(tmp_path / "lab")
+    git_root = str(tmp_path / "lab-git")
     besser = os.path.join(root, "besser")
     return {
         REPO_MODELING_AGENT: RepoSpec(REPO_MODELING_AGENT, os.path.join(root, "modeling-agent"), "develop",
-                                      "BESSER-PEARL", "modeling-agent"),
-        REPO_BESSER: RepoSpec(REPO_BESSER, besser, "development", "BESSER-PEARL", "BESSER"),
+                                      "BESSER-PEARL", "modeling-agent",
+                                      git_dir=os.path.join(git_root, "modeling-agent")),
+        REPO_BESSER: RepoSpec(REPO_BESSER, besser, "development", "BESSER-PEARL", "BESSER",
+                              git_dir=os.path.join(git_root, "besser")),
         REPO_FRONTEND: RepoSpec(REPO_FRONTEND, os.path.join(besser, *FRONTEND_SUBMODULE_PATH.split("/")), "develop",
-                                "BESSER-PEARL", "BESSER-Web-Modeling-Editor"),
+                                "BESSER-PEARL", "BESSER-Web-Modeling-Editor",
+                                git_dir=os.path.join(git_root, "besser", "modules",
+                                                     *FRONTEND_SUBMODULE_PATH.split("/"))),
     }
 
 
@@ -94,7 +99,8 @@ def test_plan_prompt_names_the_repositories_relative_to_their_folder(repos):
 
 
 def test_relative_repository_paths_are_kept(repos):
-    relative = {REPO_BESSER: RepoSpec(REPO_BESSER, "besser", "development", "BESSER-PEARL", "BESSER")}
+    relative = {REPO_BESSER: RepoSpec(REPO_BESSER, "besser", "development", "BESSER-PEARL", "BESSER",
+                                      git_dir=repos[REPO_BESSER].git_dir)}
 
     assert "- besser: `besser` (" in build_system_prompt(mode="plan", repos=relative)
 

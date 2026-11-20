@@ -5,6 +5,7 @@ Handles creating GitHub repositories and pushing generated code.
 """
 
 import base64
+import codecs
 import hashlib
 import io
 import logging
@@ -13,7 +14,7 @@ import shutil
 import stat
 import tarfile
 import tempfile
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 from pathlib import Path
 
 import httpx
@@ -48,6 +49,29 @@ MAX_ARCHIVE_MEMBERS = 50_000
 # A commit retries once when the branch moved between reading its head and
 # updating it; moving again within that window is a real race, reported as one.
 _COMMIT_ATTEMPTS = 2
+
+# The media type GitHub serves a pull request's unified diff under.
+_DIFF_MEDIA_TYPE = "application/vnd.github.diff"
+
+UpdateBranchOutcome = Literal["updated", "conflict", "refused"]
+
+
+class GitHubGraphQLError(Exception):
+    """GitHub's GraphQL API answered with ``errors`` (HTTP 200): a missing repository or pull request, a
+    field the token may not read. ``errors`` is GitHub's list, ``data`` what it resolved anyway."""
+
+    def __init__(self, errors: List[Dict[str, Any]], data: Optional[Dict[str, Any]]):
+        self.errors = errors
+        self.data = data
+        super().__init__("; ".join(str(error.get("message", error)) for error in errors))
+
+
+def _github_message(response: httpx.Response) -> str:
+    """The ``message`` of a GitHub error answer, or its text."""
+    try:
+        return str(response.json().get("message", ""))
+    except ValueError:
+        return response.text
 
 
 def git_blob_sha(content: bytes) -> str:
@@ -90,6 +114,8 @@ class GitHubService:
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28"
         }
+        # GitHub's message when the latest update_pull_request_branch was not "updated".
+        self.update_branch_message = ""
 
     async def get_authenticated_user(self) -> Dict[str, Any]:
         """
@@ -812,6 +838,113 @@ class GitHubService:
             "merged": bool(pull.get("merged_at")),
             "body": pull.get("body") or "",
         }
+
+    async def graphql(self, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+        """Run a GraphQL ``query`` and return its ``data``.
+
+        Raises ``httpx.HTTPStatusError`` for an HTTP failure and ``GitHubGraphQLError`` when the
+        answer carries ``errors``.
+        """
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/graphql",
+                headers=self.headers,
+                json={"query": query, "variables": variables},
+                timeout=30
+            )
+            response.raise_for_status()
+            answer = response.json()
+        if answer.get("errors"):
+            raise GitHubGraphQLError(answer["errors"], answer.get("data"))
+        return answer.get("data") or {}
+
+    async def get_job_log_tail(
+        self, owner: str, repo_name: str, job_id: int, *, max_bytes: int
+    ) -> Optional[bytes]:
+        """The last ``max_bytes`` of a GitHub Actions job's log; None when GitHub has no log (404, 410 expired).
+
+        GitHub answers with a 302 to a signed blob-storage URL. httpx follows it and drops the
+        ``Authorization`` header on the way (another host), and ``Range`` asks only for the tail.
+        An empty log is ``b""``.
+        """
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            response = await client.get(
+                f"{self.base_url}/repos/{owner}/{repo_name}/actions/jobs/{job_id}/logs",
+                headers={**self.headers, "Range": f"bytes=-{max_bytes}"},
+                timeout=30
+            )
+        if response.status_code in (404, 410):
+            return None
+        # 416: an empty log has no last bytes to give.
+        if response.status_code == 416:
+            return b""
+        response.raise_for_status()
+        # A store that ignores Range sends the whole log (200).
+        return response.content[-max_bytes:]
+
+    async def update_pull_request_branch(
+        self, owner: str, repo_name: str, number: int, expected_head_sha: str
+    ) -> UpdateBranchOutcome:
+        """Have GitHub merge the base branch into pull request ``number``'s branch (a merge, never a force-push).
+
+        ``expected_head_sha`` makes GitHub refuse when someone pushed since it was read. GitHub
+        accepts the update (202) and merges shortly after, so the head moves a moment later.
+
+        Returns ``"updated"`` (also when the base has nothing new), ``"conflict"`` (GitHub cannot
+        merge it) or ``"refused"`` (the head moved, the pull request is closed, or the token lacks
+        the ``workflow`` scope a workflow change on the base needs). GitHub's message for a
+        conflict or refusal is kept in ``self.update_branch_message`` and logged at warning.
+        Other failures raise ``httpx.HTTPStatusError``.
+        """
+        self.update_branch_message = ""
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"{self.base_url}/repos/{owner}/{repo_name}/pulls/{number}/update-branch",
+                headers=self.headers,
+                json={"expected_head_sha": expected_head_sha},
+                timeout=30
+            )
+        if response.status_code not in (403, 422):
+            response.raise_for_status()
+            return "updated"
+        message = _github_message(response)
+        if response.status_code == 422 and "no new commits" in message.lower():
+            return "updated"
+        outcome: UpdateBranchOutcome = (
+            "conflict" if response.status_code == 422 and "conflict" in message.lower() else "refused"
+        )
+        self.update_branch_message = message
+        logger.warning(
+            "GitHub did not update %s/%s#%d from its base (%s, HTTP %d): %s",
+            owner, repo_name, number, outcome, response.status_code, message,
+        )
+        return outcome
+
+    async def get_pull_request_diff(self, owner: str, repo_name: str, number: int, *, max_bytes: int) -> str:
+        """Pull request ``number``'s unified diff as GitHub shows it, at most ``max_bytes`` of UTF-8.
+
+        Reading stops at ``max_bytes`` (logged at warning); a character cut in two there is
+        dropped. A caller that must tell a cut asks for one byte more than it shows.
+        """
+        data = bytearray()
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                "GET",
+                f"{self.base_url}/repos/{owner}/{repo_name}/pulls/{number}",
+                headers={**self.headers, "Accept": _DIFF_MEDIA_TYPE},
+                timeout=30
+            ) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes():
+                    data += chunk
+                    if len(data) > max_bytes:
+                        break
+        cut = len(data) > max_bytes
+        if cut:
+            logger.warning("Diff of %s/%s#%d cut at %d bytes", owner, repo_name, number, max_bytes)
+        # Not final when cut: an incomplete last character stays in the decoder instead of becoming U+FFFD.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        return decoder.decode(bytes(data[:max_bytes]), final=not cut)
 
     async def compare_commits(
         self, owner: str, repo_name: str, base: str, head: str

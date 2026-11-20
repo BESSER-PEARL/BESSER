@@ -43,9 +43,13 @@ output_backend/
 
 generated/*
 .agents/
-.claude/
+# Local Claude Code settings stay out; the contributor skill in .claude/skills/ is versioned.
+.claude/*
+!.claude/skills/
 skills-lock.json
-/scripts/
+# Local deploy scripts stay out; the lab's host files in scripts/lab/ are versioned.
+/scripts/*
+!/scripts/lab/
 
 # Logs (BAF writes application.log in the current directory on import)
 *.log

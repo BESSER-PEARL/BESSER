@@ -1,167 +1,212 @@
-"""LabWorkspace against real git repositories: BESSER with the editor as a submodule, and the modeling agent."""
+"""LabWorkspace against real git repositories: settings, readiness, state files and the git operations of one change.
+
+Several changes at once are in ``test_workspace_changes.py``; git directories outside the trees in
+``test_workspace_git_dir.py``. The layout comes from the ``lab_layout`` fixture (``conftest.py``).
+"""
 
 import json
 import os
 import shutil
-import subprocess
+from dataclasses import fields
 
 import pytest
 
 from besser.spec_driven_agent.lab.contracts import (
+    DEFAULT_UPSTREAMS,
     FRONTEND_SUBMODULE_PATH,
+    LAB_BASE_DIRNAME,
+    LAB_STATE_VERSION,
     REPO_BESSER,
     REPO_FRONTEND,
     REPO_MODELING_AGENT,
     REPO_ORDER,
     ChangeKind,
     FileChange,
-    RepoSpec,
+    LabChange,
+    RepoBase,
 )
-from besser.spec_driven_agent.lab.workspace import LabWorkspace, LabWorkspaceError, _slug, default_repos
+from besser.spec_driven_agent.lab.workspace import (
+    LabWorkspace,
+    LabWorkspaceError,
+    _slug,
+    parse_upstream,
+    repo_specs_from_settings,
+    upstream_url,
+)
+from tests.spec_driven_agent.lab.conftest import SUBMODULE_PARTS, git, read, write
 
 
-def git(cwd, *args):
-    result = subprocess.run(
-        ["git", "-c", "user.name=setup", "-c", "user.email=setup@example.com", "-c", "core.autocrlf=false",
-         "-c", "protocol.file.allow=always", *args],
-        cwd=cwd, check=True, capture_output=True,
-    )
-    return result.stdout.decode("utf-8").strip()
+def open_new(ws, owner="Jordi", title="Note element", kind=ChangeKind.EDITOR_ELEMENT):
+    return ws.open_change(ws.create_draft(owner=owner), title=title, kind=kind)
 
 
-def write(path, text):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
+def tree(ws, change, repo, *parts):
+    return os.path.join(ws.change_repos(change)[repo].path, *parts)
 
 
-def read(path):
-    with open(path, encoding="utf-8") as handle:
-        return handle.read()
+def state_file(layout, change_id):
+    return os.path.join(layout.state_dir, "changes", change_id, "state.json")
 
 
-def init_repo(path, branch, files):
-    os.makedirs(path)
-    git(path, "init", "-q", "-b", branch)
-    for name, text in files.items():
-        write(os.path.join(path, name), text)
-    git(path, "add", "-A")
-    git(path, "commit", "-q", "-m", "initial")
+# -- settings ------------------------------------------------------------------------------------------
+
+def test_parse_upstream_splits_owner_name_and_branch():
+    assert parse_upstream("BESSER-PEARL/BESSER@development") == ("BESSER-PEARL", "BESSER", "development")
+    assert parse_upstream("me/BESSER-Web-Modeling-Editor@feature/x.y") == (
+        "me", "BESSER-Web-Modeling-Editor", "feature/x.y")
 
 
-@pytest.fixture(scope="module")
-def template(tmp_path_factory):
-    """A lab root as the server has it: the editor submodule on a detached HEAD, its base only on origin."""
-    base = tmp_path_factory.mktemp("lab_template")
-    editor_origin = str(base / "editor-origin")
-    init_repo(editor_origin, "develop", {"packages/webapp/src/app.ts": "export const app = 1;\n"})
-    root = base / "root"
-    besser = str(root / "besser")
-    init_repo(besser, "development", {
-        "README.md": "BESSER\n",
-        "docs/old.rst": "Old page\n",
-        "besser/old_name.py": "VALUE = 1\n",
-    })
-    git(besser, "submodule", "add", "-q", editor_origin, FRONTEND_SUBMODULE_PATH)
-    git(besser, "commit", "-q", "-m", "add the editor")
-    editor = os.path.join(besser, *FRONTEND_SUBMODULE_PATH.split("/"))
-    git(editor, "checkout", "-q", "--detach")
-    git(editor, "branch", "-q", "-D", "develop")
-    init_repo(str(root / "modeling-agent"), "develop", {"agent.py": "AGENT = 1\n"})
-    return root
+@pytest.mark.parametrize("value", ["BESSER", "BESSER-PEARL/BESSER", "a/b@", "a b/c@d", "a/b@c d", "a/b/c@d", ""])
+def test_parse_upstream_rejects_anything_else(value):
+    with pytest.raises(ValueError, match="owner/name@branch"):
+        parse_upstream(value)
 
 
-@pytest.fixture
-def root(template, tmp_path):
-    target = tmp_path / "root"
-    shutil.copytree(template, target)
-    return str(target)
+def test_repo_specs_from_settings_places_base_trees_under_base_and_git_dirs_in_the_git_root(tmp_path):
+    root, git_root = str(tmp_path / "work"), str(tmp_path / "git")
 
+    specs = repo_specs_from_settings(root, git_root, {**DEFAULT_UPSTREAMS, REPO_BESSER: "fork/BESSER@lab-test"})
 
-@pytest.fixture
-def ws(root):
-    return LabWorkspace(root)
-
-
-def path_of(ws, repo, *parts):
-    return os.path.join(ws.repos[repo].path, *parts)
-
-
-def branch_of(ws, repo):
-    return git(ws.repos[repo].path, "rev-parse", "--abbrev-ref", "HEAD")
-
-
-def start(ws, title="Note element"):
-    return ws.start_change(user="Jordi", title=title, kind=ChangeKind.EDITOR_ELEMENT)
-
-
-def test_default_repos_lists_the_three_checkouts_in_pull_request_order(tmp_path):
-    repos = default_repos(str(tmp_path))
-
-    assert tuple(spec.key for spec in repos) == REPO_ORDER
-    by_key = {spec.key: spec for spec in repos}
-    assert by_key[REPO_BESSER].path == os.path.join(str(tmp_path), "besser")
-    assert by_key[REPO_FRONTEND].path == os.path.join(str(tmp_path), "besser", *FRONTEND_SUBMODULE_PATH.split("/"))
-    assert by_key[REPO_MODELING_AGENT].path == os.path.join(str(tmp_path), "modeling-agent")
-    assert [(s.base_branch, s.github_owner, s.github_name) for s in repos] == [
+    assert tuple(spec.key for spec in specs) == REPO_ORDER
+    by_key = {spec.key: spec for spec in specs}
+    base = os.path.join(root, LAB_BASE_DIRNAME)
+    assert by_key[REPO_BESSER].path == os.path.join(base, "besser")
+    assert by_key[REPO_FRONTEND].path == os.path.join(base, "besser", *SUBMODULE_PARTS)
+    assert by_key[REPO_MODELING_AGENT].path == os.path.join(base, "modeling-agent")
+    assert by_key[REPO_BESSER].git_dir == os.path.join(git_root, "besser")
+    assert by_key[REPO_FRONTEND].git_dir == os.path.join(git_root, "besser", "modules", *SUBMODULE_PARTS)
+    assert by_key[REPO_MODELING_AGENT].git_dir == os.path.join(git_root, "modeling-agent")
+    assert [(s.base_branch, s.github_owner, s.github_name) for s in specs] == [
         ("develop", "BESSER-PEARL", "BESSER-Web-Modeling-Editor"),
-        ("development", "BESSER-PEARL", "BESSER"),
+        ("lab-test", "fork", "BESSER"),
         ("develop", "BESSER-PEARL", "modeling-agent"),
     ]
 
 
-def test_ensure_ready_accepts_the_checkouts_and_rejects_a_folder_inside_another_repository(ws, root):
-    ws.ensure_ready()
-
-    # An uninitialised submodule is an empty folder inside BESSER: git would act on BESSER.
-    inner = os.path.join(root, "besser", "docs")
-    with pytest.raises(LabWorkspaceError, match="not a git checkout of its own"):
-        LabWorkspace(root, [RepoSpec(REPO_FRONTEND, inner, "develop", "o", "n")]).ensure_ready()
-    with pytest.raises(LabWorkspaceError, match="does not exist"):
-        LabWorkspace(root, [RepoSpec(REPO_FRONTEND, os.path.join(root, "missing"), "develop", "o", "n")]).ensure_ready()
-    with pytest.raises(LabWorkspaceError, match="base branch nope not found"):
-        LabWorkspace(root, [RepoSpec(REPO_BESSER, os.path.join(root, "besser"), "nope", "o", "n")]).ensure_ready()
+def test_upstream_url_is_the_public_github_repository(tmp_path):
+    spec = repo_specs_from_settings(str(tmp_path), str(tmp_path / "git"), DEFAULT_UPSTREAMS)[1]
+    assert upstream_url(spec) == "https://github.com/BESSER-PEARL/BESSER.git"
 
 
-def test_start_change_checks_out_a_unique_lab_branch_everywhere_and_saves_its_state(ws, root):
-    git(path_of(ws, REPO_MODELING_AGENT), "branch", "lab/jordi-c/note-element")
+# -- readiness -----------------------------------------------------------------------------------------
 
-    change = ws.start_change(user="Jordi.C", title="Note element!", kind=ChangeKind.EDITOR_ELEMENT)
-
-    assert change.slug == "note-element-2"
-    assert change.branches == {key: "lab/jordi-c/note-element-2" for key in REPO_ORDER}
-    assert {key: branch_of(ws, key) for key in REPO_ORDER} == change.branches
-    with open(os.path.join(root, ".lab", "changes", change.id, "state.json"), encoding="utf-8") as handle:
-        state = json.load(handle)
-    assert state["kind"] == "editor_element" and state["user"] == "Jordi.C" and state["status"] == "active"
-    assert LabWorkspace(root).active_change() == change
-    with pytest.raises(LabWorkspaceError, match="is active"):
-        start(ws, "Another")
+def test_ensure_ready_accepts_the_layout_of_the_setup_script(lab_layout):
+    lab_layout.workspace().ensure_ready()
 
 
-def test_a_state_folder_outside_the_root_holds_every_change_and_nothing_lands_under_the_root(root, tmp_path):
-    # Outside root, the lab agent's sandboxed shell (which can write all of root) cannot reach the state.
-    state_dir = str(tmp_path / "state")
-    ws = LabWorkspace(root, state_dir=state_dir)
-    assert ws.state_dir == os.path.abspath(state_dir)
-    assert LabWorkspace(root).state_dir == os.path.join(os.path.abspath(root), ".lab")
+def test_ensure_ready_refuses_a_missing_base_clone_naming_the_setup_script(lab_layout):
+    shutil.rmtree(lab_layout.base_path(REPO_MODELING_AGENT))
 
-    change = start(ws)
-    ws.append_note(change, "## Plan\nAdd a note.")
-
-    assert os.path.isfile(os.path.join(state_dir, "changes", change.id, "state.json"))
-    assert read(os.path.join(state_dir, "changes", change.id, "notes.md")) == "## Plan\nAdd a note.\n\n"
-    assert not os.path.exists(os.path.join(root, ".lab"))
-    assert LabWorkspace(root, state_dir=state_dir).active_change() == change
-    assert LabWorkspace(root).active_change() is None
-    ws.park(change)
-    assert [c.id for c in LabWorkspace(root, state_dir=state_dir).parked_changes()] == [change.id]
-    ws.drop(ws.resume(change.id))
-    assert not os.path.exists(os.path.join(state_dir, "changes", change.id))
+    with pytest.raises(LabWorkspaceError, match="modeling_agent.*scripts/lab/setup_workspace.sh"):
+        lab_layout.workspace().ensure_ready()
 
 
-def test_slug_falls_back_and_is_reduced_to_branch_safe_characters(ws):
-    change = ws.start_change(user="Ünïcode_User", title="!!!", kind=ChangeKind.OTHER)
+def test_ensure_ready_refuses_a_base_branch_the_clone_does_not_have(lab_layout):
+    specs = repo_specs_from_settings(lab_layout.root, lab_layout.git_root, {**DEFAULT_UPSTREAMS,
+                                                                            REPO_BESSER: "BESSER-PEARL/BESSER@nope"})
+    workspace = LabWorkspace(lab_layout.root, specs, state_dir=lab_layout.state_dir, git_root=lab_layout.git_root)
+
+    with pytest.raises(LabWorkspaceError, match="besser: base branch nope"):
+        workspace.ensure_ready()
+
+
+# -- state ---------------------------------------------------------------------------------------------
+
+def test_state_json_has_the_version_and_every_field_and_reloads(lab_workspace, lab_layout):
+    change = open_new(lab_workspace)
+    change.issues = [{"repo": "besser", "number": 7, "title": "Notes", "closes": True}]
+    change.pull_requests = {REPO_BESSER: 812}
+    lab_workspace.save_change(change)
+
+    state = json.loads(read(state_file(lab_layout, change.id)))
+
+    assert state["version"] == LAB_STATE_VERSION == 2
+    assert set(state) == {"version"} | {f.name for f in fields(LabChange)}
+    assert state["kind"] == "editor_element" and state["owner"] == "Jordi" and state["status"] == "open"
+    assert state["bases"][REPO_BESSER]["branch"] == "development"
+    assert state["updated_at"] >= state["created_at"] > 0
+    reloaded = LabWorkspace(lab_layout.root, lab_layout.specs(), state_dir=lab_layout.state_dir,
+                            git_root=lab_layout.git_root).get_change(change.id)
+    assert reloaded == change
+    assert isinstance(reloaded.bases[REPO_BESSER], RepoBase)
+
+
+def test_a_phase_1_state_file_loads_with_defaults(lab_workspace, lab_layout):
+    write(state_file(lab_layout, "0123456789ab"), json.dumps({
+        "id": "0123456789ab", "slug": "note", "title": "Note", "user": "jordi", "kind": "generator",
+        "status": "parked", "created_at": 5.0, "branches": {"besser": "lab/jordi/note"}, "plan_approved": True}))
+
+    change = lab_workspace.get_change("0123456789ab")
+
+    assert change == LabChange(id="0123456789ab", slug="note", title="Note", owner="jordi", kind=ChangeKind.GENERATOR,
+                               status="open", created_at=5.0, branches={"besser": "lab/jordi/note"},
+                               plan_approved=True)
+
+
+@pytest.mark.parametrize("state", ['{"kind": "nope"}', "{not json", "[]"])
+def test_an_unreadable_change_state_is_a_refusal_naming_the_file(lab_workspace, lab_layout, state):
+    change = lab_workspace.create_draft(owner="jordi")
+    write(state_file(lab_layout, change.id), state)
+
+    with pytest.raises(LabWorkspaceError, match=f"state of change {change.id}.*cannot be read"):
+        lab_workspace.get_change(change.id)
+    with pytest.raises(LabWorkspaceError, match=f"state of change {change.id}.*cannot be read"):
+        lab_workspace.changes()
+
+
+def test_a_change_id_must_have_the_shape_of_one(lab_workspace):
+    with pytest.raises(LabWorkspaceError, match="invalid change id"):
+        lab_workspace.get_change("../../etc")
+    with pytest.raises(LabWorkspaceError, match="no change 0123456789ab"):
+        lab_workspace.get_change("0123456789ab")
+
+
+def test_changes_lists_drafts_and_open_changes_oldest_first_unless_asked(lab_workspace):
+    draft = lab_workspace.create_draft(owner="ana")
+    opened = open_new(lab_workspace)
+    closed = lab_workspace.create_draft(owner="ben")
+    closed.status = "closed"
+    lab_workspace.save_change(closed)
+
+    assert [c.id for c in lab_workspace.changes()] == [draft.id, opened.id]
+    assert [c.id for c in lab_workspace.changes(statuses=("closed",))] == [closed.id]
+
+
+def test_notes_accumulate_per_change(lab_workspace, lab_layout):
+    change = lab_workspace.create_draft(owner="jordi")
+    assert lab_workspace.notes(change) == ""
+
+    lab_workspace.append_note(change, "Asked: add a note element.")
+    lab_layout.workspace().append_note(change, "Done: added Note.\n")
+
+    assert lab_workspace.notes(change) == "Asked: add a note element.\n\nDone: added Note.\n\n"
+    assert not os.path.exists(os.path.join(lab_layout.root, ".lab"))
+
+
+# -- opening a change ----------------------------------------------------------------------------------
+
+def test_open_change_takes_a_slug_no_local_upstream_or_pushed_branch_has(lab_workspace, lab_layout):
+    lab_layout.git_in(REPO_MODELING_AGENT, "branch", "lab/jordi-c/note-element", "develop")
+    first = open_new(lab_workspace, owner="Jordi.C", title="Note element!")
+    lab_workspace.record_pushed(REPO_BESSER, "lab/jordi-c/pushed", first.bases[REPO_BESSER].sha)
+
+    pushed = open_new(lab_workspace, owner="Jordi.C", title="Pushed")
+
+    assert first.slug == "note-element-2"
+    assert first.branches == {key: "lab/jordi-c/note-element-2" for key in REPO_ORDER}
+    assert first.title == "Note element!" and first.kind == ChangeKind.EDITOR_ELEMENT
+    assert pushed.slug == "pushed-2"
+
+
+def test_open_change_refuses_a_change_that_is_not_a_draft(lab_workspace):
+    change = open_new(lab_workspace)
+
+    with pytest.raises(LabWorkspaceError, match="is not a draft"):
+        lab_workspace.open_change(change, title="Again", kind=ChangeKind.OTHER)
+
+
+def test_slug_falls_back_and_is_reduced_to_branch_safe_characters(lab_workspace):
+    change = open_new(lab_workspace, owner="Ünïcode_User", title="!!!", kind=ChangeKind.OTHER)
 
     assert change.branches[REPO_BESSER] == "lab/unicode-user/change"
 
@@ -177,36 +222,36 @@ def test_a_long_title_is_cut_at_a_word_boundary(title, slug):
     assert _slug(title, "change") == slug
 
 
-def test_start_change_refuses_uncommitted_work_but_ignores_run_artefacts(ws, root):
-    write(path_of(ws, REPO_BESSER, ".besser_trace.jsonl"), "{}\n")
-    write(path_of(ws, REPO_BESSER, ".besser_command_output", "out.txt"), "log\n")
-    ws.drop(start(ws))
+def test_run_git_runs_in_the_base_or_in_the_change_tree(lab_workspace):
+    change = open_new(lab_workspace)
 
-    write(path_of(ws, REPO_MODELING_AGENT, "stray.py"), "x = 1\n")
-    with pytest.raises(LabWorkspaceError, match="modeling_agent has uncommitted changes"):
-        start(ws)
-    assert ws.active_change() is None
-    assert branch_of(ws, REPO_BESSER) == "development"
+    assert lab_workspace.run_git(REPO_BESSER, "rev-parse", "--abbrev-ref", "HEAD").strip() == "development"
+    assert lab_workspace.run_git(REPO_BESSER, "rev-parse", "--abbrev-ref", "HEAD", change=change).strip() == (
+        "lab/jordi/note-element")
+    assert lab_workspace.run_git(REPO_FRONTEND, "rev-parse", "--show-toplevel", change=change).strip().replace(
+        "\\", "/").lower() == tree(lab_workspace, change, REPO_FRONTEND).replace("\\", "/").lower()
 
 
-def test_repo_changes_reports_each_repository_without_artefacts_or_the_submodule_pointer(ws):
-    change = start(ws)
-    besser = ws.repos[REPO_BESSER].path
-    write(path_of(ws, REPO_BESSER, "README.md"), "BESSER Lab\n")
-    os.remove(path_of(ws, REPO_BESSER, "docs", "old.rst"))
-    write(path_of(ws, REPO_BESSER, "besser", "new_gen.py"), "print('hi')\n")
-    write(path_of(ws, REPO_BESSER, "café.md"), "non-ASCII name\n")
+# -- the work of a change ------------------------------------------------------------------------------
+
+def test_repo_changes_reports_each_repository_without_artefacts_or_the_submodule_pointer(lab_workspace):
+    change = open_new(lab_workspace)
+    besser = tree(lab_workspace, change, REPO_BESSER)
+    editor = tree(lab_workspace, change, REPO_FRONTEND)
+    write(os.path.join(besser, "README.md"), "BESSER Lab\n")
+    os.remove(os.path.join(besser, "docs", "old.rst"))
+    write(os.path.join(besser, "besser", "new_gen.py"), "print('hi')\n")
+    write(os.path.join(besser, "café.md"), "non-ASCII name\n")
     git(besser, "mv", "besser/old_name.py", "besser/new_name.py")
-    write(path_of(ws, REPO_BESSER, ".besser_trace.jsonl"), "{}\n")
-    write(path_of(ws, REPO_BESSER, ".besser_command_output", "out.txt"), "log\n")
-    write(path_of(ws, REPO_BESSER, "run.sandbox-home", "cache"), "x\n")
-    editor = ws.repos[REPO_FRONTEND].path
+    write(os.path.join(besser, ".besser_trace.jsonl"), "{}\n")
+    write(os.path.join(besser, ".besser_command_output", "out.txt"), "log\n")
+    write(os.path.join(besser, "run.sandbox-home", "cache"), "x\n")
     write(os.path.join(editor, "packages", "webapp", "src", "note.ts"), "export const note = 1;\n")
     git(editor, "add", "-A")
-    git(editor, "commit", "-q", "-m", "note")  # moves BESSER's submodule pointer
+    git(editor, "commit", "-q", "-m", "note")  # moves the editor away from BESSER's submodule pointer
     write(os.path.join(editor, "packages", "webapp", "src", "app.ts"), "export const app = 2;\n")
 
-    changes = ws.repo_changes(change)
+    changes = lab_workspace.repo_changes(change)
 
     assert [(c.repo, c.branch, c.base) for c in changes] == [
         (REPO_FRONTEND, "lab/jordi/note-element", "develop"),
@@ -223,15 +268,17 @@ def test_repo_changes_reports_each_repository_without_artefacts_or_the_submodule
         FileChange("besser/new_name.py", "renamed"),
         FileChange("café.md", "added"),
     }
+    assert lab_workspace.touched_paths(change, REPO_BESSER) == {
+        "README.md", "docs/old.rst", "besser/new_gen.py", "besser/old_name.py", "besser/new_name.py", "café.md"}
 
 
-def test_commit_all_commits_only_the_changed_paths_as_the_user(ws):
-    change = start(ws)
-    besser = ws.repos[REPO_BESSER].path
-    editor = ws.repos[REPO_FRONTEND].path
-    write(path_of(ws, REPO_BESSER, "README.md"), "BESSER Lab\n")
-    write(path_of(ws, REPO_BESSER, "café.md"), "non-ASCII name\n")
-    write(path_of(ws, REPO_BESSER, ".besser_trace.jsonl"), "{}\n")
+def test_commit_all_commits_only_the_changed_paths_as_the_login(lab_workspace):
+    change = open_new(lab_workspace)
+    besser = tree(lab_workspace, change, REPO_BESSER)
+    editor = tree(lab_workspace, change, REPO_FRONTEND)
+    write(os.path.join(besser, "README.md"), "BESSER Lab\n")
+    write(os.path.join(besser, "café.md"), "non-ASCII name\n")
+    write(os.path.join(besser, ".besser_trace.jsonl"), "{}\n")
     write(os.path.join(editor, "packages", "webapp", "src", "note.ts"), "export const note = 1;\n")
     git(editor, "add", "-A")
     git(editor, "commit", "-q", "-m", "note")
@@ -239,7 +286,7 @@ def test_commit_all_commits_only_the_changed_paths_as_the_user(ws):
     write(os.path.join(editor, "packages", "webapp", "src", "app.ts"), "export const app = 2;\n")
     besser_before = git(besser, "rev-parse", "HEAD")
 
-    shas = ws.commit_all(change, "feat: note element")
+    shas = lab_workspace.commit_all(change, "feat: note element", login="Jordi")
 
     assert set(shas) == {REPO_FRONTEND, REPO_BESSER}
     assert shas[REPO_BESSER] == git(besser, "rev-parse", "HEAD") != besser_before
@@ -250,234 +297,79 @@ def test_commit_all_commits_only_the_changed_paths_as_the_user(ws):
     assert sorted(committed) == ["README.md", "café.md"]
     assert ".besser_trace.jsonl" in git(besser, "ls-files", "--others")
     assert git(editor, "show", "--name-only", "--format=", "HEAD") == "packages/webapp/src/app.ts"
-    assert ws.commit_all(change, "feat: nothing new") == {}
-    # Committed work still counts against the merge-base.
-    assert {c.repo for c in ws.repo_changes(change)} == {REPO_FRONTEND, REPO_BESSER}
+    assert lab_workspace.commit_all(change, "feat: nothing new", login="Jordi") == {}
+    # Committed work still counts against the base.
+    assert {c.repo for c in lab_workspace.repo_changes(change)} == {REPO_FRONTEND, REPO_BESSER}
 
 
-def test_git_runs_no_hook_or_fsmonitor_command_the_agent_could_have_planted(ws, tmp_path):
-    # The lab agent's file tools reach .git/: anything git ran from there would run outside the sandbox.
-    change = start(ws)
-    besser = ws.repos[REPO_BESSER].path
+def test_git_runs_no_hook_or_fsmonitor_command_the_agent_could_have_planted(lab_workspace, lab_layout, tmp_path):
+    change = open_new(lab_workspace)
     marker = tmp_path / "planted-ran"
     script = f'#!/bin/sh\necho ran >> "{marker.as_posix()}"\n'
-    hooks = os.path.join(besser, git(besser, "rev-parse", "--git-path", "hooks"))
-    for hook in ("pre-commit", "commit-msg", "post-commit", "post-checkout"):
-        write(os.path.join(hooks, hook), script)
-        os.chmod(os.path.join(hooks, hook), 0o755)
+    for hook in ("pre-commit", "commit-msg", "post-commit", "post-checkout", "reference-transaction"):
+        path = os.path.join(lab_layout.git_dir(REPO_BESSER), "hooks", hook)
+        write(path, script)
+        os.chmod(path, 0o755)
     fsmonitor = tmp_path / "fsmonitor.sh"
     write(str(fsmonitor), script)
     os.chmod(fsmonitor, 0o755)
-    git(besser, "config", "core.fsmonitor", fsmonitor.as_posix())
-    write(path_of(ws, REPO_BESSER, "README.md"), "BESSER Lab\n")
+    lab_layout.git_in(REPO_BESSER, "config", "core.fsmonitor", fsmonitor.as_posix())
+    write(tree(lab_workspace, change, REPO_BESSER, "README.md"), "BESSER Lab\n")
 
-    ws.repo_changes(change)
-    ws.commit_all(change, "feat: note element")
-    ws.park(change)
+    lab_workspace.repo_changes(change)
+    lab_workspace.commit_all(change, "feat: note element", login="Jordi")
+    open_new(lab_workspace, title="Second")
+    lab_workspace.drop(change)
 
     assert not marker.exists()
 
 
-def test_commit_all_refuses_a_repository_that_is_not_on_the_change_branch(ws):
-    change = start(ws)
-    besser = ws.repos[REPO_BESSER].path
-    git(besser, "switch", "-q", "development")
-    write(path_of(ws, REPO_BESSER, "README.md"), "edited on the base branch\n")
-    before = git(besser, "rev-parse", "HEAD")
-
-    with pytest.raises(LabWorkspaceError, match="not on the change's branch"):
-        ws.commit_all(change, "feat: x")
-    assert git(besser, "rev-parse", "HEAD") == before
-
-
-def test_park_commits_work_in_progress_and_resume_brings_it_back(ws, root):
-    change = start(ws)
-    write(path_of(ws, REPO_BESSER, "README.md"), "BESSER Lab\n")
-    write(os.path.join(ws.repos[REPO_FRONTEND].path, "packages", "webapp", "src", "app.ts"), "export const app = 2;\n")
-
-    ws.park(change)
-
-    assert change.status == "parked"
-    assert ws.active_change() is None
-    assert [c.id for c in LabWorkspace(root).parked_changes()] == [change.id]
-    assert {key: branch_of(ws, key) for key in REPO_ORDER} == {
-        REPO_FRONTEND: "develop", REPO_BESSER: "development", REPO_MODELING_AGENT: "develop"}
-    assert read(path_of(ws, REPO_BESSER, "README.md")) == "BESSER\n"
-    assert git(ws.repos[REPO_BESSER].path, "log", "-1", "--format=%s", change.branches[REPO_BESSER]) == (
-        "wip: Note element")
-    with pytest.raises(LabWorkspaceError, match="not active"):
-        ws.park(change)
-
-    resumed = LabWorkspace(root).resume(change.id)
-
-    assert resumed.status == "active" and resumed.id == change.id
-    assert {key: branch_of(ws, key) for key in REPO_ORDER} == change.branches
-    assert read(path_of(ws, REPO_BESSER, "README.md")) == "BESSER Lab\n"
-    assert ws.parked_changes() == []
-    with pytest.raises(LabWorkspaceError, match="is active"):
-        ws.resume(change.id)
-
-
-def test_resume_rejects_an_id_that_is_not_a_change_id(ws):
-    with pytest.raises(LabWorkspaceError, match="invalid change id"):
-        ws.resume("../../etc")
-    with pytest.raises(LabWorkspaceError, match="no change"):
-        ws.resume("0123456789ab")
-
-
-def test_drop_discards_the_work_the_branches_and_the_state(ws, root):
-    change = start(ws)
-    write(path_of(ws, REPO_BESSER, "README.md"), "committed\n")
-    ws.commit_all(change, "feat: x")
-    write(path_of(ws, REPO_BESSER, "README.md"), "uncommitted\n")
-    write(path_of(ws, REPO_BESSER, "besser", "new_gen.py"), "print('hi')\n")
-
-    ws.drop(change)
-
-    assert ws.active_change() is None
-    assert branch_of(ws, REPO_BESSER) == "development"
-    assert read(path_of(ws, REPO_BESSER, "README.md")) == "BESSER\n"
-    assert not os.path.exists(path_of(ws, REPO_BESSER, "besser", "new_gen.py"))
-    for key in REPO_ORDER:
-        assert git(ws.repos[key].path, "branch", "--list", "lab/*") == ""
-    assert not os.path.exists(os.path.join(root, ".lab", "changes", change.id))
-
-
-def test_drop_of_a_parked_change_leaves_the_active_one_checked_out(ws):
-    parked = start(ws, "First")
-    write(path_of(ws, REPO_BESSER, "README.md"), "first\n")
-    ws.park(parked)
-    active = start(ws, "Second")
-    write(path_of(ws, REPO_BESSER, "README.md"), "second\n")
-
-    ws.drop(parked)
-
-    assert ws.parked_changes() == []
-    assert ws.active_change().id == active.id
-    assert branch_of(ws, REPO_BESSER) == "lab/jordi/second"
-    assert read(path_of(ws, REPO_BESSER, "README.md")) == "second\n"
-    assert git(ws.repos[REPO_BESSER].path, "branch", "--list", "lab/jordi/first") == ""
-
-
-def test_files_only_the_change_ignores_do_not_block_the_base_after_park_or_drop(ws):
-    change = start(ws)
-    write(path_of(ws, REPO_BESSER, ".gitignore"), "gen_out/\n*.tmp\n")
-    write(path_of(ws, REPO_BESSER, "gen_out", "result.txt"), "generated\n")
-    write(path_of(ws, REPO_BESSER, "besser", "x.tmp"), "scratch\n")
-    write(path_of(ws, REPO_BESSER, "venv", "lib.py"), "kept\n")
-    write(path_of(ws, REPO_BESSER, ".git", "info", "exclude"), "venv/\n")  # ignored on every branch
-
-    ws.park(change)
-
-    assert not os.path.exists(path_of(ws, REPO_BESSER, "gen_out", "result.txt"))
-    assert not os.path.exists(path_of(ws, REPO_BESSER, "besser", "x.tmp"))
-    assert read(path_of(ws, REPO_BESSER, "venv", "lib.py")) == "kept\n"
-    ws.ensure_clean()
-    change = ws.resume(change.id)
-    write(path_of(ws, REPO_BESSER, "gen_out", "result.txt"), "generated\n")
-
-    ws.drop(change)
-
-    ws.ensure_clean()
-    assert read(path_of(ws, REPO_BESSER, "venv", "lib.py")) == "kept\n"
-
-
-def test_a_repository_made_inside_a_checkout_is_named_and_removed_by_drop(ws):
-    change = start(ws)
-    nested = path_of(ws, REPO_BESSER, "besser", "generators", "rusty")
+def test_a_repository_made_inside_a_tree_is_named_and_removed_by_drop(lab_workspace):
+    change = open_new(lab_workspace)
+    nested = tree(lab_workspace, change, REPO_BESSER, "besser", "generators", "rusty")
     write(os.path.join(nested, "Cargo.toml"), "[package]\n")
     git(nested, "init", "-q")
-    write(path_of(ws, REPO_BESSER, "README.md"), "BESSER Lab\n")
-    before = git(ws.repos[REPO_BESSER].path, "rev-parse", "HEAD")
+    write(tree(lab_workspace, change, REPO_BESSER, "README.md"), "BESSER Lab\n")
+    before = lab_workspace.run_git(REPO_BESSER, "rev-parse", "HEAD", change=change)
 
     with pytest.raises(LabWorkspaceError, match=r"besser/generators/rusty/ is a git repository of its own"):
-        ws.commit_all(change, "feat: rusty")
-    assert git(ws.repos[REPO_BESSER].path, "rev-parse", "HEAD") == before
+        lab_workspace.commit_all(change, "feat: rusty", login="Jordi")
+    assert lab_workspace.run_git(REPO_BESSER, "rev-parse", "HEAD", change=change) == before
 
-    ws.drop(change)
+    lab_workspace.drop(change)
 
     assert not os.path.exists(nested)
-    start(ws, "Next")
+    open_new(lab_workspace, title="Next")
 
 
-def test_drop_refuses_a_repository_switched_to_another_branch_and_discards_nothing(ws):
-    change = start(ws)
-    besser = ws.repos[REPO_BESSER].path
-    write(path_of(ws, REPO_FRONTEND, "packages", "webapp", "src", "app.ts"), "export const app = 2;\n")
-    git(besser, "switch", "-q", "-c", "operator-hotfix")
-    write(path_of(ws, REPO_BESSER, "README.md"), "operator edit\n")
-    write(path_of(ws, REPO_BESSER, "operator_notes.txt"), "notes\n")
+def test_merge_github_work_merges_commits_added_on_github(lab_workspace, lab_layout):
+    change = open_new(lab_workspace)
+    besser = tree(lab_workspace, change, REPO_BESSER)
+    write(os.path.join(besser, "README.md"), "BESSER Lab\n")
+    lab_workspace.commit_all(change, "feat: x", login="Jordi")
+    # A suggestion accepted on GitHub: one more commit on the change's branch, held by another git directory.
+    github = os.path.join(lab_layout.home, "github")
+    git(lab_layout.home, "clone", "-q", "--bare", lab_layout.git_dir(REPO_BESSER), github)
+    work = os.path.join(lab_layout.home, "github-work")
+    git(lab_layout.home, "clone", "-q", "-b", change.branches[REPO_BESSER], github, work)
+    write(os.path.join(work, "README.md"), "BESSER Lab, reviewed\n")
+    git(work, "commit", "-q", "-am", "Apply suggestion")
+    git(work, "push", "-q", "origin", change.branches[REPO_BESSER])
 
-    with pytest.raises(LabWorkspaceError, match="besser is on operator-hotfix"):
-        ws.drop(change)
+    lab_workspace.merge_github_work(change, REPO_BESSER, github, f"refs/heads/{change.branches[REPO_BESSER]}")
 
-    assert read(path_of(ws, REPO_BESSER, "README.md")) == "operator edit\n"
-    assert read(path_of(ws, REPO_BESSER, "operator_notes.txt")) == "notes\n"
-    assert read(path_of(ws, REPO_FRONTEND, "packages", "webapp", "src", "app.ts")) == "export const app = 2;\n"
-    assert ws.active_change() == change
-
-
-def test_drop_of_a_change_whose_start_failed_part_way_leaves_repositories_without_its_branch(ws):
-    change = start(ws)
-    agent = ws.repos[REPO_MODELING_AGENT].path
-    git(agent, "switch", "-q", "develop")
-    git(agent, "branch", "-q", "-D", change.branches[REPO_MODELING_AGENT])
-    write(os.path.join(agent, "agent.py"), "AGENT = 2\n")
-
-    ws.drop(change)
-
-    assert ws.active_change() is None
-    assert branch_of(ws, REPO_BESSER) == "development"
-    assert read(os.path.join(agent, "agent.py")) == "AGENT = 2\n"
+    assert read(os.path.join(besser, "README.md")) == "BESSER Lab, reviewed\n"
+    assert lab_workspace.run_git(REPO_BESSER, "log", "-1", "--format=%s", change=change).strip() == "Apply suggestion"
 
 
-@pytest.mark.parametrize("state", ['{"kind": "nope"}', "{not json", "[]"])
-def test_an_unreadable_change_state_is_a_refusal_naming_the_file(ws, root, state):
-    parked = start(ws)
-    ws.park(parked)
-    write(os.path.join(root, ".lab", "changes", parked.id, "state.json"), state)
-
-    for read_state in (ws.active_change, ws.parked_changes):
-        with pytest.raises(LabWorkspaceError, match=f"state of change {parked.id}.*cannot be read"):
-            read_state()
-
-
-def test_notes_accumulate_per_change(ws, root):
-    change = start(ws)
-    assert ws.notes(change) == ""
-
-    ws.append_note(change, "Asked: add a note element.")
-    LabWorkspace(root).append_note(change, "Done: added Note.\n")
-
-    assert ws.notes(change) == "Asked: add a note element.\n\nDone: added Note.\n\n"
-
-
-def test_diff_shows_new_files_without_touching_the_index_and_is_bounded(ws):
-    start(ws)
-    besser = ws.repos[REPO_BESSER].path
-    write(path_of(ws, REPO_BESSER, "README.md"), "BESSER Lab\n")
-    write(path_of(ws, REPO_BESSER, "besser", "new_gen.py"), "print('hi')\n")
-    write(path_of(ws, REPO_BESSER, ".besser_trace.jsonl"), "{}\n")
-
-    text = ws.diff(REPO_BESSER)
-
-    assert "+BESSER Lab" in text and "+print('hi')" in text
-    assert ".besser_trace" not in text
-    assert git(besser, "diff", "--cached", "--name-only") == ""
-    assert "besser/new_gen.py" in git(besser, "ls-files", "--others")
-    short = ws.diff(REPO_BESSER, max_bytes=40)
-    assert short.endswith("bytes shown; read the files for the rest]\n")
-    assert "[diff truncated: 40 of" in short
-
-
-def test_git_errors_are_raised_with_secrets_redacted(ws):
+def test_git_errors_are_raised_with_secrets_redacted(lab_workspace):
     token = "ghp_" + "a1B2c3D4" * 5
     with pytest.raises(LabWorkspaceError) as error:
-        ws.run_git(REPO_BESSER, "switch", token)
+        lab_workspace.run_git(REPO_BESSER, "switch", token)
     assert "git switch failed in besser" in str(error.value)
     assert token not in str(error.value)
 
     own_secret = "plain-secret-without-a-known-shape"
     with pytest.raises(LabWorkspaceError) as error:
-        ws.run_git(REPO_BESSER, "switch", own_secret, env_extra={"LAB_EXTRA": own_secret})
+        lab_workspace.run_git(REPO_BESSER, "switch", own_secret, env_extra={"LAB_EXTRA": own_secret})
     assert own_secret not in str(error.value)

@@ -285,13 +285,18 @@ def test_stop_also_ends_the_children_of_a_service(tmp_path, fake_script, supervi
 
 def _repos(root) -> dict[str, RepoSpec]:
     besser = os.path.join(str(root), "besser")
+    git_root = str(root) + "-git"
     return {
-        REPO_BESSER: RepoSpec(REPO_BESSER, besser, "development", "BESSER-PEARL", "BESSER"),
+        REPO_BESSER: RepoSpec(REPO_BESSER, besser, "development", "BESSER-PEARL", "BESSER",
+                              git_dir=os.path.join(git_root, "besser")),
         REPO_FRONTEND: RepoSpec(REPO_FRONTEND, os.path.join(besser, "besser", "utilities", "web_modeling_editor",
                                                             "frontend"),
-                                "develop", "BESSER-PEARL", "BESSER-Web-Modeling-Editor"),
+                                "develop", "BESSER-PEARL", "BESSER-Web-Modeling-Editor",
+                                git_dir=os.path.join(git_root, "besser", "modules", "besser", "utilities",
+                                                     "web_modeling_editor", "frontend")),
         REPO_MODELING_AGENT: RepoSpec(REPO_MODELING_AGENT, os.path.join(str(root), "modeling-agent"), "develop",
-                                      "BESSER-PEARL", "modeling-agent"),
+                                      "BESSER-PEARL", "modeling-agent",
+                                      git_dir=os.path.join(git_root, "modeling-agent")),
     }
 
 

@@ -10,7 +10,11 @@ with its type, default and meaning. Two ways to read them:
   environment reaches the next request.
 
 A malformed value never raises: each field falls back to its default the way
-its documented parsing says, so one bad variable cannot stop the backend.
+its documented parsing says, so one bad variable cannot stop the backend. The
+exceptions are BESSER Lab's repositories (``BESSER_LAB_REPO_*``) and preview
+origins (``BESSER_LAB_PREVIEW_URLS``): a default would point the lab at another
+repository, which it pushes to, or a preview at another origin, so a malformed
+value is refused and the backend does not start.
 """
 
 from __future__ import annotations
@@ -18,11 +22,13 @@ from __future__ import annotations
 import functools
 import hmac
 import os
+import re
 from typing import Annotated, Optional
+from urllib.parse import urlsplit
 
 from pydantic import BeforeValidator, Field, SecretStr, model_validator
 from pydantic_core import PydanticUseDefault
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _TRUTHY = ("1", "true", "yes", "on")
 
@@ -44,6 +50,17 @@ def _positive(parse):
             raise PydanticUseDefault()
         return parsed
     return validate
+
+
+def _non_negative_int(value) -> int:
+    """A blank, unparsable or negative value gives the default; 0 is kept."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise PydanticUseDefault() from None
+    if parsed < 0:
+        raise PydanticUseDefault()
+    return parsed
 
 
 def _number_or_default(parse):
@@ -86,6 +103,43 @@ def _text_or_default(value) -> str:
     return raw
 
 
+# ``owner/name@branch`` of a GitHub repository and the branch the lab works from.
+_UPSTREAM_PATTERN = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+@[A-Za-z0-9._/-]+$")
+
+
+def _upstream(value) -> str:
+    """``owner/name@branch``; blank gives the default, anything else malformed is refused."""
+    raw = str(value).strip()
+    if not raw:
+        raise PydanticUseDefault()
+    if not _UPSTREAM_PATTERN.fullmatch(raw):
+        raise ValueError(f"expected owner/name@branch, got {raw!r}")
+    return raw
+
+
+def _origins(value) -> tuple[str, ...]:
+    """Comma-separated http(s) origins (a trailing slash allowed), lower-cased; blank entries are skipped.
+
+    An entry that is not an origin is refused. One equal to ``DEPLOYMENT_URL`` is kept: the preview pool
+    disables that slot and says why.
+    """
+    entries = value.split(",") if isinstance(value, str) else list(value)
+    origins = []
+    for entry in (str(e).strip() for e in entries):
+        if not entry:
+            continue
+        parts = urlsplit(entry)
+        try:
+            parts.port  # noqa: B018 - raises ValueError on a port out of range
+        except ValueError:
+            parts = None
+        if (parts is None or parts.scheme.lower() not in ("http", "https") or not parts.hostname
+                or "@" in parts.netloc or parts.path not in ("", "/") or parts.query or parts.fragment):
+            raise ValueError(f"BESSER_LAB_PREVIEW_URLS: {entry!r} is not an origin such as https://preview.example")
+        origins.append(f"{parts.scheme}://{parts.netloc}".lower())
+    return tuple(origins)
+
+
 def _one_or_true(value) -> bool:
     return str(value).strip().lower() in ("1", "true")
 
@@ -106,6 +160,12 @@ _FlagOrUnset = Annotated[Optional[bool], BeforeValidator(_flag_or_default)]
 _IntOrDefault = Annotated[Optional[int], BeforeValidator(_number_or_default(int))]
 _FloatOrDefault = Annotated[Optional[float], BeforeValidator(_number_or_default(float))]
 _AbsPath = Annotated[Optional[str], BeforeValidator(_abspath)]
+_NonNegativeInt = Annotated[int, BeforeValidator(_non_negative_int)]
+_Text = Annotated[str, BeforeValidator(_text_or_default)]
+# NoDecode: the variable is a comma-separated list, not the JSON pydantic-settings decodes by default.
+_Origins = Annotated[tuple[str, ...], NoDecode, BeforeValidator(_origins)]
+
+_Upstream = Annotated[str, BeforeValidator(_upstream)]
 
 
 class BackendSettings(BaseSettings):
@@ -372,29 +432,84 @@ class BackendSettings(BaseSettings):
         description="Comma-separated GitHub logins allowed to use the lab (case-insensitive); empty allows none.")
     lab_workspace_root: _AbsPath = Field(
         None, validation_alias="BESSER_LAB_WORKSPACE_ROOT",
-        description="Folder holding the lab's working copies (besser, modeling-agent).")
+        description="Folder of the lab's working trees: base clones in base/, each change's trees in "
+                    "changes/<id>/, shared stores in .cache/. Hidden from every sandbox.")
+    lab_git_root: _AbsPath = Field(
+        None, validation_alias="BESSER_LAB_GIT_ROOT",
+        description="Folder of the git directories of every base clone and change tree, outside the "
+                    "working trees (read-only in every sandbox); unset: <BESSER_LAB_WORKSPACE_ROOT>-git.")
     lab_state_dir: _AbsPath = Field(
         None, validation_alias="BESSER_LAB_STATE_DIR",
-        description="Folder of the lab's state (changes, notes, last checks, preview logs); unset: "
-                    "<BESSER_LAB_WORKSPACE_ROOT>/.lab. Outside the working copy, the lab agent's shell cannot reach it.")
+        description="Folder of the lab's state (changes, threads, audit log, team memory, preview logs); "
+                    "unset: <BESSER_LAB_WORKSPACE_ROOT>-state. Hidden from every sandbox.")
     lab_llm_provider: Annotated[str, BeforeValidator(_text_or_default)] = Field(
         "anthropic", validation_alias="BESSER_LAB_LLM_PROVIDER",
         description="LLM provider of the lab agent.")
     lab_llm_model: Annotated[Optional[str], BeforeValidator(_text_or_default)] = Field(
         None, validation_alias="BESSER_LAB_LLM_MODEL",
         description="Model of the lab agent (unset: the provider's default).")
+    lab_plan_llm_model: Annotated[Optional[str], BeforeValidator(_text_or_default)] = Field(
+        None, validation_alias="BESSER_LAB_PLAN_LLM_MODEL",
+        description="Model of the plan step, same provider (unset: BESSER_LAB_LLM_MODEL).")
     lab_llm_api_key: SecretStr = Field(
         SecretStr(""), validation_alias="BESSER_LAB_LLM_API_KEY",
         description="The server's API key for the lab agent's provider; users never send their own.")
     lab_max_cost_usd: _PositiveFloat = Field(
         5.0, validation_alias="BESSER_LAB_MAX_COST_USD",
         description="Cost cap (USD) of one lab run.")
+    lab_user_monthly_cap_usd: _PositiveFloat = Field(
+        75.0, validation_alias="BESSER_LAB_USER_MONTHLY_CAP_USD",
+        description="What one login's lab runs may cost (USD) per UTC month.")
+    lab_monthly_cap_usd: _PositiveFloat = Field(
+        300.0, validation_alias="BESSER_LAB_MONTHLY_CAP_USD",
+        description="What all lab runs together may cost (USD) per UTC month.")
+    lab_max_concurrent_runs: _PositiveInt = Field(
+        2, validation_alias="BESSER_LAB_MAX_CONCURRENT_RUNS",
+        description="Lab runs in progress at once across all changes; more are refused.")
     lab_max_runtime_seconds: _PositiveInt = Field(
         2400, validation_alias="BESSER_LAB_MAX_RUNTIME_SECONDS",
         description="Runtime cap (seconds) of one lab run.")
+    lab_admin_logins: str = Field(
+        "", validation_alias="BESSER_LAB_ADMIN_LOGINS",
+        description="Comma-separated logins, among BESSER_LAB_ALLOWED_LOGINS, who may drop any change and "
+                    "stop any run; others listed here are ignored with a warning.")
+    lab_repo_besser: _Upstream = Field(
+        "BESSER-PEARL/BESSER@development", validation_alias="BESSER_LAB_REPO_BESSER",
+        description="BESSER's GitHub repository and base branch (owner/name@branch): where new changes "
+                    "start and their pull requests go. A fork, for testing.")
+    lab_repo_frontend: _Upstream = Field(
+        "BESSER-PEARL/BESSER-Web-Modeling-Editor@develop", validation_alias="BESSER_LAB_REPO_FRONTEND",
+        description="The web editor's GitHub repository and base branch (owner/name@branch).")
+    lab_repo_modeling_agent: _Upstream = Field(
+        "BESSER-PEARL/modeling-agent@develop", validation_alias="BESSER_LAB_REPO_MODELING_AGENT",
+        description="The modeling agent's GitHub repository and base branch (owner/name@branch).")
+    lab_base_refresh_minutes: _NonNegativeInt = Field(
+        60, validation_alias="BESSER_LAB_BASE_REFRESH_MINUTES",
+        description="Minutes between two fetches of the base branches; 0: only by hand and when a change "
+                    "opens. Open changes never move by themselves.")
     lab_preview_enabled: _Flag = Field(
         False, validation_alias="BESSER_LAB_PREVIEW_ENABLED",
-        description="Run the working copy's backend, editor and modeling agent as a live preview.")
+        description="Run a change's backend, editor and modeling agent as a live preview (Try it).")
+    lab_preview_urls: _Origins = Field(
+        (), validation_alias="BESSER_LAB_PREVIEW_URLS",
+        description="Comma-separated public origins of the preview slots, one per slot, each other than "
+                    "DEPLOYMENT_URL; unset: one slot on http://localhost ports.")
+    lab_preview_bind: _Text = Field(
+        "127.0.0.1", validation_alias="BESSER_LAB_PREVIEW_BIND",
+        description="Host address the preview ports are published on (0.0.0.0 in a container).")
+    lab_preview_openai_api_key: SecretStr = Field(
+        SecretStr(""), validation_alias="BESSER_LAB_PREVIEW_OPENAI_API_KEY",
+        description="Key the preview's LLM proxy adds to the preview assistant's requests; unset: no proxy, "
+                    "the preview assistant has no server key.")
+    lab_preview_openai_base_url: _Text = Field(
+        "https://api.openai.com/v1", validation_alias="BESSER_LAB_PREVIEW_OPENAI_BASE_URL",
+        description="Upstream of the preview's LLM proxy (OpenAI or a compatible gateway).")
+    lab_preview_llm_proxy_port: _PositiveInt = Field(
+        9300, validation_alias="BESSER_LAB_PREVIEW_LLM_PROXY_PORT",
+        description="Loopback port of the preview's LLM proxy.")
+    lab_preview_llm_max_requests_per_day: _PositiveInt = Field(
+        2000, validation_alias="BESSER_LAB_PREVIEW_LLM_MAX_REQUESTS_PER_DAY",
+        description="Requests the preview's LLM proxy forwards per UTC day across all slots; more answer 429.")
 
     @model_validator(mode="after")
     def _defaults_within_hard_caps(self) -> "BackendSettings":
@@ -405,6 +520,16 @@ class BackendSettings(BaseSettings):
         # The hourly temp cleanup deletes run folders older than it allows, downloads included.
         self.llm_archive_ttl_seconds = min(max(self.llm_archive_ttl_seconds, self.llm_download_ttl_seconds),
                                            TEMP_DIR_MAX_AGE_HOURS * 3600)
+        return self
+
+    @model_validator(mode="after")
+    def _lab_folders_beside_the_workspace(self) -> "BackendSettings":
+        # Beside the working trees, not inside them: the sandbox hides the workspace root as a whole.
+        if self.lab_workspace_root:
+            if self.lab_git_root is None:
+                self.lab_git_root = self.lab_workspace_root + "-git"
+            if self.lab_state_dir is None:
+                self.lab_state_dir = self.lab_workspace_root + "-state"
         return self
 
 

@@ -51,6 +51,7 @@ from besser.spec_driven_agent.execution.process import (
     _SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
 )
 from besser.spec_driven_agent.execution.sandbox import (
+    SandboxMounts,
     SandboxUnavailable,
     run_confined,
 )
@@ -575,7 +576,8 @@ _IMPORT_SMOKE_TIMEOUT = 20
 
 
 def _breaks_module_import(path: str, before: str, after: str,
-                          workspace: str | None = None) -> str | None:
+                          workspace: str | None = None,
+                          mounts: SandboxMounts | None = None) -> str | None:
     """``reason`` when ``after`` makes a structural module unimportable.
 
     The same contract as ``_new_syntax_error``, one level up: an edit that
@@ -583,9 +585,10 @@ def _breaks_module_import(path: str, before: str, after: str,
     definition, a relationship naming a property that no longer exists) is
     refused rather than written. Only judged when the module imported BEFORE
     the edit, so a file that was already broken can still be repaired.
-    The probe runs sandboxed with no network; when it cannot be confined it
-    is skipped and the edit is allowed.
+    The probe runs sandboxed with no network, under ``mounts`` when given;
+    when it cannot be confined it is skipped and the edit is allowed.
     """
+    mounts = mounts or SandboxMounts()
     name = os.path.basename(path)
     if name not in _STRUCTURAL_MODULES:
         return None
@@ -606,6 +609,7 @@ def _breaks_module_import(path: str, before: str, after: str,
             result = run_confined(
                 [sys.executable, "-c", probe], workspace=workspace or folder,
                 cwd=folder, timeout=_IMPORT_SMOKE_TIMEOUT, env=_safe_subprocess_env(),
+                writable=mounts.writable, read_only=mounts.read_only, masked=mounts.masked,
             )
             return result.returncode == 0, (result.stderr or "").strip().splitlines()[-1:] and \
                 (result.stderr or "").strip().splitlines()[-1] or ""
@@ -742,6 +746,8 @@ class ToolExecutor:
         gui_model: Optional GUI model.
         agent_model: Optional agent model.
         agent_config: Optional agent config dict.
+        sandbox_mounts: Mount rules for the shell and the write-time import
+            probe (the lab's policy); None confines both to the workspace.
     """
 
     def __init__(
@@ -758,12 +764,14 @@ class ToolExecutor:
         protect_scaffold: bool = False,
         per_write_diagnostics: bool = True,
         allow_shell: bool = False,
+        sandbox_mounts: SandboxMounts | None = None,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.allow_shell = allow_shell
+        self._sandbox_mounts = sandbox_mounts
         # The run's one shell: cwd, exported env and background processes
         # carry over between run_command calls. No process until first use.
-        self._shell = ShellSession(self.workspace)
+        self._shell = ShellSession(self.workspace, mounts=sandbox_mounts)
         # Seconds left in the run, set by the orchestrator; caps every command.
         self.time_left: Callable[[], float | None] | None = None
         # Serial number for spilled command logs (see _spill_command_output).
@@ -2775,7 +2783,7 @@ class ToolExecutor:
                     "rejection_kind": "syntax_error", "syntax_line": line,
                     "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after),
                     "current_source": "CURRENT ON-DISK CONTENT:\n" + _changed_region(after, before)}
-        unimportable = _breaks_module_import(path, before, after, self.workspace)
+        unimportable = _breaks_module_import(path, before, after, self.workspace, self._sandbox_mounts)
         if unimportable:
             return {"error": f"Refused: this edit leaves {args['path']} parseable but no longer "
                              f"importable ({unimportable}). Every router star-imports it, so this "
@@ -2940,7 +2948,8 @@ class ToolExecutor:
                     "current_source": "CURRENT ON-DISK CONTENT - unchanged by this refused rewrite:\n"
                     + _changed_region(args["content"], before),
                 }
-            unimportable = _breaks_module_import(path, before, args["content"], self.workspace)
+            unimportable = _breaks_module_import(path, before, args["content"], self.workspace,
+                                                 self._sandbox_mounts)
             if unimportable:
                 return {"error": f"Refused: this rewrite leaves {args['path']} parseable but no longer "
                                  f"importable ({unimportable}). Every router star-imports it, so this "
@@ -3385,7 +3394,8 @@ class ToolExecutor:
                 + _changed_region(new_content, content),
             }
 
-        unimportable = _breaks_module_import(path, content, new_content, self.workspace)
+        unimportable = _breaks_module_import(path, content, new_content, self.workspace,
+                                             self._sandbox_mounts)
         if unimportable:
             self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
             self._note_rejection(rel_path, old_text, new_text)

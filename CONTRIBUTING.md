@@ -120,7 +120,8 @@ that opens room for the best design.
 
 ### Prerequisites
 
-- **Python 3.10, 3.11, or 3.12** (CI tests against all three).
+- **Python 3.11 or 3.12** (`setup.cfg` declares `python_requires = >=3.11`;
+  CI tests both).
 - **Git**, including submodule support.
 - **Node.js 20+** *(only if you plan to run the web modeling editor frontend
   locally — matches the frontend repo's CI)*.
@@ -170,16 +171,17 @@ Optional but recommended:
 pip install -r docs/requirements.txt   # Sphinx + theme for building the docs
 ```
 
-Some test modules require extra packages that are **not** in
-`requirements.txt`: `torch`, `tensorflow` (for `tests/generators/nn/`), and
-`openpyxl` (for the spreadsheet importer test). CI installs them; locally,
-install them only if you intend to touch those areas.
+One test module imports a package that is **not** in the root
+`requirements.txt`: the spreadsheet importer test needs `openpyxl`, which
+ships in the backend requirements file installed above. Without it, pytest
+stops at *collection*. `torch` and `tensorflow` are not needed:
+`tests/generators/nn/` skips what needs them.
 
 ### Verify the install
 
 ```bash
 python tests/BUML/metamodel/structural/library/library.py
-python -m pytest -k library
+python -m pytest tests/ -k library
 ```
 
 If both run cleanly, you are ready to go.
@@ -248,8 +250,8 @@ Fix lint warnings before opening a PR. CI will fail on lint errors.
 - **Generators (`besser/generators/`)** — inherit from
   [`GeneratorInterface`](besser/generators/generator_interface.py); place
   Jinja2 templates in `generators/<name>/templates/`; register the generator
-  in `besser/utilities/web_modeling_editor/backend/config/generators.py` if it
-  should be exposed via the web editor.
+  with one entry in `besser/generators/registry.py`, which the web editor and
+  the Spec-Driven Agent both read.
 - **Metamodel (`besser/BUML/metamodel/`)** — keep changes backward-compatible
   where possible; mirror existing patterns (private fields with validating
   setters, `Element → NamedElement → …` hierarchy).
@@ -276,10 +278,10 @@ the full picture.
 
 ## ✅ Testing Your Changes
 
-Run the full suite before pushing:
+Run the full suite before pushing, scoped to `tests/`:
 
 ```bash
-python -m pytest
+python -m pytest tests/
 ```
 
 While iterating, target the area you are changing:
@@ -289,12 +291,11 @@ python -m pytest tests/generators -k sqlalchemy
 python -m pytest tests/BUML/metamodel/structural -k library
 ```
 
-If you do **not** have `torch`, `tensorflow`, or `openpyxl` installed locally,
-skip the modules that import them so collection does not fail:
+If `openpyxl` is not installed, skip the module that imports it so collection
+does not fail:
 
 ```bash
 python -m pytest tests/ \
-  --ignore=tests/generators/nn \
   --ignore=tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py
 ```
 
@@ -328,7 +329,9 @@ make.bat html            # Windows
 sphinx-build -b html source build/html
 ```
 
-Open `docs/build/html/index.html` to preview.
+Open `docs/build/html/index.html` to preview. CI's docs gate is
+`python docs/check_docs.py` (from the repository root): it fails on **any**
+Sphinx warning, so run it before pushing a docs change.
 
 Common pages to update:
 
@@ -427,9 +430,10 @@ If you forget, no harm done — just edit the base branch on the existing PR
 3. **Run quality checks locally** before pushing:
 
    ```bash
-   python -m pytest                # tests
+   python -m pytest tests/         # tests
    ruff check besser/              # lint
-   cd docs && make html && cd ..   # if you touched the docs
+   lint-imports                    # import layers
+   python docs/check_docs.py       # if you touched the docs
    ```
 
 4. **Push your branch:**
@@ -548,8 +552,10 @@ later. Linking a follow-up issue is even better.
 
 ### Review & merging
 
-- All PRs must pass automated checks (tests on Python 3.10/3.11/3.12, Ruff
-  lint, frontend lint+build, CodeQL).
+- All PRs must pass automated checks: tests on Python 3.11 and 3.12, Ruff
+  lint with the import-layer contracts, the editor's OpenAPI schema check, a
+  wheel build and install, the docs gate, and CodeQL. The frontend is built
+  and linted in its own repository's CI, not here.
 - At least one maintainer review is required, per the
   [governance rules](GOVERNANCE.md).
 - Maintainers choose the merge strategy (squash, rebase, or merge commit)

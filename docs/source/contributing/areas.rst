@@ -10,7 +10,8 @@ B-UML Language Core (``besser/BUML``)
 * Own the metamodel: new concepts and relationships start in this folder. Keep naming consistent with the rest of B-UML.
 * Update serialization: whenever you add or modify model elements, extend the serializers/deserializers so BUML models
   round-trip cleanly.
-* Protect behavior with tests: place unit tests under ``tests/buml`` and cover both valid and invalid scenarios.
+* Protect behavior with tests: place unit tests under ``tests/BUML/metamodel/<package>/`` and cover both valid and
+  invalid scenarios.
 * Document everything: reflect the changes in ``docs/source/buml_language.rst`` and any other affected guides to help
   users reason about the new constructs.
 
@@ -53,5 +54,7 @@ Regardless of the area:
 
 1. Discuss the idea first (issue tracker or community chat) to avoid duplicated effort.
 2. Write or update automated tests that demonstrate the new behavior.
-3. Run the relevant commands locally (``pytest``, ``npm test``, ``make docs``, etc.) and ensure they pass.
+3. Run the relevant checks locally and ensure they pass: ``python -m pytest tests/``, ``ruff check besser/`` and
+   ``lint-imports`` here, ``python docs/check_docs.py`` for docs changes, and in the editor repository its own
+   commands (it has no root ``npm test``: ``npm run test --workspace=webapp``, ``npm run lint``).
 4. Describe migrations, breaking changes, and manual steps clearly in your pull request description.

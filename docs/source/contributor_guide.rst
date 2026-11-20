@@ -372,7 +372,9 @@ Build locally to check formatting:
    make html                # Linux / macOS
    make.bat html            # Windows
 
-Open ``docs/build/html/index.html`` to preview.
+Open ``docs/build/html/index.html`` to preview. CI's docs gate is
+``python docs/check_docs.py`` (from the repository root): it fails on **any**
+Sphinx warning, so run it before pushing a docs change.
 
 Common pages to update:
 
@@ -501,7 +503,8 @@ Step-by-step
 
       python -m pytest tests/         # tests
       ruff check besser/              # lint, as CI runs it
-      python docs/check_docs.py                                     # if you touched the docs
+      lint-imports                    # import layers, as CI runs it
+      python docs/check_docs.py       # if you touched the docs
 
 4. **Push your branch:**
 
@@ -574,7 +577,7 @@ PR template in this repo follows the same structure):
    - [ ] Targeted `development` (not `master`)
    - [ ] Tests added or updated
    - [ ] Docs updated (`docs/source/...`) if user-facing behavior changed
-   - [ ] Lint passes (`ruff check .`)
+   - [ ] Lint passes (`ruff check besser/` and `lint-imports`)
    - [ ] Frontend submodule pointer updated (if a cross-repo change)
 
 Tips
@@ -647,11 +650,15 @@ example, adding a new DSL with graphical notation):
 
    .. code-block:: bash
 
-      # Fast-forward the submodule to the tip of the branch ``.gitmodules``
-      # tracks for it (currently ``main``).
-      git submodule update --remote besser/utilities/web_modeling_editor/frontend
+      cd besser/utilities/web_modeling_editor/frontend
+      git checkout <your WME commit or branch>
+      cd ../../../..
       git add besser/utilities/web_modeling_editor/frontend
       git commit -m "chore: bump frontend submodule"
+
+   Do not use ``git submodule update --remote`` for this: it moves the pointer
+   to the tip of the branch ``.gitmodules`` tracks (``main``, the WME release
+   branch), not to your ``develop``-based work.
 
 4. Link the two pull requests in their descriptions and note the intended
    **merge order**.

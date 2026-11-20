@@ -11,7 +11,13 @@ from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
 from besser.spec_driven_agent.lab.contracts import ExtraTool, LabCallbacks, LabLimits
 from besser.spec_driven_agent.lab.loop import MAX_TRUNCATION_RETRIES, TRUNCATION_PROMPT, run_lab_loop
 from besser.spec_driven_agent.lab.tooling import LabToolExecutor
-from tests.spec_driven_agent.lab.conftest import Block, end_turn, tool_use
+from tests.spec_driven_agent.lab.conftest import (
+    Block,
+    ScriptedClient,
+    StreamingScriptedClient,
+    end_turn,
+    tool_use,
+)
 
 REQUEST = "Add a note element to the class diagram."
 
@@ -284,6 +290,67 @@ def test_reads_of_one_turn_run_in_parallel(workspace, scripted_client, make_exec
     _, messages = _run(client, make_executor(_RendezvousExecutor))
     first, second = _results(messages[2])
     assert "x = 1" in first["content"] and "y = 2" in second["content"]
+
+
+class _ModelRecorder:
+    """Records the ``model_override`` of every chat and chat_stream call."""
+
+    def __init__(self, responses):
+        super().__init__(responses)
+        self.overrides: list = []
+
+    def chat(self, system, messages, tools, *, force_tool=None, model_override=None):
+        self.overrides.append(("chat", model_override))
+        return super().chat(system, messages, tools)
+
+    def chat_stream(self, system, messages, tools, model_override=None):
+        self.overrides.append(("chat_stream", model_override))
+        return super().chat_stream(system, messages, tools)
+
+
+class _RecordingClient(_ModelRecorder, ScriptedClient):
+    pass
+
+
+class _RecordingStreamingClient(_ModelRecorder, StreamingScriptedClient):
+    pass
+
+
+@pytest.mark.parametrize("cls, method, callbacks", [
+    (_RecordingClient, "chat", LabCallbacks()),
+    (_RecordingStreamingClient, "chat_stream", LabCallbacks(on_text=lambda text: None)),
+])
+def test_the_step_model_is_used_on_every_turn(make_executor, cls, method, callbacks):
+    # The plan step runs on BESSER_LAB_PLAN_LLM_MODEL through the run's one client.
+    client = cls([tool_use("read_file", {"path": "a.py"}), tool_use("read_file", {"path": "a.py"}), end_turn()])
+    result, _ = _run(client, make_executor(), callbacks=callbacks, model="plan-model")
+    assert result.stop_reason == "completed"
+    assert client.overrides == [(method, "plan-model")] * 3
+
+
+def test_without_a_step_model_the_default_is_called(make_executor):
+    client = _RecordingClient([tool_use("read_file", {"path": "a.py"}), end_turn()])
+    _run(client, make_executor())
+    assert client.overrides == [("chat", None)] * 2
+
+
+def _three_big_reads(workspace):
+    # 30k characters (~7,500 tokens) each: two reads fit a 40k window, the third crosses its threshold.
+    for name in ("one", "two", "three"):
+        (workspace / f"{name}.txt").write_text(((name + " ") * 10_000)[:30_000])
+    return [tool_use("read_file", {"path": "one.txt"}), tool_use("read_file", {"path": "two.txt"}),
+            tool_use("read_file", {"path": "three.txt"}), tool_use("read_file", {"path": "one.txt"}), end_turn()]
+
+
+@pytest.mark.parametrize("model, compacted", [("plan-model", True), (None, False)])
+def test_compaction_uses_the_window_of_the_model_called(workspace, make_executor, monkeypatch, model, compacted):
+    # Only the step model has a small window; the client's default is unknown, so frontier-sized.
+    monkeypatch.setattr(compaction, "_CATALOG", {"plan-model": 40_000})
+    monkeypatch.setattr(compaction, "_CATALOG_LOADED", True)
+    client = _RecordingClient(_three_big_reads(workspace))
+    result, _ = _run(client, make_executor(), model=model)
+    assert result.stop_reason == "completed"
+    assert (len(client.calls[3][1]) < 7) is compacted
 
 
 def test_compaction_keeps_the_request_and_shows_re_reads_in_full(workspace, scripted_client, make_executor,

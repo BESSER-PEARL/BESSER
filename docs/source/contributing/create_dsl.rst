@@ -19,7 +19,8 @@ For a full cross-repo checklist (editor package + webapp + backend), see
 
 * Update serializers/deserializers so the new objects can be exported/imported alongside the rest of the BUML model.
 * Add schema migrations or compatibility layers if the JSON/YAML representation changes.
-* Cover business rules with unit tests under ``tests/buml`` (valid models) and ``tests/buml_invalid`` (error cases).
+* Cover business rules with unit tests under ``tests/BUML/metamodel/<package>/``, for valid models and for the error
+  cases (setters that refuse a value, ``validate()`` errors).
 
 3. Extend Utilities and Converters
 ----------------------------------
@@ -71,5 +72,6 @@ that repository, then the submodule pointer updated in BESSER.
   9000).
 * Run the WME frontend locally (``npm run dev`` in the WME repo or submodule) and confirm the new palette
   items, properties, and serialization work against the backend.
-* Run automated checks: ``python -m pytest`` for BESSER; ``npm run lint`` and ``npm run build:webapp`` for WME.
+* Run automated checks: ``python -m pytest tests/``, ``ruff check besser/`` and ``lint-imports`` for BESSER;
+  ``npm run lint`` and ``npm run build:webapp`` for WME.
 

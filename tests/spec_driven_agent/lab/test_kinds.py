@@ -22,7 +22,8 @@ BESSER_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _repos(**paths) -> dict[str, RepoSpec]:
-    return {key: RepoSpec(key, str(path), "development", "BESSER-PEARL", key) for key, path in paths.items()}
+    return {key: RepoSpec(key, str(path), "development", "BESSER-PEARL", key, git_dir=str(path) + ".git")
+            for key, path in paths.items()}
 
 
 def _change(repo: str, files: dict[str, str]) -> RepoChange:

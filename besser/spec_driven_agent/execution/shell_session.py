@@ -44,7 +44,6 @@ import base64
 import json
 import logging
 import os
-import queue
 import shutil
 import struct
 import subprocess
@@ -52,7 +51,6 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import Future
 from dataclasses import dataclass, field
 
 from besser.spec_driven_agent.execution.process import (
@@ -65,12 +63,16 @@ from besser.spec_driven_agent.execution.process import (
 from besser.spec_driven_agent.execution.sandbox import (
     NETWORK_WAIT_SECONDS,
     NETWORK_WAIT_SOURCE,
+    SandboxMounts,
     SandboxUnavailable,
     read_child_pid,
     sandboxed_command,
     start_pasta,
     stop_process,
 )
+# Every session is forked from the one long-lived spawner thread (see
+# sandbox.spawn_long_lived); tests patch this module's name for it.
+from besser.spec_driven_agent.execution.sandbox import spawn_long_lived as _spawn
 from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
@@ -322,39 +324,6 @@ def _real(path: str) -> str:
     return real[4:] if real.startswith("\\\\?\\") and not real.startswith("\\\\?\\UNC\\") else real
 
 
-# --------------------------------------------------------------------------- #
-# Spawning: bwrap's --die-with-parent is a PR_SET_PDEATHSIG, which fires when
-# the THREAD that forked it exits. Tools run on a per-turn ThreadPoolExecutor,
-# so a session forked there would be killed at the end of its first turn.
-# Every session is forked from this one thread, which lives as long as the
-# worker process.
-# --------------------------------------------------------------------------- #
-_spawn_queue: "queue.SimpleQueue" = queue.SimpleQueue()
-_spawner: threading.Thread | None = None
-_spawner_guard = threading.Lock()
-
-
-def _spawner_loop() -> None:
-    while True:
-        factory, future = _spawn_queue.get()
-        try:
-            future.set_result(factory())
-        except BaseException as exc:  # handed to the caller
-            future.set_exception(exc)
-
-
-def _spawn(factory):
-    global _spawner
-    with _spawner_guard:
-        if _spawner is None or not _spawner.is_alive():
-            _spawner = threading.Thread(target=_spawner_loop, name="besser-shell-spawner",
-                                        daemon=True)
-            _spawner.start()
-    future: Future = Future()
-    _spawn_queue.put((factory, future))
-    return future.result()
-
-
 class _SessionProcess:
     """One bubblewrap sandbox running the supervisor, its channel, and the
     pasta process giving it a private network (``private_network``)."""
@@ -578,10 +547,15 @@ class ShellResult:
 
 
 class ShellSession:
-    """The run's shell: its directory, environment and (sandboxed) processes."""
+    """The run's shell: its directory, environment and (sandboxed) processes.
 
-    def __init__(self, workspace: str):
+    ``mounts`` adds mount rules to the sandbox (the lab's policy); ``None``
+    confines it to ``workspace`` as for a Spec-Driven run.
+    """
+
+    def __init__(self, workspace: str, *, mounts: SandboxMounts | None = None):
         self.workspace = _real(workspace)
+        self.mounts = mounts or SandboxMounts()
         self.cwd = self.workspace
         self.env: dict[str, str] | None = None
         self._proc: _SessionProcess | None = None
@@ -648,7 +622,9 @@ class ShellSession:
                 notes.append(f"{start} no longer exists; the command ran in the workspace root.")
                 start = self.cwd = self.workspace
             plan = sandboxed_command(self._supervisor_argv(), workspace=self.workspace,
-                                     cwd=self.workspace, shell_network=True)
+                                     cwd=self.workspace, shell_network=True,
+                                     writable=self.mounts.writable,
+                                     read_only=self.mounts.read_only, masked=self.mounts.masked)
             if plan.sandboxed:
                 result, cwd, env = self._run_sandboxed(plan, command, start, timeout, notes)
             else:

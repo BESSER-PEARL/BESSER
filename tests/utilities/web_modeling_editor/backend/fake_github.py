@@ -11,6 +11,14 @@ contents API can give its first one).
 ``use_fake_github(monkeypatch, fake)`` routes the GitHub requests of every
 ``httpx.AsyncClient`` that does not bring its own transport to the fake, so the
 backend's GitHub calls land here while a test client keeps its own transport.
+
+The review surface of a pull request (checks with their Actions job logs, commit
+statuses, review threads, reviews, comments, mergeability) is shaped through
+``fake.pull_review(repo, number)`` and read back by ``POST /graphql``, which
+answers only the operation ``LabPullRequest`` (variables ``owner``, ``name``,
+``number``) and 400 for any other, so an unplanned query fails loudly. Job logs
+redirect to ``LOG_HOST`` the way GitHub redirects to blob storage.
+``fake.calls`` counts the requests per URL path.
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ import re
 import subprocess
 import tempfile
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -30,9 +39,38 @@ from fastapi.responses import JSONResponse
 from httpx._transports.asgi import ASGITransport
 
 API = "https://api.github.com"
+# Stands in for the blob storage GitHub redirects a job log download to.
+LOG_HOST = "logs.fake-github.test"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # GitHub's rule for an account or repository name; "." and ".." are refused too.
 _NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
+_OPERATION_RE = re.compile(r"\b(?:query|mutation)\s+(\w+)")
+# GitHub's 403 for an OAuth token without the ``workflow`` scope touching a workflow file.
+WORKFLOW_REFUSAL = ("refusing to allow an OAuth App to create or update workflow `{path}` "
+                    "without `workflow` scope")
+MERGE_CONFLICT_MESSAGE = "merge conflict between base and head"
+NOTHING_TO_UPDATE_MESSAGE = "There are no new commits on the base branch."
+STALE_HEAD_MESSAGE = "expected_head_sha does not match the pull request's head"
+
+
+@dataclass
+class FakePullReview:
+    """What GitHub's review surface shows for one pull request.
+
+    ``checks``: ``{name, app="github-actions", status="completed", conclusion, job_id, log, summary}``;
+    ``log`` is the job's log bytes, None when it expired (410).
+    ``statuses``: ``{context, state, target_url, description}`` (commit statuses, ``state`` lower case).
+    ``threads``: ``{path, line, start_line, resolved, outdated, comments: [{author, association, body}]}``.
+    ``reviews``: ``{author, state, body}``; ``comments``: ``{author, association, body}``.
+    ``mergeable``: ``MERGEABLE``, ``CONFLICTING`` or ``UNKNOWN``.
+    """
+
+    checks: list[dict] = field(default_factory=list)
+    statuses: list[dict] = field(default_factory=list)
+    threads: list[dict] = field(default_factory=list)
+    reviews: list[dict] = field(default_factory=list)
+    comments: list[dict] = field(default_factory=list)
+    mergeable: str = "MERGEABLE"
 
 
 @dataclass
@@ -46,6 +84,8 @@ class FakeRepo:
     # Whether the signed-in user may push (a read-only collaborator may not).
     can_push: bool = True
     pulls: list[dict] = field(default_factory=list)
+    # Kept apart from ``pulls``, which are served as REST JSON (a log is bytes).
+    pull_reviews: dict[int, FakePullReview] = field(default_factory=dict)
 
     @property
     def full_name(self) -> str:
@@ -65,6 +105,9 @@ class FakeGitHub:
         # Called as ``(repo, branch)`` before a ref update is checked: a test can
         # land someone else's commit between BESSER reading the head and moving it.
         self.before_ref_update: Optional[Callable[[FakeRepo, str], None]] = None
+        # GitHub refuses an update-branch that brings in a workflow change when the token lacks ``workflow``.
+        self.refuse_workflow_updates = False
+        self.calls: Counter[str] = Counter()
         self.app = self._build_app()
 
     # ------------------------------------------------------------------
@@ -204,9 +247,146 @@ class FakeGitHub:
         pull.update(state="closed", merged_at="2026-10-29T12:00:00Z")
         return sha
 
+    def close_pull(self, repo: FakeRepo, number: int) -> None:
+        """Close pull request ``number`` without merging it."""
+        self._pull(repo, number).update(state="closed")
+
+    def pull_review(self, repo: FakeRepo, number: int) -> FakePullReview:
+        """The review surface of pull request ``number``, for a test to fill."""
+        self._pull(repo, number)
+        return repo.pull_reviews.setdefault(number, FakePullReview())
+
     # ------------------------------------------------------------------
     # GitHub semantics
     # ------------------------------------------------------------------
+    @staticmethod
+    def _pull(repo: FakeRepo, number: int) -> dict:
+        pull = next((p for p in repo.pulls if p["number"] == number), None)
+        if pull is None:
+            raise _NotFound()
+        return pull
+
+    def _job_log(self, repo: FakeRepo, job_id: int) -> tuple[bool, Optional[bytes]]:
+        """``(found, log)`` of an Actions job of ``repo``; ``log`` is None when it expired."""
+        for review in repo.pull_reviews.values():
+            for check in review.checks:
+                if check.get("job_id") == job_id:
+                    return True, check.get("log")
+        return False, None
+
+    def _update_branch(self, repo: FakeRepo, pull: dict, expected_head_sha: Optional[str]) -> JSONResponse:
+        """``PUT pulls/{n}/update-branch``: merge the base into the head branch, as GitHub does."""
+        head_ref, base_ref = pull["head"]["ref"], pull["base"]["ref"]
+        head_sha, base_sha = self.ref(repo, head_ref), self.ref(repo, base_ref)
+        if pull["state"] != "open":
+            return JSONResponse({"message": "Pull request is closed"}, status_code=422)
+        if expected_head_sha and expected_head_sha != head_sha:
+            return JSONResponse({"message": STALE_HEAD_MESSAGE}, status_code=422)
+        if self.refuse_workflow_updates:
+            fork_point = self.out(repo, "merge-base", head_sha, base_sha)
+            workflows = self.out(repo, "diff", "--name-only", fork_point, base_sha, "--", ".github/workflows/")
+            if workflows:
+                path = workflows.splitlines()[0]
+                return JSONResponse({"message": WORKFLOW_REFUSAL.format(path=path)}, status_code=403)
+        sha = self._merge(repo, head_ref, base_ref, f"Merge branch '{base_ref}' into {head_ref}")
+        if sha is False:
+            return JSONResponse({"message": NOTHING_TO_UPDATE_MESSAGE}, status_code=422)
+        if sha is None:
+            return JSONResponse({"message": MERGE_CONFLICT_MESSAGE}, status_code=422)
+        return JSONResponse({"message": "Updating pull request branch.",
+                             "url": f"https://github.com/{repo.full_name}/pull/{pull['number']}"}, status_code=202)
+
+    def pull_request_graphql(self, repo: FakeRepo, pull: dict) -> dict:
+        """The ``pullRequest`` object GitHub's GraphQL API gives for the ``LabPullRequest`` fields."""
+        review = repo.pull_reviews.get(pull["number"], FakePullReview())
+        number = pull["number"]
+        url = f"https://github.com/{repo.full_name}/pull/{number}"
+        head_sha, base_sha = self.ref(repo, pull["head"]["ref"]), self.ref(repo, pull["base"]["ref"])
+        merged = bool(pull.get("merged_at"))
+        state = "MERGED" if merged else pull["state"].upper()
+
+        contexts = []
+        for check in review.checks:
+            job_id = check.get("job_id")
+            contexts.append({
+                "__typename": "CheckRun", "databaseId": job_id, "name": check["name"],
+                "status": check.get("status", "completed").upper(),
+                "conclusion": (check.get("conclusion") or "").upper() or None,
+                "detailsUrl": f"https://github.com/{repo.full_name}/actions/runs/1/job/{job_id}",
+                "title": check.get("title"), "summary": check.get("summary"),
+                "checkSuite": {"app": {"slug": check.get("app", "github-actions")}},
+            })
+        for status in review.statuses:
+            contexts.append({"__typename": "StatusContext", "context": status["context"],
+                             "state": status["state"].upper(), "targetUrl": status.get("target_url"),
+                             "description": status.get("description")})
+
+        def author(entry: dict) -> dict:
+            return {"login": entry["author"]}
+
+        threads = []
+        for t, thread in enumerate(review.threads):
+            threads.append({
+                "isResolved": bool(thread.get("resolved")), "isOutdated": bool(thread.get("outdated")),
+                "path": thread["path"], "line": thread.get("line"), "startLine": thread.get("start_line"),
+                "comments": {"nodes": [{
+                    "id": f"PRRC_{number}_{t}_{c}", "author": author(comment),
+                    "authorAssociation": comment.get("association", "NONE"), "body": comment["body"],
+                    "url": f"{url}#discussion_r{number}{t}{c}", "createdAt": _timestamp(t * 10 + c),
+                } for c, comment in enumerate(thread["comments"])]},
+            })
+        return {
+            "number": number, "url": url, "state": state, "isDraft": bool(pull.get("draft")), "merged": merged,
+            "headRefOid": head_sha, "mergeable": review.mergeable,
+            "mergeStateStatus": self._merge_state(repo, review, head_sha, base_sha, pull),
+            "reviewDecision": _review_decision(review.reviews),
+            "commits": {"nodes": [{"commit": {"oid": head_sha, "statusCheckRollup": {
+                "state": _rollup_state(contexts), "contexts": {"nodes": contexts},
+            } if contexts else None}}]},
+            "reviews": {"nodes": [{
+                "author": author(r), "state": r["state"], "body": r.get("body", ""),
+                "url": f"{url}#pullrequestreview-{i}", "submittedAt": _timestamp(i),
+            } for i, r in enumerate(review.reviews)]},
+            "reviewThreads": {"nodes": threads},
+            "comments": {"nodes": [{
+                "id": f"IC_{number}_{i}", "author": author(c), "authorAssociation": c.get("association", "NONE"),
+                "body": c["body"], "url": f"{url}#issuecomment-{i}", "createdAt": _timestamp(i),
+            } for i, c in enumerate(review.comments)]},
+        }
+
+    def _merge_state(self, repo: FakeRepo, review: FakePullReview, head_sha: Optional[str],
+                     base_sha: Optional[str], pull: dict) -> str:
+        """GitHub's ``mergeStateStatus``: conflicts, a base the head lacks, then clean."""
+        if pull.get("draft"):
+            return "DRAFT"
+        if review.mergeable == "CONFLICTING":
+            return "DIRTY"
+        if review.mergeable == "UNKNOWN" or not head_sha or not base_sha:
+            return "UNKNOWN"
+        return "CLEAN" if self.is_ancestor(repo, base_sha, head_sha) else "BEHIND"
+
+    def _graphql(self, body: dict) -> JSONResponse:
+        query = body.get("query", "")
+        match = _OPERATION_RE.search(query)
+        operation = body.get("operationName") or (match.group(1) if match else None)
+        if operation != "LabPullRequest":
+            return JSONResponse({"message": f"The fake answers only LabPullRequest, not {operation!r}"},
+                                status_code=400)
+        variables = body.get("variables") or {}
+        repo = self.repos.get(f"{variables.get('owner')}/{variables.get('name')}".lower())
+        if repo is None:
+            return JSONResponse({"data": {"repository": None}, "errors": [{
+                "type": "NOT_FOUND", "path": ["repository"],
+                "message": f"Could not resolve to a Repository with the name "
+                           f"'{variables.get('owner')}/{variables.get('name')}'.",
+            }]})
+        pull = next((p for p in repo.pulls if p["number"] == variables.get("number")), None)
+        if pull is None:
+            return JSONResponse({"data": {"repository": {"pullRequest": None}}, "errors": [{
+                "type": "NOT_FOUND", "path": ["repository", "pullRequest"],
+                "message": f"Could not resolve to a PullRequest with the number of {variables.get('number')}.",
+            }]})
+        return JSONResponse({"data": {"repository": {"pullRequest": self.pull_request_graphql(repo, pull)}}})
     def _merge(self, repo: FakeRepo, base: str, head: str, message: str) -> Optional[str] | bool:
         base_sha, head_sha = self.ref(repo, base), self.ref(repo, head) or head
         if self.is_ancestor(repo, head_sha, base_sha):
@@ -252,6 +432,12 @@ class FakeGitHub:
 
         @app.middleware("http")
         async def auth(request: Request, call_next):
+            fake.calls[request.url.path] += 1
+            if request.url.hostname == LOG_HOST:
+                # Blob storage takes the signed URL alone; a forwarded GitHub token is refused, not used.
+                if "authorization" in request.headers:
+                    return Response("Server failed to authenticate the request.", status_code=403)
+                return await call_next(request)
             if request.headers.get("authorization") != f"Bearer {fake.token}" \
                     and not request.url.path.startswith(("/applications/", "/login/oauth/")):
                 return JSONResponse({"message": "Bad credentials"}, status_code=401)
@@ -533,6 +719,47 @@ class FakeGitHub:
             return [p for p in repo.pulls
                     if (not head or p["head"]["ref"] == branch) and (state == "all" or p["state"] == state)]
 
+        @app.get("/repos/{owner}/{name}/pulls/{number}")
+        async def get_pull(owner: str, name: str, number: int, request: Request):
+            repo = find(owner, name)
+            pull = fake._pull(repo, number)
+            if request.headers.get("accept") == "application/vnd.github.diff":
+                # A pull request's diff is against the merge base, like ``git diff base...head``.
+                spec = f"{pull['base']['ref']}...{pull['head']['ref']}"
+                diff = fake.git(repo, "diff", "--no-color", "--no-ext-diff", spec).stdout
+                return Response(content=diff, media_type="application/vnd.github.diff")
+            return pull
+
+        @app.put("/repos/{owner}/{name}/pulls/{number}/update-branch")
+        async def update_branch(owner: str, name: str, number: int, request: Request):
+            repo = find(owner, name)
+            body = await request.json() if await request.body() else {}
+            return fake._update_branch(repo, fake._pull(repo, number), body.get("expected_head_sha"))
+
+        @app.get("/repos/{owner}/{name}/actions/jobs/{job_id}/logs")
+        async def job_logs(owner: str, name: str, job_id: int):
+            found, log = fake._job_log(find(owner, name), job_id)
+            if not found:
+                raise _NotFound()
+            if log is None:
+                return JSONResponse({"message": "Gone"}, status_code=410)
+            # The real Location is a short-lived signed blob URL.
+            return Response(status_code=302, headers={"Location": f"https://{LOG_HOST}/{job_id}?sig=signed"})
+
+        @app.get("/{job_id:int}")
+        async def log_blob(job_id: int, request: Request):
+            if request.url.hostname != LOG_HOST:
+                raise _NotFound()
+            for repo in fake.repos.values():
+                found, log = fake._job_log(repo, job_id)
+                if found and log is not None:
+                    return _log_range(log, request.headers.get("range"))
+            raise _NotFound()
+
+        @app.post("/graphql")
+        async def graphql(request: Request):
+            return fake._graphql(await request.json())
+
         @app.post("/gists")
         async def create_gist(request: Request):
             body = await request.json()
@@ -563,7 +790,43 @@ class _Empty(Exception):
     pass
 
 
-GITHUB_HOSTS = ("api.github.com", "github.com")
+def _timestamp(index: int) -> str:
+    """An ISO time that orders entries as listed."""
+    return f"2026-10-29T12:{index // 60 % 60:02d}:{index % 60:02d}Z"
+
+
+def _review_decision(reviews: list[dict]) -> Optional[str]:
+    """GitHub's ``reviewDecision`` from each reviewer's latest approving or blocking review."""
+    latest = {r["author"]: r["state"] for r in reviews if r["state"] in ("APPROVED", "CHANGES_REQUESTED")}
+    if "CHANGES_REQUESTED" in latest.values():
+        return "CHANGES_REQUESTED"
+    return "APPROVED" if latest else None
+
+
+def _rollup_state(contexts: list[dict]) -> str:
+    """``statusCheckRollup.state``: a failure wins, then anything unfinished, else success."""
+    failed = {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+    states = [c["conclusion"] if c["__typename"] == "CheckRun" and c["status"] == "COMPLETED"
+              else c["state"] if c["__typename"] == "StatusContext" else "PENDING" for c in contexts]
+    if any(s in failed for s in states):
+        return "FAILURE"
+    return "PENDING" if any(s in ("PENDING", "EXPECTED") for s in states) else "SUCCESS"
+
+
+def _log_range(log: bytes, header: Optional[str]) -> Response:
+    """Blob storage's answer to ``Range: bytes=-N`` (a suffix); without it, the whole log."""
+    match = re.fullmatch(r"bytes=-(\d+)", header or "")
+    if match is None:
+        return Response(content=log, media_type="text/plain")
+    if not log or int(match.group(1)) == 0:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{len(log)}"})
+    tail = log[-int(match.group(1)):]
+    start = len(log) - len(tail)
+    return Response(content=tail, status_code=206, media_type="text/plain",
+                    headers={"Content-Range": f"bytes {start}-{len(log) - 1}/{len(log)}"})
+
+
+GITHUB_HOSTS = ("api.github.com", "github.com", LOG_HOST)
 
 
 class _GitHubRouter(httpx.AsyncBaseTransport):

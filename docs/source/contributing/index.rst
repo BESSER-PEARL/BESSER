@@ -25,13 +25,16 @@ Code Style
 ----------
 
 - **Python**: PEP 8, 4-space indentation, 120-character line limit
-- **Linting**: The CI pipeline uses `Ruff <https://docs.astral.sh/ruff/>`_ with
-  rules E, W, F enabled. Run locally before pushing:
+- **Linting**: The CI pipeline runs `Ruff <https://docs.astral.sh/ruff/>`_ with
+  the rules selected in ``pyproject.toml`` (``[tool.ruff.lint]``) and
+  ``lint-imports``, which enforces the package layers
+  (``[tool.importlinter]``). Run both locally before pushing:
 
   .. code-block:: bash
 
-     pip install ruff
+     pip install ruff import-linter==2.15
      ruff check besser/
+     lint-imports
 
 - **Naming**: ``snake_case`` for functions and variables, ``PascalCase`` for classes,
   ``UPPER_CASE`` for constants
@@ -44,15 +47,17 @@ Branching and PR Workflow
 1. Create a feature branch from ``development`` (e.g., ``feature/add-rdf-generator``).
 2. Make focused, incremental commits.
 3. Run tests: ``python -m pytest tests/``
-4. Run linting: ``ruff check besser/``
-5. Build docs (if changed): ``cd docs && make html``
+4. Run linting: ``ruff check besser/`` and ``lint-imports``
+5. Check the docs (if changed): ``python docs/check_docs.py``
 6. Push and open a pull request against ``development`` (not ``master`` —
    see :doc:`../contributor_guide`).
 7. Fill in the PR description with: what changed, why, how to test, any follow-up work.
 8. Respond to review feedback — reviews are collaborative.
 
-CI will automatically run tests on Python 3.11 and 3.12, Ruff linting, and a
-docs build that fails on any Sphinx warning.
+CI will automatically run tests on Python 3.11 and 3.12, Ruff linting and the
+import-layer contracts, a check that the editor's committed OpenAPI schema
+matches the backend, a wheel build, and a docs build that fails on any Sphinx
+warning.
 
 .. toctree::
    :maxdepth: 1

@@ -385,9 +385,13 @@ class LLMProvider(ABC):
         """
 
     @abstractmethod
-    def chat_stream(self, system: str, messages: list[dict], tools: list[dict]):
+    def chat_stream(self, system: str, messages: list[dict], tools: list[dict],
+                    model_override: str | None = None):
         """
         Stream a message with tools, yielding event dicts.
+
+        ``model_override`` is as in :meth:`chat`: this call uses that model,
+        billed at its own pricing.
 
         Each event has a ``type`` key:
         - ``"text_delta"`` with ``"text"`` — incremental text
@@ -788,6 +792,7 @@ class ClaudeLLMClient(LLMProvider):
         system: str,
         messages: list[dict],
         tools: list[dict],
+        model_override: str | None = None,
     ):
         """Stream a message with tools, yielding events."""
         last_error = None
@@ -795,8 +800,8 @@ class ClaudeLLMClient(LLMProvider):
         for attempt in range(self._max_retries + 1):
             try:
                 with self._client.messages.stream(
-                    model=self._model,
-                    max_tokens=self._max_tokens,
+                    model=model_override or self._model,
+                    max_tokens=self._request_max_tokens(model_override),
                     system=_with_cache_control(system),
                     messages=_with_message_cache(messages),
                     tools=_with_tool_cache(tools),
@@ -805,7 +810,7 @@ class ClaudeLLMClient(LLMProvider):
                         yield {"type": "text_delta", "text": text}
 
                     response = stream.get_final_message()
-                    self.usage.record(response.usage)
+                    self.usage.record(response.usage, model=model_override)
                     yield _with_refusal_detail({
                         "type": "message_done",
                         "stop_reason": response.stop_reason,
@@ -1649,18 +1654,20 @@ class OpenAIProvider(LLMProvider):
         system: str,
         messages: list[dict],
         tools: list[dict],
+        model_override: str | None = None,
     ):
         """Stream a message with tools, yielding events."""
         last_error = None
         api_messages = _openai_messages_to_api(system, messages)
         openai_tools = _anthropic_tools_to_openai(tools) if tools else None
+        effective_model = model_override or self._model
 
         for attempt in range(self._max_retries + 1):
             try:
-                tok_key = _openai_max_tokens_key(self._model)
+                tok_key = _openai_max_tokens_key(effective_model)
                 kwargs: dict[str, Any] = {
-                    "model": self._model,
-                    tok_key: self._max_tokens,
+                    "model": effective_model,
+                    tok_key: self._request_max_tokens(model_override),
                     "messages": api_messages,
                     "stream": True,
                     # OpenAI omits the usage object from streaming
@@ -1674,15 +1681,15 @@ class OpenAIProvider(LLMProvider):
                     "stream_options": {"include_usage": True},
                 }
                 # Per-model sampling; empty for models not in the registry.
-                kwargs.update(sampling_kwargs(self._model))
+                kwargs.update(sampling_kwargs(effective_model))
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     # gpt-5.6 reasoning models can't combine tools + reasoning
                     # on chat/completions — disable reasoning so tools work.
                     if _needs_reasoning_none_for_tools(
-                            self._model, self._base_url):
+                            effective_model, self._base_url):
                         kwargs["reasoning_effort"] = reasoning_effort_for_tools(
-                            self._model
+                            effective_model
                         )
 
                 collected_text = ""
@@ -1694,8 +1701,9 @@ class OpenAIProvider(LLMProvider):
                 try:
                     for chunk in stream:
                         # The served model name appears on every chunk
-                        # in a stream; capture once.
-                        self._usage.set_served_model(getattr(chunk, "model", None))
+                        # in a stream; capture once. Not on an override, as in chat().
+                        if not model_override:
+                            self._usage.set_served_model(getattr(chunk, "model", None))
                         # Gateways differ: a final usage-only chunk, usage on the
                         # last content chunk, or a running total on every chunk.
                         # The last one seen is the call's total in all three.
@@ -1746,6 +1754,7 @@ class OpenAIProvider(LLMProvider):
                 self._record_usage(
                     stream_usage, api_messages, collected_text,
                     "".join(call["arguments"] for call in tool_calls_accum.values()),
+                    model=model_override,
                 )
 
                 # Build final content blocks
@@ -1787,7 +1796,7 @@ class OpenAIProvider(LLMProvider):
                 if _is_auth_error(e):
                     # As in chat(): a server-paid key falls back, a user's key fails.
                     if self._activate_fallback(e, past_endpoint=self._base_url):
-                        yield from self.chat_stream(system, messages, tools)
+                        yield from self.chat_stream(system, messages, tools, model_override)
                         return
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
@@ -1797,7 +1806,7 @@ class OpenAIProvider(LLMProvider):
                     # Re-stream from the top on the fallback endpoint. Any
                     # partial deltas already yielded are superseded — same
                     # semantics as the in-loop stream retry above.
-                    yield from self.chat_stream(system, messages, tools)
+                    yield from self.chat_stream(system, messages, tools, model_override)
                     return
                 raise UpstreamLLMError(f"OpenAI API streaming failed: {last_error}") from None
 

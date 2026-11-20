@@ -28,23 +28,34 @@ Your generator directory should follow this structure:
    └── templates/
        └── my_template.py.j2    # Jinja2 template(s)
 
-The generator class must inherit from ``GeneratorInterface``:
+The generator class must inherit from ``GeneratorInterface``. Build the Jinja environment with
+``traced_environment`` and write each render with ``_write_traced``, so the editor can trace generated lines back
+to model elements (see :doc:`../generators/traceable_generator`):
 
 .. code-block:: python
 
+   import os
+
    from besser.generators import GeneratorInterface
+   from besser.utilities.generation_trace import traced_environment
+
+   TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+
 
    class MyGenerator(GeneratorInterface):
        def __init__(self, model, output_dir=None):
            super().__init__(model, output_dir)
 
        def generate(self):
-           # 1. Traverse the model
-           for cls in self.model.get_classes():
-               # 2. Render templates
-               output = self.render_template('my_template.py.j2', cls=cls)
-               # 3. Write output files
-               self.write_file(f'{cls.name}.py', output)
+           env = traced_environment(TEMPLATES_DIR, trim_blocks=True, lstrip_blocks=True)
+           template = env.get_template("my_template.py.j2")
+           # Sort what you iterate over: the output must be the same for the same model.
+           for cls in sorted(self.model.get_classes(), key=lambda c: c.name):
+               self._write_traced(f"{cls.name}.py", template.render(cls=cls))
+
+Register it with one ``GeneratorSpec`` in ``besser/generators/registry.py``, add its id to the pinned lists and
+snapshot of ``tests/generators/test_generator_registry.py``, and, to offer it to the Spec-Driven Agent, follow
+step 5 of "Adding a deterministic generator" in the repository's ``CLAUDE.md``.
 
 3. Implement Transformations
 ----------------------------
@@ -82,8 +93,11 @@ list it with a reason in ``NOT_REGENERABLE`` in ``tests/generators/test_regenera
 5. Document and Demo
 --------------------
 
-* Extend ``docs/source/examples.rst`` (or add a new section) with a walkthrough that starts from a BUML model and ends
-  with the generated artifact running locally.
+* Add ``docs/source/generators/<name>.rst``: what the generator produces from which model, a usage snippet and the
+  output. Add it to a toctree in ``docs/source/generators.rst`` **and** add a row to that page's "Choosing a
+  Generator" table. ``python docs/check_docs.py`` fails on a page missing from every toctree.
+* Optionally extend ``docs/source/examples.rst`` with a walkthrough that starts from a BUML model and ends with the
+  generated artifact running locally.
 * List prerequisites (installed toolchains, environment variables, Docker images) and troubleshooting hints.
 * Attach screenshots, logs, or GIFs if they make reviewer validation easier.
 

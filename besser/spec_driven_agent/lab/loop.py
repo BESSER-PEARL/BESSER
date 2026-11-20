@@ -47,8 +47,12 @@ TRUNCATION_PROMPT = (
 
 def run_lab_loop(*, client, executor: LabToolExecutor, system: str, messages: list[dict],
                  limits: LabLimits, callbacks: LabCallbacks, finish_tool: str | None = None,
-                 started_at: float | None = None) -> LoopResult:
+                 started_at: float | None = None, model: str | None = None) -> LoopResult:
     """Run the model with ``executor``'s tools until it stops or a cap is reached.
+
+    ``model`` (default: the client's own) is called on every turn as the call's
+    ``model_override``, billed at its price on the client's tracker, and its
+    window decides when the history is compacted.
 
     ``messages`` is the conversation so far (at least the user's message) and is
     extended in place, so a caller can continue it with another message. The cost
@@ -81,9 +85,9 @@ def run_lab_loop(*, client, executor: LabToolExecutor, system: str, messages: li
             return finish("timeout", f"the run reached its {limits.max_runtime_seconds:.0f} s limit")
         if client.usage.estimated_cost >= limits.max_cost_usd:
             return finish("cost_cap", f"the run reached its ${limits.max_cost_usd:.2f} cost limit")
-        _compact(messages, client, executor, result.tool_calls)
+        _compact(messages, client, executor, result.tool_calls, model)
         try:
-            response = _call_model(client, system, messages, executor.schemas, on_text)
+            response = _call_model(client, system, messages, executor.schemas, on_text, model)
         except InvalidApiKeyError:
             raise
         except Exception as exc:
@@ -124,11 +128,14 @@ def run_lab_loop(*, client, executor: LabToolExecutor, system: str, messages: li
     return finish("max_turns", f"the run used all {limits.max_turns} turns")
 
 
-def _call_model(client, system: str, messages: list[dict], tools: list[dict], on_text) -> dict:
+def _call_model(client, system: str, messages: list[dict], tools: list[dict], on_text,
+                model: str | None) -> dict:
     """One model call: streamed when the client streams and someone wants the text."""
+    # Without a step model the call is exactly the default one.
+    override = {"model_override": model} if model else {}
     if on_text is None or not hasattr(client, "chat_stream"):
-        return client.chat(system=system, messages=messages, tools=tools)
-    for event in client.chat_stream(system=system, messages=messages, tools=tools):
+        return client.chat(system=system, messages=messages, tools=tools, **override)
+    for event in client.chat_stream(system=system, messages=messages, tools=tools, **override):
         if event.get("type") == "text_delta":
             on_text(event.get("text", ""))
         elif event.get("type") == "message_done":
@@ -185,15 +192,16 @@ def _run_tools(blocks: list, executor: LabToolExecutor, callbacks: LabCallbacks,
     return results, finished
 
 
-def _compact(messages: list[dict], client, executor: LabToolExecutor, tool_calls: list[dict]) -> None:
-    """Summarize older turns in place once the history nears the model's window.
+def _compact(messages: list[dict], client, executor: LabToolExecutor, tool_calls: list[dict],
+             model: str | None) -> None:
+    """Summarize older turns in place once the history nears the window of the model called.
 
     The first message, the user's request, is kept word for word in front of the summary.
     """
     reserve = max(COMPACT_RESERVE_TOKENS, int(getattr(client, "max_tokens", 0) or 0))
     compacted, did_compact = maybe_compact(messages=messages, tool_calls_log=tool_calls,
                                            output_dir=executor.workspace,
-                                           model=getattr(client, "model", None), reserve=reserve)
+                                           model=model or getattr(client, "model", None), reserve=reserve)
     if not did_compact:
         return
     # After an earlier compaction the first message also holds that summary; the new one replaces it.

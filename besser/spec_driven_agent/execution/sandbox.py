@@ -32,19 +32,29 @@ and ``/dev/net/tun`` it gets a network namespace of its own with outbound NAT
 and no forwarding in either direction, so its ``localhost`` is private and the
 worker's own listeners and other runs' servers are out of reach. Otherwise it
 shares the worker's namespace.
+
+Callers that confine more than one run directory (the lab) add mount rules with
+:class:`SandboxMounts`: read-write binds in place of the workspace, read-only
+binds and masked (empty tmpfs) paths. A long-lived sandbox is forked through
+:func:`spawn_long_lived`.
 """
 
 import ipaddress
 import json
 import logging
 import os
+import queue
 import select
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from collections.abc import Callable, Sequence
+from concurrent.futures import Future
 from dataclasses import dataclass
+from typing import TypeVar
 
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
 from besser.spec_driven_agent.settings import AgentSettings
@@ -132,6 +142,25 @@ class SandboxUnavailable(RuntimeError):
 
 
 @dataclass(frozen=True)
+class SandboxMounts:
+    """Mount rules added to a sandbox's plan; ``SandboxMounts()`` changes nothing.
+
+    Mounted in this order: ``masked``, then ``writable``, then ``read_only``.
+    A masked path may be an ancestor of a bind (it hides the bind's siblings);
+    a masked or read-only path inside a read-write one, or a masked path
+    inside a read-only one, raises ``ValueError``.
+    """
+
+    # Replaces the workspace as the read-write binds; () binds none.
+    writable: tuple[str, ...] | None = None
+    # --ro-bind p p, after the read-write binds.
+    read_only: tuple[str, ...] = ()
+    # --tmpfs p for each existing directory, unless a hidden top level already
+    # hides it and no bind lies under it.
+    masked: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class SandboxedCommand:
     """How to hand one model-authored command to :func:`subprocess.run`."""
 
@@ -210,17 +239,45 @@ def sandbox_home(workspace: str) -> str:
     return workspace.rstrip("/\\") + ".sandbox-home"
 
 
-def _mount_args(workspace: str, writable: "list[str] | None" = None) -> list[str]:
+def _check_mount_order(writable: Sequence[str], read_only: Sequence[str],
+                       masked: Sequence[str]) -> None:
+    """Refuse a rule a later mount would undo.
+
+    Read-write binds come after the masks and read-only binds after both, so
+    a mask inside either kind of bind would be shown again. A read-only bind
+    inside a read-write one is refused too: renaming an ancestor directory
+    (allowed for anything but the mount point itself) moves it out of the way.
+    """
+    writable = [os.path.realpath(path) for path in writable]
+    for path in masked:
+        for outer, kind in [*((p, "read-write") for p in writable),
+                            *((p, "read-only") for p in read_only)]:
+            if _within(path, outer):
+                raise ValueError(f"masked path {path} is inside the {kind} path {outer}")
+    for path in read_only:
+        for outer in writable:
+            if _within(path, outer):
+                raise ValueError(f"read-only path {path} is inside the read-write path {outer}")
+
+
+def _mount_args(workspace: str, writable: "Sequence[str] | None" = None,
+                read_only: Sequence[str] = (), masked: Sequence[str] = ()) -> list[str]:
     """Bind the container filesystem minus this run's siblings.
 
     Everything the toolchain needs stays visible, read-only — a compile check,
     ``pip show`` and the app's own test suite must keep working — but the
     top-level directory the run workspaces live under is left out entirely.
     ``writable`` (default: the workspace) is bound back read-write, plus the
-    run's :func:`sandbox_home`.
+    run's :func:`sandbox_home`. ``masked`` paths get an empty tmpfs before the
+    read-write binds, ``read_only`` paths are bound after them (see
+    :class:`SandboxMounts`).
     """
     writable = [workspace] if writable is None else list(writable)
     hidden = {_top_level(path) for path in (workspace, *writable)}
+    home = sandbox_home(workspace)
+    read_only = [os.path.realpath(path) for path in read_only]
+    masks = [os.path.realpath(path) for path in masked]
+    _check_mount_order([*writable, home], read_only, masks)
     args: list[str] = []
     for entry in sorted(os.listdir("/")):
         path = "/" + entry
@@ -239,7 +296,13 @@ def _mount_args(workspace: str, writable: "list[str] | None" = None) -> list[str
         masked = os.path.realpath(os.environ.get(env_name) or default)
         if os.path.isdir(masked) and not any(_within(masked, h) for h in hidden):
             args += ["--tmpfs", masked]
-    home = sandbox_home(workspace)
+    binds = [*writable, *read_only]
+    for path in masks:
+        # Under a hidden top level only as a bind's ancestor: bwrap then creates
+        # the bind's target in this tmpfs, which hides everything else there.
+        if os.path.isdir(path) and (not any(_within(path, h) for h in hidden)
+                                    or any(_within(bind, path) for bind in binds)):
+            args += ["--tmpfs", path]
     args += ["--bind", home, home, "--setenv", "HOME", home]
     # rustup finds its toolchains under $HOME/.rustup; keep the image's
     # (read-only) now that $HOME moved.
@@ -249,6 +312,8 @@ def _mount_args(workspace: str, writable: "list[str] | None" = None) -> list[str
         args += ["--setenv", "RUSTUP_HOME", rustup]
     for path in writable:
         args += ["--bind", path, path]
+    for path in read_only:
+        args += ["--ro-bind", path, path]
     return args
 
 
@@ -360,18 +425,35 @@ def _sandbox_resolv_conf() -> str:
     return path
 
 
-def pasta_argv(pasta: str, pid: int, dns_host: str | None = None) -> list[str]:
-    """pasta for the network namespace of ``pid``: outbound NAT only.
+def _forward_port(port: int) -> str:
+    """One TCP port as pasta's option value; a range or a spec is refused."""
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(f"not a TCP port to forward: {port!r}")
+    return str(port)
 
-    Every forwarding option is pinned to ``none``: -t/-u would publish sandbox
-    ports on the worker, -T/-U would expose the worker's loopback to the
-    sandbox, and without --no-map-gw the gateway address maps to the worker.
+
+def pasta_argv(pasta: str, pid: int, dns_host: str | None = None, *,
+               tcp_in: Sequence[tuple[str, int]] = (), tcp_out: Sequence[int] = ()) -> list[str]:
+    """pasta for the network namespace of ``pid``: outbound NAT, and only the named ports.
+
+    By default every forwarding option is pinned to ``none``: -t/-u would
+    publish sandbox ports on the worker, -T/-U would expose the worker's
+    loopback to the sandbox, and without --no-map-gw the gateway address maps
+    to the worker. ``tcp_in`` publishes each ``(host address, port)`` (one
+    ``-t addr/port`` each, replacing ``-t none``); ``tcp_out`` lets the sandbox
+    reach each host loopback port (``-T port``, replacing ``-T none``). UDP
+    stays closed both ways.
     """
+    inbound = [f"{ipaddress.ip_address(addr)}/{_forward_port(port)}" for addr, port in tcp_in]
+    outbound = [_forward_port(port) for port in tcp_out]
     argv = [
         pasta, "-f", "-q", "--config-net",
         # As root, pasta would drop to nobody, which cannot join the userns.
         "--runas", "0:0",
-        "-t", "none", "-u", "none", "-T", "none", "-U", "none",
+        *[arg for spec in inbound or ["none"] for arg in ("-t", spec)],
+        "-u", "none",
+        *[arg for spec in outbound or ["none"] for arg in ("-T", spec)],
+        "-U", "none",
         "--no-map-gw",
     ]
     if dns_host:
@@ -379,15 +461,18 @@ def pasta_argv(pasta: str, pid: int, dns_host: str | None = None) -> list[str]:
     return [*argv, str(pid)]
 
 
-def start_pasta(pid: int, stderr) -> subprocess.Popen:
+def start_pasta(pid: int, stderr, *, tcp_in: Sequence[tuple[str, int]] = (),
+                tcp_out: Sequence[int] = ()) -> subprocess.Popen:
     """Attach pasta to ``pid``'s network namespace in the foreground; the
-    caller waits on it (pasta's daemon mode leaves zombies under PID 1)."""
+    caller waits on it (pasta's daemon mode leaves zombies under PID 1).
+    ``tcp_in`` / ``tcp_out``: the ports forwarded, see :func:`pasta_argv`."""
     pasta = shutil.which("pasta")
     if not pasta:
         raise SandboxUnavailable("pasta (passt) is not installed")
     try:
         return subprocess.Popen(
-            pasta_argv(pasta, pid, _loopback_nameserver()), stdin=subprocess.DEVNULL,
+            pasta_argv(pasta, pid, _loopback_nameserver(), tcp_in=tcp_in, tcp_out=tcp_out),
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=stderr, env=_safe_subprocess_env(),
         )
     except OSError as exc:
@@ -427,6 +512,42 @@ def stop_process(proc: "subprocess.Popen | None") -> None:
         proc.wait(timeout=5)
     except OSError:
         pass
+
+
+# --------------------------------------------------------------------------- #
+# Spawning: bwrap's --die-with-parent is a PR_SET_PDEATHSIG, which fires when
+# the THREAD that forked it exits. Tools run on a per-turn ThreadPoolExecutor
+# and lab requests on request threads, so a sandbox forked there would be
+# killed when that thread ends. Every long-lived sandbox (shell sessions,
+# preview services) and its pasta is forked from this one thread, which lives
+# as long as the worker process.
+# --------------------------------------------------------------------------- #
+_T = TypeVar("_T")
+_spawn_queue: "queue.SimpleQueue" = queue.SimpleQueue()
+_spawner: threading.Thread | None = None
+_spawner_guard = threading.Lock()
+
+
+def _spawner_loop() -> None:
+    while True:
+        factory, future = _spawn_queue.get()
+        try:
+            future.set_result(factory())
+        except BaseException as exc:  # handed to the caller
+            future.set_exception(exc)
+
+
+def spawn_long_lived(factory: Callable[[], _T]) -> _T:
+    """Run ``factory`` (which forks the process) on the long-lived spawner thread."""
+    global _spawner
+    with _spawner_guard:
+        if _spawner is None or not _spawner.is_alive():
+            _spawner = threading.Thread(target=_spawner_loop, name="besser-shell-spawner",
+                                        daemon=True)
+            _spawner.start()
+    future: Future = Future()
+    _spawn_queue.put((factory, future))
+    return future.result()
 
 
 def _network_selftest(bwrap: str) -> tuple[bool, str]:
@@ -518,20 +639,24 @@ def shell_network_is_private() -> bool:
 
 def sandboxed_command(
     command: "str | list[str]", *, workspace: str, cwd: str,
-    network: bool = True, writable: "list[str] | None" = None,
-    shell_network: bool = False,
+    network: bool = True, writable: "Sequence[str] | None" = None,
+    shell_network: bool = False, read_only: Sequence[str] = (),
+    masked: Sequence[str] = (), private_network: bool = False,
 ) -> SandboxedCommand:
     """Wrap one model-authored command for execution.
 
     ``command`` is a shell string, or an argv run without a shell.
-    ``writable`` replaces the workspace as the read-write bind (a probe's
-    scratch copy); the workspace's top level stays hidden either way.
-    ``shell_network`` applies :data:`SHELL_NETWORK_ENV` (shell sessions): a
-    private network is unshared here and the caller attaches pasta.
+    ``writable`` replaces the workspace as the read-write binds (a probe's
+    scratch copy; ``()`` binds none); the workspace's top level stays hidden
+    either way. ``read_only`` and ``masked`` add the rules of
+    :class:`SandboxMounts`. ``shell_network`` applies
+    :data:`SHELL_NETWORK_ENV` (shell sessions): a private network is unshared
+    here and the caller attaches pasta. ``private_network`` asks for one
+    whatever that setting says (preview services, sandboxed installs).
 
     Raises :class:`SandboxUnavailable` when a sandbox is mandatory here and
     cannot be started — the caller must refuse the command rather than run it
-    unconfined.
+    unconfined — and ``ValueError`` for a mount rule a later mount would undo.
     """
     use_shell = isinstance(command, str)
     if not sandbox_supported_platform():
@@ -558,14 +683,25 @@ def sandboxed_command(
             f"{SANDBOX_POLICY_ENV}=off"
         )
 
-    private = network and shell_network and _shell_network_private(bwrap)
+    if private_network:
+        ok, detail = _network_selftest(bwrap)
+        if not ok:
+            raise SandboxUnavailable(
+                f"a private network cannot be set up here ({detail}). Install 'passt' "
+                f"and give the container {_TUN_DEVICE}")
+        private = True
+    else:
+        private = network and shell_network and _shell_network_private(bwrap)
     dns = (["--ro-bind", _sandbox_resolv_conf(), _RESOLV_CONF]
            if private and _loopback_nameserver() else [])
+    # Without extra rules, the two-argument call it always was (existing tests stub that signature).
+    mounts = (_mount_args(workspace, writable, read_only, masked) if read_only or masked
+              else _mount_args(workspace, writable))
     os.makedirs(sandbox_home(workspace), exist_ok=True)
     argv = [
         bwrap,
         *_isolation_args(network and not private),
-        *_mount_args(workspace, writable),
+        *mounts,
         *dns,
         "--chdir", cwd,
         "--", *(["/bin/sh", "-c", command] if use_shell else command),
@@ -576,10 +712,12 @@ def sandboxed_command(
 def run_confined(
     argv: list[str], *, workspace: str, cwd: str, timeout: float,
     env: "dict[str, str] | None" = None, input: "str | None" = None,
-    writable: "list[str] | None" = None, network: bool = False,
+    writable: "Sequence[str] | None" = None, network: bool = False,
+    read_only: Sequence[str] = (), masked: Sequence[str] = (),
 ) -> subprocess.CompletedProcess:
     """Run a validator's command over generated code: sandboxed, no network
     unless the check cannot work without it (``network=True``).
+    ``writable``, ``read_only`` and ``masked``: see :func:`sandboxed_command`.
 
     Same policy as ``run_command``: where the sandbox is mandatory (Linux,
     unless :data:`SANDBOX_POLICY_ENV` is ``off``) and cannot start, this raises
@@ -587,8 +725,8 @@ def run_confined(
     unconfined. On a platform with no namespaces it runs with a warning.
     Raises ``subprocess.TimeoutExpired`` like :func:`run_bounded`.
     """
-    plan = sandboxed_command(argv, workspace=workspace, cwd=cwd,
-                             network=network, writable=writable)
+    plan = sandboxed_command(argv, workspace=workspace, cwd=cwd, network=network,
+                             writable=writable, read_only=read_only, masked=masked)
     # Never inherit the worker's environment (provider keys, tokens).
     if env is None:
         env = _safe_subprocess_env()

@@ -7,8 +7,10 @@ values, so a change to a variable's name, default or parsing fails here.
 """
 
 import os
+import re
 import sys
 import tempfile
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -88,6 +90,46 @@ def _old_run_store_path():
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
     return os.path.join(tempfile.gettempdir(), "x.db")
+
+
+def _env_non_negative_int(name, default):
+    value = os.environ.get(name)
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed >= 0 else default
+
+
+_UPSTREAM = r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+@[A-Za-z0-9._/-]+$"
+
+
+def _upstream(name, default):
+    """``owner/name@branch``; blank is the default, anything else malformed is refused."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    if not re.fullmatch(_UPSTREAM, raw):
+        raise ValueError(raw)
+    return raw
+
+
+def _origins(name):
+    """Comma-separated http(s) origins, a trailing slash allowed; anything else is refused."""
+    origins = []
+    for entry in os.environ.get(name, "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parts = urlsplit(entry)
+        if (parts.scheme.lower() not in ("http", "https") or not parts.hostname or "@" in parts.netloc
+                or parts.path not in ("", "/") or parts.query or parts.fragment):
+            raise ValueError(entry)
+        parts.port  # noqa: B018 - raises ValueError on a bad port
+        origins.append(f"{parts.scheme}://{parts.netloc}".lower())
+    return tuple(origins)
 
 
 def _new_session_store_path(s):
@@ -281,7 +323,49 @@ ROWS = [
      lambda: _env_int("BESSER_LAB_MAX_RUNTIME_SECONDS", 2400), lambda s: s.lab_max_runtime_seconds),
     ("lab_preview_enabled", "BESSER_LAB_PREVIEW_ENABLED", False,
      lambda: _env_bool("BESSER_LAB_PREVIEW_ENABLED", False), lambda s: s.lab_preview_enabled),
+    ("lab_git_root", "BESSER_LAB_GIT_ROOT", None,
+     lambda: _env_path("BESSER_LAB_GIT_ROOT"), lambda s: s.lab_git_root),
+    ("lab_preview_urls", "BESSER_LAB_PREVIEW_URLS", (),
+     lambda: _origins("BESSER_LAB_PREVIEW_URLS"), lambda s: s.lab_preview_urls),
+    ("lab_preview_bind", "BESSER_LAB_PREVIEW_BIND", "127.0.0.1",
+     lambda: _get("BESSER_LAB_PREVIEW_BIND", "").strip() or "127.0.0.1", lambda s: s.lab_preview_bind),
+    ("lab_preview_openai_api_key", "BESSER_LAB_PREVIEW_OPENAI_API_KEY", "",
+     lambda: _get("BESSER_LAB_PREVIEW_OPENAI_API_KEY", ""), lambda s: _secret(s.lab_preview_openai_api_key)),
+    ("lab_preview_openai_base_url", "BESSER_LAB_PREVIEW_OPENAI_BASE_URL", "https://api.openai.com/v1",
+     lambda: _get("BESSER_LAB_PREVIEW_OPENAI_BASE_URL", "").strip() or "https://api.openai.com/v1",
+     lambda s: s.lab_preview_openai_base_url),
+    ("lab_preview_llm_proxy_port", "BESSER_LAB_PREVIEW_LLM_PROXY_PORT", 9300,
+     lambda: _env_int("BESSER_LAB_PREVIEW_LLM_PROXY_PORT", 9300), lambda s: s.lab_preview_llm_proxy_port),
+    ("lab_preview_llm_max_requests_per_day", "BESSER_LAB_PREVIEW_LLM_MAX_REQUESTS_PER_DAY", 2000,
+     lambda: _env_int("BESSER_LAB_PREVIEW_LLM_MAX_REQUESTS_PER_DAY", 2000),
+     lambda s: s.lab_preview_llm_max_requests_per_day),
+    ("lab_plan_llm_model", "BESSER_LAB_PLAN_LLM_MODEL", None,
+     lambda: _get("BESSER_LAB_PLAN_LLM_MODEL", "").strip() or None, lambda s: s.lab_plan_llm_model),
+    ("lab_repo_besser", "BESSER_LAB_REPO_BESSER", "BESSER-PEARL/BESSER@development",
+     lambda: _upstream("BESSER_LAB_REPO_BESSER", "BESSER-PEARL/BESSER@development"),
+     lambda s: s.lab_repo_besser),
+    ("lab_repo_frontend", "BESSER_LAB_REPO_FRONTEND", "BESSER-PEARL/BESSER-Web-Modeling-Editor@develop",
+     lambda: _upstream("BESSER_LAB_REPO_FRONTEND", "BESSER-PEARL/BESSER-Web-Modeling-Editor@develop"),
+     lambda s: s.lab_repo_frontend),
+    ("lab_repo_modeling_agent", "BESSER_LAB_REPO_MODELING_AGENT", "BESSER-PEARL/modeling-agent@develop",
+     lambda: _upstream("BESSER_LAB_REPO_MODELING_AGENT", "BESSER-PEARL/modeling-agent@develop"),
+     lambda s: s.lab_repo_modeling_agent),
+    ("lab_admin_logins", "BESSER_LAB_ADMIN_LOGINS", "",
+     lambda: _get("BESSER_LAB_ADMIN_LOGINS", ""), lambda s: s.lab_admin_logins),
+    ("lab_max_concurrent_runs", "BESSER_LAB_MAX_CONCURRENT_RUNS", 2,
+     lambda: _env_int("BESSER_LAB_MAX_CONCURRENT_RUNS", 2), lambda s: s.lab_max_concurrent_runs),
+    ("lab_user_monthly_cap_usd", "BESSER_LAB_USER_MONTHLY_CAP_USD", 75.0,
+     lambda: _env_float("BESSER_LAB_USER_MONTHLY_CAP_USD", 75.0), lambda s: s.lab_user_monthly_cap_usd),
+    ("lab_monthly_cap_usd", "BESSER_LAB_MONTHLY_CAP_USD", 300.0,
+     lambda: _env_float("BESSER_LAB_MONTHLY_CAP_USD", 300.0), lambda s: s.lab_monthly_cap_usd),
+    ("lab_base_refresh_minutes", "BESSER_LAB_BASE_REFRESH_MINUTES", 60,
+     lambda: _env_non_negative_int("BESSER_LAB_BASE_REFRESH_MINUTES", 60), lambda s: s.lab_base_refresh_minutes),
 ]
+
+# A malformed value of these is refused rather than replaced: a default would point the lab at another
+# repository (where it pushes), or a preview at another origin, without anyone noticing.
+REFUSED_WHEN_MALFORMED = ["BESSER_LAB_REPO_BESSER", "BESSER_LAB_REPO_FRONTEND", "BESSER_LAB_REPO_MODELING_AGENT",
+                          "BESSER_LAB_PREVIEW_URLS"]
 
 EDGE_VALUES = [
     "", " ", "0", "-1", "1", "5", " 7 ", "2.5", "1e3", "1_000", "nan", "inf", "abc",
@@ -300,11 +384,12 @@ def clean_env(monkeypatch):
 
 
 def _outcome(read):
-    """The value read, typed (True is not 1, NaN equals NaN), or the error raised."""
+    """The value read, typed (True is not 1, NaN equals NaN), or that it was refused (pydantic's
+    ValidationError is a ValueError)."""
     try:
         value = read()
-    except ValueError as exc:
-        return type(exc)
+    except ValueError:
+        return ValueError
     return type(value), repr(value)
 
 
@@ -362,8 +447,66 @@ def test_a_download_outlives_its_workspace(clean_env):
 
 def test_a_malformed_value_never_stops_the_backend(clean_env):
     for name in ALL_VARIABLES:
-        clean_env.setenv(name, "é not a value ;")
+        if name not in REFUSED_WHEN_MALFORMED:
+            clean_env.setenv(name, "é not a value ;")
     BackendSettings()
+
+
+@pytest.mark.parametrize("variable", REFUSED_WHEN_MALFORMED)
+def test_a_malformed_repository_or_preview_origin_is_refused(clean_env, variable):
+    clean_env.setenv(variable, "é not a value ;")
+    with pytest.raises(ValueError, match=variable):
+        BackendSettings()
+
+
+@pytest.mark.parametrize("value", ["BESSER-PEARL/BESSER-Web-Modeling-Editor", "armen/WME@", "@develop",
+                                   "a/b/c@develop", "armen/WME@develop;rm", "https://github.com/a/b@main"])
+def test_a_bad_frontend_repository_is_refused(clean_env, value):
+    clean_env.setenv("BESSER_LAB_REPO_FRONTEND", value)
+    with pytest.raises(ValueError, match="BESSER_LAB_REPO_FRONTEND"):
+        BackendSettings()
+
+
+def test_a_fork_with_a_feature_branch_is_accepted(clean_env):
+    clean_env.setenv("BESSER_LAB_REPO_FRONTEND", " armen/BESSER-Web-Modeling-Editor@feature/lab.2 ")
+    assert BackendSettings().lab_repo_frontend == "armen/BESSER-Web-Modeling-Editor@feature/lab.2"
+
+
+def test_git_root_and_state_dir_default_beside_the_workspace_root(clean_env, tmp_path):
+    clean_env.setenv("BESSER_LAB_WORKSPACE_ROOT", str(tmp_path / "work") + os.sep)
+    settings = BackendSettings()
+    assert settings.lab_git_root == str(tmp_path / "work-git")
+    assert settings.lab_state_dir == str(tmp_path / "work-state")
+
+    clean_env.setenv("BESSER_LAB_GIT_ROOT", str(tmp_path / "git"))
+    clean_env.setenv("BESSER_LAB_STATE_DIR", str(tmp_path / "state"))
+    settings = BackendSettings()
+    assert (settings.lab_git_root, settings.lab_state_dir) == (str(tmp_path / "git"), str(tmp_path / "state"))
+
+
+def test_preview_urls_are_origins_one_per_slot(clean_env):
+    clean_env.setenv("BESSER_LAB_PREVIEW_URLS", " https://Preview.lab.example/ ,, https://preview-2.lab.example:8443")
+    assert BackendSettings().lab_preview_urls == ("https://preview.lab.example", "https://preview-2.lab.example:8443")
+
+
+@pytest.mark.parametrize("value", ["preview.lab.example", "ftp://preview.lab.example", "https://p.example/path",
+                                   "https://user@p.example", "https://p.example?x=1", "https://p.example:99999"])
+def test_a_preview_url_that_is_not_an_origin_is_refused(clean_env, value):
+    clean_env.setenv("BESSER_LAB_PREVIEW_URLS", f"https://ok.example,{value}")
+    with pytest.raises(ValueError, match="BESSER_LAB_PREVIEW_URLS"):
+        BackendSettings()
+
+
+def test_a_preview_url_equal_to_the_deployment_url_is_kept_for_the_pool_to_disable(clean_env):
+    clean_env.setenv("DEPLOYMENT_URL", "https://lab.example")
+    clean_env.setenv("BESSER_LAB_PREVIEW_URLS", "https://lab.example")
+    assert BackendSettings().lab_preview_urls == ("https://lab.example",)
+
+
+@pytest.mark.parametrize("value, minutes", [("0", 0), ("15", 15), ("-5", 60), ("", 60)])
+def test_base_refresh_zero_means_manual(clean_env, value, minutes):
+    clean_env.setenv("BESSER_LAB_BASE_REFRESH_MINUTES", value)
+    assert BackendSettings().lab_base_refresh_minutes == minutes
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows environment names ignore case")

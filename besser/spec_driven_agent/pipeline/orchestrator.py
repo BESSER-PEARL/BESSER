@@ -112,7 +112,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     _FRONTEND_ASK_RE,
 )
 from besser.spec_driven_agent.planning.agent_wiring import (
-    AGENT_DOMAIN_TASK, agent_data_requirement, gui_uses_agent,
+    AGENT_DOMAIN_TASK, agent_data_requirement, agent_left_out_note, gui_uses_agent,
 )
 from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
 from besser.spec_driven_agent.planning.generator_keywords import (
@@ -282,7 +282,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
-from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding
+from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding, counted
 from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 from besser.spec_driven_agent.settings import AgentSettings
 
@@ -675,6 +675,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # blockers fixed"). Traced so a run's exit can be attributed without
         # replaying the loop by hand. Report-only.
         self._phase3_exit_reason: str = "not reached"
+        # The Phase 3 round its steps are reported under ("First check",
+        # "Re-check after fix attempt 2"); see _report_round_step.
+        self._validation_round: str = "Validation"
+        self._phase3_sweep_running = False
         self._repair_progress: dict = {}
         # ``True`` once Phase 2 exits via end_turn (LLM said it's done).
         # Anything else — API error, cost cap, timeout, cancellation —
@@ -2492,7 +2496,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not self.on_progress:
             return
         if not getattr(self, "_progress_takes_detail", True):
-            self.on_progress(turn, tool, status)
+            try:
+                self.on_progress(turn, tool, status)
+            except Exception:
+                logger.debug("on_progress callback raised; continuing", exc_info=True)
             return
         try:
             self.on_progress(turn, tool, status, detail)
@@ -3070,6 +3077,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         cached = getattr(self, "_runtime_probe_cache", None)
         if cached and cached[0] == revision:
             return list(cached[1])
+        if self._phase3_sweep_running:
+            self._report_round_step("starting the app's backend and creating test records")
         issues: list[str] = []
         mapper_issues = _import_smoke_issues(self.output_dir)
         issues.extend(mapper_issues)
@@ -3574,7 +3583,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # pages, so it says nothing about a native or CLI target.
         raw_issues.extend(self._acceptance_matrix_issues())
 
-        execution_issues = self._collect_execution_issues()
+        # validate_app reaches the probe too (Phase 2, a fix attempt); only this sweep names it.
+        self._phase3_sweep_running = True
+        try:
+            execution_issues = self._collect_execution_issues()
+        finally:
+            self._phase3_sweep_running = False
         # An enabled ledger that extracted nothing verified nothing. Saying so
         # is the difference between "the user asked for nothing" and "we never
         # looked".
@@ -3601,6 +3615,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
         raw_issues.extend(self._format_notes)
+        raw_issues.extend(self._agent_left_out_issues())
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
@@ -3633,6 +3648,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         build_verdicts = self._frontend_build_verdicts
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
+        if (self.enable_toolchain_validation and self.allow_shell_tools
+                and any(rel.rpartition("/")[2] == "package.json" for rel in self._workspace_file_list())):
+            self._report_round_step("building the frontend")
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
             allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
@@ -3880,6 +3898,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 except OSError:
                     continue
         return bool(_route_may_serve_home(_CodeFiles(files)))
+
+    def _agent_left_out_issues(self) -> list[str]:
+        """``agent left out:`` when the web app generator's output on disk has no agents folder
+        while the project has an agent: what was generated, whatever the GUI model says now."""
+        generated = self._generator_used == "generate_web_app" or any(
+            call.get("tool") == "generate_web_app" and call.get("success") for call in self.tool_calls_log)
+        web_app = os.path.join(self.output_dir, _APPLICATION_OUTPUT_DIRS["generate_web_app"])
+        if (generated and self.agent_model is not None and os.path.isdir(web_app)
+                and not os.path.isdir(os.path.join(web_app, "agents"))):
+            return [agent_left_out_note(self.agent_model.name)]
+        return []
 
     def _app_agent(self):
         """The agent model when it is part of the app: without a GUI, when a screen
@@ -4223,6 +4252,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
             return findings
         if self._requirements is None:
+            self._report_round_step("listing the requirements in the request")
             self._extract_requirements(self._instructions)
         if self._requirements is None:
             if (_requirements_ledger._is_real_provider(self.client)
@@ -4265,6 +4295,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "revisions and is not asked again this run."]
             kept = self._requirements_still_verified(scope, imports)
             to_judge = [item for item in requirements if item["id"] not in kept]
+            if to_judge:
+                self._report_round_step(
+                    f"checking {len(to_judge)} of {counted(len(requirements), 'requirement')} against the code "
+                    f"({len(kept)} unchanged since the last check)" if kept else
+                    f"checking {counted(len(to_judge), 'requirement')} against the code")
             with self._traced_llm_call("requirements_judge") as call:
                 verdicts = _requirements_ledger.judge_coverage(
                     to_judge, digest, self.client, original_spec=self._instructions,
@@ -4398,6 +4433,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             focused_digest, gaps, shown = _requirements_ledger.build_app_digest_details(
                 self.output_dir, focus_paths=focus_paths)
             to_rejudge = [item for item in requirements if item["id"] in focus]
+            self._report_round_step(
+                f"checking {counted(len(to_rejudge), 'requirement')} again with the relevant files shown")
             with self._traced_llm_call("requirements_rejudge") as call:
                 repair = _requirements_ledger.judge_coverage(
                     to_rejudge, focused_digest, self.client, original_spec=self._instructions,
@@ -4794,12 +4831,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for folder in sorted({rel.rpartition("/")[0] for rel in self._workspace_file_list()
                                   if rel.rpartition("/")[2] == "tsconfig.json"}))
         tools = tuple(shutil.which(name) for name in ("tsc", "tsc.cmd", "npm", "npm.cmd"))
-        return self._revision_cached(
-            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs),
-            lambda: _collect_tsc_issues(
+
+        def type_check() -> list[str]:
+            if installs:
+                self._report_round_step("type-checking the TypeScript code")
+            return _collect_tsc_issues(
                 self.output_dir, self.allow_shell_tools,
                 self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
-            ))
+            )
+        return self._revision_cached(
+            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs), type_check)
 
     @classmethod
     def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:
@@ -5764,6 +5805,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         model_change = getattr(self, "_model_change", None) if self._modify_mode else None
         if model_change is not None:
             recipe["model_change"] = model_change.to_dict()
+        regeneration = self._regeneration if self._modify_mode else None
+        if regeneration is not None:
+            # A moved file counts once, under its new path.
+            recipe["regenerated_files"] = sorted({
+                *regeneration.written, *regeneration.merged, *regeneration.removed,
+                *(new for _, new in regeneration.moved)})
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did

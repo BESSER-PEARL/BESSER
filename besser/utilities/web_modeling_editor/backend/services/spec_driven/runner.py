@@ -128,6 +128,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     PhaseEvent,
     PhaseUpdateEvent,
     StartEvent,
+    StepEvent,
     TextDeltaEvent,
     ToolCallEvent,
     VerificationCounts,
@@ -351,7 +352,8 @@ def _ran(verdict: dict) -> bool:
 
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
-_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
+# "agent left out:": the project's agent is not in the web app, so nothing about it was checked there.
+_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:", "agent left out:")
 
 
 def _user_facing_cost(usage: Any, cost_usd: float) -> float:
@@ -425,12 +427,17 @@ def run_changes(recipe: dict) -> dict:
     """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
     history = recipe.get("history") or []
     mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
-    changed = sorted({
+    # Distinct files: successful edit calls (a failed or refused one changed nothing) and
+    # the files the model change regeneration wrote, merged, moved or removed.
+    edited = {
         (call.get("input") or {}).get("path")
         for call in recipe.get("tool_calls") or []
         if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
-        and isinstance((call.get("input") or {}).get("path"), str)
-    })
+        and call.get("success") is not False
+    }
+    regenerated = recipe.get("regenerated_files")
+    changed = sorted(path for path in edited | set(regenerated if isinstance(regenerated, list) else [])
+                     if isinstance(path, str))
     model_change = recipe.get("model_change") or {}
     return {
         "mode": "modify" if mode == "modify" else "create",
@@ -1609,6 +1616,8 @@ class SmartGenerationRunner:
             if isinstance(event, PhaseEvent):
                 # Stamped as the phase starts, not when the consumer gets to it.
                 event = event.model_copy(update=self._run_totals())
+            elif isinstance(event, StepEvent):
+                event = event.model_copy(update={"elapsedSeconds": self._run_totals()["elapsedSeconds"]})
             try:
                 loop.call_soon_threadsafe(_put_in_loop, event)
             except RuntimeError:
@@ -1718,6 +1727,10 @@ class SmartGenerationRunner:
                 # The first check's result, on the row announced above.
                 self._note_validation_counts(status)
                 _put(PhaseUpdateEvent(phase="validate", details="", message=status))
+                return
+            if tool == "__validation_step__":
+                # What Phase 3 is doing now (a check round, a judge call, a fix attempt).
+                _put(StepEvent(phase="validate", message=status))
                 return
             if tool == "gap_analysis":
                 # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm

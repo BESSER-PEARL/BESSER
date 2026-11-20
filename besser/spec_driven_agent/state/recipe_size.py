@@ -69,7 +69,8 @@ def _cut_api_bodies(recipe: dict) -> int:
 
 
 def _cut_tool_calls(recipe: dict) -> int:
-    """All but the last call of each file-changing tool on each file; ``.besser_trace.jsonl`` has every call."""
+    """All but the last call, and the last successful one, of each file-changing tool on each file;
+    ``.besser_trace.jsonl`` has every call."""
     calls = recipe.get("tool_calls")
     if not isinstance(calls, list):
         return 0
@@ -77,7 +78,10 @@ def _cut_tool_calls(recipe: dict) -> int:
     for index, call in enumerate(calls):
         if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS:
             given = call.get("input") if isinstance(call.get("input"), dict) else {}
-            last[(call["tool"], str(given.get("path")))] = index
+            key = (call["tool"], str(given.get("path")))
+            last[key] = index
+            if call.get("success") is not False:
+                last[(*key, "succeeded")] = index
     kept = set(last.values())
     recipe["tool_calls"] = [call for index, call in enumerate(calls) if index in kept]
     return len(calls) - len(kept)

@@ -63,7 +63,7 @@ def test_a_commented_out_rule_is_not_a_citation(app):
 
 @pytest.mark.parametrize("text", [
     "Background jobs send the invoices nightly", "A beer has a style",
-    "A quiz has a theme", "The API is responsive", "Payments are aligned with invoices",
+    "A project has a theme", "The API is responsive", "Payments are aligned with invoices",
 ])
 def test_a_requirement_that_only_shares_a_word_with_styling_does_not_add_the_stylesheets(text):
     assert not ledger.shows_stylesheets([{"text": text}])

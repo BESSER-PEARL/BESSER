@@ -138,7 +138,7 @@ The three phases
    gets a checklist item to connect them (with a GUI model, only when a
    screen uses the agent or the run targets the agent; the generated web app
    includes the agent only when a screen uses it, as in the editor's own web
-   app generation): the agent's intents about the
+   app generation, and otherwise reports ``agent left out:`` as a warning): the agent's intents about the
    model's records must read and write them, not answer with canned text.
    The item also keeps Phase 2 from being skipped, and the agent may drop it
    with a reason when it has nothing to do with the data. Phase 3 checks the
@@ -192,8 +192,11 @@ The three phases
 The whole run streams progress over Server-Sent Events, so the editor shows the
 phase timeline, the LLM's tool calls, a live cost/runtime meter, and the
 streamed text as it happens. The stream reports five coarse phases:
-``select``, ``generate``, ``gap``, ``customize``, and ``validate``. The event
-schema is documented in :doc:`api`.
+``select``, ``generate``, ``gap``, ``customize``, and ``validate``. Within
+``validate``, which can run for many minutes, each step is named as it starts
+(the check round, starting the backend, judging the requirements and how many,
+each fix attempt and how many blockers it faces), and the card shows how long
+the current step has been running. The event schema is documented in :doc:`api`.
 
 A run, end to end
 -----------------

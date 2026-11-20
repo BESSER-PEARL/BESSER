@@ -580,12 +580,40 @@ _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
 _MIN_REWRITE_SHARE = 0.6
 # A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
 _COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
+# Fewer lost lines beside a new "remaining ... unchanged" comment is an edit, not left-out code.
+_PLACEHOLDER_MIN_REPLACED = 3
 
 
 def _placeholder_comments(source: str) -> set[str]:
     """Comment-only lines that stand in for omitted code ("remaining rows unchanged")."""
     return {line.strip() for line in source.splitlines()
             if _COMMENT_ONLY_LINE_RE.match(line) and any(p in line.lower() for p in _OMISSION_PHRASES)}
+
+
+def _placeholder_standing_in(before: str, after: str) -> str | None:
+    """Why a new placeholder comment stands in for code: it takes the place of at least
+    ``_PLACEHOLDER_MIN_REPLACED`` lines the rewrite has fewer copies of, or it is added
+    while a block of that many such lines is deleted elsewhere; else None."""
+    new = _placeholder_comments(after) - _placeholder_comments(before)
+    if not new:
+        return None
+    old, cur = ([line.strip() for line in text.splitlines() if line.strip()] for text in (before, after))
+    missing = Counter(old) - Counter(cur)
+    replaced, inserted, deleted = None, None, 0
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, cur, autojunk=False).get_opcodes():
+        lost = sum((Counter(old[i1:i2]) & missing).values())
+        comment = next((line for line in cur[j1:j2] if line in new), None)
+        if tag == "replace" and comment and lost >= _PLACEHOLDER_MIN_REPLACED:
+            replaced = replaced or f"this rewrite replaces {lost} lines with a placeholder comment ({comment[:80]})"
+        elif tag == "insert" and comment:
+            inserted = inserted or comment
+        elif tag == "delete":
+            deleted = max(deleted, lost)
+    if replaced:
+        return replaced
+    if inserted and deleted >= _PLACEHOLDER_MIN_REPLACED:
+        return f"this rewrite removes {deleted} lines and adds a placeholder comment ({inserted[:80]})"
+    return None
 
 
 def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None:
@@ -616,9 +644,9 @@ def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None
     elision = find_elision(after)
     if elision and elision[1].strip() not in elided_lines(before):
         return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
-    placeholders = sorted(_placeholder_comments(after) - _placeholder_comments(before))
-    if placeholders:
-        return f"this rewrite replaces code with a placeholder comment ({placeholders[0][:80]})"
+    placeholder = _placeholder_standing_in(before, after)
+    if placeholder:
+        return placeholder
     return ""
 
 
@@ -2458,6 +2486,8 @@ class ToolExecutor:
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
         # An agent no screen uses stays out of the web app, as on /generate-output.
         ships_agent = gui_uses_agent(self.gui_model)
+        if self.agent_model is not None and not ships_agent:
+            logger.warning("generate_web_app: agent %s left out, no screen uses it", self.agent_model.name)
         generator = WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
             agent_model=self.agent_model if ships_agent else None,

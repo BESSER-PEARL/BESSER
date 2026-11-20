@@ -121,3 +121,42 @@ def test_env_style_defaults_to_true():
     """Other callers (SSE payload redaction) rely on the default."""
     out, _ = redact_text("SECRET=hunter2\n")
     assert "hunter2" not in out
+
+
+@pytest.mark.parametrize("text, secret", [
+    # curl -v output and the headers of its command line
+    ("> X-API-Key: k9f8e7d6c5b4a3f2e1d0\r\n", "k9f8e7d6c5b4a3f2e1d0"),
+    ("> Cookie: session=abcdef0123456789abcdef\r\n", "abcdef0123456789abcdef"),
+    ("< Set-Cookie: sid=zyxwvu9876543210zyxw; HttpOnly\r\n", "zyxwvu9876543210zyxw"),
+    ("curl -H 'X-Auth-Token: t0k3nv4lu3abcdef' https://api.example.com/x", "t0k3nv4lu3abcdef"),
+    ('curl --header "Cookie: session=abcdef0123456789abcdef" https://api.example.com/x',
+     "abcdef0123456789abcdef"),
+    # a URL's basic credentials, as pip config and git remotes print them
+    ("global.index-url='https://deploy:Pa55w0rdHere99@pypi.corp.example.com/simple'", "Pa55w0rdHere99"),
+    ("origin\thttps://builder:Pa55w0rdHere99@git.example.com/team/app.git (fetch)", "Pa55w0rdHere99"),
+])
+def test_header_and_url_credentials_are_redacted(text, secret):
+    safe, findings = redact_text(text)
+    assert secret not in safe and REDACTED_SECRET in safe and findings >= 1
+
+
+@pytest.mark.parametrize("text", [
+    "headers: {'X-API-Key': apiKey, 'Cookie': cookieHeader}",
+    "curl -H 'X-API-Key: $API_KEY' https://api.example.com/x",
+    "BASE_URL = 'http://admin:admin@localhost:8000'",
+    "a request with an X-API-Key header",
+])
+def test_header_and_url_rules_leave_code_and_templates_alone(text):
+    assert redact_text(text) == (text, 0)
+
+
+def test_a_long_run_of_letters_is_redacted_in_linear_time():
+    """The quoted-literal rule tried every start inside a word: minutes on a minified line or base64."""
+    import time
+
+    from besser.utilities.secret_redaction import redact_shared_file
+
+    started = time.perf_counter()
+    assert redact_shared_file("app.js", "y" * 100_000)[1] == 0
+    assert time.perf_counter() - started < 5
+    assert redact_shared_file("app.js", 'const apiKey = "wk_4f8a9b2c7d1e6f3a";')[0] == 'const apiKey = "[REDACTED]";'

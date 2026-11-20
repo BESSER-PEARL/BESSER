@@ -3,7 +3,7 @@
 The REAL orchestrator drives the REAL provider clients; only the SDK
 transport is scripted (``run_transport``). Each scenario plays a plausible run
 on the Shelf FastAPI scaffold: a plan, batched reads, an edit the executor
-refuses three times (which makes the loop force the next tool), the corrected
+refuses three times (the loop reminds, and forces no tool), the corrected
 edit, a new module, checklist bookkeeping, ``validate_app``, a premature
 end_turn that the checklist gate answers with a nudge, and a clean end_turn.
 The compaction threshold is lowered so the history is compacted mid-run.
@@ -38,8 +38,8 @@ from tests.spec_driven_agent.run_transport import (
 from tests.spec_driven_agent.shelf_app import shelf_model
 
 # Low enough that the scripted history is compacted once, mid-run; high
-# enough that the forced turn's reply is replayed before that happens. The
-# forced re-read of the unchanged router is an "unchanged" stub, not the file.
+# enough that the re-read's reply is replayed before that happens. The
+# re-read of the unchanged router is an "unchanged" stub, not the file.
 COMPACT_AT_TOKENS = 9_500
 
 TASKS = [
@@ -103,8 +103,8 @@ def shelf_script() -> list:
              calls=[("read_file", {"path": "backend/main_api.py"}),
                     ("read_file", {"path": BOOK_ROUTER}),
                     ("read_file", {"path": "backend/sql_alchemy.py"})]),
-        # The same wrong quote three times: refused each time, so the loop
-        # forces read_file on the next request.
+        # The same wrong quote three times: refused each time, and the
+        # results name the rewrite step, which starts with a re-read.
         *[Step(thinking=f"Rename the search route (attempt {i}).",
                calls=[("modify_file", dict(REJECTED_EDIT))]) for i in range(1, 4)],
         Step(thinking="Re-read the router as asked.", calls=[("read_file", {"path": BOOK_ROUTER})]),
@@ -318,7 +318,7 @@ def _is_forced(request: dict) -> bool:
 def _assert_scripted_run_completed(orchestrator, phase2):
     assert orchestrator._phase2_stop_reason == "completed", orchestrator._phase2_api_error
     assert orchestrator._compaction_count >= 1, "the run never compacted; lower COMPACT_AT_TOKENS"
-    assert any(_is_forced(request) for request in phase2), "no request forced a tool"
+    assert not any(_is_forced(request) for request in phase2), "a request forced a tool"
     nudged = [request for request in phase2
               if "You ended the turn, but these checklist items" in json.dumps(plain(request["messages"]))]
     assert nudged, "the premature end_turn was not answered with a nudge"
@@ -390,17 +390,15 @@ def test_a_claude_5x_run_keeps_its_cache_prefix_and_valid_thinking(tmp_path):
     _assert_usage_matches_script(client, model, fake)
 
 
-def test_an_older_claude_run_streams_and_forces_the_tool(tmp_path):
-    """Sonnet 4.6: a forced tool_choice with thinking off; a short request is the first turn."""
+def test_an_older_claude_run_streams_and_forces_no_tool(tmp_path):
+    """Sonnet 4.6: no forced tool_choice in the loop; a short request is the first turn."""
     orchestrator, model, fake, client = _run(
         tmp_path, _claude("claude-sonnet-4-6", thinking=False), SHORT_REQUEST, streaming=True)
     phase2 = fake.of("phase2")
     _assert_scripted_run_completed(orchestrator, phase2)
     _assert_cache_prefix_stable(phase2, orchestrator._compaction_count)
 
-    forced = [request for request in phase2 if _is_forced(request)]
-    assert [request["tool_choice"] for request in forced] == [{"type": "tool", "name": "read_file"}]
-    assert forced[0]["thinking"] == {"type": "disabled"}
+    assert all(request.get("tool_choice") in (None, {"type": "auto"}) for request in phase2)
     compacted = False
     for index, request in enumerate(phase2):
         assert count_cache_markers(plain(request)) <= 4
@@ -412,9 +410,9 @@ def test_an_older_claude_run_streams_and_forces_the_tool(tmp_path):
 
 
 def test_a_crashed_claude_run_resumes_with_a_valid_first_request(tmp_path):
-    """Crash on the request after the forced read, then resume on a fresh orchestrator."""
+    """Crash on the request after the re-read, then resume on a fresh orchestrator."""
     script = shelf_script()
-    # Plan, three refused edits, the forced read. Crashing after the corrected
+    # Plan, three refused edits, the re-read. Crashing after the corrected
     # edit would make leg 2's evidence for it refused: the executor's record of
     # this run's writes is not checkpointed (see the module docstring).
     done_before_crash = 5
@@ -478,8 +476,7 @@ def test_an_openai_run_keeps_its_prefix_and_pairs_every_tool_call(tmp_path, stre
     assert plain(_openai_system(phase2[0]))["role"] == "system"
     for index, request in enumerate(phase2):
         assert _pairing_problems_openai(request) == [], index
-    forced = [request["tool_choice"] for request in phase2 if "tool_choice" in request]
-    assert forced == [{"type": "function", "function": {"name": "read_file"}}]
+    assert not [request["tool_choice"] for request in phase2 if "tool_choice" in request]
     _assert_usage_matches_script(client, model, fake, net_cached=True)
 
 

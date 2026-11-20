@@ -35,9 +35,19 @@ WORKDIR /app
 # and before any COPY, so that no code change downloads them again.
 # Its MIT license must ship with the redistributed jar (THIRD_PARTY_LICENSES.md).
 # default-java is Debian's link to the default JRE, whatever the architecture.
+#
+# CVE-2026-114938 ("Java4Shell"): JAVA_TOOL_OPTIONS reaches every JVM in both
+# images, generated apps in the worker's sandbox included (subprocess_env.py
+# lets it through). It turns off the vulnerable Base64 intrinsic and keeps the
+# JIT off AVX-512. UseAVX exists only on x86-64; IgnoreUnrecognizedVMOptions
+# lets an arm64 build start. check_java.sh fails the build when Java is older
+# than the fixed release (trixie-security has it) or a flag is not applied.
+ENV JAVA_TOOL_OPTIONS="-XX:+IgnoreUnrecognizedVMOptions -XX:-UseBASE64Intrinsics -XX:UseAVX=2"
+COPY --chmod=0755 docker/check_java.sh /usr/local/bin/check_java
 RUN apt-get update \
     && apt-get install -y --no-install-recommends default-jre-headless \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && check_java
 ADD --checksum=sha256:6b8c1cb5bc93bedfc7c61435c4e1ab6e688a242dc702a394628d9a9801edb78d \
     https://github.com/AlloyTools/org.alloytools.alloy/releases/download/v6.2.0/org.alloytools.alloy.dist.jar /alloy/alloy.jar
 ADD --checksum=sha256:5e84c60adb66216c83e8f2ffbbcabcef06b55d24cadaf9f93d2d29118c8c6ab6 \
@@ -125,7 +135,8 @@ RUN apt-get update \
     && unzip -q /tmp/kotlinc.zip -d /opt \
     && rm /tmp/kotlinc.zip \
     && apt-get purge -y --auto-remove unzip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && check_java
 ENV PATH="/root/.cargo/bin:/opt/kotlinc/bin:${PATH}"
 
 # Same code layers and CA strip as the backend target.

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import platform
 import subprocess
 from enum import Enum
 from pathlib import Path
@@ -12,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 # Seconds the Alloy Analyzer may run before an analysis times out.
 _DEFAULT_TIMEOUT_SECONDS = 30
+
+# Mitigation for CVE-2026-114938 ("Java4Shell"): turn off the vulnerable Base64
+# intrinsic and keep the JIT off AVX-512. UseAVX exists only on x86-64; other
+# JVMs refuse to start with it.
+_JVM_MITIGATION_FLAGS = ["-XX:-UseBASE64Intrinsics"]
+if platform.machine().lower() in ("x86_64", "amd64"):
+    _JVM_MITIGATION_FLAGS.append("-XX:UseAVX=2")
 
 
 class AlloyResult(Enum):
@@ -60,7 +68,7 @@ class AlloyAnalyzerExecutor:
         Path(output_dir, "receipt.json").unlink(missing_ok=True)
         # Execute the Alloy Analyzer via subprocess, with a bounded heap
         command = [
-            self.java_path, f"-Xmx{get_settings().alloy_max_heap_mb}m", "-jar", self.alloy_jar_path, "exec",
+            self.java_path, *_JVM_MITIGATION_FLAGS, f"-Xmx{get_settings().alloy_max_heap_mb}m", "-jar", self.alloy_jar_path, "exec",
             "-n", "-f", "-o", output_dir, "-t", "xml", "-r", str(num_instances), spec_als,
         ]
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:

@@ -971,6 +971,10 @@ text, so a bad port fails only the feedback mail), and a flag is on only for
   ``/semantic-consistency-check`` and ``/generate-object-diagram`` run (see
   :doc:`utilities/object_diagram_generator`). The backend Docker image sets both.
 
+- ``JAVA_TOOL_OPTIONS`` -- Set in both Docker images to the JVM flags that mitigate CVE-2026-114938
+  (``-XX:-UseBASE64Intrinsics -XX:UseAVX=2``). The worker passes it to the apps it compiles and runs; the
+  Alloy Analyzer is started with the same flags. The image build fails when Java is older than the fixed release.
+
 **Spec-Driven Agent (all optional):**
 
 The agent's ``BESSER_LLM_*``, ``BESSER_FREE_LLM_*``,

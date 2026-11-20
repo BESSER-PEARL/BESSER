@@ -369,17 +369,16 @@ What it does:
 - **Refusal, not concealment.** The gate is enforced when the tool is called,
   not by leaving it out of the advertised list — a model that names a tool it
   was never offered is refused too.
-- **One shell per run, like a terminal.** The directory a command ends in
-  (``cd``) and the variables it exports (``export``, ``source
-  .venv/bin/activate``) carry over to the next command, and on Linux a
-  process started in the background (``python app.py > app.log 2>&1 &``)
-  keeps running after its command returns, so a server started in one
-  command answers ``curl`` in the next. ``working_dir`` runs one command in
-  another directory without moving the shell; ``install_dependencies`` runs
-  in the same shell and leaves its directory and environment as they were.
-  What a background process prints after its command returned is discarded.
-  A command that ends outside the workspace does not move the shell there:
-  the next command starts in the workspace root, and the result says so.
+- **One shell per run.** Every command starts in the workspace root, or in
+  its ``working_dir``: a ``cd`` lasts for its own command only, since models
+  write each command as if from the root. The variables a command exports
+  (``export``, ``source .venv/bin/activate``) carry over to the next command,
+  and on Linux a process started in the background (``python app.py >
+  app.log 2>&1 &``) keeps running after its command returns, so a server
+  started in one command answers ``curl`` in the next.
+  ``install_dependencies`` runs in the same shell and leaves its environment
+  as it was. What a background process prints after its command returned is
+  discarded.
 - **Working directory inside the run workspace.** ``working_dir`` is resolved
   against the workspace and a path that escapes it is rejected.
 - **A per-command timeout**: 120 seconds by default. A command may set
@@ -430,8 +429,8 @@ What it does:
   control channel is a pipe to the worker, and bubblewrap's init takes the
   whole PID namespace with it). A session with no command for
   ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (900; ``0`` never) is closed too,
-  and the next command starts a fresh one; the directory and environment
-  survive that, since the worker keeps them, and the result's ``notes`` tell
+  and the next command starts a fresh one; the environment
+  survives that, since the worker keeps it, and the result's ``notes`` tell
   the model its background processes are gone. At most
   ``BESSER_LLM_SHELL_SESSION_MAX`` (10) sessions live per worker; past that a
   command runs in a one-off sandbox with the same confinement, whose
@@ -442,16 +441,16 @@ What it does:
   a fresh sandbox of their own, so nothing a command left behind can steer a
   check. Before each Phase 3 validation sweep the session's processes are
   stopped as well, so a dev server or file watcher the agent left running
-  cannot write to the workspace while it is checked; the directory and
-  environment carry over to the next command, whose notes say so.
+  cannot write to the workspace while it is checked; the environment
+  carries over to the next command, whose notes say so.
 
 What it does not:
 
 - **No sandbox on Windows or macOS.** There is no namespace sandbox on those
   platforms, so commands run unconfined, as the backend user, and a warning
   is logged. The same applies on Linux with ``BESSER_LLM_SHELL_SANDBOX=off``.
-  Each command is then its own process: the directory and environment still
-  carry over, but the worker does not track what a command left running, so
+  Each command is then its own process: the environment still
+  carries over, but the worker does not track what a command left running, so
   ending the run does not stop it.
 - **It does not cut the network for commands.** ``run_command`` keeps
   outbound network access so that installs work, as do the Phase 1
@@ -495,12 +494,7 @@ session can name an unrelated process. Several ``run_command`` (and
 In a turn that also writes files, a command starts only after every write the
 model emitted before it has finished, and a write emitted after it starts only
 once it has returned; reads still run in parallel.
-A command without ``working_dir`` starts where an earlier ``cd`` left the
-shell; when that is not the workspace root, the result's first field,
-``ran_in``, names that directory. When the line's first ``cd``, relative,
-fails there and the path exists from the workspace root (inside it), a
-``cd_hint`` names the shell's directory
-and the path to use from it (or as ``working_dir``). A line that joins two commands with ``;`` or
+A line that joins two commands with ``;`` or
 a new line, exits 0 and reports a failure in stderr gets a ``note`` that
 ``exit_code`` is the last command's alone.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.

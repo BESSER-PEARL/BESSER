@@ -152,8 +152,9 @@ The three phases
    prompt states what create, update and get-by-id return. The relationship
    mutation coverage block is left out only when the requirements ledger is
    known to be empty and the model has no constraint. The shell is
-   one session for the whole run, like a terminal: ``cd`` and exported
-   variables carry over between commands, and on Linux, where the run has a
+   one session for the whole run: every command starts in the workspace
+   root (or its ``working_dir``), exported variables carry over between
+   commands, and on Linux, where the run has a
    sandbox, a server started in one command answers requests in the next,
    until the run ends.
 

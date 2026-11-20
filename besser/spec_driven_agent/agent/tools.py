@@ -227,8 +227,9 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
         "name": "run_command",
         "description": (
             "Run a shell command in this run's shell and return stdout + stderr. Use it to "
-            "test code, run linters and verify builds. The shell is one session for the "
-            "whole run, like a terminal: `cd` and exported variables (`export X=1`, "
+            "test code, run linters and verify builds. Every command starts in the workspace "
+            "root, or in working_dir: a `cd` lasts for its own command only. The shell is one "
+            "session for the whole run: exported variables (`export X=1`, "
             "`source .venv/bin/activate`) carry over to the next command, and a process "
             "started in the background (`python app.py > app.log 2>&1 &`) keeps running "
             "after its command returns, so a server started in one command can be tested "
@@ -239,10 +240,7 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "started in the foreground blocks for the full timeout: start servers in the "
             "background instead. When a result's notes "
             "say the session was restarted or the command ran in a one-off sandbox, earlier "
-            "background processes are gone. A result's cwd field is the shell's directory "
-            "when it is not the workspace root; ran_in, the result's first field, names it when an "
-            "earlier cd left the shell there, and cd_hint gives the path from there when a cd failed "
-            "on a path that exists from the root. A result's note says when exit_code is only that of the "
+            "background processes are gone. A result's note says when exit_code is only that of the "
             "last of several commands joined with ';' and an earlier one failed. Destructive or exfiltrating commands "
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
@@ -257,11 +255,8 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                 "command": {"type": "string"},
                 "working_dir": {
                     "type": "string",
-                    "description": (
-                        "Directory for this command only, relative to the workspace root; "
-                        "the shell's own directory does not move. Default: the shell's "
-                        "current directory (the workspace root until a command cd's elsewhere)."
-                    ),
+                    "description": "Directory for this command, relative to the workspace root. "
+                                   "Default: the workspace root.",
                 },
                 "timeout": {
                     "type": "integer",

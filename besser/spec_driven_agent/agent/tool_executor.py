@@ -475,27 +475,6 @@ def _joins_commands_unconditionally(command: str) -> bool:
     return commands + bool(words) >= 2
 
 
-_CD_FAILED_RE = re.compile(r"\bcd: (.+?): No such file or directory")
-# The line's first cd: a later one runs wherever the earlier ones left the shell.
-_FIRST_CD_RE = re.compile(r"(?:^|[;&|(\n])\s*cd\s+(['\"]?)([^\s;&|)'\"]+)\1")
-
-
-def _cd_hint(stderr: str, command: str, workspace: str, started_in: str | None) -> str | None:
-    """One line for the line's first ``cd P``, relative, that failed off the workspace
-    root while ``P`` exists from the root, inside the workspace."""
-    first_cd = _FIRST_CD_RE.search(command)
-    if started_in in (None, ".") or first_cd is None:
-        return None
-    target = first_cd.group(2)
-    from_root = _normalize_path_for_comparison(os.path.realpath(os.path.join(workspace, target)))
-    if (target not in _CD_FAILED_RE.findall(stderr) or os.path.isabs(target) or target.startswith("~")
-            or os.path.commonpath([from_root, workspace]) != workspace or not os.path.isdir(from_root)):
-        return None
-    from_here = os.path.relpath(from_root, os.path.join(workspace, started_in)).replace(os.sep, "/")
-    return (f"The shell was in {started_in}, not the workspace root, and {target} is a path from the root: "
-            f"use cd {from_here} from here, or working_dir='{target}'.")
-
-
 def ends_shell_session(method):
     """Close ``self.executor``'s shell session when a run entry point returns
     or raises: its servers must not outlive the run."""
@@ -906,8 +885,8 @@ class ToolExecutor:
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.app_name = app_name
         self.allow_shell = allow_shell
-        # The run's one shell: cwd, exported env and background processes
-        # carry over between run_command calls. No process until first use.
+        # The run's one shell: exported env and background processes carry
+        # over between run_command calls; each command starts in the root. No process until first use.
         self._shell = ShellSession(self.workspace)
         # Seconds left in the run, set by the orchestrator; caps every command.
         self.time_left: Callable[[], float | None] | None = None
@@ -3692,8 +3671,8 @@ class ToolExecutor:
         without moving its directory or changing its environment.
         """
         command = args["command"]
-        working_dir = args.get("working_dir")
-        start_dir = self._safe_cwd(working_dir) if working_dir else None
+        # The workspace root unless working_dir says otherwise: a cd never carries over.
+        start_dir = self._safe_cwd(args.get("working_dir") or ".")
         own_timeout = self._command_timeout(args.get("timeout"))
         left = self.time_left() if self.time_left else None
         # Never past the run's deadline; when that is what sets the timeout, a
@@ -3717,12 +3696,7 @@ class ToolExecutor:
             return {"error": f"Command stopped: {OUT_OF_TIME}. It was not run.",
                     "stopped": OUT_OF_TIME, "command": command}
 
-        logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
-        # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
-        carried_over = None if working_dir else self._shell.relative_cwd()
-        started_in = carried_over or os.path.relpath(start_dir, self.workspace).replace(os.sep, "/")
-        located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
-                   if carried_over not in (None, ".") else {})
+        logger.info("Running command: %s (in %s)", command, start_dir)
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
         before = backend_files(self.workspace)
         try:
@@ -3761,9 +3735,6 @@ class ToolExecutor:
                 + "; ".join(f"{name} ({why})" for name, why in sorted(not_restored.items()))
                 + ". Undo what the command did to them and do not write, move or delete .besser_* files."
             )
-        cwd = self._shell.relative_cwd()
-        if cwd != ".":
-            extra["cwd"] = cwd
         if result.notes:
             extra["notes"] = result.notes
 
@@ -3798,7 +3769,6 @@ class ToolExecutor:
         stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
 
         payload = {
-            **located,
             "exit_code": result.returncode,
             "stdout": stdout,
             "stderr": stderr,
@@ -3812,9 +3782,6 @@ class ToolExecutor:
                 "new line and stderr reports a failure, so an earlier command did not do its job: "
                 "read stderr, and join commands with && to stop at the first failure."
             )
-        cd_hint = _cd_hint(raw_stderr, command, self.workspace, started_in)
-        if cd_hint:
-            payload["cd_hint"] = cd_hint
         # A missing binary is a failure like any other: the model must not
         # read a check whose tool is absent as a passed one.
         if result.returncode != 0 and _looks_like_command_not_found(stderr):

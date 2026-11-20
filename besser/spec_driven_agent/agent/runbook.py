@@ -437,8 +437,8 @@ The shell is one session for the whole run, so the server `up` starts keeps
 running between commands: `routes` and `req` reach that same server, and `down`
 stops it. If the session was restarted in between (a result's notes say so),
 `req` and `routes` boot a fresh server themselves; the SQLite file keeps
-records either way. The probe path is relative: if you `cd`-ed elsewhere, pass
-`working_dir="."`. Files the app writes while it runs here (its database, a key
+records either way. The probe path is relative to the workspace root, where every
+command starts. Files the app writes while it runs here (its database, a key
 it generates, uploads) are not delivered with the app: its own code has to
 create whatever it needs at startup.
 

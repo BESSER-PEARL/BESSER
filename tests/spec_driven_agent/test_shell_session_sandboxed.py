@@ -136,13 +136,12 @@ def test_a_server_started_in_one_command_answers_the_next(run):
     assert "notes" not in answered, answered
 
 
-def test_cd_and_export_carry_over_to_the_next_command(run):
+def test_exports_carry_over_to_the_next_command_and_cd_does_not(run):
     assert _sh(run, "mkdir -p backend && cd backend && export APP_MODE=dev")["success"]
 
     result = _sh(run, "pwd; echo mode=$APP_MODE")
 
-    assert result["stdout"].splitlines() == [os.path.join(run.workspace, "backend"), "mode=dev"]
-    assert result["cwd"] == "backend"
+    assert result["stdout"].splitlines() == [run.workspace, "mode=dev"]
 
 
 def test_working_dir_runs_one_command_elsewhere_without_moving_the_shell(run):
@@ -153,7 +152,7 @@ def test_working_dir_runs_one_command_elsewhere_without_moving_the_shell(run):
     after = _sh(run, "pwd")
 
     assert elsewhere["stdout"].strip() == os.path.join(run.workspace, "frontend")
-    assert after["stdout"].strip() == os.path.join(run.workspace, "backend")
+    assert after["stdout"].strip() == run.workspace
 
 
 def test_a_timed_out_command_is_killed_but_the_session_and_its_server_survive(run, monkeypatch):
@@ -268,7 +267,7 @@ def test_before_a_validation_sweep_the_processes_stop_but_the_shell_state_stays(
 
     assert _get(port) == 0
     after = _sh(run, "pwd; echo $MODE")
-    assert after["stdout"].split() == [os.path.join(run.workspace, "api"), "x"]
+    assert after["stdout"].split() == [run.workspace, "x"]
     assert any("re-checked the workspace" in note for note in after["notes"])
     assert shell_session.live_session_count() == 1, "the next command got a new session"
 

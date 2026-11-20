@@ -38,6 +38,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
+from besser.spec_driven_agent.agent.runbook import backend_files, files_the_app_wrote
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.agent.tools import (
@@ -589,20 +590,29 @@ def _placeholder_comments(source: str) -> set[str]:
             if _COMMENT_ONLY_LINE_RE.match(line) and any(p in line.lower() for p in _OMISSION_PHRASES)}
 
 
-def _placeholder_standing_in(before: str, after: str) -> tuple[str, int] | None:
-    """``(comment, lines)`` for a new placeholder comment that takes the place of at least
-    ``_PLACEHOLDER_MIN_REPLACED`` lines the rewrite no longer has anywhere; else None."""
+def _placeholder_standing_in(before: str, after: str) -> str | None:
+    """Why a new placeholder comment stands in for code: it takes the place of at least
+    ``_PLACEHOLDER_MIN_REPLACED`` lines the rewrite has fewer copies of, or it is added
+    while a block of that many such lines is deleted elsewhere; else None."""
     new = _placeholder_comments(after) - _placeholder_comments(before)
     if not new:
         return None
     old, cur = ([line.strip() for line in text.splitlines() if line.strip()] for text in (before, after))
-    kept = set(cur)
+    missing = Counter(old) - Counter(cur)
+    replaced, inserted, deleted = None, None, 0
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, cur, autojunk=False).get_opcodes():
+        lost = sum((Counter(old[i1:i2]) & missing).values())
         comment = next((line for line in cur[j1:j2] if line in new), None)
-        if tag == "replace" and comment:
-            lost = sum(1 for line in old[i1:i2] if line not in kept)
-            if lost >= _PLACEHOLDER_MIN_REPLACED:
-                return comment, lost
+        if tag == "replace" and comment and lost >= _PLACEHOLDER_MIN_REPLACED:
+            replaced = replaced or f"this rewrite replaces {lost} lines with a placeholder comment ({comment[:80]})"
+        elif tag == "insert" and comment:
+            inserted = inserted or comment
+        elif tag == "delete":
+            deleted = max(deleted, lost)
+    if replaced:
+        return replaced
+    if inserted and deleted >= _PLACEHOLDER_MIN_REPLACED:
+        return f"this rewrite removes {deleted} lines and adds a placeholder comment ({inserted[:80]})"
     return None
 
 
@@ -636,7 +646,7 @@ def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None
         return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
     placeholder = _placeholder_standing_in(before, after)
     if placeholder:
-        return f"this rewrite replaces {placeholder[1]} lines with a placeholder comment ({placeholder[0][:80]})"
+        return placeholder
     return ""
 
 
@@ -879,6 +889,9 @@ class ToolExecutor:
         self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+        # Files the running app wrote under the backend during a shell command
+        # (runbook.files_the_app_wrote): {path: [size, mtime_ns]}, left out of the output.
+        self.command_app_files: dict[str, list[int]] = {}
         # Called with each generator call's files and traced regions (the run
         # log's ``generator_output`` record); set by the orchestrator.
         self.on_generated: Callable[[dict], None] | None = None
@@ -3807,6 +3820,7 @@ class ToolExecutor:
         located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
                    if carried_over not in (None, ".") else {})
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
+        before = backend_files(self.workspace)
         try:
             # Fail closed: a command that cannot be confined is not run.
             # Falling back to an unconfined shell would silently restore both
@@ -3827,6 +3841,8 @@ class ToolExecutor:
             return {"error": f"Failed to run command: {e}"}
 
         extra: dict = {}
+        self.command_app_files.update(
+            files_the_app_wrote(before, backend_files(self.workspace), command, self.workspace))
         restored, not_restored = self._restore_guarded_records(records)
         if restored:
             extra["run_records_restored"] = restored

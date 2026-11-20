@@ -2,6 +2,7 @@
 Basic component parsers for GUI elements (Button, Text, Image, InputField, etc.).
 """
 
+import json
 import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
@@ -39,7 +40,8 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, Enumeration
+from besser.utilities import sort_by_timestamp
 
 from .component_helpers import (
     collect_input_fields_recursive,
@@ -48,7 +50,7 @@ from .component_helpers import (
 )
 from besser.generators.structural_utils import form_parent_ends, is_server_owned_attribute
 
-from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
+from .constants import ALERT_SEVERITY_MAP, INPUT_COMPONENT_TYPES, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE, TEXT_TAGS
 from .utils import css_class_names, extract_text_content, html_attributes, clean_attribute_name, get_element_by_id
 
 
@@ -514,10 +516,14 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
             or ""
         )
         if raw_options and isinstance(raw_options, str):
-            for opt_label in raw_options.split(","):
-                opt_label = opt_label.strip()
-                if opt_label:
-                    options.append(SelectOption(value=opt_label, label=opt_label))
+            values = [value for value in _option_list(raw_options) if value]
+            # Labels that differ from the submitted values are kept in data-option-labels
+            labels = _option_list(attributes.get("data-option-labels"))
+            if len(labels) != len(values):
+                labels = values
+            options = [SelectOption(value=value, label=label or value) for value, label in zip(values, labels)]
+        if not options and "select" in (tag, str(component.get("type") or "").lower()):
+            options = _select_options(component)
 
     else:
         multiple = False
@@ -546,6 +552,39 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
     _attach_component_metadata(input_field, component, meta)
 
     return input_field
+
+
+def _option_list(raw: Any) -> List[str]:
+    """The items of ``data-options`` / ``data-option-labels``: a JSON list when
+    an item holds a comma, else comma-separated."""
+    text = str(raw or "").strip()
+    if text.startswith("["):
+        try:
+            items = json.loads(text)
+        except ValueError:
+            items = None
+        if isinstance(items, list):
+            return [str(item).strip() for item in items]
+    return [item.strip() for item in text.split(",")] if text else []
+
+
+def _select_options(component: Dict[str, Any]) -> List[SelectOption]:
+    """The choices of a ``<select>``'s options (optgroups included) in document
+    order: the value, else the text, shown with the text. A blank (placeholder)
+    or disabled option is no choice."""
+    options = []
+    for child in component.get("components") or []:
+        if not isinstance(child, dict):
+            continue
+        if "option" not in (str(child.get("tagName") or "").lower(), str(child.get("type") or "").lower()):
+            options.extend(_select_options(child))
+            continue
+        attrs = child.get("attributes") if isinstance(child.get("attributes"), dict) else {}
+        text = extract_text_content(child).strip()
+        value = text if attrs.get("value") is None else str(attrs["value"]).strip()
+        if value and attrs.get("disabled") in (None, False, "false"):
+            options.append(SelectOption(value=value, label=text or value))
+    return options
 
 
 def parse_alert(component: Dict[str, Any], styling, name: str, meta: Dict) -> Alert:
@@ -652,7 +691,7 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
     # Inputs keep their order in the form (display_order is otherwise per parent)
     for position, input_field in enumerate(inputs):
         input_field.display_order = position
-    _apply_form_labels(ordered, inputs)
+    captions = _apply_form_labels(ordered, inputs)
 
     buttons = [element for element in ordered if isinstance(element, Button)]
     submit = next(
@@ -675,7 +714,17 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
     if meta["tagName"] is None:
         meta["tagName"] = "form"
 
-    _bind_form(form, inputs, attributes.get("data-source"), class_model, domain_model)
+    in_labels = {
+        input_field
+        for element in ordered
+        if isinstance(element, ViewContainer) and (element.tag_name or element.component_type or "").lower() in TEXT_TAGS
+        for input_field in collect_input_fields_recursive(element.view_elements)
+    }
+    _bind_form(form, inputs, attributes.get("data-source"), class_model, domain_model, in_labels)
+    form.inputFields = form.inputFields - _group_radios(inputs, captions)
+    for input_field in form.inputFields:
+        if input_field.field_type in (InputFieldType.Dropdown, InputFieldType.RadioGroup):
+            _fit_to_enumeration(input_field)
 
     # Create OnSubmit event if form has submit button
     submit_button = None
@@ -715,29 +764,96 @@ def _flatten_in_order(elements) -> List[Any]:
     return flat
 
 
-def _apply_form_labels(ordered, inputs) -> None:
+def _apply_form_labels(ordered, inputs) -> Dict[InputField, str]:
     """Give unlabelled inputs the text of their ``<label>``: the one whose
-    ``for`` names the input, else the label right before it."""
-    by_key = {}
+    ``for`` names the input, else the label right before it. A label right
+    before a radio button captions its group instead: these captions are
+    returned by radio button."""
+    by_key: Dict[str, List[InputField]] = {}
     for input_field in inputs:
         for key in (input_field.component_id, (input_field.custom_attributes or {}).get("name"), input_field.name):
-            if key:
-                by_key.setdefault(str(key), input_field)
+            if key and input_field not in by_key.setdefault(str(key), []):
+                by_key[str(key)].append(input_field)
+    captions: Dict[InputField, str] = {}
     pending = None
     for element in ordered:
         if isinstance(element, Text) and (element.tag_name or "").lower() == "label":
             text = (element.content or "").strip()
-            target = by_key.get(str((element.custom_attributes or {}).get("for") or ""))
-            if target is not None:
-                if not target.label and text:
+            targets = by_key.get(str((element.custom_attributes or {}).get("for") or ""))
+            if targets:
+                # A name shared by radio buttons labels the next unlabelled one
+                target = next((t for t in targets if not t.label), None)
+                if target is not None and text:
                     target.label = text
-                pending = None
+                if not _is_native_radio(targets[0]):
+                    pending = None
             else:
                 pending = text or None
         elif isinstance(element, InputField):
-            if pending and not element.label:
+            if pending and _is_native_radio(element):
+                captions[element] = pending
+            elif pending and not element.label:
                 element.label = pending
             pending = None
+    return captions
+
+
+def _is_native_radio(input_field) -> bool:
+    """An ``<input type="radio">``: one choice of the group its ``name`` forms."""
+    return (
+        input_field.field_type == InputFieldType.RadioGroup
+        and str((input_field.custom_attributes or {}).get("type") or "").lower() == "radio"
+    )
+
+
+def _fit_to_enumeration(input_field) -> None:
+    """Make the options of an input bound to an enumeration attribute its
+    literals, the only values the backend accepts: each option's value matched
+    exactly, else ignoring case, else by its label. Options matching no literal
+    are dropped; an input left without options offers every literal."""
+    attribute_type = getattr(getattr(input_field.data_binding, "data_field", None), "type", None)
+    if not isinstance(attribute_type, Enumeration):
+        return
+    literals = [literal.name for literal in sort_by_timestamp(attribute_type.literals)]
+    by_lower = {name.lower(): name for name in literals}
+    fitted: Dict[str, SelectOption] = {}
+    for option in input_field.options or []:
+        literal = (option.value if option.value in literals else None) or by_lower.get(
+            str(option.value).lower()) or by_lower.get(str(option.label or "").lower())
+        if literal:
+            fitted.setdefault(literal, SelectOption(value=literal, label=option.label or literal))
+    input_field.options = list(fitted.values()) or [SelectOption(value=name, label=name) for name in literals]
+
+
+def _group_radios(inputs, captions: Dict[InputField, str]) -> set:
+    """Make the radio buttons of a form that share a ``name`` one RadioGroup,
+    the first of them: its options are their values (shown with their labels),
+    or their ``data-options``, in document order and each once. Returns the
+    other buttons, merged away."""
+    groups: Dict[Any, List[InputField]] = {}
+    for input_field in inputs:
+        if _is_native_radio(input_field):
+            groups.setdefault((input_field.custom_attributes or {}).get("name") or input_field, []).append(input_field)
+    merged = set()
+    for radios in groups.values():
+        group = radios[0]
+        options: Dict[str, SelectOption] = {}
+        for radio in radios:
+            value = str((radio.custom_attributes or {}).get("value") or "")
+            # A button without a value submits what it shows
+            choices = radio.options or (
+                [SelectOption(value=value or radio.label, label=radio.label or value)] if value or radio.label else []
+            )
+            for choice in choices:
+                options.setdefault(choice.value, choice)
+        # A button with data-options carries the group's own label
+        group.label = captions.get(group) or next((radio.label for radio in radios if radio.options), None)
+        group.options = list(options.values())
+        if not group.required and any(radio.required for radio in radios):
+            group.required = True
+            group.validationRules = ",".join(filter(None, ["required", group.validationRules]))
+        merged.update(radios[1:])
+    return merged
 
 
 def _normalized(value: Any) -> str:
@@ -814,8 +930,10 @@ def _infer_form_class(inputs, domain_model, form_name: str):
     return None
 
 
-def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain_model) -> None:
-    """Bind the form and its inputs to a domain class (see ``parse_form``)."""
+def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain_model, in_labels=frozenset()) -> None:
+    """Bind the form and its inputs to a domain class (see ``parse_form``). An
+    inferred class is chosen from every input, else from the inputs not inside
+    a label (a consent checkbox edits no attribute)."""
     if domain_model is None:
         return
     if class_ref:
@@ -823,6 +941,8 @@ def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain
         domain_class = domain_model.get_class_by_name(class_el.get("name") if class_el else class_ref)
     else:
         domain_class = _infer_form_class(inputs, domain_model, form.name)
+        if domain_class is None and in_labels:
+            domain_class = _infer_form_class([i for i in inputs if i not in in_labels], domain_model, form.name)
     if domain_class is None:
         return
     form.data_binding = DataBinding(domain_concept=domain_class, name=f"{form.name}_binding")
@@ -1124,6 +1244,29 @@ def parse_container(component: Dict[str, Any], styling, name: str, meta: Dict, p
         container.layout = styling.layout
 
     _attach_component_metadata(container, component, meta)
+    return container
+
+
+def wraps_input(component: Dict[str, Any]) -> bool:
+    """Whether the component holds an input, at any depth (``<label><input type="radio"> Yes</label>``)."""
+    return any(
+        isinstance(child, dict) and (
+            bool(INPUT_COMPONENT_TYPES & {str(child.get("type") or "").lower(), str(child.get("tagName") or "").lower()})
+            or wraps_input(child)
+        )
+        for child in component.get("components") or []
+    )
+
+
+def parse_label_around_input(component: Dict[str, Any], styling, name: str, meta: Dict,
+                             parse_component_list_func) -> ViewContainer:
+    """A ``<label>`` (or other text element) around an input: a container of its
+    content, its inputs labelled with its text."""
+    container = parse_container(component, styling, name, meta, parse_component_list_func)
+    text = extract_text_content(component).strip()
+    for element in collect_input_fields_recursive(container.view_elements):
+        if not element.label and text:
+            element.label = text
     return container
 
 

@@ -74,7 +74,9 @@ declaration outside comments, its ``export default``, every ``<Route>``
 element, no new elision such as ``{/* ... unchanged ... */}``, and no new
 comment-only line that reads as a placeholder (``{/* remaining fields
 unchanged */}``) in place of three or more of the file's lines that the
-rewrite no longer has, however much it adds elsewhere. A rewrite that misses one is
+rewrite has fewer copies of (a repeated section counts), or added while a
+block of three or more such lines is deleted elsewhere, however much the
+rewrite adds. A rewrite that misses one is
 refused saying which. Backend and other files, and frontend files with no
 declarations to compare, keep the two-attempt rule.
 Repeated failures do not permanently freeze the file; an agent that ignores
@@ -489,15 +491,39 @@ upload) lands beside the source. The probe records the files that appear under
 the backend during ``up`` and ``req`` in ``.besser_probe.runtime_files.json``,
 and the run deletes them before it writes the recipe, unless a generator or a
 write tool wrote them; the recipe lists them under ``runtime_files_removed``.
-They are therefore in neither the download nor a GitHub push. Only the
-name-based exclusions (databases, logs, caches) apply, and a generated key or
-upload is delivered with the app, when the file is:
+They are therefore in neither the download nor a GitHub push.
 
-- written while the app was started some other way than the probe: ``python
-  main_api.py`` or a test run through ``run_command``, or a script that
-  imports the app's module;
-- written by the running server between two probe calls, for example by a
-  background task or a request sent with ``curl``;
+The worker also lists the backend's files before and after every
+``run_command`` and ``install_dependencies`` call, and records a file the call
+left as written by the running app (a request sent with ``curl``, a test
+client, a script importing the app) only when all of these hold: it is new
+under the backend folder, outside dot-folders; it is a data file (``.json``,
+``.pdf``, an image), not code, configuration or docs (``.py``, ``.ts``,
+``.toml``, ``.txt``, ``.yaml``, ``.sql``, ``.html`` ...); its name holds a
+generated id, 32 hex digits or a UUID, as an app names a stored upload; and the
+command names neither its path nor its name, nor does another file the same
+command created or changed (a script writing an image under a generated name
+and the manifest naming it; UTF-8 text files up to 1 MB, at most 50, never a
+database, log or other file the output leaves out by name, so the app's database
+storing an upload's path does not keep the upload). Those
+are removed by the same rules as the probe's record. A file the agent creates on
+purpose through the shell is kept: one the command names (``cat >
+data/seed.json``, ``cp a b``), code such as a migration ``alembic`` names with a
+hex id, data a script writes under a plain name (``fixtures.json``), and a
+generated name another file of that command names. A file of the app's data that
+the agent's own script writes under a generated name that nothing names is still
+taken for the app's and removed. The listing skips virtualenvs (a folder holding
+``pyvenv.cfg``, under any name) and stops at 5,000 files, in which case nothing is
+recorded for that command.
+
+Only the name-based exclusions (databases, logs, caches) apply, and a generated
+key or upload is delivered with the app, when the file is:
+
+- written while the app was started some other way than the probe and not
+  matching the rule above: a key under a plain name (``signing.key``), an
+  upload kept under the name it was sent with;
+- written by the running server between two shell commands, for example by a
+  background task;
 - written anywhere when the backend is the workspace root: the probe then
   records nothing and nothing is removed;
 - in a dot-folder or outside the backend folder, an existing file the app

@@ -67,7 +67,11 @@ The three phases
    a failure of the existing app (``is_failure_report``), and which entity it
    is about (``reported_entity``). A changed target is built next to the
    existing project; a failure report makes the run a fix run, gated on that
-   failure. A call with no usable answer, even as JSON text, keeps the
+   failure: a blocker that names the reported entity, from a check of the app
+   (a runtime probe, the data contract, the acceptance matrix), leaves it
+   unconfirmed, and so does one on this run's own requirements or fix tasks.
+   A finding on a requirement of an earlier run's request never does: it names
+   the app's entities whatever the failure. A call with no usable answer, even as JSON text, keeps the
    recorded target and makes no fix run, with a warning. This call is one
    primary-model call more per modify run.
 
@@ -188,8 +192,11 @@ The three phases
 The whole run streams progress over Server-Sent Events, so the editor shows the
 phase timeline, the LLM's tool calls, a live cost/runtime meter, and the
 streamed text as it happens. The stream reports five coarse phases:
-``select``, ``generate``, ``gap``, ``customize``, and ``validate``. The event
-schema is documented in :doc:`api`.
+``select``, ``generate``, ``gap``, ``customize``, and ``validate``. Within
+``validate``, which can run for many minutes, each step is named as it starts
+(the check round, starting the backend, judging the requirements and how many,
+each fix attempt and how many blockers it faces), and the card shows how long
+the current step has been running. The event schema is documented in :doc:`api`.
 
 A run, end to end
 -----------------

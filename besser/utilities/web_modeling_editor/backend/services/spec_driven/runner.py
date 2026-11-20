@@ -63,7 +63,13 @@ from besser.spec_driven_agent.pipeline.constants import (
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
-from besser.spec_driven_agent.planning.requirements_ledger import ABSENCE_KIND, NOT_PROVABLE, render_evidence
+from besser.spec_driven_agent.planning.requirements_ledger import (
+    ABSENCE_KIND,
+    CHANGED_LATER,
+    INHERITED,
+    NOT_PROVABLE,
+    render_evidence,
+)
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_recap import NO_RULES_STATED
@@ -128,6 +134,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     PhaseEvent,
     PhaseUpdateEvent,
     StartEvent,
+    StepEvent,
     TextDeltaEvent,
     ToolCallEvent,
     VerificationCounts,
@@ -334,6 +341,9 @@ _UNENFORCED_PREFIXES = ("action contract:", "model contract:")
 # is a test the agent wrote for its own code, not a rule the user stated: when it fails, the test or the
 # app may be wrong, so it is a result to look at, not a rule shipped unenforced.
 _UNCONFIRMED = "the check could not confirm it in the delivered code"
+# A modify run's requirement the previous run had also left unmet.
+_OPEN_BEFORE = "open since the previous run; this request did not concern it"
+_CHANGED_LATER = "a newer message changes or removes it"
 _WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it is not a rule from your "
                     "request, and the test or the app may be wrong")
 # Verification levels (``requirements_ledger.with_verification_levels``) at which a call to the
@@ -424,12 +434,18 @@ def run_changes(recipe: dict) -> dict:
     """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
     history = recipe.get("history") or []
     mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
-    changed = sorted({
+    # Distinct files: successful edit calls (a failed or refused one changed nothing, a
+    # rollback discarded a rolled-back one) and the files the model change regeneration
+    # wrote, merged, moved or removed.
+    edited = {
         (call.get("input") or {}).get("path")
         for call in recipe.get("tool_calls") or []
         if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
-        and isinstance((call.get("input") or {}).get("path"), str)
-    })
+        and call.get("success") is not False and not call.get("rolled_back")
+    }
+    regenerated = recipe.get("regenerated_files")
+    changed = sorted(path for path in edited | set(regenerated if isinstance(regenerated, list) else [])
+                     if isinstance(path, str))
     model_change = recipe.get("model_change") or {}
     return {
         "mode": "modify" if mode == "modify" else "create",
@@ -645,6 +661,9 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             # The judge's note argues about citations with the agent; the user needs the outcome.
             item = _item("requirement", ident, what, why=_UNCONFIRMED)
             not_verified.append(item)
+        if verdict.get(INHERITED) or verdict.get(CHANGED_LATER):
+            marker = _OPEN_BEFORE if verdict.get(INHERITED) else _CHANGED_LATER
+            item.why = _clip(f"{marker}: {item.why}", _MAX_WHY)
         if run_id:
             item.traceRef = traced_requirement_id(run_id, verdict)
 
@@ -1606,6 +1625,8 @@ class SmartGenerationRunner:
             if isinstance(event, PhaseEvent):
                 # Stamped as the phase starts, not when the consumer gets to it.
                 event = event.model_copy(update=self._run_totals())
+            elif isinstance(event, StepEvent):
+                event = event.model_copy(update={"elapsedSeconds": self._run_totals()["elapsedSeconds"]})
             try:
                 loop.call_soon_threadsafe(_put_in_loop, event)
             except RuntimeError:
@@ -1715,6 +1736,10 @@ class SmartGenerationRunner:
                 # The first check's result, on the row announced above.
                 self._note_validation_counts(status)
                 _put(PhaseUpdateEvent(phase="validate", details="", message=status))
+                return
+            if tool == "__validation_step__":
+                # What Phase 3 is doing now (a check round, a judge call, a fix attempt).
+                _put(StepEvent(phase="validate", message=status))
                 return
             if tool == "gap_analysis":
                 # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm

@@ -32,9 +32,10 @@ AGENT_LEFT_OUT = "agent left out:"
 
 
 def agent_left_out_note(agent_name: str) -> str:
-    """The warning for a project agent the web app leaves out because no screen uses it."""
-    return (f"{AGENT_LEFT_OUT} The agent '{agent_name}' is not part of the web app, because no screen "
-            "of the GUI model uses it. Add an agent component to a screen to include it.")
+    """The warning for a project agent the generated web app does not include."""
+    return (f"{AGENT_LEFT_OUT} The agent '{agent_name}' is not part of the web app: it includes an agent "
+            "only when a screen of the GUI model holds an agent component, and it was generated without "
+            "one. Add one to a screen and generate the web app again to include the agent.")
 
 
 def gui_uses_agent(gui_model) -> bool:

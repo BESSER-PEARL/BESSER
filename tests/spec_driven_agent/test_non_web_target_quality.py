@@ -294,30 +294,51 @@ def test_the_web_app_ships_the_agent_only_when_a_screen_uses_it(tmp_path, screen
     assert (tmp_path / "web_app" / "agents").is_dir() is screen_uses_agent
 
 
-@pytest.mark.parametrize("generator,screen_uses_agent,reported", [
-    ("generate_web_app", False, True), ("generate_web_app", True, False), ("generate_baf", False, False),
-])
-def test_an_agent_left_out_of_the_web_app_is_a_warning_in_the_run_summary(tmp_path, generator, screen_uses_agent,
-                                                                           reported):
-    """Read from the run's own state, which a resumed run restores and a modify run takes from its seed."""
+def _web_app_orch(tmp_path, generated_with_agent):
+    """A run whose web app was generated with or without the agent, on disk."""
+    orch = LLMOrchestrator(llm_client=_OfflineClient(), domain_model=_web_model(), agent_model=_agent(),
+                           gui_model=_gui(generated_with_agent), output_dir=str(tmp_path),
+                           enable_checkpointing=False, enable_tracing=False, enable_import_smoke_check=False,
+                           enable_toolchain_validation=False)
+    assert json.loads(orch.executor.execute("generate_web_app", {}))["status"] == "ok"
+    orch._generator_used = "generate_web_app"
+    return orch
+
+
+def _left_out(issues):
+    return [i for i in issues if str(getattr(i, "message", i)).startswith("agent left out:")]
+
+
+def test_an_agent_left_out_of_the_web_app_is_a_warning_in_the_run_summary(tmp_path):
     from besser.spec_driven_agent.validation.issues import _classify_issue
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import build_verification_report
 
-    orch = LLMOrchestrator(llm_client=_OfflineClient(), domain_model=_web_model(), agent_model=_agent(),
-                           gui_model=_gui(screen_uses_agent), output_dir=str(tmp_path),
-                           enable_checkpointing=False, enable_tracing=False, enable_import_smoke_check=False,
-                           enable_toolchain_validation=False)
-    orch._generator_used = generator
-    notes = [i for i in orch._collect_validation_issues() if i.message.startswith("agent left out:")]
-    if not reported:
-        assert not notes
-        return
-    [note] = notes
+    [note] = _left_out(_web_app_orch(tmp_path, generated_with_agent=False)._collect_validation_issues())
     assert "TaskAssistant" in note.message
     assert note.severity == "warning" and _classify_issue(note.message).severity == "warning"
     report = build_verification_report({"validation_issues": [{"severity": "warning", "message": note.message}]})
     [item] = report.notVerified
-    assert "TaskAssistant" in item.what and "no screen" in item.what
+    assert "TaskAssistant" in item.what and "agent component" in item.what
+
+
+@pytest.mark.parametrize("generated_with_agent,gui_now_uses_agent,reported", [
+    (False, False, True), (True, True, False),
+    # A modify run edits the GUI model but does not regenerate the web app: the files decide.
+    (False, True, True), (True, False, False),
+])
+def test_the_left_out_agent_notice_follows_the_web_app_on_disk(tmp_path, generated_with_agent, gui_now_uses_agent,
+                                                               reported):
+    orch = _web_app_orch(tmp_path, generated_with_agent)
+    orch.gui_model = _gui(gui_now_uses_agent)
+    assert bool(_left_out(orch._agent_left_out_issues())) is reported
+
+
+def test_the_left_out_agent_notice_covers_a_web_app_generated_by_a_tool_call(tmp_path):
+    orch = _web_app_orch(tmp_path, generated_with_agent=False)
+    orch._generator_used = "generate_fastapi_backend"
+    assert not orch._agent_left_out_issues()
+    orch.tool_calls_log.append({"turn": 3, "tool": "generate_web_app", "input": {}, "success": True})
+    assert _left_out(orch._agent_left_out_issues())
 
 
 def _gui_agent_orch(tmp_path, screen_uses_agent, **kwargs):

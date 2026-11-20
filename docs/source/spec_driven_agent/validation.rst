@@ -743,6 +743,15 @@ agent's; the requirement is judged again on the changed code. A line that only
 declares data where a rule must be enforced stays not confirmed: on recorded runs
 those citations were real code doing the job across several lines.
 
+Known limit: the check reads only the lines cited. A no-op validator cited for a rule
+that the same class enforces another way (the field's declared type validates the
+value) is refuted all the same: telling such a type from one that does not enforce
+the rule would take knowledge of particular types. The refuted verdict is judged once
+more on that revision, with the cited file shown whole and the reason its citation was
+rejected. It stays a blocker when that answer again says implemented citing nothing
+but such lines, or when no answer comes back; citing the enforcing declaration leaves
+it not confirmed.
+
 Two findings of the same "could not check" kind stay blockers. ``verification
 setup:`` asks the agent to install the project's declared dependencies, which it
 is allowed to do, so that the compile and build checks behind it can run; one

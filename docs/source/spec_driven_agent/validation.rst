@@ -892,8 +892,10 @@ it, no longer finds one of the entities it measured there on a backend that
 still starts (compared by entity name, so a create the probe already maps onto
 its table counts as the same entity). Removing a crashing create route, or
 moving its body off the schema the probe reads, makes that create absent, not
-fixed. Otherwise an attempt that edited the tree is kept only if all of these
-hold:
+fixed. The same holds for a create the probe can no longer read, for example
+one whose request body was renamed or whose handler now writes a table the
+probe does not map, even when the restructure was meant. Otherwise an attempt
+that edited the tree is kept only if all of these hold:
 
 1. It retired at least one blocker it faced, or a runtime blocker it faced now
    fails with another error. Attempts compare requirements by
@@ -946,10 +948,13 @@ checked again; the findings only the discarded tree showed are listed in a
 run record, and checklist items it had verified are reopened. When the attempt
 had retired a blocker, or changed a runtime blocker's error, one more attempt
 starts from the restored tree, its prompt naming why the previous one was
-rolled back; the loop ends if that attempt is rolled back too, and otherwise
-continues as usual. An attempt that moved nothing forward ends the loop when it
-is rolled back. The tree that ships is always the last one kept, so a retry
-can cost one more attempt but never stacks a regression on the shipped tree.
+rolled back; the loop ends if that attempt is rolled back too. Once an attempt
+is kept the loop continues as usual, and a later rollback may be retried again.
+The note of the rolled-back attempt stays in the findings, and the run reports
+a rollback only while the restored tree is the one that ships. An attempt that
+moved nothing forward ends the loop when it is rolled back. The tree that ships
+is always the last one kept, so a retry can cost one more attempt but never
+stacks a regression on the shipped tree.
 An attempt that edits nothing is checked again when it moved evidence (a
 checklist item, a corrected scenario, an accepted citation) or dependencies (a
 successful ``install_dependencies`` or ``run_command``, or a change in a

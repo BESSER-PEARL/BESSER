@@ -486,6 +486,8 @@ class Phase3RepairMixin:
         # Set when the tree an attempt left was replaced: an interrupted
         # attempt's unvalidated edits, or an attempt that was not kept.
         restored = False
+        # The notes of reverted attempts a retry followed: later findings replace them otherwise.
+        rollback_notes: list[ValidationIssue] = []
         last_issues = list(issues)
         attempts_run = self._repair_progress.get("attempts_run", 0)
         self._repair_last_outcome = None
@@ -557,8 +559,8 @@ class Phase3RepairMixin:
                 exit_reason = mid_attempt_stop
                 # This attempt's edits were never validated. Ship the tree
                 # that was, not an unverified one.
-                restored = source_changed and self._discard_unverified_attempt(
-                    mid_attempt_stop, current_issues, attempts_run)
+                if source_changed and self._discard_unverified_attempt(mid_attempt_stop, current_issues, attempts_run):
+                    restored = True
                 break
             if not source_changed and not obligations_changed:
                 # Nothing moved on disk or in the evidence: a re-check would find the same.
@@ -621,6 +623,7 @@ class Phase3RepairMixin:
                     # It moved some blockers but broke something: one more attempt from the
                     # restored tree, told what broke. A second revert in a row ends the loop.
                     retried_revert = True
+                    rollback_notes.append(self._validation_issues[-1])  # the note _revert_attempt adds
                     self._repair_last_outcome = (
                         f"Fix attempt {attempts_run} was rolled back: {not_kept}. The tree from before it is "
                         "restored, so the blockers below are the ones it faced. Repair them without causing that.")
@@ -632,10 +635,12 @@ class Phase3RepairMixin:
                     last_issues = issues_after
                     self._report_findings(attempts_run, issues_after)
                 break
-            if source_changed:  # a tree newer than any restored one is kept
-                restored = retried_revert = False
+            # These findings describe the tree that ships; an edit here is a tree newer than any restored one.
+            restored = retried_revert = False
+            if source_changed:
+                self._phase3_rolled_back = False
             last_issues = issues_after
-            self._validation_issues = self._with_model_contract(issues_after)
+            self._validation_issues = self._with_model_contract(issues_after) + rollback_notes
             self._report_findings(attempts_run, issues_after)
             if not blockers_after:
                 logger.info(
@@ -673,10 +678,11 @@ class Phase3RepairMixin:
 
         self._phase3_exit_reason = exit_reason
         if restored:
+            self._validation_issues += [note for note in rollback_notes if note not in self._validation_issues]
             last_issues = list(self._validation_issues)
             self._report_findings(attempts_run, last_issues, restored=True)
         else:
-            self._validation_issues = self._with_model_contract(last_issues)
+            self._validation_issues = self._with_model_contract(last_issues) + rollback_notes
         checkpoint_progress()
         remaining_blockers = [
             i for i in last_issues if i.severity == "blocker"
@@ -1120,8 +1126,8 @@ class Phase3RepairMixin:
         undone = (f" The restore also undid completed work: {len(reopened)} checklist "
                   f"item(s) verified during the attempt are open again." if reopened else "")
         self._validation_issues = self._with_model_contract(restored) + [_classify_issue(
-            f"validation: Phase 3 fix attempt {attempt} was rolled back - {reason} - so the tree "
-            f"from before it ships.{undone} Findings seen only in the discarded tree (they may "
+            f"validation: Phase 3 fix attempt {attempt} was rolled back - {reason} - to the tree "
+            f"from before it.{undone} Findings seen only in the discarded tree (they may "
             "still be real): " + seen_only
         )]
         restored_blockers = [i for i in restored if i.severity == "blocker"]

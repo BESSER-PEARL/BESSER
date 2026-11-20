@@ -841,6 +841,65 @@ def test_a_second_revert_in_a_row_ends_the_loop(tmp_path):
     assert _read(tmp_path, "backend/routers/order.py") == FILES["backend/routers/order.py"]
 
 
+TSC_ONE_LEFT = B("blocker", "tsc [frontend]: src/pages/P0.tsx(3,5): error TS2339: Property 'x0' does not exist.")
+
+
+def _rollback_notes(orch) -> list[str]:
+    return [i.message for i in orch._validation_issues if "fix attempt 1 was rolled back" in i.message]
+
+
+def _recording(reports, second_attempt=None):
+    """``before`` for ``_cycle``: record what ``on_findings`` is told; run ``second_attempt(orch)``
+    instead of the second fix attempt."""
+    def before(orch):
+        orch.on_findings = lambda attempt, issues, restored=False: reports.append((attempt, restored))
+        if second_attempt:
+            fix = orch._invoke_phase3_fix_loop
+            orch._invoke_phase3_fix_loop = lambda blockers, first: (
+                fix(blockers, first) if first else second_attempt(orch))
+    return before
+
+
+def test_a_kept_retry_ships_its_tree_and_keeps_the_note_of_the_rolled_back_attempt(tmp_path):
+    reports = []
+    orch, _ = _cycle(tmp_path, [[TSC_NEW], TSC_TEN, [TSC_ONE_LEFT]], _tools(FIX_ORDER), _done(),
+                     _tools(FIX_ORDER), _done(), entry=TSC_TEN, before=_recording(reports))
+
+    assert _read(tmp_path, "backend/routers/order.py").endswith("# fixed\n")
+    assert not orch._phase3_rolled_back, "the tree that ships is the kept retry's, not a restored one"
+    [note] = _rollback_notes(orch)
+    assert TSC_NEW.message in note, "what only the discarded tree showed stays listed"
+    assert reports[-1] == (2, False)
+
+
+def test_a_retry_stopped_before_it_edits_reports_the_restored_tree(tmp_path):
+    def stopped(orch):
+        orch._phase3_interrupted = True
+        return 0
+
+    reports = []
+    orch, _ = _cycle(tmp_path, [[TSC_NEW], TSC_TEN], _tools(FIX_ORDER), _done(), entry=TSC_TEN,
+                     before=_recording(reports, stopped))
+
+    assert orch._phase3_rolled_back
+    assert len(_rollback_notes(orch)) == 1
+    assert reports[-1] == (2, True)
+
+
+def test_an_evidence_round_after_a_retry_is_not_reported_as_a_restore(tmp_path):
+    def settles_evidence(orch):
+        orch._repair_obligations_revision = lambda: "evidence moved"
+        return 0
+
+    reports = []
+    orch, _ = _cycle(tmp_path, [[TSC_NEW], TSC_TEN, [TSC_ONE_LEFT]], _tools(FIX_ORDER), _done(), entry=TSC_TEN,
+                     before=_recording(reports, settles_evidence))
+
+    assert orch._phase3_exit_reason == "replay (attempt 3 called no tool)"
+    assert reports[-1] == (2, False), "the last report is the evidence round's, not a restore"
+    assert orch._phase3_rolled_back and len(_rollback_notes(orch)) == 1
+
+
 # ---------------------------------------------------------------- the attempt starts with the files
 
 def test_an_attempt_starts_with_the_text_of_the_files_its_blockers_name(tmp_path):

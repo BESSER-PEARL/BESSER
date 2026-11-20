@@ -526,8 +526,9 @@ Findings are classified into three severities:
        quotation marks are compared by kind, not glyph: ``'``, ``“ ”``, ``‘ ’``, ``« »``
        and the fullwidth ``＂ ＇`` read as ``"`` on both sides, since some models return
        them typographic. Some providers return a citation with its double quotation
-       marks left out (``<button type=submit>``): a citation no line matches is
-       compared once more with the quotation marks removed on both sides, and
+       marks left out (``<button type=submit>``): a citation with no quotation mark
+       at all that no line matches is compared once more with the file's quotation
+       marks removed (a quote that kept some marks is compared with them), and
        locates a line only when exactly one line of the cited file then reads as the
        whole quote; with two or more it is refused, never picked.
        Prose, a paraphrase or

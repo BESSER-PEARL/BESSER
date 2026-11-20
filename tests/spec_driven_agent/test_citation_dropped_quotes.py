@@ -99,3 +99,13 @@ def test_our_decoding_of_tool_arguments_keeps_escaped_quotation_marks():
     evidence = ledger._parse_evidence(payload["verdicts"][0]["evidence"])
 
     assert evidence == [{"path": "frontend/src/OrderForm.tsx", "line": line}]
+
+
+def test_a_quote_that_kept_some_quotation_marks_is_compared_with_them(tmp_path):
+    """Only a quote with no mark at all lost them; ``"a, b"`` is not the two strings ``"a", "b"``."""
+    _write(tmp_path, "backend/check.py", 'def check(q):\n    if q < 1:\n'
+                                         '        raise HTTPException(422, "quantity", "must be positive")\n')
+
+    checked = _check(tmp_path, "backend/check.py", 'raise HTTPException(422, "quantity, must be positive")')
+
+    assert checked["status"] == "unverified"

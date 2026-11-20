@@ -324,12 +324,12 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False) -> list[tuple[
 
 
 def _quoteless_span(quoted: str, source: _Source) -> list[tuple[int, int]]:
-    """The one line of the file that reads as the quote once the quotation marks of both are
-    removed (some providers return a citation with them left out); none when no line or
-    more than one line does, so a line is never picked among several."""
-    bare = quoted.replace('"', "")
-    if len(bare) < _MIN_PART_QUOTE:
-        return []
+    """For a quote with no quotation mark at all (some providers return a citation with them
+    left out): the one line of the file that reads as the quote once its quotation marks are
+    removed; none when no line or more than one line does, so a line is never picked among several."""
+    bare = quoted
+    if '"' in quoted or len(bare) < _MIN_PART_QUOTE:
+        return []  # a quote that kept quotation marks is compared with them
     found = [index + 1 for index, line in enumerate(source.normalised)
              if (text := line.replace('"', "")) == bare
              or (text.startswith(bare) and set(text[len(bare):]) <= _BLOCK_PUNCTUATION)]

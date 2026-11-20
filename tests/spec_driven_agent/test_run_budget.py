@@ -6,9 +6,12 @@ model (``scripted_rig``), as in ``test_scripted_loop_structure``.
 
 from __future__ import annotations
 
+import json
+
 import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
 import besser.spec_driven_agent.pipeline.phase3_repair as phase3_module
 from besser.spec_driven_agent.pipeline.constants import _PHASE3_BUDGET_SHARE
+from tests.spec_driven_agent.run_transport import plain
 from tests.spec_driven_agent.scripted_rig import FakeClock, ScriptedAgent, run_scripted
 from tests.spec_driven_agent.test_scripted_loop_structure import MAIN, TASKS, _no_app_boot, shelf_script
 
@@ -80,3 +83,27 @@ def test_verifying_one_call_per_turn_is_not_stagnation(tmp_path, monkeypatch):
 
     assert orchestrator._phase2_stop_reason == "completed", orchestrator._phase2_stop_detail
     assert sum(map(len, agent.sent["phase2"])) == len(script)
+
+
+def test_the_model_is_told_what_budget_is_left_after_tool_results(tmp_path, monkeypatch):
+    """It was never told its calls, time or cost left. The line goes after the tool
+    results; the system prompt, the cached prefix, stays byte-identical."""
+    _no_app_boot(monkeypatch)
+    agent = ScriptedAgent(str(tmp_path), shelf_script(), TASKS)
+    run_scripted(tmp_path, agent, max_turns=6)   # 24 calls, 18 of them Phase 2's: 16 used
+
+    requests = agent.transport.of("phase2")[:len(agent.sent["phase2"])]
+    assert len({json.dumps(r["system"], sort_keys=True) for r in requests}) == 1
+    reminders = []
+    for request in requests:
+        messages = plain(request["messages"])
+        for before, message in zip(messages, messages[1:]):
+            text = json.dumps(message["content"])
+            if "of this phase's budget is used" in text:
+                assert message["role"] == "user" and "tool_result" in json.dumps(before["content"])
+                reminder = text.split("<system-reminder>")[1].split("</system-reminder>")[0]
+                if reminder not in reminders:
+                    reminders.append(reminder)
+    assert [r[:3] for r in reminders] == ["50%", "75%"]
+    assert all("blocked" in r and "finish now" not in r.lower() for r in reminders)
+    assert "of this phase's budget is used" not in json.dumps(requests[-1]["system"])

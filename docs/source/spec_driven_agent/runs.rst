@@ -55,6 +55,14 @@ a reminder, with its open checklist items, and the handoff comes no earlier than
 the next turn. After 40 calls without a source change it is reminded once to
 implement.
 
+The model is told what is left. When half, three quarters and nine tenths of
+Phase 2's share (of the tool calls, the time or the spend, whichever is
+furthest along) are used, a short reminder after that turn's tool results gives
+the tool calls, minutes and, for a priced model, dollars left before validation
+and repair take over, and asks the model to record what it cannot finish as
+blocked. It is never part of the system prompt, which stays byte-identical so
+the provider's prompt cache keeps serving it.
+
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.

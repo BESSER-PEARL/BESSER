@@ -2167,6 +2167,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         inspection_nudged = False
         self._phase2_inspection_handoff = ""
         call_limit = self._phase2_call_limit()
+        phase2_seconds = self.deadline.work_remaining()
+        budget_announced = 0.0
         for turn in range(start_turn, self._turn_guard()):
             if self._tool_calls_executed() >= call_limit:  # Phase 2's share of the work
                 self._end_phase2_work_share(call_limit)
@@ -2380,6 +2382,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "concrete diagnostics to implement or verify the next unresolved behavior; avoid restarting a full-file tour."
                     )
                     logger.warning("Phase 2: bounded inspection/no-progress limit; switching to diagnostic-led repair")
+                if not handoff:
+                    budget_announced, reminder = self._budget_reminder(call_limit, phase2_seconds, budget_announced)
+                    if reminder:
+                        messages.append(reminder)
 
                 # Per-file modify-loop guard. After the tool_results are
                 # appended, check whether the LLM has just made a streak
@@ -2552,6 +2558,35 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 seen.add(key)
                 novel = True
         return novel
+
+    # Shares of Phase 2's budget at which the model is told what is left.
+    _BUDGET_REMINDER_AT = (0.5, 0.75, 0.9)
+
+    def _budget_reminder(self, call_limit: int, phase2_seconds: float | None,
+                         announced: float) -> tuple[float, dict | None]:
+        """The highest share of Phase 2's budget now used, and the message telling the
+        model what is left when it passed a share not announced yet. Sent after tool
+        results, never in the system prompt, so the cached prefix does not change."""
+        calls_left = call_limit - self._tool_calls_executed()
+        cost_limit = self.max_cost_usd * (1 - _PHASE3_BUDGET_SHARE)
+        spent = self.client.usage.estimated_cost
+        seconds_left = self.deadline.work_remaining()
+        used = max(1 - calls_left / call_limit, spent / cost_limit if cost_limit > 0 else 0.0,
+                   1 - seconds_left / phase2_seconds if seconds_left is not None and phase2_seconds else 0.0)
+        reached = max((mark for mark in self._BUDGET_REMINDER_AT if used >= mark), default=0.0)
+        if reached <= announced:
+            return announced, None
+        left = [f"{max(0, calls_left)} tool calls"]
+        if seconds_left is not None:
+            left.append(f"{max(0.0, seconds_left) / 60:.0f} minutes")
+        if spent > 0:  # a model with no price reports none
+            left.append(f"${max(0.0, cost_limit - spent):.2f}")
+        text = (f"<system-reminder>{reached:.0%} of this phase's budget is used. About {', '.join(left)} "
+                "remain before the run moves on to validation and repair. Keep working through the open "
+                "items. Record any you cannot finish with what remains as blocked in task_list, with "
+                "the reason; never mark undone work done."
+                "</system-reminder>")
+        return reached, {"role": "user", "content": [{"type": "text", "text": text}]}
 
     @staticmethod
     def _record_novel_inspections(tool_blocks, tool_results, seen) -> bool:

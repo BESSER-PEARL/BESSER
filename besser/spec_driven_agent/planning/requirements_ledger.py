@@ -846,11 +846,12 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
 
     The new messages are the later messages of ``instructions`` after those it shares, from the
     start, with ``previous_instructions`` (the previous run's); when there are none, nothing is
-    new if the first message is unchanged, else the newest message is. Returns ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the
-    ids of ``previous`` a new message changes, asks for again or removes, and whether the messages
-    only ask to retry or finish earlier work. When the new messages are empty or are only the
-    previous run's newest message, that is decided without a call. None when no real provider is
-    available or the call failed.
+    new if the first message is unchanged, else the newest message is. Returns
+    ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the ids of
+    ``previous`` a new message changes, asks for again or removes, and whether the messages only
+    ask to retry or finish earlier work. When the new messages are empty or are only the previous
+    run's newest message, that is decided without a call. None when no real provider is available
+    or the call failed.
     """
     validate_specification(instructions)
     if not _is_real_provider(llm_client):

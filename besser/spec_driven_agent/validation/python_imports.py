@@ -268,16 +268,64 @@ def _falls_back(node: _ast.Try | _ast.TryStar) -> bool:
                    for n in _ast.walk(handler))
 
 
-def _used_only_in(function: _ast.AST, block: list[_ast.stmt]) -> bool:
-    """Whether every name the imports in ``block`` bind is read only inside
-    ``block``: a read anywhere else in ``function`` is a NameError when the
-    import failed."""
-    imports = [n for stmt in block for n in _ast.walk(stmt) if isinstance(n, (_ast.Import, _ast.ImportFrom))]
-    bound = {alias.asname or (alias.name if isinstance(node, _ast.ImportFrom) else alias.name.split(".")[0])
-             for node in imports for alias in node.names}
+_SCOPES = (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.Lambda, _ast.ClassDef)
+
+
+def _import_names(node: _ast.Import | _ast.ImportFrom) -> set[str]:
+    return {alias.asname or (alias.name if isinstance(node, _ast.ImportFrom) else alias.name.split(".")[0])
+            for alias in node.names}
+
+
+def _params(node: _ast.AST) -> set[str]:
+    args = getattr(node, "args", None)
+    if not isinstance(args, _ast.arguments):
+        return set()
+    return {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg) if a}
+
+
+def _is_binding(node: _ast.AST, name: str) -> bool:
+    """Whether ``node`` binds ``name``: an assignment target, an import, a def or class, ``except ... as``."""
+    if isinstance(node, _ast.Name):
+        return node.id == name and isinstance(node.ctx, _ast.Store)
+    if isinstance(node, (_ast.Import, _ast.ImportFrom)):
+        return name in _import_names(node)
+    return (isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef, _ast.ExceptHandler))
+            and node.name == name)
+
+
+def _scope_nodes(scope: _ast.AST, name: str):
+    """The nodes of ``scope`` where ``name`` is the scope's own: nested functions,
+    lambdas and classes are left out when they bind ``name`` themselves."""
+    stack = list(_ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _SCOPES) and (name in _params(node)
+                                          or any(_is_binding(n, name) for n in _ast.walk(node) if n is not node)):
+            continue
+        yield node
+        stack.extend(_ast.iter_child_nodes(node))
+
+
+def _read_unguarded(function: _ast.AST, guard: _ast.AST, block: list[_ast.stmt]) -> bool:
+    """Whether a name the imports in ``block`` bind may be read in ``function``
+    where the import failed: outside ``block`` and after no other binding of it
+    (a parameter, an assignment before or after ``guard``, in source order),
+    unless every catch-all handler of ``guard`` binds it as a fallback."""
+    names = {name for stmt in block for n in _ast.walk(stmt)
+             if isinstance(n, (_ast.Import, _ast.ImportFrom)) for name in _import_names(n)}
     inside = {id(n) for stmt in block for n in _ast.walk(stmt)}
-    return not any(isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Load) and n.id in bound
-                   and id(n) not in inside for n in _ast.walk(function))
+    in_guard = {id(n) for n in _ast.walk(guard)}
+    broad = [h for h in getattr(guard, "handlers", ()) if _handler_kind(h) == _BROAD]
+    for name in names:
+        if broad and all(any(_is_binding(n, name) for stmt in h.body for n in _ast.walk(stmt)) for h in broad):
+            continue
+        nodes = list(_scope_nodes(function, name))
+        bound_at = [function.lineno] if name in _params(function) else []
+        bound_at += [n.lineno for n in nodes if id(n) not in in_guard and _is_binding(n, name)]
+        if any(isinstance(n, _ast.Name) and n.id == name and isinstance(n.ctx, _ast.Load) and id(n) not in inside
+               and not any(line < n.lineno for line in bound_at) for n in nodes):
+            return True
+    return False
 
 
 def _is_type_checking(test: _ast.expr) -> bool:
@@ -323,7 +371,7 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
         if _OPTIONAL in kinds or _BROAD in kinds:
             children = [*node.orelse, *node.finalbody]
             optional = (function is not None and _falls_back(node)
-                        and _used_only_in(function, [*node.body, *node.orelse]))
+                        and not _read_unguarded(function, node, [*node.body, *node.orelse]))
             guarded = [] if _OPTIONAL in kinds or optional else node.body
         else:
             children = list(_ast.iter_child_nodes(node))
@@ -332,7 +380,7 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
     elif isinstance(node, _ast.If) and _is_version_check(node.test):
         children = []
     elif isinstance(node, _ast.With) and (kind := _suppress_kind(node)):
-        optional = kind == _OPTIONAL or (function is not None and _used_only_in(function, node.body))
+        optional = kind == _OPTIONAL or (function is not None and not _read_unguarded(function, node, node.body))
         children, guarded = [], [] if optional else node.body
     else:
         children = list(_ast.iter_child_nodes(node))

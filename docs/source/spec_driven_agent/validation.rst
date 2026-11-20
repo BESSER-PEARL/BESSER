@@ -48,14 +48,20 @@ that was already broken is never refused, so it can be repaired.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup. Imports the app starts
-  without are not checked: inside a ``try`` that handles ``ImportError``, and
-  under ``if TYPE_CHECKING:``. Under a catch-all handler (``except Exception``)
-  an unresolved import is a warning, ``possibly missing module:``, unless it
-  is inside a function and the handler goes on to the code after the
-  ``try`` (no ``return`` or ``raise`` in it) and the imported names are read
-  only inside the ``try`` body or its ``else``: an optional fast path the
-  function falls back from. A name read after the ``try`` or in its handler
-  is a ``NameError`` when the import failed, so it is still reported. A package
+  without are not checked: inside a ``try`` that handles ``ImportError`` or a
+  ``with suppress(ImportError):``, and under ``if TYPE_CHECKING:``. Under a
+  catch-all (``except Exception``, ``with suppress(Exception):``) an
+  unresolved import is a warning, ``possibly missing module:``, unless it is
+  inside a function, the handler goes on to the code after the ``try`` (no
+  ``return`` or ``raise`` in it), and the import has a fallback: every
+  catch-all handler binds the imported name (another import, ``= None``), or
+  each read of it outside the ``try`` body (or its ``else``) or the ``with``
+  block comes after another binding of it in the function (a parameter, an
+  assignment before the guard or a later one). That is an optional fast path
+  the function falls back from. Otherwise the read, after the guard, in the
+  handler, in ``finally`` or in a closure, is a ``NameError`` when the import
+  failed, so it is reported. A flag set in the handler (``found = False``,
+  then ``if found:``) is not followed, so that read is reported too. A package
   declared in the app's manifest satisfies its import name, matched
   case-insensitively and, for names that differ (``python-socketio`` /
   ``socketio``), by name prefix, unless the app ships a module of that name.

@@ -35,6 +35,7 @@ from besser.spec_driven_agent.planning.action_inventory import (
     format_action_inventory,
 )
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_inventory
+from besser.spec_driven_agent.agent.tools import with_scope_widening
 from besser.spec_driven_agent.planning.model_rules import DROPPED
 from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest, route_serves
 from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
@@ -1268,6 +1269,8 @@ class Phase3RepairMixin:
             })
 
         edits = 0                 # successful write-tool calls this attempt
+        # needed_for is offered only while the attempt's edits are limited.
+        tools = with_scope_widening(self.tools) if scope is not None else self.tools
         unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
         turn_cap = _PHASE3_FIX_TURNS
@@ -1290,7 +1293,7 @@ class Phase3RepairMixin:
             request_messages = without_rejected_edit_drafts(messages)
             try:
                 response = self.client.chat(
-                    system=system, messages=request_messages, tools=self.tools,
+                    system=system, messages=request_messages, tools=tools,
                 )
             except InvalidApiKeyError:
                 # Same rule as Phase 2: an auth failure must PROPAGATE so the

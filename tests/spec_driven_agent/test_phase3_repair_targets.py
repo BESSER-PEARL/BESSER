@@ -74,7 +74,7 @@ class _Client:
         self.requests = []
 
     def chat(self, system, messages, tools, force_tool=None, model_override=None):
-        self.requests.append({"force_tool": force_tool, "messages": list(messages)})
+        self.requests.append({"force_tool": force_tool, "messages": list(messages), "tools": tools})
         return self.replies.pop(0) if self.replies else _done()
 
 
@@ -719,3 +719,34 @@ def test_evidence_that_adds_an_observed_failure_ends_the_loop(tmp_path):
 
     assert orch._phase3_exit_reason.endswith("it added an observed failure: " + MAPPER.message)
     assert len(client.requests) == 2
+
+
+# ---------------------------------------------------------------- needed_for only where it means something
+
+WRITE_TOOLS = {"write_file", "modify_file", "replace_file_lines", "delete_file"}
+
+
+def _offers_needed_for(tools) -> set[str]:
+    return {tool["name"] for tool in tools if "needed_for" in tool["input_schema"].get("properties", {})}
+
+
+def test_needed_for_is_offered_only_while_an_attempts_edits_are_limited(tmp_path):
+    client = _Client()
+    orch = _build(tmp_path, client)
+    assert _offers_needed_for(orch.tools) == set(), "every Phase 2 turn re-sends the schemas"
+
+    orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True)
+    orch._invoke_phase3_fix_loop([ROUTE_500], is_first_attempt=True)  # names no file: scope open
+
+    assert _offers_needed_for(client.requests[0]["tools"]) == WRITE_TOOLS
+    assert _offers_needed_for(client.requests[1]["tools"]) == set()
+
+
+def test_needed_for_where_it_is_not_offered_is_ignored(tmp_path):
+    orch = _build(tmp_path, _Client())
+
+    result = orch.executor.execute_typed("modify_file", {
+        "path": "backend/services/customer.py", "old_text": "return []", "new_text": "return [2]",
+        "needed_for": "a blocker"})
+
+    assert result.succeeded

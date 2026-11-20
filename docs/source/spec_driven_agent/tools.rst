@@ -75,8 +75,9 @@ chooses its next call, in Phase 2 as in a repair attempt.
 A rewrite of a file this run did not create must keep its code when the file
 is a generated one over 200 lines, or, in a modify run, any file over 15
 lines. Keeping its code means: at least 60% of its non-blank lines; every
-top-level declaration (Python ``def``, ``class`` and assigned names; TS/JS
-column-0 declarations outside comments); no fewer Python decorators and
+top-level declaration (Python ``def``, ``class`` and assigned names, and each
+Python class's own methods, fields and assigned names; TS/JS column-0
+declarations outside comments); no fewer Python decorators and
 module-level calls (``app.include_router(...)``), and no fewer TS/JS ``export
 default`` statements, ``<Route>`` elements and re-exports (``export { A } from
 "./a"``); no new elision such as ``{/* ... unchanged ... */}``; and no new

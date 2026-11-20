@@ -6,7 +6,8 @@ request asked to redesign was generated in full, thrown away, and generated
 again after two edits, and any two edit calls, refused ones included, then
 let a rewrite drop code. A rewrite that keeps its code is now accepted at once,
 and one that loses code is refused however many edits came before: one that
-shrinks the file or abbreviates it, drops a top-level declaration, or has
+shrinks the file or abbreviates it, drops a top-level declaration or a Python
+class member (a field, a method), or has
 fewer default exports, routes, re-exports, decorators or module-level calls.
 """
 import json
@@ -33,6 +34,10 @@ MAIN = ("from fastapi import FastAPI\nfrom routers import order_router\n\napp = 
 ORM = "Base = declarative_base()\n\n" + "".join(
     f"class Model{n}(Base):\n    __tablename__ = 'm{n}'\n    a = 1\n    b = 2\n\n\n" for n in range(40))
 BARREL = "".join(f'export {{ Thing{n} }} from "./thing{n}";\n' for n in range(210))
+SCHEMAS = "from pydantic import BaseModel\n\n" + "".join(
+    f"class Item{n}(BaseModel):\n    name: str\n    price: float\n    qty: int\n    note: str\n    flag: bool\n\n"
+    for n in range(35))
+SERVICE = "class OrderService:\n" + "".join(f"    def step_{n}(self):\n        return {n}\n\n" for n in range(70))
 
 PAGE_PATH = "web_app/frontend/src/pages/OrderList.tsx"
 
@@ -95,6 +100,10 @@ PLACEHOLDER = PAGE.replace("".join(ROW_LINES[150:]), "      {/* remaining rows u
                  id="py-bodies-elided"),
     pytest.param("web_app/backend/sql_alchemy.py", ORM,
                  re.sub(r"(class Model\d+\(Base\):\n)(    .*\n)+", r"\1    pass\n", ORM), id="py-orm-classes-stubbed"),
+    pytest.param("web_app/backend/pydantic_classes.py", SCHEMAS,
+                 SCHEMAS.replace("    note: str\n    flag: bool\n", ""), id="py-class-fields-dropped"),
+    pytest.param("web_app/backend/services.py", SERVICE,
+                 SERVICE.replace("    def step_7(self):\n        return 7\n\n", ""), id="py-method-dropped"),
 ])
 def test_a_rewrite_that_loses_scaffold_is_refused(tmp_path, rel, before, after):
     executor = _generated(tmp_path, rel, before)
@@ -115,6 +124,17 @@ def test_a_rewrite_of_a_file_with_no_declarations_that_keeps_its_lines_is_accept
 def test_a_rewrite_that_keeps_a_backend_module_is_accepted(tmp_path):
     rewritten = MAIN.replace('return {"n": x}', 'return {"n": x, "ok": True}')
     assert _write(tmp_path, "web_app/backend/main_api.py", MAIN, rewritten).get("status") == "written"
+
+
+def test_a_rewrite_that_keeps_every_class_member_is_accepted(tmp_path):
+    rewritten = SCHEMAS.replace("    price: float\n", "    price: float = 0.0\n    currency: str = 'EUR'\n")
+    assert _write(tmp_path, "web_app/backend/pydantic_classes.py", SCHEMAS, rewritten).get("status") == "written"
+
+
+def test_a_dropped_class_member_is_named(tmp_path):
+    error = _write(tmp_path, "web_app/backend/services.py", SERVICE,
+                   SERVICE.replace("    def step_7(self):\n        return 7\n\n", "")).get("error", "")
+    assert "OrderService.step_7" in error, error
 
 
 def test_declaration_names_are_not_keywords():

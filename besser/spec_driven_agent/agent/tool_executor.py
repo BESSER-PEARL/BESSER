@@ -609,10 +609,23 @@ def _placeholder_standing_in(before: str, after: str) -> str | None:
 
 
 class _Outline(NamedTuple):
-    """What a rewrite must keep of a source file: its top-level names, and counts
-    of the registrations a name check misses (decorators, routes, module-level calls)."""
+    """What a rewrite must keep of a source file: its top-level names (and a Python
+    class's members), and counts of the registrations a name check misses
+    (decorators, routes, module-level calls)."""
     names: set[str]
     counts: dict[str, int]
+
+
+def _declared_names(body: list) -> set[str]:
+    """The functions, classes and assigned names a Python block defines."""
+    names = set()
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(target.id for target in targets if isinstance(target, ast.Name))
+    return names
 
 
 def _outline(rel_path: str, code: str) -> _Outline | None:
@@ -622,14 +635,12 @@ def _outline(rel_path: str, code: str) -> _Outline | None:
             tree = ast.parse(code)
         except (SyntaxError, ValueError):
             return None
-        names, decorators, calls = set(), 0, 0
+        names, decorators, calls = _declared_names(tree.body), 0, 0
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names.add(node.name)
                 decorators += len(node.decorator_list)
-            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                names.update(target.id for target in targets if isinstance(target, ast.Name))
+            if isinstance(node, ast.ClassDef):
+                names.update(f"{node.name}.{member}" for member in _declared_names(node.body))
             elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
                 calls += 1
         return _Outline(names, {"decorators": decorators, "module-level calls": calls})

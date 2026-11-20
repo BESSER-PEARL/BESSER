@@ -294,8 +294,12 @@ def test_the_web_app_ships_the_agent_only_when_a_screen_uses_it(tmp_path, screen
     assert (tmp_path / "web_app" / "agents").is_dir() is screen_uses_agent
 
 
-@pytest.mark.parametrize("screen_uses_agent", [False, True])
-def test_an_agent_left_out_of_the_web_app_is_a_warning_in_the_run_summary(tmp_path, screen_uses_agent):
+@pytest.mark.parametrize("generator,screen_uses_agent,reported", [
+    ("generate_web_app", False, True), ("generate_web_app", True, False), ("generate_baf", False, False),
+])
+def test_an_agent_left_out_of_the_web_app_is_a_warning_in_the_run_summary(tmp_path, generator, screen_uses_agent,
+                                                                           reported):
+    """Read from the run's own state, which a resumed run restores and a modify run takes from its seed."""
     from besser.spec_driven_agent.validation.issues import _classify_issue
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import build_verification_report
 
@@ -303,9 +307,9 @@ def test_an_agent_left_out_of_the_web_app_is_a_warning_in_the_run_summary(tmp_pa
                            gui_model=_gui(screen_uses_agent), output_dir=str(tmp_path),
                            enable_checkpointing=False, enable_tracing=False, enable_import_smoke_check=False,
                            enable_toolchain_validation=False)
-    assert json.loads(orch.executor.execute("generate_web_app", {}))["status"] == "ok"
+    orch._generator_used = generator
     notes = [i for i in orch._collect_validation_issues() if i.message.startswith("agent left out:")]
-    if screen_uses_agent:
+    if not reported:
         assert not notes
         return
     [note] = notes

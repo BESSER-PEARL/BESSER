@@ -3593,8 +3593,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
         raw_issues.extend(self._format_notes)
-        if self.executor.agent_left_out:
-            raw_issues.append(agent_left_out_note(self.executor.agent_left_out))
+        if (self._generator_used == "generate_web_app" and self.agent_model is not None
+                and self.gui_model is not None and not gui_uses_agent(self.gui_model)):
+            raw_issues.append(agent_left_out_note(self.agent_model.name))
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))

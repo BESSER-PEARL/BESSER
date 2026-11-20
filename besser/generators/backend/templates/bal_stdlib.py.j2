@@ -102,3 +102,34 @@ def link_attrs(link, names):
                 continue
         values[name] = value.value if isinstance(value, _Enum) else value
     return values
+
+
+############################################
+#
+#   Method parameter helpers
+#
+############################################
+# Method routes read their parameters from a free-form `params` body.
+from datetime import timedelta as _timedelta
+
+from fastapi import HTTPException as _HTTPException
+from pydantic import TypeAdapter as _TypeAdapter, ValidationError as _ValidationError
+
+
+def method_enum_param(enum_type, name, value):
+    """An enumeration parameter, sent as a literal's name; 422 for any other value."""
+    if value is None or isinstance(value, enum_type):
+        return value
+    if isinstance(value, str) and value in enum_type.__members__:
+        return enum_type[value]
+    raise _HTTPException(status_code=422, detail=f"{name} must be one of: " + ", ".join(enum_type.__members__))
+
+
+def method_timedelta_param(name, value):
+    """A duration parameter, sent as seconds or an ISO 8601 duration (as attributes are); 422 otherwise."""
+    if value is None or isinstance(value, _timedelta):
+        return value
+    try:
+        return _TypeAdapter(_timedelta).validate_python(value)
+    except _ValidationError:
+        raise _HTTPException(status_code=422, detail=f"{name} must be a duration in seconds or ISO 8601") from None

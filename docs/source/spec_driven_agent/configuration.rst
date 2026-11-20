@@ -176,6 +176,11 @@ Feature flags
   in-process checks (syntax, Dockerfile references, contracts, ``ruff``) run
   regardless; the ``pip install --dry-run`` dependency check is gated on
   ``BESSER_LLM_ENABLE_SHELL_TOOLS`` instead. See :doc:`validation`.
+- ``BESSER_LLM_SCREEN_CHECK`` (**on**) -- After a frontend's build has passed,
+  open its screens in a headless browser and report the ones that throw, stay
+  blank or get a 5xx from the backend (:doc:`validation`). Needs a
+  Chromium-family browser and Node.js 22; without them the check reports that
+  it did not run. ``0``, ``false`` or ``no`` turns it off.
 - ``BESSER_LLM_ENABLE_AUTO_FIX`` (on) -- Let Phase 3 spend LLM turns repairing
   blocker-severity findings. Phase 2 then leaves part of ``max_turns`` to that
   repair (see :doc:`runs`).

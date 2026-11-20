@@ -78,6 +78,7 @@ _DID_NOT_RUN = re.compile(r"^validation(?: unverified)?: (?P<check>.+?) did not 
 _DETAIL_TEXT = re.compile(r'"detail"\s*:\s*"((?:[^"\\]|\\.)+)"')
 _ERROR_MSG = re.compile(r'"loc"\s*:\s*\[(?P<loc>[^\]]*)\].*?"msg"\s*:\s*"(?P<msg>(?:[^"\\]|\\.)+)"', re.S)
 _ACCEPTANCE = re.compile(r"^acceptance: entity (?P<entity>\w+) — (?P<detail>.*)")
+_SCREENS_NOT_RUN = re.compile(r"^screens: not run \((?P<reason>.*)\)$", re.S)
 
 # Prefixes whose finding needs no detail to be said plainly.
 _SIMPLE = (
@@ -89,6 +90,8 @@ _SIMPLE = (
     ("form route:", "A form in the user interface cannot be reached."),
     ("form json textarea:", "A form in the user interface asks for raw data instead of fields."),
     ("form field type:", "A form field does not match the type of value it collects."),
+    ("screen:", "A screen of the app fails when it is opened in a browser."),
+    ("screen warning:", "A screen of the app reported errors when it was opened in a browser."),
     ("api call:", "A screen sends a request, or reads its answer, in a shape the backend does not use."),
     ("data contract", "The code does not match the class diagram (an identifier or a field type)."),
     ("model conformance:", "The backend does not match the latest changes to the class diagram."),
@@ -265,6 +268,9 @@ def user_finding(message: str) -> Finding:
             return Finding(f"{check[0].upper()}{check[1:]} could not be run against the app.")
         reason = f" ({plain_reason(skipped.group('reason'))})" if skipped.group("reason") else ""
         return Finding(f"Not run: {check}{reason}, so its checks are not covered.")
+    if screens := _SCREENS_NOT_RUN.match(text):
+        return Finding(f"Not run: opening the app's screens in a browser ({plain_reason(screens.group('reason'))}), "
+                       "so they are not covered.")
     if acceptance := _ACCEPTANCE.match(text):
         entity = acceptance.group("entity")
         if "create" in acceptance.group("detail"):

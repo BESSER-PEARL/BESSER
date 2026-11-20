@@ -216,6 +216,11 @@ def _classify_issue(message: str) -> ValidationIssue:
         return ValidationIssue("blocker", text)
     if lower.startswith("form field type:"):
         return ValidationIssue("warning", text)
+    # A screen opened in a headless browser threw while loading, rendered nothing,
+    # or got a 5xx from the app's backend (ui_probe.py). ``screen warning:`` and
+    # ``screens: not run`` keep the warning default.
+    if lower.startswith("screen:"):
+        return ValidationIssue("blocker", text)
     # A project agent the web app leaves out because no screen uses it: a notice, never repaired.
     if lower.startswith("agent left out:"):
         return ValidationIssue("warning", text)

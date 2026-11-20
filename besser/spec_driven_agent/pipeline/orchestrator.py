@@ -3634,6 +3634,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             build_verdicts=build_verdicts, can_run=self._verification_call_allowed,
             timeout=remaining,
         ))
+        raw_issues.extend(self._collect_screen_issues())
 
         issues = [_classify_issue(s) for s in drop_duplicate_python_findings(raw_issues)]
         # For the duration of a fix/modify run, promote findings that match
@@ -4654,6 +4655,40 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                    for issue in issues):
             results[key] = list(issues)
         return issues
+
+    def _collect_screen_issues(self) -> list[str]:
+        """Open the screens of each frontend whose build passed on this tree (``ui_probe.py``).
+
+        Cached per tree like :meth:`_revision_cached`; a check that did not run
+        is not, unless no edit can change that (no browser, turned off). The
+        report is kept as ``_screen_report`` (revision, report) for
+        ``ui_probe.screen_evidence``.
+        """
+        from besser.spec_driven_agent.validation.ui_probe import NOT_RUN_PREFIX, collect_screen_report, not_run
+
+        revision = self._workspace_revision()
+        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
+        built = tuple(sorted({key[0] for key, verdict in self._frontend_build_verdicts.items()
+                              if key[1] == revision and verdict is None}))
+        if not built:
+            return []
+        key = ("screens", revision, built)
+        if key in self._check_results:
+            return list(self._check_results[key])
+        if not self._verification_call_allowed():
+            return [not_run("validation was stopped or its budget exhausted")]
+        remaining = self.max_runtime_seconds - (
+            time.monotonic() - self._start_time if self._start_time is not None else 0)
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase3_screens")
+        report = collect_screen_report(self.output_dir, list(built), timeout=remaining)
+        self._trace.write(EVENT_PHASE_EXIT, phase="phase3_screens", screens=len(report["screens"]),
+                          seconds=report["seconds"],
+                          exit_reason=f"{len(report['screens'])} screen(s) opened in {report['seconds']}s")
+        self._screen_report = (revision, report)
+        stable = (not_run("no browser available"), not_run("turned off on this server"))
+        if all(not issue.startswith(NOT_RUN_PREFIX) or issue in stable for issue in report["issues"]):
+            self._check_results[key] = list(report["issues"])
+        return report["issues"]
 
     def _pip_dry_run_issues(self, rel: str) -> list[str]:
         """``pip install --dry-run`` of one requirements file, sandboxed."""

@@ -1,0 +1,5 @@
+{
+  "name": "screen-app",
+  "private": true,
+  "scripts": { "build": "vite build" }
+}

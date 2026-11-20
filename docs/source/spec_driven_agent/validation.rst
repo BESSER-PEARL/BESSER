@@ -247,6 +247,41 @@ gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
 
+Once a frontend's build has passed on the current tree, Phase 3 opens its
+screens in a headless browser (``validation/ui_probe.py``). Inside the same
+no-network sandbox it boots the generated FastAPI backend on a scratch SQLite
+database (on every local port the built bundle calls), serves the build output
+(``index.html`` for page loads, the backend for any other path the build does
+not hold) and opens each screen in a fresh tab: ``/``, every literal path the
+router declares (``<Route path>``, ``createBrowserRouter`` objects, the
+scaffold's ``ui_components.json``), then same-origin links found on the opened
+pages that match a declared route, which is how a ``/orders/:id`` screen is
+reached. At most 25 screens, 15 seconds each and 150 seconds in all (less when
+the run has less time left). The database starts empty and nothing is clicked or
+typed, so forms, buttons and screens that need a record are not exercised.
+Findings name the route and, when the router names it, the page's source file:
+
+- ``screen:`` (blocker) -- an uncaught exception while a declared screen loads,
+  a declared screen whose root element (``#root``, ``#app`` or ``body``) holds no
+  text and no visible control once the page is idle, or a 5xx from the app's own
+  backend during load.
+- ``screen warning:`` -- a 4xx, a console error, an unhandled promise rejection,
+  a page that did not settle (a request still open, or a fetch loop), a local
+  address nothing answered. A crash or blank page is only a warning when the
+  app's backend was unreachable or an external script could not load (the check
+  has no network): other checks own those causes.
+- ``screens: not run (reason)`` -- no browser, no Node.js, no sandbox, no build
+  output, or the check is turned off. A note, never a blocker, and it does not
+  withhold verified completion.
+
+The browser is a Chromium-family binary found on ``PATH``
+(``chromium-headless-shell`` in the worker image), driven over the DevTools
+protocol by a Node.js script that uses Node 22's built-in WebSocket; nothing is
+downloaded. CORS is not judged, since the deployed origins are unknown, and host
+names other than ``localhost`` resolve to nothing. Results are reused for an
+unchanged tree; a check that did not run is tried again. Its time shows in the
+trace as the ``phase3_screens`` phase.
+
 Generated create probes use distinct fixture values and native association-link
 payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
 that every valid request fails. An unresolved create probe can be discharged by

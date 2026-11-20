@@ -211,6 +211,12 @@ an expected field value accepts the same references, so a check can name an id
 an earlier request returned. Braces that resolve to no earlier value are text,
 compared and reported as written.
 
+A request body is ``json``, or ``form``: urlencoded fields (an OAuth2 password
+login, a form post), whose values accept the same references. With ``files`` the
+body is multipart, for an upload: each file field maps to ``{"filename",
+"content", "content_type"}`` with text content (a CSV, a small text document).
+``json`` and ``form``/``files`` in one request are refused.
+
 A request may carry ``headers``, whose values accept the same references, so a
 scenario can register, log in and send the returned token on later requests:
 ``{"Authorization": "Bearer {{1.access_token}}"}``. Allowed names are
@@ -248,7 +254,8 @@ expectations and last report without executing them. ``action="run"`` with
 only a scenario ID replays its saved definition. ``action="retire"`` with a
 scenario ID and ``correction_reason`` drops a workflow another one replaced: it
 is no longer replayed and no longer blocks the run, and the run report lists it
-under *Could not verify* as retired, with the reason. The original specification
+under *Could not verify* as retired, with the reason; a workflow that had failed
+when it was retired is listed as *failed, retired*: retiring it settled nothing. The original specification
 remains authoritative: a generated assertion can be wrong and must not force
 correct application behavior to regress.
 

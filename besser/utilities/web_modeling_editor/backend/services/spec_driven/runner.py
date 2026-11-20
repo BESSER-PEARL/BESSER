@@ -758,11 +758,18 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         else:
             not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
     # Workflows the agent retired as replaced by another: not run at the end, so not evidence either way.
+    # One that had failed says so: retiring it settled nothing.
     for retired in recipe.get("api_scenarios_retired") or []:
         if isinstance(retired, dict):
             ident = str(retired.get("scenario_id") or "")
-            not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
-                                      why=f"the agent retired it: {retired.get('reason') or 'no reason given'}"))
+            reason = retired.get("reason") or "no reason given"
+            if retired.get("last_status") == "failed":
+                not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}' (failed, retired)",
+                                          why=f"it ran against the app and failed, then the agent retired it: "
+                                              f"{reason}"))
+            else:
+                not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
+                                          why=f"the agent retired it: {reason}"))
 
     # 3b. A run that judged its requirements but never ran the app has no
     #     runtime evidence at all. Silence here reads as "it works".

@@ -105,6 +105,15 @@ to compare (CSS, JSON, YAML, HTML, ``requirements.txt``) is held only to the
 permanently freeze the file; an agent that ignores recovery is still bounded
 by the loop and run budgets.
 
+The rule guards against losing code by accident; it is not a wall against an
+agent that removes code in several steps. Each step is judged against the file
+as it is then, so these sequences still land on a large generated file:
+``delete_file`` (or ``rm`` through ``run_command``)
+and then ``write_file``, since the file is then new to this run; emptying the
+file with a range edit and then ``write_file``, since an empty file is below
+the size limit; and several range edits that each replace less than 90% of
+the file.
+
 ``delete_file`` removes one regular file, for every model alike: whether a
 delete runs never depends on the model. When other files still import a
 top-level module or package the delete removed, the result lists those imports
@@ -321,6 +330,14 @@ run keeps the same lock. To change the stack, start a fresh run. The lock covers
 the agent's calls only: when the model changed, a modify run itself regenerates
 the generated files and merges the change into edited ones (see
 :ref:`spec-driven-regeneration`).
+
+After Phase 1, Phase 2 drops the generators whose output the chosen generator
+already bundles (Pydantic, SQLAlchemy and the like next to a backend). The
+single-artifact generators that remain (``generate_python_classes``,
+``generate_java_classes``, ``generate_rdf``, ``generate_supabase``) stay
+offered whether or not the request asks for that artifact: nothing structured
+in a run says which extra artifacts the user wants, and the tool list is never
+chosen by matching the request's wording.
 
 .. _spec-driven-shell-tools:
 

@@ -387,7 +387,8 @@ SSE event types
        AI-written share of the lines from the run's Agent Trace record (see
        :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
        ``changedFiles`` (capped) and ``changedFileCount`` are the distinct
-       files the agent's successful calls wrote, edited or deleted, plus those
+       files the agent's successful calls wrote, edited or deleted (not those a
+       Phase 3 rollback discarded), plus those
        the model change regeneration wrote, merged, moved (new path) or
        removed (the recipe's ``regenerated_files``), and ``modelChanges`` how the model
        differs from the one the base app was built from (modify runs).

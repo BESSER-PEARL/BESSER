@@ -194,3 +194,15 @@ def test_cutting_the_calls_keeps_the_last_successful_change_of_each_file():
 
     assert [call["success"] for call in recipe["tool_calls"]] == [True, False]
 
+
+def test_cutting_the_calls_treats_a_rolled_back_change_as_unsuccessful():
+    from besser.spec_driven_agent.state.recipe_size import _cut_tool_calls
+
+    recipe = {"tool_calls": [
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True},
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True, "rolled_back": True},
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True, "rolled_back": True},
+    ]}
+    _cut_tool_calls(recipe)
+
+    assert [call.get("rolled_back") for call in recipe["tool_calls"]] == [None, True]

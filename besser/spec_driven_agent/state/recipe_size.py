@@ -80,7 +80,7 @@ def _cut_tool_calls(recipe: dict) -> int:
             given = call.get("input") if isinstance(call.get("input"), dict) else {}
             key = (call["tool"], str(given.get("path")))
             last[key] = index
-            if call.get("success") is not False:
+            if call.get("success") is not False and not call.get("rolled_back"):
                 last[(*key, "succeeded")] = index
     kept = set(last.values())
     recipe["tool_calls"] = [call for index, call in enumerate(calls) if index in kept]

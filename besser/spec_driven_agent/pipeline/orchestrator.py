@@ -528,6 +528,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # ``POST /cancel-smart-gen/{run_id}`` without killing the thread.
         self._should_continue = should_continue
         self.tool_calls_log: list[dict] = []
+        # ``tool_calls_log`` length at the last snapshot (None: none taken by this process).
+        self._snapshot_calls: int | None = None
         self.total_turns = 0
         # (loop key, succeeded) per non-readonly call. Success matters: counting
         # names alone flags a run of SUCCESSFUL edits as a loop.

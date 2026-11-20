@@ -560,8 +560,9 @@ class ModifyRunMixin:
         seed = self._seed_target
         routing = None
         if self._can_route():
-            with self._traced_llm_call("routing"):
+            with self._traced_llm_call("routing") as call:
                 routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+                call["outcome"] = "failed" if routing is None or routing.target is None else "ok"
         if routing is None or routing.target is None:
             logger.warning(
                 "Modify run: the routing call failed; keeping the existing target (%s) "

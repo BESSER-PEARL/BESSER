@@ -108,6 +108,16 @@ def test_a_modify_runs_routing_and_model_sync_calls_are_recorded(tmp_path):
         ("routing", 1, 1000), ("model_deltas", 1, 1000)]
 
 
+def test_a_modify_routing_call_with_no_usable_answer_is_recorded_as_failed(tmp_path):
+    orch = _orch(tmp_path, _Structured({}))
+    orch._instructions = "add a search box"
+    orch._modify_mode = True
+    orch._route_modify_request()
+
+    (event,) = _events(tmp_path, "llm_call")
+    assert event["payload"]["purpose"] == "routing" and event["payload"]["outcome"] == "failed"
+
+
 def test_phase2_records_the_cost_of_the_closing_reply(tmp_path, monkeypatch):
     generate_backend(tmp_path, shelf_model(author=True))
     monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **_: None)

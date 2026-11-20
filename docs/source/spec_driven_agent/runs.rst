@@ -48,9 +48,7 @@ run cannot overshoot its cap by one more billable call. A single warning is
 logged at 80% of the cost cap.
 
 The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
-agent's own commands stop 30 seconds before the cap, which keeps that time free
-for packaging the result (formatting, the recipe and report, the checkpoint, the
-download). Every LLM call of a run (the customize and repair turns, generator
+agent's own commands stop 30 seconds before the cap. Every LLM call of a run (the customize and repair turns, generator
 selection, planning, model sync, requirement extraction and judging) gets as its
 timeout that time left, never more than its usual timeout, and is not started
 with less than 20 seconds left: requirements a judgment would have checked are
@@ -63,9 +61,13 @@ run to a fallback model; a provider error (an exhausted quota, an unknown model)
 stays one. Every command a run starts (``run_command``,
 ``install_dependencies``, the scaffold's install, the validators, the build and
 type checks) ends by the cap at the latest, and a check or a tool cut by the cap
-says so rather than reporting its own timeout. Phase 3 keeps validating while
-there are at least 10 seconds before the cap, so a repair whose turns ran out of
-time is still checked, not thrown away.
+says so rather than reporting its own timeout. Those last 30 seconds are left to
+formatting the output and to Phase 3's checks, which start while at least 10
+seconds remain before the cap, so a repair whose turns ran out of time is still
+checked, not thrown away. Writing the recipe, report and checkpoint and packing
+the download start no command and take seconds; they may end a few seconds past
+the cap, which the watchdog's grace (``BESSER_LLM_WATCHDOG_GRACE_SECONDS``)
+covers.
 
 A cancellation — from ``POST /besser_api/spec-driven/cancel/{run_id}``, a closed
 connection, the abandonment timer or the runtime watchdog — takes effect at

@@ -525,8 +525,10 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
             except SandboxUnavailable as exc:
                 return _error(str(exc), "probe_error", backend=relative)
             except subprocess.TimeoutExpired as exc:
-                cause = timeout_cause(exc, f"timed out after {min(_PROBE_TIMEOUT_SECONDS, 60)}s")
-                return _error(f"API scenario {cause}", "timeout", backend=relative)
+                own = f"timed out after {min(_PROBE_TIMEOUT_SECONDS, 60)}s"
+                cause = timeout_cause(exc, own)
+                return _error(f"API scenario {own}" if cause == own else f"API scenario stopped: {cause}",
+                              "timeout", backend=relative)
             for line in reversed((result.stdout or "").splitlines()):
                 if line.startswith(_MARKER):
                     report = json.loads(line[len(_MARKER):])

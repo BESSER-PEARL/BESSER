@@ -1608,8 +1608,14 @@ class OpenAIProvider(LLMProvider):
         active (caller should raise).
         """
         deadline = current_deadline()
-        if deadline is not None and deadline.stop_reason():
-            return False  # the run ends: no call would reach the fallback
+        reason = deadline.stop_reason() if deadline is not None else ""
+        if reason:
+            # The run ends, so no call would reach the fallback. A rejected
+            # server key that would have moved on is the run's stop, not the
+            # user's key; any other error stays the provider's.
+            if _is_auth_error(error) and self._has_fallback():
+                raise deadline.reached(reason)
+            return False
         if past_endpoint is not None:
             while (self._fallback_step < len(self._fallback_chain)
                    and self._fallback_chain[self._fallback_step][0] == past_endpoint):

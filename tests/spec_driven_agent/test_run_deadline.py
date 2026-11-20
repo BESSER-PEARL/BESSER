@@ -21,7 +21,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
 from besser.spec_driven_agent.agent import tool_executor as te
-from besser.spec_driven_agent.errors import DeadlineReached, UpstreamLLMError
+from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError, UpstreamLLMError
 from besser.spec_driven_agent.execution import deadline as deadline_module
 from besser.spec_driven_agent.execution import shell_session
 from besser.spec_driven_agent.execution.deadline import (
@@ -695,3 +695,51 @@ def test_a_repair_that_returns_with_no_work_time_left_is_validated_not_discarded
     assert discarded == []
     assert orch._phase3_exit_reason.startswith("runtime budget exhausted")
     assert sum(issue.severity == "blocker" for issue in orch._validation_issues) == 2, "the attempt was re-checked"
+
+
+
+# --------------------------------------------------------------------------- #
+# A rejected server key while the run is stopping
+# --------------------------------------------------------------------------- #
+def _rejected_key():
+    response = httpx.Response(401, request=httpx.Request("POST", "https://example.invalid"))
+    return openai.AuthenticationError("invalid token", response=response, body=None)
+
+
+def test_a_rejected_server_key_during_a_cancel_ends_the_run_cleanly(tmp_path):
+    """On the server-paid tier a rejected key moves the run to the next
+    endpoint. When the run is being cancelled there is no next call: it is a
+    stop, and the run still writes its result, not an invalid-key failure."""
+    orch = None
+
+    def reply(**kwargs):
+        tools = {tool["function"]["name"] for tool in kwargs.get("tools") or []}
+        if "write_file" in tools and "tool_choice" not in kwargs:  # a Phase 2 turn
+            orch.deadline.cancel()  # the user cancels while the request is out
+            raise _rejected_key()
+        return _openai_reply()
+
+    provider = _openai_provider(_RecordingCompletions(reply),
+                                fallback=[("http://127.0.0.1:9/v1", "tok", "other-model")])
+    orch = LLMOrchestrator(llm_client=provider, domain_model=_model(), output_dir=str(tmp_path),
+                           enable_tracing=False, enable_checkpointing=False, max_runtime_seconds=900)
+
+    orch.run("Build an order tracking app")
+
+    assert orch._phase2_stop_reason == "cancelled"
+    assert provider._fallback_step == 0
+    assert os.path.isfile(os.path.join(str(tmp_path), ".besser_recipe.json"))
+
+
+def test_a_users_own_rejected_key_is_still_reported_during_a_cancel():
+    """Without a fallback the key is the user's: they must be told it was rejected."""
+    deadline = Deadline(_clock(1000))
+
+    def rejected(**kwargs):
+        deadline.cancel()
+        raise _rejected_key()
+
+    provider = _openai_provider(_RecordingCompletions(rejected))
+
+    with pytest.raises(InvalidApiKeyError):
+        _Run(deadline).call(provider.chat, "system", _MESSAGES, [])

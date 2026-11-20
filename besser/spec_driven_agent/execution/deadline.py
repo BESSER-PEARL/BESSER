@@ -18,9 +18,9 @@ from besser.spec_driven_agent.errors import DeadlineReached
 
 logger = logging.getLogger(__name__)
 
-# Left free at the end of the run for packaging: formatting, the recipe and
-# report, the checkpoint and the download archive, which take seconds. LLM
-# calls and the agent's own commands stop this long before the cap.
+# LLM calls and the agent's own commands stop this long before the cap; the
+# time is left to formatting and Phase 3's checks (cut at the cap). Writing the
+# result after them starts no command and takes seconds.
 PACKAGING_RESERVE_SECONDS = 30.0
 # An LLM call is not started with less time than this: it would rarely finish,
 # and a call cut short is paid for and gives nothing.

@@ -125,7 +125,7 @@ See :doc:`runs` for how the caps are enforced.
 - ``BESSER_LLM_WATCHDOG_GRACE_SECONDS`` (120) -- Extra time allowed on top of
   the request's ``max_runtime_seconds`` before the runner-level watchdog
   force-cancels a run. A backstop: LLM calls and commands already end by the
-  cap, and packaging has 30 seconds of it kept free.
+  cap; the grace covers writing the result after it, which takes seconds.
 
 Feature flags
 -------------

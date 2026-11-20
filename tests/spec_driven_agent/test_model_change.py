@@ -422,3 +422,25 @@ def test_model_sync_classes_are_not_reported_removed_next_run(tmp_path):
 
     change = compare_with_base(str(tmp_path), _domain(HOTEL))
     assert change.verdict == SMALL and change.removed == () and change.changes == ()
+
+
+def test_a_modify_recipe_records_the_files_the_regeneration_changed(tmp_path):
+    from besser.spec_driven_agent.pipeline.regeneration import Regeneration
+
+    orch = _orch(tmp_path, _domain(HOTEL))
+    orch._modify_mode = True
+    orch._regeneration = Regeneration(
+        generator="backend", replaced=["b.py"], added=["a.py"], merged=["c.py"],
+        moved=[("old.py", "new.py")], removed=["gone.py"])
+    orch._save_recipe("rename a class", elapsed=1.0)
+
+    recipe = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))
+    # A moved file is one file, under its new path.
+    assert recipe["regenerated_files"] == ["a.py", "b.py", "c.py", "gone.py", "new.py"]
+
+
+def test_a_recipe_without_a_regeneration_has_no_regenerated_files(tmp_path):
+    _orch(tmp_path, _domain(HOTEL))._save_recipe("build it", elapsed=1.0)
+    recipe = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))
+    assert "regenerated_files" not in recipe
+

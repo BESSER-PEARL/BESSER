@@ -17,7 +17,7 @@ from besser.spec_driven_agent.lab.contracts import (
     FileChange,
     RepoSpec,
 )
-from besser.spec_driven_agent.lab.workspace import LabWorkspace, LabWorkspaceError, default_repos
+from besser.spec_driven_agent.lab.workspace import LabWorkspace, LabWorkspaceError, _slug, default_repos
 
 
 def git(cwd, *args):
@@ -164,6 +164,17 @@ def test_slug_falls_back_and_is_reduced_to_branch_safe_characters(ws):
     change = ws.start_change(user="Ünïcode_User", title="!!!", kind=ChangeKind.OTHER)
 
     assert change.branches[REPO_BESSER] == "lab/unicode-user/change"
+
+
+@pytest.mark.parametrize("title, slug", [
+    # Titles of the live test (C-D5): cut mid-word to "...get-bui" and "...not-stam" before.
+    ("Comment why 'unknown' means not stamped in get_build_sha", "comment-why-unknown-means-not-stamped-in-get"),
+    ("Comment why 'unknown' build SHA counts as not stamped", "comment-why-unknown-build-sha-counts-as-not"),
+    ("Add the forty eight character title right here x", "add-the-forty-eight-character-title-right-here-x"),
+    ("a" * 60, "a" * 48),
+])
+def test_a_long_title_is_cut_at_a_word_boundary(title, slug):
+    assert _slug(title, "change") == slug
 
 
 def test_start_change_refuses_uncommitted_work_but_ignores_run_artefacts(ws, root):

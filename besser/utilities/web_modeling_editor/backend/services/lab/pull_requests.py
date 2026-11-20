@@ -7,13 +7,16 @@ The token reaches git only through the environment, never argv, a remote URL
 or git config, and only in a scratch repository: never with the working copy's
 own config, which the lab agent can write. Commits added to a lab branch on
 GitHub are merged before the push; a pull request already open keeps its body
-except for the related section.
+except for the related section. A failure the user can act on (sign-in, access,
+branch protection, network) is told in plain words; git's or GitHub's own message
+goes to the server log only.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import re
 import shutil
@@ -38,6 +41,8 @@ from besser.utilities.secret_redaction import redact_text, scrub_secret_files
 from besser.utilities.web_modeling_editor.backend.constants.constants import TEMP_DIR_PREFIX
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import GitHubService
 
+logger = logging.getLogger(__name__)
+
 # The sign-in token has no ``workflow`` scope, so GitHub refuses a push that changes these.
 _WORKFLOWS_DIR = ".github/workflows/"
 # A pull request body lists at most this many changed files; the diff on GitHub has the rest.
@@ -46,6 +51,26 @@ _PUSH_TIMEOUT_SECONDS = 300
 # The scratch repository's copy of the lab branch as GitHub has it.
 _GITHUB_HEAD = "refs/lab/github"
 _RELATED_HEADING = "## Related pull requests"
+
+# What to tell the user for each failure class; ``{repo}`` is owner/name, ``{branch}`` the lab branch.
+_SIGN_IN = "GitHub did not accept your sign-in. Sign in to GitHub again, then open the pull request again."
+_NO_ACCESS = ("Your GitHub account cannot push to {repo}. Ask a maintainer of {repo} for write access, then open "
+              "the pull request again.")
+_PROTECTED = ("GitHub's branch protection rules of {repo} refused the branch {branch}. Ask a maintainer of {repo} to "
+              "allow pushes to lab branches.")
+_NETWORK = ("The lab server could not reach GitHub. Try again in a few minutes; if it keeps failing, ask the lab's "
+            "administrator to check the server's connection to github.com.")
+# git's messages for those classes, checked in this order (a 403 also says "unable to access").
+_GIT_FAILURES = (
+    (re.compile(r"could not read Username|Authentication failed|Invalid username or password|"
+                r"returned error: 401", re.IGNORECASE), _SIGN_IN),
+    (re.compile(r"protected branch|GH006|GH013|repository rule violations", re.IGNORECASE), _PROTECTED),
+    (re.compile(r"Permission to \S+ denied|returned error: 403|Repository not found|"
+                r"write access to repository not granted", re.IGNORECASE), _NO_ACCESS),
+    (re.compile(r"Could not resolve (host|proxy)|Failed to connect|Couldn't connect|"
+                r"Connection (timed out|refused|reset)|Operation timed out|timed out after|SSL certificate problem|"
+                r"SSL_ERROR|schannel|gnutls_handshake", re.IGNORECASE), _NETWORK),
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +86,10 @@ class PullRequestInfo:
 
 class PullRequestError(Exception):
     """The pull requests could not be opened; the message is safe to show (no token)."""
+
+
+class PullRequestSignInError(PullRequestError):
+    """GitHub refused the user's sign-in (the token): only signing in again helps."""
 
 
 def push_environment(access_token: str) -> dict[str, str]:
@@ -165,7 +194,12 @@ async def open_pull_requests(
                     await github.update_pull_request(spec.github_owner, spec.github_name, info.number, body=new_body)
     except httpx.HTTPError as exc:
         already = "".join(f" Already opened: {info.url}." for info in opened)
-        raise PullRequestError(safe(f"GitHub refused the pull request: {_github_error(exc)}.{already}")) from None
+        advice = _github_advice(exc)
+        if advice is None:
+            raise PullRequestError(safe(f"GitHub refused the pull request: {_github_error(exc)}.{already}")) from None
+        logger.warning("BESSER Lab: GitHub refused the pull request of change %s: %s", change.id,
+                       safe(_github_error(exc)))
+        raise (PullRequestSignInError if advice == _SIGN_IN else PullRequestError)(advice + already) from None
     return opened
 
 
@@ -248,17 +282,31 @@ def _push(workspace: LabWorkspace, change: LabChange, repo_change: RepoChange, a
     try:
         isolated = {"GIT_DIR": scratch}
         authenticated = {**isolated, **push_environment(access_token)}
+
+        def remote(*args: str) -> str:
+            """``git <args>`` against GitHub; a failure the user can act on becomes a plain refusal."""
+            try:
+                return workspace.run_git(repo, *args, env_extra=authenticated, timeout=_PUSH_TIMEOUT_SECONDS)
+            except LabWorkspaceError as exc:
+                detail = redact_text(str(exc), env_style=False, secrets=[access_token])[0]
+                advice = next((text for pattern, text in _GIT_FAILURES if pattern.search(detail)), None)
+                if advice is None:
+                    raise
+                logger.warning("BESSER Lab: git %s to %s failed: %s", args[0], url, detail)
+                error = PullRequestSignInError if advice == _SIGN_IN else PullRequestError
+                raise error(advice.format(repo=f"{spec.github_owner}/{spec.github_name}",
+                                          branch=repo_change.branch)) from None
+
         workspace.run_git(repo, "init", "-q", "--bare", env_extra=isolated)
         objects = workspace.run_git(repo, "rev-parse", "--path-format=absolute", "--git-path", "objects").strip()
         with open(os.path.join(scratch, "objects", "info", "alternates"), "w", encoding="utf-8", newline="\n") as handle:
             handle.write(objects + "\n")
-        if workspace.run_git(repo, "ls-remote", url, ref, env_extra=authenticated, timeout=_PUSH_TIMEOUT_SECONDS):
-            workspace.run_git(repo, "fetch", "-q", "--no-tags", url, f"+{ref}:{_GITHUB_HEAD}",
-                              env_extra=authenticated, timeout=_PUSH_TIMEOUT_SECONDS)
+        if remote("ls-remote", url, ref):
+            remote("fetch", "-q", "--no-tags", url, f"+{ref}:{_GITHUB_HEAD}")
             workspace.merge_github_work(change, repo, scratch, _GITHUB_HEAD)
         head = workspace.run_git(repo, "rev-parse", ref).strip()
         workspace.run_git(repo, "update-ref", ref, head, env_extra=isolated)
-        workspace.run_git(repo, "push", url, f"{ref}:{ref}", env_extra=authenticated, timeout=_PUSH_TIMEOUT_SECONDS)
+        remote("push", url, f"{ref}:{ref}")
         workspace.record_pushed(repo, repo_change.branch, head)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -285,6 +333,13 @@ def _related_section(opened: Sequence[PullRequestInfo], this: PullRequestInfo) -
 def _without_related_section(body: str) -> str:
     """``body`` without the related section the lab appended to its end."""
     return re.split(rf"\s*^{re.escape(_RELATED_HEADING)}\s*$", body, maxsplit=1, flags=re.MULTILINE)[0]
+
+
+def _github_advice(exc: httpx.HTTPError) -> Optional[str]:
+    """What to tell the user for a GitHub API failure they can act on (no placeholders); None for any other."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return _SIGN_IN if exc.response.status_code == 401 else None
+    return _NETWORK if isinstance(exc, httpx.TransportError) else None
 
 
 def _github_error(exc: httpx.HTTPError) -> str:

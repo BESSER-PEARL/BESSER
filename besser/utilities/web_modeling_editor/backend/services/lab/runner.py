@@ -4,7 +4,8 @@ The session runs in a worker thread of the Spec-Driven runtime. Its callbacks fi
 handed to the event loop with ``call_soon_threadsafe``, as ``services/spec_driven/runner.py`` does; a cost
 event goes out every ``BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS``. The run id is registered with
 ``active_runs``, so ``POST /spec-driven/cancel/{run_id}`` stops the run at its next turn. The route holds the
-lab's lock for the run; :meth:`LabRunner.stream` releases it, with the run id, when the stream ends.
+lab's lock for the run; :meth:`LabRunner.stream` releases it, with the run id, when the stream ends. A
+stopped run ends with ``done`` like any other, ``cancelled`` and with the checks that ran.
 """
 
 from __future__ import annotations
@@ -74,7 +75,8 @@ def lab_done(outcome: SessionOutcome) -> LabDone:
     ``modelProposal``.
     """
     change, plan, build = outcome.change, outcome.plan, outcome.build
-    proposal = proposal_from_plan(plan) if plan is not None else None
+    # A plan that changes nothing proposes no model: there is no change for the editor to tie it to.
+    proposal = proposal_from_plan(plan) if plan is not None and not plan.changes_nothing else None
     kind = change.kind if change is not None else plan.kind if plan is not None else ChangeKind.OTHER
     title = change.title if change is not None else plan.title if plan is not None else ""
     return LabDone(
@@ -87,7 +89,8 @@ def lab_done(outcome: SessionOutcome) -> LabDone:
         modelProposal=LabModelProposal(**proposal) if proposal is not None else None,
         repoChanges=[repo_change_view(c) for c in build.changes] if build is not None else [],
         checks=[LabCheck(id=r.spec_id, repo=r.repo, title=r.title, passed=r.passed, skipped=r.skipped,
-                         summary=r.summary) for r in build.checks] if build is not None else [],
+                         summary=r.summary, durationSeconds=r.duration_seconds)
+                for r in build.checks] if build is not None else [],
         checklist=[LabChecklistItem(id=i.id, text=i.text, done=i.done)
                    for i in build.checklist] if build is not None else [],
         summary=build.summary if build is not None else plan.summary if plan is not None else outcome.final_text,
@@ -100,7 +103,8 @@ def done_event(run_id: str, lab: LabDone) -> DoneEvent:
     """A ``done`` event the Spec-Driven run card renders: nothing to download, the changed paths per repository."""
     changed = [f"{change.repo}/{file.path}" for change in lab.repoChanges for file in change.files]
     return DoneEvent(runId=run_id, downloadUrl="", fileName="", isZip=False, recipe={}, mode="modify",
-                     changedFiles=changed[:_MAX_CHANGED_FILES], changedFileCount=len(changed), lab=lab)
+                     changedFiles=changed[:_MAX_CHANGED_FILES], changedFileCount=len(changed),
+                     cancelled=lab.stopReason == "cancelled", lab=lab)
 
 
 class LabRunner:
@@ -147,8 +151,11 @@ class LabRunner:
                 "elapsedSeconds": round(time.monotonic() - self._started_at, 2)}
 
     def _model_spec(self) -> Optional[dict]:
-        """The change's class diagram in the project, for a build of a change that follows one."""
-        if self.request.project is None or self.request.action == "plan":
+        """The change's class diagram in the project, as the user corrected it, for a change that follows one.
+
+        A plan revision starts from it as the build does, so a correction made on the canvas is kept.
+        """
+        if self.request.project is None:
             return None
         change = self._lab.workspace.active_change()
         if change is None or change.kind not in _KINDS_WITH_MODEL:
@@ -263,9 +270,7 @@ class LabRunner:
         lab = await self._runtime.run_blocking(lab_done, outcome)
         await self._runtime.run_blocking(self._lab.remember_run, lab)
         yield self._sse(CostEvent(**self._totals()))
-        if outcome.stop_reason == "cancelled":
-            yield self._sse(ErrorEvent(code="CANCELLED", message="The run was stopped.", reason="user"))
-            return
+        # A stop is the user's own: no warning; ``done`` says it (``cancelled``, ``lab.stopReason``).
         if outcome.stop_reason in _EARLY_STOPS:
             code, message = _EARLY_STOPS[outcome.stop_reason]
             yield self._sse(ErrorEvent(code=code, message=message))

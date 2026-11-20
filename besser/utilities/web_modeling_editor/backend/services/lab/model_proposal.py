@@ -5,12 +5,14 @@ A metamodel or diagram-type plan carries a class diagram of the extension (``Pla
 ``class_buml_to_json``; the user's reviewed diagram (the one the editor marks as the change's) comes back
 through ``process_class_diagram`` and is listed
 for the build step in the same ``model_spec`` shape. In both directions a composition's target is the whole,
-as in the editor's class diagrams.
+as in the editor's class diagrams. A proposal comes laid out: generalization levels in rows, parents above
+children, enumerations last, each box as wide as its longest line.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Mapping, Optional
 
 from besser.BUML.metamodel.structural import (
@@ -48,6 +50,15 @@ _PRIMITIVES = {primitive.name: primitive for primitive in data_types}
 SPEC_ERRORS = (ConversionError, KeyError, TypeError, ValueError)
 # ``DiagramInput.config`` keys by which the editor ties a class diagram to a lab change (see _change_diagram).
 _CHANGE_MARKERS = ("labProposalChangeId", "labChangeId")
+
+# The proposal's layout. Widths follow the editor's classifier: text measured at its 16 px font plus 20 px
+# padding, rounded up to 10, never under the converter's 160.
+_MIN_BOX_WIDTH = 160
+_CHAR_WIDTH = 9  # px, an average character of the editor's font, rounded up
+_TEXT_PADDING = 20
+_COLUMN_GAP = 140  # room for an association's name and role labels between two boxes
+_ROW_GAP = 120
+_MAX_ROW_WIDTH = 1400  # a wider row wraps
 
 
 def model_spec_to_domain_model(spec: Mapping[str, Any], name: str) -> DomainModel:
@@ -132,6 +143,7 @@ def proposal_from_plan(plan: Plan) -> Optional[dict[str, Any]]:
         return None
     try:
         domain_model = model_spec_to_domain_model(plan.model_spec, plan.title)
+        domain_model._layout_positions = _layout(domain_model)
         model = {**class_buml_to_json(domain_model), "type": "ClassDiagram"}
     except SPEC_ERRORS as exc:
         logger.warning("BESSER Lab: the plan's class diagram could not be converted: %s", exc)
@@ -139,6 +151,69 @@ def proposal_from_plan(plan: Plan) -> Optional[dict[str, Any]]:
                               "describe the model again or answer with the corrections.")
         return None
     return {"title": plan.title, "diagramType": "ClassDiagram", "model": model}
+
+
+def _box_width(domain_model: DomainModel, name: str) -> int:
+    """The width that shows the type's name and every member line, as the editor renders them, unclipped."""
+    found = domain_model.get_type_by_name(name)
+    if isinstance(found, Enumeration):
+        lines = [literal.name for literal in found.literals]
+    else:
+        lines = [f"+ {p.name}: {p.type.name}" for p in found.attributes]
+    longest = max(len(line) for line in [name, *lines])
+    return max(_MIN_BOX_WIDTH, math.ceil((longest * _CHAR_WIDTH + _TEXT_PADDING) / 10) * 10)
+
+
+def _layout(domain_model: DomainModel) -> dict[str, dict[str, float]]:
+    """Bounds per class and enumeration name, in ``class_buml_to_json``'s ``_layout_positions`` shape.
+
+    A class is one row below its lowest parent and ordered after its parents; enumerations take the last row.
+    Heights are the converter's own: it sizes each box first.
+    """
+    heights = {e["name"]: e["bounds"]["height"] for e in class_buml_to_json(domain_model)["elements"].values()
+               if e["type"] in ("Class", "AbstractClass", "Enumeration")}
+    parents: dict[str, list[str]] = {}
+    for g in domain_model.generalizations:
+        parents.setdefault(g.specific.name, []).append(g.general.name)
+    levels: dict[str, int] = {}
+
+    def level(name: str) -> int:  # model_spec_to_domain_model refused cycles
+        if name not in levels:
+            levels[name] = 1 + max((level(parent) for parent in parents.get(name, ())), default=-1)
+        return levels[name]
+
+    classes = sorted(c.name for c in domain_model.get_classes())
+    rows: list[list[str]] = [[] for _ in range(max(map(level, classes), default=-1) + 1)]
+    order: dict[str, int] = {}
+    for depth, row in enumerate(rows):
+        row.extend(sorted((name for name in classes if levels[name] == depth),
+                          key=lambda name: (min((order[p] for p in parents.get(name, ())), default=0), name)))
+        order.update((name, len(order)) for name in row)
+    rows.append(sorted(e.name for e in domain_model.get_enumerations()))
+
+    widths = {name: _box_width(domain_model, name) for name in heights}
+    lines: list[list[str]] = []  # the rows wrapped at _MAX_ROW_WIDTH
+    for row in filter(None, rows):
+        lines.append([])
+        for name in row:
+            used = sum(widths[n] + _COLUMN_GAP for n in lines[-1])
+            if lines[-1] and used + widths[name] > _MAX_ROW_WIDTH:
+                lines.append([])
+            lines[-1].append(name)
+
+    def line_width(line: list[str]) -> int:
+        return sum(widths[name] for name in line) + _COLUMN_GAP * (len(line) - 1)
+
+    widest = max(map(line_width, lines), default=0)
+    bounds: dict[str, dict[str, float]] = {}
+    y = 0
+    for line in lines:
+        x = (widest - line_width(line)) // 2  # each row centred under the widest
+        for name in line:
+            bounds[name] = {"x": x, "y": y, "width": widths[name], "height": heights[name]}
+            x += widths[name] + _COLUMN_GAP
+        y += max(heights[name] for name in line) + _ROW_GAP
+    return bounds
 
 
 def domain_model_to_spec(domain_model: DomainModel) -> dict[str, Any]:

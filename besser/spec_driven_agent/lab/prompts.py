@@ -142,10 +142,12 @@ _SUBMIT_PLAN_SCHEMA: dict[str, Any] = {
             "title": {"type": "string", "maxLength": _MAX_TITLE_CHARS, "description": (
                 "Short imperative title; it names the branch and the pull request.")},
             "summary": {"type": "string", "description": "What the change does and why, in two to four sentences."},
-            "steps": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": (
-                "Concrete steps, each naming the files it adds or changes, tests and docs included.")},
-            "repos": {"type": "array", "items": {"type": "string", "enum": list(REPO_ORDER)}, "minItems": 1,
-                      "description": "The repositories the change touches."},
+            "steps": {"type": "array", "items": {"type": "string"}, "description": (
+                "Concrete steps, each naming the files it adds or changes, tests and docs included. Empty only "
+                "when repos is empty.")},
+            "repos": {"type": "array", "items": {"type": "string", "enum": list(REPO_ORDER)}, "description": (
+                "The repositories the change touches. Empty when the request needs no change, for example "
+                "because it is already met: say why in summary. No change or branch is created then.")},
             "questions": {"type": "array", "items": {"type": "string"}, "description": (
                 "Decisions only the user can make. Empty when nothing is open.")},
             "model_spec": MODEL_SPEC_SCHEMA,
@@ -179,7 +181,7 @@ this step. When you know which files change, call `submit_plan` once with:
 - title: short and imperative; it names the branch and the pull request.
 - summary: what the change does and why.
 - steps: concrete steps that name the files to add or change, tests and docs included.
-- repos: the repositories the change touches.
+- repos: the repositories the change touches. When the request needs no change (it is already met), submit repos and steps empty and say why in summary: no change and no branch is created.
 - questions: decisions only the user can make. Do not ask what the code answers.
 - model_spec: required for a metamodel or diagram_type change: the class diagram of the extension, with \
 the new classes, their attributes, associations and generalizations, and the existing metaclasses they \
@@ -489,21 +491,23 @@ def _parse_plan(arguments: Mapping[str, Any]) -> tuple[Optional[Plan], list[str]
     summary = _text(arguments.get("summary"), "summary", errors)
 
     steps = [_text(s, f"steps[{i}]", errors) for i, s in enumerate(_items(arguments.get("steps"), "steps", errors))]
-    if not steps:
-        errors.append("steps: at least one step is required.")
     repos = _items(arguments.get("repos"), "repos", errors)
     for repo in repos:
         if repo not in REPO_ORDER:
             errors.append(f"repos: {repo!r} is not one of {', '.join(REPO_ORDER)}.")
-    if not repos:
-        errors.append("repos: at least one repository is required.")
+    # No repository: the request needs no change (Plan.changes_nothing), so there are no steps either.
+    if repos and not steps:
+        errors.append("steps: at least one step is required.")
+    if steps and not repos:
+        errors.append("repos: the repositories the steps change are required; leave steps empty when nothing "
+                      "needs to change.")
     questions = [q.strip() for q in _items(arguments.get("questions"), "questions", errors)
                  if isinstance(q, str) and q.strip()]
 
     model_spec = None
     if arguments.get("model_spec") is not None:
         model_spec = _parse_model_spec(arguments["model_spec"], errors)
-    elif kind in _KINDS_NEEDING_MODEL:
+    elif kind in _KINDS_NEEDING_MODEL and repos:
         errors.append(f"model_spec: a {kind.value} change needs the class diagram of the extension.")
 
     if errors:
@@ -545,7 +549,10 @@ def first_user_message(*, message: str, mode: str, plan: Plan | None, model_spec
             parts.append("## The approved plan\n" + format_plan(plan))
     if model_spec_text and model_spec_text.strip():
         note = ("It is the model of the extension as the user left it after review: where it differs from the "
-                "plan, follow it." if mode == "build" else "Use it where the message refers to it.")
+                "plan, follow it." if mode == "build" else
+                "It is the model of the extension as the user corrected it after review: the revised plan's "
+                "model_spec starts from it, not from the earlier plan's model in the notes, and keeps the user's "
+                "corrections unless the message asks to change them.")
         parts.append(f"## The class diagram of this change in the editor\n{note}\n{model_spec_text.strip()}")
     return "\n\n".join(parts)
 

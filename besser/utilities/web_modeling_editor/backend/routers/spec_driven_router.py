@@ -32,7 +32,7 @@ import uuid
 from typing import AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional
 
 import httpx
-from fastapi import APIRouter, File, Header, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from besser.spec_driven_agent.planning.model_change import compare_with_base
@@ -47,6 +47,7 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartPreviewResponse,
     SpecDrivenConfigResponse,
 )
+from besser.utilities.web_modeling_editor.backend.routers.auth import require_lab_user
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -275,6 +276,23 @@ def _refuse_on_lab(settings: BackendSettings) -> None:
         raise HTTPException(status_code=404, detail="Not Found")
 
 
+def _lab_user_on_lab(
+    settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+) -> None:
+    """On a BESSER Lab instance, a run route needs an allowed lab user, as the lab routes do; elsewhere nothing.
+
+    Every run there is a lab run: its events hold the model's text, file paths and check results.
+    """
+    if settings.lab_enabled:
+        require_lab_user(settings, github_sessions, github_session)
+
+
+# The run routes: on a lab, the ``X-GitHub-Session`` of an allowed login (401 / 403 otherwise).
+_LAB_RUN_ACCESS = [Depends(_lab_user_on_lab)]
+
+
 def _run_stream_response(
     durable_runs: DurableRunManager, run_id: str, after_sequence: int = 0,
 ) -> StreamingResponse:
@@ -410,7 +428,7 @@ async def smart_generate(
 # ---------------------------------------------------------------------
 
 
-@router.get("/spec-driven/runs/{run_id}")
+@router.get("/spec-driven/runs/{run_id}", dependencies=_LAB_RUN_ACCESS)
 async def get_smart_run_status(
     runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
@@ -432,7 +450,7 @@ def _run_with_events(runtime: SpecDrivenRuntime, run_id: str) -> RunRecord:
     return record
 
 
-@router.get("/spec-driven/runs/{run_id}/events.json")
+@router.get("/spec-driven/runs/{run_id}/events.json", dependencies=_LAB_RUN_ACCESS)
 async def poll_smart_run_events(
     runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
@@ -480,7 +498,7 @@ async def poll_smart_run_events(
     }
 
 
-@router.get("/spec-driven/runs/{run_id}/events", response_class=StreamingResponse)
+@router.get("/spec-driven/runs/{run_id}/events", response_class=StreamingResponse, dependencies=_LAB_RUN_ACCESS)
 async def stream_smart_run_events(
     runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
@@ -802,7 +820,7 @@ async def resume_smart_gen(
 # ---------------------------------------------------------------------
 
 
-@router.post("/spec-driven/cancel/{run_id}")
+@router.post("/spec-driven/cancel/{run_id}", dependencies=_LAB_RUN_ACCESS)
 @handle_endpoint_errors("cancel_smart_gen")
 async def cancel_smart_gen(
     runtime: SpecDrivenRuntimeDep,

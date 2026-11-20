@@ -91,7 +91,11 @@ def default_repos(root: str) -> tuple[RepoSpec, ...]:
 def _slug(text: str, fallback: str) -> str:
     ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
-    return slug[:_MAX_SLUG_LENGTH].rstrip("-") or fallback
+    if len(slug) > _MAX_SLUG_LENGTH:
+        # Cut after the last whole word that fits; a single word longer than the cap is cut at it.
+        head = slug[:_MAX_SLUG_LENGTH + 1].rpartition("-")[0]
+        slug = head or slug[:_MAX_SLUG_LENGTH]
+    return slug.rstrip("-") or fallback
 
 
 def _is_harness_path(path: str) -> bool:

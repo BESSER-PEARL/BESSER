@@ -29,7 +29,8 @@ class LabMessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
     #: ``auto``: plan when there is no change, else build; ``plan`` and ``build`` force the step.
     action: Literal["auto", "plan", "build"] = "auto"
-    #: The editor's project; the class diagram it marks as the change's is the model the build step follows.
+    #: The editor's project; the class diagram it marks as the change's is the model a plan revision starts
+    #: from and the build step follows.
     project: Optional[ProjectInput] = None
 
 
@@ -71,6 +72,8 @@ class LabCheck(ResponseModel):
     passed: bool
     skipped: bool
     summary: str
+    #: How long the check ran, in seconds; 0 for one that did not run.
+    durationSeconds: float = 0.0
 
 
 class LabChecklistItem(ResponseModel):

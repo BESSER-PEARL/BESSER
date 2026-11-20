@@ -67,7 +67,8 @@ def build_outcome(stop_reason: str = "completed") -> SessionOutcome:
                        (FileChange("besser/BUML/metamodel/structural/note.py", "added"),
                         FileChange("tests/BUML/metamodel/test_note.py", "added"))),
         ],
-        checks=[CheckResult("besser:tests", "besser", "Tests of the touched areas", passed=True, summary="3 passed"),
+        checks=[CheckResult("besser:tests", "besser", "Tests of the touched areas", passed=True, summary="3 passed",
+                            duration_seconds=12.5),
                 CheckResult("besser:docs", "besser", "Docs", passed=False, skipped=True, summary="sphinx missing")],
         checklist=[ChecklistItem("metamodel.tests", "Tests under tests/BUML/metamodel/", True),
                    ChecklistItem("metamodel.docs", "Docs in docs/source/buml_language", None)],
@@ -229,6 +230,20 @@ def test_a_plan_step_without_a_plan_reports_the_models_last_words(
     assert lab_payload["summary"] == "Which diagram type?" and lab_payload["finalText"] == ""
 
 
+def test_a_plan_that_changes_nothing_is_an_answer_with_no_change_and_no_model(
+        lab, spec_driven_runtime, lab_settings, session_script):
+    # E2E C-D4: the request was already met. Even a model the agent sent along is not proposed: no change owns it.
+    plan = Plan(kind=ChangeKind.METAMODEL, title="Note already exists", summary="The Note metaclass is already there.",
+                steps=[], repos=[], model_spec=MODEL_SPEC)
+    session_script(lambda session, message: SessionOutcome(step="plan", plan=plan))
+
+    _, frames = run_lab(lab, spec_driven_runtime, lab_settings)
+
+    lab_payload = events(frames)[-1]["lab"]
+    assert (lab_payload["changeId"], lab_payload["plan"]["repos"], lab_payload["modelProposal"]) == ("", [], None)
+    assert lab_payload["summary"] == "The Note metaclass is already there."
+
+
 def test_the_session_gets_the_lab_settings_and_the_server_key(lab, spec_driven_runtime, lab_settings, session_script):
     run_lab(lab, spec_driven_runtime, lab_settings)
 
@@ -259,9 +274,9 @@ def test_a_build_reports_files_per_repository_checks_and_checklist(
                   {"path": "tests/BUML/metamodel/test_note.py", "status": "added"}]}
     assert lab_payload["checks"] == [
         {"id": "besser:tests", "repo": "besser", "title": "Tests of the touched areas", "passed": True,
-         "skipped": False, "summary": "3 passed"},
+         "skipped": False, "summary": "3 passed", "durationSeconds": 12.5},
         {"id": "besser:docs", "repo": "besser", "title": "Docs", "passed": False, "skipped": True,
-         "summary": "sphinx missing"}]
+         "summary": "sphinx missing", "durationSeconds": 0.0}]
     assert lab_payload["checklist"] == [
         {"id": "metamodel.tests", "text": "Tests under tests/BUML/metamodel/", "done": True},
         {"id": "metamodel.docs", "text": "Docs in docs/source/buml_language", "done": None}]
@@ -382,9 +397,11 @@ def test_the_cancel_route_stops_the_session_through_the_run_id(
     got = events(frames)
 
     assert found is True
-    assert got[-1] == {"event": "error", "code": "CANCELLED", "message": "The run was stopped.", "reason": "user",
-                       "resumeAvailable": None}
-    assert all(e["event"] != "done" for e in got)
+    # E2E C-D3: the stream ends with a done event that says so and carries the checks that ran.
+    assert got[-1]["event"] == "done" and got[-1]["cancelled"] is True
+    assert got[-1]["lab"]["stopReason"] == "cancelled"
+    assert [c["id"] for c in got[-1]["lab"]["checks"]] == ["besser:tests", "besser:docs"]
+    assert all(e["event"] != "error" for e in got)
     # The run id and the lab are free again.
     assert again is False
     assert lab.try_begin_run("f" * 32)
@@ -463,9 +480,10 @@ def _project() -> ProjectInput:
     (ChangeKind.DIAGRAM_TYPE, "build", MODEL_SPEC),
     # The user's own application model is not part of a generator change.
     (ChangeKind.GENERATOR, "auto", None),
-    (ChangeKind.METAMODEL, "plan", None),
+    # E2E A-1: a plan revision starts from the diagram the user corrected.
+    (ChangeKind.METAMODEL, "plan", MODEL_SPEC),
 ])
-def test_a_build_of_a_model_change_follows_the_changes_class_diagram(
+def test_a_step_of_a_model_change_reads_the_changes_class_diagram(
         lab, spec_driven_runtime, lab_settings, session_script, kind, action, expected):
     lab.workspace.save_change(LabChange(id="abcdef012345", slug="note", title="Note", user="octocat", kind=kind))
 

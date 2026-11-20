@@ -3,6 +3,7 @@
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -209,6 +210,34 @@ def test_a_file_without_tests_is_reported_not_dropped(tmp_path):
     assert "tool_executor.py" in reported.summary
 
 
+def _utilities_tree(root: Path) -> Path:
+    _write(root, "besser/__init__.py", "besser/utilities/__init__.py", "besser/utilities/old.py",
+           "tests/utilities/test_old.py", "tests/utilities/test_other.py", "tests/utilities/test_model_stats.py")
+    (root / "tests/utilities/test_uses.py").write_text("from besser.utilities import model_stats, old\n",
+                                                       encoding="utf-8")
+    return root
+
+
+def test_a_new_module_runs_its_own_test_and_the_tests_importing_it_not_its_whole_package(tmp_path):
+    # Live run B: a new besser/utilities/model_stats.py ran all 19 utilities test files. Tests that existed
+    # before the module cannot use it except through a changed module, whose own tests are selected.
+    root = _utilities_tree(tmp_path)
+    repos = _repos(besser=root)
+
+    def tests_for(path, status):
+        specs = _by_id(checks_for([_change("besser", path, status=status)], repos))
+        return _pytest_files(specs["besser:tests"]) if "besser:tests" in specs else specs
+
+    assert tests_for("besser/utilities/model_stats.py", "added") == [
+        "tests/utilities/test_model_stats.py", "tests/utilities/test_uses.py"]
+    # A changed module can break any test of its package, so it keeps the package's tests.
+    assert tests_for("besser/utilities/old.py", "modified") == [
+        "tests/utilities/test_model_stats.py", "tests/utilities/test_old.py", "tests/utilities/test_other.py",
+        "tests/utilities/test_uses.py"]
+    lonely = tests_for("besser/utilities/lonely.py", "added")
+    assert lonely["besser:tests-missing"].title == "No tests found for besser/utilities/lonely.py"
+
+
 def test_changed_tests_run_themselves_and_deleted_ones_do_not(tmp_path):
     root = _besser_tree(tmp_path)
     changes = [RepoChange(repo="besser", branch="lab/u/x", base="development", files=(
@@ -267,6 +296,10 @@ def test_the_real_besser_tree_maps_as_ci_lays_it_out():
                                             repos))["besser:tests"])
     assert "tests/spec_driven_agent/test_added_generator_tools.py" in tools
 
+    # A new utility nothing imports yet has no tests, rather than all of tests/utilities.
+    new = _by_id(checks_for([_change("besser", "besser/utilities/model_stats.py", status="added")], repos))
+    assert "besser:tests" not in new and "besser:tests-missing" in new
+
 
 # --- Which checks: editor and modeling agent ------------------------------
 
@@ -321,8 +354,22 @@ def test_translations_get_the_i18n_check_and_editor_package_files_are_reported(t
 
     assert specs["frontend:i18n"].argv == ("node", "scripts/i18n-check.mjs")
     assert specs["frontend:types"].argv == ("npm", "run", "typecheck")
-    assert specs["frontend:tests-missing"].title == "No tests found for packages/editor/src/main/packages/components.ts"
+    assert specs["frontend:editor-tests"].title == (
+        "No tests run for packages/editor/src/main/packages/components.ts: the editor package has no test "
+        "runner and CI runs none of its tests; tests of editor code go in packages/webapp")
+    assert specs["frontend:editor-tests"].argv == ()
     assert "frontend:lint" not in specs
+
+
+def test_a_test_file_of_the_editor_package_is_reported_as_never_run(tmp_path):
+    # packages/editor/src/tests/ holds jest-era tests that no script or CI job runs.
+    root = _frontend_tree(tmp_path)
+    specs = _by_id(checks_for([_change("frontend", "packages/editor/src/tests/unit/merge-test.ts")],
+                              _repos(frontend=root)))
+
+    assert specs["frontend:editor-tests"].title.startswith(
+        "No tests run for packages/editor/src/tests/unit/merge-test.ts: the editor package has no test runner")
+    assert "frontend:tests" not in specs and "frontend:tests-missing" not in specs
 
 
 def test_an_editor_schema_change_runs_the_api_schema_check_in_besser(tmp_path):
@@ -517,6 +564,29 @@ def test_default_runner_stops_a_check_at_its_timeout(tmp_path):
 
     assert exit_code == TIMED_OUT
     assert not result.passed and result.summary == "Timed out after 1 s"
+
+
+def test_a_stop_ends_a_running_check_and_the_processes_it_started(tmp_path):
+    # Live run C (D3): a stop during pytest waited for pytest to end; a test check may run for 30 minutes.
+    beat = tmp_path / "beat"
+    child = (f"import pathlib, time\np = pathlib.Path({str(beat)!r})\n"
+             "while True:\n    p.write_text(str(time.time()))\n    time.sleep(0.1)\n")
+    parent = f"import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-c', {child!r}])\ntime.sleep(60)\n"
+    started = time.monotonic()
+    stop_at = started + 3
+
+    [result] = run_checks([_spec(argv=(sys.executable, "-c", parent), timeout=30)], _repos(besser=tmp_path),
+                          callbacks=LabCallbacks(should_continue=lambda: time.monotonic() < stop_at))
+
+    assert time.monotonic() - started < 15
+    assert result.skipped and not result.passed
+    assert result.summary == "Stopped: the run was stopped before this check finished"
+    # The process the check started is gone too: its heartbeat no longer moves.
+    assert beat.is_file()
+    time.sleep(0.5)
+    last = beat.read_text()
+    time.sleep(1)
+    assert beat.read_text() == last
 
 
 def test_format_results_puts_failures_first_and_bounds_their_output():

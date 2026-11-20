@@ -34,6 +34,7 @@ from besser.utilities.subprocess_env import safe_subprocess_env
 from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
     PullRequestError,
     PullRequestInfo,
+    PullRequestSignInError,
     default_title,
     open_pull_requests,
     push_environment,
@@ -445,6 +446,65 @@ def test_a_failed_push_is_reported_without_the_token(lab):
     assert TOKEN not in str(raised.value)
     assert "Pushing the change failed" in str(raised.value) and "403" in str(raised.value)
     assert lab.requests == []
+
+
+# git's own words for each failure a user can act on (E2E A-6: the first came from a live run with a bad token).
+PUSH_FAILURES = [
+    ("fatal: could not read Username for 'https://github.com': terminal prompts disabled", "Sign in to GitHub again"),
+    ("remote: Invalid username or password.\nfatal: Authentication failed for "
+     "'https://github.com/BESSER-PEARL/BESSER.git/'", "Sign in to GitHub again"),
+    ("remote: Permission to BESSER-PEARL/BESSER.git denied to jordi.\nfatal: unable to access "
+     "'https://github.com/BESSER-PEARL/BESSER.git/': The requested URL returned error: 403",
+     "Ask a maintainer of BESSER-PEARL/BESSER for write access"),
+    ("remote: error: GH006: Protected branch update failed for refs/heads/lab/jordi/note-element.\n"
+     " ! [remote rejected] lab/jordi/note-element -> lab/jordi/note-element (protected branch hook declined)",
+     "branch protection"),
+    ("fatal: unable to access 'https://github.com/BESSER-PEARL/BESSER.git/': Could not resolve host: github.com",
+     "could not reach GitHub"),
+    ("git push timed out after 300 s in besser", "could not reach GitHub"),
+]
+
+
+@pytest.mark.parametrize("failing", ["ls-remote", "push"])
+@pytest.mark.parametrize("stderr, advice", PUSH_FAILURES)
+def test_a_failed_push_tells_the_user_what_to_do_and_logs_gits_words(lab, caplog, failing, stderr, advice):
+    _write(lab.path(REPO_BESSER) / "besser/note.py", "NOTE = 1\n")
+    run_git = lab.workspace.run_git
+
+    def failing_git(repo, *args, **kwargs):
+        if args[0] == failing:
+            if "timed out" in stderr:
+                raise LabWorkspaceError(stderr)
+            raise LabWorkspaceError(f"git {failing} failed in {repo} (exit 128): {stderr} {TOKEN}")
+        return run_git(repo, *args, **kwargs)
+
+    lab.workspace.run_git = failing_git
+
+    with pytest.raises(PullRequestError) as raised:
+        lab.open()
+
+    message = str(raised.value)
+    assert advice in message
+    # Only a refused sign-in is one: the route answers it with 401, so the editor offers "Sign in again".
+    assert isinstance(raised.value, PullRequestSignInError) == (advice == "Sign in to GitHub again")
+    # git's words stay in the server log, without the token.
+    assert "fatal" not in message and "git " not in message and "exit 128" not in message
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert stderr.splitlines()[-1] in logged
+    assert TOKEN not in message and TOKEN not in logged
+
+
+def test_a_rejected_token_on_the_github_api_asks_to_sign_in_again(lab, caplog):
+    _write(lab.path(REPO_BESSER) / "besser/note.py", "NOTE = 1\n")
+    lab.transport.answer = lambda request: (
+        httpx.Response(401, json={"message": "Bad credentials"}) if request.method == "POST" else None)
+
+    with pytest.raises(PullRequestError) as raised:
+        lab.open()
+
+    assert "Sign in to GitHub again" in str(raised.value) and "HTTP 401" not in str(raised.value)
+    assert isinstance(raised.value, PullRequestSignInError)
+    assert "Bad credentials" in "\n".join(record.getMessage() for record in caplog.records)
 
 
 def test_a_github_refusal_names_the_status_and_the_pull_requests_already_open(lab):

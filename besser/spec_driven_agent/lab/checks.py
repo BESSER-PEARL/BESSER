@@ -14,8 +14,11 @@ nearest ancestor that has some, but never to a top-level area such as
 ``tests/spec_driven_agent``: the routers' tests sit flat in
 ``tests/utilities/web_modeling_editor/backend``. A module with neither maps to
 the test files of its top-level area that import it (``tests/spec_driven_agent``
-is flat). A file that maps to nothing is reported in a skipped "No tests found"
-result.
+is flat). A module the change adds maps only to ``test_<name>.py`` in its
+package's mirror and to the tests of its area that import it. A file that maps
+to nothing is reported in a skipped "No tests found" result. The editor package
+(``packages/editor``) has no test runner, so its files get a skipped result
+saying that its tests go in ``packages/webapp``.
 """
 
 from __future__ import annotations
@@ -27,10 +30,18 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import time
+from functools import partial
 from typing import Callable, Iterable, Mapping, Optional, Sequence
 
-from besser.spec_driven_agent.execution.process import run_bounded
+from besser.spec_driven_agent.execution.process import (
+    FLOOD_NOTE,
+    MAX_CAPTURE_BYTES,
+    _captured_size,
+    _decode,
+    _kill_tree,
+)
 from besser.spec_driven_agent.lab.contracts import (
     REPO_BESSER,
     REPO_FRONTEND,
@@ -54,6 +65,11 @@ Runner = Callable[[CheckSpec, str], tuple[int, str]]
 MISSING_TOOL = 127
 #: Exit code of a runner whose command ran past the spec's timeout.
 TIMED_OUT = 124
+#: Exit code of a runner whose command was killed because the run was stopped (the shell's code for Ctrl-C).
+STOPPED = 130
+_STOPPED_SUMMARY = "Stopped: the run was stopped before this check finished"
+#: How often a running check looks for a timeout, a flood of output or a stop (``run_bounded``'s interval).
+_POLL_SECONDS = 0.05
 
 #: Characters of a check's output kept in its result.
 OUTPUT_TAIL_CHARS = 6_000
@@ -107,6 +123,7 @@ _COUNT_LINE = re.compile(r"\b(passed|failed|errors?|broken)\b", re.IGNORECASE)
 _MISSING_MODULE = re.compile(r"No module named '?([A-Za-z_][\w]*)")
 #: Python modules that are the check tool itself: missing, the check could not run.
 _TOOL_MODULES = frozenset({"pytest", "sphinx", "sphinx_immaterial", "ruff", "importlinter"})
+_ADDED = "added"
 _DELETED = "deleted"
 #: Scripts folder of a checkout's own environment (``python -m venv venv``).
 _VENV_SCRIPTS = os.path.join("venv", "Scripts") if os.name == "nt" else os.path.join("venv", "bin")
@@ -145,11 +162,12 @@ def run_checks(specs: Sequence[CheckSpec], repos: Mapping[str, RepoSpec], *,
     """Run ``specs`` in order and return one result per spec run.
 
     ``runner(spec, cwd)`` returns ``(exit code, output)``; the default runs the
-    command. Exit code :data:`MISSING_TOOL`, or a missing check tool module,
-    gives a skipped result. Stops early once ``callbacks.should_continue()`` is False.
+    command and ends it once ``callbacks.should_continue()`` is False. Exit code
+    :data:`MISSING_TOOL`, or a missing check tool module, gives a skipped result, and
+    :data:`STOPPED` a skipped "Stopped" one. No check starts once the run is stopped.
     """
-    run = runner or default_runner
     callbacks = callbacks or LabCallbacks()
+    run = runner or partial(default_runner, should_continue=callbacks.should_continue)
     results: list[CheckResult] = []
     for spec in specs:
         if not callbacks.should_continue():
@@ -168,19 +186,61 @@ def run_checks(specs: Sequence[CheckSpec], repos: Mapping[str, RepoSpec], *,
     return results
 
 
-def default_runner(spec: CheckSpec, cwd: str) -> tuple[int, str]:
-    """Run ``spec.argv`` in ``cwd`` with a scrubbed environment; stdout and stderr combined."""
+def default_runner(spec: CheckSpec, cwd: str, *,
+                   should_continue: Optional[Callable[[], bool]] = None) -> tuple[int, str]:
+    """Run ``spec.argv`` in ``cwd`` with a scrubbed environment; stdout and stderr combined.
+
+    The command and every process it started are killed at the spec's timeout (:data:`TIMED_OUT`)
+    and as soon as ``should_continue()`` is False (:data:`STOPPED`).
+    """
     env = safe_subprocess_env()
     executable = shutil.which(spec.argv[0], path=env.get("PATH"))
     if executable is None:
         return MISSING_TOOL, f"{spec.argv[0]} is not installed (not found on PATH)"
     try:
-        proc = run_bounded([executable, *spec.argv[1:]], timeout=spec.timeout_seconds, cwd=cwd, env=env)
-    except subprocess.TimeoutExpired as exc:
-        return TIMED_OUT, f"{exc.output or ''}{exc.stderr or ''}\nTimed out after {spec.timeout_seconds:g} s"
+        return _run_stoppable([executable, *spec.argv[1:]], cwd=cwd, env=env, timeout=spec.timeout_seconds,
+                              should_continue=should_continue or (lambda: True))
     except OSError as exc:
         return 1, f"Could not start {spec.argv[0]} in {cwd}: {exc}"
-    return proc.returncode, proc.stdout + proc.stderr
+
+
+def _run_stoppable(argv: list[str], *, cwd: str, env: dict[str, str], timeout: float,
+                   should_continue: Callable[[], bool]) -> tuple[int, str]:
+    """``run_bounded``'s handling (own process group, output in temp files, the whole tree killed on a
+    timeout or a flood of output), plus a stop: the tree is also killed once ``should_continue()`` is False.
+
+    ``run_bounded`` has no stop hook; once it has one, this is that call.
+    """
+    group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+             else {"start_new_session": True})
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err, **group)
+        deadline = time.monotonic() + timeout
+        code: Optional[int] = None
+        note = ""
+        while True:
+            try:
+                code = proc.wait(timeout=min(_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if not should_continue():
+                code, note = STOPPED, "\nStopped: the run was stopped"
+            elif max(_captured_size(out), _captured_size(err)) > MAX_CAPTURE_BYTES:
+                note = FLOOD_NOTE
+            elif time.monotonic() >= deadline:
+                code, note = TIMED_OUT, f"\nTimed out after {timeout:g} s"
+            else:
+                continue
+            _kill_tree(proc)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            if code is None:  # a flood: the killed command's own exit code
+                code = proc.returncode if proc.returncode is not None else 1
+            break
+        return code, _decode(out) + _decode(err) + note
 
 
 def format_results(results: Sequence[CheckResult]) -> str:
@@ -207,16 +267,20 @@ def format_results(results: Sequence[CheckResult]) -> str:
 
 
 def run_checks_tool(get_changes: Callable[[], list[RepoChange]], repos: Mapping[str, RepoSpec], *,
-                    runner: Runner | None = None, callbacks: LabCallbacks | None = None) -> ExtraTool:
+                    runner: Runner | None = None, callbacks: LabCallbacks | None = None,
+                    on_results: Callable[[list[CheckResult]], None] | None = None) -> ExtraTool:
     """The ``run_checks`` tool: the checks of what the change touched so far, formatted for the model.
 
     ``runner`` runs each check as in :func:`run_checks` (a caller bounds it by the run's time left).
-    ``callbacks`` stream each check's phase and stop the checks between two once the run is cancelled.
+    ``callbacks`` stream each check's phase and stop the checks once the run is cancelled.
+    ``on_results`` receives the results of every call, those of a stopped call included.
     """
     callbacks = callbacks or LabCallbacks()
 
     def handler(arguments: dict) -> str:
         results = run_checks(checks_for(get_changes(), repos), repos, runner=runner, callbacks=callbacks)
+        if on_results is not None:
+            on_results(results)
         if not callbacks.should_continue():
             return "The run was stopped; the checks did not finish."
         return format_results(results)
@@ -305,7 +369,10 @@ def _besser_tests(change: RepoChange, root: str) -> tuple[list[str], list[str]]:
             found = _nearest_tests(root, parts[1:-1])
         elif parts[0] == "besser" and len(parts) > 1:
             package = _package_parts(root, parts)
-            found = _nearest_tests(root, package, renames=True) or _importing_tests(root, file.path)
+            if file.status == _ADDED and parts[-1].endswith(".py") and parts[-1] != "__init__.py":
+                found = _new_module_tests(root, package, file.path)
+            else:
+                found = _nearest_tests(root, package, renames=True) or _importing_tests(root, file.path)
             if file.path == "besser/generators/registry.py":
                 found += [path for path in _REGISTRY_TESTS if os.path.isfile(os.path.join(root, path))]
         else:
@@ -366,6 +433,18 @@ def _importing_tests(root: str, path: str) -> list[str]:
     return sorted(found)
 
 
+def _new_module_tests(root: str, package: tuple[str, ...], path: str) -> list[str]:
+    """Tests of a module the change adds: ``test_<name>.py`` in its package's mirror, and those importing it.
+
+    A test that existed before the module cannot use it except through a changed module, whose own
+    tests that module's mapping selects; the package's other tests are left out.
+    """
+    name = "test_" + path.rsplit("/", 1)[-1]
+    found = {"/".join(("tests", *mirror, name)) for mirror in _mirrors(package)
+             if os.path.isfile(os.path.join(root, "tests", *mirror, name))}
+    return sorted(found.union(_importing_tests(root, path)))
+
+
 def _mirrors(package: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
     for length in range(len(package), 0, -1):
         targets = _TEST_DIR_RENAMES.get(package[:length])
@@ -403,6 +482,7 @@ def _module_name(path: str) -> str:
 def _frontend_checks(change: RepoChange, root: str) -> list[CheckSpec]:
     tests: set[str] = set()
     unmapped: list[str] = []
+    editor_files: list[str] = []
     for file in change.files:
         path = file.path
         if path.startswith(_WEBAPP + "src/"):
@@ -416,7 +496,7 @@ def _frontend_checks(change: RepoChange, root: str) -> list[CheckSpec]:
             elif path.endswith(_SCRIPT_EXTENSIONS):
                 unmapped.append(path)
         elif path.startswith("packages/editor/src/") and path.endswith(_SCRIPT_EXTENSIONS):
-            unmapped.append(path)
+            editor_files.append(path)
     paths = [f.path for f in change.files]
     specs: list[CheckSpec] = []
     if any(p.startswith((_WEBAPP, "packages/server/")) and p.endswith(_SCRIPT_EXTENSIONS) for p in paths):
@@ -431,6 +511,12 @@ def _frontend_checks(change: RepoChange, root: str) -> list[CheckSpec]:
         specs.append(_server_tests())
     if unmapped:
         specs.append(_no_tests(REPO_FRONTEND, unmapped))
+    if editor_files:
+        # packages/editor has no test script or config, and the editor CI runs only webapp and server tests;
+        # the webapp's vitest resolves @besser/wme to the editor's source.
+        specs.append(CheckSpec(id="frontend:editor-tests", repo=REPO_FRONTEND, argv=(), title=(
+            f"No tests run for {_listing(editor_files)}: the editor package has no test runner and CI runs "
+            "none of its tests; tests of editor code go in packages/webapp")))
     if any(p.startswith("packages/i18n/") for p in paths):
         specs.append(_i18n_check())
     if _EDITOR_SCHEMA in paths or _EDITOR_API_TYPES in paths:
@@ -527,12 +613,18 @@ def _agent_checks(change: RepoChange, full: bool, root: str) -> list[CheckSpec]:
 
 
 def _no_tests(repo: str, paths: list[str]) -> CheckSpec:
-    shown = ", ".join(paths[:5]) + (f" and {len(paths) - 5} more" if len(paths) > 5 else "")
-    return CheckSpec(id=f"{repo}:tests-missing", repo=repo, title=f"No tests found for {shown}", argv=())
+    return CheckSpec(id=f"{repo}:tests-missing", repo=repo, title=f"No tests found for {_listing(paths)}", argv=())
+
+
+def _listing(paths: list[str]) -> str:
+    return ", ".join(paths[:5]) + (f" and {len(paths) - 5} more" if len(paths) > 5 else "")
 
 
 def _result(spec: CheckSpec, code: int, output: str, duration: float) -> CheckResult:
     tail = output[-OUTPUT_TAIL_CHARS:]
+    if code == STOPPED:
+        return CheckResult(spec_id=spec.id, repo=spec.repo, title=spec.title, passed=False, skipped=True,
+                           summary=_STOPPED_SUMMARY, output_tail=tail, duration_seconds=duration)
     missing = _missing_tool(code, output)
     if missing:
         return CheckResult(spec_id=spec.id, repo=spec.repo, title=spec.title, passed=False, skipped=True,

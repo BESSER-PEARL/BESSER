@@ -192,6 +192,11 @@ class Plan:
     #: A class diagram of the extension, or None. See ``prompts.MODEL_SPEC_SCHEMA``.
     model_spec: Optional[dict[str, Any]] = None
 
+    @property
+    def changes_nothing(self) -> bool:
+        """True for a plan that touches no repository: the request needs no change, or only answers."""
+        return not self.repos
+
 
 @dataclass
 class BuildOutcome:

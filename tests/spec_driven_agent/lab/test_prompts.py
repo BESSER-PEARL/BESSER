@@ -210,6 +210,22 @@ def test_every_problem_is_reported_and_no_plan_is_passed_on():
     assert plans == []
 
 
+def test_a_request_already_met_is_a_plan_that_changes_nothing():
+    """E2E C-D4: "the request is already met" had to name a repository, so a change and three branches were made."""
+    _, [plan] = _submit(_plan_arguments(kind="metamodel", repos=[], steps=[], model_spec=None,
+                                        summary="get_build_sha already says why unknown means not stamped."))
+
+    assert plan.changes_nothing and plan.steps == [] and plan.model_spec is None
+
+
+def test_steps_without_a_repository_are_refused():
+    plans = []
+    with pytest.raises(ValueError) as raised:
+        submit_plan_tool(plans.append).handler(_plan_arguments(repos=[]))
+
+    assert "repos: the repositories the steps change are required" in str(raised.value) and plans == []
+
+
 def test_plan_step_executor_offers_submit_plan_and_returns_refusals_as_errors(tmp_path):
     from besser.spec_driven_agent.lab.tooling import LabToolExecutor
 
@@ -349,7 +365,11 @@ def test_first_message_of_a_revised_plan_carries_the_plan_and_the_diagram():
     text = first_user_message(message="Use .md files", mode="plan", plan=_plan(), model_spec_text="Classes:\n- Note")
 
     assert "## The current plan\nRevise it to answer the message, then call submit_plan.\nTitle: Add a note" in text
-    assert "## The class diagram of this change in the editor\nUse it where the message refers to it.\nClasses:\n- Note" in text
+    # E2E A-1: a rename the user made on the canvas was lost because the revision started from the old plan's model.
+    assert ("## The class diagram of this change in the editor\nIt is the model of the extension as the user "
+            "corrected it after review: the revised plan's model_spec starts from it, not from the earlier plan's "
+            "model in the notes, and keeps the user's corrections unless the message asks to change them."
+            "\nClasses:\n- Note") in text
 
 
 def test_first_message_of_a_build_follows_the_reviewed_model():

@@ -2,13 +2,16 @@
 
 A message goes through one step. The plan step is a read-only tool loop that ends
 with ``submit_plan``; a new change and its branches are created from that plan,
-and the plan goes into the change's notes. A plan step that ends without a plan
-and without a change keeps the exchange in ``pending.json`` of the workspace's
-state folder, so the user's next message continues it. The build step is a tool loop with the
-write and shell tools in the working copy, followed by the repositories' own
-checks; failing checks go back to the model, in the same conversation, for at most
+and the plan goes into the change's notes. A plan that touches no repository
+(nothing needs to change) creates no change. A plan step that ends without a
+change, with such a plan or without any, keeps the exchange in ``pending.json``
+of the workspace's state folder, so the user's next message continues it. The
+build step is a tool loop with the write and shell tools in the working copy,
+followed by the repositories' own checks; failing checks go back to the model, in the same conversation, for at most
 ``max_check_rounds`` rounds. Then the change kind's checklist is judged and what
-was asked and done is appended to the notes.
+was asked and done is appended to the notes. A stop ends a running check; a
+stopped build reports the checks that ran, those of the model's last
+``run_checks`` call when the checks after the loop did not start.
 
 The tools work at the workspace root, the folder that holds the repositories (the
 paths the system prompt names are relative to it). Unless the workspace was given
@@ -150,18 +153,21 @@ class LabSession:
         finally:
             executor.close()
         exchange = f"The user: {message.strip()}"
-        if not plans:
-            # Often a question back to the user: the only place they read it. Kept for the answer.
-            reply = loop.final_text or f"(no reply: the step stopped, {loop.stop_reason})"
+        plan = plans[-1] if plans else None
+        if plan is None or plan.changes_nothing:
+            # A question back, or the answer that nothing needs to change: kept for the user's reply.
+            if plan is not None:
+                reply = "\n".join([plan.summary, *(f"- {question}" for question in plan.questions)])
+            else:
+                reply = loop.final_text or f"(no reply: the step stopped, {loop.stop_reason})"
             exchange += f"\nThe lab agent: {reply}"
             if change is None:
                 self._save_pending(user, f"{pending}\n\n{exchange}".strip())
             else:
                 self.workspace.append_note(change, f"## Request without a plan\n{exchange}")
-            return SessionOutcome(step="plan", change=change, stop_reason=loop.stop_reason,
+            return SessionOutcome(step="plan", change=change, plan=plan, stop_reason=loop.stop_reason,
                                   final_text=loop.final_text)
 
-        plan = plans[-1]
         if change is None:
             change = self.workspace.start_change(user=user, title=plan.title, kind=plan.kind)
             heading = "Request"
@@ -185,8 +191,10 @@ class LabSession:
             change.plan_approved = True
             self.workspace.save_change(change)
         self.callbacks.on_phase("build", f"Building: {change.title}")
+        tool_checks: list[list[CheckResult]] = []  # each run_checks call's results
         extra_tools = [run_checks_tool(lambda: self.workspace.repo_changes(change), repos,
-                                       runner=self._bounded_runner(started), callbacks=self.callbacks)]
+                                       runner=self._bounded_runner(started), callbacks=self.callbacks,
+                                       on_results=tool_checks.append)]
         if change.kind is ChangeKind.GENERATOR and REPO_BESSER in repos:
             extra_tools.append(scaffold_generator_tool(repos[REPO_BESSER].path))
         system = build_system_prompt(mode="build", repos=repos, kind=change.kind,
@@ -216,8 +224,12 @@ class LabSession:
             executor.close()
             # The tools and the checks can write under <root>/.lab/: the session's copy of the change is kept.
             self.workspace.save_change(change)
-        if loop.stop_reason == "completed" and not self.callbacks.should_continue():
-            loop.stop_reason, loop.detail = "cancelled", "stopped during the checks"
+        if not self.callbacks.should_continue():
+            if loop.stop_reason == "completed":
+                loop.stop_reason, loop.detail = "cancelled", "stopped during the checks"
+            if not checks and tool_checks:
+                # Stopped before the checks after the loop: the model's last run_checks call is what ran.
+                checks = tool_checks[-1]
         checklist = evaluate_checklist(change.kind, changes, repos)
         summary = describe_outcome(changes, checks, checklist, loop.final_text)
         self.workspace.append_note(change, f"## Build request\n{message.strip()}\n\n"
@@ -238,7 +250,8 @@ class LabSession:
         return lambda: self.limits.max_runtime_seconds - (time.monotonic() - started)
 
     def _bounded_runner(self, started: float) -> lab_checks.Runner:
-        """The checks' runner with each check cut at the time the run has left; none starts after the cap."""
+        """The checks' runner with each check cut at the time the run has left and ended by a stop;
+        none starts after the cap."""
         time_left = self._time_left(started)
 
         def runner(spec: CheckSpec, cwd: str) -> tuple[int, str]:
@@ -246,7 +259,8 @@ class LabSession:
             if left <= 0:
                 limit = self.limits.max_runtime_seconds
                 return lab_checks.TIMED_OUT, f"Not run: the run reached its {limit:.0f} s limit"
-            return lab_checks.default_runner(replace(spec, timeout_seconds=min(spec.timeout_seconds, left)), cwd)
+            return lab_checks.default_runner(replace(spec, timeout_seconds=min(spec.timeout_seconds, left)), cwd,
+                                             should_continue=self.callbacks.should_continue)
 
         return runner
 

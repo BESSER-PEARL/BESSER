@@ -29,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.services.lab.preview import Pr
 from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
     PullRequestError,
     PullRequestInfo,
+    PullRequestSignInError,
 )
 from besser.utilities.web_modeling_editor.backend.services.lab.service import LabService, create_lab_service
 from tests.spec_driven_agent.lab.conftest import ScriptedClient, StreamingScriptedClient, end_turn, tool_use
@@ -386,6 +387,23 @@ def test_a_refused_pull_request_is_409_with_its_message(client, lab, monkeypatch
     assert lab.try_begin_run("f" * 32)  # the lab is free again
 
 
+def test_a_pull_request_github_refused_the_sign_in_of_is_401(client, lab, monkeypatch):
+    """E2E A-6: the editor offers "Sign in again" on a 401 only; a rejected token is not a state refusal."""
+    start_change(lab)
+
+    async def refuse(*args, **kwargs):
+        raise PullRequestSignInError("GitHub did not accept your sign-in. Sign in to GitHub again, then open the "
+                                     "pull request again.")
+
+    monkeypatch.setattr(service_module, "open_pull_requests", refuse)
+
+    response = call(client, "POST", "/besser_api/lab/pull-request", {})
+
+    assert response.status_code == 401
+    assert response.json()["detail"].startswith("GitHub did not accept your sign-in.")
+    assert lab.try_begin_run("f" * 32)  # the lab is free again
+
+
 # -- The run --------------------------------------------------------------------------------------------
 
 def sse_events(response) -> list[dict]:
@@ -429,7 +447,7 @@ def test_a_message_streams_the_run_and_the_state_keeps_its_checks(client, lab, m
     state = client.get("/besser_api/lab/state", headers=SESSION).json()
     assert state["change"]["step"] == "build"
     assert state["change"]["checks"] == [{"id": "besser:lint", "repo": "besser", "title": "Ruff", "passed": False,
-                                          "skipped": False, "summary": "1 error"}]
+                                          "skipped": False, "summary": "1 error", "durationSeconds": 0.0}]
     assert state["change"]["summary"] == "besser: 1 file added"
     assert "finalText" not in state["change"]
     assert state["run"] is None
@@ -546,6 +564,24 @@ def test_the_build_follows_the_proposal_the_user_corrected_not_the_open_diagram(
     assert "Library" not in first_message
 
 
+def test_a_plan_revision_starts_from_the_proposal_the_user_corrected(client, lab, scripted_models):
+    """E2E A-1: the user corrected the proposed diagram, then answered in the chat; the edit was lost."""
+    scripted_models[:] = [ScriptedClient([tool_use("submit_plan", NOTE_PLAN)])]
+    planned = sse_events(client.post("/besser_api/lab/message", json={"message": "add notes"}, headers=SESSION))
+    lab_payload = planned[-1]["lab"]
+    proposal = _diagram("d2", "Add a Note metaclass", _corrected(lab_payload["modelProposal"]["model"]),
+                        labProposalChangeId=lab_payload["changeId"])
+    revision_model = ScriptedClient([tool_use("submit_plan", NOTE_PLAN)])
+    scripted_models[:] = [revision_model]
+
+    body = {"message": "Notes need no colour.", "action": "plan", "project": _project_of([proposal], active=0)}
+    revised = sse_events(client.post("/besser_api/lab/message", json=body, headers=SESSION))
+
+    assert revised[-1]["event"] == "done" and revised[-1]["lab"]["step"] == "plan", revised
+    first_message = revision_model.calls[0][1][0]["content"]
+    assert "Memo" in first_message and "b: int" in first_message
+
+
 def test_without_the_changes_diagram_the_build_reads_no_class_diagram(client, lab, scripted_models):
     """The proposal was discarded (or never shown): the user's own model is not the extension's model."""
     scripted_models[:] = [ScriptedClient([tool_use("submit_plan", NOTE_PLAN)])]
@@ -560,6 +596,38 @@ def test_without_the_changes_diagram_the_build_reads_no_class_diagram(client, la
 
     assert built[-1]["event"] == "done", built
     assert "Library" not in build_model.calls[0][1][0]["content"]
+
+
+# -- The Spec-Driven run routes on a lab --------------------------------------------------------------------
+
+RUN_ID = "a" * 32
+RUN_ROUTES = [
+    ("POST", f"/besser_api/spec-driven/cancel/{RUN_ID}"),
+    ("GET", f"/besser_api/spec-driven/runs/{RUN_ID}"),
+    ("GET", f"/besser_api/spec-driven/runs/{RUN_ID}/events"),
+    ("GET", f"/besser_api/spec-driven/runs/{RUN_ID}/events.json"),
+]
+# What each run route answers for a run id it does not know.
+UNKNOWN_RUN = [(200, {"status": "not_found", "runId": RUN_ID}), (404, {"detail": "Spec-driven run not found"})]
+
+
+@pytest.mark.parametrize("method, path", RUN_ROUTES)
+def test_on_a_lab_the_run_routes_need_an_allowed_lab_user(client, lab, method, path):
+    """E2E C-D6: a lab run's stream (model text, paths, checks) was readable, and stoppable, without a session."""
+    assert client.request(method, path).status_code == 401
+    assert client.request(method, path, headers={"X-GitHub-Session": "sess-mallory"}).status_code == 403
+    # An allowed user reaches the route itself: the run is unknown.
+    allowed = client.request(method, path, headers=SESSION)
+    assert (allowed.status_code, allowed.json()) in UNKNOWN_RUN
+
+
+@pytest.mark.parametrize("method, path", RUN_ROUTES)
+def test_on_a_public_editor_the_run_routes_need_no_session(client, route_settings, method, path):
+    assert route_settings.lab_enabled is False
+
+    response = client.request(method, path)
+
+    assert (response.status_code, response.json()) in UNKNOWN_RUN
 
 
 # -- The config flag ------------------------------------------------------------------------------------

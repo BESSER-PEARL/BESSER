@@ -27,7 +27,10 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
     LabStateResponse,
 )
 from besser.utilities.web_modeling_editor.backend.routers.auth import LabUserDep
-from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import PullRequestError
+from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
+    PullRequestError,
+    PullRequestSignInError,
+)
 from besser.utilities.web_modeling_editor.backend.services.lab.runner import LabRunner
 from besser.utilities.web_modeling_editor.backend.services.lab.service import LabBusyError, LabStateError
 
@@ -94,12 +97,15 @@ async def lab_state(user: LabUserDep, lab: LabServiceDep) -> LabStateResponse:
 async def lab_pull_request(body: LabPullRequestRequest, user: LabUserDep, lab: LabServiceDep) -> dict:
     """Push the active change and open a draft pull request in each repository it touched, editor first.
 
-    409 when ``changeId`` is not the active change. The full test suites are not run first; ``checksNote``
-    tells the user which checks the change passed.
+    409 when ``changeId`` is not the active change; 401 when GitHub refuses the user's sign-in (the token), so
+    the editor asks them to sign in again. The full test suites are not run first; ``checksNote`` tells the user
+    which checks the change passed.
     """
     try:
         opened, checks_note = await lab.open_pull_requests(user, change_id=body.changeId, title=body.title,
                                                            body=body.body)
+    except PullRequestSignInError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from None
     except _REFUSALS as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     return {"pullRequests": [asdict(info) for info in opened], "checksNote": checks_note}

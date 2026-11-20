@@ -185,3 +185,48 @@ def test_a_project_without_classes_has_no_model_spec():
     no_class_diagram = ProjectInput.model_validate({
         "id": "p1", "type": "Project", "name": "Lab", "createdAt": "2026-11-19T00:00:00Z", "diagrams": {}})
     assert model_spec_from_project(no_class_diagram, CHANGE_ID) is None
+
+
+def _boxes(model: dict) -> dict[str, dict]:
+    return {e["name"]: e["bounds"] for e in model["elements"].values()
+            if e["type"] in ("Class", "AbstractClass", "Enumeration")}
+
+
+def test_the_proposal_is_laid_out_parents_above_children_without_overlaps():
+    """E2E A-7: the proposal opened with overlapping classes and cut attribute texts."""
+    spec = {
+        # Named so the editor's alphabetical grid would put the child (Edge) before its parent (Node).
+        "classes": [
+            {"name": "Edge", "attributes": [{"name": "relation_type", "type": "RelationType"}], "is_abstract": False},
+            {"name": "Graph", "attributes": [{"name": f"attribute_{i}", "type": "str"} for i in range(7)],
+             "is_abstract": False},
+            {"name": "Label", "attributes": [], "is_abstract": False},
+            {"name": "Node", "attributes": [{"name": "name", "type": "str"}], "is_abstract": True},
+            {"name": "Vertex", "attributes": [], "is_abstract": False},
+        ],
+        "enumerations": [{"name": "RelationType", "literals": ["BROADER_THAN", "RELATED_TO"]}],
+        "associations": [{"name": "edges", "source": "Edge", "target": "Graph", "source_multiplicity": "0..*",
+                          "target_multiplicity": "1", "composition": True}],
+        "generalizations": [{"child": "Edge", "parent": "Node"}, {"child": "Vertex", "parent": "Node"}],
+    }
+
+    boxes = _boxes(proposal_from_plan(_plan(spec))["model"])
+
+    for name, box in boxes.items():
+        for other, other_box in boxes.items():
+            if name < other:
+                apart = (box["x"] + box["width"] <= other_box["x"] or other_box["x"] + other_box["width"] <= box["x"]
+                         or box["y"] + box["height"] <= other_box["y"]
+                         or other_box["y"] + other_box["height"] <= box["y"])
+                assert apart, f"{name} overlaps {other}"
+    for child in ("Edge", "Vertex"):
+        assert boxes["Node"]["y"] + boxes["Node"]["height"] < boxes[child]["y"]
+    # Wide enough for "+ relation_type: RelationType" at the editor's font, which clips a narrower box.
+    assert boxes["Edge"]["width"] >= 9 * len("+ relation_type: RelationType")
+    assert boxes["Label"]["width"] == 160
+
+
+def test_the_layout_is_the_same_for_the_same_plan():
+    first, second = proposal_from_plan(_plan(SPEC))["model"], proposal_from_plan(_plan(SPEC))["model"]
+
+    assert _boxes(first) == _boxes(second)

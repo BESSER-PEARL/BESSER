@@ -193,6 +193,23 @@ def test_cancellation_is_checked_every_turn(scripted_client, make_executor):
     assert (result.stop_reason, result.turns) == ("cancelled", 1)
 
 
+def test_a_stop_skips_the_rest_of_the_turns_tool_calls(workspace, scripted_client, make_executor):
+    # A shell command or check queued after the stop would otherwise run to its end before the run stops.
+    done = []
+    callbacks = LabCallbacks(on_progress=lambda turn, tool, status, detail: status == "done" and done.append(tool),
+                             should_continue=lambda: not done)
+    client = scripted_client([tool_use("write_file", {"path": "b.py", "content": "1\n"},
+                                       ("write_file", {"path": "c.py", "content": "2\n"}))])
+
+    result, messages = _run(client, make_executor(), callbacks=callbacks)
+
+    assert (result.stop_reason, result.turns) == ("cancelled", 1)
+    assert (workspace / "b.py").exists() and not (workspace / "c.py").exists()
+    first, second = _results(messages[-1])
+    assert first["is_error"] is False
+    assert second["is_error"] is True and second["content"] == "Not run: the run was stopped."
+
+
 def test_output_limit_gets_a_smaller_step_retry(workspace, scripted_client, make_executor):
     cut_off = {"stop_reason": "max_tokens",
                "content": [Block("tool_use", id="toolu_cut", name="write_file", input={"path": "big.py"})]}

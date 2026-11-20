@@ -93,15 +93,20 @@ A user message goes through at most three steps.
    metamodel or diagram-type plan also carries a class diagram of the
    extension (``model_spec``), which the editor opens as a new class diagram
    for the user to review. The plan creates the change and is stored in its
-   notes. A reply to a plan that is not approved yet revises it. A plan step
-   that ends without a plan, for example with a question, keeps the exchange
-   in ``.lab/pending.json``, and the same user's next message continues it.
+   notes. A plan that touches no repository (the request is already met)
+   creates no change and no branch. A reply to a plan that is not approved yet
+   revises it, starting from the class diagram as the user corrected it in the
+   editor. A plan step that ends without a change, with a question or with a
+   plan that touches nothing, keeps the exchange in ``.lab/pending.json``, and
+   the same user's next message continues it.
 2. **Build.** When the user builds the plan (the plan card's Build button
    sends action ``build``), or sends a message to a change whose plan is
    already approved, the lab agent works in the working copy with the write
    and shell tools, following the guidance of the change's kind. It runs the
-   checks itself with ``run_checks``, which stops between two checks when the
-   user cancels and cuts each check to the time the run has left. When its
+   checks itself with ``run_checks``, which cuts each check to the time the
+   run has left. A stop ends a running check with every process it started,
+   skips the tool calls the model had not started yet, and the stopped build
+   reports the checks that ran. When its
    loop ends, the lab runs the checks of the changed files once more; while a
    check fails and fix rounds remain, the failures go back to the model in the
    same conversation. A fix round that ends without a tool call keeps the
@@ -326,13 +331,17 @@ How a changed file maps to tests:
   some, but never to a whole top-level area such as
   ``tests/spec_driven_agent``. A module that maps to nothing that way gets the
   test files of its top-level area that import it (``tests/spec_driven_agent``
-  is flat). A change to ``besser/generators/registry.py``
-  also runs the registry, regeneration and generator-tool tests.
+  is flat). A module the change adds maps only to ``test_<name>.py`` in its
+  package's mirror and to the tests of its area that import it. A change to
+  ``besser/generators/registry.py`` also runs the registry, regeneration and
+  generator-tool tests.
 - **Editor** -- a file under ``src/main/features/<x>/`` or
   ``src/main/shared/<y>/`` maps to every test under that folder; any other
   webapp file to the tests next to it and in its ``__tests__`` folder.
 - A changed file that maps to no tests gets a skipped "No tests found for ..."
-  result rather than nothing.
+  result rather than nothing. A file of the editor package
+  (``packages/editor/src``) gets a skipped result saying that the package has no
+  test runner and that its tests go in ``packages/webapp``.
 
 The Python checks of a repository run with the interpreter, ``ruff`` and
 ``lint-imports`` of its checkout's ``venv/`` when it has one, so they import the
@@ -378,7 +387,10 @@ with the signed-in user's GitHub token:
    order, the editor first.
 
 Every error message is passed through the secret redaction with the token
-before it is shown. A push failure opens no pull request; a GitHub failure
+before it is shown. A failure the user can act on is told in plain words, with
+git's or GitHub's own message only in the server log: a refused sign-in (the
+route answers 401, and the editor offers to sign in again), no write access, a
+branch protection rule, or no connection to GitHub. A push failure opens no pull request; a GitHub failure
 part way names the pull requests already opened. Asking again returns the
 pull request already open for a branch; its description is kept; only the
 related pull requests section at its end is replaced.
@@ -517,7 +529,8 @@ login and redirects to ``DEPLOYMENT_URL`` with ``?error=not_allowed``.
        plan" button, and ``auto`` otherwise. ``project`` holds only the class
        diagram the lab proposed for the change being continued (pending, or
        kept by the user), never the user's other diagrams, and is null when
-       there is none. The build step follows that diagram, the one the editor
+       there is none. A plan revision starts from that diagram and the build
+       step follows it: the one the editor
        marks as the change's (``config.labProposalChangeId``, or
        ``labChangeId`` once kept), not the active class diagram. One run at a
        time per instance (409 otherwise).
@@ -536,7 +549,8 @@ login and redirects to ``DEPLOYMENT_URL`` with ``?error=not_allowed``.
        null}``. Opens the draft pull requests (see `Pull requests`_) and
        returns ``{"pullRequests": [{"repo", "number", "url", "branch",
        "base"}], "checksNote": str}``. 409 when ``changeId`` is not the active
-       change, before anything is pushed. The lab runs only the checks of the
+       change, before anything is pushed; 401 when GitHub refuses the user's
+       sign-in. The lab runs only the checks of the
        touched areas before pushing, never the full suites; ``checksNote`` says
        so with the last build's counts.
    * - ``POST /lab/change/park``
@@ -553,7 +567,12 @@ The stream of ``/lab/message`` uses the Spec-Driven Agent's event types
 (``start``, ``phase``, ``tool_call``, ``text``, ``cost``, ``error``, ``done``;
 see :doc:`api`), so the editor's run card shows a lab run unchanged. ``start``
 carries the 32-hex ``runId``, which ``POST /spec-driven/cancel/{run_id}``
-stops. The phases are ``plan``, ``build`` and ``check``. ``done`` has
+stops. On a lab instance the run routes (``GET /spec-driven/runs/{run_id}``,
+its ``/events`` and ``/events.json``, and ``POST /spec-driven/cancel/{run_id}``)
+need the ``X-GitHub-Session`` of an allowed user, as the lab routes do. A
+stopped run ends with ``done`` like any other, with ``cancelled: true``,
+``lab.stopReason: "cancelled"`` and the checks that ran. The phases are
+``plan``, ``build`` and ``check``. ``done`` has
 ``mode: "modify"``, empty ``downloadUrl`` and ``fileName``, ``changedFiles``
 (each path prefixed with its repository) and one extra field, ``lab``:
 
@@ -570,7 +589,7 @@ stops. The phases are ``plan``, ``build`` and ``check``. ``done`` has
                       "files": [{"path": "packages/editor/src/main/packages/components.ts",
                                  "status": "modified"}]}],
      "checks": [{"id": "frontend:tests", "repo": "frontend", "title": "Tests of the touched areas",
-                 "passed": true, "skipped": false, "summary": "12 passed"}],
+                 "passed": true, "skipped": false, "summary": "12 passed", "durationSeconds": 12.4}],
      "checklist": [{"id": "editor_element.registries", "text": "...", "done": true}],
      "summary": "What changed, per repository.",
      "stopReason": "completed",

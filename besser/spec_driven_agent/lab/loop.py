@@ -35,6 +35,9 @@ MAX_TRUNCATION_RETRIES = 3
 #: How ``maybe_compact`` opens its summary message.
 _SUMMARY_PREFIX = "[Earlier work summarized]"
 
+#: The result of a tool call the run was stopped before.
+STOPPED_RESULT = "Not run: the run was stopped."
+
 TRUNCATION_PROMPT = (
     "Your previous response was cut off at the output token limit, so it was discarded and "
     "nothing in it was run or written. Continue in a smaller step: at most one or two tool calls, "
@@ -138,13 +141,16 @@ def _run_tools(blocks: list, executor: LabToolExecutor, callbacks: LabCallbacks,
     """The tool results of one turn, in the model's order, and whether ``finish_tool`` succeeded.
 
     Consecutive read calls run in parallel; every other call runs alone, in order,
-    so a read the model placed after a write sees that write.
+    so a read the model placed after a write sees that write. Once the run is
+    stopped, the calls not started yet are answered with :data:`STOPPED_RESULT`.
     """
     detail_count = len(blocks)
     outcomes: list[tuple[str, bool]] = []
     pending_reads: list = []
 
     def run(block) -> tuple[str, bool]:
+        if not callbacks.should_continue():
+            return STOPPED_RESULT, True
         name = getattr(block, "name", None) or ""
         arguments = getattr(block, "input", None)
         callbacks.on_progress(turn, name, "executing", _tool_call_detail(name, arguments, detail_count))

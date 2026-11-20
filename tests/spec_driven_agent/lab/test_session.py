@@ -14,13 +14,16 @@ import time
 import pytest
 
 from besser.spec_driven_agent.lab import checks
+from besser.spec_driven_agent.lab import session as session_module
 from besser.spec_driven_agent.lab.contracts import (
     FRONTEND_SUBMODULE_PATH,
     REPO_BESSER,
     REPO_MODELING_AGENT,
     ChangeKind,
+    ExtraTool,
     LabCallbacks,
     LabLimits,
+    Plan,
     RepoSpec,
 )
 from besser.spec_driven_agent.lab.kinds import guidance
@@ -95,7 +98,7 @@ class ScriptedRunner:
         self.results = {key: list(value) for key, value in (results or {}).items()}
         self.calls = []
 
-    def __call__(self, spec, cwd):
+    def __call__(self, spec, cwd, should_continue=None):
         self.calls.append(spec.id)
         script = self.results.get(spec.id)
         if not script:
@@ -179,6 +182,39 @@ def test_no_change_is_created_when_the_model_never_submits_a_plan(ws, scripted_c
     assert outcome.final_text == "Still no plan."
     assert ws.active_change() is None
     assert branch_of(ws, REPO_MODELING_AGENT) == "develop"
+
+
+def test_a_plan_that_changes_nothing_creates_no_change_and_the_next_message_continues_it(ws, scripted_client,
+                                                                                        monkeypatch):
+    # Live run C (D4): "The request is already met, so I plan no change" still made a change and a branch in
+    # all three repositories. A plan that touches no repository (nothing to do, or only questions) is the
+    # model's answer, not a change.
+    def no_change_plan_tool(on_plan):
+        def handle(arguments):
+            on_plan(Plan(kind=ChangeKind.OTHER, title="Check the docstring", repos=[], steps=[],
+                         summary="get_build_sha already has a docstring, so nothing changes.",
+                         questions=["Do you want different wording?"]))
+            return "Plan submitted."
+        return ExtraTool(schema={"name": "submit_plan", "description": "d",
+                                 "input_schema": {"type": "object", "properties": {}}},
+                         handler=handle, writes=False)
+
+    monkeypatch.setattr(session_module, "submit_plan_tool", no_change_plan_tool)
+    client = scripted_client([tool_use("submit_plan", {}), tool_use("submit_plan", {})])
+    session = LabSession(ws, client=client)
+
+    outcome = session.handle("Give get_build_sha a docstring", user="Jordi")
+
+    assert outcome.step == "plan" and outcome.change is None
+    assert outcome.plan.summary == "get_build_sha already has a docstring, so nothing changes."
+    assert ws.active_change() is None
+    assert {repo: branch_of(ws, repo) for repo in ws.repos} == {
+        "frontend": "develop", "besser": "development", "modeling_agent": "develop"}
+    # Kept like a question back: the user's answer continues the same request.
+    session.handle("Yes: say it returns None when not stamped", user="Jordi")
+    first = client.calls[1][1][0]["content"]
+    assert "The user: Give get_build_sha a docstring" in first
+    assert "nothing changes." in first and "Do you want different wording?" in first
 
 
 def test_a_plan_on_an_active_change_revises_it_and_asks_for_approval_again(ws, scripted_client):
@@ -418,7 +454,7 @@ def test_the_sessions_change_state_wins_over_what_code_run_in_the_build_wrote(ws
         tampered = json.load(handle)
     tampered.update(title="Hijacked", plan_approved=False, branches={REPO_BESSER: "development"})
 
-    def tampering_check(spec, cwd):
+    def tampering_check(spec, cwd, should_continue=None):
         with open(state, "w", encoding="utf-8") as handle:
             json.dump(tampered, handle)
         return 0, "4 passed"
@@ -439,7 +475,7 @@ def test_the_checks_after_the_loop_stop_at_the_runs_time_limit(ws, scripted_clie
     real_monotonic = time.monotonic
     monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + clock[0])
 
-    def first_check_takes_the_rest_of_the_run(spec, cwd):
+    def first_check_takes_the_rest_of_the_run(spec, cwd, should_continue=None):
         timeouts.append(spec.timeout_seconds)
         clock[0] = 120.0
         return 0, "ok"
@@ -462,7 +498,7 @@ def test_a_stop_during_the_checks_after_the_loop_is_reported_as_cancelled(ws, sc
     start(ws)
     ran = []
 
-    def check_during_which_the_user_presses_stop(spec, cwd):
+    def check_during_which_the_user_presses_stop(spec, cwd, should_continue=None):
         ran.append(spec.id)
         return 0, "4 passed"
 
@@ -482,7 +518,7 @@ def test_a_stop_during_the_models_own_run_checks_call_stops_its_checks_and_the_r
     start(ws)
     ran, phases = [], []
 
-    def check_during_which_the_user_presses_stop(spec, cwd):
+    def check_during_which_the_user_presses_stop(spec, cwd, should_continue=None):
         ran.append(spec.id)
         return 0, "4 passed"
 
@@ -497,13 +533,45 @@ def test_a_stop_during_the_models_own_run_checks_call_stops_its_checks_and_the_r
     assert outcome.stop_reason == "cancelled" and len(client.calls) == 2
 
 
+def test_a_stopped_build_reports_the_checks_that_ran_and_lets_the_runner_stop_a_check(ws, scripted_client,
+                                                                                     monkeypatch):
+    # Live run C (D3): ruff, import layers and tests ran in the model's run_checks call, then the user
+    # stopped; the saved result said "Checks: none ran".
+    start(ws)
+    stopped, stops = [], []
+
+    def checks_until_the_user_presses_stop(spec, cwd, should_continue=None):
+        stops.append(should_continue)
+        if spec.id == "modeling_agent:imports":
+            stopped.append(True)  # the real runner kills the check here and returns STOPPED
+            return checks.STOPPED, "Stopped: the run was stopped"
+        time.sleep(0.02)
+        return 0, "All checks passed!"
+
+    monkeypatch.setattr(checks, "default_runner", checks_until_the_user_presses_stop)
+    callbacks = LabCallbacks(should_continue=lambda: not stopped)
+    client = scripted_client([tool_use(*GREETING), tool_use("run_checks", {}), end_turn("never sent")])
+
+    outcome = LabSession(ws, client=client, callbacks=callbacks).handle("Build it", user="Jordi")
+
+    assert outcome.stop_reason == "cancelled" and len(client.calls) == 2
+    # The session's runner hands the run's stop to the check, so a running check can be ended.
+    assert stops and all(stop is callbacks.should_continue for stop in stops)
+    ruff, imports = outcome.build.checks
+    assert ruff.spec_id == "modeling_agent:ruff" and ruff.passed and ruff.duration_seconds > 0
+    assert imports.spec_id == "modeling_agent:imports" and imports.skipped
+    assert imports.summary == "Stopped: the run was stopped before this check finished"
+    assert "Checks: none ran" not in outcome.build.summary
+    assert "Checks: 1 passed, 0 failed, 1 skipped." in ws.notes(ws.active_change())
+
+
 def test_the_models_own_run_checks_call_stops_at_the_runs_time_limit(ws, scripted_client, monkeypatch):
     start(ws)
     timeouts, clock = [], [0.0]
     real_monotonic = time.monotonic
     monkeypatch.setattr(time, "monotonic", lambda: real_monotonic() + clock[0])
 
-    def first_check_takes_the_rest_of_the_run(spec, cwd):
+    def first_check_takes_the_rest_of_the_run(spec, cwd, should_continue=None):
         timeouts.append(spec.timeout_seconds)
         clock[0] = 120.0
         return 0, "ok"

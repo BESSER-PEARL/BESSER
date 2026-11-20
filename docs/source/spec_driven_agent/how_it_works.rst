@@ -307,9 +307,10 @@ reading a trace and wondering why a run did what it did.
        ``end_turn`` with open items is sent back with the list, twice — four
        times when an open item carries a machine check. Some items are verified
        before they are accepted (the "build the frontend" item checks that
-       frontend files exist). Ending the turn also runs ``validate_app``; a
-       blocker from its static frontend checks is sent back to the model once
-       before Phase 2 ends. The harness closes an item itself when its check
+       frontend files exist). Ending the turn also runs ``validate_app``;
+       every blocker it reports is sent back to the model with the open items,
+       and Phase 2 hands off to validation only when the model ends its turn
+       again with the same blockers on an unchanged tree. The harness closes an item itself when its check
        passes, and refuses ``done`` while the check fails; the model closes
        an item without a check with ``task_list(action='done')``, without
        quoting code. An edit to a file the item names never closes it. Work

@@ -5,8 +5,8 @@ Two regressions of the round that added them, found by a scripted Phase 2 on r9-
   frontend page") under "Issues to fix from Phase 1 validation";
 - a frontend blocker at end_turn ended Phase 2 at once, before the open-checklist nudge
   and without the model ever seeing the blocker.
-Now only blockers open the prompt, and a static frontend blocker is sent back once
-(``_MAX_FRONTEND_BLOCKER_NUDGES``, inside the end-turn nudge cap) before Phase 2 ends.
+Now only blockers open the prompt, and every blocker at end_turn, frontend or backend, is
+shown to the model; Phase 2 hands off when it ends the turn again on the same tree and blockers.
 """
 import pytest
 
@@ -81,24 +81,57 @@ def test_no_blocker_no_issues_section(tmp_path, monkeypatch):
     assert "## Issues to fix" not in client.systems[0]
 
 
-def test_frontend_blocker_is_sent_back_once_and_open_items_keep_their_nudges(tmp_path, monkeypatch):
+def test_a_frontend_blocker_is_shown_and_an_unchanged_one_hands_off(tmp_path, monkeypatch):
     orch, client = _run(tmp_path, monkeypatch)
     nudges = [_text(content) for content in client.last_messages[1:]]
-    assert len(client.systems) == 3
-    assert "the frontend still has these blockers" in nudges[0] and "still OPEN" in nudges[0]
-    assert "the frontend still has these blockers" not in nudges[1] and "still OPEN" in nudges[1]
-    assert (orch._phase2_stop_reason, orch._phase2_stop_detail) == (
-        "validation_required", "end_turn frontend blocker gate")
+    # Shown once with the open items; the model ends its turn again on the same tree.
+    assert len(client.systems) == 2
+    assert "it still reports these blockers" in nudges[0] and "Feedback.jsx" in nudges[0]
+    assert "still OPEN" in nudges[0]
+    assert (orch._phase2_stop_reason, orch._phase2_stop_detail) == ("validation_required", "end_turn blocker gate")
 
 
-def test_frontend_blocker_alone_gets_one_nudge_then_phase2_ends(tmp_path, monkeypatch):
+def test_frontend_blocker_alone_is_shown_then_phase2_ends(tmp_path, monkeypatch):
     orch, client = _run(tmp_path, monkeypatch, planner=())
     assert len(client.systems) == 2
     assert orch._phase2_stop_reason == "validation_required"
 
 
 @pytest.mark.parametrize("dead_form", [True, False])
-def test_a_backend_blocker_still_ends_phase2_at_once(tmp_path, monkeypatch, dead_form):
+def test_a_backend_blocker_is_shown_to_the_model_before_phase2_ends(tmp_path, monkeypatch, dead_form):
+    """It ended Phase 2 at once: the model never saw it, nor its open checklist item."""
     orch, client = _run(tmp_path, monkeypatch, dead_form=dead_form, backend_blocker=True)
-    assert len(client.systems) == 1
+    assert len(client.systems) == 2
+    shown = _text(client.last_messages[1])
+    assert "undefined name 'x'" in shown and "still OPEN" in shown
     assert (orch._phase2_stop_reason, orch._phase2_stop_detail) == ("validation_required", "end_turn blocker gate")
+
+
+class _FixesAfterTheReport(_EndsEveryTurn):
+    """Ends its turn; once shown the blocker, it fixes it and ends again."""
+
+    def __init__(self, fix):
+        super().__init__()
+        self.fix = fix
+
+    def chat(self, system, messages, tools, **kwargs):
+        if len(self.systems) == 1:
+            self.fix()
+        return super().chat(system, messages, tools, **kwargs)
+
+
+def test_a_fixed_blocker_lets_phase2_finish(tmp_path, monkeypatch):
+    execution = ["python contract: backend/main_api.py line 1: undefined name 'x'"]
+    generate_backend(tmp_path, shelf_model(author=True))
+    client = _FixesAfterTheReport(lambda: (execution.clear(), (tmp_path / "backend" / "fixed.py").write_text(
+        "x = 1\n", encoding="utf-8")))
+    orch = LLMOrchestrator(llm_client=client, domain_model=shelf_model(author=True), output_dir=str(tmp_path),
+                           enable_tracing=False, enable_checkpointing=False, enable_import_smoke_check=False,
+                           enable_requirements_ledger=False, use_streaming=False)
+    orch._generator_used = GENERATOR
+    orch._instructions = "Build the shelf API"
+    monkeypatch.setattr(orch, "_collect_execution_issues", lambda: list(execution))
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **_: [])
+    orch._run_phase2(orch._instructions)
+    assert len(client.systems) == 2
+    assert orch._phase2_stop_reason == "completed"

@@ -353,8 +353,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # How many times the end_turn checklist gate sends the model back to
     # its open items before letting the run finish anyway.
     _MAX_TASK_NUDGES = 2
-    # End-of-turn nudges that show static frontend blockers; each also counts as a task nudge.
-    _MAX_FRONTEND_BLOCKER_NUDGES = 1
     # Executed calls with no source change and no new result before Phase 2
     # hands off, and with no source change before it is reminded to implement.
     _PHASE2_STAGNANT_CALLS = 20
@@ -751,7 +749,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # model back to its open task_list items (bounded by
         # ``_MAX_TASK_NUDGES`` so a stubborn model can't loop the budget).
         self._end_turn_task_nudges: int = 0
-        self._end_turn_frontend_nudges: int = 0
         # Model-derived acceptance matrix (per entity: route/page/create),
         # computed by Phase 3 and saved in the recipe. Report-only.
         self._acceptance_matrix: dict | None = None
@@ -2166,6 +2163,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         inspected: set[tuple[str, str]] = set()
         observed_plans = {self._repair_obligations_revision()}
         observed_results: set[str] = set()
+        shown_blocker_report: tuple | None = None
         inspection_nudged = False
         self._phase2_inspection_handoff = ""
         call_limit = self._phase2_call_limit()
@@ -2254,12 +2252,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # rather than looping the user's budget away; Phase 3
                 # still validates whatever state it left).
                 execution_report = self._validate_app()
-                # Static frontend blockers go back to the model once (it has the
-                # context here); any other blocker ends Phase 2 as before.
-                frontend_blockers = ([issue for issue in self._static_frontend_issues()
-                                      if _classify_issue(issue).severity == "blocker"]
-                                     if execution_report["blocker_count"] else [])
-                if execution_report["blocker_count"] > len(frontend_blockers):
+                # Every observed blocker goes back to the model, which has the context
+                # here; Phase 2 hands off only when it ends the turn again on the same
+                # tree and the same blockers.
+                blockers = [issue for issue in execution_report["issues"]
+                            if _classify_issue(issue).severity == "blocker"]
+                report_state = (self._workspace_revision(), tuple(blockers))
+                if execution_report["blocker_count"] and report_state == shown_blocker_report:
                     self._phase2_stop_reason = "validation_required"
                     self._phase2_stop_detail = "end_turn blocker gate"
                     self._phase2_exited_cleanly = False
@@ -2268,14 +2267,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 _has_verified_open = any(t.get("verify") for t in open_items)
                 _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
                               else self._MAX_TASK_NUDGES)
-                frontend_nudge = (bool(frontend_blockers)
-                                  and self._end_turn_frontend_nudges < self._MAX_FRONTEND_BLOCKER_NUDGES)
-                if (open_items or frontend_nudge) and self._end_turn_task_nudges < _nudge_cap:
-                    self._end_turn_task_nudges += 1
-                    self._end_turn_frontend_nudges += frontend_nudge
+                report_blockers = bool(execution_report["blocker_count"])
+                if report_blockers or (open_items and self._end_turn_task_nudges < _nudge_cap):
+                    if report_blockers:
+                        shown_blocker_report = report_state
+                    else:
+                        self._end_turn_task_nudges += 1
                     logger.info(
-                        "end_turn with %d open checklist item(s), %d frontend blocker(s) — nudge %d/%d",
-                        len(open_items), len(frontend_blockers) if frontend_nudge else 0,
+                        "end_turn with %d open checklist item(s), %d blocker(s) — nudge %d/%d",
+                        len(open_items), execution_report["blocker_count"],
                         self._end_turn_task_nudges, _nudge_cap,
                     )
                     # An empty end_turn reply (no text, no tool calls) is not
@@ -2287,13 +2287,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             {"role": "assistant", "content": response["content"]}
                         )
                     parts = []
-                    if frontend_nudge:
-                        shown = "\n".join(f"  - {clip_finding(issue)}"
-                                          for issue in frontend_blockers[:self._VALIDATE_APP_MAX_ISSUES])
+                    if report_blockers:
+                        shown = "\n".join(f"  - {issue}" for issue in blockers)
+                        more = execution_report["blocker_count"] - len(blockers)
                         parts.append(
-                            "Ending the turn ran validate_app, and the frontend still has these "
-                            f"blockers:\n{shown}\nFix them now; Phase 2 ends with them unfixed "
-                            "the next time you end the turn.")
+                            "Ending the turn ran validate_app, and it still reports these "
+                            f"blockers:\n{shown}" + (f"\n  (+{more} more)" if more > 0 else "")
+                            + "\nFix them now. Ending the turn again without changing them hands "
+                            "the run to validation with them unfixed.")
                     if open_items:
                         listing = "\n".join(
                             f"  {t['id']}. {t['text']}" for t in open_items
@@ -2316,11 +2317,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "content": [{"type": "text", "text": "\n\n".join(parts)}],
                     })
                     continue
-                if frontend_blockers:
-                    self._phase2_stop_reason = "validation_required"
-                    self._phase2_stop_detail = "end_turn frontend blocker gate"
-                    self._phase2_exited_cleanly = False
-                    break
                 logger.info("LLM completed after %d turns", turn + 1)
                 self._phase2_exited_cleanly = True
                 self._phase2_stop_reason = "completed"

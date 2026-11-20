@@ -33,6 +33,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import stat
 from dataclasses import dataclass
 from typing import Iterable
@@ -150,7 +151,57 @@ def _is_app_file_path(rel: object, backend: str) -> bool:
             and not any(part != part.rstrip(". ") for part in (*folders, name)))
 
 
-def remove_app_runtime_files(output_dir: str, keep: Iterable[str]) -> RuntimeFileRemoval:
+# Code, configuration and docs: a file of these kinds a command left is never taken for the app's data.
+_NOT_DATA_SUFFIXES = frozenset({
+    ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sql", ".sh", ".ps1", ".bat", ".cmd",
+    ".toml", ".ini", ".cfg", ".conf", ".yaml", ".yml", ".env", ".txt", ".md", ".rst", ".lock",
+    ".html", ".css", ".mako", ".jinja", ".j2", ".java", ".kt", ".go", ".rs", ".rb", ".php", ".cs",
+})
+# A name a program generated: 32 hex digits or a UUID, as an app names a stored upload.
+_GENERATED_NAME_RE = re.compile(
+    r"(?<![0-9a-f])(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f])",
+    re.I)
+
+
+def backend_files(output_dir: str) -> dict[str, list[int]]:
+    """``{path: [size, mtime_ns]}`` of the files under the generated backend, as the probe
+    lists them (no dot-folder, no run record); empty without a backend below the root."""
+    root = os.path.realpath(output_dir)
+    backend = _find_backend(root)
+    if backend in (None, "."):
+        return {}
+    found: dict[str, list[int]] = {}
+    for folder, dirs, names in walk_plain(os.path.join(root, backend)):
+        dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS and d != "htmlcov" and not d.startswith(".")]
+        for name in names:
+            if name.startswith(".besser_"):
+                continue
+            try:
+                info = os.lstat(os.path.join(folder, name))
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                rel = os.path.relpath(os.path.join(folder, name), root).replace(os.sep, "/")
+                found[rel] = [info.st_size, info.st_mtime_ns]
+    return found
+
+
+def files_the_app_wrote(before: dict[str, list[int]], after: dict[str, list[int]],
+                        command: str) -> dict[str, list[int]]:
+    """The files a shell command left under the backend that the running app wrote there:
+    new since ``before``, of a data kind (not code, configuration or docs), named by a
+    generated id (``_GENERATED_NAME_RE``), and named nowhere in ``command``. A file the
+    command itself creates (``> seed.json``, ``cp``, a migration) is not one of them."""
+    text = command or ""
+    return {rel: seen for rel, seen in after.items()
+            if rel not in before
+            and os.path.splitext(rel)[1].lower() not in _NOT_DATA_SUFFIXES
+            and _GENERATED_NAME_RE.search(rel.rsplit("/", 1)[-1])
+            and rel not in text and rel.rsplit("/", 1)[-1] not in text}
+
+
+def remove_app_runtime_files(output_dir: str, keep: Iterable[str],
+                             command_files: dict[str, list[int]] | None = None) -> RuntimeFileRemoval:
     """Delete what the app wrote while the probe ran it, and the probe's record of it.
 
     A generated signing key or an upload is state of that test run, not part
@@ -160,10 +211,12 @@ def remove_app_runtime_files(output_dir: str, keep: Iterable[str]) -> RuntimeFil
     (the workspace-relative paths a generator or a write tool wrote, or that
     were there when the run started) and still has the size and modification
     time the probe recorded. A file the output leaves out by name anyway is
-    left where it is. Never raises.
+    left where it is. ``command_files`` (:func:`files_the_app_wrote`, recorded by the
+    worker around each shell command) are removed by the same rules. Never raises.
     """
     root = os.path.realpath(output_dir)
     files, note = _read_runtime_record(root)
+    files = {**files, **(command_files or {})}
     backend = _find_backend(root)
     if files and backend is None:
         files, note = {}, "no backend folder was found, so the record of files the app wrote was not used"

@@ -5544,7 +5544,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         account of every call so far.
         """
         self.executor.stop_shell_processes()
-        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start)
+        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start,
+                                          self.executor.command_app_files)
         if result.removed:
             logger.warning("Removed %d file(s) the app wrote while it was test-run; they are not "
                            "part of the output: %s", len(result.removed), ", ".join(result.removed[:20]))

@@ -390,3 +390,92 @@ def test_a_real_boot_records_the_key_the_app_creates_on_import(tmp_path):
 
     assert list(_record(tmp_path)["files"]) == [KEY]
     assert remove_app_runtime_files(str(tmp_path), set()).removed == (KEY,)
+
+
+# --- files the running app wrote during a shell command -------------------
+#
+# Live evidence (2026-11-19): the agent re-uploaded a stored upload through the
+# shell, outside the probe; the app stored it under a generated name beside its
+# source and the run delivered it (no record named it). A command's files are now
+# recorded too, but only what the running app wrote: a data file named by a
+# generated id that the command itself does not name.
+
+UPLOAD = "backend/data/uploads/9f86d081884c4d659a2feaa0c55ad015_sample.json"
+
+
+class _Shell:
+    """The run's shell: ``run`` writes what the command would have written."""
+
+    cwd = ""
+
+    def __init__(self, workspace, writes):
+        self.workspace, self.writes = workspace, writes
+
+    def relative_cwd(self):
+        return "."
+
+    def run(self, command, **kwargs):
+        for rel, text in self.writes.get(command, {}).items():
+            _write(self.workspace, rel, text)
+        return type("Result", (), {"notes": [], "persistent": True, "returncode": 0, "stdout": "",
+                                   "stderr": "", "timed_out": False})()
+
+
+SEED = "cat > backend/data/seed_orders.json <<'END'\n[]\nEND"
+COMMANDS = {
+    # The app stores the upload under a name it generates.
+    "curl -s -F file=@sample.json http://127.0.0.1:8000/order/upload": {UPLOAD: '{"a": 1}'},
+    # What the agent creates on purpose: named in the command, or code, or not a generated name.
+    SEED: {"backend/data/seed_orders.json": "[]"},
+    "python scripts/make_fixtures.py": {"backend/data/fixtures.json": "[]"},
+    "alembic revision -m add_total": {
+        "backend/migrations/versions/3f2a9c1d4e5b6a7b8c9d0e1f2a3b4c5d_add_total.py": "revision = 'x'\n"},
+    "cp backend/data/uploads/9f86d081884c4d659a2feaa0c55ad015_sample.json "
+    "backend/data/kept/0a1b2c3d4e5f60718293a4b5c6d7e8f9_sample.json": {
+        "backend/data/kept/0a1b2c3d4e5f60718293a4b5c6d7e8f9_sample.json": '{"a": 1}'},
+}
+
+
+def _run_commands(tmp_path, commands):
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+
+    _backend(tmp_path)
+    executor = ToolExecutor(str(tmp_path), allow_shell=True)
+    executor._shell = _Shell(tmp_path, COMMANDS)
+    for command in commands:
+        assert executor._run_command({"command": command}).get("error") is None
+    return executor
+
+
+def test_a_file_the_app_wrote_during_a_command_is_recorded(tmp_path):
+    executor = _run_commands(tmp_path, list(COMMANDS))
+
+    assert list(executor.command_app_files) == [UPLOAD]
+
+
+def test_files_the_agent_creates_through_the_shell_are_never_removed(simple_library_book_model, tmp_path):
+    orchestrator = _orchestrator(simple_library_book_model, tmp_path)
+    executor = _run_commands(tmp_path, list(COMMANDS))
+    orchestrator.executor.command_app_files = executor.command_app_files
+
+    recipe = _recipe(orchestrator, tmp_path)
+
+    assert recipe["runtime_files_removed"] == [UPLOAD]
+    assert not (tmp_path / UPLOAD).exists()
+    for created in ("backend/data/seed_orders.json", "backend/data/fixtures.json",
+                    "backend/migrations/versions/3f2a9c1d4e5b6a7b8c9d0e1f2a3b4c5d_add_total.py",
+                    "backend/data/kept/0a1b2c3d4e5f60718293a4b5c6d7e8f9_sample.json"):
+        assert (tmp_path / created).exists(), created
+
+
+def test_a_recorded_upload_the_agent_then_edited_or_that_was_there_at_start_stays(
+        simple_library_book_model, tmp_path):
+    _backend(tmp_path)
+    _write(tmp_path, UPLOAD, '{"seeded": true}')
+    orchestrator = _orchestrator(simple_library_book_model, tmp_path)  # the upload is there at the start
+    other = "backend/data/uploads/c0ffee00c0ffee00c0ffee00c0ffee00_b.json"
+    _write(tmp_path, other, "{}")
+    orchestrator.executor.command_app_files = {UPLOAD: _stat(tmp_path, UPLOAD), other: [99, 1]}
+
+    assert _recipe(orchestrator, tmp_path)["runtime_files_removed"] == []
+    assert (tmp_path / UPLOAD).exists() and (tmp_path / other).exists()

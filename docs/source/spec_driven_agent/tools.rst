@@ -487,15 +487,30 @@ upload) lands beside the source. The probe records the files that appear under
 the backend during ``up`` and ``req`` in ``.besser_probe.runtime_files.json``,
 and the run deletes them before it writes the recipe, unless a generator or a
 write tool wrote them; the recipe lists them under ``runtime_files_removed``.
-They are therefore in neither the download nor a GitHub push. Only the
-name-based exclusions (databases, logs, caches) apply, and a generated key or
-upload is delivered with the app, when the file is:
+They are therefore in neither the download nor a GitHub push.
 
-- written while the app was started some other way than the probe: ``python
-  main_api.py`` or a test run through ``run_command``, or a script that
-  imports the app's module;
-- written by the running server between two probe calls, for example by a
-  background task or a request sent with ``curl``;
+The worker also lists the backend's files before and after every
+``run_command`` and ``install_dependencies`` call, and records a file the call
+left as written by the running app (a request sent with ``curl``, a test
+client, a script importing the app) only when all of these hold: it is new
+under the backend folder, outside dot-folders; it is a data file (``.json``,
+``.pdf``, an image), not code, configuration or docs (``.py``, ``.ts``,
+``.toml``, ``.txt``, ``.yaml``, ``.sql``, ``.html`` ...); its name holds a
+generated id, 32 hex digits or a UUID, as an app names a stored upload; and the
+command names neither its path nor its name. Those are removed by the same
+rules as the probe's record. A file the agent creates on purpose through the
+shell is kept: one the command names (``cat > data/seed.json``, ``cp a b``),
+code such as a migration ``alembic`` names with a hex id, and data a script
+writes under a plain name (``fixtures.json``).
+
+Only the name-based exclusions (databases, logs, caches) apply, and a generated
+key or upload is delivered with the app, when the file is:
+
+- written while the app was started some other way than the probe and not
+  matching the rule above: a key under a plain name (``signing.key``), an
+  upload kept under the name it was sent with;
+- written by the running server between two shell commands, for example by a
+  background task;
 - written anywhere when the backend is the workspace root: the probe then
   records nothing and nothing is removed;
 - in a dot-folder or outside the backend folder, an existing file the app

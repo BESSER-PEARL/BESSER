@@ -87,3 +87,10 @@ def test_the_options_survive_export_and_reimport():
     dropdown = _dropdown(_forms(reimported)[0])
     assert _options(dropdown) == [("low", "Low"), ("normal", "Normal"), ("High", "High")]
     assert dropdown.data_binding.data_field.name == "priority"
+
+
+def test_a_select_bound_to_an_enumeration_offers_its_literals_for_its_values():
+    select = _select("status", _option("Open", value="OPEN"), _option("Closed", value="shut"), _option("Other", value="x"))
+    dropdown = _dropdown(_forms(import_gui([_form(select)], _task_classes()))[0])
+
+    assert _options(dropdown) == [("Open", "Open"), ("Closed", "Closed")]

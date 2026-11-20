@@ -90,13 +90,18 @@ STATUS_WRAPPED = [
     _label(_radio("status", "open"), " Open"),
     _label(_radio("status", "closed", required=""), " Closed"),
 ]
+PRIORITY_WRAPPED = [
+    _label(_radio("priority", "low"), " Low, when idle"),
+    _label(_radio("priority", "high"), " High"),
+]
 
 
 def test_radios_sharing_a_name_are_one_radio_group_with_their_options_in_order():
     form, = _forms(import_gui([_form(*STATUS_WRAPPED)], _task_classes()))
 
     group, = _radio_groups(form)
-    assert _options(group) == [("open", "Open"), ("closed", "Closed")]
+    # Bound to Status: the values are its literals (the backend accepts nothing else)
+    assert _options(group) == [("Open", "Open"), ("Closed", "Closed")]
     assert group.label == "Status"
     assert group.required is True  # one of its radios is required
     assert group.data_binding.data_field.name == "status"
@@ -129,25 +134,25 @@ def test_two_groups_in_one_form_stay_two_groups():
     )], _task_classes()))
 
     status, priority = _radio_groups(form)
-    assert [o.value for o in status.options] == ["open", "closed"]
+    assert [o.value for o in status.options] == ["Open", "Closed"]
     assert [o.value for o in priority.options] == ["low", "high"]
     assert priority.required is False
 
 
 def test_the_same_name_in_two_forms_makes_one_group_per_form():
     forms = _forms(import_gui([
-        _form(*STATUS_WRAPPED, form_id="form-a"),
-        _form(_label(_radio("status", "archived"), " Archived"), form_id="form-b"),
+        _form(*PRIORITY_WRAPPED, form_id="form-a"),
+        _form(_label(_radio("priority", "urgent"), " Urgent"), form_id="form-b"),
     ], _task_classes()))
 
-    assert [[o.value for o in _radio_groups(f)[0].options] for f in forms] == [["open", "closed"], ["archived"]]
+    assert [[o.value for o in _radio_groups(f)[0].options] for f in forms] == [["low", "high"], ["urgent"]]
 
 
 def test_a_radio_outside_the_form_is_not_merged_into_its_group():
     gui = import_gui([_form(*STATUS_WRAPPED), _label(_radio("status", "other"), " Other")], _task_classes())
     form, = _forms(gui)
 
-    assert [o.value for o in _radio_groups(form)[0].options] == ["open", "closed"]
+    assert [o.value for o in _radio_groups(form)[0].options] == ["Open", "Closed"]
     screen, = next(iter(gui.modules)).screens
     outside = [e for e in screen.view_elements if not isinstance(e, Form)]
     radio, = [i for e in outside for i in getattr(e, "view_elements", ()) if isinstance(i, InputField)]
@@ -193,22 +198,117 @@ def test_valueless_radios_not_bound_to_an_enumeration_submit_their_label():
     assert _options(group) == [("Low", "Low"), ("High", "High")]
 
 
-def test_the_group_and_its_option_values_survive_export_and_reimport():
-    class_json = _task_classes()
+def _export(components, class_json):
+    """The GUI JSON exported back from the B-UML project code of ``components``, and that code."""
     domain = process_class_diagram({"title": "Domain", "model": class_json})
     gui_json = {"pages": [{"id": "p", "name": "Tasks", "frames": [{"component": {
-        "type": "wrapper", "components": [_form(*STATUS_WRAPPED)]}}]}], "styles": []}
+        "type": "wrapper", "components": components}}]}], "styles": []}
     gui = process_gui_diagram(gui_json, class_json, domain)
     path = os.path.join(tempfile.mkdtemp(), "project.py")
     project_to_code(Project(name="p", models=[domain, gui], metadata=Metadata(description="d")), path)
     with open(path, encoding="utf-8") as handle:
         code = handle.read()
-    assert 'SelectOption(value="open", label="Open")' in code
-
     entry = project_to_json(code)["diagrams"]["GUINoCodeDiagram"]
-    reimported = process_gui_diagram((entry[0] if isinstance(entry, list) else entry)["model"], class_json, domain)
+    return (entry[0] if isinstance(entry, list) else entry)["model"], code, domain
 
-    group, = _radio_groups(_forms(reimported)[0])
-    assert _options(group) == [("open", "Open"), ("closed", "Closed")]
-    assert group.required is True and group.label == "Status"
-    assert group.data_binding.data_field.name == "status"
+
+def test_the_groups_and_their_option_values_survive_export_and_reimport():
+    class_json = _task_classes()
+    exported, code, domain = _export([_form(*STATUS_WRAPPED, *PRIORITY_WRAPPED)], class_json)
+    assert 'SelectOption(value="low", label="Low, when idle")' in code
+
+    for _ in range(2):
+        status, priority = _radio_groups(_forms(process_gui_diagram(exported, class_json, domain))[0])
+        assert _options(status) == [("Open", "Open"), ("Closed", "Closed")]
+        assert status.required is True and status.label == "Status"
+        assert status.data_binding.data_field.name == "status"
+        assert _options(priority) == [("low", "Low, when idle"), ("high", "High")]
+        exported = _export(exported["pages"][0]["frames"][0]["component"]["components"], class_json)[0]
+
+
+def _tree(node):
+    """(tag, radio name/value, text) of the exported elements, in document order."""
+    attributes = node.get("attributes") or {}
+    rows = []
+    if node.get("tagName") in ("label", "input"):
+        text = "".join(c.get("content", "") for c in node.get("components") or [] if c.get("type") == "textnode")
+        rows.append((node["tagName"], attributes.get("name"), attributes.get("value"), text.strip()))
+    for child in node.get("components") or []:
+        rows.extend(_tree(child))
+    return rows
+
+
+def test_an_exported_group_is_a_caption_and_one_labelled_radio_per_option():
+    """The editor canvas shows radios, not ``data-options``: the group is written as radios."""
+    exported, _, _ = _export([_form(*STATUS_WRAPPED)], _task_classes())
+
+    rows = _tree(exported["pages"][0]["frames"][0]["component"]["components"][0])
+    assert rows[2:] == [
+        ("label", None, None, "Status"),
+        ("label", None, None, "Open"), ("input", "status", "Open", ""),
+        ("label", None, None, "Closed"), ("input", "status", "Closed", ""),
+    ]
+
+
+def test_an_editor_radio_block_is_exported_as_the_block():
+    block = {"type": "gui-input-radio", "tagName": "div", "attributes": {
+        "id": "rg", "data-gui-type": "RadioGroup", "data-field-name": "priority",
+        "data-options": "Low, High", "data-label": "Priority"}}
+    exported, _, _ = _export([_form(block)], _task_classes())
+
+    form = exported["pages"][0]["frames"][0]["component"]["components"][0]
+    node, = [c for c in form["components"] if (c.get("attributes") or {}).get("data-gui-type") == "RadioGroup"]
+    assert node["attributes"]["data-options"] == "Low, High"
+    assert not [row for row in _tree(form) if row[0] == "input"][1:]  # only the title input
+
+
+def test_an_editor_radio_block_without_options_bound_to_an_enumeration_offers_its_literals():
+    block = {"type": "gui-input-radio", "tagName": "div", "attributes": {
+        "id": "rg", "data-gui-type": "RadioGroup", "data-field-name": "status", "data-options": ""}}
+    form, = _forms(import_gui([_form(block)], _task_classes()))
+
+    group, = _radio_groups(form)
+    assert _options(group) == [("Open", "Open"), ("Closed", "Closed")]
+
+
+def test_values_bound_to_an_enumeration_become_its_literals():
+    """Exact, else case-insensitive, else by the label; a value matching nothing is dropped."""
+    form, = _forms(import_gui([_form(
+        _label(_radio("status", "OPEN"), " Open"),
+        _label(_radio("status", "2"), " Closed"),
+        _label(_radio("status", "later"), " Later"),
+    )], _task_classes()))
+
+    group, = _radio_groups(form)
+    assert _options(group) == [("Open", "Open"), ("Closed", "Closed")]
+
+
+def test_values_matching_no_literal_are_replaced_by_the_literals():
+    form, = _forms(import_gui([_form(
+        _label(_radio("status", "a"), " First"), _label(_radio("status", "b"), " Second"),
+    )], _task_classes()))
+
+    group, = _radio_groups(form)
+    assert _options(group) == [("Open", "Open"), ("Closed", "Closed")]
+
+
+def test_a_radio_inside_an_element_of_its_label_is_kept():
+    form, = _forms(import_gui([_form(
+        _label("Status"),
+        _label({"tagName": "span", "components": [_radio("priority", "low"), _text(" Low")]}),
+        _label(_radio("priority", "high"), " High"),
+    )], _task_classes()))
+
+    group, = _radio_groups(form)
+    assert _options(group) == [("low", "Low"), ("high", "High")]
+    assert group.label == "Status"
+
+
+def test_options_written_as_a_json_list_are_read():
+    block = {"type": "gui-input-dropdown", "tagName": "div", "attributes": {
+        "data-gui-type": "Dropdown", "data-field-name": "priority",
+        "data-options": '["low", "a, b"]', "data-option-labels": '["Low", "A, then B"]'}}
+    form, = _forms(import_gui([_form(block)], _task_classes()))
+
+    dropdown, = [i for i in form.inputFields if i.field_type == InputFieldType.Dropdown]
+    assert _options(dropdown) == [("low", "Low"), ("a, b", "A, then B")]

@@ -20,6 +20,7 @@ from besser.BUML.metamodel.gui import (
     GUIModel,
     Image,
     InputField,
+    InputFieldType,
     Link,
     Menu,
     Screen,
@@ -386,7 +387,8 @@ def _serialize_form_children(form: Form) -> List[Dict[str, Any]]:
 
     ``parse_form`` folds the labels into ``InputField.label`` and the button
     into ``Form.submit_label``; rebuilding them keeps the form visible as
-    authored. Editor ``gui-input-*`` inputs render their own label.
+    authored. Editor ``gui-input-*`` inputs render their own label; any other
+    radio group is written as its caption and one labelled radio per option.
     """
     children: List[Dict[str, Any]] = []
     for field in _sorted_elements(getattr(form, "inputFields", None) or []):
@@ -399,6 +401,13 @@ def _serialize_form_children(form: Form) -> List[Dict[str, Any]]:
             str(kind or "").startswith("gui-input-")
             for kind in (serialized.get("type"), attrs.get("data-gui-component"))
         )
+        # The editor's radio block keeps its shape (its data-gui-type is its own attribute)
+        editor_block = self_labelled or "data-gui-type" in (field.custom_attributes or {})
+        if field.field_type == InputFieldType.RadioGroup and field.options and not editor_block:
+            if label:
+                children.append({"tagName": "label", "components": [{"type": "textnode", "content": label}]})
+            children.extend(_radio_buttons(field, attrs))
+            continue
         if label and not self_labelled:
             label_node: Dict[str, Any] = {"tagName": "label", "components": [{"type": "textnode", "content": label}]}
             field_id = attrs.get("id")
@@ -416,6 +425,23 @@ def _serialize_form_children(form: Form) -> List[Dict[str, Any]]:
         "components": [{"type": "textnode", "content": getattr(form, "submit_label", None) or "Submit"}],
     })
     return children
+def _radio_buttons(field: InputField, attrs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """A RadioGroup as the editor canvas shows it: a ``<label>`` around a radio
+    per option, all sharing the group's name (read back as one group)."""
+    shared = {key: attrs[key] for key in ("name", "data-field-name") if attrs.get(key)}
+    shared.setdefault("name", field.name)
+    buttons = []
+    for index, option in enumerate(field.options):
+        radio = {"type": "radio", **shared, "value": option.value}
+        if index == 0 and attrs.get("id"):
+            radio["id"] = attrs["id"]
+        if field.required:
+            radio["required"] = ""
+        buttons.append({"tagName": "label", "components": [
+            {"tagName": "input", "attributes": radio},
+            {"type": "textnode", "content": f" {option.label or option.value}"},
+        ]})
+    return buttons
 # ---------------------------------------------------------------------------
 # Attribute builders
 # ---------------------------------------------------------------------------
@@ -809,6 +835,12 @@ def _apply_alert_attributes(alert: Alert, attrs: Dict[str, Any]) -> None:
     if content:
         attrs.setdefault("data-content", content)
     attrs.setdefault("data-dismissible", "true" if getattr(alert, "dismissible", False) else "false")
+def _option_list_attribute(items: List[str]) -> str:
+    """Option values or labels as ``data-options`` keeps them: comma-separated,
+    or a JSON list when one of them holds a comma."""
+    return json.dumps(items, ensure_ascii=False) if any("," in item for item in items) else ",".join(items)
+
+
 def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> None:
     """Expose InputField traits so parse_input_field can rebuild them on re-import.
 
@@ -842,9 +874,9 @@ def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> N
     ]
     options = [(value, label or value) for value, label in options if value]
     if options:
-        attrs.setdefault("data-options", ",".join(value for value, _ in options))
+        attrs.setdefault("data-options", _option_list_attribute([value for value, _ in options]))
         if any(value != label for value, label in options):
-            attrs.setdefault("data-option-labels", ",".join(label for _, label in options))
+            attrs.setdefault("data-option-labels", _option_list_attribute([label for _, label in options]))
     if getattr(field, "min_value", None) is not None:
         attrs.setdefault("data-min", field.min_value)
     if getattr(field, "max_value", None) is not None:

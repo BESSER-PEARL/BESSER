@@ -102,15 +102,31 @@ editor's form is processed, the class comes from the form's ``data-source``
 (class id or name) or, without one, from the input names when they are all
 attributes of exactly one class and supply every attribute a new record of it
 requires (so a lookup form is not bound); a ``<label>`` becomes its input's ``label``
-and the first submit button's text the ``submit_label``. The ``<input type="radio">``
-buttons of a form that share a ``name`` become one ``RadioGroup`` field: one
-``SelectOption`` per button in document order (its ``value``, shown with its label),
-``required`` when any button is, and captioned by the label before the group. When
-no button has a value and the group is bound to an enumeration attribute, its
-options are the enumeration's literals. A ``<select>`` without ``data-options``
-takes its options from its ``<option>`` children (the ``value``, else the text,
-shown with the text); a blank or disabled option is not a choice, and a bound
-select without options offers the literals of its enumeration attribute. The React generator
+and the first submit button's text the ``submit_label``. An input inside a
+``<label>`` (or another text element) is kept and labelled with that text. When
+the inputs do not name one class together, the class is inferred from the
+inputs outside labels, so a consent checkbox or a "remember me" switch does not
+unbind the form; an input that edits no attribute is not sent.
+
+The ``<input type="radio">`` buttons of a form that share a ``name`` become one
+``RadioGroup`` field: one ``SelectOption`` per button in document order (its
+``value``, else its label, shown with its label; ``data-options`` on a button
+are its options), each value once, ``required`` when any button is, and
+captioned by the label before the group. A ``<select>`` without
+``data-options`` takes its options from its ``<option>`` children (the
+``value``, else the text, shown with the text); a blank or disabled option is
+not a choice. When a radio group or dropdown is bound to an enumeration
+attribute, its option values are the enumeration's literals (matched by name,
+ignoring case, else by the label); options matching no literal are dropped,
+and a field left without options offers every literal. A pre-selected choice
+(``checked`` / ``selected``) is not kept as the field's default, and a
+``<select multiple>`` stays a ``Dropdown``. Exported back to the editor, a
+radio group is written as its caption and one labelled radio per option (the
+editor's own radio block keeps its shape), and ``data-options`` /
+``data-option-labels`` hold the option values and labels, as a JSON list when
+one of them contains a comma.
+
+The React generator
 renders a bound form as a ``FormBlock`` that POSTs to ``/<class>/`` (see
 :doc:`../../generators/react`).
 

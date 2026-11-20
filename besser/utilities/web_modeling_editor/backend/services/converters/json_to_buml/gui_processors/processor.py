@@ -520,8 +520,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             attach_meta(input_field, meta)
             return input_field
 
-        # === LABEL AROUND AN INPUT (its input is kept, labelled with its text) ===
-        if "label" in (tag, comp_type) and wraps_input(component):
+        # === LABEL (OR OTHER TEXT) AROUND AN INPUT (its input is kept, labelled with its text) ===
+        if (comp_type in {"text", "label"} or tag in TEXT_TAGS) and wraps_input(component):
             name = get_unique_name(component, "Container")
             container = parse_label_around_input(component, styling, name, meta, parse_component_list)
             attach_meta(container, meta)

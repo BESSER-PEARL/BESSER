@@ -577,8 +577,13 @@ _TOP_LEVEL_DECL_RE = re.compile(
 )
 _EXPORT_DEFAULT_RE = re.compile(r"^export\s+default\b", re.MULTILINE)
 _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
+# `export { A } from "./a"` / `export * from "./b"`: a barrel's re-exports.
+_REEXPORT_RE = re.compile(r"^export\s+(?:type\s+)?(?:\*|\{)[^;\n]*\bfrom\b", re.MULTILINE)
 # A rewrite of a large file shorter than this share of its non-blank lines has left code out.
 _MIN_REWRITE_SHARE = 0.6
+# Above these sizes a rewrite of a file this run did not create must keep its code.
+_GENERATED_REWRITE_LINES = 200
+_MODIFY_RUN_REWRITE_LINES = 15
 # A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
 _COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
 # Fewer lost lines beside a new "remaining unchanged" comment is an edit, not left-out code.
@@ -617,31 +622,55 @@ def _placeholder_standing_in(before: str, after: str) -> str | None:
     return None
 
 
-def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None:
-    """Why a whole rewrite of a large generated frontend file may lose code.
+class _Outline(NamedTuple):
+    """What a rewrite must keep of a source file: its top-level names, and counts
+    of the registrations a name check misses (decorators, routes, module-level calls)."""
+    names: set[str]
+    counts: dict[str, int]
 
-    ``""`` when it keeps the file's code; ``None`` when the file is not frontend
-    source with listable declarations, which keeps the two-attempt rule.
-    """
-    if not frontend_source.supports(rel_path) or "frontend" not in rel_path.split("/")[:-1]:
-        return None
-    old_code, new_code = _strip_comments(before, rel_path), _strip_comments(after, rel_path)
-    old_names = set(_TOP_LEVEL_DECL_RE.findall(old_code))
-    if not old_names:
-        return None
+
+def _outline(rel_path: str, code: str) -> _Outline | None:
+    """The outline of Python or TS/JS source; None for other files and unparsable Python."""
+    if rel_path.lower().endswith(".py"):
+        try:
+            tree = ast.parse(code)
+        except (SyntaxError, ValueError):
+            return None
+        names, decorators, calls = set(), 0, 0
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+                decorators += len(node.decorator_list)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names.update(target.id for target in targets if isinstance(target, ast.Name))
+            elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                calls += 1
+        return _Outline(names, {"decorators": decorators, "module-level calls": calls})
+    if frontend_source.supports(rel_path):
+        code = _strip_comments(code, rel_path)
+        return _Outline(set(_TOP_LEVEL_DECL_RE.findall(code)), {
+            "`export default` statements": len(_EXPORT_DEFAULT_RE.findall(code)),
+            "<Route> elements": len(_ROUTE_ELEMENT_RE.findall(code)),
+            "re-exports": len(_REEXPORT_RE.findall(code))})
+    return None
+
+
+def _rewrite_loss(rel_path: str, before: str, after: str) -> str:
+    """Why a whole rewrite of an existing file loses its code; ``""`` when it keeps it."""
     old_lines, new_lines = (sum(1 for line in text.splitlines() if line.strip()) for text in (before, after))
     if new_lines < _MIN_REWRITE_SHARE * old_lines:
         return (f"this rewrite has {new_lines} non-blank lines, under {_MIN_REWRITE_SHARE:.0%} "
                 f"of the file's {old_lines}")
-    dropped = sorted(old_names - set(_TOP_LEVEL_DECL_RE.findall(new_code)))
-    if dropped:
-        shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
-        return f"this rewrite drops {len(dropped)} of its declarations: {shown}"
-    if _EXPORT_DEFAULT_RE.search(old_code) and not _EXPORT_DEFAULT_RE.search(new_code):
-        return "this rewrite drops its `export default`"
-    old_routes, new_routes = (len(_ROUTE_ELEMENT_RE.findall(code)) for code in (old_code, new_code))
-    if new_routes < old_routes:
-        return f"this rewrite has {new_routes} <Route> elements where the file has {old_routes}"
+    old, new = _outline(rel_path, before), _outline(rel_path, after)
+    if old and new:
+        dropped = sorted(old.names - new.names)
+        if dropped:
+            shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
+            return f"this rewrite drops {len(dropped)} of its declarations: {shown}"
+        for what, count in old.counts.items():
+            if new.counts[what] < count:
+                return f"this rewrite has {new.counts[what]} {what} where the file has {count}"
     elision = find_elision(after)
     if elision and elision[1].strip() not in elided_lines(before):
         return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
@@ -901,11 +930,8 @@ class ToolExecutor:
         # Per generator output dir: file stamps taken just before the
         # generator ran (see _gen_dir / _track_generated_files).
         self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
-        # Per-path targeted edit attempts (modify_file and replace_file_lines,
-        # landed or refused). Two unlock write_file on a large generator file
-        # and in a modify run - the rewrite the recovery ladder sends to after
-        # two refused edits of either kind.
-        self._edit_attempts: dict[str, int] = {}
+        # Files write_file created this run: rewritten without the loss check.
+        self._created_files: set[str] = set()
         # Consecutive failed modify_file attempts per path. Escalates the
         # error message from "not found" to "stop retyping old_text, read the
         # file".
@@ -980,11 +1006,9 @@ class ToolExecutor:
         # items are open.
         self._tasks: list[dict] = []
         self._autoclose_lock = threading.Lock()
-        # Edit-first guardrail for MODIFY runs (set via
-        # ``enable_modify_guard``). In a modify run every existing file
-        # is a user's working app, so whole-file rewrites are rejected
-        # until the model has demonstrably tried targeted edits — the
-        # rewrite habit is where modify-run regressions come from.
+        # MODIFY runs (set via ``enable_modify_guard``): every existing file is
+        # part of the user's working app, so a rewrite of one over
+        # _MODIFY_RUN_REWRITE_LINES must keep its code.
         self._modify_guard = False
         # Whole-application generators refused once the scaffold exists (#666).
         self._locked_generators: frozenset[str] = frozenset()
@@ -2752,8 +2776,6 @@ class ToolExecutor:
         frozen = self._frozen(args["path"])
         if frozen:
             return frozen
-        rel_path = args["path"].replace("\\", "/")
-        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         view = self._read_views.get(args.get("read_id", ""))
         if view is None or view[0] != os.path.normcase(path):
             return {"error": "Unknown read_id for this file. Call read_file on the target region first.",
@@ -2938,65 +2960,23 @@ class ToolExecutor:
                 "rest with read_file, or edit the part you read with modify_file."
             )}
 
-        # Edit-first guardrail (MODIFY runs only): every existing
-        # non-trivial file is part of the user's working app — reject a
-        # whole-file rewrite until the model has tried at least two
-        # targeted edits on it. The >= 2 relaxation is what lets the
-        # recovery ladder's rewrite step (two refused edits) run.
-        if (
-            self._modify_guard
-            and os.path.isfile(path)
-            and self._edit_attempts.get(rel_path, 0) < 2
-        ):
+        # A rewrite must keep the code of a file this run did not create: a
+        # generated file over 200 lines, or in a modify run any file over 15
+        # lines. Small files and the model's own files are rewritten freely.
+        limit = (_MODIFY_RUN_REWRITE_LINES if self._modify_guard
+                 else _GENERATED_REWRITE_LINES if rel_path in self._generator_files else None)
+        if limit and os.path.isfile(path) and rel_path not in self._created_files:
             with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
-                existing_lines = f.read().count("\n") + 1
-            if existing_lines > 15:
-                return {
-                    "error": (
-                        f"'{rel_path}' already exists ({existing_lines} lines) and "
-                        "this is a MODIFY run — edit it in place with modify_file "
-                        "(exact old_text → new_text). A full rewrite risks dropping "
-                        "the customisations the app already carries. write_file "
-                        "unlocks for this file after two modify_file attempts, as "
-                        "a last resort."
-                    ),
-                }
-
-        # Size rule: a whole-file rewrite is cheapest and
-        # safest on a SMALL file (<=200 lines), which the model can reproduce
-        # faithfully after one read; it is a large file that risks dropping
-        # code. So small generated files unlock write_file immediately; a
-        # large one after two modify_file attempts, or at once for a frontend
-        # rewrite that keeps the file's code (_frontend_rewrite_loss).
-        if rel_path in self._generator_files and os.path.isfile(path):
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
                 existing = f.read()
             existing_lines = existing.count("\n") + 1
-            if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-                loss = _frontend_rewrite_loss(rel_path, existing, args["content"])
-                if loss is None:
-                    return {
-                        "error": (
-                            f"'{rel_path}' was created by a BESSER generator and is large "
-                            f"({existing_lines} lines) - too large to reproduce faithfully "
-                            "from one read. Use modify_file for targeted edits. write_file "
-                            "unlocks for this file after two modify_file attempts."
-                        ),
-                    }
-                if loss:
-                    return {
-                        "error": (
-                            f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines) "
-                            f"and {loss}. Rewrite it in full keeping that code, or use modify_file "
-                            "for targeted edits. write_file also unlocks for this file after two "
-                            "modify_file attempts."
-                        ),
-                    }
-            # Rewrite allowed (large file, or repeated modifies already tried) — log it
-            logger.info(
-                "Allowing rewrite of generated file: %s (%d lines, %d prior targeted edits)",
-                rel_path, existing_lines, self._edit_attempts.get(rel_path, 0),
-            )
+            loss = _rewrite_loss(rel_path, existing, args["content"]) if existing_lines > limit else ""
+            if loss:
+                origin = ("was created by a BESSER generator" if rel_path in self._generator_files
+                          else "existed before this run")
+                return {"error": (
+                    f"'{rel_path}' {origin} ({existing_lines} lines) and {loss}. Rewrite it "
+                    "in full keeping that code, or change it with modify_file."
+                ), "rejection_kind": "rewrite_loss"}
 
         before = None
         if os.path.isfile(path):
@@ -3035,6 +3015,8 @@ class ToolExecutor:
         makedirs_plain(os.path.dirname(path), root=self.workspace)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
+        if before is None:
+            self._created_files.add(rel_path)
         if before != args["content"]:
             self._note_task_write(args["path"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
@@ -3153,7 +3135,6 @@ class ToolExecutor:
         if frozen:
             self._note_rejection(rel_path, old_text, new_text)
             return frozen
-        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             content = f.read()
         replace_all = args.get("replace_all") is True
@@ -3492,9 +3473,6 @@ class ToolExecutor:
         self._last_missed_old_text.pop(rel_path, None)
         self._clear_rejections(rel_path)
         self._known_paths.add(rel_path.strip())
-        # Keeps the modify guard's "write_file unlocks after two modify_file
-        # attempts" escalation reachable.
-        self._fully_seen.add(rel_path.strip())
         result = {
             "status": "modified",
             "path": args["path"],
@@ -3513,25 +3491,10 @@ class ToolExecutor:
         return result
 
     def _scaffold_edit_route(self, rel_path: str, path: str) -> str:
-        """The write route ``_write_file`` actually permits for a generator file.
-
-        A rewrite of a generator file over 200 lines is itself refused until
-        two modify_file edits have been tried, so blanket "or write_file"
-        advice in another refusal walks the model into a second refusal.
-        """
-        try:
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as fh:
-                existing_lines = fh.read().count("\n") + 1
-        except OSError:
-            existing_lines = 0
-        if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-            return (
-                "Edit it in place with modify_file; write_file on this file "
-                "unlocks only after two modify_file attempts."
-            )
+        """The write route ``_write_file`` permits for a generator file."""
         return (
             "Edit it in place with modify_file, or read it in full and "
-            "write_file it back."
+            "write_file it back keeping its code."
         )
 
     def _delete_file(self, args: dict) -> dict:

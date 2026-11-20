@@ -1,0 +1,136 @@
+"""One write rule: an existing file shown whole this run, a rewrite that keeps its code.
+
+A rewrite of an existing file is refused for what it does to the file (it drops
+declarations, most of its lines, or abbreviates code), never for how many edit
+calls came before it. Reproduced before these tests: a modify run refused a
+full-read rewrite that kept every line of a 42-line module, a generated
+241-line router refused a rewrite that kept all of its functions, and two
+throwaway ``modify_file`` calls (an empty old_text, a no-op) unlocked a rewrite
+that dropped half of a generated module's functions.
+"""
+
+import os
+
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+
+
+def call(executor, name, **args):
+    return executor.execute_typed(name, args).payload
+
+
+def _functions(prefix, count):
+    return "".join(f"def {prefix}{i}():\n    return {i}\n\n" for i in range(count))
+
+
+def _seed(workspace, rel, source):
+    target = os.path.join(workspace, rel)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(source)
+
+
+def _modify_run(tmp_path, rel, source):
+    _seed(str(tmp_path), rel, source)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.enable_modify_guard()
+    return executor
+
+
+def _generated(tmp_path, rel, source):
+    _seed(str(tmp_path), rel, source)
+    executor = ToolExecutor(workspace=str(tmp_path))
+    executor.update_generator_files([rel], [])
+    return executor
+
+
+def _junk_edits(executor, rel):
+    """Two calls that change nothing: an empty quote and a no-op."""
+    assert "error" in call(executor, "modify_file", path=rel, old_text="  ", new_text="x")
+    assert "error" in call(executor, "modify_file", path=rel, old_text="return 1", new_text="return 1")
+
+
+def test_a_full_read_rewrite_that_keeps_the_code_lands_in_a_modify_run(tmp_path):
+    source = _functions("f", 14)
+    executor = _modify_run(tmp_path, "backend/util.py", source)
+    call(executor, "read_file", path="backend/util.py")
+
+    written = call(executor, "write_file", path="backend/util.py",
+                   content=source + "def g():\n    return 0\n")
+
+    assert written.get("status") == "written", written
+
+
+def test_a_generated_backend_rewrite_that_keeps_its_functions_lands(tmp_path):
+    rel = "backend/routers/book.py"
+    source = _functions("r", 80)
+    executor = _generated(tmp_path, rel, source)
+    call(executor, "read_file", path=rel)
+
+    written = call(executor, "write_file", path=rel, content=source + "def extra():\n    return 1\n")
+
+    assert written.get("status") == "written", written
+
+
+def test_a_generated_backend_rewrite_that_drops_functions_is_refused_by_name(tmp_path):
+    rel = "backend/routers/book.py"
+    source = _functions("r", 80)
+    executor = _generated(tmp_path, rel, source)
+    call(executor, "read_file", path=rel)
+
+    lossy = source.replace("def r7():\n    return 7\n\n", "")
+    refused = call(executor, "write_file", path=rel, content=lossy)
+
+    assert "r7" in refused.get("error", ""), refused
+    assert "unlock" not in refused["error"]
+    with open(tmp_path / rel, encoding="utf-8") as handle:
+        assert handle.read() == source
+
+
+def test_junk_edits_do_not_unlock_a_lossy_rewrite(tmp_path):
+    rel = "backend/routers/book.py"
+    source = _functions("r", 80)
+    executor = _generated(tmp_path, rel, source)
+    call(executor, "read_file", path=rel)
+    _junk_edits(executor, rel)
+
+    refused = call(executor, "write_file", path=rel, content=_functions("r", 40))
+
+    assert "error" in refused, refused
+    with open(tmp_path / rel, encoding="utf-8") as handle:
+        assert handle.read() == source
+
+
+def test_junk_edits_do_not_unlock_a_lossy_rewrite_in_a_modify_run(tmp_path):
+    source = _functions("f", 14)
+    executor = _modify_run(tmp_path, "backend/util.py", source)
+    call(executor, "read_file", path="backend/util.py")
+    _junk_edits(executor, "backend/util.py")
+
+    lossy = source.replace("def f5():\n    return 5\n\n", "")
+    refused = call(executor, "write_file", path="backend/util.py", content=lossy)
+
+    assert "f5" in refused.get("error", ""), refused
+
+
+def test_a_file_created_this_run_is_rewritten_freely_in_a_modify_run(tmp_path):
+    executor = _modify_run(tmp_path, "backend/seed.py", _functions("s", 3))
+    created = call(executor, "write_file", path="backend/new_service.py", content=_functions("n", 20))
+    assert created.get("status") == "written", created
+
+    rewritten = call(executor, "write_file", path="backend/new_service.py", content=_functions("m", 4))
+
+    assert rewritten.get("status") == "written", rewritten
+
+
+def test_a_rewrite_from_a_partial_view_is_still_refused(tmp_path):
+    """The file must have been shown whole: a landed edit does not count as a read."""
+    source = _functions("f", 14)
+    executor = _modify_run(tmp_path, "backend/util.py", source)
+    edited = call(executor, "modify_file", path="backend/util.py",
+                  old_text="def f3():\n    return 3\n", new_text="def f3():\n    return 30\n")
+    assert edited.get("status") == "modified", edited
+
+    refused = call(executor, "write_file", path="backend/util.py",
+                   content=source.replace("return 3\n", "return 30\n") + "def g():\n    return 0\n")
+
+    assert "have read only part" in refused.get("error", ""), refused

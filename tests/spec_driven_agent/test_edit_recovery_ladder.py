@@ -70,14 +70,15 @@ def test_the_rewrite_step_in_a_modify_run_is_not_refused(tmp_path):
     assert written.get("status") == "written", written
 
 
-def test_the_modify_run_rule_still_refuses_a_cold_rewrite(tmp_path):
+def test_the_modify_run_rule_still_refuses_a_lossy_rewrite(tmp_path):
     _seed(tmp_path, "app.py", 40)
     ex = ToolExecutor(workspace=str(tmp_path))
     ex.enable_modify_guard()
 
     _refused_range_edit(ex, "app.py")
-    refused = _follow_rewrite(ex, "app.py")
-    assert "MODIFY run" in refused.get("error", ""), refused
+    call(ex, "read_file", path="app.py")
+    refused = call(ex, "write_file", path="app.py", content="v_0 = 0\nv_1 = 1\n")
+    assert "existed before this run" in refused.get("error", ""), refused
 
 
 # -- one instruction per result ---------------------------------------------

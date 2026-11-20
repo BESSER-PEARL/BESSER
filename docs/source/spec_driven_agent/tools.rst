@@ -39,7 +39,8 @@ is claimed. Missing-file responses suggest existing paths without substituting
 them for the requested path.
 
 ``write_file`` over an existing file requires the whole file to have been read
-this run; a rewrite from memory would drop scaffold code. Like the other
+(or written) this run; a rewrite from memory would drop scaffold code, and a
+landed ``modify_file`` does not count as a read. Like the other
 editors, it refuses an edit that would make the ORM or Pydantic module
 (``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
 ``N| `` line numbering that ``read_file`` displays (``7| code``, or the padded
@@ -64,23 +65,28 @@ customization and validation repair. When a ``modify_file`` miss brackets one
 region, or a range edit's ``read_id`` is stale, the result holds that span as a
 ``located_range`` with a fresh ``read_id`` for ``replace_file_lines``. From the
 second refused edit on a file (with no landed edit between), the step is to read
-the whole file and ``write_file`` it back; two targeted edit attempts of either
-kind also unlock ``write_file`` where it is otherwise held back (a large
-generated file, a modify run). The orchestrator's reminders repeat that step.
-A generated frontend page or component (``.tsx``, ``.jsx``, ``.ts`` or ``.js``
-under a ``frontend`` folder) over 200 lines needs no such attempts when the
-rewrite keeps its code: at least 60% of its non-blank lines, every column-0
-declaration outside comments, its ``export default``, every ``<Route>``
-element, no new elision such as ``{/* ... unchanged ... */}``, and no new
+the whole file and ``write_file`` it back. The orchestrator's reminders repeat
+that step.
+
+A rewrite of a file this run did not create must keep its code when the file
+is a generated one over 200 lines, or, in a modify run, any file over 15
+lines. Keeping its code means: at least 60% of its non-blank lines; every
+top-level declaration (Python ``def``, ``class`` and assigned names; TS/JS
+column-0 declarations outside comments); no fewer Python decorators and
+module-level calls (``app.include_router(...)``), and no fewer TS/JS ``export
+default`` statements, ``<Route>`` elements and re-exports (``export { A } from
+"./a"``); no new elision such as ``{/* ... unchanged ... */}``; and no new
 comment-only line that reads as a placeholder (``{/* remaining fields
 unchanged */}``) in place of three or more of the file's lines that the
 rewrite has fewer copies of (a repeated section counts), or added while a
 block of three or more such lines is deleted elsewhere, however much the
-rewrite adds. A rewrite that misses one is
-refused saying which. Backend and other files, and frontend files with no
-declarations to compare, keep the two-attempt rule.
-Repeated failures do not permanently freeze the file; an agent that ignores
-recovery is still bounded by the loop and run budgets.
+rewrite adds. A rewrite that misses one is refused saying which
+(``rejection_kind`` ``rewrite_loss``), whatever edits came before it. A file
+``write_file`` created this run, and a smaller file, is rewritten freely. A
+change these checks cannot see (one entry dropped from a large object literal)
+is a targeted edit's job, and is not caught here. Repeated failures do not
+permanently freeze the file; an agent that ignores recovery is still bounded
+by the loop and run budgets.
 
 ``read_file`` returns a ``read_id`` tied to the resolved path, whole-file content
 hash, and actually displayed lines. ``replace_file_lines`` accepts that ID,

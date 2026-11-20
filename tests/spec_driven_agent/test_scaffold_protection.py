@@ -10,8 +10,8 @@ The named contradiction (a write_file refusal offering ``delete_file +
 write_file`` while delete_file refuses generator files) was removed in
 d55dee91. What remained was the mirror image: the delete refusal offered
 ``write_file`` unconditionally, while ``_write_file`` refuses a generator file
-over 200 lines until two modify_file edits have landed. Every refusal must now
-name the route the executor actually permits FOR THAT FILE.
+over 200 lines that drops its code. Every refusal must now name the route the
+executor actually permits FOR THAT FILE.
 """
 from __future__ import annotations
 
@@ -45,19 +45,15 @@ def test_delete_refusal_on_a_large_scaffold_file_does_not_offer_a_refused_rewrit
     refusal = _run(executor, "delete_file", {"path": rel})["error"]
     assert "Refused to delete" in refusal
     assert "modify_file" in refusal
-    # The advice must be true: write_file on this file is itself refused now.
-    assert "unlocks only after two modify_file attempts" in refusal
+    # The advice must be true: only a rewrite that keeps the code lands.
+    assert "keeping its code" in refusal
 
     blocked = _run(executor, "write_file", {"path": rel, "content": "x = 1\n"})
     assert "error" in blocked, "the delete refusal named a rule the executor does not enforce"
 
-    for n in (0, 1):
-        landed = _run(executor, "modify_file", {
-            "path": rel, "old_text": f"line_{n} = {n}", "new_text": f"line_{n} = {n + 10}",
-        })
-        assert landed.get("status") == "modified"
-    unlocked = _run(executor, "write_file", {"path": rel, "content": "x = 1\n"})
-    assert unlocked.get("status") == "written"
+    source = open(os.path.join(str(tmp_path), rel), encoding="utf-8").read()
+    kept = _run(executor, "write_file", {"path": rel, "content": source + "x = 1\n"})
+    assert kept.get("status") == "written"
 
 
 def test_delete_refusal_on_a_small_scaffold_file_offers_the_rewrite_that_works(tmp_path):

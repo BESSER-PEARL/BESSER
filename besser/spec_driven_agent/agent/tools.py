@@ -93,13 +93,13 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "write_file",
         "description": (
-            "Create a new file, or replace an existing file's full contents. "
-            "Use it for NEW files (configs, new modules, pages), and to rewrite "
-            "the whole of any existing file you have just read in full - a "
-            "first-class way to change a file here, not a last resort: it is "
-            "the most reliable write tool. Use modify_file for a small edit to a file you would "
-            "rather not reproduce in full. Do not rewrite a file you have not "
-            "read this run."
+            "Create a new file, or replace an existing file's whole content. An existing "
+            "file must have been read in full (or written) this run. Refused, the file "
+            "unchanged, when a parseable file would no longer parse or import, or when "
+            "a rewrite of a file this run did not create (generated and over 200 lines; "
+            "in a modify run, over 15 lines) drops its code: most of its lines, a "
+            "top-level declaration, a route or registration, or code left as a "
+            "placeholder. For a small change to a large file, modify_file is cheaper."
         ),
         "input_schema": {
             "type": "object",

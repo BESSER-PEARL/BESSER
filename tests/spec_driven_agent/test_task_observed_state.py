@@ -168,11 +168,10 @@ def test_a_model_close_needs_no_evidence_quotes(orchestrator):
     assert _task_findings(orchestrator) == []
 
 
-def test_a_word_close_of_an_item_nothing_else_checks_is_reported(orchestrator, monkeypatch):
+def test_a_word_close_of_an_item_nothing_else_checks_is_reported(orchestrator):
     """A modeled rule the generators could not enforce: only this item holds it."""
     rule = "Enforce the modeled rule 'positivePages' of Book"
-    monkeypatch.setattr(orchestrator, "_unchecked_task_texts", lambda: {rule})
-    orchestrator.executor.set_tasks([rule, "Make the order list easier to scan"])
+    orchestrator.executor.set_tasks([{"text": rule, "unchecked": True}, "Make the order list easier to scan"])
     orchestrator.executor.execute_typed("task_list", {"action": "done", "ids": [1, 2]})
 
     [finding] = _task_findings(orchestrator)
@@ -183,15 +182,42 @@ def test_a_word_close_of_an_item_nothing_else_checks_is_reported(orchestrator, m
                                               f"{rule} (the agent marked it done)")
 
 
-def test_the_unchecked_items_are_the_model_rule_and_derived_attribute_items(orchestrator, monkeypatch):
+def test_the_mark_survives_a_resume_and_an_old_checkpoint_has_none(orchestrator):
+    orchestrator.executor.set_tasks([{"text": "Compute the derived total", "unchecked": True}])
+    orchestrator.executor.execute_typed("task_list", {"action": "done", "id": 1})
+    snapshot = orchestrator.executor.task_snapshot()
+    assert snapshot[0]["unchecked"] is True
+
+    orchestrator.executor.restore_tasks(snapshot)
+    assert len(_task_findings(orchestrator)) == 1
+    orchestrator.executor.restore_tasks([{k: v for k, v in snapshot[0].items() if k != "unchecked"}])
+    assert _task_findings(orchestrator) == []
+
+
+def test_the_rule_and_derived_attribute_items_are_seeded_unchecked(orchestrator, monkeypatch):
     monkeypatch.setattr(orchestrator, "_unenforced_rule_tasks", lambda: ["rule item"])
     orchestrator._generator_used = "generate_fastapi_backend"
-    monkeypatch.setattr(
-        "besser.spec_driven_agent.pipeline.orchestrator.derived_attribute_tasks", lambda model: ["derived item"])
+    monkeypatch.setattr(orchestrator_module, "derived_attribute_tasks", lambda model: ["derived item"])
 
-    assert orchestrator._unchecked_task_texts() == {"rule item", "derived item"}
-    orchestrator._modify_mode = True
-    assert orchestrator._unchecked_task_texts() == {"rule item"}
+    seeded = {t["text"]: t.get("unchecked") for t in orchestrator._deterministic_gap_tasks()
+              if isinstance(t, dict) and t["text"].endswith("item")}
+
+    assert seeded == {"rule item": True, "derived item": True}
+
+
+def test_the_derived_enum_initial_state_item_is_seeded_unchecked(orchestrator, monkeypatch):
+    """The planner list carries it as text; Phase 2 marks it when it seeds the checklist."""
+    enum_item = "Order.status is a derived, required Status attribute with no default"
+    monkeypatch.setattr(orchestrator_module, "_note_derived_enum_initial_state", lambda model, request: [enum_item])
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: [enum_item, "planner item"])
+    orchestrator._generator_used = "generate_fastapi_backend"
+    monkeypatch.setattr(orchestrator.client, "chat", lambda **kwargs: {
+        "stop_reason": "end_turn", "content": [{"type": "text", "text": "done"}]}, raising=False)
+
+    orchestrator._run_phase2("Build the order API.", extra_issues=[])
+
+    marks = {t["text"]: t.get("unchecked", False) for t in orchestrator.executor.task_snapshot()}
+    assert marks[enum_item] is True and marks["planner item"] is False
 
 
 def test_an_item_whose_check_fails_stays_a_blocker(orchestrator):

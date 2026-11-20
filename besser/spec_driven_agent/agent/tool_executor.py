@@ -1089,6 +1089,7 @@ class ToolExecutor:
                      **({"kind": kind} if isinstance(kind, str) and kind else {}),
                      **({"planning_notes": planning_notes} if planning_notes else {}),
                      **({"_action_contract": list(action)} if action else {}),
+                     **({"unchecked": True} if isinstance(t, dict) and t.get("unchecked") is True else {}),
                      "blocked": False}
                 )
 
@@ -1178,7 +1179,7 @@ class ToolExecutor:
             {"id": t["id"], "text": t["text"], "done": bool(t["done"]),
              "blocked": bool(t.get("blocked")),
              "verification": t.get("verification", "unverified"),
-             **{key: t[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract") if key in t}}
+             **{key: t[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract", "unchecked") if key in t}}
             for t in self._tasks
         ]
 
@@ -1214,7 +1215,7 @@ class ToolExecutor:
                 "blocked": item.get("blocked") is True,
                 "verification": item.get("verification", "unverified"),
                 "files": task_paths(text),
-                **{key: item[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract") if key in item},
+                **{key: item[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract", "unchecked") if key in item},
             })
         self._tasks = restored
 

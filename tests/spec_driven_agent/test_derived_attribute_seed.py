@@ -67,7 +67,7 @@ def _seeds(tmp_path, generator_used="generate_fastapi_backend", modify=False):
     orch._generator_used = generator_used
     orch._instructions = "Build the shop API."
     orch._modify_mode = modify
-    return [t for t in orch._deterministic_gap_tasks() if isinstance(t, str) and "derived" in t]
+    return [t for t in orch._deterministic_gap_tasks() if isinstance(t, dict) and "derived" in t["text"]]
 
 
 def test_the_task_is_seeded_on_a_new_fastapi_scaffold_only(tmp_path):

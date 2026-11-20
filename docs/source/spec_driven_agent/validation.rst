@@ -159,9 +159,11 @@ satisfy it. The JSX rule matters even where build verification is enabled:
 no build check can see it. A Vite project counts as using the automatic runtime
 only when its ``vite.config`` imports ``@vitejs/plugin-react`` and calls it
 inside ``plugins: [...]``. Declaring the package in ``package.json``, or naming
-it in a comment, does not enable it. A ``package.json`` dependency whose version
-is ``"latest"``, ``"*"``, ``"x"`` or empty is a blocker naming the file and the
-package: the install would depend on whatever npm publishes that day.
+it in a comment, does not enable it. Dependencies whose version is ``"latest"``,
+``"*"``, ``"x"``, empty or another dist-tag are one warning per ``package.json``,
+naming the packages: the install still works, but takes whatever npm publishes
+that day, so the build is not reproducible. The warning points at the lockfile
+when the project has one and never suggests a version number.
 
 Create forms are checked statically against the backend's ``*Create`` Pydantic
 schemas, because the runtime probes drive HTTP and never render a page. Each

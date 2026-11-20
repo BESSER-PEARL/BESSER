@@ -866,3 +866,30 @@ def test_a_named_file_over_the_budget_is_shown_as_an_excerpt(tmp_path):
 
     prompt = client.requests[0]["messages"][0]["content"]
     assert "(read_id " not in prompt and "backend/routers/order.py (lines 1-10):" in prompt
+
+
+def _fits_by_size_not_by_text(tmp_path):
+    """About 21,000 bytes, about 41,000 characters once read_file numbers its lines."""
+    (tmp_path / "backend/routers/order.py").write_bytes(("from sql_alchemy import Order\n" + "a = 1\n" * 3500).encode())
+
+
+def test_a_named_file_left_out_of_the_prompt_is_not_answered_with_a_stub(tmp_path):
+    client = _Client(_tools(("read_file", {"path": "backend/routers/order.py"})))
+    orch = _build(tmp_path, client)
+    _fits_by_size_not_by_text(tmp_path)
+
+    orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True)
+
+    assert "backend/routers/order.py (read_id " not in client.requests[0]["messages"][0]["content"]
+    [read] = _results(client.requests[1])
+    assert "unchanged" not in read and "3501| a = 1" in read
+
+
+def test_a_named_file_left_out_of_the_prompt_still_needs_a_read_before_a_rewrite(tmp_path):
+    orch = _build(tmp_path, _Client())
+    _fits_by_size_not_by_text(tmp_path)
+
+    orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True)
+
+    result = orch.executor.execute_typed("write_file", {"path": "backend/routers/order.py", "content": "x = 1\n"})
+    assert not result.succeeded and "you have not read it this run" in str(result.payload)

@@ -27,6 +27,7 @@ import shutil
 import time
 from collections import Counter
 
+from besser.spec_driven_agent.agent.edit_apply import gutter_line
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
@@ -1271,11 +1272,7 @@ class Phase3RepairMixin:
                                      "is valid for replace_file_lines; quote old_text without the line-number "
                                      "gutter):"])
             prompt_parts.extend(seeded.values())
-        # Show the offending lines: with only "file line N" a model spends a
-        # turn on read_file; with the excerpt it calls modify_file immediately.
-        # A BOUNDED window is the point -- SWE-agent's ablation scores
-        # a 100-line window above the whole file (18.0 vs 12.7 on SWE-bench
-        # Lite), so this never pastes a file larger than the budget above.
+        # A named file that did not fit the budget above gets the lines around its blocker instead.
         excerpts = self._excerpts_for(blockers, shown=set(seeded))
         if excerpts:
             prompt_parts.append("")
@@ -1543,19 +1540,26 @@ class Phase3RepairMixin:
     def _seed_named_files(self, paths: list[str]) -> dict[str, str]:
         """``{path: prompt block}``: the files the blockers name, in order, read through
         ``read_file`` so a re-read in this conversation is answered with a stub. A file
-        that does not fit what is left of ``_FIX_PROMPT_FILE_CHARS`` is left out."""
+        that does not fit what is left of ``_FIX_PROMPT_FILE_CHARS`` is left out unread:
+        a read records the file as seen."""
         seeded: dict[str, str] = {}
         budget = _FIX_PROMPT_FILE_CHARS
         for rel in dict.fromkeys(paths):
+            path = os.path.join(self.output_dir, rel)
             try:
-                if os.path.getsize(os.path.join(self.output_dir, rel)) > budget:
+                if os.path.getsize(path) > budget:
                     continue
-            except OSError:
+                with open(path, encoding="utf-8") as handle:
+                    lines = handle.read().split("\n")
+            except (OSError, UnicodeDecodeError):
+                continue
+            # As read_file numbers it.
+            if sum(len(gutter_line(n, line)) + 1 for n, line in enumerate(lines, 1)) - 1 > budget:
                 continue
             result = self.executor.execute_typed("read_file", {"path": rel})
             payload = result.payload if result.succeeded else {}
             content = payload.get("content")
-            if not content or payload.get("truncated") or len(content) > budget:
+            if not content:
                 continue
             budget -= len(content)
             seeded[rel] = "\n".join(["", f"{rel} (read_id {payload.get('read_id')}, whole file):",

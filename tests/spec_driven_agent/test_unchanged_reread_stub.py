@@ -153,7 +153,9 @@ def test_a_phase3_fix_round_starts_without_stubs(tmp_path):
     orch = _orchestrator(tmp_path, client)
     orch.executor.execute("read_file", {"path": "app.py"})  # read in an earlier conversation
 
-    orch._invoke_phase3_fix_loop([ValidationIssue("blocker", "syntax: app.py line 1")], is_first_attempt=True)
+    # A blocker that names no file: app.py is not in the round's prompt.
+    orch._invoke_phase3_fix_loop([ValidationIssue("blocker", "python contract: a route returns 500")],
+                                 is_first_attempt=True)
 
     result = next(block["content"] for message in client.sent[1] if isinstance(message["content"], list)
                   for block in message["content"] if isinstance(block, dict) and block.get("type") == "tool_result")

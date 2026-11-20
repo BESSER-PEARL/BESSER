@@ -347,8 +347,10 @@ after ``App``, so the design's class, ``:root``, ``@media`` and ``:hover`` rules
 apply to the generated pages and win ties with the components' own CSS. Components
 render their ``css_classes`` as ``className``; tables, charts and metric cards
 forward it through their runtime blocks to the rendered root element.
-Per-element ``Styling`` is still emitted as inline styles. Without a stylesheet
-neither the file nor the import is generated.
+Per-element ``Styling`` is still emitted as inline styles, without the chart
+palette when it is ``"default"`` (what a pie chart falls back to) and no bar
+colour would take its place. Without a stylesheet neither the file nor the
+import is generated.
 
 A design is written against the browser's defaults, and the Tailwind reset the
 app imports (``index.css``) removes them. ``design.css`` therefore starts with a

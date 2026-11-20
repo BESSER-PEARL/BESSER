@@ -411,6 +411,27 @@ def test_an_older_claude_run_streams_and_forces_the_tool(tmp_path):
     _assert_usage_matches_script(client, model, fake)
 
 
+def test_a_compaction_is_in_the_run_log_and_shrinks_the_request(tmp_path):
+    """The request-size counter and the run log agree on where the history was rewritten."""
+    orchestrator, model, fake, client = _run(
+        tmp_path, _claude("claude-sonnet-4-6", thinking=False), SHORT_REQUEST)
+    phase2 = fake.of("phase2")
+    sizes = fake.request_chars("phase2")
+
+    lines = (tmp_path / ".besser_trace.jsonl").read_text(encoding="utf-8").splitlines()
+    compactions = [r["payload"] for r in map(json.loads, lines) if r["event"] == "compaction"]
+    assert len(compactions) == orchestrator._compaction_count >= 1
+    at = next(index for index, request in enumerate(phase2) if _is_compaction(request))
+    assert compactions[0]["turn"] == at + 1
+    assert compactions[0]["tokens_after"] < compactions[0]["tokens_before"]
+    assert len(sizes) == len(phase2)
+    assert sizes[at]["messages"] < sizes[at - 1]["messages"]
+    assert all(row["messages"] > sizes[index - 1]["messages"]
+               for index, row in enumerate(sizes) if 0 < index < at)
+    assert {(row["system"], row["tools"]) for row in sizes} == {(sizes[0]["system"], sizes[0]["tools"])}
+    assert sizes[0]["system"] > 1_000 and sizes[0]["tools"] > 1_000
+
+
 def test_a_crashed_claude_run_resumes_with_a_valid_first_request(tmp_path):
     """Crash on the request after the forced read, then resume on a fresh orchestrator."""
     script = shelf_script()

@@ -3,10 +3,6 @@
 The REAL orchestrator runs a whole run of the shelf app (FastAPI scaffold); only
 the model is scripted (``scripted_rig``). The script is small and neutral: read
 the scaffold, add a stats route and two modules, validate, close the checklist.
-
-Tests marked ``xfail(strict=True)`` record what the loop does today and are the
-acceptance gates of the packages named in their reasons: when a package lands,
-its gate passes and the marker has to go.
 """
 
 from __future__ import annotations
@@ -37,8 +33,7 @@ STATS_ROUTE = (
 )
 EDIT_TOOLS = {"modify_file", "write_file", "replace_file_lines"}
 # 12 turns: the script below needs 16 at one call per turn, 8 at two, 4 at four.
-# With auto-fix on, a cap this small reserves no turns for Phase 3 (the reserve
-# is at most a quarter of the cap and is dropped below one fix attempt).
+# The budget is 48 tool calls, 36 of them Phase 2's.
 MAX_TURNS = 12
 
 
@@ -161,22 +156,20 @@ def test_one_two_or_four_calls_per_turn_do_the_same_work(by_batch_size):
 # (b) Phase 3 keeps a share of the wall clock
 # ----------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Decision needed: Phase 2 now stops at its share of the clock and Phase 3 validates with "
-    "time left (test_run_budget.py), but no repair turn follows: the open checklist items are "
-    "'task unverified' warnings, not blockers, and the audit rules out promoting them. Whether "
-    "a budget-cut Phase 2's open items start a repair attempt is the owner's call."))
 def test_phase3_gets_time_when_phase2_spends_the_runtime_cap(tmp_path, monkeypatch):
-    _no_app_boot(monkeypatch)
+    """Phase 2 would spend the whole cap; an observed failure is left for Phase 3, which
+    keeps time to validate and to repair it. Open checklist items alone start no repair (d)."""
+    _no_app_boot(monkeypatch, [CREATE_500])
     clock = FakeClock()
     monkeypatch.setattr(orchestrator_module, "time", clock)
     monkeypatch.setattr(phase3_module, "time", clock)
     agent, entry = _run(tmp_path, shelf_script(), 1, clock=clock, seconds_per_turn=60.0,
-                        max_runtime_seconds=600)
+                        max_runtime_seconds=600, phase3_calls=[("read_file", {"path": BOOK_ROUTER})])
     orchestrator = agent.orchestrator
-    assert orchestrator._phase2_stop_reason == "timeout"
+    assert orchestrator._phase2_stop_reason == "validation_required"
+    assert orchestrator._phase2_stop_detail.startswith("time share used")
     assert not orchestrator._phase3_exit_reason.startswith("skipped")
-    assert entry, "Phase 3 ran no validation round"
+    assert entry["blockers"] == [CREATE_500], "Phase 3 ran no validation round"
     assert agent.sent["phase3"], "Phase 3 made no repair turn"
 
 

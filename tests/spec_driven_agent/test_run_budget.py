@@ -59,12 +59,36 @@ def test_phase2_stops_at_its_share_of_the_clock_and_phase3_validates(tmp_path, m
     orchestrator = run_scripted(tmp_path, agent, max_runtime_seconds=600,
                                 on_findings=lambda attempt, issues, restored=False: rounds.append(clock.now))
 
-    assert orchestrator._phase2_stop_reason == "timeout"
+    # Its share, not the cap: it hands off to validation, not as a run stopped by its time limit.
+    assert orchestrator._phase2_stop_reason == "validation_required"
+    assert orchestrator._phase2_stop_detail == "time share used (150 of 600 s reserved for validation and repair)"
     assert rounds, "Phase 3 ran no validation round"
     assert not orchestrator._phase3_exit_reason.startswith("skipped")
     # A scripted turn takes 60 s: Phase 2's last call started before Phase 3's share began.
     last_call_at = rounds[0] - 1_000.0 - 60.0
     assert last_call_at < 600 * (1 - _PHASE3_BUDGET_SHARE), f"Phase 2's last call started {last_call_at:.0f} s in"
+
+
+def _timed_run(tmp_path, monkeypatch, seconds_per_turn, **kwargs):
+    _no_app_boot(monkeypatch)
+    clock = FakeClock()
+    monkeypatch.setattr(orchestrator_module, "time", clock)
+    monkeypatch.setattr(phase3_module, "time", clock)
+    agent = ScriptedAgent(str(tmp_path), shelf_script(), TASKS, clock=clock, seconds_per_turn=seconds_per_turn)
+    return agent, run_scripted(tmp_path, agent, max_runtime_seconds=600, **kwargs)
+
+
+def test_a_phase2_cut_by_its_time_share_with_its_work_done_completes_when_validation_is_clean(
+        tmp_path, monkeypatch):
+    """28 s a turn on a 600 s cap: every scripted call is made, and the share ends Phase 2 before
+    the model ends its turn. It was reported as a run stopped by its time limit, though no cap
+    was reached and validation found nothing."""
+    agent, orchestrator = _timed_run(tmp_path, monkeypatch, 28.0)
+
+    assert sum(map(len, agent.sent["phase2"])) == len(shelf_script())
+    assert orchestrator._phase2_stop_detail.startswith("time share used")
+    assert orchestrator._phase3_exit_reason == "no blocker-class issues"
+    assert orchestrator._phase2_stop_reason == "completed" and orchestrator._phase2_exited_cleanly
 
 
 def test_verifying_one_call_per_turn_is_not_stagnation(tmp_path, monkeypatch):

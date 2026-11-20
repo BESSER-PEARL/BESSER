@@ -36,15 +36,17 @@ same multiple of turns (480) is kept only as a guard against a runaway loop.
 Phase 2 leaves Phase 3 a quarter of each budget: it stops with a quarter of the
 runtime cap and of the cost cap left, and, with auto-fix on, a quarter of the
 tool calls (Phase 2 may make 360 of the default 480). Phase 3 uses that share
-for its checks, the requirements judge and the repair loop. A Phase 2 that
-makes its share of tool calls with checklist items still open hands off to
-validation; with no open item it reports that the customization loop reached
-its step limit. A handed-off run completes only when validation finds nothing
-left and no checklist item is still open or blocked: an item no check closes
-is reported as not confirmed, not repaired, so the run is reported as handed
-off, never as plainly completed. Either way its trace's Phase 2 ``phase_exit`` names the reserve
-in ``stop_detail``. A Phase 2 that uses its share of the time or the spend stops
-as ``timeout`` or ``cost_cap``. The quarter is ``_PHASE3_BUDGET_SHARE``,
+for its checks, the requirements judge and the repair loop (with auto-fix off,
+the time and spend shares are kept for the checks and the judge). A Phase 2
+that uses its share of any of the three hands off to validation, and its
+trace's Phase 2 ``phase_exit`` names the share in ``stop_detail`` (``time share
+used``, ``cost share used`` or ``tool-call share used``). A handed-off run
+completes only when validation finds nothing left and no checklist item is
+still open or blocked: an item no check closes is reported as not confirmed,
+not repaired, so the run is reported as handed off, never as plainly
+completed. Only a Phase 2 that reaches the cap itself (a Phase 1 that ran past
+it, or one reply that spent past it) stops as ``timeout`` or ``cost_cap``.
+The quarter is ``_PHASE3_BUDGET_SHARE``,
 sized from recorded runs: where Phase 3 repaired, it made a median quarter of
 the run's tool calls, and a quarter of the 2400 s cap covers most recorded
 validation phases.
@@ -536,9 +538,10 @@ keys, always in this order:
   error``, ``internal error``, ``cancelled``, ``repeated edits did not land``,
   ``output limit`` or ``handed off to validation``), ``stop_message`` (the run
   card's sentence for that ending, without its variable parts) and ``outcome``.
-  ``turn limit`` means the customization loop made its share of the tool calls
-  (see the split above) with no open checklist item left to hand to validation;
-  ``output limit`` means the model's replies were cut off at its output limit
+  ``turn limit`` means the customization loop made every tool call of the
+  budget (auto-fix off, so no share was kept) or reached the runaway guard on
+  turns; ``time limit`` and ``cost limit`` mean the cap itself, never only
+  Phase 2's share of it; ``output limit`` means the model's replies were cut off at its output limit
   more often than the four recoveries a run allows. A handoff stays ``handed off
   to validation`` while a checklist item is still open or blocked after
   validation, and its ``outcome`` is then never ``completed``. A run whose

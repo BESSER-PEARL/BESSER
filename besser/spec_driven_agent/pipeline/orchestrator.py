@@ -2187,8 +2187,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
             # -- Phase 2's share of the time and spend ----------------------
             if self.deadline.out_of_time():
-                logger.warning("Phase 2 used its share of the %ds runtime cap", self.max_runtime_seconds)
-                self._phase2_stop_reason = "timeout"
+                self._stop_phase2_on_time()
                 break
             # Checked before the call too, so no request starts on a spent share.
             cost_limit = self.max_cost_usd * (1 - _PHASE3_BUDGET_SHARE)
@@ -2197,7 +2196,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "Phase 2 cost share spent before turn %d: $%.4f >= $%.4f",
                     turn + 1, self.client.usage.estimated_cost, cost_limit,
                 )
-                self._phase2_stop_reason = "cost_cap"
+                self._stop_phase2_on_spend()
                 break
 
             logger.info("LLM generation turn %d (%d of %d tool calls made)",
@@ -2214,7 +2213,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 raise
             except DeadlineReached as e:
                 logger.warning("Phase 2 stopped on turn %d: %s", turn + 1, e)
-                self._phase2_stop_reason = "cancelled" if e.cancelled else "timeout"
+                if e.cancelled:
+                    self._phase2_stop_reason = "cancelled"
+                else:
+                    self._stop_phase2_on_time()
                 break
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
@@ -2244,7 +2246,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "Phase 2 cost share spent: $%.4f > $%.4f",
                     current_cost, cost_limit,
                 )
-                self._phase2_stop_reason = "cost_cap"
+                self._stop_phase2_on_spend()
                 break
 
             if response["stop_reason"] == "end_turn":
@@ -2472,17 +2474,42 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._phase2_stop_detail = f"turn guard reached ({self._turn_guard()} turns)"
 
     def _end_phase2_work_share(self, call_limit: int) -> None:
-        """Phase 2 made its share of the tool calls. With checklist items open it
-        hands off like the inspection limit; with nothing to bring back, or no
-        share kept for repair, it stays a step limit."""
-        reserved = call_limit < self._call_budget()
-        if reserved:
-            self._phase2_stop_detail = (
-                f"tool-call share used ({self._call_budget() - call_limit} of {self._call_budget()} "
-                "calls reserved for validation and repair)")
-            logger.warning("Phase 2 made its %d tool calls; %s", call_limit, self._phase2_stop_detail)
-        unfinished = self.executor.open_tasks() or self.executor.blocked_tasks()
-        self._phase2_stop_reason = "validation_required" if reserved and unfinished else "max_turns"
+        """Phase 2 made the tool calls it may make: its share, or, with no share
+        kept for repair, the whole budget, a step limit."""
+        budget = self._call_budget()
+        if call_limit < budget:
+            self._hand_off_phase2_share("tool-call", f"{budget - call_limit} of {budget} calls")
+        else:
+            self._phase2_stop_reason = "max_turns"
+
+    def _stop_phase2_on_time(self) -> None:
+        """No LLM call may start in Phase 2: the runtime cap is reached, or only Phase 2's share of it."""
+        if self.deadline.cap_reached():
+            logger.warning("Runtime cap of %ds reached", self.max_runtime_seconds)
+            self._phase2_stop_reason = "timeout"
+        else:
+            self._hand_off_phase2_share(
+                "time", f"{self.max_runtime_seconds * _PHASE3_BUDGET_SHARE:.0f} of {self.max_runtime_seconds} s")
+
+    def _stop_phase2_on_spend(self) -> None:
+        """Phase 2 spent the cost cap, or only its share of it."""
+        if self.client.usage.estimated_cost >= self.max_cost_usd:
+            self._phase2_stop_reason = "cost_cap"
+        else:
+            self._hand_off_phase2_share(
+                "cost", f"${self.max_cost_usd * _PHASE3_BUDGET_SHARE:.2f} of ${self.max_cost_usd:.2f}")
+
+    def _hand_off_phase2_share(self, meter: str, reserved: str) -> None:
+        """Phase 2 used its share of one budget, not the budget: it hands off to
+        validation, and Phase 3 decides how the run ends."""
+        self._phase2_stop_reason = "validation_required"
+        self._phase2_exited_cleanly = False
+        self._phase2_stop_detail = f"{meter} share used ({reserved} reserved for {self._phase3_work()})"
+        logger.warning("Phase 2: %s", self._phase2_stop_detail)
+
+    def _phase3_work(self) -> str:
+        """What Phase 3 does with the share Phase 2 leaves it."""
+        return "validation and repair" if self.auto_fix_issues else "validation"
 
     def _tool_calls_executed(self) -> int:
         """Tool calls the model's turns executed in this run; Phase 1's generator run is not one."""

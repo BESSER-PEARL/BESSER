@@ -475,8 +475,9 @@ def test_the_cost_cap_stops_the_run_before_another_request(tmp_path):
         tmp_path, _claude("claude-sonnet-5-5", thinking=True), SHORT_REQUEST,
         usage=expensive, max_cost_usd=cap)
 
-    assert orchestrator._phase2_stop_reason == "cost_cap"
-    # Phase 2 stops on its share of the cap; the rest is Phase 3's.
+    # Phase 2 stops on its share of the cap and hands off; the rest is Phase 3's.
+    assert orchestrator._phase2_stop_reason != "cost_cap"
+    assert orchestrator._phase2_stop_detail == "cost share used ($0.12 of $0.50 reserved for validation)"
     assert client.usage.estimated_cost > cap * (1 - _PHASE3_BUDGET_SHARE)
     assert all(cost <= cap * (1 - _PHASE3_BUDGET_SHARE) for cost in fake.costs_at_send), fake.costs_at_send
     assert 1 < len(fake.of("phase2")) < len(shelf_script())

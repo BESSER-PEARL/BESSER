@@ -3,8 +3,8 @@
 Both phases count against one budget of executed tool calls (``max_turns``
 times ``_CALLS_PER_TURN``). A model that never ends its turn used to spend
 every turn in Phase 2, so validation found its blockers and had no turn left
-to repair them. A Phase 2 cut at its share hands off to validation when
-checklist items are open, and stays a step limit otherwise.
+to repair them. A Phase 2 cut at its share hands off to validation, and Phase 3
+decides how the run ends.
 """
 from __future__ import annotations
 
@@ -148,9 +148,9 @@ def test_a_handoff_with_items_still_open_is_not_reported_completed(task_model, t
     assert orch._phase2_stop_reason == "validation_required" and not orch._phase2_exited_cleanly
 
 
-def test_a_cut_with_no_checklist_stays_a_turn_limit_even_when_validation_is_clean(
-        task_model, tmp_path, monkeypatch):
-    """Nothing unfinished can come back as a blocker, so a clean Phase 3 cannot complete the run."""
+def test_a_cut_at_the_share_is_a_handoff_even_with_nothing_left_open(task_model, tmp_path, monkeypatch):
+    """The share is not the budget: a cut there was reported as a run that reached its step
+    limit. With no checklist item left open, a clean validation completes the run."""
     orch = _orchestrator(task_model, tmp_path, monkeypatch, _NeverDoneClient(), tasks=(),
                          max_turns=30, auto_fix_issues=True)
     monkeypatch.setattr(orch, "_collect_validation_issues", lambda: [])
@@ -158,9 +158,9 @@ def test_a_cut_with_no_checklist_stays_a_turn_limit_even_when_validation_is_clea
 
     orch.run("Build a task tracker")
 
-    assert at_phase3["calls"] == 90 and at_phase3["stop_reason"] == "max_turns"
-    assert orch._phase2_stop_reason == "max_turns" and not orch._phase2_exited_cleanly
+    assert at_phase3["calls"] == 90 and at_phase3["stop_reason"] == "validation_required"
     assert "30 of 120 calls reserved for validation and repair" in orch._phase2_stop_detail
+    assert orch._phase2_stop_reason == "completed" and orch._phase2_exited_cleanly
 
 
 @pytest.mark.parametrize(("max_turns", "auto_fix", "phase2_calls", "stop_reason"), [
@@ -209,12 +209,12 @@ def test_a_resumed_phase2_past_its_share_goes_straight_to_repair(task_model, tmp
     assert resumed._phase2_stop_reason == "validation_required"
 
 
-def test_a_resumed_phase2_with_no_checklist_past_its_share_stays_a_turn_limit(task_model, tmp_path, monkeypatch):
+def test_a_resumed_phase2_with_no_checklist_past_its_share_hands_off_too(task_model, tmp_path, monkeypatch):
     resumed, client, at_phase3 = _resume_from_phase2_checkpoint(
         task_model, tmp_path, monkeypatch, 100, "api_error", tasks=(), max_turns=30, auto_fix_issues=True)
 
-    assert at_phase3["stop_reason"] == "max_turns" and client.calls == 20
-    assert resumed._phase2_stop_reason == "max_turns"
+    assert at_phase3["stop_reason"] == "validation_required" and client.calls == 20
+    assert resumed._phase2_stop_reason == "validation_required"
 
 
 def test_a_resumed_phase2_that_ran_out_of_turns_does_not_keep_the_checkpoints_stop_reason(

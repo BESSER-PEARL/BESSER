@@ -89,6 +89,11 @@ class Deadline:
         left = self.work_remaining()
         return left is not None and left < MIN_CALL_SECONDS
 
+    def cap_reached(self) -> bool:
+        """No LLM call could start even with the held seconds released."""
+        left = self._time_left()
+        return left is not None and left - PACKAGING_RESERVE_SECONDS < MIN_CALL_SECONDS
+
     def checks_out_of_time(self) -> bool:
         """No validation round may start any more."""
         left = self.remaining()

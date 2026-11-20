@@ -107,16 +107,23 @@ def test_a_turn_that_reads_little_of_an_unchanged_prefix_from_cache_is_flagged(t
     log.turn(4, 300, read=10_600, start=1_007.0, answered=1_008.0)    # hit
     # Rewritten history (an eviction that a large new result outgrew): expected.
     log.turn(5, 11_000, start=1_009.0, answered=1_010.0, compacted=True)
-    log.turn(6, 2_000, start=1_011.0, answered=1_012.0)             # shrank (an unrecorded rewrite)
+    log.turn(6, 2_000, start=1_011.0, answered=1_012.0)             # shrank with no record: listed apart
+    log.turn(7, 100, read=1_900, start=1_013.0, answered=1_014.0)     # hit
+    log.turn(8, 100, read=1_750, start=1_015.0, answered=1_016.0)     # shrank, prefix kept: a hit
     log.event("phase_enter", phase="phase3_fix_attempt", attempt=1)
-    log.turn(7, 8_000, start=1_013.0, answered=1_014.0)             # a new conversation
-    log.turn(8, 100, read=8_000, start=1_015.0, answered=1_016.0)     # hit
-    log.event("run_end", at=1_020.0)
+    log.turn(9, 8_000, start=1_017.0, answered=1_018.0)             # a new conversation
+    log.turn(10, 100, read=8_000, start=1_019.0, answered=1_020.0)    # hit
+    log.event("run_end", at=1_021.0)
 
     run = _one_run(tmp_path, log)
+    text = report([run])
 
     assert [turn.turn for turn in cache_misses(run)] == [3]
-    assert "3: 10,600 fresh, 0 read after a 10,500-token prompt" in report([run])
+    assert "3: 10,600 fresh, 0 read after a 10,500-token prompt" in text
+    # A rewrite that writes no record is what the counter must expose, apart from the misses.
+    assert ("history rewritten without a compaction or eviction record (turn: fresh, cache read, previous "
+            "prompt): 6: 2,000 fresh, 0 read after a 11,000-token prompt\n") in text
+    assert totals([run])["misses"] == 1 and totals([run])["unrecorded_rewrites"] == 1
 
 
 def test_cache_is_unknown_when_the_provider_reports_no_cache_reads(tmp_path):

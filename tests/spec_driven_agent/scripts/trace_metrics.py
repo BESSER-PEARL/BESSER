@@ -29,13 +29,14 @@ A second table gives, per run and phase (P2, P3 repair turns, and the calls
 outside the loop), fresh input, cache-read, cache-write and output tokens, cost,
 the cache hit ratio, the cache misses, and the seconds the loop's model calls
 and tool batches took. A loop turn's tokens are the difference of two
-``cost_update`` records less the ``llm_call`` records between them. A cache
-miss is a turn that read under 0.9 of the previous turn's prompt from the cache
-although the history was not rewritten: same conversation, no ``compaction`` or
-``eviction`` record, a prompt that did not shrink. A run that never reports a
-cache read or write shows ``unknown``: its provider may not report them. Totals
-over all runs follow, each run counted once. Dollar figures follow the price
-catalog of the day; compare tokens.
+``cost_update`` records less the ``llm_call`` records between them. A cache miss is a turn that read under 0.9 of the previous turn's prompt
+from the cache although the history was not rewritten: same conversation, no
+``compaction`` or ``eviction`` record, a prompt that did not shrink. A turn that
+read under 0.9 of its own, smaller prompt with no such record is listed apart,
+as history rewritten without a record (on a log older than those records, a
+compaction). A run that never reports a cache read or write shows ``unknown``:
+its provider may not report them. Totals over all runs follow, each run counted
+once. Dollar figures follow the price catalog of the day; compare tokens.
 """
 
 from __future__ import annotations
@@ -389,19 +390,28 @@ def _phase_of(turn: Turn) -> str:
     return "P3" if turn.phase and turn.phase.startswith("phase3") else "P2"
 
 
-def _misses(run: Run) -> list[tuple[Turn, int]] | None:
-    """(turn, previous prompt) of each cache miss; None when the run reports no cache at all."""
+def _misses(run: Run) -> tuple[list[tuple[Turn, int]] | None, list[tuple[Turn, int]]]:
+    """(turn, previous prompt) of the turns that read under 0.9 of the prefix they share with the
+    previous request from the cache, with no compaction or eviction record: those whose prompt did
+    not shrink (misses; None when the run reports no cache at all), and those whose prompt shrank
+    (a rewrite of the history that wrote no record, or a log older than those records)."""
     if not any(turn.cache_read or turn.cache_write for turn in run.turns):
-        return None
-    return [(turn, previous.prompt) for previous, turn in zip(run.turns, run.turns[1:])
-            if not turn.new_context and turn.prompt >= previous.prompt
-            and turn.cache_read < CACHE_MISS_SHARE * previous.prompt]
+        return None, []
+    flagged = [(turn, previous.prompt) for previous, turn in zip(run.turns, run.turns[1:])
+               if not turn.new_context and turn.cache_read < CACHE_MISS_SHARE * min(turn.prompt, previous.prompt)]
+    return ([row for row in flagged if row[0].prompt >= row[1]],
+            [row for row in flagged if row[0].prompt < row[1]])
 
 
 def cache_misses(run: Run) -> list[Turn] | None:
     """Loop turns that read under 0.9 of an unchanged prefix from the cache (None: cache unknown)."""
-    misses = _misses(run)
+    misses, _ = _misses(run)
     return None if misses is None else [turn for turn, _ in misses]
+
+
+def unrecorded_rewrites(run: Run) -> list[Turn]:
+    """Loop turns whose prompt shrank and that read little from the cache, with no record of a rewrite."""
+    return [turn for turn, _ in _misses(run)[1]]
 
 
 def _tokens(rows) -> dict:
@@ -432,7 +442,7 @@ def usage(run: Run) -> dict:
         purposes[purpose] = {"calls": len(calls), **_tokens(calls)}
     read = sum(turn.cache_read for turn in run.turns)
     prompts = sum(turn.prompt for turn in run.turns)
-    known = _misses(run) is not None
+    known = _misses(run)[0] is not None
     return {"phases": phases, "purposes": purposes, "misses": cache_misses(run),
             "cache_hit": read / prompts if known and prompts else None, "wall_seconds": run.wall_seconds}
 
@@ -460,9 +470,11 @@ def totals(runs: list[Run]) -> dict:
             for key, value in row.items():
                 total[key] += value
     misses = [turn for run in runs for turn in cache_misses(run) or []]
+    rewrites = [turn for run in runs for turn in unrecorded_rewrites(run)]
     return {"runs": len(runs), "turns": len(turns), **_tokens(turns),
             "loop_input": sum(turn.prompt for turn in turns), "purposes": purposes,
-            "misses": len(misses), "miss_fresh": sum(turn.fresh for turn in misses)}
+            "misses": len(misses), "miss_fresh": sum(turn.fresh for turn in misses),
+            "unrecorded_rewrites": len(rewrites), "rewrite_fresh": sum(turn.fresh for turn in rewrites)}
 
 
 def _fmt(value, pattern="{:.2f}") -> str:
@@ -522,7 +534,7 @@ def usage_report(runs: list[Run]) -> list[str]:
         for index, run in enumerate(source_runs):
             label = _label(run, index, len(source_runs))
             figures = usage(run)
-            misses = _misses(run)
+            misses, rewrites = _misses(run)
             for name, row in figures["phases"].items():
                 prompts = row["fresh"] + row["cache_read"] + row["cache_write"]
                 hit, missed = "unknown", "unknown"
@@ -540,10 +552,12 @@ def usage_report(runs: list[Run]) -> list[str]:
                 details.append(f"- {label} outside the loop: " + "; ".join(
                     f"{purpose} {row['calls']} call(s), {_n(row['fresh'] + row['cache_read'] + row['cache_write'])} "
                     f"in, ${row['cost']:.4f}" for purpose, row in figures["purposes"].items()))
-            if misses:
-                details.append(f"- {label} cache misses (turn: fresh, cache read, previous prompt): " + "; ".join(
-                    f"{turn.turn}: {_n(turn.fresh)} fresh, {_n(turn.cache_read)} read after a "
-                    f"{_n(previous)}-token prompt" for turn, previous in misses))
+            for title, rows in (("cache misses", misses), ("history rewritten without a compaction or eviction "
+                                                           "record", rewrites)):
+                if rows:
+                    details.append(f"- {label} {title} (turn: fresh, cache read, previous prompt): " + "; ".join(
+                        f"{turn.turn}: {_n(turn.fresh)} fresh, {_n(turn.cache_read)} read after a "
+                        f"{_n(previous)}-token prompt" for turn, previous in rows))
             if figures["wall_seconds"] is not None and run.turns:
                 model = sum(row["model_seconds"] for row in figures["phases"].values())
                 tools = sum(row["tool_seconds"] for row in figures["phases"].values())
@@ -556,7 +570,8 @@ def usage_report(runs: list[Run]) -> list[str]:
         f"(fresh {_n(total['fresh'])}, cache read {_n(total['cache_read'])}"
         + (f" = {total['cache_read'] / loop_input:.1%}" if loop_input else "")
         + f", cache write {_n(total['cache_write'])}), output {_n(total['output'])}, cost ${total['cost']:.4f}; "
-        f"cache misses {total['misses']} turn(s), {_n(total['miss_fresh'])} fresh tokens.",
+        f"cache misses {total['misses']} turn(s), {_n(total['miss_fresh'])} fresh tokens; history rewritten "
+        f"without a record {total['unrecorded_rewrites']} turn(s), {_n(total['rewrite_fresh'])} fresh tokens.",
     ]
     if total["purposes"]:
         summary.append("Outside the loop: " + "; ".join(

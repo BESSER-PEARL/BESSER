@@ -150,7 +150,18 @@ The three phases
    tools are on and a FastAPI backend is present it gains a runtime
    verification runbook (see :ref:`spec-driven-shell-tools`). For a scaffold
    from the FastAPI backend generator, the endpoint manifest in the system
-   prompt states what create, update and get-by-id return. The relationship
+   prompt states what create, update and get-by-id return. When the workspace
+   holds the generated typed client (``src/api/generated/client.ts``, from the
+   web app generator), the section leads with it instead: where it is, that
+   frontend code calls the backend only through it (``apiRequest`` for a route
+   the agent adds), and its functions per class, read from the
+   ``api_contract.json`` it was rendered from and capped at 4,000 characters.
+   Only the served routes the client does not cover are then listed as raw
+   routes, for ``test_api`` and the runbook. The inventory lists each
+   TypeScript file's exported functions, constants, classes, interfaces, types
+   and enumerations, and the fields of its ``...Props`` and ``...Options``
+   interfaces, so a generated component is configured rather than read whole.
+   The relationship
    mutation coverage block is left out only when the requirements ledger is
    known to be empty and the model has no constraint. The shell is
    one session for the whole run: every command starts in the workspace

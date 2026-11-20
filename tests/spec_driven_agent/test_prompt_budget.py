@@ -21,6 +21,8 @@ HEADROOM = 0.06
 # prints chars per fixture, section and tool.
 BASELINES = {
     "shelf": {"system_chars": 23_002, "tools_chars": 10_657},
+    # shelf with the generated typed client: its section replaces the client's routes in the manifest.
+    "shelf_client": {"system_chars": 23_310, "tools_chars": 10_657},
     "shelf_no_requirements": {"system_chars": 19_981, "tools_chars": 10_657},
     "conference": {"system_chars": 44_028, "tools_chars": 10_657},
     "state_machine": {"system_chars": 13_558, "tools_chars": 9_778},
@@ -31,6 +33,9 @@ BASELINE_SECTIONS = {
     "shelf": {"role_plan": 1589, "rules": 9635, "tail_header": 31, "models": 803,
               "data_contract": 1618, "inventory": 2071, "endpoint_manifest": 4747, "requirements": 351,
               "request": 302, "checklist": 1098, "phase2_appendix": 613},
+    "shelf_client": {"role_plan": 1589, "rules": 9635, "tail_header": 31, "models": 803,
+                     "data_contract": 1618, "inventory": 2660, "endpoint_manifest": 5192, "requirements": 351,
+                     "request": 302, "checklist": 516, "phase2_appendix": 613},
     "shelf_no_requirements": {"role_plan": 1589, "rules": 9635, "tail_header": 31,
                               "models": 803, "data_contract": 1618, "inventory": 2071,
                               "endpoint_manifest": 2077, "request": 302, "checklist": 1098,

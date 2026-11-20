@@ -52,6 +52,9 @@ and the runtime blocks' requests go through the client's ``apiRequest``, which j
 to the path it is given (pass a path, not a URL already joined to the base). The client assumes the backend generated with every HTTP method, as the
 :doc:`full_web_app` generator does.
 
+``ReactGenerator(model, None, output_dir).generate_api_client()`` writes only these two
+files, byte for byte as ``generate()`` writes them; it needs the domain model alone.
+
 Generated Components
 --------------------
 

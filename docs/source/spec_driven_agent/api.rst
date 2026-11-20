@@ -377,8 +377,10 @@ SSE event types
        a three-way authorship split of the output tree, and ``aiShare``, the
        AI-written share of the lines from the run's Agent Trace record (see
        :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
-       ``changedFiles`` (capped) and ``changedFileCount`` are the files the
-       agent wrote, edited or deleted, and ``modelChanges`` how the model
+       ``changedFiles`` (capped) and ``changedFileCount`` are the distinct
+       files the agent's successful calls wrote, edited or deleted, plus those
+       the model change regeneration wrote, merged, moved (new path) or
+       removed (the recipe's ``regenerated_files``), and ``modelChanges`` how the model
        differs from the one the base app was built from (modify runs).
        ``trace`` is the run's trace, a trace-file fragment (``projectId``
        null) the editor merges into the project trace (see

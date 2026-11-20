@@ -929,7 +929,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% endif %}
     {% endif %}
     {% elif is_class(action, 'WebSocketReplyOptions') %}
-    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% if action.label %}, label='{{ action.label | py_str }}'{% endif %})
     {% elif is_class(action, 'WebSocketReplyLocation') %}
     platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
     {% elif is_class(action, 'WebSocketReplyFile') %}

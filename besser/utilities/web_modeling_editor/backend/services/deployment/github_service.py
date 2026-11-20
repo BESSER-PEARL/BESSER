@@ -18,6 +18,8 @@ from pathlib import Path
 
 import httpx
 
+from besser.generators.agents.baf_version import BAF_VERSION
+
 from besser.utilities.provenance import readme_about
 from besser.utilities.web_modeling_editor.backend.services.deployment.render_blueprint import RENDER_DEPLOY_URL
 from besser.utilities.web_modeling_editor.backend.services.deployment.repo_model import commit_origin, with_origin
@@ -959,7 +961,7 @@ The Render blueprint runs one Python web service with Streamlit UI and websocket
 ## Local Development
 
 ```bash
-pip install besser-agentic-framework[llms]==4.3.2
+pip install besser-agentic-framework[llms]=={BAF_VERSION}
 python <agent_name>.py
 ```
 

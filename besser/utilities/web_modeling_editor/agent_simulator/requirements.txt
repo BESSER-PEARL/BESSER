@@ -11,11 +11,11 @@
 # Simulator API. Same fastapi / uvicorn versions as the main environment.
 fastapi==0.110.0
 uvicorn[standard]==0.28.0
-# Exact versions besser-agentic-framework 4.5.1 pins.
+# Exact versions besser-agentic-framework 4.6.1 pins.
 websockets==11.0.3
 PyYAML==6.0.2
 # The agents themselves.
-besser-agentic-framework[extras,llms]==4.5.1
+besser-agentic-framework[extras,llms]==4.6.1
 # Imported by `besser.utilities` (package __init__), which the simulator loads
 # for besser.utilities.path_utils.
 antlr4-python3-runtime==4.13.1

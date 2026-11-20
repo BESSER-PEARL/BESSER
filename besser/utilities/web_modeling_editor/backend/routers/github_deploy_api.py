@@ -42,6 +42,7 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
     agent_model_to_code,
 )
+from besser.generators.agents.baf_version import BAF_VERSION
 from besser.generators.docker_compose.agent_dependencies import baf_dependency_extras
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.buml_code_builder.common import safe_var_name
@@ -839,13 +840,13 @@ def _add_chatbot_deployment_configs(
 
     if _agent_needs_torch(directory, agent_script, ic_tech):
         build_cmd = (
-            "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.3.2 "
+            f"pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]=={BAF_VERSION} "
             "--extra-index-url https://download.pytorch.org/whl/cpu "
             '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
         )
     else:
         build_cmd = (
-            "pip install besser-agentic-framework[llms]==4.3.2 "
+            f"pip install besser-agentic-framework[llms]=={BAF_VERSION} "
             '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
         )
 
@@ -1086,14 +1087,14 @@ def _add_deployment_configs(
             # Single pip call with --extra-index-url so PyTorch CPU resolves from the wheel index while the rest comes from PyPI.
             # BAFGenerator does NOT emit a requirements.txt, so everything has to be pinned inline here.
             build_cmd = (
-                "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.3.2 "
+                f"pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]=={BAF_VERSION} "
                 "--extra-index-url https://download.pytorch.org/whl/cpu "
                 '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
             )
         else:
             # LLM-based IC (default)
             build_cmd = (
-                "pip install besser-agentic-framework[llms]==4.3.2 "
+                f"pip install besser-agentic-framework[llms]=={BAF_VERSION} "
                 '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
             )
 

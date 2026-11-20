@@ -24,8 +24,9 @@ def _model(with_ids: bool) -> DomainModel:
                                         Property("books", book, multiplicity=Multiplicity(0, "*"))})
     model = DomainModel("Library", types={genre, library, book}, associations={holds})
     if with_ids:  # as the editor gives them
-        # The primitive types are shared by every model: they keep no id.
-        for count, element in enumerate(e for e in model_elements(model) if not isinstance(e, PrimitiveDataType)):
+        # Primitive types and the default multiplicity are shared by every model: they keep no id.
+        shared = (PrimitiveDataType, Multiplicity)
+        for count, element in enumerate(e for e in model_elements(model) if not isinstance(e, shared)):
             element.id = f"el-{count}"
     return model
 

@@ -10,6 +10,7 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.generators.backend import BackendGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
 
 def _model(with_ids: bool) -> DomainModel:
@@ -93,7 +94,8 @@ def test_members_and_constraints_have_their_own_lines(traced):
     lines = lambda path, region: files[path].split("\n")[region.start_line - 1:region.end_line]
 
     title = regions["sql_alchemy.py"][("title", "attribute")]
-    assert lines("sql_alchemy.py", title) == ["    title: Mapped_[str] = mapped_column(String_(100))"]
+    column_type = SQLAlchemyGenerator.TYPES["str"]
+    assert lines("sql_alchemy.py", title) == [f"    title: Mapped_[str] = mapped_column({column_type})"]
     assert (title.element_type, title.owner.element_name) == ("Property", "Book")
     assert lines("pydantic_classes.py", regions["pydantic_classes.py"][("title", "attribute")]) == ["    title: str"]
     method = regions["sql_alchemy.py"][("open", "method")]

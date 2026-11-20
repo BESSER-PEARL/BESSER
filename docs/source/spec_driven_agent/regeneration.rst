@@ -153,9 +153,12 @@ endpoint, editing ``pydantic_classes.py``, ``sql_alchemy.py`` and
 #. **Check the base.** When the store comes from the same BESSER and carries
    its diagram, its files must be what the generator writes for that diagram;
    files an earlier run left to the agent (``pending``) are exempt, since they
-   keep an older base. A store edited by hand fails the check and is not used
-   (see :ref:`spec-driven-regeneration-fallback`). After a BESSER upgrade the
-   check cannot run, and the store is taken as it is.
+   keep an older base. This relies on the generator writing the same bytes for
+   the same model in every process, BAL method bodies included. A store edited
+   by hand fails the check and is not used (see
+   :ref:`spec-driven-regeneration-fallback`); the warning names the first
+   generated file that differs. After a BESSER upgrade the check cannot run,
+   and the store is taken as it is.
 #. **Merge each file.** Each generated file is merged three ways with
    `pygit2 <https://www.pygit2.org/>`_, the library behind libgit2:
 

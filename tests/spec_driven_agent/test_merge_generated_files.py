@@ -298,7 +298,7 @@ def test_a_pending_file_does_not_disable_the_merge_next_time(app):
     second = _regenerate(app, shelf_model(isbn=True, author=True), previous_model=shelf_model(isbn=True))
 
     assert second.method == "merge", second.merge_warning
-    assert "edited by hand" not in second.merge_warning
+    assert "differs from what this BESSER generates" not in second.merge_warning
     assert "backend/main_api.py" in second.merged
 
 
@@ -507,7 +507,9 @@ def test_a_store_edited_by_hand_is_not_used(app):
 
     assert "# USER SECURITY FIX" in main.read_text(encoding="utf-8")
     assert regeneration.method == "attribution"
-    assert "edited by hand" in regeneration.merge_warning
+    # the file is named, so a generator that is not deterministic is not taken for a hand edit
+    assert ("differs from what this BESSER generates for its model, first in backend/main_api.py"
+            in regeneration.merge_warning)
 
 
 def test_a_crafted_version_never_reaches_the_note_as_text(app):

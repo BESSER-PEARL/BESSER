@@ -211,9 +211,12 @@ def regenerate(
         if expected is None:
             warnings.append(f"the stored generator output was not checked: generating its model failed ({error})")
         elif _without(expected, stored.pending) != _without(stored.files, stored.pending):
+            # named from the generator's own paths: a path only in the store is untrusted text
+            first = next((rel for rel in sorted(expected) if rel not in stored.pending
+                          and expected[rel] != stored.files.get(rel)), "a file it does not write")
             stored = None
-            warnings.append("edited files are not merged: the stored generator output is not what this "
-                            "BESSER generates for its model (edited by hand?)")
+            warnings.append("edited files are not merged: the stored generator output differs from what "
+                            f"this BESSER generates for its model, first in {first}")
     state = None
     if stored is None:
         try:

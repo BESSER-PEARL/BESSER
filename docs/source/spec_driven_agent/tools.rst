@@ -91,7 +91,9 @@ removal or rename the model means to make, the refusal names
 ``replace_file_lines`` with the ``read_id`` of its whole-file read. A file
 ``write_file`` created this run, and a smaller file, is rewritten freely. A
 change these checks cannot see (one entry dropped from a large object literal)
-is a targeted edit's job, and is not caught here. Repeated failures do not
+is a targeted edit's job, and is not caught here; a file with no declarations
+to compare (CSS, JSON, YAML, HTML, ``requirements.txt``) is held only to the
+60% share and the elision checks. Repeated failures do not
 permanently freeze the file; an agent that ignores recovery is still bounded
 by the loop and run budgets.
 

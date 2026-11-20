@@ -298,3 +298,54 @@ def create_large(count: int):
     item = _orders_level(tmp_path / "whole", 'if count > 9: ... raise HTTPException(status_code=422, detail="Invalid")',
                          [("POST", "/items/large/")], rel="backend/routers/items.py", source=source)
     assert item["verification"] == "verified"
+
+
+def test_a_local_named_like_a_module_function_is_not_a_call_of_it(tmp_path):
+    source = """from fastapi import APIRouter, HTTPException
+
+router = APIRouter(prefix="/orders")
+
+
+def validate(order: dict):
+    if order["total"] > 1000:
+        raise HTTPException(status_code=422, detail="order total over the limit")
+
+
+@router.get("/")
+def list_orders(checks: list = []):
+    for validate in checks:
+        validate({})
+    return []
+
+
+@router.get("/count/")
+def count_orders(validate=None):
+    validate()
+    return 0
+
+
+@router.get("/first/")
+def first_order():
+    def validate(order):
+        return order
+    validate({})
+    return {}
+
+
+@router.get("/last/")
+def last_order():
+    validate = print
+    validate({})
+    return {}
+
+
+@router.post("/")
+def create_order(order: dict):
+    validate(order)
+    return order
+"""
+    line = 'if order["total"] > 1000:'
+    for path in ("/orders/", "/orders/count/", "/orders/first/", "/orders/last/"):
+        item = _orders_level(tmp_path / path.strip("/").replace("/", "_"), line, [("GET", path)], source=source)
+        assert item["verification"] == "unverified", path
+    assert _orders_level(tmp_path / "post", line, [("POST", "/orders/")], source=source)["verification"] == "verified"

@@ -2592,9 +2592,27 @@ def _route_ranges(full: str) -> dict[tuple, list[tuple[int, int]]] | None:
             if (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", None)) == "Depends"
                     and node.args and isinstance(node.args[0], ast.Name)):
                 callees.add(node.args[0].id)
+        callees -= _local_names(handler) if handler is not None else set()
         ranges[route] = own + [span(module_functions[name]) for name in sorted(callees)
                                if name in module_functions and module_functions[name] is not handler]
     return ranges
+
+
+def _local_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """The names ``function`` binds itself (parameters, assignments, loop and ``with``
+    targets, nested definitions, imports, ``except`` names): a call of one is not a call
+    of the module function of that name."""
+    names = {arg.arg for arg in ast.walk(function.args) if isinstance(arg, ast.arg)}
+    for node in ast.walk(function):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node is not function:
+            names.add(node.name)
+        elif isinstance(node, ast.alias):
+            names.add((node.asname or node.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+    return names
 
 
 def _cited_part_lines(full: str, path: str, quote: str, files: dict[str, str], parsed: dict,

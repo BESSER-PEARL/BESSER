@@ -74,6 +74,8 @@ _API_REQUEST_RE = re.compile(
 _TYPED_CALL_RE = re.compile(
     r"(?<![\w$.])(?:\(\s*)?(?P<api>[a-z][\w$]*Api)(?:\s+as\s+[\w$<>\[\]]+\s*\))?"
     r"(?P<chain>(?:\s*\.\s*(?:relations\s*\.\s*[\w$]+|methods)(?![\w$]))?)\s*\.\s*(?P<function>[\w$]+)\s*\(")
+# The typed client the React generator writes (src/api/generated/client.ts).
+_GENERATED_CLIENT_RE = re.compile(r"(?:^|/)api/generated/client\.[jt]sx?$")
 _TEMPLATE_VALUE_RE = re.compile(r"\$\{[^}]+\}")
 _ROUTE_VALUE_RE = re.compile(r"\{[^}/]+\}")
 
@@ -310,7 +312,8 @@ def collect_endpoint_coherence_issues(
                 "frontend/" in rel_lower
                 or rel_lower.startswith("src/")
                 or "/src/" in rel_lower
-            ):
+            ) or _GENERATED_CLIENT_RE.search(rel_lower):
+                # Regeneration rewrites the generated client; its functions are checked where code calls them.
                 continue
             try:
                 if os.path.getsize(full_path) > 1_000_000:

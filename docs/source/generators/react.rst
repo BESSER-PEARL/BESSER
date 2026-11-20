@@ -49,7 +49,7 @@ interceptors (an ``Authorization`` header, for instance) apply to every call.
 (``VITE_API_URL``, default ``http://localhost:8000``; a relative one such as ``/api``
 behind a same-origin proxy works too); the runtime blocks and ``MethodButton`` use it,
 and the runtime blocks' requests go through the client's ``apiRequest``, which joins it
-once (a path that already starts with it is kept). The client assumes the backend generated with every HTTP method, as the
+to the path it is given (pass a path, not a URL already joined to the base). The client assumes the backend generated with every HTTP method, as the
 :doc:`full_web_app` generator does.
 
 Generated Components

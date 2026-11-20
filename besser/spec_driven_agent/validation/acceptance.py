@@ -42,6 +42,7 @@ import os
 import re
 from besser.BUML.metamodel.gui import Button, ButtonActionType, Form
 from besser.spec_driven_agent.validation.constructibility import abstract_entities
+from besser.spec_driven_agent.validation.endpoint_coherence import _GENERATED_CLIENT_RE
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.utilities.workspace_fs import walk_plain
 
@@ -55,8 +56,6 @@ _POST_RE = re.compile(
     r"\.post\s*\(|\(\s*['\"]POST['\"]\s*,"
     r"|(?:\(\s*['\"](?P<url>[^'\"]{1,200})['\"]\s*,\s*\{[^{}]{0,200}?)?method\s*:\s*['\"]POST['\"]",
     re.IGNORECASE)
-# The typed client the React generator writes (src/api/generated/client.ts).
-_GENERATED_CLIENT_RE = re.compile(r"(?:^|/)api/generated/client\.[jt]sx?$")
 _LITERAL_PATH_RE = re.compile(r"\s*['\"]([^'\"]{1,200})['\"]\s*")
 _TEMPLATE_SLOT_RE = re.compile(r"\$\{[^}]*\}")
 # A one-expression arrow body up to the call that POSTs: `=> api`, `=> request<T>`.

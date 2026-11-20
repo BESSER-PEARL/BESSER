@@ -231,9 +231,39 @@ def _runnable(source):
     return re.sub(r'(from "\.{1,2}/[^"]+)"', r'\1.ts"', source)
 
 
-def test_every_block_joins_a_relative_base_url_once(build_app, run_ts, tmp_path):
-    """Behind a same-origin proxy (VITE_API_URL=/api) each request goes to /api/<route>, not /api/api/."""
-    app = build_app({"Book": [("title", "str")]}, {"Home": []})
+
+
+# The axios default instance as the generated app uses it: `defaults.headers.common`, request
+# interceptors, then the adapter; a non-2xx answer rejects with an error carrying `response`.
+# `next` sets what the backend answers; `sent` records each request with the headers it carried.
+AXIOS_STUB = """
+export const sent = [];
+export let next = { status: 200, data: [] };
+export const answer = (response) => { next = response; };
+const interceptors = [];
+const axios = {
+  defaults: { headers: { common: {} } },
+  interceptors: { request: { use: (fn) => interceptors.push(fn) } },
+  isAxiosError: (value) => Boolean(value && value.isAxiosError),
+  async request(config) {
+    let merged = { ...config, headers: { ...axios.defaults.headers.common, ...(config.headers || {}) } };
+    for (const fn of interceptors) merged = await fn(merged);
+    sent.push({ method: merged.method, url: merged.url, headers: merged.headers, data: merged.data ?? null });
+    const response = { status: next.status, data: next.data };
+    if (next.status >= 200 && next.status < 300) return response;
+    throw Object.assign(new Error(`Request failed with status code ${next.status}`), { isAxiosError: true, response });
+  },
+};
+export default axios;
+"""
+
+
+@pytest.fixture
+def client_harness(build_app, tmp_path):
+    """The generated client.ts and bindingData.ts, runnable by Node.js against the axios stub,
+    for an app with a Book and a class named like the `/api` base path; plus FormBlock's
+    error message function. Returns the ``run_ts`` path prefix."""
+    app = build_app({"Book": [("title", "str")], "Api": [("label", "str")]}, {"Home": []})
     harness = tmp_path / "h"
     (harness / "api").mkdir(parents=True)
     (harness / "api" / "client.ts").write_text(_runnable(app.file("api", "generated", "client.ts")), encoding="utf-8")
@@ -241,19 +271,25 @@ def test_every_block_joins_a_relative_base_url_once(build_app, run_ts, tmp_path)
         _runnable(app.file("components", "runtime", "bindingData.ts")).replace("../../api/generated/client",
                                                                              "./api/client"),
         encoding="utf-8")
+    form = app.file("components", "runtime", "FormBlock.tsx")
+    error_text = form[form.index("const errorText"):form.index("\n};\n", form.index("const errorText")) + 4]
+    (harness / "formErrors.ts").write_text('import { ApiError } from "./api/client.ts";\nexport '
+                                           + error_text, encoding="utf-8")
     axios = tmp_path / "node_modules" / "axios"
     axios.mkdir(parents=True)
     (axios / "package.json").write_text('{"name": "axios", "type": "module", "main": "index.js"}', encoding="utf-8")
-    (axios / "index.js").write_text(
-        "export const calls = [];\n"
-        "export default { request: async (c) => { calls.push(`${c.method} ${c.url}`); return { data: [], status: 200 }; },"
-        " isAxiosError: () => false };\n", encoding="utf-8")
+    (axios / "index.js").write_text(AXIOS_STUB, encoding="utf-8")
+    return app
 
-    calls = run_ts("""
+
+def test_every_block_joins_a_relative_base_url_once(client_harness, run_ts):
+    """Behind a same-origin proxy (VITE_API_URL=/api) each request goes to /api/<route>, not
+    /api/api/; a route or endpoint that itself starts with /api keeps the prefix."""
+    sent = run_ts("""
 (globalThis as any).VITE_API_URL = "/api";
-const { apiRequest } = await import("./h/api/client.ts");
-const { buildFilteredRequest, backendUrl } = await import("./h/bindingData.ts");
-const { calls } = await import("axios");
+const { apiRequest, apiApi } = await import("./h/api/client.ts");
+const { buildFilteredRequest } = await import("./h/bindingData.ts");
+const { sent } = await import("axios");
 const filter = { serverCompatible: true, queryParams: { title: "x" }, conditions: [], hasNestedFields: false } as any;
 const chart = buildFilteredRequest("/book/", { detailed: true });
 await apiRequest("GET", chart.path, { query: chart.query });
@@ -263,14 +299,68 @@ const custom = buildFilteredRequest("/stats/revenue", { custom: true, filter });
 await apiRequest("GET", custom.path, { query: custom.query });
 await apiRequest("GET", "/book/");
 await apiRequest("POST", "/book/", { body: { title: "x" } });
-await apiRequest("GET", backendUrl("/book/"));
-console.log(JSON.stringify(calls));
+await apiApi.list();
+const stats = buildFilteredRequest("/api/stats", { custom: true });
+await apiRequest("GET", stats.path, { query: stats.query });
+console.log(JSON.stringify(sent.map((r: any) => `${r.method} ${r.url}`)));
 """, name="run.mts")
-    assert calls == ["GET /api/book/?detailed=true", "GET /api/book/search/?title=x", "GET /api/stats/revenue",
-                     "GET /api/book/", "POST /api/book/", "GET /api/book/"]
+    assert sent == ["GET /api/book/?detailed=true", "GET /api/book/search/?title=x", "GET /api/stats/revenue",
+                    "GET /api/book/", "POST /api/book/", "GET /api/api/", "GET /api/api/stats"]
 
-    # Every block hands apiRequest a path, never a URL already joined to the base.
+
+def test_every_block_hands_the_client_a_path(build_app):
+    app = build_app({"Book": [("title", "str")]}, {"Home": []})
     runtime = pathlib.Path(app.src) / "components" / "runtime"
     for block in sorted(runtime.glob("*.ts*")):
         for call in re.findall(r"apiRequest(?:<[^>]*>)?\(([^)]*)", block.read_text(encoding="utf-8")):
             assert "backendUrl" not in call and "buildFilteredUrl" not in call, (block.name, call)
+
+
+def test_axios_defaults_and_interceptors_reach_every_client_request(client_harness, run_ts):
+    """The app's axios setup (a default header, an Authorization interceptor) applies to the blocks'
+    requests and to the typed functions alike."""
+    sent = run_ts("""
+const axios = (await import("axios")).default;
+const { sent } = await import("axios");
+axios.defaults.headers.common["X-Tenant"] = "acme";
+axios.interceptors.request.use((config: any) => ({ ...config, headers: { ...config.headers, Authorization: "Bearer t" } }));
+const { apiRequest, bookApi } = await import("./h/api/client.ts");
+await apiRequest("GET", "/book/");
+await apiRequest("POST", "/book/", { body: { title: "x" } });
+await bookApi.list();
+console.log(JSON.stringify(sent.map((r: any) => [r.method, r.headers.Authorization, r.headers["X-Tenant"], r.data])));
+""", name="run.mts")
+    assert sent == [["GET", "Bearer t", "acme", None], ["POST", "Bearer t", "acme", {"title": "x"}],
+                    ["GET", "Bearer t", "acme", None]]
+
+
+def test_failures_become_one_api_error_and_the_form_messages_stay(client_harness, run_ts):
+    """Each error body the backend sends becomes an ApiError; FormBlock shows what it showed when
+    it called axios itself."""
+    shown = run_ts("""
+const { answer } = await import("axios");
+const { apiRequest, ApiError } = await import("./h/api/client.ts");
+const { errorText } = await import("./h/formErrors.ts");
+const failures: Record<string, any> = {
+  invalid: { status: 422, data: { detail: [{ loc: ["body", "title"], msg: "Field required", type: "missing" }] } },
+  missing: { status: 404, data: { error: "Book not found", message: "Book not found", detail: "Book not found" } },
+  crashed: { status: 500, data: "Internal Server Error" },
+};
+const out: Record<string, any> = {};
+for (const [name, response] of Object.entries(failures)) {
+  answer(response);
+  try {
+    await apiRequest("POST", "/book/", { body: {} });
+  } catch (err: any) {
+    out[name] = [err instanceof ApiError, err.status, err.message, err.fields, errorText(err)];
+  }
+}
+out.network = errorText(new TypeError("Failed to fetch"));
+console.log(JSON.stringify(out));
+""", name="run.mts")
+    assert shown == {
+        "invalid": [True, 422, "title: Field required", {"title": "Field required"}, "title: Field required"],
+        "missing": [True, 404, "Book not found", {}, "Book not found"],
+        "crashed": [True, 500, "Internal Server Error", {}, "Could not save. Please check your input."],
+        "network": "Network error. Please try again.",
+    }

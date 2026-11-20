@@ -88,14 +88,9 @@ const apiErrorFromResponse = (status: number, body: unknown): ApiError => {
   return new ApiError(status, `Request failed with status ${status}`, {}, body);
 };
 
-/**
- * A path joined to API_BASE_URL, with its query parameters. An http(s) URL, or a path that
- * already starts with API_BASE_URL, is kept as it is.
- */
+/** A path joined to API_BASE_URL (an http(s) URL is kept as it is), with its query parameters. */
 export const apiUrl = (path: string, query?: object): string => {
-  const joined = /^https?:\/\//i.test(path) || path === API_BASE_URL || path.startsWith(`${API_BASE_URL}/`)
-    ? path
-    : API_BASE_URL + (path.startsWith("/") ? path : `/${path}`);
+  const joined = /^https?:\/\//i.test(path) ? path : API_BASE_URL + (path.startsWith("/") ? path : `/${path}`);
   const params = Object.entries(query || {})
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);

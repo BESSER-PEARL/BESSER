@@ -136,3 +136,23 @@ export async function saveTask(projectId: number) {
     matrix = build_acceptance_matrix(str(tmp_path), domain)
     assert {name: cells["create"] for name, cells in matrix.items()} == {
         "Client": False, "Project": False, "Task": True}
+
+
+def _with_renamed_route(app, tmp_path, page):
+    work = pathlib.Path(_with_page(app, tmp_path, page))
+    router = work / "backend" / "routers" / "book.py"
+    text = router.read_text(encoding="utf-8")
+    assert '@router.post("/book/bulk/"' in text
+    router.write_text(text.replace('@router.post("/book/bulk/"', '@router.post("/book/batch/"'), encoding="utf-8")
+    return str(work)
+
+
+def test_a_renamed_route_is_reported_where_code_calls_it_not_in_the_generated_client(library_app, tmp_path):
+    """The generated client is rewritten by regeneration: a client function nothing calls is no finding."""
+    assert collect_endpoint_coherence_issues(_with_renamed_route(library_app, tmp_path / "unused", None)) == []
+
+    page = '''import { bookApi } from "../api/generated/client";
+export const importBooks = () => bookApi.bulkCreate([]);
+'''
+    issues = collect_endpoint_coherence_issues(_with_renamed_route(library_app, tmp_path / "used", page))
+    assert len(issues) == 1 and f"{PAGE} line 2 calls POST /book/bulk/" in issues[0]

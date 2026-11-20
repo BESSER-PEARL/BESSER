@@ -514,6 +514,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # newest messages only ask to retry or finish earlier work (then those are in scope).
         self._previous_ids: set[int] = set()
         self._follow_up_continues = False
+        self._replaced_ids: set[int] = set()  # previous requirements a newer message changes or removes
         # (requirement cache key, import index): one index per judged tree; see _import_index.
         self._import_index_cache: tuple[str, _requirements_ledger.ImportIndex] | None = None
         self._requirement_judgments: dict[str, list[dict]] = {}
@@ -4360,7 +4361,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._requirement_verdicts = _requirements_ledger.mark_inherited(
                 self._requirement_verdicts,
                 [item for item in self._previous_verdicts if item["id"] in self._previous_ids],
-                inherit=not self._follow_up_continues)
+                inherit=not self._follow_up_continues, changed=frozenset(self._replaced_ids))
         self._requirement_verdicts_scope = scope
         self._requirement_verdicts_key = cache_key
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
@@ -4584,7 +4585,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     previous, instructions, self._previous_instructions, self.client,
                     can_call=self._verification_call_allowed)
                 self._requirements = follow_up["requirements"] if follow_up else None
-            else:
+            if previous and follow_up is None and self._verification_call_allowed():
+                # The follow-up call failed: judge the whole request, as a run without a previous ledger.
+                logger.warning("Requirements ledger: the follow-up extraction returned nothing; "
+                               "extracting the whole request instead")
+                self._previous_verdicts = None
+                self._requirement_extraction_attempts += 1
+                self._requirements = _requirements_ledger.extract_requirements(
+                    instructions, self.client, can_call=self._verification_call_allowed)
+            elif not previous:
                 self._requirements = _requirements_ledger.extract_requirements(
                     instructions, self.client, can_call=self._verification_call_allowed)
             call["outcome"] = "failed" if self._requirements is None else "ok"
@@ -4630,16 +4639,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 for item in self._previous_verdicts if item["text"] not in derived]
 
     def _continue_previous_ledger(self, previous: list[dict], follow_up: dict) -> None:
-        """The ledger: the previous run's requirements no new message replaced, then the new
-        messages' own, numbered after them."""
-        kept = [item for item in previous if item["id"] not in follow_up["replaces"]]
+        """The ledger: the previous run's requirements, then the new messages' own, numbered
+        after them. One a new message changes or removes stays, judged as usual: unmet, it is
+        reported as changed by that message, never as a regression (an extraction that names
+        too many must not empty the ledger)."""
         next_id = max(item["id"] for item in previous) + 1
-        self._requirements = kept + [{**item, "id": next_id + i} for i, item in enumerate(self._requirements)]
+        self._requirements = previous + [{**item, "id": next_id + i} for i, item in enumerate(self._requirements)]
         self._follow_up_continues = follow_up["continues"]
-        if follow_up["replaces"]:
-            logger.info("Requirements ledger: the new messages replace R%s of the previous run",
-                        ", R".join(map(str, sorted(follow_up["replaces"]))))
-        self._adopt_previous_verdicts({item["id"]: item["id"] for item in kept})
+        self._replaced_ids = set(follow_up["replaces"])
+        if self._replaced_ids:
+            logger.info("Requirements ledger: the new messages change R%s of the previous run",
+                        ", R".join(map(str, sorted(self._replaced_ids))))
+        self._adopt_previous_verdicts({item["id"]: item["id"] for item in previous})
 
     def _matched_previous_ids(self, requirements: list[dict]) -> dict[int, int]:
         """Previous id -> id in ``requirements`` (the editor's) of the same requirement: the

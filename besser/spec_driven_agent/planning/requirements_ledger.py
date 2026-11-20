@@ -837,8 +837,9 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
                       llm_client, *, can_call: Callable[[], bool] | None = None) -> dict | None:
     """What the user's messages since the previous run ask of the app ``previous`` describes.
 
-    The new messages are the later messages of ``instructions`` that ``previous_instructions``
-    (the previous run's) does not hold, else the newest one. Returns ``{"requirements",
+    The new messages are the later messages of ``instructions`` after those of
+    ``previous_instructions`` (the previous run's) when these start the conversation, all of
+    them otherwise, and the newest one when there are none. Returns ``{"requirements",
     "replaces", "continues"}``: requirements numbered from 1, the ids of ``previous`` a new
     message changes, asks for again or removes, and whether the messages only ask to retry or
     finish earlier work. None when no real provider is available or the call failed.
@@ -846,11 +847,11 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     validate_specification(instructions)
     if not _is_real_provider(llm_client):
         return None
-    seen = set(later_messages(previous_instructions or ""))
-    new = [message for message in later_messages(instructions) if message not in seen] or [
-        latest_user_message(instructions)]
+    seen, messages = later_messages(previous_instructions or ""), later_messages(instructions)
+    # The previous run's messages are the start of this conversation; otherwise every later one is new.
+    earlier_messages = seen if messages[:len(seen)] == seen else []
+    new = messages[len(earlier_messages):] or [latest_user_message(instructions)]
     earlier = original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
-    earlier_messages = [message for message in later_messages(instructions) if message in seen]
     prompt = "\n\n".join([
         "## The earlier conversation (context only)", earlier, *earlier_messages,
         "## Requirements the app was built against", render_requirements(previous),
@@ -2650,6 +2651,9 @@ def source_hashes(output_dir: str) -> dict[str, str]:
 # Set on a modify run's verdict that is unmet now and was unmet when the previous run ended:
 # reported as still open, not a blocker of this run.
 INHERITED = "open_since_previous_run"
+# Set on a modify run's unmet verdict of a previous requirement a newer message changes or removes:
+# reported as such, neither a regression nor work for the fix loop.
+CHANGED_LATER = "changed_by_newer_message"
 UNMET_STATUSES = ("partial", "missing", "unverified")
 
 
@@ -2701,15 +2705,19 @@ def previous_run_verdicts(recorded: list, output_dir: str) -> list[dict]:
     return verdicts
 
 
-def mark_inherited(verdicts: list[dict], previous: list[dict], *, inherit: bool = True) -> list[dict]:
-    """``verdicts`` with each unmet one whose ``previous`` verdict (by id) was unmet too marked
-    :data:`INHERITED` (unless ``inherit`` is off), and each unmet one whose previous verdict
-    was implemented noted as a regression. Only the ids in ``previous`` are compared."""
+def mark_inherited(verdicts: list[dict], previous: list[dict], *, inherit: bool = True,
+                   changed: frozenset[int] = frozenset()) -> list[dict]:
+    """``verdicts`` with each unmet one in ``changed`` (a newer message changes or removes it)
+    marked :data:`CHANGED_LATER`, each other unmet one whose ``previous`` verdict (by id) was
+    unmet too marked :data:`INHERITED` (unless ``inherit`` is off), and each unmet one whose
+    previous verdict was implemented noted as a regression. Only the ids in ``previous`` are compared."""
     before = {item["id"]: item.get("status") for item in previous}
     marked = []
     for verdict in verdicts:
         status, earlier = verdict.get("status"), before.get(verdict["id"])
-        if inherit and status in UNMET_STATUSES and earlier in UNMET_STATUSES:
+        if status in UNMET_STATUSES and verdict["id"] in changed:
+            verdict = {**verdict, CHANGED_LATER: True}
+        elif inherit and status in UNMET_STATUSES and earlier in UNMET_STATUSES:
             verdict = {**verdict, INHERITED: True}
         elif status in UNMET_STATUSES and earlier == "implemented":
             verdict = {**verdict, "note": " ".join(
@@ -2772,6 +2780,10 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         if v.get(INHERITED):
             # Unclassified prefix: a warning, never a blocker.
             issues.append(f"requirement still open from the previous run: {label} ({status}){note}")
+            continue
+        if v.get(CHANGED_LATER):
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement changed by your newest message: {label} ({status}){note}")
             continue
         if status == "out_of_scope":
             # Unclassified prefix: a warning, never a blocker.

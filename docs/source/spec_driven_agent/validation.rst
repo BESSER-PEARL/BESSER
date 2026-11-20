@@ -767,14 +767,21 @@ A modify run is answerable for its own request and for what it breaks, not for
 the whole application again. When the seeded recipe records requirement
 verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
 most 128) and extracts only the user messages the previous run's request did not
-hold (a message sent to a run that was cancelled counts as new), with the earlier
+hold: the messages after the previous run's when those start the conversation,
+otherwise all later messages (a message sent to a run that was cancelled counts
+as new, and so does one repeated after the previous run), with the earlier
 conversation and the numbered requirements as context, so "retry", "yes" or "the
 same for the other screen" resolve. Their requirements follow the previous ones.
 The extraction also names the previous requirements a new message changes, asks
-for again or removes: those leave the ledger (a changed or restated one comes
-back as a new requirement), so doing what the message asks is not a regression.
+for again or removes. Those stay in the ledger and are judged as usual (an
+extraction that names every requirement cannot empty it): met, they are met;
+unmet, they are a warning, ``requirement changed by your newest message:``, never
+a regression and never work for the fix loop. A changed or restated requirement
+comes back as a new requirement of its own.
 It also says whether the messages only ask to retry, continue or finish earlier
-work. When the editor sends its own requirements, a previous verdict is kept for
+work. When that extraction fails, the whole request is extracted instead and
+judged as in a run without a previous ledger. When the editor sends its own
+requirements, a previous verdict is kept for
 the requirement with the same trace id, else the same text.
 
 The previous verdicts are taken as of the tree the run starts from: an

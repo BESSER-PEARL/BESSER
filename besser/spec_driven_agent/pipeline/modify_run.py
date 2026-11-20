@@ -628,6 +628,7 @@ class ModifyRunMixin:
             "previous_instructions": self._previous_instructions,
             "previous_ids": sorted(self._previous_ids),
             "follow_up_continues": self._follow_up_continues,
+            "replaced_ids": sorted(self._replaced_ids),
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -667,6 +668,7 @@ class ModifyRunMixin:
         self._previous_instructions = previous if isinstance(previous, str) else None
         self._previous_ids = {rid for rid in state.get("previous_ids") or [] if type(rid) is int}
         self._follow_up_continues = state.get("follow_up_continues") is True
+        self._replaced_ids = {rid for rid in state.get("replaced_ids") or [] if type(rid) is int}
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""

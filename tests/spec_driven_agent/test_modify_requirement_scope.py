@@ -217,9 +217,48 @@ def test_a_requirement_the_new_message_replaces_is_not_a_regression(run, change)
 
     issues = run.orch._collect_requirement_issues()
 
-    assert replaced not in [item["id"] for item in run.orch._requirements]
-    assert not _about(issues, replaced)
+    [changed] = _about(issues, replaced)
+    assert changed.startswith(f"requirement changed by your newest message: R{replaced}")
+    assert _classify_issue(changed).severity == "warning"
     assert _blockers(issues) == []
+
+
+def test_an_extraction_that_replaces_every_requirement_keeps_them_all_judged(run):
+    """An over-broad answer must not empty the ledger: the requirements stay and are judged."""
+    run.client.reply = {"requirements": [], "replaces": [1, 2, 3], "continues_earlier_work": False}
+    _write(run.root, "backend/routers/customers.py", CUSTOMERS_PY.replace("def list_customers():", "def _x():"))
+
+    issues = run.orch._collect_requirement_issues()
+
+    assert [item["id"] for item in run.orch._requirements] == [1, 2, 3]
+    assert 2 in sum(run.calls, [])
+    [r2] = _about(issues, 2)
+    assert r2.startswith("requirement changed by your newest message: R2")
+    assert _blockers(issues) == []
+
+
+def test_a_message_repeated_after_the_previous_run_is_new(tmp_path):
+    _seed(tmp_path, instructions=_instructions(LATEST))
+    client = _Client({"requirements": [], "replaces": [], "continues_earlier_work": False})
+    orch = _orchestrator(tmp_path, client, instructions=_instructions(LATEST, EXPORT, LATEST))
+
+    orch._extract_requirements(orch._instructions)
+
+    new = client.prompts[0].split("## The new user messages", 1)[1]
+    assert f"1. {EXPORT}" in new and f"2. {LATEST}" in new
+
+
+def test_a_failed_follow_up_extraction_falls_back_to_the_whole_request(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    orch = _orchestrator(tmp_path, _Client({"unexpected": True}))
+    extracted = []
+    monkeypatch.setattr(ledger, "extract_requirements",
+                        lambda instructions, client, **kw: extracted.append(instructions) or [{"id": 1, **NEW}])
+
+    orch._extract_requirements(orch._instructions)
+
+    assert extracted == [INSTRUCTIONS]
+    assert orch._requirements == [{"id": 1, **NEW}] and orch._previous_verdicts is None
 
 
 def test_a_new_requirement_with_the_text_of_an_open_one_is_judged_as_this_runs(run):

@@ -112,6 +112,27 @@ def test_junk_edits_do_not_unlock_a_lossy_rewrite_in_a_modify_run(tmp_path):
     assert "f5" in refused.get("error", ""), refused
 
 
+def test_a_requested_removal_refused_as_a_rewrite_names_the_range_edit_that_lands(tmp_path):
+    """The ladder's rewrite step ends here for a removal; modify_file has failed twice."""
+    rel = "backend/util.py"
+    source = _functions("f", 14)
+    executor = _modify_run(tmp_path, rel, source)
+    read_id = call(executor, "read_file", path=rel)["read_id"]
+    for quote in ("def f5():\n    return 55\n", "def f5():\n  return 5\n"):
+        call(executor, "modify_file", path=rel, old_text=quote, new_text="")
+
+    refused = call(executor, "write_file", path=rel, content=source.replace("def f5():\n    return 5\n\n", ""))
+
+    assert refused.get("rejection_kind") == "rewrite_loss", refused
+    assert "replace_file_lines" in refused["error"] and read_id in refused["error"], refused
+    start = source.splitlines().index("def f5():") + 1
+    removed = call(executor, "replace_file_lines", path=rel, read_id=read_id,
+                   start_line=start, end_line=start + 2, new_text="")
+    assert removed.get("status") == "modified", removed
+    with open(tmp_path / rel, encoding="utf-8") as handle:
+        assert "def f5" not in handle.read()
+
+
 def test_a_file_created_this_run_is_rewritten_freely_in_a_modify_run(tmp_path):
     executor = _modify_run(tmp_path, "backend/seed.py", _functions("s", 3))
     created = call(executor, "write_file", path="backend/new_service.py", content=_functions("n", 20))

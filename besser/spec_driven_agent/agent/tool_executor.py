@@ -2569,6 +2569,14 @@ class ToolExecutor:
                 del self._read_views[next(iter(self._read_views))]
         return read_id
 
+    def _whole_view_id(self, path: str, content: str) -> str | None:
+        """A live ``read_id`` that shows all of ``content`` at ``path``, or None."""
+        key, digest = os.path.normcase(path), self._content_digest(content)
+        last = content.count("\n") + (not content.endswith("\n"))
+        with self._bookkeeping_lock:
+            return next((read_id for read_id, view in reversed(self._read_views.items())
+                         if view[:2] == (key, digest) and view[2] == 1 and view[3] >= last), None)
+
     def _read_file_once(self, args: dict) -> dict:
         """read_file, except for an identical re-read of unchanged content.
 
@@ -3010,9 +3018,12 @@ class ToolExecutor:
             if loss:
                 origin = ("was created by a BESSER generator" if rel_path in self._generator_files
                           else "existed before this run")
+                read_id = self._whole_view_id(path, existing)
+                removal = (f"replace_file_lines with read_id {read_id} (your whole-file read)" if read_id
+                           else "modify_file or replace_file_lines")
                 return {"error": (
                     f"'{rel_path}' {origin} ({existing_lines} lines) and {loss}. Rewrite it "
-                    "in full keeping that code, or change it with modify_file."
+                    f"in full keeping that code; to remove or rename code on purpose, edit that part with {removal}."
                 ), "rejection_kind": "rewrite_loss"}
 
         before = None

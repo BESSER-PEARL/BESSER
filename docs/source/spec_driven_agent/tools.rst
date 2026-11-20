@@ -86,7 +86,9 @@ unchanged */}``) in place of three or more of the file's lines that the
 rewrite has fewer copies of (a repeated section counts), or added while a
 block of three or more such lines is deleted elsewhere, however much the
 rewrite adds. A rewrite that misses one is refused saying which
-(``rejection_kind`` ``rewrite_loss``), whatever edits came before it. A file
+(``rejection_kind`` ``rewrite_loss``), whatever edits came before it; for a
+removal or rename the model means to make, the refusal names
+``replace_file_lines`` with the ``read_id`` of its whole-file read. A file
 ``write_file`` created this run, and a smaller file, is rewritten freely. A
 change these checks cannot see (one entry dropped from a large object literal)
 is a targeted edit's job, and is not caught here. Repeated failures do not

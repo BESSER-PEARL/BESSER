@@ -1083,7 +1083,9 @@ A newest message that only asks to retry, continue or fix earlier work ("try
 again", "fix it"; a bare "continue" sends the earlier request unchanged) does not
 count when the request says so (``followup_states_nothing_new``, set from the
 assistant's verdict): the editor's requirements and their trace ids are used, with
-no extraction call. Without that field, such a message is extracted like any other
+no extraction call, and on a modify run the message counts as asking to finish
+earlier work, so the previous run's open requirements are judged and repaired.
+Without that field, such a message is extracted like any other
 later message: one call, and verdicts without trace ids.
 
 The judge reads a digest of the app of at most 200,000 characters: the schema

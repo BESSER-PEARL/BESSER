@@ -4669,6 +4669,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._stated_requirements = None  # decided once: used, or extract below
             if self._requirements is not None:
                 self._requirements_source = "editor"
+                # The assistant's verdict that the newest message only asks to retry or fix.
+                self._follow_up_continues = self._followup_states_nothing_new and bool(
+                    _requirements_ledger.later_messages(instructions))
                 self._adopt_previous_verdicts(self._matched_previous_ids(self._requirements))
                 self._trace.write(EVENT_REQUIREMENTS, source="editor", items=self._requirements)
                 return

@@ -195,7 +195,25 @@ def test_a_retry_puts_the_open_items_in_scope(run):
     assert not any("previous run" in issue for issue in issues)
 
 
-@pytest.mark.parametrize("change", ["remove", "change"])
+def test_a_retry_with_the_editor_requirements_puts_the_open_items_in_scope(tmp_path, monkeypatch):
+    """The assistant's verdict that the newest message states nothing new asks to finish earlier
+    work: the previous run's unmet R3 is judged and a blocker, not inherited as still open."""
+    _seed(tmp_path)
+    stated = [{"id": f"call-1:R{item['id']}", "text": item["text"], "kind": item["kind"]} for item in PREVIOUS]
+    client = _Client()
+    orch = _orchestrator(tmp_path, client, instructions=_instructions(RETRY),
+                         stated_requirements=stated, followup_states_nothing_new=True)
+    monkeypatch.setattr(ledger, "judge_coverage", lambda requirements, digest, client, **kwargs: [
+        {**item, "note": "", "evidence": "", "status": "missing"} for item in requirements])
+
+    issues = orch._collect_requirement_issues()
+
+    assert orch._requirements_source == "editor" and client.prompts == []
+    [r3] = _about(issues, 3)
+    assert r3.startswith("requirement: R3") and _classify_issue(r3).severity == "blocker"
+
+
+@pytest.mark.parametrize("change",["remove", "change"])
 def test_a_requirement_the_new_message_replaces_is_not_a_regression(run, change):
     if change == "remove":
         run.orch._instructions = _instructions("Remove the customer list, nobody uses it.")

@@ -47,7 +47,6 @@ REQUIREMENTS = [
 # runs from its heading to the next heading present in the prompt.
 _SECTION_MARKERS = (
     ("rules", "\n## Rules\n"),
-    ("model_tools", "\n## Tools for deeper model inspection"),
     # The cached block shared across runs ends here (llm_client.SYSTEM_CACHE_SPLIT).
     ("tail_header", "\n## Variable context"),
     ("models", ("\n## Domain Model", "\n## GUI Model", "\n## Agent Model", "\n## Object Model",

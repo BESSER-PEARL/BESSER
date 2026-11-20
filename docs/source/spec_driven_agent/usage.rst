@@ -66,8 +66,9 @@ to do:
 
 A fix request runs up to 10 LLM turns. It gets a fresh ``max_runtime_seconds``
 window, but shares the run's ``max_cost_usd``: once the cap is spent it makes no
-call. When the cap, the runtime, cancellation, an API error, a truncated or
-declined reply or the turn limit stops it, ``response`` starts with
+call. A provider quota that was exhausted during the run is tried again. When
+the cap, the runtime, cancellation, an API error, a truncated or declined reply
+or the turn limit stops it, ``response`` starts with
 ``Fix cycle stopped:`` and the reason. An invalid API key raises
 ``InvalidApiKeyError``.
 

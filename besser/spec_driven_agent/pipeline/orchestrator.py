@@ -5210,8 +5210,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._previous_errors.append(error_line)
 
         # A fix request is a new request: it gets a full runtime window, not
-        # what generate() left of its own (which also bounds run_command).
+        # what generate() left of its own (which also bounds run_command),
+        # and a quota that was exhausted then may have been topped up since.
         self._start_time = time.monotonic()
+        self._phase2_quota_exhausted = False
 
         retry_note = ""
         if already_tried:

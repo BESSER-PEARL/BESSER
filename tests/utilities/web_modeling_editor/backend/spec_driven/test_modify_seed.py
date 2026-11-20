@@ -492,6 +492,21 @@ class TestArchiveSeed:
             restored = registry._entry_from_download_dir(str(tmp_path), name, time.time())
             assert restored is not None and restored[1].packaged is packaged
 
+    def test_a_download_from_before_the_packaged_flag_is_known_by_its_name(self, tmp_path):
+        registry = runner_module.SmartRunRegistry()
+        for run_id, file_name, packaged in (("3" * 32, f"besser_smart_{'3' * 32}.zip", True),
+                                            ("4" * 32, f"besser_smart_{'3' * 32}.zip", False),
+                                            ("5" * 32, "generated.zip", False)):
+            workspace = str(tmp_path / f"besser_llm_{run_id}_x")
+            download = runner_module.run_download_dir(workspace)
+            os.makedirs(download)
+            open(os.path.join(download, "artifact"), "wb").close()
+            with open(os.path.join(download, "manifest.json"), "w", encoding="utf-8") as fh:
+                json.dump({"version": 2, "runId": run_id, "fileName": file_name, "isZip": True,
+                           "createdAt": time.time()}, fh)
+            restored = registry._entry_from_download_dir(str(tmp_path), os.path.basename(download), time.time())
+            assert restored is not None and restored[1].packaged is packaged, file_name
+
 
 # ---------------------------------------------------------------------
 # (e) Base-expired fallback

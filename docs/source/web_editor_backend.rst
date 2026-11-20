@@ -20,12 +20,13 @@ into the HTTP response. Endpoints are organized by concern:
 - **``routers/validation_router.py``** -- Diagram validation (metamodel + OCL constraints)
 - **``routers/deployment_router.py``** -- Docker deployment and feedback
 - **``routers/spec_driven_router.py``** -- The :doc:`Spec-Driven Agent <spec_driven_agent/index>`: SSE generation runs, preview, config, durable run status and event replay, resume, cancel, download, and GitHub push/import
+- **``routers/lab_router.py``** -- :doc:`BESSER Lab <spec_driven_agent/lab>`: the lab chat (SSE), the state, pull requests, park/resume/drop and the preview reset (see `BESSER Lab`_)
 - **``routers/telemetry_router.py``** -- Opt-in run telemetry collection and reporting
 - **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
 - **``routers/traceability_router.py``** -- Code generation that also returns the trace of the run (see `Traceability`_)
 - **``routers/error_handler.py``** -- Centralized ``@handle_endpoint_errors`` decorator
-- **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401)
-- **``routers/github_oauth.py``** -- GitHub sign-in, sign-out and the session lookup (``get_user_token``)
+- **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401) and the :doc:`BESSER Lab <spec_driven_agent/lab>` gate built on it (``LabUserDep``: 404 when the lab is off, 401, 403 for a login not on the list)
+- **``routers/github_oauth.py``** -- GitHub sign-in, sign-out and the session lookup (``get_user_token``); on a lab instance the callback refuses a login that is not on the list
 - **``routers/github_deploy_api.py``** -- The ``/github/*`` endpoints: save, load, create, repo summary, sync status, model history, pull requests, deploy, go live
 
 Additional infrastructure:
@@ -39,11 +40,13 @@ Additional infrastructure:
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
 - **``services/traceability/``** -- ``traced_generation.py``: runs a generation through ``services/generation`` (the same path as the plain endpoints) and builds the trace fragment of the run from its ``Generation`` with ``besser.utilities.generation_trace``
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``github_sync.py`` (a run pushed to GitHub, a GitHub repo imported as a run), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
+- **``services/lab/``** -- The :doc:`BESSER Lab <spec_driven_agent/lab>` services: ``access.py`` (``LabUser`` and the ``BESSER_LAB_ALLOWED_LOGINS`` check), ``pull_requests.py`` (pushes a change's lab branches and opens its draft pull requests), ``preview.py`` (runs the working copy's backend, editor and modeling agent as a preview), ``service.py`` (the lab of one instance on ``app.state.lab``: working copy, preview, one run or change action at a time), ``runner.py`` (one lab message streamed as Spec-Driven SSE events), ``model_proposal.py`` (a plan's class diagram to the editor's JSON, and the user's diagram back for the build step)
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
 - **``settings.py``** -- ``BackendSettings``, every environment variable the backend reads (see `Environment Variables`_)
 - **``models/responses.py``** -- Standardized Pydantic response models. They derive from ``ResponseModel``, which marks every field the backend sends (defaults included) as required in the OpenAPI schema, and use ``Literal`` types and nested models for fields with a fixed set of values or a fixed shape, so the editor's generated client needs no casts. ``KGIssueResponse`` and ``KGActionResponse`` stay plain ``BaseModel`` classes: they are also part of a request body
 - **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
 - **``models/traceability.py``** -- ``TracedGenerationInput`` (a ``DiagramInput`` plus ``actorName``), ``TracedProjectGenerationInput`` (a ``ProjectInput`` plus ``actorName``) and ``TracedGenerationResponse``
+- **``models/lab.py``** -- Request/response models of the BESSER Lab endpoints, and ``LabDone``, the ``lab`` field of a lab run's ``done`` event
 - **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators; ``traceabilityEnabled``, off by default, makes a run record its trace)
 - **``dependencies.py``** -- FastAPI dependencies that hand routes the state built in the lifespan
 
@@ -519,6 +522,26 @@ Backend-side notes that do not belong in the contract:
   body, this is checked before the ``X-GitHub-Session`` header. It answers
   ``400`` for a repository over the import limits: a 100 MB archive, 500 MB
   unpacked, or 50,000 files. The response detail says which limit was hit.
+
+BESSER Lab
+^^^^^^^^^^
+
+Seven endpoints under ``/lab/*`` back :doc:`BESSER Lab <spec_driven_agent/lab>`,
+the deployment whose chat changes BESSER's own source. Each needs the
+``X-GitHub-Session`` header of a login in ``BESSER_LAB_ALLOWED_LOGINS`` and
+answers 404 while ``BESSER_LAB_ENABLED`` is off, 401 without a valid session
+and 403 for a login not on the list. They are registered on every instance,
+so the OpenAPI schema does not depend on ``BESSER_LAB_ENABLED``. A lab instance answers 404 to ``POST /spec-driven/generate``
+and ``POST /spec-driven/resume/{run_id}``. Request and response shapes are in
+:doc:`spec_driven_agent/lab`.
+
+- ``POST /lab/message`` -- Run one message of the lab chat (plan or build); answers with an SSE stream of the Spec-Driven Agent's event types, whose ``done`` carries a ``lab`` field. One run at a time per instance (409 otherwise); ``POST /spec-driven/cancel/{run_id}`` stops it
+- ``GET /lab/state`` -- The signed-in user, the active change with its changed files, the parked changes, the preview's services and the run in progress (``run``)
+- ``POST /lab/pull-request`` -- Push the active change's lab branches and open a draft pull request in each repository it touched; returns the pull requests and ``checksNote`` (only the quick checks ran). 409 when ``changeId`` is not the active change
+- ``POST /lab/change/park``, ``POST /lab/change/resume``, ``POST /lab/change/drop`` -- Park the active change, resume a parked one (``{"changeId"}``), or drop the active change; each returns the state
+- ``POST /lab/preview/reset`` -- Check out the base branches when no change is active (409 otherwise); returns the state
+
+``GET /spec-driven/config`` reports ``"lab": {"enabled": bool}``.
 
 Telemetry (research study mode)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -999,6 +1022,28 @@ durable-run storage paths -- are documented in one place, with the agent:
 :doc:`spec_driven_agent/configuration`. The caps, flags, run lifecycle and
 demo token are on ``BackendSettings``; the rest are on the agent's
 ``AgentSettings`` (``besser/spec_driven_agent/settings.py``).
+
+**BESSER Lab** (all optional, read once per process; see :doc:`spec_driven_agent/lab`):
+
+- ``BESSER_LAB_ENABLED`` (off) -- This instance is a BESSER Lab: the ``/lab/*``
+  endpoints answer and GitHub sign-in is limited to ``BESSER_LAB_ALLOWED_LOGINS``.
+  Off, every lab endpoint answers 404 and sign-in is unchanged.
+- ``BESSER_LAB_ALLOWED_LOGINS`` (empty) -- Comma-separated GitHub logins allowed
+  to use the lab, ignoring case; empty allows no one.
+- ``BESSER_LAB_WORKSPACE_ROOT`` (unset) -- Absolute path of the folder holding the
+  lab's working copies (``besser``, ``modeling-agent``).
+- ``BESSER_LAB_STATE_DIR`` (unset) -- Absolute path of the lab's state (changes'
+  state and notes, last checks, preview logs); unset, ``.lab`` of
+  ``BESSER_LAB_WORKSPACE_ROOT``. Set it outside the working copy on a server.
+- ``BESSER_LAB_LLM_PROVIDER`` (``anthropic``) -- LLM provider of the lab agent.
+- ``BESSER_LAB_LLM_MODEL`` (unset) -- Model of the lab agent; unset, the
+  provider's default.
+- ``BESSER_LAB_LLM_API_KEY`` (unset) -- The server's key for that provider;
+  users never send their own.
+- ``BESSER_LAB_MAX_COST_USD`` (``5.0``) -- Cost cap of one lab run, in US dollars.
+- ``BESSER_LAB_MAX_RUNTIME_SECONDS`` (``2400``) -- Runtime cap of one lab run.
+- ``BESSER_LAB_PREVIEW_ENABLED`` (off) -- Run the working copy's backend, editor
+  and modeling agent as a live preview.
 
 **Telemetry, research study mode (all optional):**
 

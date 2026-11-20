@@ -759,17 +759,17 @@ class GitHubService:
             )
 
     async def create_pull_request(
-        self, owner: str, repo_name: str, head: str, base: str, title: str, body: str
+        self, owner: str, repo_name: str, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> Dict[str, Any]:
         """Open a pull request from ``head`` into ``base``; returns ``number`` and ``html_url``.
 
-        When ``head`` already has an open pull request, that one is returned.
+        When ``head`` already has an open pull request, that one is returned. ``draft`` opens it as a draft.
         """
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.base_url}/repos/{owner}/{repo_name}/pulls",
                 headers=self.headers,
-                json={"head": head, "base": base, "title": title, "body": body},
+                json={"head": head, "base": base, "title": title, "body": body, "draft": draft},
                 timeout=15
             )
         if response.status_code == 422:
@@ -779,6 +779,17 @@ class GitHubService:
         response.raise_for_status()
         data = response.json()
         return {"number": data.get("number"), "html_url": data.get("html_url", "")}
+
+    async def update_pull_request(self, owner: str, repo_name: str, number: int, *, body: str) -> None:
+        """Replace the description of pull request ``number``."""
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(
+                f"{self.base_url}/repos/{owner}/{repo_name}/pulls/{number}",
+                headers=self.headers,
+                json={"body": body},
+                timeout=15
+            )
+            response.raise_for_status()
 
     async def get_pull_request_for_branch(self, owner: str, repo_name: str, branch: str) -> Optional[Dict[str, Any]]:
         """The newest pull request from ``branch`` (open, closed or merged), or None."""
@@ -799,6 +810,7 @@ class GitHubService:
             "html_url": pull.get("html_url", ""),
             "state": pull.get("state", ""),
             "merged": bool(pull.get("merged_at")),
+            "body": pull.get("body") or "",
         }
 
     async def compare_commits(

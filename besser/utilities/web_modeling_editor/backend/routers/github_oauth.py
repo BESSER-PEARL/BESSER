@@ -22,6 +22,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.session_st
 )
 from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep, SettingsDep
 from besser.utilities.web_modeling_editor.backend.models.responses import ResponseModel
+from besser.utilities.web_modeling_editor.backend.services.lab.access import is_login_allowed
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 
@@ -152,6 +153,16 @@ async def github_callback(code: str, state: str, settings: SettingsDep, github_s
             user_data = user_response.json()
 
         username = user_data.get("login")
+
+        # A lab instance signs in only the logins on its list; nothing of a refused sign-in is kept.
+        if settings.lab_enabled and not is_login_allowed(settings, username):
+            logger.warning("BESSER Lab sign-in refused for GitHub login %r: not on BESSER_LAB_ALLOWED_LOGINS",
+                           username)
+            await _revoke_github_token(settings, access_token)
+            return RedirectResponse(
+                url=f"{settings.deployment_url}?error=not_allowed",
+                status_code=302
+            )
 
         # Store token in encrypted session store
         session_id = secrets.token_urlsafe(32)

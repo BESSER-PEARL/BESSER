@@ -50,7 +50,7 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
-from besser.utilities.web_modeling_editor.backend.settings import is_demo_token
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, is_demo_token
 from besser.utilities.web_modeling_editor.backend.dependencies import (
     GitHubSessionsDep,
     SettingsDep,
@@ -265,6 +265,16 @@ def _require_demo_token(request: SmartGenerateRequest) -> None:
         )
 
 
+def _refuse_on_lab(settings: BackendSettings) -> None:
+    """A BESSER Lab instance starts no Spec-Driven run: 404, as the lab routes answer elsewhere.
+
+    The lab's proxy sends ``/spec-driven/`` to the lab backend (its runs share the cancel route), and a run
+    asks for no sign-in, so any visitor could otherwise start one beside the lab's working copy.
+    """
+    if settings.lab_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
 def _run_stream_response(
     durable_runs: DurableRunManager, run_id: str, after_sequence: int = 0,
 ) -> StreamingResponse:
@@ -303,6 +313,7 @@ async def smart_generate(
     against ``/spec-driven/download/{runId}`` serves the file; subsequent GETs
     return 404.
     """
+    _refuse_on_lab(settings)
     # Authorisation before anything is allocated: a sponsored-tier run spends
     # the org's own credits and needs the demo secret.
     _require_demo_token(request)
@@ -603,6 +614,8 @@ async def smart_gen_config(settings: SettingsDep) -> dict:
             # frontend release -- the client never hardcodes a model id.
             "pilot_model": free_pilot_model() or None,
         },
+        # The editor shows the BESSER Lab chat only on a lab instance.
+        "lab": {"enabled": settings.lab_enabled},
     }
 
 
@@ -698,6 +711,7 @@ async def resume_smart_gen(
     The run_id path pattern matches hex[32] to keep malformed IDs out
     of the filesystem scan performed by ``_locate_run_temp_dir``.
     """
+    _refuse_on_lab(settings)
     # Resume takes the same request shape as /generate and spends the same
     # way — gate it identically or it becomes the way around the gate.
     _require_demo_token(request)

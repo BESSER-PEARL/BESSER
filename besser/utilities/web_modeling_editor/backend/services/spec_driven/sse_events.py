@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from besser.utilities.secret_redaction import (
     redact_data,
 )
+from besser.utilities.web_modeling_editor.backend.models.lab import LabDone
 
 
 class BaseSseEvent(BaseModel):
@@ -47,7 +48,8 @@ class StartEvent(BaseSseEvent):
     maxRuntime: int
 
 
-PhaseName = Literal["select", "generate", "gap", "customize", "validate"]
+# The last three are the steps of a BESSER Lab run.
+PhaseName = Literal["select", "generate", "gap", "customize", "validate", "plan", "build", "check"]
 
 
 class PhaseEvent(BaseSseEvent):
@@ -296,6 +298,8 @@ class DoneEvent(BaseSseEvent):
     changedFiles: list[str] = Field(default_factory=list)
     changedFileCount: int = 0
     modelChanges: list[str] = Field(default_factory=list)
+    # Set only by a BESSER Lab run (``services/lab/runner.py``): its plan or build.
+    lab: Optional[LabDone] = None
 
 
 ErrorCode = Literal[

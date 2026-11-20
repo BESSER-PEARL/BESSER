@@ -1,0 +1,14 @@
+"""Tests of the ${title} generator."""
+
+from besser.generators.${name} import ${class_name}
+
+
+def test_writes_every_class_with_its_attributes(library_book_author_model, tmp_path):
+    ${class_name}(library_book_author_model, output_dir=str(tmp_path)).generate()
+
+    text = (tmp_path / "${output_file}").read_text(encoding="utf-8")
+    assert text.splitlines() == [
+        "Author", "  email: str", "  name: str",
+        "Book", "  pages: int", "  release: date", "  title: str",
+        "Library", "  address: str", "  name: str",
+    ]

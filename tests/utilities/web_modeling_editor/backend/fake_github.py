@@ -511,9 +511,18 @@ class FakeGitHub:
             number = len(repo.pulls) + 1
             pull = {"number": number, "state": "open", "merged_at": None, "title": body["title"],
                     "body": body.get("body", ""), "html_url": f"https://github.com/{repo.full_name}/pull/{number}",
-                    "head": {"ref": body["head"]}, "base": {"ref": body["base"]}}
+                    "head": {"ref": body["head"]}, "base": {"ref": body["base"]},
+                    "draft": bool(body.get("draft", False))}
             repo.pulls.append(pull)
             return JSONResponse(pull, status_code=201)
+
+        @app.patch("/repos/{owner}/{name}/pulls/{number}")
+        async def update_pull(owner: str, name: str, number: int, request: Request):
+            pull = next((p for p in find(owner, name).pulls if p["number"] == number), None)
+            if pull is None:
+                raise _NotFound()
+            pull.update({k: v for k, v in (await request.json()).items() if k in ("title", "body", "state")})
+            return pull
 
         @app.get("/repos/{owner}/{name}/pulls")
         async def list_pulls(owner: str, name: str, request: Request):

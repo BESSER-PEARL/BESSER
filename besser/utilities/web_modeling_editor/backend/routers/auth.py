@@ -2,19 +2,22 @@
 Shared authentication helpers for router endpoints.
 
 Holds the GitHub-session gate used by every router that requires a signed-in
-user, so the check (and its error messages) lives in one place.
+user, so the check (and its error messages) lives in one place, and the
+BESSER Lab gate built on it (``LabUserDep``).
 """
 
-from typing import Callable, Optional
+from typing import Annotated, Callable, Optional
 
-from fastapi import HTTPException
+from fastapi import Depends, Header, HTTPException
 
+from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep, SettingsDep
 from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
     GitHubSessions,
 )
+from besser.utilities.web_modeling_editor.backend.services.lab.access import LabUser, is_login_allowed
 
 
 def require_github_session(
@@ -48,3 +51,30 @@ def require_github_session(
             status_code=401,
             detail="GitHub session expired. Please sign in again.",
         )
+
+
+def require_lab_user(
+    settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+) -> LabUser:
+    """FastAPI dependency of every BESSER Lab route: the signed-in user, if the lab allows them.
+
+    The session is read from the ``X-GitHub-Session`` header only; the lab never
+    accepts the deprecated ``session_id`` query parameter.
+
+    Raises:
+        HTTPException: 404 when the lab is off (its routes are mounted on every instance), 401 when the
+            session is missing or expired, 403 when the login is not on ``BESSER_LAB_ALLOWED_LOGINS``.
+    """
+    if not settings.lab_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+    require_github_session(github_sessions, github_session)
+    session = github_sessions.user_tokens.get(github_session) or {}
+    login = session.get("username")
+    if not is_login_allowed(settings, login):
+        raise HTTPException(status_code=403, detail="This GitHub account is not allowed to use BESSER Lab.")
+    return LabUser(login=login, session_id=github_session, access_token=session["access_token"])
+
+
+LabUserDep = Annotated[LabUser, Depends(require_lab_user)]

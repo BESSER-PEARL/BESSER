@@ -3,7 +3,7 @@
 import threading
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 from starlette.requests import HTTPConnection
 
 from besser.utilities.web_modeling_editor.backend.services.agent_simulation import (
@@ -12,6 +12,7 @@ from besser.utilities.web_modeling_editor.backend.services.agent_simulation impo
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
     GitHubSessions,
 )
+from besser.utilities.web_modeling_editor.backend.services.lab.service import LabService
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import (
     SpecDrivenRuntime,
 )
@@ -50,7 +51,20 @@ def get_semantic_check_slots(connection: HTTPConnection) -> threading.BoundedSem
     return connection.app.state.semantic_check_slots
 
 
+def get_lab_service(request: Request) -> LabService:
+    """BESSER Lab's service on ``app.state.lab``; 503 on a lab without a working copy configured.
+
+    Lab routes take it after ``LabUserDep``, which already answers 404 when the lab is off.
+    """
+    lab = getattr(request.app.state, "lab", None)
+    if lab is None:
+        raise HTTPException(status_code=503,
+                            detail="BESSER Lab has no working copy configured (BESSER_LAB_WORKSPACE_ROOT).")
+    return lab
+
+
 SpecDrivenRuntimeDep = Annotated[SpecDrivenRuntime, Depends(get_spec_driven_runtime)]
+LabServiceDep = Annotated[LabService, Depends(get_lab_service)]
 GitHubSessionsDep = Annotated[GitHubSessions, Depends(get_github_sessions)]
 AgentSimulatorDep = Annotated[AgentSimulatorState, Depends(get_agent_simulator)]
 KgConsistencySlotsDep = Annotated[threading.BoundedSemaphore, Depends(get_kg_consistency_slots)]

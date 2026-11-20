@@ -732,6 +732,10 @@ class FreeTierResponse(ResponseModel):
     pilot_model: Optional[str]
 
 
+class SpecDrivenLabResponse(ResponseModel):
+    enabled: bool = Field(description="This instance is a BESSER Lab (BESSER_LAB_ENABLED).")
+
+
 class SpecDrivenConfigResponse(ResponseModel):
     """Response of ``GET /besser_api/spec-driven/config``: public caps and feature flags."""
 
@@ -748,3 +752,4 @@ class SpecDrivenConfigResponse(ResponseModel):
     providers: list[CatalogProviderResponse]
     default_models: dict[str, str]
     free_tier: FreeTierResponse
+    lab: SpecDrivenLabResponse

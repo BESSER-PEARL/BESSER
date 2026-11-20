@@ -74,12 +74,14 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     telemetry_router,
     agent_simulator_router,
     traceability_router,
+    lab_router,
 )
 
 # Per-app state, built in the lifespan (see dependencies.py)
 from besser.utilities.web_modeling_editor.backend.services.agent_simulation import AgentSimulatorState
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
 from besser.utilities.web_modeling_editor.backend.services.kg.validation import consistency_check_slots
+from besser.utilities.web_modeling_editor.backend.services.lab.service import create_lab_service
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import sdmx_import_slots
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
     semantic_check_slots,
@@ -235,6 +237,10 @@ async def lifespan(app: FastAPI):
     runtime = SpecDrivenRuntime.create(get_settings())
     app.state.spec_driven = runtime
     logger.info("Spec-driven runtime started (%d run slots)", get_settings().llm_max_concurrent_runs)
+    # BESSER Lab: its working copy and preview, only on a lab instance (None also when misconfigured).
+    app.state.lab = None
+    if get_settings().lab_enabled:
+        app.state.lab = await asyncio.to_thread(create_lab_service, get_settings())
 
     # Download metadata lives beside artifacts on the persistent run volume,
     # so a backend/container restart does not invalidate a completed result.
@@ -268,6 +274,8 @@ async def lifespan(app: FastAPI):
         await durable_run_sweeper
     except asyncio.CancelledError:
         pass
+    if app.state.lab is not None:
+        await asyncio.to_thread(app.state.lab.close)
     runtime.close()
     logger.info("Spec-driven runtime stopped")
 
@@ -318,6 +326,9 @@ app.include_router(spec_driven_router.router)
 app.include_router(telemetry_router.router)
 app.include_router(agent_simulator_router.router)
 app.include_router(traceability_router.router)
+# Always mounted, so the OpenAPI schema is one whatever BESSER_LAB_ENABLED says; with the lab off every
+# lab route answers 404 from ``LabUserDep`` (a body that is not JSON at all gets FastAPI's 422 first).
+app.include_router(lab_router.router)
 
 
 # Exception handlers

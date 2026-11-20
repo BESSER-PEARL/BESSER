@@ -39,6 +39,7 @@ and the model's contract.
    regeneration
    configuration
    production_deployment
+   lab
 
 Where the LLM sits
 ------------------

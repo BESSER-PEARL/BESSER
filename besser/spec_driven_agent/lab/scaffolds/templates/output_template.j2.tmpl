@@ -1,0 +1,8 @@
+{% for cls in model.get_classes() | sort(attribute="name") %}
+{% trace cls, "class" %}
+{{ cls.name }}
+{% for attribute in cls.attributes | sort(attribute="name") %}
+  {{ attribute.name }}: {{ attribute.type.name }}
+{% endfor %}
+{% endtrace %}
+{% endfor %}

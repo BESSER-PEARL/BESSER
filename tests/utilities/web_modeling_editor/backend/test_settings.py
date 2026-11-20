@@ -260,6 +260,27 @@ ROWS = [
     # Unset was None and is now "": the mail is sent only when it is truthy.
     ("smtp_password", "SMTP_PASSWORD", "",
      lambda: bool(_get("SMTP_PASSWORD")), lambda s: bool(_secret(s.smtp_password))),
+    # BESSER Lab: new variables, so "old" states the intended parsing.
+    ("lab_enabled", "BESSER_LAB_ENABLED", False,
+     lambda: _env_bool("BESSER_LAB_ENABLED", False), lambda s: s.lab_enabled),
+    ("lab_allowed_logins", "BESSER_LAB_ALLOWED_LOGINS", "",
+     lambda: _get("BESSER_LAB_ALLOWED_LOGINS", ""), lambda s: s.lab_allowed_logins),
+    ("lab_workspace_root", "BESSER_LAB_WORKSPACE_ROOT", None,
+     lambda: _env_path("BESSER_LAB_WORKSPACE_ROOT"), lambda s: s.lab_workspace_root),
+    ("lab_state_dir", "BESSER_LAB_STATE_DIR", None,
+     lambda: _env_path("BESSER_LAB_STATE_DIR"), lambda s: s.lab_state_dir),
+    ("lab_llm_provider", "BESSER_LAB_LLM_PROVIDER", "anthropic",
+     lambda: _get("BESSER_LAB_LLM_PROVIDER", "").strip() or "anthropic", lambda s: s.lab_llm_provider),
+    ("lab_llm_model", "BESSER_LAB_LLM_MODEL", None,
+     lambda: _get("BESSER_LAB_LLM_MODEL", "").strip() or None, lambda s: s.lab_llm_model),
+    ("lab_llm_api_key", "BESSER_LAB_LLM_API_KEY", "",
+     lambda: _get("BESSER_LAB_LLM_API_KEY", ""), lambda s: _secret(s.lab_llm_api_key)),
+    ("lab_max_cost_usd", "BESSER_LAB_MAX_COST_USD", 5.0,
+     lambda: _env_float("BESSER_LAB_MAX_COST_USD", 5.0), lambda s: s.lab_max_cost_usd),
+    ("lab_max_runtime_seconds", "BESSER_LAB_MAX_RUNTIME_SECONDS", 2400,
+     lambda: _env_int("BESSER_LAB_MAX_RUNTIME_SECONDS", 2400), lambda s: s.lab_max_runtime_seconds),
+    ("lab_preview_enabled", "BESSER_LAB_PREVIEW_ENABLED", False,
+     lambda: _env_bool("BESSER_LAB_PREVIEW_ENABLED", False), lambda s: s.lab_preview_enabled),
 ]
 
 EDGE_VALUES = [

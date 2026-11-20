@@ -78,6 +78,14 @@ def _abspath(value) -> Optional[str]:
     return os.path.abspath(os.path.expanduser(raw)) if raw else None
 
 
+def _text_or_default(value) -> str:
+    """Text with surrounding blanks removed; blank gives the default."""
+    raw = str(value).strip()
+    if not raw:
+        raise PydanticUseDefault()
+    return raw
+
+
 def _one_or_true(value) -> bool:
     return str(value).strip().lower() in ("1", "true")
 
@@ -351,6 +359,42 @@ class BackendSettings(BaseSettings):
     smtp_password: SecretStr = Field(
         SecretStr(""), validation_alias="SMTP_PASSWORD",
         description="SMTP password; unset, feedback is only stored locally. Read per call.")
+
+    # -- BESSER Lab ------------------------------------------------------------
+    # A lab instance lets the listed GitHub users change BESSER's own source
+    # through the lab agent, with the server's LLM key and shell tools.
+    lab_enabled: _Flag = Field(
+        False, validation_alias="BESSER_LAB_ENABLED",
+        description="This instance is a BESSER Lab: the lab routes answer and sign-in is limited to "
+                    "BESSER_LAB_ALLOWED_LOGINS; off, every lab route answers 404.")
+    lab_allowed_logins: str = Field(
+        "", validation_alias="BESSER_LAB_ALLOWED_LOGINS",
+        description="Comma-separated GitHub logins allowed to use the lab (case-insensitive); empty allows none.")
+    lab_workspace_root: _AbsPath = Field(
+        None, validation_alias="BESSER_LAB_WORKSPACE_ROOT",
+        description="Folder holding the lab's working copies (besser, modeling-agent).")
+    lab_state_dir: _AbsPath = Field(
+        None, validation_alias="BESSER_LAB_STATE_DIR",
+        description="Folder of the lab's state (changes, notes, last checks, preview logs); unset: "
+                    "<BESSER_LAB_WORKSPACE_ROOT>/.lab. Outside the working copy, the lab agent's shell cannot reach it.")
+    lab_llm_provider: Annotated[str, BeforeValidator(_text_or_default)] = Field(
+        "anthropic", validation_alias="BESSER_LAB_LLM_PROVIDER",
+        description="LLM provider of the lab agent.")
+    lab_llm_model: Annotated[Optional[str], BeforeValidator(_text_or_default)] = Field(
+        None, validation_alias="BESSER_LAB_LLM_MODEL",
+        description="Model of the lab agent (unset: the provider's default).")
+    lab_llm_api_key: SecretStr = Field(
+        SecretStr(""), validation_alias="BESSER_LAB_LLM_API_KEY",
+        description="The server's API key for the lab agent's provider; users never send their own.")
+    lab_max_cost_usd: _PositiveFloat = Field(
+        5.0, validation_alias="BESSER_LAB_MAX_COST_USD",
+        description="Cost cap (USD) of one lab run.")
+    lab_max_runtime_seconds: _PositiveInt = Field(
+        2400, validation_alias="BESSER_LAB_MAX_RUNTIME_SECONDS",
+        description="Runtime cap (seconds) of one lab run.")
+    lab_preview_enabled: _Flag = Field(
+        False, validation_alias="BESSER_LAB_PREVIEW_ENABLED",
+        description="Run the working copy's backend, editor and modeling agent as a live preview.")
 
     @model_validator(mode="after")
     def _defaults_within_hard_caps(self) -> "BackendSettings":

@@ -1,0 +1,16 @@
+${heading}
+${underline}
+
+This code generator produces one ``${output_file}`` file from a :doc:`../buml_language/model_types/structural`:
+each class of the model, with its attributes and their types.
+
+Create a ``${class_name}`` with the model and call its ``generate`` method:
+
+.. code-block:: python
+
+    from besser.generators.${name} import ${class_name}
+
+    generator = ${class_name}(model=library_model)
+    generator.generate()
+
+The file is written to the ``output`` folder of the current directory, or to ``output_dir`` when one is given.

@@ -43,18 +43,9 @@ router = APIRouter()
 {% do method_params.append((param.name, param_type, param.default_value, needs_fk_access, param.type.name)) %}
 {% endfor %}
 
-{% set method_code = "" %}
-{% if method.implementation_type.name == "BAL" %}
-{% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
-{% elif method.implementation_type.name == "CODE" %}
-{% set method_code = method.code %}
-{% elif method.implementation_type.name == "NEURAL_NETWORK" %}
-{% set method_code = nn_method_code(method) %}
-{% endif %}
-
-{# Normalize (expand tabs, dedent, compile-gate) the body so a method authored
-   with mixed indentation or invalid Python cannot break the generated app. #}
-{% set method_code = normalize_code(method_code, method.name) %}
+{# The body, normalized (expanded tabs, dedented, compile-gated) so a method authored with mixed
+   indentation or invalid Python cannot break the generated app. api_contract.py reads the same. #}
+{% set method_code = method_route_code(class, method) %}
 
 {# A method is class-level only when its CODE says so (no 'self' parameter). A
    method with no body is an unimplemented INSTANCE method - B-UML has no static

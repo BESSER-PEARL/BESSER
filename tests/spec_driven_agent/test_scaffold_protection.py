@@ -91,4 +91,4 @@ def test_delete_file_description_states_the_contract():
     description = next(t["description"] for t in FILE_TOOLS if t["name"] == "delete_file").lower()
     assert "protected run" not in description
     assert "generator left behind" not in description
-    assert "still import" in description
+    assert "still_imported" in description and "top-level module" in description

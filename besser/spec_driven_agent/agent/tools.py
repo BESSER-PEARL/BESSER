@@ -88,9 +88,9 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "file must have been read in full (or written) this run. Refused, the file "
             "unchanged, when a parseable file would no longer parse or import, or when "
             "a rewrite of a file this run did not create (generated and over 200 lines; "
-            "in a modify run, over 15 lines) drops its code: most of its lines, a "
-            "top-level declaration, a route or registration, or code left as a "
-            "placeholder. For a small change to a large file, modify_file is cheaper."
+            "in a modify run, over 15 lines) drops its code: over 40% of its lines, a "
+            "top-level declaration or class member, a route or registration, or code left as "
+            "a placeholder. For a small change to a large file, modify_file is cheaper."
         ),
         "input_schema": {
             "type": "object",
@@ -142,7 +142,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "before another range edit on the same file. new_text is the complete literal "
             "replacement (empty deletes the lines; to insert, include the anchor line). "
             "Refused, the file unchanged, for unseen lines, abbreviated code, or a replacement "
-            "that breaks the file's syntax."
+            "that breaks the file's syntax or import."
         ),
         "input_schema": {
             "type": "object",
@@ -183,8 +183,8 @@ FILE_TOOLS: list[dict[str, Any]] = [
         "name": "delete_file",
         "description": (
             "Delete one regular file (not a directory), by its path relative to the "
-            "workspace root. The result lists the files that still import what was "
-            "deleted (still_imported). To change a generated file, edit it instead."
+            "workspace root. The result lists imports of a top-level module the delete "
+            "removed (still_imported). To change a generated file, edit it instead."
         ),
         "input_schema": {
             "type": "object",

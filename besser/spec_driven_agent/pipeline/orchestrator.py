@@ -670,6 +670,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # The Phase 3 round its steps are reported under ("First check",
         # "Re-check after fix attempt 2"); see _report_round_step.
         self._validation_round: str = "Validation"
+        self._phase3_sweep_running = False
         self._repair_progress: dict = {}
         # ``True`` once Phase 2 exits via end_turn (LLM said it's done).
         # Anything else — API error, cost cap, timeout, cancellation —
@@ -2487,7 +2488,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not self.on_progress:
             return
         if not getattr(self, "_progress_takes_detail", True):
-            self.on_progress(turn, tool, status)
+            try:
+                self.on_progress(turn, tool, status)
+            except Exception:
+                logger.debug("on_progress callback raised; continuing", exc_info=True)
             return
         try:
             self.on_progress(turn, tool, status, detail)
@@ -3065,7 +3069,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         cached = getattr(self, "_runtime_probe_cache", None)
         if cached and cached[0] == revision:
             return list(cached[1])
-        self._report_round_step("starting the app's backend and creating test records")
+        if self._phase3_sweep_running:
+            self._report_round_step("starting the app's backend and creating test records")
         issues: list[str] = []
         mapper_issues = _import_smoke_issues(self.output_dir)
         issues.extend(mapper_issues)
@@ -3570,7 +3575,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # pages, so it says nothing about a native or CLI target.
         raw_issues.extend(self._acceptance_matrix_issues())
 
-        execution_issues = self._collect_execution_issues()
+        # validate_app reaches the probe too (Phase 2, a fix attempt); only this sweep names it.
+        self._phase3_sweep_running = True
+        try:
+            execution_issues = self._collect_execution_issues()
+        finally:
+            self._phase3_sweep_running = False
         # An enabled ledger that extracted nothing verified nothing. Saying so
         # is the difference between "the user asked for nothing" and "we never
         # looked".
@@ -3629,7 +3639,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         build_verdicts = self._frontend_build_verdicts
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
-        if self.enable_toolchain_validation and self.allow_shell_tools:
+        if (self.enable_toolchain_validation and self.allow_shell_tools
+                and any(rel.rpartition("/")[2] == "package.json" for rel in self._workspace_file_list())):
             self._report_round_step("building the frontend")
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,

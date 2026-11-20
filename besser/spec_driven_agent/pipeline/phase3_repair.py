@@ -72,6 +72,7 @@ from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
+    is_completion_issue,
     required_check_unverified,
 )
 from besser.spec_driven_agent.validation.toolchain import (
@@ -180,11 +181,19 @@ def counted(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
-def _fixing_blockers(blockers: list[ValidationIssue]) -> str:
-    """A fix attempt's step: what it faces, by count, never by internal ids."""
+def _fixing_blockers(blockers: list[ValidationIssue], round_issues: list[ValidationIssue]) -> str:
+    """A fix attempt's step: what it faces, by count, never by internal ids.
+
+    The round's blocker count (``FindingsEvent``) also counts checks that could
+    not run; no edit settles those, so the attempt says it leaves them.
+    """
+    not_run = sum(1 for issue in round_issues if issue.severity != "blocker" and is_completion_issue(issue))
     about_requirements = sum(1 for issue in blockers if issue.message.startswith("requirement "))
-    return (f"fixing {counted(len(blockers), 'blocker')}"
-            + (f" ({about_requirements} about requirements)" if about_requirements else ""))
+    notes = ([f"{about_requirements} about requirements"] if about_requirements else []) + (
+        [f"{not_run} {'is a check' if not_run == 1 else 'are checks'} that could not run"] if not_run else [])
+    head = (f"fixing {len(blockers)} of {counted(len(blockers) + not_run, 'blocker')}" if not_run
+            else f"fixing {counted(len(blockers), 'blocker')}")
+    return head + (f" ({'; '.join(notes)})" if notes else "")
 
 
 def _judge_left_unverified(verdict: dict) -> bool:
@@ -333,7 +342,9 @@ class Phase3RepairMixin:
                 self._save_phase3_checkpoint()
             return
 
-        self._begin_validation_round("First check")
+        # A resumed repair has run attempts already: its first sweep is not the run's first check.
+        self._begin_validation_round(
+            "Check after resuming" if self._repair_progress.get("attempts_run") else "First check")
         issues = self._collect_validation_issues()
 
         if not issues:
@@ -477,7 +488,7 @@ class Phase3RepairMixin:
             attempts_run += 1
             faced_last = self._blocker_identity(current_blockers)
             self._validation_round = f"Fix attempt {attempts_run}"
-            self._report_round_step(_fixing_blockers(current_blockers))
+            self._report_round_step(_fixing_blockers(current_blockers, last_issues))
             self._trace.write(
                 EVENT_PHASE_ENTER,
                 phase="phase3_fix_attempt",

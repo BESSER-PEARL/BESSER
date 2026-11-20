@@ -155,7 +155,13 @@ _BLOCK_PUNCTUATION = frozenset("{(:;,[")
 _TYPOGRAPHIC_QUOTES = str.maketrans({
     "“": '"', "”": '"', "„": '"', "‟": '"', "«": '"', "»": '"',
     "‘": "'", "’": "'", "‚": "'", "‛": "'", "‹": "'", "›": "'",
+    "＂": '"', "＇": "'",
 })
+
+
+def _ascii_quotes(text: str) -> str:
+    """Every quotation mark as ``"``: single, typographic and fullwidth ones alike."""
+    return text.translate(_TYPOGRAPHIC_QUOTES).replace("'", '"')
 
 
 def _normalise_quote(text: str, escapes: bool = True) -> str:
@@ -170,13 +176,13 @@ def _normalise_quote(text: str, escapes: bool = True) -> str:
     # read_file numbers what the model sees; no real source line starts with
     # "175| ", so such a prefix is always a copied artifact.
     first = _READ_NUMBER_PREFIX_RE.sub("", first, count=1)
-    return _collapse(first.translate(_TYPOGRAPHIC_QUOTES).replace("'", '"'))
+    return _collapse(_ascii_quotes(first))
 
 
 def _normalise_line(line: str) -> str:
     """A source line in a quote's form. Its escapes stay as written: turning
     ``"\\n".join(...)`` into a line break cut the line at that string."""
-    return _collapse(line.translate(_TYPOGRAPHIC_QUOTES).replace("'", '"'))
+    return _collapse(_ascii_quotes(line))
 
 
 def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:
@@ -1720,7 +1726,7 @@ def _as_written(raw: str, fragment: str, limit: int = _UNMATCHED_NOTE_CHARS) -> 
     """``fragment`` (a whitespace-free quote part) as the judge wrote it in
     ``raw``, clipped, so a re-judge can see which part to correct."""
     kept = [i for i, char in enumerate(raw) if not char.isspace()]
-    at = "".join(raw[i] for i in kept).replace("'", '"').find(fragment) if fragment else -1
+    at = _ascii_quotes("".join(raw[i] for i in kept)).find(fragment) if fragment else -1
     text = " ".join(raw[kept[at]:kept[at + len(fragment) - 1] + 1].split()) if at >= 0 else fragment
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
@@ -1853,7 +1859,7 @@ def _collapsed_text(full: str, cache: dict) -> str:
     if key not in cache:
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as handle:
-                cache[key] = _collapse(handle.read().replace("'", '"'))
+                cache[key] = _collapse(_ascii_quotes(handle.read()))
         except OSError:
             cache[key] = ""
     return cache[key]

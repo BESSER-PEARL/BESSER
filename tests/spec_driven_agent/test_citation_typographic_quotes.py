@@ -60,6 +60,7 @@ def app(tmp_path):
      "<button type=»button» className=»btn» onClick={onNext} disabled={!orders.length}>"),
     ("frontend/src/OrderList.tsx", "{orders.length === 0 ? ‘No orders yet’ : null}"),
     ("backend/orders.py", "customer=item[“customer”],"),
+    ("backend/orders.py", "customer=item[＂customer＂],"),
 ])
 def test_a_quote_with_typographic_quotation_marks_locates_the_line(app, path, line):
     [checked] = verify_evidence([_verdict(path, line)], str(app))
@@ -84,3 +85,12 @@ def test_a_source_line_with_typographic_marks_matches_its_own_quote(tmp_path):
         "export const Empty = () => <p className=\"hint\">{“Nothing here”}</p>;")], str(tmp_path))
 
     assert checked["status"] == "implemented", checked["note"]
+
+
+def test_a_line_quoted_from_the_wrong_file_names_its_file_whatever_its_marks(app):
+    """The note that sends a re-judge to the right file compares whole files the same way."""
+    [checked] = verify_evidence(
+        [_verdict("frontend/src/OrderList.tsx", "customer=item[“customer”],")], str(app))
+
+    assert checked["status"] == "unverified"
+    assert "backend/orders.py" in checked["note"], checked["note"]

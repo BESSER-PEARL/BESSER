@@ -1,12 +1,14 @@
 """Phase 3: open every screen of a built frontend in a headless browser.
 
 The other checks build the frontend and drive the backend over HTTP, but none
-renders a page: a bundle that builds and then dies on mount, or a screen whose
-data call answers 500, passes all of them. After the build has passed, this
-check boots the app's backend on a scratch database, serves the build output
-under its base path and opens each screen in a fresh tab of a headless Chromium
-(``ui_probe_driver.mjs``, the DevTools protocol over Node's own WebSocket).
-Nothing is clicked or typed.
+renders a page: a bundle that builds and then dies on mount, a screen whose
+data call answers 500, or a list that never shows the records the API holds
+passes all of them. After the build has passed, this check creates records
+through the app's own API (the create probe of ``constructibility.py``, on a
+scratch SQLite database), boots the backend on that database, serves the build
+output under its base path and opens each screen in a fresh tab of a headless
+Chromium (``ui_probe_driver.mjs``, the DevTools protocol over Node's own
+WebSocket). Nothing is clicked or typed.
 
 Screens are the router's paths read from the source (nested routes resolved),
 ``/`` first, plus same-origin links found on the opened pages that match a
@@ -15,7 +17,8 @@ when a page links to them.
 
 Every finding is a ``screen warning:`` naming the route and, when the router
 names it, the page's source file: an uncaught exception, a page that shows
-nothing, React Router's error page, a 4xx or 5xx, a console error. A screen that throws
+nothing, React Router's error page, a 4xx or 5xx, a console error, and a
+created record the API lists but no opened screen shows. A screen that throws
 and shows nothing is also returned as a blocker candidate, so the precision of
 that rule can be measured from real runs before it blocks anything.
 
@@ -89,6 +92,9 @@ _NETWORK_ERROR = re.compile(
     r"Name or service not known|Temporary failure in name resolution|getaddrinfo failed|nodename nor servname"
     r"|Network is unreachable|No route to host|ConnectError|ConnectTimeout|NewConnectionError"
     r"|Failed to establish a new connection|URLError|ConnectionRefusedError|gaierror", re.I)
+# The create probe's own text samples (``constructibility._sample``): distinctive, so a screen
+# showing one shows that record.
+_SAMPLE_TEXT = re.compile(r"^(?:p\d+-|probe-\d+-)")
 
 # Boots the generated FastAPI app as the runbook's ``.besser_probe.py up`` does.
 _SERVE = (
@@ -341,6 +347,78 @@ def _bundle_backend_ports(site: str) -> list[int]:
     return ports[:_MAX_BACKEND_PORTS] or [_DEFAULT_BACKEND_PORT]
 
 
+# --------------------------------------------------------------- the data pass
+
+
+def _payload_texts(payload) -> list[str]:
+    """The create probe's own text samples in a payload it sent, lower-cased."""
+    if not isinstance(payload, dict):
+        return []
+    return [value.lower() for value in payload.values()
+            if isinstance(value, str) and len(value) >= 6 and _SAMPLE_TEXT.match(value)]
+
+
+def _seed(backend: str, database: str, output_dir: str, domain_model, timeout: float) -> tuple[dict, dict]:
+    """Create records through the app's API with the create probe, into ``database``.
+
+    ``({entity: {"path": create path, "texts": [...]}}, {entity: why not checked})``.
+    """
+    from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+    from besser.spec_driven_agent.validation.constructibility import _model_actions, _run_probe, abstract_entities
+
+    report = _run_probe(backend, _safe_subprocess_env(), _model_actions(domain_model),
+                        abstract_entities(domain_model), workspace=output_dir, database=database,
+                        timeout=timeout)
+    if report.get("boot") != "ok":
+        return {}, {"*": f"the create probe could not run the app ({_first_line(report.get('error') or report.get('boot'))})"}
+    created, skipped = {}, {}
+    for entity, entry in sorted((report.get("entities") or {}).items()):
+        attempts = [a for a in entry.get("attempts") or [] if a.get("outcome") == "created"]
+        texts = sorted({text for attempt in attempts for text in _payload_texts(attempt.get("payload"))})
+        if not attempts:
+            skipped[entity] = "it could not be created through the API"
+        elif "{" in str(entry.get("path")):
+            skipped[entity] = "its list route needs a parent record"
+        elif not texts:
+            skipped[entity] = "it has no text field to look for"
+        else:
+            created[entity] = {"path": entry["path"], "texts": texts}
+    return created, skipped
+
+
+def _route_serves(route: str, path: str) -> bool:
+    from besser.spec_driven_agent.planning.mutation_inventory import route_serves
+
+    return route_serves(route, path)
+
+
+def _data_findings(label: str, created: dict, skipped: dict, listed: dict, screens: list[dict]) -> list[str]:
+    """Records the API lists that no opened screen shows."""
+    issues, unchecked = [], dict(skipped)
+    for entity, record in sorted(created.items()):
+        path = record["path"]
+        state = listed.get(entity) or {}
+        if not state.get("listed"):
+            unchecked[entity] = (f"GET {path} answered {state['status']}" if state.get("status") not in (None, 200)
+                                 else f"GET {path} does not return it")
+            continue
+        if any(set(record["texts"]) & set(screen.get("found") or []) for screen in screens):
+            continue
+        loading = [screen["route"] for screen in screens
+                   if any(call.get("method") == "GET" and _route_serves(path, call.get("path", ""))
+                          for call in screen.get("calls") or [])]
+        where = (f"screens that load GET {path}: {_listed(loading, 5)}" if loading
+                 else f"no opened screen loads GET {path}")
+        issues.append(f"{WARNING_PREFIX} {label} created a {entity} through the API (POST {path}) and the API "
+                      f"lists it, but none of its text ({_listed(record['texts'], 2)}) appears on any of the "
+                      f"{len(screens)} opened screen(s); {where}")
+    if unchecked:
+        issues.append(f"{WARNING_PREFIX} {label} records not checked on the screens: "
+                      + "; ".join(f"{entity} ({why})" if entity != "*" else why
+                                  for entity, why in sorted(unchecked.items())))
+    return issues
+
+
 # ------------------------------------------------------------------ findings
 
 
@@ -493,7 +571,7 @@ def _run_driver(config: dict, *, workspace: str, work: str, env: dict, timeout: 
     return {"not_run": (tail[-1] if tail else "no report")[:300]}
 
 
-def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
+def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None, domain_model,
                    deadline: float) -> dict:
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
     from besser.utilities.workspace_fs import copytree_plain
@@ -509,6 +587,7 @@ def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
     ports = _bundle_backend_ports(site)
     base = _build_base(site)
     work = tempfile.mkdtemp(prefix="besser_screens_")
+    created, skipped = {}, {}
     try:
         copytree_plain(site, os.path.join(work, "site"))
         env = _safe_subprocess_env()
@@ -516,10 +595,15 @@ def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
         if backend:
             app_dir = os.path.join(work, "app")
             copytree_plain(backend, app_dir, _BACKEND_SKIP)
-            env["DATABASE_URL"] = "sqlite:///" + os.path.join(work, "screens.db").replace("\\", "/")
+            database = os.path.join(work, "screens.db")
+            created, skipped = _seed(backend, database, output_dir, domain_model,
+                                     max(5.0, (deadline - time.monotonic()) / 2))
+            env["DATABASE_URL"] = "sqlite:///" + database.replace("\\", "/")
             backend_config = {"argv": [sys.executable, "-u", "-c", _SERVE, str(ports[0])], "cwd": app_dir,
                               "env": {}, "port": ports[0], "ready_path": "/openapi.json",
-                              "boot_ms": _BACKEND_BOOT_SECONDS * 1000}
+                              "boot_ms": _BACKEND_BOOT_SECONDS * 1000,
+                              "seed": [{"entity": entity, "path": record["path"], "texts": record["texts"]}
+                                       for entity, record in created.items()]}
         os.makedirs(os.path.join(work, "profile"))
         timeout = deadline - time.monotonic()
         config = {
@@ -531,6 +615,7 @@ def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
             "backend": backend_config, "own_ports": ports, "routes": routes.visit, "hash": routes.hash,
             # Links are followed only to declared routes, unless some route is computed.
             "route_patterns": [] if routes.computed else [pattern for pattern, _ in routes.declared],
+            "markers": sorted({text for record in created.values() for text in record["texts"]}),
             "max_screens": MAX_SCREENS, "screen_ms": SCREEN_SECONDS * 1000,
             "total_ms": int(max(timeout - _PROCESS_SLACK_SECONDS, 5) * 1000),
         }
@@ -566,6 +651,8 @@ def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
         result["screens"].append({"project": rel, "route": route, "file": file,
                                   "rendered": screen.get("rendered") is True,
                                   "seconds": round((screen.get("ms") or 0) / 1000, 1)})
+    if backend and screens:
+        issues.extend(_data_findings(label, created, skipped, backend_state.get("seeded") or {}, screens))
     left = report.get("unvisited") or []
     stop = report.get("stopped") or ("the time limit" if report.get("timed_out") else report.get("error"))
     if stop:
@@ -574,7 +661,8 @@ def _probe_project(output_dir: str, rel: str, browser: str, backend: str | None,
     return result
 
 
-def collect_screen_report(output_dir: str, projects: list[str], *, timeout: float = TOTAL_SECONDS) -> dict:
+def collect_screen_report(output_dir: str, projects: list[str], *, timeout: float = TOTAL_SECONDS,
+                          domain_model=None) -> dict:
     """Open the screens of each built frontend in ``projects`` (workspace-relative folders).
 
     One deadline, ``min(timeout, TOTAL_SECONDS)``, covers every project.
@@ -596,7 +684,8 @@ def collect_screen_report(output_dir: str, projects: list[str], *, timeout: floa
                 report["issues"].append(not_run(f"[{rel}] no time left in the run"))
                 continue
             try:
-                found = _probe_project(output_dir, rel, browser, backends[0] if backends else None, deadline)
+                found = _probe_project(output_dir, rel, browser, backends[0] if backends else None,
+                                       domain_model, deadline)
             except Exception as exc:  # a crash of this check must not stop Phase 3
                 logger.warning("Screen check crashed on %s", rel, exc_info=True)
                 found = {"issues": [not_run(f"[{rel}] it crashed: {type(exc).__name__}")], "screens": [],

@@ -4840,7 +4840,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3_screens")
-        report = collect_screen_report(self.output_dir, list(built), timeout=remaining)
+        report = collect_screen_report(self.output_dir, list(built), timeout=remaining,
+                                       domain_model=self.domain_model)
         self._trace.write(EVENT_PHASE_EXIT, phase="phase3_screens", screens=len(report["screens"]),
                           seconds=report["seconds"], **{BLOCKER_CANDIDATES: report["candidates"]},
                           exit_reason=f"{len(report['screens'])} screen(s) opened in {report['seconds']}s")

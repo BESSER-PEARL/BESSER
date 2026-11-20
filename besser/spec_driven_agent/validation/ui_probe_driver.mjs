@@ -18,6 +18,7 @@ const QUIET_MS = 500;
 const RECHECK_MS = 250;
 const MAX_TEXT = 400;
 const MAX_REQUESTS = 40;
+const MAX_CALLS = 60;
 const MAX_MESSAGES = 10;
 const MAX_LOG = 200000;
 const PROXY_HEADER = "x-besser-screen-proxied";
@@ -30,18 +31,21 @@ const MIME = {
   ".webmanifest": "application/manifest+json",
 };
 // What the page shows: text or a visible control anywhere in the body (a portal renders
-// outside the app's root), React Router's default error page and the links.
-const RENDERED_JS = `(() => {
+// outside the app's root), React Router's default error page, the links, and which of the
+// configured texts appear.
+const RENDERED_JS = (markers) => `(() => {
   const body = document.body;
-  if (!body) return { rendered: false, links: [] };
+  if (!body) return { rendered: false, links: [], found: [] };
   const text = (body.innerText || "").trim();
   const media = body.querySelector("img,svg,canvas,video,input,button,select,textarea,iframe,table");
   const lines = text.split("\\n").map((line) => line.trim()).filter(Boolean);
   const at = lines.indexOf("Unexpected Application Error!");
+  const lower = text.toLowerCase();
   return {
     rendered: text.length > 0 || media !== null,
     error_page: at >= 0 ? (lines[at + 1] || "") : null,
     links: Array.from(document.querySelectorAll("a[href]"), (a) => a.href).slice(0, 200),
+    found: ${JSON.stringify(markers)}.filter((marker) => lower.includes(marker)),
   };
 })()`;
 
@@ -135,6 +139,24 @@ async function forward(ports, backendPort) {
       server.listen(port, "127.0.0.1", resolve);
     });
   }
+}
+
+// Whether the API lists each record created before the backend started: its list route,
+// unauthenticated, must return the record's text for a screen to be able to show it.
+function listed(port, seed) {
+  return new Promise((resolve) => {
+    const request = http.get({ host: "127.0.0.1", port, path: seed.path, timeout: 10000,
+      headers: { accept: "application/json" } }, (response) => {
+      let body = "";
+      response.on("data", (chunk) => { body = (body + chunk).slice(0, 2000000); });
+      response.on("end", () => {
+        const text = body.toLowerCase();
+        resolve({ status: response.statusCode, listed: seed.texts.some((marker) => text.includes(marker)) });
+      });
+    });
+    request.on("error", () => resolve({ status: null, listed: false }));
+    request.on("timeout", () => { request.destroy(); resolve({ status: null, listed: false }); });
+  });
 }
 
 function sendFile(response, file) {
@@ -300,10 +322,19 @@ function isLocal(url) {
   }
 }
 
+function shownPath(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname + parsed.search;
+  } catch {
+    return cut(url);
+  }
+}
+
 async function visit(cdp, url, ownPorts) {
   const screen = {
-    url, exceptions: [], console_errors: [], requests: [], rendered: null, error_page: null,
-    idle: false, loaded: false, ms: 0, links: [], error: null, request_count: 0, backend_log: "",
+    url, exceptions: [], console_errors: [], requests: [], calls: [], rendered: null, error_page: null,
+    found: [], idle: false, loaded: false, ms: 0, links: [], error: null, request_count: 0, backend_log: "",
   };
   const started = Date.now();
   const logFrom = backendLog.length;
@@ -327,11 +358,14 @@ async function visit(cdp, url, ownPorts) {
       case "Network.responseReceived": {
         const status = p.response.status;
         const request = sent.get(p.requestId) || { method: "GET", type: p.type || "" };
+        const isOwn = own(p.response.url, p.response.headers);
+        const unreachable = header(p.response.headers, PROXY_HEADER) === "unreachable";
+        if (isOwn && !unreachable) {
+          note(screen.calls, { method: request.method, path: shownPath(p.response.url), status }, MAX_CALLS);
+        }
         if (status >= 400) {
           note(screen.requests, {
-            method: request.method, url: cut(p.response.url), type: request.type, status,
-            own: own(p.response.url, p.response.headers),
-            unreachable: header(p.response.headers, PROXY_HEADER) === "unreachable",
+            method: request.method, url: cut(p.response.url), type: request.type, status, own: isOwn, unreachable,
           }, MAX_REQUESTS);
         }
         break;
@@ -385,11 +419,12 @@ async function visit(cdp, url, ownPorts) {
   const end = Math.min(started + cfg.screen_ms, deadline - 1000);
   const look = async () => {
     const evaluated = await cdp.send("Runtime.evaluate",
-      { expression: RENDERED_JS, returnByValue: true }, sessionId);
+      { expression: RENDERED_JS(cfg.markers), returnByValue: true }, sessionId);
     const value = evaluated.result?.value || {};
     screen.rendered = value.rendered === true;
     screen.error_page = value.error_page ?? null;
     screen.links = value.links || [];
+    screen.found = value.found || [];
   };
   try {
     ({ targetId } = await cdp.send("Target.createTarget", { url: "about:blank" }));
@@ -448,6 +483,8 @@ async function main() {
     if (report.backend.status === "up") {
       backendPort = cfg.backend.port;
       await forward(cfg.own_ports, backendPort);
+      report.backend.seeded = {};
+      for (const seed of cfg.backend.seed || []) report.backend.seeded[seed.entity] = await listed(backendPort, seed);
     }
   }
   const server = staticServer(cfg.site, cfg.base, backendPort);

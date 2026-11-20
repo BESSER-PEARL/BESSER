@@ -174,6 +174,67 @@ def test_a_healthy_app_has_no_findings(tmp_path, monkeypatch):
         assert _by_route(report["issues"], route) == []
 
 
+# ----------------------------------------------- records the API lists, on screen
+
+
+@pytest.fixture
+def shop(tmp_path):
+    """A generated backend (Order, Product, Customer, Tag) and a frontend that lists orders by
+    title, products by price only, and customers nowhere."""
+    from besser.BUML.metamodel.structural import Class, DomainModel, FloatType, IntegerType, Property, StringType
+    from besser.generators.backend import BackendGenerator
+
+    pytest.importorskip("fastapi")
+    root = tmp_path / "workspace"
+    model = DomainModel(name="Shop", types={
+        Class(name="Order", attributes={Property(name="title", type=StringType)}),
+        Class(name="Product", attributes={Property(name="label", type=StringType),
+                                          Property(name="price", type=FloatType)}),
+        Class(name="Customer", attributes={Property(name="fullName", type=StringType)}),
+        Class(name="Tag", attributes={Property(name="weight", type=IntegerType)})})
+    BackendGenerator(model=model, output_dir=str(root / "backend")).generate()
+    (root / "frontend" / "dist" / "assets").mkdir(parents=True)
+    (root / "frontend" / "src").mkdir()
+    (root / "frontend" / "dist" / "index.html").write_text(
+        '<!doctype html><script type="module" src="/assets/app.js"></script><div id="root"></div>')
+    (root / "frontend" / "dist" / "assets" / "app.js").write_text(
+        'const root = document.getElementById("root");\n'
+        'const route = location.pathname.replace(/\\/+$/, "") || "/";\n'
+        'const show = (text) => { const p = document.createElement("p"); p.textContent = text; root.append(p); };\n'
+        'const list = (path, field) => fetch(path).then((r) => r.json())\n'
+        '  .then((rows) => rows.forEach((row) => show(String(row[field]))));\n'
+        'if (route === "/") show("Shop");\n'
+        'else if (route === "/orders") { show("Orders"); list("/order/", "title"); }\n'
+        'else if (route === "/products") { show("Products"); list("/product/", "price"); }\n')
+    (root / "frontend" / "src" / "App.jsx").write_text(
+        '<Routes><Route path="/" element={<p />} /><Route path="/orders" element={<p />} />'
+        '<Route path="/products" element={<p />} /></Routes>\n')
+    return root
+
+
+@needs_browser
+def test_a_created_record_no_opened_screen_shows_is_reported(shop, monkeypatch):
+    report = _run(shop, monkeypatch)
+    assert report["issues"] == [
+        "screen warning: [frontend] created a Customer through the API (POST /customer/) and the API lists it, "
+        "but none of its text (p4-customer-fullname) appears on any of the 3 opened screen(s); "
+        "no opened screen loads GET /customer/",
+        "screen warning: [frontend] created a Product through the API (POST /product/) and the API lists it, "
+        "but none of its text (p2-product-label) appears on any of the 3 opened screen(s); "
+        "screens that load GET /product/: /products",
+        "screen warning: [frontend] records not checked on the screens: Tag (it has no text field to look for)",
+    ]
+    assert user_sentence(report["issues"][0]) == (
+        "A Customer created through the app's API does not appear on any screen that was opened.")
+
+
+def test_a_record_the_api_does_not_list_is_not_checked():
+    created = {"Order": {"path": "/order/", "texts": ["p1-order-title"]}}
+    screens = [{"route": "/", "found": [], "calls": []}]
+    assert ui_probe._data_findings("[web]", created, {}, {"Order": {"status": 401, "listed": False}}, screens) == [
+        "screen warning: [web] records not checked on the screens: Order (GET /order/ answered 401)"]
+
+
 # ------------------------------------------------------------- optional, bounded
 
 
@@ -221,7 +282,7 @@ def test_one_deadline_bounds_the_whole_check(tmp_path, monkeypatch):
 def test_every_frontend_shares_one_deadline(tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(ui_probe, "find_browser", lambda: "chromium")
-    monkeypatch.setattr(ui_probe, "_probe_project", lambda output, rel, browser, backend, deadline:
+    monkeypatch.setattr(ui_probe, "_probe_project", lambda output, rel, browser, backend, model, deadline:
                         seen.append(deadline) or {"issues": [], "screens": [], "candidates": []})
     started = time.monotonic()
     collect_screen_report(str(tmp_path), ["web", "admin"], timeout=10_000)
@@ -412,8 +473,8 @@ def test_screens_open_only_after_the_build_passed_and_candidates_reach_the_trace
     calls = []
     candidate = {"project": "frontend", "route": "/", "file": "", "exception": "Error: x"}
 
-    def report(output_dir, projects, *, timeout):
-        calls.append(projects)
+    def report(output_dir, projects, *, timeout, domain_model):
+        calls.append((projects, domain_model))
         return {"issues": ["screen warning: [frontend] route /: x"], "screens": [{}], "candidates": [candidate],
                 "seconds": 1.0}
 
@@ -426,7 +487,7 @@ def test_screens_open_only_after_the_build_passed_and_candidates_reach_the_trace
     orch._frontend_build_verdicts[("frontend", revision, ("installed",), "vite build")] = None
     assert orch._collect_screen_issues() == ["screen warning: [frontend] route /: x"]
     assert orch._collect_screen_issues() == ["screen warning: [frontend] route /: x"]
-    assert calls == [["frontend"]], "an unchanged tree was opened again"
+    assert calls == [(["frontend"], orch.domain_model)], "an unchanged tree was opened again"
     exits = [payload for event, payload in orch._trace.events if payload.get("phase") == "phase3_screens"
              and event == "phase_exit"]
     assert exits[0][ui_probe.BLOCKER_CANDIDATES] == [candidate]
@@ -436,7 +497,7 @@ def test_a_screen_check_that_did_not_run_is_tried_again(orch, monkeypatch):
     outcomes = [not_run("[frontend] timed out after 150s"), not_run("no browser available")]
     calls = []
 
-    def report(output_dir, projects, *, timeout):
+    def report(output_dir, projects, *, timeout, domain_model):
         calls.append(projects)
         return {"issues": [outcomes[min(len(calls), 2) - 1]], "screens": [], "candidates": [], "seconds": 0.0}
 

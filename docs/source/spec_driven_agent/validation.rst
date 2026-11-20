@@ -249,8 +249,9 @@ continues to state that frontend build verification is pending.
 
 Once a frontend's build has passed on the current tree, Phase 3 opens its
 screens in a headless browser (``validation/ui_probe.py``). Inside the same
-no-network sandbox it boots the generated FastAPI backend on a scratch SQLite
-database (on every local port the built
+no-network sandbox it first creates records through the app's own API with the
+create probe described above, into a scratch SQLite database, then boots the
+generated FastAPI backend on that database (on every local port the built
 bundle calls), serves the build output under its base path (``vite build --base
 /app/`` included; ``index.html`` for page loads, the backend for any other path
 the build does not hold) and opens each screen in a fresh tab: ``/``, every path
@@ -277,7 +278,13 @@ router names it, the page's source file:
 - a 5xx from the app's backend, or "in the sandbox (no network there)" when the
   backend's log for that screen shows a connection or name-resolution error, a
   4xx, a request to a local address nothing answers, and a page that did not
-  settle (a request still open, or a fetch loop).
+  settle (a request still open, or a fetch loop);
+- a created record that the API lists but whose text appears on none of the
+  opened screens, naming the screens that load its list route, or saying that
+  none does. The create probe's own text samples (``p3-order-title``) are the
+  markers looked for. A record the probe could not create, one without a text
+  field, one whose list route needs a parent record, and one the API does not
+  list without signing in are named as not checked.
 
 A screen that threw and showed nothing is also written to the trace, under the
 ``screen_blocker_candidates`` key of the ``phase3_screens`` phase's exit, so the

@@ -47,6 +47,8 @@ GROUP_SENTENCES = {
     "workflow_failed": "{n} test workflows ran and failed: {subjects}.",
     "no_create_screen": "The user interface offers no way to create: {subjects}.",
     "operation_missing": "{n} operations of the model are not implemented: {subjects}.",
+    "record_not_shown": "{n} kinds of record created through the app's API appear on no screen that was opened: "
+                        "{subjects}.",
 }
 
 # Checks named by their internal tool, said in plain words.
@@ -79,6 +81,7 @@ _DETAIL_TEXT = re.compile(r'"detail"\s*:\s*"((?:[^"\\]|\\.)+)"')
 _ERROR_MSG = re.compile(r'"loc"\s*:\s*\[(?P<loc>[^\]]*)\].*?"msg"\s*:\s*"(?P<msg>(?:[^"\\]|\\.)+)"', re.S)
 _ACCEPTANCE = re.compile(r"^acceptance: entity (?P<entity>\w+) — (?P<detail>.*)")
 _SCREENS_NOT_RUN = re.compile(r"^screens: not run \((?P<reason>.*)\)$", re.S)
+_NOT_SHOWN = re.compile(r"^screen warning: \[[^\]]*\] created a (?P<entity>\w+) through the API .* but none of its text")
 
 # Prefixes whose finding needs no detail to be said plainly.
 _SIMPLE = (
@@ -267,6 +270,10 @@ def user_finding(message: str) -> Finding:
             return Finding(f"{check[0].upper()}{check[1:]} could not be run against the app.")
         reason = f" ({plain_reason(skipped.group('reason'))})" if skipped.group("reason") else ""
         return Finding(f"Not run: {check}{reason}, so its checks are not covered.")
+    if unshown := _NOT_SHOWN.match(text):
+        entity = unshown.group("entity")
+        return Finding(f"A {entity} created through the app's API does not appear on any screen that was opened.",
+                       "record_not_shown", entity)
     if screens := _SCREENS_NOT_RUN.match(text):
         return Finding(f"Not run: opening the app's screens in a browser ({plain_reason(screens.group('reason'))}), "
                        "so they are not covered.")

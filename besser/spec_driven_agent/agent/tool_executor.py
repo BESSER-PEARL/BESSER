@@ -615,9 +615,11 @@ def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None
     elision = find_elision(after)
     if elision and elision[1].strip() not in elided_lines(before):
         return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
+    # A new comment such as "remaining rows unchanged" is a placeholder only when lines went missing.
     placeholders = sorted(_placeholder_comments(after) - _placeholder_comments(before))
-    if placeholders:
-        return f"this rewrite replaces code with a placeholder comment ({placeholders[0][:80]})"
+    if placeholders and new_lines < old_lines:
+        return (f"this rewrite has {new_lines} non-blank lines where the file has {old_lines}, and a new "
+                f"comment that reads as standing in for the left-out code ({placeholders[0][:80]})")
     return ""
 
 

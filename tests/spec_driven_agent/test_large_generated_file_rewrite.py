@@ -118,3 +118,13 @@ def test_declaration_names_are_not_keywords():
 
     source = "export default class extends Base {}\nexport const enum Status { A }\nexport async function load() {}\n"
     assert _TOP_LEVEL_DECL_RE.findall(source) == ["Status", "load"]
+
+
+def test_a_new_comment_with_an_omission_word_in_a_rewrite_that_keeps_every_line_is_accepted(tmp_path):
+    commented = PAGE.replace("  return (\n", "  // Count the remaining rows before showing the footer\n  return (\n")
+    assert _write(tmp_path, PAGE_PATH, PAGE, commented).get("status") == "written"
+
+
+def test_a_placeholder_refusal_says_the_rewrite_is_shorter(tmp_path):
+    error = _write(tmp_path, PAGE_PATH, PAGE, PLACEHOLDER).get("error", "")
+    assert "non-blank lines where the file has" in error and "remaining rows unchanged" in error, error

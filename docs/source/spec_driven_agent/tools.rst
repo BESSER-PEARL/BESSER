@@ -71,8 +71,9 @@ A generated frontend page or component (``.tsx``, ``.jsx``, ``.ts`` or ``.js``
 under a ``frontend`` folder) over 200 lines needs no such attempts when the
 rewrite keeps its code: at least 60% of its non-blank lines, every column-0
 declaration outside comments, its ``export default``, every ``<Route>``
-element, and no new elision or placeholder comment such as
-``{/* ... unchanged ... */}`` or ``{/* remaining fields unchanged */}``. A rewrite that misses one is
+element, no new elision such as ``{/* ... unchanged ... */}``, and, when it
+has fewer non-blank lines than the file, no new comment-only line that reads
+as a placeholder (``{/* remaining fields unchanged */}``). A rewrite that misses one is
 refused saying which. Backend and other files, and frontend files with no
 declarations to compare, keep the two-attempt rule.
 Repeated failures do not permanently freeze the file; an agent that ignores

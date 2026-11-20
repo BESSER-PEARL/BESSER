@@ -105,6 +105,7 @@ _SIMPLE = (
     ("form field type:", "A form field does not match the type of value it collects."),
     ("screen warning:", "A screen of the app reported a problem when it was opened in a browser."),
     ("api call:", "A screen sends a request, or reads its answer, in a shape the backend does not use."),
+    ("endpoint coherence:", "A screen calls an API route or client function the backend does not have."),
     ("data contract", "The code does not match the class diagram (an identifier or a field type)."),
     ("model conformance:", "The backend does not match the latest changes to the class diagram."),
     ("missing module:", "The code imports a module that is not in the output, so the app cannot start."),
@@ -335,6 +336,12 @@ def user_finding(message: str) -> Finding:
         if lower.startswith(prefix):
             return Finding(sentence)
     return Finding(GENERIC_SENTENCE)
+
+
+def not_checked(message: str) -> bool:
+    """A screen-check note saying what it could not look at, as opposed to what it saw."""
+    text = " ".join(str(message or "").split())
+    return bool(_SCREEN_COVERAGE.match(text) or _SCREENS_NOT_RUN.match(text))
 
 
 def user_sentence(message: str) -> str:

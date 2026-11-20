@@ -220,6 +220,7 @@ class VerificationCounts(BaseModel):
     notVerified: int = 0
     shippedUnenforced: int = 0
     failed: int = 0
+    advisory: int = 0
 
 
 class VerificationReport(BaseModel):
@@ -235,8 +236,12 @@ class VerificationReport(BaseModel):
     (a rule missing in the code, a cited implementation that does not do it),
     ``failed`` is "we ran it and it failed" (a test workflow the agent wrote;
     the test or the app may be wrong, so it is not a rule shipped unenforced).
+    ``advisory`` is "seen, not blocking": a finding a check observed that
+    blocks nothing and is not a verdict (a screen that reported an error, a
+    call to a route no backend serves, a lint finding), one item per finding.
     A finding counted as a blocker is never in ``notVerified``. ``counts``
-    holds the true totals; the lists are capped. ``failed`` is additive.
+    holds the true totals; the lists are capped. ``failed`` and ``advisory``
+    are additive.
     """
 
     verified: list[VerificationItem] = Field(default_factory=list)
@@ -244,6 +249,7 @@ class VerificationReport(BaseModel):
     notVerified: list[VerificationItem] = Field(default_factory=list)
     shippedUnenforced: list[VerificationItem] = Field(default_factory=list)
     failed: list[VerificationItem] = Field(default_factory=list)
+    advisory: list[VerificationItem] = Field(default_factory=list)
     counts: VerificationCounts = Field(default_factory=VerificationCounts)
 
 

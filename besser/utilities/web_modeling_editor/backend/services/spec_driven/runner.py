@@ -30,6 +30,7 @@ import time
 import uuid
 import zipfile
 import zlib
+from collections import Counter
 from dataclasses import dataclass, replace as dataclass_replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
@@ -97,9 +98,10 @@ from besser.utilities.provenance import (
     write_generation_provenance,
 )
 from besser.spec_driven_agent.validation.user_wording import (
-    Finding, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
+    Finding, not_checked, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
 )
 from besser.spec_driven_agent.validation.issues import (
+    _classify_issue,
     is_completion_issue,
     is_configured_off,
     is_not_confirmed,
@@ -360,6 +362,8 @@ _WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it i
 # The heading of the checked-and-not-met state in BESSER_GENERATION.md: a rule missing in the
 # code, a cited implementation that does not do it.
 _NOT_MET = "Checked and not met"
+# The heading of the advisory findings: observed, blocking nothing, no verdict.
+_SEEN = "Seen, not blocking"
 # Verification levels (``requirements_ledger.with_verification_levels``) at which a call to the
 # running app exercised the requirement; ``unverified`` means only its source citation was checked.
 _RAN_LEVELS = ("verified", "api_verified")
@@ -520,7 +524,8 @@ def run_summary_markdown(
         f"- Verification: {counts.verified} confirmed by running the app's API, "
         f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not confirmed, "
         f"{counts.shippedUnenforced} checked and not met"
-        + (f", {counts.failed} test workflow(s) ran and failed" if counts.failed else ""))
+        + (f", {counts.failed} test workflow(s) ran and failed" if counts.failed else "")
+        + (f", {counts.advisory} seen, not blocking" if counts.advisory else ""))
     removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
                      for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
     note = recipe.get("runtime_files_note")
@@ -549,6 +554,15 @@ def run_summary_markdown(
             lines += [f"- {line}" for line in shown]
             if max(total, len(items)) > covered:
                 lines.append(f"- and {max(total, len(items)) - covered} more")
+    if verification.advisory:
+        # One line per sentence: several lint or screen findings say the same thing.
+        seen = list(Counter(one_line(item.what) for item in verification.advisory).items())
+        shown = seen[:_SUMMARY_ITEMS_PER_STATE]
+        lines += ["", f"### {_SEEN}", ""]
+        lines += [f"- {line}" + (f" ({n} findings)" if n > 1 else "") for line, n in shown]
+        rest = max(counts.advisory, len(verification.advisory)) - sum(n for _, n in shown)
+        if rest > 0:
+            lines.append(f"- and {rest} more")
     return lines
 
 
@@ -601,6 +615,7 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
     not_verified: list[VerificationItem] = []
     unenforced: list[VerificationItem] = []
     failed: list[VerificationItem] = []
+    advisory: list[VerificationItem] = []
 
     if recipe.get("warning") and not any(
         recipe.get(key) for key in
@@ -777,6 +792,10 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             # Every other finding the counts call not confirmed (the runtime gate's "no runtime
             # evidence"); requirements are listed from their verdicts above and below.
             not_verified.append(_item("check", "", user_sentence(message)))
+        elif _classify_issue(message).severity == "warning":
+            # A plain warning: what a check could not look at is not verified; what it saw is advisory.
+            (not_verified if not_checked(message) else advisory).append(
+                _item("check", "", user_sentence(message)))
 
     # 5. The requirements ledger can fail before producing a single verdict
     #    (extraction failed, verification budget exhausted). Its finding then
@@ -797,12 +816,14 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         notVerified=_capped(not_verified),
         shippedUnenforced=_capped(unenforced),
         failed=_capped(failed),
+        advisory=_capped(advisory),
         counts=VerificationCounts(
             verified=len(verified),
             foundInCode=len(found_in_code),
             notVerified=len(not_verified),
             shippedUnenforced=len(unenforced),
             failed=len(failed),
+            advisory=len(advisory),
         ),
     )
 

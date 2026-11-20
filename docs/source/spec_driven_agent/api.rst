@@ -388,9 +388,11 @@ SSE event types
        by running the app (``verified``), found cited in the code without
        running it (``foundInCode``), could not verify (``notVerified``),
        checked and found not met (``shippedUnenforced``: a rule missing in the
-       code, a cited implementation that does not do it) and ran and saw fail
+       code, a cited implementation that does not do it), ran and saw fail
        (``failed``, additive: a test workflow the agent wrote, which is not a
-       rule from the request), with true totals in
+       rule from the request) and saw without blocking anything (``advisory``,
+       additive: a warning a check observed, such as a screen that reported an
+       error, one item per finding), with true totals in
        ``counts``; a finding counted as a blocker is never in ``notVerified``),
        ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
        when a cancel request was honoured after the run had written files, so

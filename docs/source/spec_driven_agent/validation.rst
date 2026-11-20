@@ -849,7 +849,13 @@ counts the blockers still standing when the run ended and
 carries ``notConfirmedCount`` and, for released editors, a ``blockerCount`` that
 on a run that is not incomplete adds the two (see :doc:`api`). The
 ``verification`` report reads the same split: a finding not confirmed is listed
-under ``notVerified``, a blocker never is.
+under ``notVerified``, a blocker never is. A plain warning, which is neither (an
+endpoint-coherence or form-field-type finding, a screen warning, an acceptance
+cell, a lint finding), is listed under ``advisory``, "Seen, not blocking" in
+``BESSER_GENERATION.md`` with its count: it withholds nothing and is not counted as
+not confirmed. The screen check's notes on what it could not look at (``screen
+warning: ... not checked:`` and ``screens: not run``) are listed under
+``notVerified`` instead, apart from what it saw.
 
 .. _spec-driven-design-fidelity:
 

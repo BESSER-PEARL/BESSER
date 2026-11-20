@@ -267,7 +267,10 @@ def test_a_class_of_checks_that_never_ran_is_not_verified(monkeypatch, findings,
         done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         run = done["recipe"]["run"]
         assert done["notConfirmedCount"] == len(findings)
-        assert run["not_verified"] == [{"check": "runtime", "reason": "its startup timed out"}]
+        assert done["unresolvedBlockerCount"] == int(defect)
+        assert run["not_verified"] == [{"check": "runtime", "reason": "its startup timed out",
+                                        "configured_off": False}]
+        assert done["checksOff"] == []
         if defect:
             # A known defect keeps its own headline; the state is not reported twice.
             assert done["incomplete"] is True and done["unverified"] is False
@@ -286,12 +289,18 @@ def test_a_class_of_checks_that_never_ran_is_not_verified(monkeypatch, findings,
 
 
 def test_a_dependency_install_left_undone_is_not_an_unresolved_blocker(monkeypatch):
-    from besser.spec_driven_agent.validation.issues import _classify_issue, required_dependency_setup
+    from besser.spec_driven_agent.validation.issues import (
+        _classify_issue,
+        dependencies_not_installed,
+        required_dependency_setup,
+    )
 
     class SetupOpen(_StubOrchestrator):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            self._validation_issues = [_classify_issue(required_dependency_setup("tsc", "frontend"))]
+            # As LLMOrchestrator._settle_open_setup leaves it at Phase 3 exit.
+            self._validation_issues = [_classify_issue(dependencies_not_installed(
+                required_dependency_setup("tsc", "frontend")))]
 
         def verification_gaps(self):
             return [("build", "its dependencies were not installed")]
@@ -306,3 +315,72 @@ def test_a_dependency_install_left_undone_is_not_an_unresolved_blocker(monkeypat
         assert run["outcome"] == "completed_unverified"
     finally:
         _cleanup()
+
+
+def test_a_check_switched_off_on_the_server_is_not_a_not_verified_run(monkeypatch):
+    class ToolchainOff(_StubOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._validation_issues = []
+
+        def verification_gaps(self):
+            return [("build", "the build check is off on this server", True)]
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", ToolchainOff)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    try:
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+        assert done["unverified"] is False and done["unverifiedReason"] is None
+        assert done["checksOff"] == ["build"] and done["blockerCount"] == 0
+        assert done["recipe"]["run"]["outcome"] == "completed"
+    finally:
+        _cleanup()
+
+
+def test_a_switched_off_build_keeps_its_legacy_count_and_is_quiet_for_new_editors(monkeypatch, tmp_path):
+    """On master a toolchain-off server already showed "1 could not be verified" (the build's
+    ``validation unverified:`` note counted in blockerCount): released editors keep that. New
+    editors read checksOff, notConfirmedCount 0 and unresolvedBlockerCount 0: a quiet line."""
+    from besser.spec_driven_agent.validation.frontend_build import collect_frontend_build_issues
+    from besser.spec_driven_agent.validation.issues import _classify_issue, is_configured_off
+
+    (tmp_path / "package.json").write_text('{"name": "app", "scripts": {"build": "vite build"}}', encoding="utf-8")
+    (tmp_path / "index.html").write_text("<div id=root></div>", encoding="utf-8")
+    note, = collect_frontend_build_issues(str(tmp_path), enabled=False, allow_shell=True,
+                                          source_revision=lambda: "r", build_verdicts={}, can_run=lambda: True)
+    assert is_configured_off(note)
+
+    class ToolchainOffWithNote(_StubOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._validation_issues = [_classify_issue(note)]
+
+        def verification_gaps(self):
+            return [("build", "the build check is off on this server", True)]
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", ToolchainOffWithNote)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    try:
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+        assert done["blockerCount"] == 1, "unchanged for released editors"
+        assert (done["notConfirmedCount"], done["unresolvedBlockerCount"]) == (0, 0)
+        assert done["checksOff"] == ["build"] and done["unverified"] is False
+        run = done["recipe"]["run"]
+        assert run["outcome"] == "completed" and run["counts"]["not_confirmed"] == 0
+    finally:
+        _cleanup()
+
+
+@pytest.mark.parametrize("message", [
+    "validation unverified: original-specification coverage did not run completely (requirements ledger is "
+    "disabled) - required verification was SKIPPED; generated output is not verified complete",
+    "validation unverified: runtime check (backend startup and data entry) did not run (these checks are "
+    "disabled for this run) - no source edit can settle this",
+    "validation unverified: frontend build [web] did not run completely (configured build scripts require "
+    "explicitly enabled shell tools) - required verification was SKIPPED",
+])
+def test_each_switched_off_check_is_recognised(message):
+    from besser.spec_driven_agent.validation.issues import is_configured_off
+
+    assert is_configured_off(message)
+    assert not is_configured_off("validation unverified: frontend build [web] did not run completely (timed out)")

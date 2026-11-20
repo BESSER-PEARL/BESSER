@@ -430,3 +430,26 @@ def test_a_screen_check_finding_is_never_promoted(tmp_path):
     orch._validation_issues = issues
     orch._evaluate_fix_target_gate()
     assert orch._fix_target_resolved is True
+
+
+@pytest.mark.parametrize("message", [
+    "requirement unverified: R4 — An Order can be exported — the cited evidence 'backend/x.py: a' does not "
+    "verify it ([the quoted executable line was not found])",
+    "validation unverified: runtime check (the constructibility probe) did not run (backend: timed out) for Order",
+])
+def test_no_conclusion_about_the_code_is_never_the_reported_failure(tmp_path, message):
+    """The report can corroborate what the running app did, not "the citation was not located"
+    or "the check did not run". Before (first review round): both became reported-failure blockers."""
+    from besser.spec_driven_agent.pipeline.modify_run import _NEVER_PROMOTED
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+
+    orch = _orch(tmp_path, _domain("Order"))
+    assert _NEVER_PROMOTED[0] == orch._FIX_TARGET_PREFIX
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    issue = _classify_issue(message)
+
+    assert orch._promote_fix_target_findings([issue]) == [issue]
+    orch._validation_issues = [issue]
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True

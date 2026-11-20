@@ -188,6 +188,34 @@ def required_dependency_setup(check: str, project: str) -> str:
     )
 
 
+# What a not-confirmed finding says when the server has the check switched off (the
+# toolchain, shell tools, the requirements ledger, the startup check): the same on every
+# run there, so the done event's ``notConfirmedCount`` leaves it out (``checksOff`` says it).
+CONFIGURED_OFF_REASONS = (
+    "toolchain validation is disabled",
+    "require explicitly enabled shell tools",
+    "requirements ledger is disabled",
+    "these checks are disabled for this run",
+)
+
+
+def is_configured_off(issue) -> bool:
+    """A not-confirmed finding about a check the server has switched off."""
+    message = str(getattr(issue, "message", issue)).lower()
+    return is_not_confirmed(message) and any(reason in message for reason in CONFIGURED_OFF_REASONS)
+
+
+# The reason a check carries once the dependency install it needed was left undone.
+DEPENDENCIES_NOT_INSTALLED = "its project dependencies were not installed"
+_SETUP_CHECK_RE = _re.compile(r"^verification setup: (?P<check>.+?) requires installed project dependencies")
+
+
+def dependencies_not_installed(setup: str) -> str:
+    """A ``verification setup:`` still open when the run ends: the checks behind it did not run."""
+    match = _SETUP_CHECK_RE.match(setup)
+    return required_check_unverified(match["check"] if match else "a check", DEPENDENCIES_NOT_INSTALLED)
+
+
 def is_completion_issue(issue: ValidationIssue) -> bool:
     """A blocker the run ends with: counted in ``blockerCount``.
 

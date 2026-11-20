@@ -409,8 +409,12 @@ SSE event types
        that is not ``incomplete`` it keeps the meaning released editors give it,
        "could not be verified": the blockers that do not make a run incomplete
        (a requirement found missing, partial or unsupported, a failed test
-       workflow) plus ``notConfirmedCount``, and at least one per class of
-       checks that never ran when ``unverified`` is true. ``unverified`` is true
+       workflow) plus ``notConfirmedCount`` plus the notes of checks the server
+       has switched off (counted there before this field existed), and at least
+       one per class of checks that never ran when ``unverified`` is true.
+       ``unresolvedBlockerCount`` is the real number of unresolved blockers on
+       every run, and ``notConfirmedCount`` leaves the switched-off notes out:
+       new clients read those two instead. ``unverified`` is true
        when the run is not ``incomplete`` but a whole class of checks left no
        evidence on the delivered app: it was not checked against the request
        (no requirement verdict: the extraction or the judge failed, or a limit
@@ -419,9 +423,15 @@ SSE event types
        created through its API, or its frontend (a ``package.json``) was never
        built. ``unverifiedReason`` is then the sentence to show, for example
        ``The app was generated, but it was never started, so nothing shows it
-       runs (its startup timed out).``; it is ``null`` otherwise. Both fields,
-       and ``notConfirmedCount``, are additive: a client that ignores them
-       still reads ``blockerCount`` as before.
+       runs (its startup timed out).`` (``The app was updated, but ...`` on a
+       modify run); it is ``null`` otherwise.
+       ``checksOff`` lists the classes (``requirements``, ``runtime``,
+       ``build``) the server has switched off (the requirements check, the
+       startup check, the build check or shell tools): the same on every run
+       there, so it never sets ``unverified`` and never counts in
+       ``blockerCount`` beyond its own finding notes. These fields,
+       ``notConfirmedCount`` and ``unresolvedBlockerCount`` are additive: a
+       client that ignores them still reads ``blockerCount`` as before.
        ``trace`` is the run's trace, a trace-file fragment (``projectId``
        null) the editor merges into the project trace (see
        :ref:`spec-driven-run-trace`); ``null`` when the request did not set

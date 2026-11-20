@@ -255,7 +255,7 @@ def test_conversion_losses_remain_obligations_until_current_code_evidence(orch, 
     orch._run_phase3_validation()
     assert any(is_not_confirmed(item) and "validation did not run" in item.message
                for item in orch._validation_issues)
-    assert ("requirements", "too little time was left") in orch.verification_gaps()
+    assert ("requirements", "too little time was left", False) in orch.verification_gaps()
 
 
 def test_core_rejects_oversized_spec_before_work(orch):

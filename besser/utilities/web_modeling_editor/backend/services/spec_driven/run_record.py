@@ -109,10 +109,24 @@ _GAP_CLAUSES = {
 }
 
 
-def not_verified_message(gaps) -> Optional[str]:
-    """The sentence of a run whose classes of checks in ``gaps`` left no evidence, or None."""
-    clauses = [_GAP_CLAUSES.get(kind, "{}").format(reason) for kind, reason in gaps or ()]
-    return f"The app was generated, but {'; and '.join(clauses)}." if clauses else None
+def as_gap(gap) -> tuple[str, str, bool]:
+    """``(class, reason, configured_off)`` of a gap given with or without its third member."""
+    kind, reason, *rest = gap
+    return str(kind), str(reason), bool(rest and rest[0])
+
+
+def run_gaps(gaps) -> list[tuple[str, str, bool]]:
+    """The gaps of this run: not the classes the server has switched off."""
+    return [gap for gap in map(as_gap, gaps or ()) if not gap[2]]
+
+
+def not_verified_message(gaps, *, updated: bool = False) -> Optional[str]:
+    """The sentence of a run whose classes of checks in ``gaps`` left no evidence, or None.
+    A class the server has switched off is no event of the run and is not in it. ``updated``:
+    a modify run, which updated an app rather than generating one."""
+    clauses = [_GAP_CLAUSES.get(kind, "{}").format(reason) for kind, reason, _ in run_gaps(gaps)]
+    return (f"The app was {'updated' if updated else 'generated'}, but {'; and '.join(clauses)}."
+            if clauses else None)
 
 
 # ``warnings``: a warning the user was shown, by how its fixed text starts. A
@@ -174,7 +188,7 @@ class RunFacts:
     blocker_count: int = 0
     #: Findings that are not confirmed (a check that reached no conclusion); never blockers.
     not_confirmed: int = 0
-    #: ``(class, reason)`` of each class of checks that left no evidence at all.
+    #: ``(class, reason, configured_off)`` of each class of checks that left no evidence at all.
     not_verified: list = field(default_factory=list)
     estimated_cost_usd: float = 0.0
     archive_written: bool = False
@@ -209,12 +223,12 @@ class RunFacts:
         else:
             self.stopped_by = _STOP_REASONS.get(stop_reason, FINISHED)
         self.stop_message = (_STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None)
-                             or not_verified_message(gaps) or (
+                             or not_verified_message(gaps, updated=self.mode == "modify") or (
             f"The app was generated; {not_confirmed} finding(s) could not be confirmed and are listed "
             "for review." if not_confirmed else None))
         self.blocker_count = blocker_count
         self.not_confirmed = not_confirmed
-        self.not_verified = [list(gap) for gap in gaps or ()]
+        self.not_verified = [list(as_gap(gap)) for gap in gaps or ()]
         self.estimated_cost_usd = round(cost, 4)
         if self.stopped_by == CANCELLED:
             self.outcome = "cancelled"
@@ -224,7 +238,7 @@ class RunFacts:
             self.outcome = "failed"
         else:
             self.outcome = ("completed_with_blockers" if incomplete or blocker_count
-                            else "completed_unverified" if gaps else "completed")
+                            else "completed_unverified" if run_gaps(gaps) else "completed")
 
 
 def _files(tool_calls: list) -> tuple[int, int]:
@@ -291,7 +305,8 @@ def run_section(facts: RunFacts, orchestrator: Any, *, provider: str, models: li
             "blockers": facts.blocker_count,
             "not_confirmed": facts.not_confirmed,
         },
-        "not_verified": [{"check": kind, "reason": reason} for kind, reason in facts.not_verified],
+        "not_verified": [{"check": kind, "reason": reason, "configured_off": off}
+                         for kind, reason, off in facts.not_verified],
         "lines": facts.lines,
         "besser_version": get_besser_version(),
         "besser_build": get_build_sha(),
@@ -321,6 +336,7 @@ def end_line(run_id: str, facts: RunFacts, usage: Any = None) -> str:
     return (f"spec-driven run end run_id={run_id} outcome={facts.outcome or 'failed'} "
             f"duration_seconds={time.monotonic() - facts.started:.1f} blockers={facts.blocker_count} "
             f"not_confirmed={facts.not_confirmed} "
-            f"not_verified={','.join(kind for kind, _ in facts.not_verified) or '-'} "
+            f"not_verified={','.join(kind for kind, _, off in facts.not_verified if not off) or '-'} "
+            f"checks_off={','.join(kind for kind, _, off in facts.not_verified if off) or '-'} "
             f"estimated_cost_usd={facts.estimated_cost_usd:.4f} {tokens} {lines} "
             f"archive_written={str(facts.archive_written).lower()}")

@@ -1591,14 +1591,17 @@ def _comment_only_lines(source: str, suffix: str) -> set[int]:
 # does not show enforcement on its own. A verdict whose every cited line fails with
 # one of these is refuted (``EVIDENCE_REFUTED``): a blocker, not "not confirmed".
 _NO_PARSE = "the cited Python source does not parse"
-_NOT_CODE = "the cited line is a comment, docstring, import or placeholder"
+_NOT_CODE = "the cited line is a comment, docstring or placeholder"
+# An import names code without showing it: the rule may well be in what it imports.
+_IMPORT = "the cited line is an import; cite the code it imports"
 _COMMENT = "the cited line is a comment, not an implementation"
 _NOOP_VALIDATOR = "the cited validator is a no-op: it does not check or enforce a rule"
 _SCAFFOLD = "the cited implementation is an unimplemented scaffold"
 _ACTION_SCAFFOLD = "the cited action body is an unimplemented scaffold"
 _DECLARATION_ONLY = "the cited declaration does not perform the required behaviour"
-_ROLE_FAILURES = frozenset({_NO_PARSE, _NOT_CODE, _COMMENT, _NOOP_VALIDATOR, _SCAFFOLD, _ACTION_SCAFFOLD,
-                            _DECLARATION_ONLY})
+# Not _DECLARATION_ONLY nor _IMPORT: a column default, a ``column_property`` or an imported
+# helper can be the implementation, so neither proves the requirement is not met.
+_ROLE_FAILURES = frozenset({_NO_PARSE, _NOT_CODE, _COMMENT, _NOOP_VALIDATOR, _SCAFFOLD, _ACTION_SCAFFOLD})
 
 
 def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) -> tuple[ast.stmt | None, str]:
@@ -1610,7 +1613,9 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
     if not enclosing:
         return None, "the cited line is not an executable statement"
     statement = min(enclosing, key=lambda n: n.end_lineno - _statement_start(n))
-    if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)) or (
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return statement, _IMPORT
+    if isinstance(statement, ast.Pass) or (
         isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
     ):
         return statement, _NOT_CODE
@@ -2143,7 +2148,8 @@ def _annotates(source: _Source, end: int, starts: set[int]) -> bool:
 _PATH_UNRESOLVED = "the cited source path is missing, excluded or ambiguous"
 
 
-def _cited_file_missing(path: str, raw_quote: str, output_dir: str, files: dict[str, str], quote_cache: dict) -> bool:
+def _cited_file_missing(path: str, raw_quote: str, output_dir: str, files: dict[str, str], parsed: dict,
+                        quote_cache: dict, sqlite: bool) -> bool:
     """The citation names no file of the app, none is on disk at that path, and its code
     is in no judged file: invented evidence, not a misquote or a file the digest left out."""
     rel = path.strip().replace("\\", "/")
@@ -2152,7 +2158,14 @@ def _cited_file_missing(path: str, raw_quote: str, output_dir: str, files: dict[
             or _resolve_cited_path(rel, quote, files, quote_cache)
             or os.path.exists(os.path.join(output_dir, rel))):
         return False
-    return not any(quote in _collapsed_text(full, quote_cache) for full in files.values())
+    if any(quote in _collapsed_text(full, quote_cache) for full in files.values()):
+        return False
+    # Nor a near match anywhere: a paraphrase of real code under a wrong path is a misquote.
+    for rel, full in files.items():
+        source = _load_source(full, parsed, sqlite)
+        if _where_the_quote_leaves(quote, source, rel, raw_quote, quote_cache)[1]:
+            return False
+    return True
 
 
 def _locate_decorator(path: str, raw_quote: str, files: dict[str, str], parsed: dict,
@@ -2314,7 +2327,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                 item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED if malformed and item.get(
                     EVIDENCE_UNLOCATED, CITATION_MALFORMED) == CITATION_MALFORMED else CITATION_ABSENT
                 missing_file = missing_file or (failure == _PATH_UNRESOLVED and _cited_file_missing(
-                    path, raw_quote, output_dir, files, quote_cache))
+                    path, raw_quote, output_dir, files, parsed, quote_cache, sqlite))
                 if item[EVIDENCE_UNLOCATED] == CITATION_ABSENT:
                     break
                 continue
@@ -2949,8 +2962,7 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
                     else "is not an implementation of it")
             issues.append(
                 f"requirement unsupported: {label} — the cited evidence '{render_evidence(v.get('evidence'))}' "
-                f"{what}{note}; implement the behaviour, or cite the code that performs it: "
-                f"validate_app citations=[{{requirement: {v['id']}, path, line}}]")
+                f"{what}{note}; implement the behaviour: the requirement is judged again on the changed code")
         elif status == "unverified":
             pointed = ", ".join(v.get(CITED_FRAGMENT_LINES) or ())
             issues.append(

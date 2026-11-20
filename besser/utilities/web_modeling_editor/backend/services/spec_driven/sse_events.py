@@ -288,20 +288,33 @@ class DoneEvent(BaseSseEvent):
     # ``incomplete`` true: the unresolved blockers. With ``incomplete`` false:
     # the legacy "could not be verified" count released editors show, the
     # blockers (requirements found missing or unsupported, failed workflows,
-    # which never set ``incomplete``) plus ``notConfirmedCount``, and at least
-    # one per class of checks that never ran when ``unverified``.
+    # which never set ``incomplete``) plus ``notConfirmedCount`` plus the notes
+    # of checks the server has switched off (counted there before), and at
+    # least one per class of checks that never ran when ``unverified``. New
+    # clients read ``unresolvedBlockerCount`` and ``notConfirmedCount``.
     blockerCount: int = 0
     # Findings that are not confirmed: a check that reached no conclusion (a
     # citation not located, a guessed create refused, a check that did not run,
-    # a dependency install left undone). Never blockers. Additive.
+    # a dependency install left undone). Never blockers. A check the server has
+    # switched off (``checksOff``) is not counted here. Additive.
     notConfirmedCount: int = 0
+    # The real unresolved blockers, on every run (also one cut short): what
+    # ``blockerCount`` cannot say on a finished run, where it is padded for
+    # released editors. Additive.
+    unresolvedBlockerCount: int = 0
     # True when the run is not incomplete but a whole class of checks left no
     # evidence on the delivered app: it was not checked against the request, it
     # was never started, no record could be created through its API, or its
-    # frontend was never built. ``unverifiedReason`` is the sentence to show.
-    # False whenever ``incomplete`` is true. Additive.
+    # frontend was never built. ``unverifiedReason`` is the sentence to show
+    # ("The app was generated, but ..."; "The app was updated, but ..." on a
+    # modify run). False whenever ``incomplete`` is true. Additive.
     unverified: bool = False
     unverifiedReason: Optional[str] = None
+    # The classes of checks (``requirements``, ``runtime``, ``build``) this server has
+    # switched off: the requirements check, the startup check, the build check or shell
+    # tools. A property of the server, the same on every run there, so it never sets
+    # ``unverified``; the editor may say it once. Additive.
+    checksOff: list[str] = Field(default_factory=list)
     # What the run verified, could not verify, and shipped unenforced. This is
     # the field to render: blockerCount is one number over all three states.
     # Additive — existing clients that ignore it are unaffected.

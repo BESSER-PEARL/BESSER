@@ -100,6 +100,7 @@ from besser.spec_driven_agent.validation.user_wording import (
 )
 from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
+    is_configured_off,
     is_not_confirmed,
     required_check_unverified,
     unresolved_defects,
@@ -508,6 +509,10 @@ def run_summary_markdown(
             lines.append(f"- Model: {', '.join(map(one_line, run['models']))} ({run.get('key_tier')})")
         if run.get("outcome") == "completed_unverified" and run.get("stop_message"):
             lines.append(f"- Not verified: {one_line(run['stop_message'])}")
+        off = [gap for gap in run.get("not_verified") or [] if isinstance(gap, dict) and gap.get("configured_off")]
+        if off:
+            lines.append("- Checks off on this server: " + "; ".join(
+                f"{one_line(gap.get('check'))} ({one_line(gap.get('reason'))})" for gap in off))
     if readme:
         lines.append("- How to run it: see `README.md`")
     lines.append(
@@ -546,7 +551,7 @@ def run_summary_markdown(
     return lines
 
 
-def _verification_gaps(orchestrator: Any) -> list[tuple[str, str]]:
+def _verification_gaps(orchestrator: Any) -> list[tuple[str, str, bool]]:
     """The orchestrator's ``verification_gaps``: each class of checks with no evidence at all.
 
     Fails closed: a summary that could not be computed is itself a gap.
@@ -558,8 +563,8 @@ def _verification_gaps(orchestrator: Any) -> list[tuple[str, str]]:
         found = gaps()
     except Exception:
         logger.warning("Could not tell which checks left no evidence", exc_info=True)
-        return [("checks", "the check summary could not be computed")]
-    return [(str(kind), str(reason)) for kind, reason in found] if isinstance(found, list) else []
+        return [("checks", "the check summary could not be computed", False)]
+    return [run_record.as_gap(gap) for gap in found] if isinstance(found, list) else []
 
 
 def _issue_messages(recipe: dict) -> list[str]:
@@ -2436,13 +2441,12 @@ class SmartGenerationRunner:
             _unfixed_blockers = [
                 getattr(i, "message", str(i)) for i in _final_issues if is_completion_issue(i)
             ]
-            # A dependency install the agent was allowed to run but did not: still open at the
-            # end, it means the checks behind it never ran, which is "not verified", not a defect.
-            _setup_open = [m for m in _unfixed_blockers if m.startswith("verification setup:")]
-            _unfixed_blockers = [m for m in _unfixed_blockers if m not in _setup_open]
-            _not_confirmed = len(_setup_open) + sum(
-                1 for i in _final_issues
-                if is_not_confirmed(i) and getattr(i, "message", i) not in assembly_warnings)
+            # (A dependency install left undone was rewritten at Phase 3 exit as checks that did not run.)
+            # A check the server has switched off is counted apart: the same on every run there.
+            _off_notes = sum(1 for i in _final_issues if is_configured_off(i))
+            _not_confirmed = sum(1 for i in _final_issues
+                                 if is_not_confirmed(i) and not is_configured_off(i)
+                                 and getattr(i, "message", i) not in assembly_warnings)
             # Assembly warnings count even if the orchestrator dropped them.
             _unfixed_blockers = list(dict.fromkeys(_unfixed_blockers + assembly_warnings))
             _gaps = _verification_gaps(orchestrator)
@@ -2578,10 +2582,16 @@ class SmartGenerationRunner:
                 done_event.cancelled = cancelled
                 # A whole class of checks that left no evidence: reported as its own
                 # state, never as incomplete (which is for a known defect).
-                unverified = bool(_gaps) and not incomplete
+                # A class the server has switched off is reported apart (``checksOff``): it is
+                # the same on every run there, so it never makes a run read "not verified".
+                _run_gaps = run_record.run_gaps(_gaps)
+                unverified = bool(_run_gaps) and not incomplete
                 done_event.unverified = unverified
-                done_event.unverifiedReason = run_record.not_verified_message(_gaps) if unverified else None
+                done_event.unverifiedReason = (run_record.not_verified_message(
+                    _run_gaps, updated=self._facts.mode == "modify") if unverified else None)
+                done_event.checksOff = [kind for kind, _, off in _gaps if off]
                 done_event.notConfirmedCount = _not_confirmed
+                done_event.unresolvedBlockerCount = len(_unfixed_blockers)
                 # Completed-with-blockers vs cut-short need different
                 # client framing: a run whose loop finished but left
                 # completion-blocking issues did NOT "stop early". Only set
@@ -2594,7 +2604,10 @@ class SmartGenerationRunner:
                 done_event.blockerCount = (
                     0 if not exited_cleanly or cut_by_cancel
                     else len(_unfixed_blockers) if incomplete
-                    else len(_unfixed_blockers) + max(_not_confirmed, len(_gaps) if unverified else 0)
+                    # A switched-off check's note counts here as it always has (no change for
+                    # released editors); ``checksOff`` lets new editors say it quietly.
+                    else len(_unfixed_blockers) + max(_not_confirmed + _off_notes,
+                                                      len(_run_gaps) if unverified else 0)
                 )
                 # Best-effort authorship split (generator vs. LLM) over the
                 # final tree — the headline telemetry metric. Never blocks the
@@ -3231,7 +3244,8 @@ class SmartGenerationRunner:
                 try:
                     issues = getattr(orchestrator, "_validation_issues", None) or []
                     blockers_remaining = sum(1 for issue in issues if is_completion_issue(issue))
-                    not_confirmed = sum(1 for issue in issues if is_not_confirmed(issue))
+                    not_confirmed = sum(1 for issue in issues
+                                        if is_not_confirmed(issue) and not is_configured_off(issue))
                 except Exception:
                     blockers_remaining = None
 
@@ -3270,6 +3284,7 @@ class SmartGenerationRunner:
                 "blockers_remaining": blockers_remaining,
                 "not_confirmed": not_confirmed,
                 "not_verified": bool((done or {}).get("unverified")),
+                "checks_off": list((done or {}).get("checksOff") or []),
                 "outcome": outcome,
                 "file_split": file_split,
             }

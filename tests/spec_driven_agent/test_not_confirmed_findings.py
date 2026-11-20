@@ -227,9 +227,6 @@ def _cites(rid: int, kind: str, path: str, line: str, text: str = "Orders behave
     # A comment.
     (_cites(3, "implementation", "backend/service.py", "# Orders are written to CSV here.",
             "Orders can be exported to CSV."), ledger.REFUTED_ROLE),
-    # An import.
-    (_cites(4, "implementation", "backend/service.py", "from fastapi import FastAPI",
-            "Orders can be exported to CSV."), ledger.REFUTED_ROLE),
     # A file that does not parse.
     (_cites(5, "implementation", "backend/broken.py", "return 1", "Orders have a total."), ledger.REFUTED_ROLE),
     # A file the app does not have, quoting code that is nowhere in it.
@@ -261,6 +258,8 @@ def test_a_refuted_citation_is_a_repairable_blocker(tmp_path, verdict, refuted):
     _cites(9, "validation", "backend/service.py", "end: int", "An order's end must be after its start."),
     # A fragment of a line, not a whole line.
     _cites(10, "transition", "backend/service.py", "def cancel_order(order_id"),
+    # An import: the rule may be in what it imports (``from backend.rules import check_capacity``).
+    _cites(4, "rule", "backend/service.py", "from fastapi import FastAPI", "An order holds at most 100 items."),
 ])
 def test_a_citation_that_was_only_not_located_stays_not_confirmed(tmp_path, verdict):
     checked, = ledger.verify_evidence([verdict], _service(tmp_path))
@@ -327,3 +326,58 @@ def test_each_listed_finding_is_in_the_bucket_its_count_puts_it_in():
         {"severity": _classify_issue(m).severity, "message": m} for m in messages]})
     assert len(report.notVerified) == sum(map(is_not_confirmed, messages)) == 2
     assert len(report.shippedUnenforced) == len(_blockers(messages)) == 1
+
+
+# Correct code the first refutation rule refuted (second review). Each must stay not confirmed:
+# a false refutation reads "rules not enforced" and sends repair to rewrite working code.
+_MODELS_RULES = {
+    "backend/models.py": (
+        "from sqlalchemy import Column, Integer, String\n"
+        "from sqlalchemy.orm import column_property\n"
+        "from database import Base\n"
+        "\n"
+        "class Order(Base):\n"
+        "    __tablename__ = 'orders'\n"
+        "    id = Column(Integer, primary_key=True)\n"
+        "    reference = Column(String(40), nullable=False, unique=True)\n"
+        "    status = Column(String(20), nullable=False, default='pending')\n"
+        "    quantity = Column(Integer, nullable=False)\n"
+        "    unit_price = Column(Integer, nullable=False)\n"
+        "    total = column_property(quantity * unit_price)\n"),
+    "backend/rules.py": "def check_capacity(order):\n    if order.quantity > 100:\n        raise ValueError('x')\n",
+    "backend/routers.py": "from backend.rules import check_capacity\n\ndef cancel(order_id):\n    pass\n",
+}
+
+
+def _rules_app(root: Path) -> str:
+    for rel, text in _MODELS_RULES.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    return str(root)
+
+
+@pytest.mark.parametrize("verdict", [
+    _cites(1, "transition", "backend/models.py", "status = Column(String(20), nullable=False, default='pending')",
+           "A new order is pending until paid."),
+    _cites(2, "computed", "backend/models.py", "total = column_property(quantity * unit_price)",
+           "An order's total is quantity times unit price."),
+    _cites(3, "rule", "backend/routers.py", "from backend.rules import check_capacity",
+           "An order holds at most 100 items."),
+    # A wrong path prefix and a paraphrase of a line that exists.
+    _cites(4, "uniqueness", "app/models/order.py", "reference = Column(String, unique=True)",
+           "Order references are unique."),
+])
+def test_correct_code_is_never_refuted(tmp_path, verdict):
+    checked, = ledger.verify_evidence([verdict], _rules_app(tmp_path))
+    assert not checked.get(ledger.EVIDENCE_REFUTED), checked["note"]
+    if checked["status"] != "implemented":
+        message, = ledger.ledger_issues([checked])
+        assert is_not_confirmed(message) and _blockers([message]) == []
+
+
+def test_a_true_stub_beside_them_is_still_refuted(tmp_path):
+    checked, = ledger.verify_evidence([_cites(5, "transition", "backend/routers.py", "pass",
+                                              "A customer can cancel an order.")], _rules_app(tmp_path))
+    assert checked[ledger.EVIDENCE_REFUTED] == ledger.REFUTED_ROLE
+    message, = ledger.ledger_issues([checked])
+    assert message.startswith("requirement unsupported:") and "validate_app citations" not in message

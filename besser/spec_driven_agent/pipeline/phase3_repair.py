@@ -68,6 +68,7 @@ from besser.spec_driven_agent.state.tracing import (
 )
 from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 from besser.spec_driven_agent.validation.issues import (
+    RUNTIME_CHECK_UNVERIFIED,
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
@@ -886,7 +887,10 @@ class Phase3RepairMixin:
                 f"proven to accept a record - {what}, so this run is NOT complete: "
                 + "; ".join(sorted(observed or fatal_source)[:3])[:1200]
             )
-        if self._never_started():
+        # Said once: a runtime check that did not run already says why nothing started it.
+        if self._never_started() and not any(
+                i.message.startswith(RUNTIME_CHECK_UNVERIFIED) and "(api scenario " not in i.message
+                for i in self._validation_issues):
             return (
                 f"validation unverified: {self._RUNTIME_GATE_PREFIX} the delivered application has no "
                 "runtime evidence at all - nothing started it on this source revision (no "

@@ -723,32 +723,44 @@ severity a finding was built or stored with:
 ``requirement unsupported:`` is the judge saying implemented while the verifier
 found the cited code does not do it: every line it cites was found whole and none
 is an implementation (an action body or implementation still a stub, a validator
-that returns its input, a comment, docstring, import or ``pass``, a declaration
-where behaviour is needed, a Python file that does not parse), or a cited file
-does not exist and its quoted code is in no file of the app. That is evidence of
+that returns its input, a comment, docstring or ``pass``, a Python file that does
+not parse), or a cited file does not exist and its quoted code is in no file of the
+app, not even nearly (a paraphrase of a line that exists is a misquote). A
+declaration (a column default, a ``column_property``) and an import (the rule may be
+in what it imports) are never refuted: they can be the implementation. That is evidence of
 a defect, so it is a blocker the repair loop works on, counted like a
 ``missing`` verdict, and the report lists it as checked and not met ("the code the
 check was pointed at does not do this"). Like the judge's own verdicts it does not
-make the run incomplete. A line that only declares data where a rule must be
-enforced stays not confirmed: on recorded runs those citations were real code
-doing the job across several lines.
+make the run incomplete. Its message asks for the behaviour, not for a citation:
+any working line would verify, so a refuted citation cannot be replaced by the
+agent's; the requirement is judged again on the changed code. A line that only
+declares data where a rule must be enforced stays not confirmed: on recorded runs
+those citations were real code doing the job across several lines.
 
 Two findings of the same "could not check" kind stay blockers. ``verification
 setup:`` asks the agent to install the project's declared dependencies, which it
 is allowed to do, so that the compile and build checks behind it can run; one
-still open when the run ends is counted as not confirmed, not as a blocker, and
-the run reports its frontend as never built (below). A
+still open when Phase 3 ends is rewritten once as ``validation unverified: <check>
+did not run completely (its project dependencies were not installed)``, so the
+trace, the recipe, the counts, telemetry and the report all read it as not
+confirmed, and the run reports its frontend as never built (below). A
 diagram that failed to convert carries ``validation unverified:`` but is a known
 loss (part of the project never reached the generator), so it still marks the run
 incomplete.
 
 A run whose only findings are not confirmed starts no fix attempt. The agent's
 ``validate_app`` lists them, answers ``verified: false`` with ``blocker_count:
-0``, and tells it not to edit working code for them. On a fix run, a finding not
-confirmed that names what the user reported failing (``finding_matches_target``)
-is corroborated by the report: it is promoted to the reported failure, repaired,
-and keeps the run from claiming the failure fixed. One that names something else
-is not; nor is a ``task unverified:`` item.
+0``, and tells it not to edit working code for them. On a fix run, the user's
+report can corroborate what the running app did: a ``create``, ``action`` or
+``runtime unverified:`` refusal that names what the user reported failing
+(``finding_matches_target``) is promoted to the reported failure, repaired, and
+keeps the run from claiming the failure fixed. It never corroborates "no
+conclusion about the code" or "the check did not run": ``requirement
+unverified:``, ``validation unverified:``, ``task unverified:`` and the screen
+check's findings (``screen:``, ``screen warning:``, ``screens: not run``) are never
+promoted and never hold that gate (one tuple, ``_NEVER_PROMOTED`` in
+``modify_run.py``). Leaving the screen check out is a policy choice: its findings
+stay warnings until it is calibrated.
 
 .. _spec-driven-not-verified:
 
@@ -766,16 +778,25 @@ stays reserved for a known defect. The classes are:
   the run's time or cost limit or a cancel stopped it. Since LLM calls stop
   shortly before the runtime cap, a run out of time before the judge lands here;
 - *runtime*: a backend to start, and nothing started it on that tree: no probe
-  boot (the probe timed out, a dependency was missing, the probe crashed or was
-  off) and no test workflow that booted it or passed. The runtime gate records
-  this as ``validation unverified: runtime gate: ...`` for the timed-out probe
-  and for no probe alike;
+  boot (the probe timed out, a dependency was missing, the probe crashed) and no
+  test workflow that booted it or passed. When no runtime check note already says
+  why, the runtime gate records it as ``validation unverified: runtime gate:
+  ...``, so a timed-out probe is listed once. Only the FastAPI backends the probe
+  drives count: another kind of backend is never started by the check, and its
+  run reports no runtime class;
 - *records*: the probe started the backend, no entity came back created, and no
   workflow created a record and read it back ("no record could be created through
   the API"); a single refused create stays a finding not confirmed;
 - *build*: a frontend with a ``package.json`` that was never built (its
-  dependencies were not installed, the build check is off on the server, or a
-  limit stopped it).
+  dependencies were not installed, or a limit stopped it).
+
+A class the server has switched off (the requirements ledger, the startup check,
+the build check or shell tools) has no evidence on any run there. It is reported
+apart, as ``configured_off`` in the run record and in the ``done`` event's
+``checksOff``, and never makes a run "not verified". When the judge did not run on
+the delivered tree, the recipe keeps the last verdicts as ``unverified`` with the
+note "not judged on the delivered version of the app", so the report never says a
+requirement was found in code nobody judged.
 
 One Python defect is one finding: a file that does not parse is reported as
 ``Syntax error in``, without the python contract's and ``ruff``'s copies of the

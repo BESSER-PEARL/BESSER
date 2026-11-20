@@ -82,6 +82,23 @@ from besser.utilities.workspace_fs import open_plain
 logger = logging.getLogger(__name__)
 
 
+# Never promoted to the reported failure on a fix run, and never held against it by the
+# gate. A user's report can corroborate an OBSERVATION of the running app (a guessed create
+# or action the app refused: ``create``/``action``/``runtime unverified:``), never "no
+# conclusion about the code" (a citation not located), "the check did not run", or a
+# checklist item nothing closed. The first entry is ``_FIX_TARGET_PREFIX``. Leaving the
+# screen check out is a policy choice: its findings stay warnings until calibrated.
+_NEVER_PROMOTED = (
+    "reported-failure: ",
+    "requirement unverified:",
+    "validation unverified:",
+    "task unverified:",
+    "screen:",
+    "screen warning:",
+    "screens: not run",
+)
+
+
 class ModifyRunMixin:
     """modify and friends; see the module docstring."""
 
@@ -256,6 +273,7 @@ class ModifyRunMixin:
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._settle_open_setup()
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="phase3",
@@ -745,15 +763,11 @@ class ModifyRunMixin:
         earlier = self._earlier_requirement_findings()
         promoted: list[ValidationIssue] = []
         for issue in issues:
-            # A finding not confirmed on its own (a guessed create refused, a check
-            # that did not run) is corroborated when it matches what the user reported.
+            # A refusal the probe observed is corroborated when it matches what the user reported.
             if (
                 issue.severity != "blocker"
                 and issue.message not in earlier
-                # A checklist item nothing confirmed is not an observed failure; the
-                # screen check (ui_probe.py) never blocks.
-                and not issue.message.startswith((self._FIX_TARGET_PREFIX, "task unverified:",
-                                                  "screen:", "screen warning:", "screens: not run"))
+                and not issue.message.startswith(_NEVER_PROMOTED)
                 and finding_matches_target(issue.message, self._fix_target)
             ):
                 promoted.append(ValidationIssue(
@@ -795,11 +809,10 @@ class ModifyRunMixin:
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
         earlier = self._earlier_requirement_findings()
-        # A not-confirmed finding that matches the report is the failure persisting too,
-        # except a checklist item nothing closed, which is never promoted either.
+        # A not-confirmed observation that matches the report is the failure persisting too.
         unresolved = [
             i for i in self._validation_issues
-            if (is_completion_issue(i) or is_not_confirmed(i) and not i.message.startswith("task unverified:"))
+            if (is_completion_issue(i) or (is_not_confirmed(i) and not i.message.startswith(_NEVER_PROMOTED)))
             and i.message not in earlier
             and (
                 i.message.startswith(self._FIX_TARGET_PREFIX)

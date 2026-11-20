@@ -518,12 +518,15 @@ keys, always in this order:
   findings are not confirmed ends ``completed``, and its ``stop_message`` says how
   many could not be confirmed.
 - ``not_verified``: each class of checks that left no evidence on the delivered
-  app, as ``{"check", "reason"}`` with a fixed reason: ``requirements`` (not
-  checked against the request), ``runtime`` (never started), ``records`` (no
-  record could be created through the API) or ``build`` (the frontend was never
-  built). A finished run with one and no blocker ends ``completed_unverified``,
-  and its ``stop_message`` names them: ``The app was generated, but it was not
-  checked against your request (too little time was left).``
+  app, as ``{"check", "reason", "configured_off"}`` with a fixed reason:
+  ``requirements`` (not checked against the request), ``runtime`` (never
+  started), ``records`` (no record could be created through the API) or
+  ``build`` (the frontend was never built). ``configured_off`` is true when the
+  server has that check switched off; such an entry is a property of the server
+  and changes neither the outcome nor the ``stop_message``. A finished run with
+  another entry and no blocker ends ``completed_unverified``, and its
+  ``stop_message`` names them: ``The app was generated, but it was not checked
+  against your request (too little time was left).``
 - ``lines``: the lines of the delivered files by author, as in the run's Agent
   Trace record: ``total``, ``generator``, ``ai``, ``human``, ``unknown``, and
   ``ai_this_run`` (the part of ``ai`` this run wrote). ``null`` when the run has
@@ -542,12 +545,13 @@ The worker logs one line when a run starts and one when it ends, with the same
 names: ``spec-driven run start run_id=... mode=... base_run_id=... key_tier=...
 model=... generator=...`` (``generator=auto`` unless the request bound one; the
 target is decided later) and ``spec-driven run end run_id=... outcome=...
-duration_seconds=... blockers=... not_confirmed=... not_verified=... estimated_cost_usd=... input_tokens=...
+duration_seconds=... blockers=... not_confirmed=... not_verified=... checks_off=... estimated_cost_usd=...
+input_tokens=...
 output_tokens=... cache_creation_tokens=... cache_read_tokens=... lines_total=...
 lines_generator=... lines_ai=... lines_human=... lines_unknown=...
 lines_ai_this_run=... archive_written=...``: the token counts under the recipe's
 ``usage`` names, the line counts as in ``lines``, and ``-`` for a value the run
-does not have (``not_verified`` lists the classes, comma-separated).
+does not have (``not_verified`` and ``checks_off`` list classes, comma-separated).
 ``outcome`` is ``completed``, ``completed_unverified``, ``completed_with_blockers``, ``cancelled``,
 ``budget_stop`` or ``failed``. Neither line carries the request or the key.
 They are written by the ``besser.spec_driven.runs`` logger, which the backend

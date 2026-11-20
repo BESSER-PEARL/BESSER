@@ -278,6 +278,9 @@ def user_finding(message: str) -> Finding:
     if lower.startswith("model contract:"):
         return Finding("The class diagram has a problem the generated code cannot resolve: "
                        + _cut(text[len("model contract:"):], _MAX_REQUIREMENT))
+    if lower.startswith("agent left out:"):
+        # Written for the user already: the message after its prefix.
+        return Finding(text[len("agent left out:"):].strip())
     if _TRUNCATION_NOTE_RE.match(text):
         return Finding("More findings of the same check were counted but not listed.")
     if lower.startswith("ruff:"):
